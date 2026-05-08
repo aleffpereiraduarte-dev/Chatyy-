@@ -105,6 +105,15 @@ function SettingsScreenInner() {
   const [twoFALoading, setTwoFALoading] = useState(false);
   const [twoFAError, setTwoFAError] = useState('');
   const [twoFASuccess, setTwoFASuccess] = useState(false);
+  // Registration Lock (anti-SIM-swap) PIN modal — same shape as 2FA but
+  // writes to a different backend key (registration_lock vs 2fa_pin) and
+  // gates phone-OTP login instead of password login.
+  const [regLockOpen, setRegLockOpen] = useState(false);
+  const [regLockDigits, setRegLockDigits] = useState(['', '', '', '']);
+  const regLockRefs = useRef([null, null, null, null]);
+  const [regLockLoading, setRegLockLoading] = useState(false);
+  const [regLockError, setRegLockError] = useState('');
+  const [regLockSuccess, setRegLockSuccess] = useState(false);
   const [oneEnabled, setOneEnabled] = useState(true);
   const [oneNotifLevel, setOneNotifLevel] = useState('push'); // 'email', 'push', 'urgent' — for One AI
   const [pushNotifLevel, setPushNotifLevel] = useState('all'); // 'all', 'urgent', 'silent' — global push delivery
@@ -940,6 +949,36 @@ function SettingsScreenInner() {
               </View>
               <Text style={{ color: colors.textTertiary, fontSize: 20 }}>›</Text>
             </TouchableOpacity>
+
+            {/* Registration Lock (anti-SIM-swap) — separate concept from 2FA.
+                A short PIN that adds a second factor to phone-OTP login,
+                defeating SIM-swap attacks where the attacker steals the
+                number, gets the OTP, and takes over the account. Same
+                4-digit PIN UI as 2FA but writes to a different backend key. */}
+            <TouchableOpacity
+              style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
+              onPress={() => {
+                setRegLockDigits(['', '', '', '']);
+                setRegLockError('');
+                setRegLockSuccess(false);
+                setRegLockOpen(true);
+                setTimeout(() => { try { regLockRefs.current[0]?.focus?.(); } catch {} }, 250);
+              }}
+              activeOpacity={0.65}
+            >
+              <View style={[s.settingInfo, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
+                <IconShield size={18} color={colors.primary} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.settingLabel, { color: colors.text }]}>
+                    {t('settings.registrationLock') || 'PIN de segurança (anti-SIM-swap)'}
+                  </Text>
+                  <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                    {t('settings.registrationLockDesc') || 'PIN extra no login por telefone — protege se trocarem seu chip.'}
+                  </Text>
+                </View>
+              </View>
+              <Text style={{ color: colors.textTertiary, fontSize: 20 }}>›</Text>
+            </TouchableOpacity>
           </View>
         )}
 
@@ -1729,6 +1768,149 @@ function SettingsScreenInner() {
                 ) : (
                   <Text style={{ color: '#fff', fontWeight: '700' }}>
                     {t('settings.twoFactorEnable') || 'Ativar PIN'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Registration Lock PIN Entry Modal — same shape as 2FA but writes a
+          separate backend key (registration_lock) that gates phone-OTP login
+          rather than email/password login. The PIN is the second factor on
+          phone_login_verify; without it, even a successful SIM-swap can't
+          take over the account. */}
+      <Modal
+        visible={regLockOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setRegLockOpen(false)}
+      >
+        <Pressable
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center' }}
+          onPress={() => setRegLockOpen(false)}
+        >
+          <Pressable
+            onPress={e => e.stopPropagation?.()}
+            style={{
+              margin: 20,
+              backgroundColor: colors.surface,
+              borderRadius: 20,
+              padding: 24,
+              ...(Platform.OS === 'web' ? { boxShadow: '0 20px 50px rgba(0,0,0,0.25)' } : {}),
+            }}
+          >
+            <View style={{ alignItems: 'center', marginBottom: 14 }}>
+              <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: colors.primary + '22', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+                <IconShield size={28} color={colors.primary} />
+              </View>
+              <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text, textAlign: 'center' }}>
+                {t('settings.registrationLock') || 'PIN de segurança (anti-SIM-swap)'}
+              </Text>
+              <Text style={{ fontSize: 13, color: colors.textTertiary, marginTop: 6, textAlign: 'center', lineHeight: 18 }}>
+                {t('settings.registrationLockDesc') || 'PIN extra no login por telefone — protege se trocarem seu chip.'}
+              </Text>
+            </View>
+
+            <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 12, marginVertical: 18 }}>
+              {[0, 1, 2, 3].map(idx => (
+                <TextInput
+                  key={idx}
+                  ref={el => { regLockRefs.current[idx] = el; }}
+                  value={regLockDigits[idx]}
+                  onChangeText={(v) => {
+                    const digit = (v || '').replace(/\D/g, '').slice(-1);
+                    setRegLockDigits(prev => {
+                      const next = [...prev];
+                      next[idx] = digit;
+                      return next;
+                    });
+                    setRegLockError('');
+                    if (digit && idx < 3) {
+                      try { regLockRefs.current[idx + 1]?.focus?.(); } catch {}
+                    }
+                  }}
+                  onKeyPress={(e) => {
+                    if (e?.nativeEvent?.key === 'Backspace' && !regLockDigits[idx] && idx > 0) {
+                      try { regLockRefs.current[idx - 1]?.focus?.(); } catch {}
+                    }
+                  }}
+                  keyboardType="number-pad"
+                  maxLength={1}
+                  secureTextEntry
+                  style={{
+                    width: 56, height: 64, borderRadius: 14,
+                    borderWidth: 1.5, borderColor: regLockDigits[idx] ? colors.primary : colors.border,
+                    backgroundColor: colors.surfaceVariant || colors.surface,
+                    color: colors.text, textAlign: 'center',
+                    fontSize: 26, fontWeight: '700',
+                    ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
+                  }}
+                />
+              ))}
+            </View>
+
+            {!!regLockError && (
+              <Text style={{ color: colors.error || '#EF4444', fontSize: 13, textAlign: 'center', marginBottom: 8 }}>
+                {regLockError}
+              </Text>
+            )}
+            {regLockSuccess && (
+              <Text style={{ color: '#10B981', fontSize: 13, textAlign: 'center', marginBottom: 8, fontWeight: '600' }}>
+                {t('settings.registrationLockEnabled') || 'PIN ativado com sucesso'}
+              </Text>
+            )}
+
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
+              <TouchableOpacity
+                onPress={() => { setRegLockOpen(false); }}
+                disabled={regLockLoading}
+                style={{
+                  flex: 1, paddingVertical: 14, borderRadius: 12,
+                  backgroundColor: colors.surfaceVariant || 'transparent',
+                  borderWidth: 1, borderColor: colors.border,
+                  alignItems: 'center', opacity: regLockLoading ? 0.5 : 1,
+                }}
+              >
+                <Text style={{ color: colors.text, fontWeight: '600' }}>
+                  {t('common.cancel') || 'Cancelar'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={async () => {
+                  const pin = regLockDigits.join('');
+                  if (pin.length !== 4) {
+                    setRegLockError(t('settings.registrationLockPinLen') || 'Digite os 4 dígitos');
+                    return;
+                  }
+                  setRegLockError(''); setRegLockLoading(true);
+                  try {
+                    const r = await api.setRegistrationLock(pin);
+                    if (r?.success) {
+                      setRegLockSuccess(true);
+                      setTimeout(() => { setRegLockOpen(false); setRegLockSuccess(false); }, 1100);
+                    } else {
+                      setRegLockError(r?.message || (t('settings.registrationLockFailed') || 'Não foi possível ativar o PIN'));
+                    }
+                  } catch (e) {
+                    setRegLockError(e?.message || (t('settings.registrationLockFailed') || 'Não foi possível ativar o PIN'));
+                  } finally {
+                    setRegLockLoading(false);
+                  }
+                }}
+                disabled={regLockLoading}
+                style={{
+                  flex: 1, paddingVertical: 14, borderRadius: 12,
+                  backgroundColor: colors.primary,
+                  alignItems: 'center', opacity: regLockLoading ? 0.6 : 1,
+                }}
+              >
+                {regLockLoading ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={{ color: '#fff', fontWeight: '700' }}>
+                    {t('settings.registrationLockEnable') || 'Ativar PIN'}
                   </Text>
                 )}
               </TouchableOpacity>

@@ -1216,6 +1216,27 @@ export async function phoneSignup({ verify_token, username, name, domain = 'chat
   return apiCall('phone_signup', { verify_token, username, name, domain, password }, 'POST');
 }
 
+// Username-only signup (Telegram-style — no SIM/SMS). Mirror of phoneSignup
+// without the verify_token. Backend skips phone uniqueness + verification.
+// User can add a phone later via verifyPhoneSend/verifyPhoneCheck.
+export async function usernameSignup({ username, name, password, domain = 'chatyy.com.br' }) {
+  return apiCall('username_signup', { username, name, password, domain }, 'POST');
+}
+
+// Variant of phoneLoginVerify that also passes a registration-lock PIN.
+// Backend returns { requires_lock: true } on the first verify if the account
+// has a PIN configured; client re-calls with the PIN to complete the login.
+export async function phoneLoginVerifyWithPin(phone, code, pin) {
+  return apiCall('phone_login_verify', { phone, code, pin }, 'POST');
+}
+
+// Registration Lock (anti-SIM-swap). Authenticated user sets a 4-6 digit PIN
+// that becomes a second factor on the next phone_login_verify for this
+// account. Pass empty string to clear the lock.
+export async function setRegistrationLock(pin) {
+  return apiCall('set_registration_lock', { pin: pin || '' }, 'POST');
+}
+
 // Star / Unstar
 export async function starEmail(uid, folder = 'INBOX') {
   return apiCall('star', { uid, folder }, 'POST');
@@ -1992,8 +2013,22 @@ export async function chatSetSlowMode(conversationId, seconds) {
 }
 
 // Group Topics
-export async function chatTopicCreate(conversationId, name, icon = '💬') {
-  return apiCall('chat_topic_create', { conversation_id: conversationId, name, icon }, 'POST');
+// Two call shapes (back-compat):
+//   1) chatTopicCreate(convId, name, icon)                        — legacy positional
+//   2) chatTopicCreate(convId, { name, color, emoji|icon })       — new object form
+// TODO: backend `chat_topic_create` doesn't parse `color` yet — included optimistically
+// so the UI can persist the picked color without a separate round-trip later.
+export async function chatTopicCreate(conversationId, nameOrOpts, iconArg = '💬') {
+  if (nameOrOpts && typeof nameOrOpts === 'object') {
+    const { name, color, emoji, icon } = nameOrOpts;
+    return apiCall('chat_topic_create', {
+      conversation_id: conversationId,
+      name,
+      icon: emoji || icon || '💬',
+      color: color || null,
+    }, 'POST');
+  }
+  return apiCall('chat_topic_create', { conversation_id: conversationId, name: nameOrOpts, icon: iconArg }, 'POST');
 }
 export async function chatTopicList(conversationId) {
   return apiCall('chat_topic_list', { conversation_id: conversationId });
@@ -2383,6 +2418,28 @@ export async function chatAiAssist(conversationId, action, text = '') {
 
 export async function chatSetNotifSound(conversationId, sound) {
   return apiCall('chat_set_notif_sound', { conversation_id: conversationId, sound }, 'POST');
+}
+
+// Per-conversation notification settings — persisted in chat_user_conv_settings.
+// Settings shape: {
+//   notify_messages: boolean,
+//   sound: 'default' | 'custom' | 'silent',
+//   vibration: 'default' | 'short' | 'long' | 'off',
+//   preview: boolean,
+//   mention_exception: boolean,  // even if muted, still notify on @everyone / @currentEmail
+//   mute_until: ISO string | null,
+// }
+// TODO(backend): chat_user_conv_settings_get/set actions live in chat.php and
+// must read/write the chat_user_conv_settings PG table.
+export async function chatGetConvSettings(conversationId) {
+  return apiCall('chat_user_conv_settings_get', { conversation_id: conversationId }, 'POST');
+}
+
+export async function chatSetConvSettings(conversationId, settings = {}) {
+  return apiCall('chat_user_conv_settings_set', {
+    conversation_id: conversationId,
+    ...settings,
+  }, 'POST');
 }
 
 export async function chatTyping(conversationId, recording = false) {

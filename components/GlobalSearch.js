@@ -83,14 +83,127 @@ function Row({ leading, title, subtitle, onPress, colors, query }) {
   );
 }
 
+// Filter chips (WhatsApp pattern) — purely client-side post-processing.
+// Keys are stable internal IDs; labels stay PT (per "no new i18n keys").
+const FILTERS = [
+  { id: 'all',    label: 'Tudo' },
+  { id: 'msg',    label: 'Mensagens' },
+  { id: 'media',  label: 'Mídia' },
+  { id: 'links',  label: 'Links' },
+  { id: 'docs',   label: 'Documentos' },
+  { id: 'audio',  label: 'Áudio' },
+  { id: 'people', label: 'Pessoas' },
+  { id: 'convs',  label: 'Conversas' },
+];
+
+// Loose URL detector — matches plain http(s)://… and bare domain.tld/path forms.
+const URL_RE = /(https?:\/\/[^\s]+)|(\b[a-z0-9.-]+\.[a-z]{2,}(\/[^\s]*)?\b)/i;
+
+function hasLink(text) {
+  if (!text) return false;
+  return URL_RE.test(String(text));
+}
+
+// Apply filter to the unified result buckets. Returns the same shape so the
+// existing render code keeps working without per-section forks. Each filter
+// only emits the relevant bucket(s); the others come back empty.
+function applyFilter(results, filterId) {
+  const empty = { users: [], chats: [], emails: [], posts: [] };
+  if (!results) return empty;
+  const all = {
+    users:  results.users  || [],
+    chats:  results.chats  || [],
+    emails: results.emails || [],
+    posts:  results.posts  || [],
+  };
+  switch (filterId) {
+    case 'people':
+      return { ...empty, users: all.users };
+    case 'convs':
+      return { ...empty, chats: all.chats };
+    case 'msg':
+      // "Mensagens" = chat conversations + emails (text-based threads).
+      return { ...empty, chats: all.chats, emails: all.emails };
+    case 'media':
+      // Only feed posts whose media type is image or video.
+      return {
+        ...empty,
+        posts: all.posts.filter(p => {
+          const ty = String(p?.type || '').toLowerCase();
+          return ty === 'image' || ty === 'video' || ty === 'photo' || ty === 'carousel';
+        }),
+      };
+    case 'audio':
+      return {
+        ...empty,
+        posts: all.posts.filter(p => String(p?.type || '').toLowerCase() === 'audio' || String(p?.type || '').toLowerCase() === 'voice'),
+      };
+    case 'docs':
+      return {
+        ...empty,
+        posts: all.posts.filter(p => {
+          const ty = String(p?.type || '').toLowerCase();
+          return ty === 'document' || ty === 'doc' || ty === 'file' || ty === 'pdf';
+        }),
+      };
+    case 'links':
+      // Surface emails with URL in subject and posts with URL in caption.
+      return {
+        ...empty,
+        emails: all.emails.filter(e => hasLink(e?.subject) || hasLink(e?.from)),
+        posts:  all.posts.filter(p => hasLink(p?.caption)),
+        chats:  all.chats.filter(c => hasLink(c?.name)),
+      };
+    case 'all':
+    default:
+      return all;
+  }
+}
+
+function FilterChip({ label, active, onPress, colors }) {
+  const brand = colors?.primary || '#7C3AED';
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.75}
+      style={{
+        paddingHorizontal: 14,
+        paddingVertical: 7,
+        borderRadius: 999,
+        marginRight: 8,
+        backgroundColor: active ? brand : 'transparent',
+        borderWidth: active ? 0 : StyleSheet.hairlineWidth,
+        borderColor: colors?.border || 'rgba(0,0,0,0.15)',
+      }}
+    >
+      <Text
+        style={{
+          fontSize: 13,
+          fontWeight: active ? '700' : '500',
+          color: active ? '#fff' : (colors?.text || '#000'),
+        }}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
 export default function GlobalSearch({
   visible, onClose, colors, isDark, t, router,
 }) {
   const [q, setQ] = useState('');
   const [results, setResults] = useState({ users: [], chats: [], emails: [], posts: [] });
   const [loading, setLoading] = useState(false);
+  const [filter, setFilter] = useState('all');
   const inputRef = useRef(null);
   const debounceRef = useRef(null);
+  // Cache results per (filter,query) so toggling chips doesn't refetch when
+  // the underlying unified payload is the same. The unified search payload
+  // itself is the same regardless of filter (we filter client-side), so this
+  // cache is keyed by query alone — the filter purely re-derives.
+  const cacheRef = useRef(new Map());
 
   // Autofocus when the overlay opens
   useEffect(() => {
@@ -100,6 +213,8 @@ export default function GlobalSearch({
     } else {
       setQ('');
       setResults({ users: [], chats: [], emails: [], posts: [] });
+      setFilter('all');
+      cacheRef.current.clear();
     }
   }, [visible]);
 
@@ -112,6 +227,13 @@ export default function GlobalSearch({
       setLoading(false);
       return;
     }
+    // Cache hit — reuse the unified payload, no network roundtrip.
+    const cached = cacheRef.current.get(term);
+    if (cached) {
+      setResults(cached);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     debounceRef.current = setTimeout(async () => {
       try {
@@ -119,18 +241,29 @@ export default function GlobalSearch({
         // Defensive defaults — server pode omitir buckets vazios e os
         // .length acessados depois quebrariam.
         if (r?.success) {
-          setResults({
+          const data = {
             users: r.data?.users || [],
             chats: r.data?.chats || [],
             emails: r.data?.emails || [],
             posts: r.data?.posts || [],
-          });
+          };
+          cacheRef.current.set(term, data);
+          // Cap cache to last ~20 queries to avoid unbounded growth.
+          if (cacheRef.current.size > 20) {
+            const firstKey = cacheRef.current.keys().next().value;
+            cacheRef.current.delete(firstKey);
+          }
+          setResults(data);
         }
       } catch {}
       setLoading(false);
     }, 250);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [q]);
+
+  // Derived view = filter applied to the unified payload. Cheap memo so we
+  // don't rebuild on every render.
+  const viewResults = React.useMemo(() => applyFilter(results, filter), [results, filter]);
 
   const close = useCallback(() => {
     Keyboard.dismiss?.();
@@ -139,7 +272,7 @@ export default function GlobalSearch({
 
   const go = (path) => { close(); setTimeout(() => router?.push(path), 60); };
 
-  const hasAny = (results.users?.length ?? 0) + (results.chats?.length ?? 0) + (results.emails?.length ?? 0) + (results.posts?.length ?? 0) > 0;
+  const hasAny = (viewResults.users?.length ?? 0) + (viewResults.chats?.length ?? 0) + (viewResults.emails?.length ?? 0) + (viewResults.posts?.length ?? 0) > 0;
 
   return (
     <Modal visible={!!visible} transparent animationType="fade" onRequestClose={close}>
@@ -178,6 +311,30 @@ export default function GlobalSearch({
             </TouchableOpacity>
           </View>
 
+          {/* Filter chips — WhatsApp-style horizontal scroll row.
+              Only render when the user has typed something useful so we
+              don't waste vertical space on the empty-state hint screen. */}
+          {q.trim().length >= 2 && (
+            <View style={{ borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors?.border }}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 10 }}
+              >
+                {FILTERS.map(f => (
+                  <FilterChip
+                    key={f.id}
+                    label={f.label}
+                    active={filter === f.id}
+                    onPress={() => setFilter(f.id)}
+                    colors={colors}
+                  />
+                ))}
+              </ScrollView>
+            </View>
+          )}
+
           <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
             {q.trim().length < 2 && (
               <View style={{ padding: 40, alignItems: 'center' }}>
@@ -197,9 +354,9 @@ export default function GlobalSearch({
             )}
 
             {/* Users */}
-            {results.users.length > 0 && (
+            {viewResults.users.length > 0 && (
               <Section title={t?.('search.users') || 'Pessoas'} icon={IconUser} colors={colors}>
-                {results.users.map(u => (
+                {viewResults.users.map(u => (
                   <Row
                     key={u.email}
                     leading={<AvatarCircle email={u.email} name={u.name} size={36} />}
@@ -214,9 +371,9 @@ export default function GlobalSearch({
             )}
 
             {/* Chats */}
-            {results.chats.length > 0 && (
+            {viewResults.chats.length > 0 && (
               <Section title={t?.('search.chats') || 'Conversas'} icon={IconMessageSquare} colors={colors}>
-                {results.chats.map(c => (
+                {viewResults.chats.map(c => (
                   <Row
                     key={c.id}
                     leading={<AvatarCircle name={c.name || String(c.id)} size={36} />}
@@ -231,9 +388,9 @@ export default function GlobalSearch({
             )}
 
             {/* Emails */}
-            {results.emails.length > 0 && (
+            {viewResults.emails.length > 0 && (
               <Section title={t?.('search.emails') || 'Emails'} icon={IconMail} colors={colors}>
-                {results.emails.map((e, i) => (
+                {viewResults.emails.map((e, i) => (
                   <Row
                     key={`${e.folder}:${e.uid}:${i}`}
                     leading={
@@ -252,9 +409,9 @@ export default function GlobalSearch({
             )}
 
             {/* Posts */}
-            {results.posts.length > 0 && (
+            {viewResults.posts.length > 0 && (
               <Section title={t?.('search.posts') || 'Publicações'} icon={IconImage} colors={colors}>
-                {results.posts.map(p => {
+                {viewResults.posts.map(p => {
                   const thumbUrl = resolveMedia(p.thumbnail);
                   return (
                     <Row

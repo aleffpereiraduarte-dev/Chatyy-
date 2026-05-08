@@ -147,6 +147,12 @@ export default function LoginScreen() {
   const [phoneOtp, setPhoneOtp] = useState(['', '', '', '', '', '']);
   const [phoneOtpFocused, setPhoneOtpFocused] = useState(false);
   const [phoneStep, setPhoneStep] = useState('input'); // 'input' or 'otp'
+  // Registration-lock (anti-SIM-swap) PIN gate. When the OTP succeeds but the
+  // account has a lock configured, server returns requires_lock=true and we
+  // surface a 6-digit input on top of the OTP step. The PIN field is shown
+  // when phoneRequiresLock is true; OTP step otherwise.
+  const [phoneRequiresLock, setPhoneRequiresLock] = useState(false);
+  const [phoneLockPin, setPhoneLockPin] = useState('');
   const [phoneSending, setPhoneSending] = useState(false);
   const [phoneVerifying, setPhoneVerifying] = useState(false);
   const [phoneResendTimer, setPhoneResendTimer] = useState(0);
@@ -918,8 +924,27 @@ export default function LoginScreen() {
       // straight to the name step in /signup-phone, skipping welcome +
       // phone + otp since we already have phone+verify_token). No
       // intermediate "não encontramos sua conta" screen.
-      const r = await api.phoneLoginVerify(fullPhone, code);
+      // If a registration_lock is set on the account, server returns
+      // requires_lock=true and we surface the PIN input. Pass the PIN
+      // back when the user enters it.
+      const _pin = phoneRequiresLock ? phoneLockPin : '';
+      const r = await api.phoneLoginVerifyWithPin(fullPhone, code, _pin);
       if (!mountedRef.current) return;
+      // Account has registration lock — show PIN input and stop here.
+      if (r.success && r.data?.requires_lock) {
+        setPhoneRequiresLock(true);
+        // Don't shake — this is a normal branch, not an error.
+        setPhoneVerifying(false);
+        return;
+      }
+      // Bad PIN — server returns success:false with requires_lock flag.
+      if (!r.success && r.data?.requires_lock) {
+        setError(r.message || (t('login.phoneLockPinWrong') || 'PIN incorreto'));
+        setPhoneLockPin('');
+        shake();
+        setPhoneVerifying(false);
+        return;
+      }
       if (r.success && r.data?.token) {
         safeHaptic(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success));
         await loginWithToken(r.data.token, r.data.email);
@@ -1694,6 +1719,23 @@ export default function LoginScreen() {
                               </Text>
                             </TouchableOpacity>
                           )}
+
+                          {/* Telegram-style "Criar conta sem telefone" link.
+                              Routes to /signup-username — username + password
+                              flow that skips SIM/OTP entirely. On web first
+                              visit it sits below the phone input as a low-key
+                              alternative; on mobile it's a secondary link
+                              under the email-fallback. */}
+                          <TouchableOpacity
+                            onPress={() => { safeHaptic(() => Haptics.selectionAsync()); router.push('/signup-username'); }}
+                            activeOpacity={0.6}
+                            style={{ alignSelf: 'center', paddingVertical: 12, marginTop: 2 }}
+                            accessibilityRole="button"
+                          >
+                            <Text style={{ fontSize: 13, color: colors.primary, fontWeight: '600' }}>
+                              {t('login.createWithoutPhone') || 'Criar conta sem telefone'}
+                            </Text>
+                          </TouchableOpacity>
                         </>
                       ) : (
                         <>
@@ -1768,15 +1810,65 @@ export default function LoginScreen() {
                             />
                           </Pressable>
 
+                          {/* Registration-lock PIN gate (anti-SIM-swap).
+                              Surfaces ONLY when the OTP succeeded but the
+                              account has a PIN set — server returned
+                              requires_lock=true. The PIN is a 4-6 digit
+                              second factor the legitimate owner chose at
+                              account creation time, so a SIM-swap attacker
+                              who hijacks the OTP still can't pass this gate. */}
+                          {phoneRequiresLock && (
+                            <View style={{ marginBottom: 16, paddingHorizontal: 4 }}>
+                              <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text, marginBottom: 6, textAlign: 'center' }}>
+                                {t('login.phoneLockPinTitle') || 'Digite seu PIN de segurança'}
+                              </Text>
+                              <Text style={{ fontSize: 12, color: isDark ? '#9aa0a6' : '#6b7280', marginBottom: 12, textAlign: 'center', lineHeight: 17 }}>
+                                {t('login.phoneLockPinDesc') || 'Essa conta tem PIN ativado para proteger contra troca de SIM.'}
+                              </Text>
+                              <TextInput
+                                style={{
+                                  alignSelf: 'center',
+                                  width: 180, height: 52,
+                                  borderRadius: 12,
+                                  borderWidth: 1.5,
+                                  borderColor: phoneLockPin ? colors.primary : (isDark ? '#2a2d31' : '#e5e7eb'),
+                                  backgroundColor: isDark ? '#1f2229' : '#f3f4f6',
+                                  color: colors.text,
+                                  textAlign: 'center',
+                                  fontSize: 22, fontWeight: '700',
+                                  letterSpacing: 8,
+                                  ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+                                }}
+                                value={phoneLockPin}
+                                onChangeText={(v) => { setPhoneLockPin((v || '').replace(/\D/g, '').slice(0, 6)); if (error) setError(''); }}
+                                placeholder="••••"
+                                placeholderTextColor={isDark ? '#5f6368' : '#9ca3af'}
+                                keyboardType="number-pad"
+                                inputMode="numeric"
+                                maxLength={6}
+                                secureTextEntry
+                                autoFocus
+                              />
+                            </View>
+                          )}
+
                           <TouchableOpacity
                             style={[s.primaryBtn, {
                               backgroundColor: colors.primary,
-                              opacity: phoneVerifying ? 0.7 : (phoneOtp.join('').length !== 6 ? 0.5 : 1),
+                              opacity: phoneVerifying ? 0.7 : (
+                                phoneRequiresLock
+                                  ? (phoneLockPin.length < 4 ? 0.5 : 1)
+                                  : (phoneOtp.join('').length !== 6 ? 0.5 : 1)
+                              ),
                               width: '100%', alignSelf: 'stretch',
                               alignItems: 'center', justifyContent: 'center',
                             }]}
                             onPress={handlePhoneVerifyOtp}
-                            disabled={phoneVerifying || phoneOtp.join('').length !== 6}
+                            disabled={phoneVerifying || (
+                              phoneRequiresLock
+                                ? (phoneLockPin.length < 4)
+                                : (phoneOtp.join('').length !== 6)
+                            )}
                             activeOpacity={0.85}
                           >
                             {phoneVerifying ? (
@@ -1785,13 +1877,13 @@ export default function LoginScreen() {
                                 <Text style={[s.primaryBtnText, { marginLeft: 10 }]}>{t('login.phoneVerify')}</Text>
                               </View>
                             ) : (
-                              <Text style={s.primaryBtnText}>{t('login.phoneVerify')}</Text>
+                              <Text style={s.primaryBtnText}>{phoneRequiresLock ? (t('login.phoneLockPinSubmit') || 'Confirmar PIN') : t('login.phoneVerify')}</Text>
                             )}
                           </TouchableOpacity>
 
                           <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 16 }}>
                             <TouchableOpacity
-                              onPress={() => { setPhoneStep('input'); setPhoneOtp(['', '', '', '', '', '']); setError(''); }}
+                              onPress={() => { setPhoneStep('input'); setPhoneOtp(['', '', '', '', '', '']); setPhoneRequiresLock(false); setPhoneLockPin(''); setError(''); }}
                               activeOpacity={0.6}
                             >
                               <Text style={[s.linkText, { color: colors.primary }]}>{t('login.phoneChangeNumber')}</Text>

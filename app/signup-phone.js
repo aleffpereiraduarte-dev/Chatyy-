@@ -14,7 +14,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator,
   Animated, Platform, KeyboardAvoidingView, ScrollView, Dimensions, Modal,
-  Image, ActionSheetIOS, Easing,
+  Image, ActionSheetIOS, Easing, Pressable,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -128,6 +128,12 @@ export default function SignupPhone() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [resendCountdown, setResendCountdown] = useState(0);
+  // Registration-lock (anti-SIM-swap) PIN state. lockRequired flips true when
+  // server returns requires_lock=true after a successful OTP verify; the OTP
+  // step then renders an extra PIN input below the OTP boxes. lockPin holds
+  // the entered 4-6 digits.
+  const [lockRequired, setLockRequired] = useState(false);
+  const [lockPin, setLockPin] = useState('');
   // Country picker modal (Telegram-stacked phone input). The picker shows the
   // full COUNTRIES list with a search box. Replaces the previous PhoneInput
   // component, which jammed flag/dial into the field.
@@ -337,8 +343,25 @@ export default function SignupPhone() {
       //   • exists → returns { token, email } → log user in directly
       //   • not exists → returns { exists: false, verify_token } → continue
       //     to name/handle/done. Same OTP, no second SMS.
-      const r = await api.phoneLoginVerify(fullPhone, code);
+      // If account has registration_lock, server returns requires_lock=true
+      // and we need to surface the PIN gate before re-calling with PIN.
+      const _pin = lockRequired ? lockPin : '';
+      const r = await api.phoneLoginVerifyWithPin(fullPhone, code, _pin);
       if (!mountedRef.current) return;
+      // Account locked — show PIN gate and stop.
+      if (r?.success && r.data?.requires_lock) {
+        setLockRequired(true);
+        setBusy(false);
+        return;
+      }
+      // Bad PIN — server returns success:false with requires_lock flag.
+      if (r && !r.success && r.data?.requires_lock) {
+        setError(r.message || (t('signupPhone.lockPinWrong') || 'PIN incorreto'));
+        setLockPin('');
+        triggerOtpError();
+        setBusy(false);
+        return;
+      }
       if (r?.success && r.data?.token) {
         // Existing account — log in.
         try { await loginWithToken(r.data.token, r.data.email); } catch {}
@@ -542,7 +565,11 @@ export default function SignupPhone() {
       if (!params?.phone) goStep('welcome');
       else safeBack();
     }
-    else if (step === 'otp')    goStep('phone');
+    else if (step === 'otp')    {
+      // Clear the PIN gate state so a fresh OTP doesn't see stale state.
+      setLockRequired(false); setLockPin('');
+      goStep('phone');
+    }
     else if (step === 'name')   {
       // Unified flow: when /login forwarded us straight to name (with
       // verify_token), the otp step has no context — back from name
@@ -913,6 +940,46 @@ export default function SignupPhone() {
                     </Text>
                   </TouchableOpacity>
                 </View>
+                {/* Registration-lock PIN gate (anti-SIM-swap). Surfaces only
+                    when the account has a 4-6 digit PIN configured and the
+                    OTP succeeded — the user must enter the PIN before a
+                    bearer token is issued. Defeats SIM-swap attacks where
+                    the attacker steals the SMS but never knew the PIN. */}
+                {lockRequired && (
+                  <View style={{ marginTop: 18, paddingHorizontal: 4 }}>
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text, marginBottom: 6, textAlign: 'center' }}>
+                      {t('signupPhone.lockPinTitle') || 'Digite seu PIN de segurança'}
+                    </Text>
+                    <Text style={{ fontSize: 12, color: colors.textTertiary, marginBottom: 12, textAlign: 'center', lineHeight: 17 }}>
+                      {t('signupPhone.lockPinDesc') || 'Essa conta tem PIN ativado para proteger contra troca de SIM.'}
+                    </Text>
+                    <TextInput
+                      style={{
+                        alignSelf: 'center',
+                        width: 180, height: 52,
+                        borderRadius: 12,
+                        borderWidth: 1.5,
+                        borderColor: lockPin ? colors.primary : (isDark ? '#2a2d31' : '#e5e7eb'),
+                        backgroundColor: isDark ? '#1f2229' : '#f3f4f6',
+                        color: colors.text,
+                        textAlign: 'center',
+                        fontSize: 22, fontWeight: '700',
+                        letterSpacing: 8,
+                        ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+                      }}
+                      value={lockPin}
+                      onChangeText={(v) => { setLockPin((v || '').replace(/\D/g, '').slice(0, 6)); if (error) setError(''); }}
+                      placeholder="••••"
+                      placeholderTextColor={isDark ? '#5f6368' : '#9ca3af'}
+                      keyboardType="number-pad"
+                      inputMode="numeric"
+                      maxLength={6}
+                      secureTextEntry
+                      autoFocus
+                    />
+                  </View>
+                )}
+
                 {/* Voice fallback (WhatsApp/Telegram parity): após o timer expirar,
                     deixa o user pedir uma chamada onde a Polly Camila lê o
                     código em PT-BR. Para quando o SMS não chega ou caixa lotada. */}
@@ -1267,7 +1334,7 @@ export default function SignupPhone() {
                 backgroundColor: colors.primary,
                 opacity: busy ? 0.7 : (
                   (step === 'phone' && phone.replace(/\D/g, '').length < 8) ||
-                  (step === 'otp'   && code.length !== 6) ||
+                  (step === 'otp'   && (lockRequired ? lockPin.length < 4 : code.length !== 6)) ||
                   (step === 'name'  && (firstName || '').trim().length < 2) ||
                   (step === 'handle' && (!username || usernameAvailable !== true || password.length < 8))
                 ) ? 0.5 : 1,
@@ -1275,7 +1342,7 @@ export default function SignupPhone() {
             ]}
             disabled={busy ||
               (step === 'phone' && phone.replace(/\D/g, '').length < 8) ||
-              (step === 'otp'   && code.length !== 6) ||
+              (step === 'otp'   && (lockRequired ? lockPin.length < 4 : code.length !== 6)) ||
               (step === 'name'  && (firstName || '').trim().length < 2) ||
               (step === 'handle' && (!username || usernameAvailable !== true || password.length < 8))}
             onPress={() => {

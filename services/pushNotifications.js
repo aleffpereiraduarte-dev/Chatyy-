@@ -104,6 +104,57 @@ async function loadModules() {
           };
         }
 
+        // Per-conversation notification settings (set in
+        // ChatNotificationSettingsSheet → cached locally as JSON in
+        // AsyncStorage so we can read it sync-ish from this handler).
+        // Honors:
+        //  - mute_until: silence message-typed pushes when in window
+        //  - mention_exception (groups only): bypass mute on @everyone /
+        //    @currentEmail mentions so the user still hears important calls
+        //  - notify_messages: master switch — overrides everything
+        //  - preview: redact body when off (matches WhatsApp "Hide preview")
+        if (data?.conversation_id && data?.type === 'chat_message') {
+          const convSettings = await _readConvSettings(data.conversation_id);
+          if (convSettings) {
+            // Master switch off → silent no matter what
+            if (convSettings.notify_messages === false) {
+              return { shouldShowAlert: false, shouldPlaySound: false, shouldSetBadge: true };
+            }
+            const mutedNow = _isMutedNow(convSettings.mute_until);
+            const mentioned = await _pushMentionsCurrentUser(data, notification.request?.content);
+            const allowMention = mutedNow && convSettings.mention_exception !== false && mentioned;
+            if (mutedNow && !allowMention) {
+              // Silent — the badge still increments so the chat list shows it.
+              return { shouldShowAlert: false, shouldPlaySound: false, shouldSetBadge: true };
+            }
+            // Sound/vibration overrides flow through Android channels — here
+            // we just gate alert/sound globally. "silent" sound silences the
+            // foreground tone; vibration off is honored at OS level.
+            const wantSound = convSettings.sound !== 'silent';
+            // Foreground toast: redact body when preview is disabled.
+            if (_onForegroundNotification) {
+              const body = convSettings.preview === false
+                ? null
+                : notification.request.content.body;
+              _onForegroundNotification({
+                title: notification.request.content.title,
+                body,
+                data,
+              });
+              return {
+                shouldShowAlert: false,
+                shouldPlaySound: wantSound,
+                shouldSetBadge: true,
+              };
+            }
+            return {
+              shouldShowAlert: true,
+              shouldPlaySound: wantSound,
+              shouldSetBadge: true,
+            };
+          }
+        }
+
         // Other notifications in foreground: show toast
         if (_onForegroundNotification && data) {
           _onForegroundNotification({
@@ -126,6 +177,61 @@ async function loadModules() {
     });
   }
   return true;
+}
+
+// Read per-conversation notification settings from the local cache mirror
+// that ChatNotificationSettingsSheet writes on save. Best-effort — returns
+// null if no AsyncStorage entry exists, in which case the handler falls
+// through to the default "show alert + play sound" path.
+async function _readConvSettings(conversationId) {
+  try {
+    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+    const raw = await AsyncStorage.getItem(`chat_notif_settings_${conversationId}`);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function _isMutedNow(muteUntil) {
+  if (!muteUntil) return false;
+  const t = Date.parse(muteUntil);
+  if (!Number.isFinite(t)) return false;
+  return t > Date.now();
+}
+
+// Returns true when the incoming chat-message push contains an @mention
+// addressed to the currently-active user. Inspects:
+//   - data.mentions  (array of emails sent by the backend, fast path)
+//   - data.mention_everyone (server-set when message has @everyone/@all)
+//   - notification body fallback for "@username" / "@email" — covers older
+//     server payloads that don't ship a mentions[] hint.
+async function _pushMentionsCurrentUser(data, content) {
+  try {
+    if (data?.mention_everyone === '1' || data?.mention_everyone === true) return true;
+    let me = '';
+    try {
+      const { getActiveAccountEmail } = require('./api');
+      me = (typeof getActiveAccountEmail === 'function' ? getActiveAccountEmail() : '') || '';
+    } catch {}
+    if (!me) return false;
+    me = String(me).toLowerCase();
+    if (Array.isArray(data?.mentions)) {
+      const list = data.mentions.map(m => String(m || '').toLowerCase());
+      if (list.includes(me) || list.includes('everyone') || list.includes('all')) return true;
+    }
+    const body = String(content?.body || '').toLowerCase();
+    if (!body) return false;
+    if (body.includes('@everyone') || body.includes('@all')) return true;
+    const username = me.split('@')[0];
+    // Word-boundary match — prevents a body like "@usernamefoo" matching
+    // "username". Also matches the full email form ("@user@domain").
+    const re = new RegExp(`@(${username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}|${me.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})\\b`, 'i');
+    return re.test(body);
+  } catch {
+    return false;
+  }
 }
 
 export async function registerForPushNotifications() {

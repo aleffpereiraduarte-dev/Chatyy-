@@ -66,6 +66,7 @@ import MessageScreenEffect, { SCREEN_EFFECT_IDS } from '../components/MessageScr
 import MessageBubbleEffect from '../components/MessageBubbleEffect';
 import MediaGallery from '../components/MediaGallery';
 import FormatToolbar from '../components/FormatToolbar';
+import ChatNotificationSettingsSheet from '../components/ChatNotificationSettingsSheet';
 import { getCachedUri, preCacheUrls, cacheMedia, saveMediaPermanent, saveConversationMedia, initSyncCache } from '../services/mediaCache';
 const ExpoImage = Image;
 import { cacheMessages, getCachedMessages, getLastSyncId, cacheSingleMessage, savePendingMessage, removePendingMessage, getPendingMessages, purgeStalePending } from '../services/chatCache';
@@ -481,7 +482,7 @@ function SendButtonAnim({ children, isSend }) {
 // ============================================================
 // TYPING BUBBLE (WhatsApp-style bouncing dots)
 // ============================================================
-function TypingBubble({ name, colors, recording, t, active = true }) {
+function TypingBubble({ name, colors, recording, t, active = true, entries = null }) {
   const dot1 = useRef(new Animated.Value(0)).current;
   const dot2 = useRef(new Animated.Value(0)).current;
   const dot3 = useRef(new Animated.Value(0)).current;
@@ -533,9 +534,37 @@ function TypingBubble({ name, colors, recording, t, active = true }) {
     dotAnimsRef.current.forEach(a => a?.stop?.());
   }, [active]);
 
+  // Multi-typer avatar stack (WhatsApp-style overlap). When 2+ users are
+  // typing, render a mini-row of overlapping circles to the LEFT of the
+  // bubble. The label above turns into "X e Y estão digitando..." style
+  // (caller is responsible for the joined name string). Single-typer keeps
+  // the original layout (no avatars, just the name pill above the bubble).
+  const stackList = Array.isArray(entries) && entries.length >= 2
+    ? entries.slice(0, 3) // cap at 3 visible avatars
+    : null;
+  const labelSuffix = !stackList
+    ? ''
+    : (stackList.length === entries.length
+        ? ''
+        : ` +${entries.length - stackList.length}`);
+
   return (
     <Animated.View style={{ alignSelf: 'flex-start', marginBottom: 10, marginLeft: 14, opacity: bubbleOpacity, transform: [{ scale: bubbleScale }, { translateY: bubbleY }] }}>
-      {name && <Text style={{ fontSize: 11.5, color: colors.textTertiary, marginBottom: 4, marginLeft: 10, fontWeight: '700', letterSpacing: 0 }}>{name}</Text>}
+      {name && (
+        <Text style={{ fontSize: 11.5, color: colors.textTertiary, marginBottom: 4, marginLeft: stackList ? 0 : 10, fontWeight: '700', letterSpacing: 0 }} numberOfLines={1}>
+          {name}{labelSuffix}
+        </Text>
+      )}
+      <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 6 }}>
+      {stackList && (
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginRight: -4 }}>
+          {stackList.map((e, i) => (
+            <View key={(e.email || e.name || i) + '-' + i} style={{ marginLeft: i === 0 ? 0 : -10, borderWidth: 2, borderColor: colors.background, borderRadius: 999 }}>
+              <AvatarCircle email={e.email} name={e.name} size={22} />
+            </View>
+          ))}
+        </View>
+      )}
       <View style={{
         backgroundColor: colors.surface,
         borderRadius: 22, borderBottomLeftRadius: 6,
@@ -557,6 +586,7 @@ function TypingBubble({ name, colors, recording, t, active = true }) {
             <Animated.View key={i} style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#7C3AED', transform: [{ translateY: dot }] }} />
           ))
         )}
+      </View>
       </View>
     </Animated.View>
   );
@@ -584,19 +614,21 @@ function ReplyPreviewBar({ children, style }) {
 // Wrapper that keeps the TypingBubble mounted ~280ms after the peer stops
 // typing so the exit animation has time to play before unmount. Without this,
 // the bubble would pop out instantly the moment `typingUser` flips to null.
-function TypingBubbleHost({ user, recording, colors, t }) {
+function TypingBubbleHost({ user, recording, colors, t, entries = null }) {
   const [renderUser, setRenderUser] = useState(user);
+  const [renderEntries, setRenderEntries] = useState(entries);
   useEffect(() => {
     if (user) {
       setRenderUser(user);
+      setRenderEntries(entries);
       return;
     }
     // Peer stopped — let the inner bubble play its 220ms fade-out, then unmount.
-    const id = setTimeout(() => setRenderUser(null), 280);
+    const id = setTimeout(() => { setRenderUser(null); setRenderEntries(null); }, 280);
     return () => clearTimeout(id);
-  }, [user]);
+  }, [user, entries]);
   if (!renderUser) return null;
-  return <TypingBubble name={renderUser} colors={colors} recording={recording} t={t} active={!!user} />;
+  return <TypingBubble name={renderUser} colors={colors} recording={recording} t={t} active={!!user} entries={renderEntries} />;
 }
 
 // ============================================================
@@ -1076,37 +1108,137 @@ function TextWithLinks({ text, style, linkColor, colors, mentionColor, router: r
 // ============================================================
 // LINK PREVIEW CARD (WhatsApp-style)
 // ============================================================
+// Module-level memo — every conversation share one Map so navigating
+// away/back doesn't refetch the same URLs. Bounded so a chat history of
+// thousands of links doesn't bloat memory; oldest entries are evicted
+// once we go over LP_CACHE_MAX. NEGATIVE results (404, fetch fail, no
+// title) are stored as `false` so we don't keep retrying dead links.
+const _linkPreviewCache = new Map();
+const LP_CACHE_MAX = 500;
+function _lpCacheGet(url) { return _linkPreviewCache.get(url); }
+function _lpCacheSet(url, val) {
+  if (_linkPreviewCache.size >= LP_CACHE_MAX) {
+    const first = _linkPreviewCache.keys().next().value;
+    if (first !== undefined) _linkPreviewCache.delete(first);
+  }
+  _linkPreviewCache.set(url, val);
+}
+
+// Domains we never preview — our own (cards would just be noise: chat
+// list items linking back to the app).
+const LP_SKIP_HOSTS = ['chatyy.com.br', 'www.chatyy.com.br', 'media.chatyy.com.br', 'api-br.chatyy.com.br', 'api-us.chatyy.com.br'];
+function _lpShouldSkip(url) {
+  try {
+    const m = url.match(/^https?:\/\/([^/]+)/i);
+    if (!m) return true;
+    const host = m[1].toLowerCase();
+    return LP_SKIP_HOSTS.some(h => host === h || host.endsWith('.' + h));
+  } catch { return true; }
+}
+
+function _lpHashColor(seed) {
+  // Stable HSL fallback per-domain — same site → same color across
+  // devices. Saturation/lightness tuned to read on dark + light theme.
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = ((h << 5) - h + seed.charCodeAt(i)) | 0;
+  return `hsl(${Math.abs(h) % 360}, 65%, 55%)`;
+}
+
 function LinkPreview({ url, colors }) {
-  const [preview, setPreview] = useState(null);
+  // Skip our own domains — cards linking back to the app are pure noise.
+  if (_lpShouldSkip(url)) return null;
+
+  // Initial state pulls from the module cache so a re-rendered row
+  // (scrolled away + back) instantly shows the preview, no flicker.
+  // `false` means "we tried, no data" → render nothing this session.
+  const cached = _lpCacheGet(url);
+  const [preview, setPreview] = useState(cached === undefined ? null : cached);
+
   useEffect(() => {
+    if (cached !== undefined) return; // already resolved
     let cancelled = false;
-    api.chatLinkPreview(url).then(r => {
-      if (!cancelled && r.success && r.data?.title) setPreview(r.data);
-    }).catch(() => {});
-    return () => { cancelled = true; };
-  }, [url]);
+    // Debounce 300ms — if a user scrolls past the row quickly we don't
+    // fire dozens of curl-backed fetches.
+    const timer = setTimeout(() => {
+      api.chatLinkPreview(url).then(r => {
+        if (cancelled) return;
+        if (r && r.success && r.data && (r.data.title || r.data.image)) {
+          _lpCacheSet(url, r.data);
+          setPreview(r.data);
+        } else {
+          _lpCacheSet(url, false);
+        }
+      }).catch(() => { if (!cancelled) _lpCacheSet(url, false); });
+    }, 300);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [url, cached]);
+
   if (!preview) return null;
+
+  // Domain shown in small caps above title (WhatsApp pattern).
+  let domain = preview.site_name || '';
+  if (!domain) {
+    try { domain = (url.match(/^https?:\/\/([^/]+)/i) || [])[1] || ''; } catch {}
+  }
+  domain = String(domain || '').replace(/^www\./i, '');
+  const firstLetter = (domain || preview.title || '?').trim().charAt(0).toUpperCase() || '?';
+  const fallbackBg = _lpHashColor(domain || url);
+
   return (
-    <TouchableOpacity onPress={() => { try { Linking.openURL(url); } catch {} }} activeOpacity={0.7} style={[linkPreviewStyles.container, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-      {preview.image && <ExpoImage source={{ uri: preview.image }} style={linkPreviewStyles.image} contentFit="cover" cachePolicy="memory-disk" />}
+    <TouchableOpacity
+      onPress={() => { try { Linking.openURL(url); } catch {} }}
+      activeOpacity={0.85}
+      style={[linkPreviewStyles.container, { backgroundColor: colors.surface, borderColor: colors.border }]}
+    >
+      {preview.image ? (
+        <ExpoImage
+          source={{ uri: preview.image }}
+          style={linkPreviewStyles.image}
+          contentFit="cover"
+          cachePolicy="memory-disk"
+        />
+      ) : (
+        <View style={[linkPreviewStyles.imageFallback, { backgroundColor: fallbackBg }]}>
+          <Text style={linkPreviewStyles.imageFallbackLetter}>{firstLetter}</Text>
+        </View>
+      )}
       <View style={linkPreviewStyles.textContainer}>
-        <Text style={[linkPreviewStyles.domain, { color: colors.textTertiary }]}>{preview.domain}</Text>
-        {preview.title ? <Text style={[linkPreviewStyles.title, { color: colors.text }]} numberOfLines={2}>{preview.title}</Text> : null}
-        {preview.description ? <Text style={[linkPreviewStyles.desc, { color: colors.textSecondary }]} numberOfLines={2}>{preview.description}</Text> : null}
+        {domain ? (
+          <Text style={[linkPreviewStyles.domain, { color: colors.textTertiary }]} numberOfLines={1}>
+            {domain}
+          </Text>
+        ) : null}
+        {preview.title ? (
+          <Text style={[linkPreviewStyles.title, { color: colors.text }]} numberOfLines={2}>
+            {preview.title}
+          </Text>
+        ) : null}
+        {preview.description ? (
+          <Text style={[linkPreviewStyles.desc, { color: colors.textSecondary }]} numberOfLines={2}>
+            {preview.description}
+          </Text>
+        ) : null}
       </View>
     </TouchableOpacity>
   );
 }
 const linkPreviewStyles = StyleSheet.create({
   container: {
-    borderWidth: 0, borderRadius: 10, overflow: 'hidden', marginTop: 6, maxWidth: 280,
+    borderRadius: 12, overflow: 'hidden', marginTop: 6, maxWidth: 280,
     borderLeftWidth: 3, borderLeftColor: '#7C3AED',
   },
-  image: { width: '100%', height: 130 },
+  image: { width: '100%', height: 140, backgroundColor: '#00000010' },
+  imageFallback: {
+    width: '100%', height: 80, alignItems: 'center', justifyContent: 'center',
+  },
+  imageFallbackLetter: {
+    color: '#fff', fontSize: 32, fontWeight: '700', letterSpacing: 1,
+    textShadowColor: 'rgba(0,0,0,0.25)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2,
+  },
   textContainer: { paddingHorizontal: 10, paddingVertical: 8 },
   domain: { fontSize: 10, textTransform: 'uppercase', marginBottom: 3, letterSpacing: 0.5, fontWeight: '600' },
   title: { fontSize: 13, fontWeight: '600', marginBottom: 2, lineHeight: 18 },
-  desc: { fontSize: 12, lineHeight: 16, opacity: 0.75 },
+  desc: { fontSize: 12, lineHeight: 16, opacity: 0.85 },
 });
 
 // ============================================================
@@ -5461,6 +5593,15 @@ export default function ChatConversationScreen() {
   const [quoteSelectModal, setQuoteSelectModal] = useState(null); // { msg, draft }
   const [editingMsg, setEditingMsg] = useState(null);
   const [selectedMsg, setSelectedMsg] = useState(null);
+  // 1-second tick used to repaint the "Apagar para todos · Disponível por X
+  // mais" countdown inside the long-press menu while it's open. Without this
+  // the subtitle would freeze on the value at open time and never tick down.
+  const [longPressNow, setLongPressNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!selectedMsg) return undefined;
+    const id = setInterval(() => setLongPressNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [selectedMsg]);
   const [showReactions, setShowReactions] = useState(null);
   const [reactionDetail, setReactionDetail] = useState(null);
   const [showFullEmojiPicker, setShowFullEmojiPicker] = useState(false);
@@ -5793,6 +5934,10 @@ export default function ChatConversationScreen() {
   const [burst, setBurst] = useState(null); // { emoji, key, premium }
   const [isPremium, setIsPremium] = useState(false);
   const [e2eBannerDismissed, setE2eBannerDismissed] = useState(false);
+  // Per-conversation dismiss flag for the amber "vanish timer" banner. Storage
+  // key includes the timer value so any policy change re-surfaces the banner —
+  // users shouldn't silently miss the new duration.
+  const [vanishTimerBannerDismissed, setVanishTimerBannerDismissed] = useState(false);
 
   // Load dismissed state for E2E banner (per-conversation)
   useEffect(() => {
@@ -5804,6 +5949,20 @@ export default function ChatConversationScreen() {
       } catch {}
     })();
   }, [conversationId]);
+
+  // Vanish-timer banner dismiss state, keyed by conversationId + current
+  // timer value (so changing 24h → 7d resurfaces the banner with the new
+  // duration even after a previous dismiss).
+  useEffect(() => {
+    if (!disappearingTimer || disappearingTimer <= 0) { setVanishTimerBannerDismissed(false); return; }
+    (async () => {
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const v = await AsyncStorage.getItem(userScopedKey(`vanish_timer_banner_dismissed_${conversationId}_${disappearingTimer}`));
+        setVanishTimerBannerDismissed(v === '1');
+      } catch { setVanishTimerBannerDismissed(false); }
+    })();
+  }, [conversationId, disappearingTimer]);
 
   // Load plan to determine premium tier for animated reactions
   useEffect(() => {
@@ -5824,6 +5983,16 @@ export default function ChatConversationScreen() {
   const [activeTopic, setActiveTopic] = useState(null); // { id, name, icon } | null
   const [newTopicName, setNewTopicName] = useState('');
   const [newTopicIcon, setNewTopicIcon] = useState('💬');
+  // Admin-only "create topic" sheet (separate from the read-only topic
+  // filter — keeps the picker UI out of the way for non-admins).
+  const [showTopicCreate, setShowTopicCreate] = useState(false);
+  const [newTopicColor, setNewTopicColor] = useState('#7C3AED');
+  // Per-member custom permissions sheet. `roleEditTarget` holds the email
+  // of the admin we're editing; `rolePermsLocal` keeps optimistic state
+  // keyed by email (until the backend grows real persistence).
+  const [roleEditTarget, setRoleEditTarget] = useState(null);
+  const [rolePermsLocal, setRolePermsLocal] = useState({});
+  const [rolePermsDraft, setRolePermsDraft] = useState(null);
   const [mentionedEmails, setMentionedEmails] = useState([]);
   const [showMentionPopup, setShowMentionPopup] = useState(false);
   const [showStarredModal, setShowStarredModal] = useState(false);
@@ -5935,6 +6104,11 @@ export default function ChatConversationScreen() {
     : (chatyySettings.wallpaper || 'none');
   const [showWallpaperPicker, setShowWallpaperPicker] = useState(false);
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
+  // Per-conversation notification settings sheet (sound/vibration/preview/mention exception/mute).
+  // Surfaced from the header overflow menu → "Notificações". Persists via
+  // api.chatSetConvSettings and mirrors to AsyncStorage so the push handler
+  // in services/pushNotifications.js can read it on the next conv push.
+  const [showNotifSettingsSheet, setShowNotifSettingsSheet] = useState(false);
   const [showStatsModal, setShowStatsModal] = useState(false);
   const [aiSummary, setAiSummary] = useState({ visible: false, loading: false, text: '', error: '', messageCount: 0 });
   const [showWebSearch, setShowWebSearch] = useState(false);
@@ -7285,12 +7459,35 @@ export default function ChatConversationScreen() {
     } catch {}
     return () => { try { unsub(); } catch {} };
   }, [conversationId]);
+  // Surface the raw list of typers so downstream consumers (TypingBubble
+  // avatar stack, header subtitle) can render the right shape. `typingUser`
+  // remains a single string for components that only want a label.
+  // Map keys are the typer email; values hold { name, recording, timer }.
+  // The avatar stack needs the email to load the correct profile pic, so
+  // we re-shape into [{ email, name, recording }] here.
+  const typingEntries = useMemo(
+    () => [...typingUsers.entries()].map(([email, v]) => ({ email, name: v?.name, recording: !!v?.recording })),
+    [typingUsers]
+  );
   const typingUser = useMemo(() => {
-    if (typingUsers.size === 0) return null;
-    const entries = [...typingUsers.values()];
-    if (entries.length === 1) return entries[0].name;
-    return entries.map(e => e.name).join(', ');
-  }, [typingUsers]);
+    if (typingEntries.length === 0) return null;
+    // 1 user: "X está digitando..."
+    // 2 users: "X e Y estão digitando..."
+    // 3+ users: "X, Y e mais N estão digitando..."
+    // We return only the names portion ("X" / "X e Y" / "X, Y e mais N").
+    // The "está/estão digitando..." suffix is appended by the bubble label
+    // (TypingBubble already shows the dots, not text). Header subtitle
+    // re-formats below using the same shape.
+    if (typingEntries.length === 1) return typingEntries[0].name;
+    if (typingEntries.length === 2) {
+      const sep = t('chatConv.typingAnd') || 'e';
+      return `${typingEntries[0].name} ${sep} ${typingEntries[1].name}`;
+    }
+    const more = typingEntries.length - 2;
+    const sep = t('chatConv.typingAnd') || 'e';
+    const moreLabel = t('chatConv.typingMore') || 'mais';
+    return `${typingEntries[0].name}, ${typingEntries[1].name} ${sep} ${moreLabel} ${more}`;
+  }, [typingEntries, t]);
   const typingIsRecording = useMemo(() => {
     if (typingUsers.size === 0) return false;
     return [...typingUsers.values()].some(e => e.recording);
@@ -10306,12 +10503,33 @@ export default function ChatConversationScreen() {
     if (!msg) return;
     const isMine = msg.sender_email === user?.email;
 
-    // "Delete for everyone" only within 3 hours of sending (WhatsApp parity —
-    // user asked to tighten the window so people don't retract ancient posts).
-    const isWithin3h = msg?.created_at
-      ? (Date.now() - new Date(msg.created_at).getTime()) < 3 * 3600 * 1000
-      : false;
-    const canDeleteForAll = isMine && isWithin3h;
+    // Delete-for-everyone window — WhatsApp parity:
+    //   • personal (direct) chats:  5 minutes
+    //   • group chats:              1 hour
+    // Helps surface a "(expirado)" hint in the alert + a countdown subtitle
+    // when within the window so users know how long they have left.
+    const isGroupChat = conversationType === 'group';
+    const deleteForAllWindowMs = isGroupChat ? 3600 * 1000 : 300 * 1000;
+    const createdMs = (() => {
+      try {
+        if (!msg?.created_at) return 0;
+        const raw = typeof msg.created_at === 'number'
+          ? msg.created_at
+          : Date.parse(String(msg.created_at).endsWith('Z') ? msg.created_at : msg.created_at + 'Z');
+        return Number.isFinite(raw) ? raw : 0;
+      } catch { return 0; }
+    })();
+    const elapsedMs = createdMs ? (Date.now() - createdMs) : Infinity;
+    const remainingMs = Math.max(0, deleteForAllWindowMs - elapsedMs);
+    const isWithinWindow = createdMs > 0 && elapsedMs < deleteForAllWindowMs;
+    const canDeleteForAll = isMine && isWithinWindow;
+    // Format remaining as "Xm Ys" (or "Ys" when <60s) for the subtitle.
+    const remainingLabel = (() => {
+      const tot = Math.max(0, Math.floor(remainingMs / 1000));
+      const m = Math.floor(tot / 60);
+      const s = tot % 60;
+      return m > 0 ? `${m}m ${s}s` : `${s}s`;
+    })();
 
     const deleteForEveryone = async () => {
       setSelectedMsg(null);
@@ -10393,11 +10611,32 @@ export default function ChatConversationScreen() {
       { text: t('common.cancel'), style: 'cancel' },
       { text: t('chatConv.deleteForMe') || 'Apagar para mim', onPress: deleteForMe },
     ];
-    // Only show "delete for everyone" for own messages within 48h
-    if (canDeleteForAll) {
-      buttons.push({ text: t('chatConv.deleteForEveryone') || 'Apagar para todos', style: 'destructive', onPress: deleteForEveryone });
+    // Surface "Apagar para todos" with a countdown subtitle when within the
+    // window, or as "(expirado)" when out of window — gives users a clear
+    // signal whether retraction is still possible. The disabled-but-visible
+    // entry is informational so users learn the policy.
+    let confirmBody = t('chat.deleteConfirm');
+    if (isMine) {
+      if (canDeleteForAll) {
+        buttons.push({
+          text: `${t('chatConv.deleteForEveryone') || 'Apagar para todos'}`,
+          style: 'destructive',
+          onPress: deleteForEveryone,
+        });
+        // Append remaining-time hint to the body so users see urgency.
+        const hint = `${t('chatConv.deleteForEveryone') || 'Apagar para todos'} · ${remainingLabel}`;
+        confirmBody = confirmBody ? `${confirmBody}\n\n${hint}` : hint;
+      } else if (createdMs > 0) {
+        // Disabled (expired) marker — surfaced as a non-actionable entry so
+        // the user can see retraction is no longer possible.
+        buttons.push({
+          text: `${t('chatConv.deleteForEveryone') || 'Apagar para todos'} (expirado)`,
+          style: 'cancel',
+          onPress: () => {},
+        });
+      }
     }
-    safeAlert(t('chat.deleteMessage'), t('chat.deleteConfirm'), buttons);
+    safeAlert(t('chat.deleteMessage'), confirmBody, buttons);
   };
 
   // Delete fade-out animation state: Set<msgId>
@@ -11872,6 +12111,9 @@ export default function ChatConversationScreen() {
     const current = messages.find(m => m.id === messageId);
     setEditHistoryModal({ visible: true, loading: true, versions: [], currentContent: current?.content || '' });
     try {
+      // Endpoint name verified: api.chatEditHistory → chat_edit_history
+      // (memory called this out as the wrong path historically; this matches
+      // the audited fix from task #590).
       const r = await api.chatEditHistory(messageId);
       if (r?.success) {
         setEditHistoryModal(prev => ({ ...prev, loading: false, versions: r.data?.versions || [] }));
@@ -11882,6 +12124,27 @@ export default function ChatConversationScreen() {
       setEditHistoryModal(prev => ({ ...prev, loading: false }));
     }
   }, [messages]);
+
+  // Pretty-print a disappearing-timer duration in seconds for the top banner
+  // and any picker labels. WhatsApp parity: round to whole units, prefer the
+  // largest sensible unit ("24 horas", "7 dias", "90 dias", "1 hora", "5 min").
+  const formatDisappearTimer = useCallback((sec) => {
+    const s = Number(sec) || 0;
+    if (s <= 0) return '';
+    if (s % 86400 === 0) {
+      const d = s / 86400;
+      return d === 1 ? '1 dia' : `${d} dias`;
+    }
+    if (s % 3600 === 0) {
+      const h = s / 3600;
+      return h === 1 ? '1 hora' : `${h} horas`;
+    }
+    if (s >= 60) {
+      const m = Math.round(s / 60);
+      return m === 1 ? '1 min' : `${m} min`;
+    }
+    return `${s}s`;
+  }, []);
 
   // WhatsApp parity: when wifi flips ON, drain pending video/file downloads
   // for messages already on screen. The initial pre-cache only fires on
@@ -14920,6 +15183,22 @@ export default function ChatConversationScreen() {
                 // than hard-swap. Uses keyed CheckStatus component so React
                 // unmounts the old status and mounts the new one with a
                 // short fade-in. Matches iMessage's subtle color transition.
+                // In groups, tapping or long-pressing the tick opens the
+                // per-recipient read receipts sheet (Read / Delivered /
+                // Pending). In direct chats it stays decorative.
+                if (conversationType === 'group' && typeof msg.id === 'number' && !msg._failed && !msg._queued) {
+                  return (
+                    <TouchableOpacity
+                      onPress={() => handleMessageInfo(msg)}
+                      onLongPress={() => handleMessageInfo(msg)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      accessibilityLabel={t('chatConv.messageInfo') || 'Informações da mensagem'}
+                      accessibilityRole="button"
+                    >
+                      <AnimatedCheckStatus status={msg._readStatus} color={ownMetaColor} />
+                    </TouchableOpacity>
+                  );
+                }
                 return <AnimatedCheckStatus status={msg._readStatus} color={ownMetaColor} />;
               })()}
             </View>
@@ -15494,20 +15773,35 @@ export default function ChatConversationScreen() {
         }]} pointerEvents="none" />
       )}
 
-      {/* Disappearing messages banner */}
-      {disappearingTimer > 0 && (
+      {/* Vanish-timer banner (amber tint per WhatsApp parity). Surfaces the
+          per-conversation disappearing duration just below the header so a
+          new participant can't miss the policy. Tap → opens the picker;
+          the (X) on the right snoozes per-(conv, timer) — if the duration
+          changes later the banner re-surfaces with the new value. */}
+      {disappearingTimer > 0 && !vanishTimerBannerDismissed && (
         <TouchableOpacity
-          style={[styles.disappearingBanner, { backgroundColor: isDark ? 'rgba(16,185,129,0.15)' : 'rgba(16,185,129,0.1)' }]}
+          style={[styles.disappearingBanner, { backgroundColor: 'rgba(255,193,7,0.12)' }]}
           onPress={() => setShowDisappearingModal(true)}
           activeOpacity={0.7}
         >
-          <IconClock size={14} color="#10b981" />
-          <Text style={[styles.disappearingBannerText, { color: isDark ? '#6ee7b7' : '#047857' }]}>
-            {t('chat.disappearingActive') || 'Mensagens temporárias ativadas'} · {disappearingTimer <= 300 ? '5min' : disappearingTimer <= 3600 ? '1h' : disappearingTimer <= 86400 ? '24h' : disappearingTimer <= 604800 ? '7d' : '90d'}
+          <IconClock size={14} color={isDark ? '#fcd34d' : '#b45309'} />
+          <Text style={[styles.disappearingBannerText, { color: isDark ? '#fde68a' : '#92400e' }]}>
+            {`🕐 Mensagens desta conversa somem após ${formatDisappearTimer(disappearingTimer)}`}
           </Text>
-          <Text style={[styles.disappearingBannerAction, { color: colors.primary }]}>
-            {t('chat.disappearingChange') || 'Alterar'}
-          </Text>
+          <TouchableOpacity
+            onPress={async (e) => {
+              e.stopPropagation?.();
+              setVanishTimerBannerDismissed(true);
+              try {
+                const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+                await AsyncStorage.setItem(userScopedKey(`vanish_timer_banner_dismissed_${conversationId}_${disappearingTimer}`), '1');
+              } catch {}
+            }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={{ padding: 4, marginLeft: 4 }}
+          >
+            <IconX size={14} color={isDark ? '#fcd34d' : '#b45309'} />
+          </TouchableOpacity>
         </TouchableOpacity>
       )}
 
@@ -16164,7 +16458,7 @@ export default function ChatConversationScreen() {
               {aiTyping ? (
                 <TypingBubbleHost user="Chatyy AI" recording={false} colors={colors} t={t} />
               ) : null}
-              <TypingBubbleHost user={typingUser} recording={typingIsRecording} colors={colors} t={t} />
+              <TypingBubbleHost user={typingUser} recording={typingIsRecording} colors={colors} t={t} entries={typingEntries} />
             </>
           }
           ListFooterComponent={
@@ -17924,6 +18218,62 @@ export default function ChatConversationScreen() {
 
             {/* Secondary Actions — Vertical List */}
             <View style={styles.ctxSecondaryList}>
+              {/* Apagar para todos — surfaced when the user long-presses
+                  their own message. Within window: shows live "Disponível
+                  por Xm Ys mais" subtitle that ticks down each second.
+                  Out of window: shows greyed-out "(expirado)" label so the
+                  user understands retraction is no longer possible. */}
+              {!selectedMsg?.deleted_at && selectedMsg?.sender_email === currentEmail && (() => {
+                const isGroupChat = conversationType === 'group';
+                const winMs = isGroupChat ? 3600 * 1000 : 300 * 1000;
+                const cAt = (() => {
+                  try {
+                    if (!selectedMsg?.created_at) return 0;
+                    const raw = typeof selectedMsg.created_at === 'number'
+                      ? selectedMsg.created_at
+                      : Date.parse(String(selectedMsg.created_at).endsWith('Z') ? selectedMsg.created_at : selectedMsg.created_at + 'Z');
+                    return Number.isFinite(raw) ? raw : 0;
+                  } catch { return 0; }
+                })();
+                if (!cAt) return null;
+                const elapsed = longPressNow - cAt;
+                const within = elapsed < winMs;
+                const remaining = Math.max(0, winMs - elapsed);
+                const tot = Math.max(0, Math.floor(remaining / 1000));
+                const m = Math.floor(tot / 60);
+                const s = tot % 60;
+                const ttl = m > 0 ? `${m}m ${s}s` : `${s}s`;
+                if (within) {
+                  return (
+                    <TouchableOpacity
+                      style={styles.ctxSecondaryItem}
+                      onPress={() => handleDelete(selectedMsg?.id)}
+                      activeOpacity={0.6}
+                    >
+                      <IconTrash size={18} color={colors.error || '#EF4444'} />
+                      <View style={{ flex: 1, marginLeft: 12 }}>
+                        <Text style={[styles.ctxSecondaryText, { color: colors.error || '#EF4444', marginLeft: 0 }]}>
+                          {t('chatConv.deleteForEveryone') || 'Apagar para todos'}
+                        </Text>
+                        <Text style={{ fontSize: 11, color: colors.textTertiary, marginTop: 2 }}>
+                          {`Disponível por ${ttl} mais`}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                }
+                return (
+                  <View
+                    style={[styles.ctxSecondaryItem, { opacity: 0.5 }]}
+                    accessibilityState={{ disabled: true }}
+                  >
+                    <IconTrash size={18} color={colors.textTertiary} />
+                    <Text style={[styles.ctxSecondaryText, { color: colors.textTertiary }]}>
+                      {`${t('chatConv.deleteForEveryone') || 'Apagar para todos'} (expirado)`}
+                    </Text>
+                  </View>
+                );
+              })()}
               {/* Pin/Unpin */}
               {!selectedMsg?.deleted_at && (
                 <TouchableOpacity
@@ -18329,7 +18679,67 @@ export default function ChatConversationScreen() {
 
             {messageInfoModal?.loading ? (
               <ActivityIndicator size="small" color={colors.primary} style={{ marginVertical: 16 }} />
+            ) : conversationType === 'group' ? (
+              // GROUP: WhatsApp-style 3 buckets — Read / Delivered (not yet read) / Pending (not even delivered).
+              // Sorted by ts desc inside each section so most-recent receipt is on top.
+              <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+                {(() => {
+                  const all = messageInfoModal?.receipts || [];
+                  const readList = all.filter(r => r.read_at).slice().sort((a, b) => +new Date(b.read_at) - +new Date(a.read_at));
+                  const deliveredList = all.filter(r => !r.read_at && r.delivered_at).slice().sort((a, b) => +new Date(b.delivered_at) - +new Date(a.delivered_at));
+                  const pendingList = all.filter(r => !r.read_at && !r.delivered_at);
+                  const Section = ({ titleKey, fallback, list, tintColor, tsKey }) => (
+                    <View style={{ marginBottom: 18 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                        {tintColor && (
+                          <View style={{ flexDirection: 'row' }}>
+                            <IconCheck size={14} color={tintColor} />
+                            <IconCheck size={14} color={tintColor} style={{ marginLeft: -7 }} />
+                          </View>
+                        )}
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                          {(t(titleKey) || fallback)} ({list.length})
+                        </Text>
+                      </View>
+                      {list.length === 0 ? (
+                        <Text style={{ fontSize: 13, color: colors.textTertiary, paddingLeft: 4, fontStyle: 'italic' }}>
+                          {t('chatConv.noneYet') || '—'}
+                        </Text>
+                      ) : (
+                        list.map(r => (
+                          <View key={`${titleKey}-${r.email}`} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 7, gap: 10 }}>
+                            <AvatarCircle email={r.email} name={r.name} size={36} />
+                            <View style={{ flex: 1, minWidth: 0 }}>
+                              <Text numberOfLines={1} style={{ fontSize: 14, color: colors.text, fontWeight: '500' }}>{r.name || r.email}</Text>
+                              {tsKey && r[tsKey] ? (
+                                <Text style={{ fontSize: 11.5, color: colors.textTertiary, marginTop: 1 }}>
+                                  {_formatReceiptDate(r[tsKey], t)}
+                                </Text>
+                              ) : null}
+                            </View>
+                          </View>
+                        ))
+                      )}
+                    </View>
+                  );
+                  return (
+                    <>
+                      <Section titleKey="chatConv.readBy" fallback="Lido por" list={readList} tintColor="#7C3AED" tsKey="read_at" />
+                      <Section titleKey="chatConv.deliveredTo" fallback="Entregue para" list={deliveredList} tintColor={colors.textSecondary} tsKey="delivered_at" />
+                      {pendingList.length > 0 && (
+                        <Section titleKey="chatConv.pendingTo" fallback="Pendente" list={pendingList} tintColor={null} tsKey={null} />
+                      )}
+                      {all.length === 0 && (
+                        <Text style={[styles.messageInfoEmpty, { color: colors.textTertiary }]}>
+                          {t('chatConv.notDelivered')}
+                        </Text>
+                      )}
+                    </>
+                  );
+                })()}
+              </ScrollView>
             ) : (
+              // DIRECT chat: keep the per-recipient timestamp list (was the original design).
               (messageInfoModal?.receipts || []).map((r, idx) => (
                 <View key={r.email || idx}>
                   {/* Participant — WhatsApp-style avatar + name row */}
@@ -18367,7 +18777,7 @@ export default function ChatConversationScreen() {
               ))
             )}
 
-            {!messageInfoModal?.loading && (!messageInfoModal?.receipts || messageInfoModal.receipts.length === 0) && (
+            {!messageInfoModal?.loading && conversationType !== 'group' && (!messageInfoModal?.receipts || messageInfoModal.receipts.length === 0) && (
               <Text style={[styles.messageInfoEmpty, { color: colors.textTertiary }]}>
                 {t('chatConv.notDelivered')}
               </Text>
@@ -18645,6 +19055,10 @@ export default function ChatConversationScreen() {
                     );
                   }},
                   { Icon: IconBell, tint: mutedUntil ? '#f59e0b' : '#6B7280', label: mutedUntil ? (t('chatConv.unmute') || 'Remover silêncio') : (t('chatConv.muteChat') || 'Silenciar conversa'), badge: !!mutedUntil, onPress: () => { setShowHeaderMenu(false); if (mutedUntil) { handleMuteChat(null); } else { setShowMuteModal(true); } }},
+                  // Per-conversation notification settings sheet — full
+                  // controls beyond the mute timer: sound, vibration, preview,
+                  // mention-exception toggle for muted groups.
+                  { Icon: IconBell, tint: '#A78BFA', label: t('notifications.title') || 'Notificações', onPress: () => { setShowHeaderMenu(false); setShowNotifSettingsSheet(true); }},
                   // Vanish (modo invisível): mensagens novas somem após lidas.
                   // Backend já existia mas não tinha entrada no menu — toggle agora exposto.
                   { Icon: IconClock, tint: vanishMode ? '#7C3AED' : '#6B7280', label: vanishMode ? (t('chatConv.vanishModeOff') || 'Desligar modo invisível') : (t('chatConv.vanishModeOn') || 'Ativar modo invisível'), badge: !!vanishMode, onPress: () => { setShowHeaderMenu(false); handleToggleVanishMode(); }},
@@ -19104,6 +19518,20 @@ export default function ChatConversationScreen() {
               </TouchableOpacity>
             )}
 
+            {/* Funções e permissões — admin-only hint above the member list.
+                The actual "Editar permissões" link lives next to each admin
+                badge below; this label gives the section a clear name. */}
+            {isGroupAdmin && (
+              <View style={{ marginTop: Spacing.lg, paddingTop: Spacing.md, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }}>
+                <Text style={[styles.groupLabel, { color: colors.textSecondary }]}>
+                  {t('chatConv.rolesAndPermissions') || 'Funções e permissões'}
+                </Text>
+                <Text style={{ fontSize: 12, color: colors.textTertiary, marginTop: 4 }}>
+                  {t('chatConv.rolesAndPermissionsHint') || 'Toque em "Editar permissões" ao lado de cada admin abaixo'}
+                </Text>
+              </View>
+            )}
+
             <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: Spacing.lg }}>
               <Text style={[styles.groupLabel, { color: colors.textSecondary, flex: 1 }]}>
                 {t('chatConv.members')} ({members.length})
@@ -19152,13 +19580,38 @@ export default function ChatConversationScreen() {
                     <Text style={{ fontSize: FontSize.xs, color: colors.textTertiary }}>{m.email}</Text>
                   </View>
                   {m.role === 'admin' && (
-                    <View style={{
-                      flexDirection: 'row', alignItems: 'center', gap: 4,
-                      backgroundColor: '#7C3AED', paddingHorizontal: 9, paddingVertical: 3, borderRadius: 11, marginRight: 6,
-                      ...(Platform.OS === 'web' ? { boxShadow: '0 1px 4px rgba(124,58,237,0.35)' } : {}),
-                    }}>
-                      <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: '#fff', opacity: 0.9 }} />
-                      <Text style={{ fontSize: 11, color: '#fff', fontWeight: '700', letterSpacing: 0.2 }}>Admin</Text>
+                    <View style={{ alignItems: 'flex-end', marginRight: 6, gap: 3 }}>
+                      <View style={{
+                        flexDirection: 'row', alignItems: 'center', gap: 4,
+                        backgroundColor: '#7C3AED', paddingHorizontal: 9, paddingVertical: 3, borderRadius: 11,
+                        ...(Platform.OS === 'web' ? { boxShadow: '0 1px 4px rgba(124,58,237,0.35)' } : {}),
+                      }}>
+                        <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: '#fff', opacity: 0.9 }} />
+                        <Text style={{ fontSize: 11, color: '#fff', fontWeight: '700', letterSpacing: 0.2 }}>Admin</Text>
+                      </View>
+                      {/* Funções e permissões — only the current admin can
+                          open this sheet; tweaks are persisted locally for
+                          now (backend may not parse `permissions` yet). */}
+                      {isGroupAdmin && !isMe && (
+                        <TouchableOpacity
+                          onPress={() => {
+                            setRoleEditTarget(m.email);
+                            setRolePermsDraft({
+                              add_members: true,
+                              edit_info: true,
+                              remove_messages: true,
+                              pin_messages: true,
+                              promote_admins: false,
+                              ...(rolePermsLocal[m.email] || {}),
+                            });
+                          }}
+                          style={{ paddingVertical: 2, paddingHorizontal: 6 }}
+                        >
+                          <Text style={{ fontSize: 11, color: colors.primary, fontWeight: '600' }}>
+                            {t('chatConv.editPermissions') || 'Editar permissões'}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
                   )}
                   {isGroupAdmin && !isMe && (
@@ -19319,27 +19772,49 @@ export default function ChatConversationScreen() {
 
             {/* Topics (group, admin can create; everyone can filter) */}
             {conversationType === 'group' && (
-              <TouchableOpacity
-                onPress={async () => {
-                  setShowGroupInfo(false);
-                  try {
-                    const r = await api.chatTopicList(conversationId);
-                    if (r?.success) setTopics(r.data?.topics || []);
-                  } catch {}
-                  setShowTopicsModal(true);
-                }}
-                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.md, marginTop: Spacing.sm, gap: 10 }}
-              >
-                <IconHash size={20} color={colors.text} />
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: FontSize.md, color: colors.text, fontWeight: '500' }}>
-                    {t('chat.topics') || 'Tópicos'}
-                  </Text>
-                  <Text style={{ fontSize: FontSize.xs, color: colors.textSecondary, marginTop: 2 }}>
-                    {activeTopic ? `${activeTopic.icon || '💬'} ${activeTopic.name}` : (t('chat.topicsHint') || 'Organize conversas por tema')}
-                  </Text>
-                </View>
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.md, marginTop: Spacing.sm, gap: 10 }}>
+                <TouchableOpacity
+                  onPress={async () => {
+                    setShowGroupInfo(false);
+                    try {
+                      const r = await api.chatTopicList(conversationId);
+                      if (r?.success) setTopics(r.data?.topics || []);
+                    } catch {}
+                    setShowTopicsModal(true);
+                  }}
+                  style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 }}
+                >
+                  <IconHash size={20} color={colors.text} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: FontSize.md, color: colors.text, fontWeight: '500' }}>
+                      {t('chat.topics') || 'Tópicos'}
+                    </Text>
+                    <Text style={{ fontSize: FontSize.xs, color: colors.textSecondary, marginTop: 2 }}>
+                      {activeTopic ? `${activeTopic.icon || '💬'} ${activeTopic.name}` : (t('chat.topicsHint') || 'Organize conversas por tema')}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+                {isGroupAdmin && (
+                  <TouchableOpacity
+                    onPress={async () => {
+                      // Refresh list silently so the optimistic append below
+                      // doesn't collide with a stale state.
+                      try {
+                        const r = await api.chatTopicList(conversationId);
+                        if (r?.success) setTopics(r.data?.topics || []);
+                      } catch {}
+                      setNewTopicName('');
+                      setNewTopicIcon('💬');
+                      setNewTopicColor('#7C3AED');
+                      setShowTopicCreate(true);
+                    }}
+                    accessibilityLabel={t('chat.createTopic') || 'Criar tópico'}
+                    style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' }}
+                  >
+                    <Text style={{ color: '#fff', fontSize: 20, fontWeight: '700', lineHeight: 22 }}>+</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             )}
 
             {/* Slow Mode (admin only) */}
@@ -19686,6 +20161,192 @@ export default function ChatConversationScreen() {
                 </View>
               </View>
             )}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Per-conversation notification settings sheet (Notificações entry in header menu) */}
+      <ChatNotificationSettingsSheet
+        visible={showNotifSettingsSheet}
+        onClose={() => setShowNotifSettingsSheet(false)}
+        conversationId={conversationId}
+        conversationType={conversationType}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+      />
+
+      {/* Topic Create Modal — admin-only sheet launched from the "+" button
+          on the topics row. Color picker + emoji + name input. Optimistic
+          append so the new topic shows up instantly. */}
+      <Modal visible={showTopicCreate} transparent animationType="slide" onRequestClose={() => setShowTopicCreate(false)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setShowTopicCreate(false)}>
+          <Pressable style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '80%' }} onPress={e => e.stopPropagation()}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+              <IconHash size={22} color={colors.primary} />
+              <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, flex: 1 }}>
+                {t('chat.createTopic') || 'Criar tópico'}
+              </Text>
+              <TouchableOpacity onPress={() => setShowTopicCreate(false)}>
+                <IconX size={22} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginBottom: 6 }}>
+              {t('chat.topicNamePh') || 'Nome do tópico'}
+            </Text>
+            <TextInput
+              value={newTopicName}
+              onChangeText={setNewTopicName}
+              placeholder={t('chat.topicNamePh') || 'Nome do tópico'}
+              placeholderTextColor={colors.textSecondary}
+              maxLength={50}
+              style={{ height: 44, borderRadius: 10, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border, paddingHorizontal: 12, color: colors.text, marginBottom: 14 }}
+            />
+
+            <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginBottom: 6 }}>
+              {t('chat.topicEmoji') || 'Emoji'}
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+              {['💬', '📌', '🎯', '🔥', '📣', '✅'].map(em => (
+                <TouchableOpacity
+                  key={em}
+                  onPress={() => setNewTopicIcon(em)}
+                  style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: newTopicIcon === em ? colors.primary + '22' : colors.background, borderWidth: 1, borderColor: newTopicIcon === em ? colors.primary : colors.border }}
+                >
+                  <Text style={{ fontSize: 22 }}>{em}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginBottom: 6 }}>
+              {t('chat.topicColor') || 'Cor'}
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 10, marginBottom: 18 }}>
+              {['#7C3AED', '#3B82F6', '#10B981', '#F59E0B', '#EC4899', '#EF4444'].map(c => (
+                <TouchableOpacity
+                  key={c}
+                  onPress={() => setNewTopicColor(c)}
+                  style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: c, borderWidth: newTopicColor === c ? 3 : 0, borderColor: colors.text }}
+                />
+              ))}
+            </View>
+
+            <TouchableOpacity
+              disabled={!newTopicName.trim()}
+              onPress={async () => {
+                const name = newTopicName.trim();
+                if (!name) return;
+                const emoji = newTopicIcon || '💬';
+                const color = newTopicColor;
+                // Optimistic append so the topic shows up immediately.
+                // Use a temp negative ID we can swap once the server
+                // returns the real one.
+                const tempId = -Date.now();
+                setTopics(prev => [...prev, { id: tempId, name, icon: emoji, color, message_count: 0 }]);
+                setShowTopicCreate(false);
+                setNewTopicName('');
+                setNewTopicIcon('💬');
+                setNewTopicColor('#7C3AED');
+                try {
+                  const r = await api.chatTopicCreate(conversationId, { name, color, emoji });
+                  if (r?.success && r.data?.id) {
+                    setTopics(prev => prev.map(tp => tp.id === tempId
+                      ? { id: r.data.id, name: r.data.name || name, icon: r.data.icon || emoji, color: r.data.color || color, message_count: 0 }
+                      : tp));
+                  } else {
+                    // Roll back on failure.
+                    setTopics(prev => prev.filter(tp => tp.id !== tempId));
+                  }
+                } catch {
+                  setTopics(prev => prev.filter(tp => tp.id !== tempId));
+                }
+              }}
+              style={{ height: 48, borderRadius: 12, backgroundColor: newTopicName.trim() ? colors.primary : colors.border, alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>
+                {t('common.save') || 'Salvar'}
+              </Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Custom roles / permissions sheet — opened from the "Editar
+          permissões" link on each admin row. Toggles are persisted in
+          local state for now (rolePermsLocal); the chat_group_admin call
+          ships them to the backend, which may or may not parse the
+          `permissions` payload yet.
+          TODO: backend `chat_group_admin` doesn't yet parse a
+          `permissions` object — when it does, drop the local-state
+          fallback and rely on chatGroupInfo to hydrate. */}
+      <Modal visible={!!roleEditTarget} transparent animationType="slide" onRequestClose={() => setRoleEditTarget(null)}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setRoleEditTarget(null)}>
+          <Pressable style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '85%' }} onPress={e => e.stopPropagation()}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <IconShield size={22} color={colors.primary} />
+              <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, flex: 1 }}>
+                {t('chatConv.editPermissions') || 'Editar permissões'}
+              </Text>
+              <TouchableOpacity onPress={() => setRoleEditTarget(null)}>
+                <IconX size={22} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            {roleEditTarget && (
+              <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 16 }}>
+                {roleEditTarget}
+              </Text>
+            )}
+
+            {rolePermsDraft && [
+              { key: 'add_members',     label: t('chatConv.permAddMembers')     || 'Pode adicionar membros' },
+              { key: 'edit_info',       label: t('chatConv.permEditInfo')       || 'Pode editar info do grupo' },
+              { key: 'remove_messages', label: t('chatConv.permRemoveMessages') || 'Pode remover mensagens' },
+              { key: 'pin_messages',    label: t('chatConv.permPinMessages')    || 'Pode fixar mensagens' },
+              { key: 'promote_admins',  label: t('chatConv.permPromoteAdmins')  || 'Pode promover admins' },
+            ].map(row => {
+              const on = !!rolePermsDraft[row.key];
+              return (
+                <TouchableOpacity
+                  key={row.key}
+                  onPress={() => setRolePermsDraft(d => ({ ...d, [row.key]: !d[row.key] }))}
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, gap: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}
+                >
+                  <Text style={{ flex: 1, fontSize: 15, color: colors.text }}>{row.label}</Text>
+                  <View style={{ width: 44, height: 26, borderRadius: 13, backgroundColor: on ? colors.primary : colors.border, justifyContent: 'center', padding: 3 }}>
+                    <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff', alignSelf: on ? 'flex-end' : 'flex-start' }} />
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
+              <TouchableOpacity
+                onPress={() => { setRoleEditTarget(null); setRolePermsDraft(null); }}
+                style={{ flex: 1, height: 46, borderRadius: 12, backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Text style={{ color: colors.text, fontWeight: '600' }}>{t('common.cancel') || 'Cancelar'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={async () => {
+                  const email = roleEditTarget;
+                  const perms = rolePermsDraft || {};
+                  // Persist locally first so the UI feels responsive even
+                  // if the backend ignores the payload.
+                  setRolePermsLocal(prev => ({ ...prev, [email]: perms }));
+                  setRoleEditTarget(null);
+                  setRolePermsDraft(null);
+                  try {
+                    // Best-effort backend ship — backend may not parse
+                    // `permissions` yet (see TODO above).
+                    await api.chatGroupAdmin(conversationId, { target_email: email, permissions: perms });
+                  } catch {}
+                }}
+                style={{ flex: 1, height: 46, borderRadius: 12, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700' }}>{t('common.save') || 'Salvar'}</Text>
+              </TouchableOpacity>
+            </View>
           </Pressable>
         </Pressable>
       </Modal>

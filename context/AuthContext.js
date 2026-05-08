@@ -1,5 +1,5 @@
-import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
-import { Platform, AppState } from 'react-native';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import { Platform, AppState, Modal, View, Text, Pressable, ActivityIndicator } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import * as api from '../services/api';
@@ -15,6 +15,61 @@ const AuthContext = createContext(null);
 
 // Module-level interval ref so it persists across re-renders
 let _locationInterval = null;
+
+// Module-level state for the first-launch cloud-restore prompt. Set to a
+// truthy object after a successful first-time login when the user does not
+// yet carry the `chatyy_restored_once` AsyncStorage flag. The chat list
+// reads this via `consumeRestorePrompt()` and renders a fullscreen modal
+// over itself; the user picks Restaurar or Começar do zero, which sets the
+// flag so we never ask again.
+let _restorePromptState = null;
+const _restorePromptListeners = new Set();
+function _notifyRestorePromptChange() {
+  for (const fn of _restorePromptListeners) { try { fn(_restorePromptState); } catch {} }
+}
+export function getRestorePromptState() { return _restorePromptState; }
+export function subscribeRestorePrompt(fn) {
+  _restorePromptListeners.add(fn);
+  return () => _restorePromptListeners.delete(fn);
+}
+export async function dismissRestorePrompt() {
+  _restorePromptState = null;
+  _notifyRestorePromptChange();
+  try { await AsyncStorage.setItem('chatyy_restored_once', '1'); } catch {}
+}
+// Trigger after successful first-time login. Best-effort: if the existence
+// probe fails or there are no backups, we silently set the flag and skip
+// the prompt entirely. Only fires once per device — controlled by the
+// `chatyy_restored_once` AsyncStorage key.
+async function _maybeOfferCloudRestore() {
+  try {
+    const already = await AsyncStorage.getItem('chatyy_restored_once');
+    if (already) return;
+    // chatBackupExists is optional — if missing, fall back to chatBackupList
+    // and skip the prompt only when we get a confident "no backups" signal.
+    let hasBackup = null; // null = unknown
+    try {
+      if (typeof api.chatBackupExists === 'function') {
+        const r = await api.chatBackupExists();
+        if (r?.success && typeof r?.data?.exists === 'boolean') hasBackup = r.data.exists;
+      } else if (typeof api.chatBackupList === 'function') {
+        const r = await api.chatBackupList();
+        if (r?.success) {
+          const list = r.data?.backups || r.data?.list || (Array.isArray(r.data) ? r.data : []);
+          hasBackup = Array.isArray(list) && list.length > 0;
+        }
+      }
+    } catch {}
+    // Confident "no backup" → set flag, never ask again. Unknown (network
+    // hiccup) → still show the prompt; the user can pick Começar do zero.
+    if (hasBackup === false) {
+      try { await AsyncStorage.setItem('chatyy_restored_once', '1'); } catch {}
+      return;
+    }
+    _restorePromptState = { visible: true };
+    _notifyRestorePromptChange();
+  } catch {}
+}
 
 // Child account restrictions (loaded after login)
 let _childRestrictions = null;
@@ -494,6 +549,10 @@ export function AuthProvider({ children }) {
       } else {
         _childRestrictions = null;
       }
+      // First-launch cloud-restore prompt — fires once per device. Runs
+      // fire-and-forget so the login flow returns immediately; the chat
+      // list listens to subscribeRestorePrompt() and renders the modal.
+      _maybeOfferCloudRestore().catch(() => {});
     }
     return r;
   }, [loadAccounts, registerPushAfterAuth, prefetchAvatar, prefetchProfile]);
@@ -515,6 +574,7 @@ export function AuthProvider({ children }) {
     setUser(data);
     loadAccounts();
     registerPushAfterAuth();
+    _maybeOfferCloudRestore().catch(() => {});
   }, [loadAccounts, registerPushAfterAuth]);
 
   // Log in using a previously-saved bearer token (QR flow, biometric flow).
@@ -578,6 +638,10 @@ export function AuthProvider({ children }) {
     }
     loadAccounts();
     registerPushAfterAuth();
+    // First-launch cloud-restore — same prompt path as login(). Only fires
+    // when chatyy_restored_once is unset, so QR/Face-ID re-logins of the
+    // same user on the same device won't re-trigger it.
+    _maybeOfferCloudRestore().catch(() => {});
     return { success: true, data };
   }, [loadAccounts, registerPushAfterAuth]);
 
@@ -854,7 +918,115 @@ export function AuthProvider({ children }) {
   return (
     <AuthContext.Provider value={contextValue}>
       {children}
+      <CloudRestorePrompt />
     </AuthContext.Provider>
+  );
+}
+
+// First-launch cloud restore prompt — fullscreen modal overlay rendered
+// inside AuthProvider so it sits above whatever screen the user lands on
+// after login (typically chat list). Subscribes to the module-level
+// _restorePromptState so login() / loginWithToken() / signup() / challenge
+// can all trigger it without prop drilling. The flag write happens here on
+// either branch so the prompt never re-fires.
+function CloudRestorePrompt() {
+  const [state, setState] = React.useState(getRestorePromptState());
+  const [busy, setBusy] = React.useState(false);
+  const [progressMsg, setProgressMsg] = React.useState('');
+
+  React.useEffect(() => {
+    return subscribeRestorePrompt(setState);
+  }, []);
+
+  if (!state?.visible) return null;
+
+  const onRestore = async () => {
+    if (busy) return;
+    setBusy(true);
+    setProgressMsg('Baixando backup…');
+    try {
+      let payload = null;
+      try {
+        const dl = await api.chatBackupDownload?.();
+        if (dl?.success) payload = dl.data ?? dl;
+      } catch {}
+      if (payload) {
+        setProgressMsg('Restaurando…');
+        try { await api.chatBackupRestore?.(payload); } catch {}
+      }
+    } catch {}
+    setBusy(false);
+    await dismissRestorePrompt();
+  };
+
+  const onSkip = async () => {
+    if (busy) return;
+    await dismissRestorePrompt();
+  };
+
+  return (
+    <Modal visible transparent animationType="fade" statusBarTranslucent>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <View
+          style={{
+            width: '100%',
+            maxWidth: 360,
+            backgroundColor: '#fff',
+            borderRadius: 18,
+            padding: 24,
+            shadowColor: '#000',
+            shadowOpacity: 0.25,
+            shadowOffset: { width: 0, height: 8 },
+            shadowRadius: 16,
+            elevation: 18,
+          }}
+        >
+          <Text style={{ fontSize: 19, fontWeight: '700', color: '#111', textAlign: 'center', marginBottom: 8 }}>
+            Restaurar dados do Chatyy?
+          </Text>
+          <Text style={{ fontSize: 14, color: '#555', textAlign: 'center', lineHeight: 20, marginBottom: 20 }}>
+            Encontramos um backup na nuvem. Você pode restaurar suas conversas e mídias agora, ou começar do zero.
+          </Text>
+          {busy ? (
+            <View style={{ alignItems: 'center', paddingVertical: 16 }}>
+              <ActivityIndicator size="large" color="#7C3AED" />
+              {!!progressMsg && (
+                <Text style={{ marginTop: 12, fontSize: 13, color: '#666' }}>{progressMsg}</Text>
+              )}
+            </View>
+          ) : (
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <Pressable
+                onPress={onSkip}
+                style={({ pressed }) => ({
+                  flex: 1,
+                  paddingVertical: 12,
+                  borderRadius: 12,
+                  backgroundColor: 'rgba(0,0,0,0.06)',
+                  alignItems: 'center',
+                  opacity: pressed ? 0.7 : 1,
+                })}
+              >
+                <Text style={{ fontSize: 15, fontWeight: '600', color: '#111' }}>Começar do zero</Text>
+              </Pressable>
+              <Pressable
+                onPress={onRestore}
+                style={({ pressed }) => ({
+                  flex: 1,
+                  paddingVertical: 12,
+                  borderRadius: 12,
+                  backgroundColor: '#7C3AED',
+                  alignItems: 'center',
+                  opacity: pressed ? 0.85 : 1,
+                })}
+              >
+                <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff' }}>Restaurar</Text>
+              </Pressable>
+            </View>
+          )}
+        </View>
+      </View>
+    </Modal>
   );
 }
 
