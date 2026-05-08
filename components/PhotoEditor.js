@@ -102,25 +102,51 @@ function IconSun({ size = 22, color = '#fff' }) {
 
 // ── Constants ──
 
-// Tab order: spatial transforms first (crop/rotate), then color (filters/adjust),
-// then on-top overlays (text/sticker/blur). Overlays only get baked into the
-// output on web (canvas path) for now — native flatten would need
-// react-native-view-shot, marked TODO in the save fn.
-const TABS = ['crop', 'rotate', 'filters', 'adjust', 'text', 'sticker', 'blur'];
+// Brand color (Chatyy purple). Sourced once so we can use it inline as a
+// gradient stop / pill background without pulling theme on every paint.
+const BRAND = '#7C3AED';
+const BRAND_DARK = '#5B21B6';
 
-// Pen/text colors — small palette per the design brief (3-4 colors).
-const PEN_COLORS = ['#ffffff', '#FF3B30', '#FFCC00', '#0A84FF'];
+// Tab order matches the design brief: Filtros first (most-used color path),
+// then Texto, Adesivos, Desenho, Cortar, Brilho, Música, Tag pessoas. The
+// adjust/rotate/blur paths still exist under the hood and are reachable from
+// the redesigned toolbar — `draw` / `music` / `tag` are placeholders that
+// surface UI but no-op for now (per task spec).
+const TABS = ['filters', 'text', 'sticker', 'draw', 'crop', 'adjust', 'music', 'tag'];
 
-// Stickers panel — basic emoji set. Tapping inserts the glyph centered
-// onto the photo; user can drag it via PanResponder.
-const STICKER_EMOJI = ['😀', '😂', '😍', '🥳', '🔥', '✨', '❤️', '👍', '👏', '🎉', '💯', '⭐'];
+// Pen/text colors — expanded to 10 swatches per the design brief, plus a
+// trailing "+" custom slot. The "+" entry is a sentinel; tapping it just
+// keeps the current color (real picker is TODO).
+const PEN_COLORS = [
+  '#ffffff', '#000000', '#FF3B30', '#FF9500', '#FFCC00',
+  '#34C759', '#0A84FF', '#5856D6', '#AF52DE', '#FF2D92',
+];
 
+// Stickers panel — grouped into packs (Emoji / GIPHY / Avatares / Branded)
+// per the design brief. The non-Emoji packs are placeholders — tapping the
+// header switches the visible grid; their tiles use the same insert handler
+// so picking still works for Emoji without breaking the API.
+const STICKER_PACKS = [
+  {
+    key: 'emoji',
+    label: 'Emoji',
+    items: ['😀', '😂', '😍', '🥳', '🔥', '✨', '❤️', '👍', '👏', '🎉', '💯', '⭐', '😎', '🤩', '🙌', '💜'],
+  },
+  { key: 'giphy', label: 'GIPHY', items: ['🎬', '🎞️', '📺', '🎥', '🎭', '🎪'] },
+  { key: 'avatars', label: 'Avatares', items: ['🧑', '👩', '👨', '🧒', '👶', '🧓'] },
+  { key: 'branded', label: 'Chatyy', items: ['💬', '✉️', '🔔', '🚀', '⚡', '💎'] },
+];
+
+// Crop aspect chips — Original (free) plus the social-media presets the
+// design brief calls out (Quadrado / Stories / Post). Labels are inline
+// strings since these aren't in i18n yet (placeholder OK per task rules).
 const CROP_RATIOS = [
-  { label: 'photos.free', value: null },
-  { label: '1:1', value: 1 },
+  { label: 'Original', value: null },
+  { label: '1:1', sub: 'Quadrado', value: 1 },
+  { label: '9:16', sub: 'Stories', value: 9 / 16 },
+  { label: '4:5', sub: 'Post', value: 4 / 5 },
   { label: '4:3', value: 4 / 3 },
   { label: '16:9', value: 16 / 9 },
-  { label: '3:2', value: 3 / 2 },
 ];
 
 const FILTERS = [
@@ -193,7 +219,17 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
   const [flipH, setFlipH] = useState(false);
   const [flipV, setFlipV] = useState(false);
   const [selectedFilter, setSelectedFilter] = useState('original');
+  // Filter intensity 0-100 — controls opacity of the filter overlay so
+  // non-Original filters can be dialed in. 100 = full strength (matches
+  // the FILTERS overlay rgba alpha as authored).
+  const [filterIntensity, setFilterIntensity] = useState(100);
   const [brightness, setBrightness] = useState(0); // -100 to 100
+  // Sticker pack selection — index into STICKER_PACKS. Defaults to Emoji.
+  const [stickerPack, setStickerPack] = useState('emoji');
+  // Undo/redo history snapshots. Each entry captures the editable state
+  // (rotation, flips, filter, crop, overlays). Cheap shallow snapshots —
+  // not a true command stack, but good enough for the editor scale.
+  const historyRef = useRef({ past: [], future: [] });
   const [saving, setSaving] = useState(false);
   const [imageSize, setImageSize] = useState({ w: 0, h: 0 });
   const [imageLoaded, setImageLoaded] = useState(false);
@@ -255,11 +291,12 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
   // Reset state when opening
   useEffect(() => {
     if (visible) {
-      setActiveTab('crop');
+      setActiveTab('filters');
       setRotation(0);
       setFlipH(false);
       setFlipV(false);
       setSelectedFilter('original');
+      setFilterIntensity(100);
       setBrightness(0);
       setCropRect({ x: 0, y: 0, w: 1, h: 1 });
       setSelectedRatio(null);
@@ -271,12 +308,68 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
       setActiveOverlayId(null);
       setTextInputValue('');
       setTextColor(PEN_COLORS[0]);
+      setStickerPack('emoji');
+      historyRef.current = { past: [], future: [] };
     }
   }, [visible]);
+
+  // Snapshot current state — used by undo/redo. Tap into the relevant
+  // primitives so we can restore them as a unit. We keep the history
+  // small (last 20 entries) to bound memory.
+  const snapshotState = useCallback(() => ({
+    rotation, flipH, flipV,
+    selectedFilter, filterIntensity, brightness,
+    cropRect, selectedRatio,
+    textItems, stickerItems, blurRegions,
+  }), [rotation, flipH, flipV, selectedFilter, filterIntensity, brightness, cropRect, selectedRatio, textItems, stickerItems, blurRegions]);
+
+  const restoreSnapshot = useCallback((snap) => {
+    if (!snap) return;
+    setRotation(snap.rotation);
+    setFlipH(snap.flipH);
+    setFlipV(snap.flipV);
+    setSelectedFilter(snap.selectedFilter);
+    setFilterIntensity(snap.filterIntensity);
+    setBrightness(snap.brightness);
+    setCropRect(snap.cropRect);
+    setSelectedRatio(snap.selectedRatio);
+    setTextItems(snap.textItems);
+    setStickerItems(snap.stickerItems);
+    setBlurRegions(snap.blurRegions);
+  }, []);
+
+  // Push the CURRENT state to the past stack and drop the future stack
+  // (any redo branch is invalidated once the user makes a fresh edit).
+  // Bound to 20 entries to keep memory in check on long sessions.
+  const pushHistory = useCallback(() => {
+    const h = historyRef.current;
+    h.past.push(snapshotState());
+    if (h.past.length > 20) h.past.shift();
+    h.future = [];
+  }, [snapshotState]);
+
+  const undo = useCallback(() => {
+    const h = historyRef.current;
+    if (!h.past.length) return;
+    const prev = h.past.pop();
+    h.future.push(snapshotState());
+    if (h.future.length > 20) h.future.shift();
+    restoreSnapshot(prev);
+  }, [snapshotState, restoreSnapshot]);
+
+  const redo = useCallback(() => {
+    const h = historyRef.current;
+    if (!h.future.length) return;
+    const next = h.future.pop();
+    h.past.push(snapshotState());
+    if (h.past.length > 20) h.past.shift();
+    restoreSnapshot(next);
+  }, [snapshotState, restoreSnapshot]);
 
   // ── Crop handlers ──
 
   const applyCropRatio = useCallback((ratio) => {
+    pushHistory();
     setSelectedRatio(ratio);
     if (ratio === null) {
       setCropRect({ x: 0, y: 0, w: 1, h: 1 });
@@ -300,7 +393,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
       w: cw,
       h: ch,
     });
-  }, [displayDims]);
+  }, [displayDims, pushHistory]);
 
   // Convert crop rect to pixel coordinates on displayed image
   const cropPixels = useMemo(() => ({
@@ -391,6 +484,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
   const addTextItem = useCallback(() => {
     const value = (textInputValue || '').trim();
     if (!value) return;
+    pushHistory();
     const id = genId();
     setTextItems(prev => [...prev, {
       id,
@@ -403,9 +497,10 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
     }]);
     setActiveOverlayId(id);
     setTextInputValue('');
-  }, [textInputValue, textColor, cropPixels]);
+  }, [textInputValue, textColor, cropPixels, pushHistory]);
 
   const addStickerItem = useCallback((emoji) => {
+    pushHistory();
     const id = genId();
     setStickerItems(prev => [...prev, {
       id,
@@ -415,9 +510,10 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
       size: 56,
     }]);
     setActiveOverlayId(id);
-  }, [cropPixels]);
+  }, [cropPixels, pushHistory]);
 
   const addBlurRegion = useCallback(() => {
+    pushHistory();
     const id = genId();
     const w = Math.min(160, cropPixels.w * 0.5);
     const h = Math.min(160, cropPixels.h * 0.5);
@@ -429,14 +525,15 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
       intensity: 0.7,
     }]);
     setActiveOverlayId(id);
-  }, [cropPixels]);
+  }, [cropPixels, pushHistory]);
 
   const removeOverlay = useCallback((id) => {
+    pushHistory();
     setTextItems(prev => prev.filter(t => t.id !== id));
     setStickerItems(prev => prev.filter(s => s.id !== id));
     setBlurRegions(prev => prev.filter(b => b.id !== id));
     if (activeOverlayId === id) setActiveOverlayId(null);
-  }, [activeOverlayId]);
+  }, [activeOverlayId, pushHistory]);
 
   // PanResponder factory for moving an overlay item by id+kind.
   // Mirrors the crop-handle pattern: capture starting pos on grant, then
@@ -470,10 +567,10 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
 
   // ── Rotate / Flip ──
 
-  const rotateLeft = useCallback(() => setRotation(r => (r + 270) % 360), []);
-  const rotateRight = useCallback(() => setRotation(r => (r + 90) % 360), []);
-  const toggleFlipH = useCallback(() => setFlipH(v => !v), []);
-  const toggleFlipV = useCallback(() => setFlipV(v => !v), []);
+  const rotateLeft = useCallback(() => { pushHistory(); setRotation(r => (r + 270) % 360); }, [pushHistory]);
+  const rotateRight = useCallback(() => { pushHistory(); setRotation(r => (r + 90) % 360); }, [pushHistory]);
+  const toggleFlipH = useCallback(() => { pushHistory(); setFlipH(v => !v); }, [pushHistory]);
+  const toggleFlipV = useCallback(() => { pushHistory(); setFlipV(v => !v); }, [pushHistory]);
 
   // ── Reset ──
 
@@ -482,6 +579,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
     setFlipH(false);
     setFlipV(false);
     setSelectedFilter('original');
+    setFilterIntensity(100);
     setBrightness(0);
     setCropRect({ x: 0, y: 0, w: 1, h: 1 });
     setSelectedRatio(null);
@@ -626,12 +724,13 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
         ctx.fillRect(0, 0, cw, ch);
       }
 
-      // Apply filter overlay
+      // Apply filter overlay (scaled by user-selected intensity 0-100).
       const filter = FILTERS.find(f => f.key === selectedFilter);
       if (filter?.overlay) {
-        ctx.globalAlpha = 1;
+        ctx.globalAlpha = Math.max(0, Math.min(1, filterIntensity / 100));
         ctx.fillStyle = filter.overlay;
         ctx.fillRect(0, 0, cw, ch);
+        ctx.globalAlpha = 1;
       }
       if (filter?.grayscale) {
         const imgData = ctx.getImageData(0, 0, cw, ch);
@@ -714,7 +813,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
       console.warn('Canvas save error:', err);
       return null;
     }
-  }, [imageUri, rotation, flipH, flipV, cropRect, brightness, selectedFilter, textItems, stickerItems, blurRegions, displayDims]);
+  }, [imageUri, rotation, flipH, flipV, cropRect, brightness, selectedFilter, filterIntensity, textItems, stickerItems, blurRegions, displayDims]);
 
   // ── Filter overlay for current filter ──
   const currentFilter = useMemo(() => FILTERS.find(f => f.key === selectedFilter), [selectedFilter]);
@@ -731,6 +830,19 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
     },
   }), [brightness, screenW]);
 
+  // ── Filter intensity slider (0-100) ──
+  // Same gesture math as brightness but mapped to a 0-100 range. Touch
+  // anywhere on the track jumps the knob; drag adjusts incrementally.
+  const filterIntensityPan = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => true,
+    onMoveShouldSetPanResponder: () => true,
+    onPanResponderMove: (e, gs) => {
+      const sliderW = screenW - 80;
+      const pct = Math.max(0, Math.min(100, filterIntensity + (gs.dx / sliderW) * 100));
+      setFilterIntensity(Math.round(pct));
+    },
+  }), [filterIntensity, screenW]);
+
   // ── Render ──
 
   if (!visible) return null;
@@ -746,63 +858,128 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
     dramatic: t('photos.dramatic'),
   };
 
+  // Each tab icon is rendered at 24px so the 44pt hit target reads as a
+  // proper toolbar item (vs the cramped 20px we had before). Active tabs
+  // paint white; inactive go to textTertiary-ish #888 so contrast still
+  // pops on the black tray. Music + Tag are placeholders (no panel yet).
+  const tabIconColor = (key) => activeTab === key ? '#fff' : '#888';
   const tabIcons = {
-    crop: <IconCrop size={20} color={activeTab === 'crop' ? colors.primary : '#aaa'} />,
-    rotate: <IconRotateCw size={20} color={activeTab === 'rotate' ? colors.primary : '#aaa'} />,
-    filters: <IconFilters size={20} color={activeTab === 'filters' ? colors.primary : '#aaa'} />,
-    adjust: <IconSliders size={20} color={activeTab === 'adjust' ? colors.primary : '#aaa'} />,
-    text: <Text style={{ fontSize: 16, fontWeight: '900', color: activeTab === 'text' ? colors.primary : '#aaa' }}>T</Text>,
-    sticker: <Text style={{ fontSize: 18 }}>{activeTab === 'sticker' ? '😀' : '🙂'}</Text>,
-    blur: (
-      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={activeTab === 'blur' ? colors.primary : '#aaa'} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-        <Circle cx="6" cy="12" r="2" />
-        <Circle cx="12" cy="12" r="2" />
-        <Circle cx="18" cy="12" r="2" />
-        <Circle cx="9" cy="6" r="1.5" />
-        <Circle cx="15" cy="6" r="1.5" />
-        <Circle cx="9" cy="18" r="1.5" />
-        <Circle cx="15" cy="18" r="1.5" />
+    filters: <IconFilters size={24} color={tabIconColor('filters')} />,
+    text: (
+      <Svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke={tabIconColor('text')} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+        <Path d="M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2" />
+        <Path d="M9 20h6" />
+        <Path d="M12 4v16" />
+      </Svg>
+    ),
+    sticker: (
+      <Svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke={tabIconColor('sticker')} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+        <Path d="M15.5 3H7a4 4 0 0 0-4 4v10a4 4 0 0 0 4 4h7l7-7V8.5z" />
+        <Path d="M15 21v-5a2 2 0 0 1 2-2h4" />
+        <Circle cx="9" cy="10" r="1" />
+        <Circle cx="14" cy="10" r="1" />
+        <Path d="M9 14c.5 1 1.5 1.5 2.5 1.5S13.5 15 14 14" />
+      </Svg>
+    ),
+    draw: (
+      <Svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke={tabIconColor('draw')} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+        <Path d="M12 19l7-7 3 3-7 7-3-3z" />
+        <Path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18z" />
+        <Path d="M2 2l7.5 7.5" />
+        <Circle cx="11" cy="11" r="2" />
+      </Svg>
+    ),
+    crop: <IconCrop size={24} color={tabIconColor('crop')} />,
+    adjust: <IconSun size={24} color={tabIconColor('adjust')} />,
+    music: (
+      <Svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke={tabIconColor('music')} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+        <Path d="M9 18V5l12-2v13" />
+        <Circle cx="6" cy="18" r="3" />
+        <Circle cx="18" cy="16" r="3" />
+      </Svg>
+    ),
+    tag: (
+      <Svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke={tabIconColor('tag')} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+        <Path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+        <Circle cx="12" cy="7" r="4" />
       </Svg>
     ),
   };
 
-  // Reuse photos.* keys when present, fall back to English label inline (no
-  // new i18n keys per task constraints).
+  // Reuse photos.* keys when present, fall back to PT-BR label inline (no
+  // new i18n keys per task constraints — placeholder labels are okay).
   const tabLabels = {
-    crop: t('photos.crop'),
-    rotate: t('photos.rotate'),
-    filters: t('photos.filters'),
-    adjust: t('photos.adjust'),
-    text: t('photos.text') || 'Text',
-    sticker: t('photos.sticker') || 'Sticker',
-    blur: t('photos.blur') || 'Blur',
+    filters: t('photos.filters') || 'Filtros',
+    text: t('photos.text') || 'Texto',
+    sticker: 'Adesivos',
+    draw: 'Desenho',
+    crop: t('photos.crop') || 'Cortar',
+    adjust: 'Brilho',
+    music: 'Música',
+    tag: 'Marcar',
   };
+
+  const canUndo = historyRef.current.past.length > 0;
+  const canRedo = historyRef.current.future.length > 0;
 
   return (
     <Modal visible={visible} animationType="fade" transparent={false} onRequestClose={onClose}>
       <View style={s.container}>
-        {/* Top bar */}
+        {/* Top bar — X on the left, "Próximo" pill on the right (primary
+            purple). Reset is folded into a small icon pill in the middle so
+            users still have the safety hatch without crowding the header. */}
         <View style={s.topBar}>
-          <TouchableOpacity onPress={onClose} style={s.topBtn} accessibilityLabel={t('common.cancel')}>
-            <IconX size={24} color="#fff" />
+          <TouchableOpacity onPress={onClose} style={s.topIconBtn} accessibilityLabel={t('common.cancel')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <IconX size={26} color="#fff" />
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={resetAll} style={s.topBtn}>
-            <IconRefresh size={20} color="#fff" />
-            <Text style={s.topBtnText}>{t('photos.reset')}</Text>
+          <TouchableOpacity onPress={resetAll} style={s.resetPill} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+            <IconRefresh size={14} color="#fff" />
+            <Text style={s.resetPillText}>{t('photos.reset')}</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             onPress={handleSave}
-            style={[s.topBtn, s.saveBtn]}
+            style={[s.nextPill, saving && { opacity: 0.6 }]}
             disabled={saving}
             accessibilityLabel={t('photos.save')}
+            activeOpacity={0.85}
           >
             {saving ? (
               <ActivityIndicator size="small" color="#fff" />
             ) : (
-              <IconCheck size={24} color="#fff" />
+              <Text style={s.nextPillText}>{t('photos.next') || t('common.next') || 'Próximo'}</Text>
             )}
+          </TouchableOpacity>
+        </View>
+
+        {/* Undo/redo — vertical stack pinned top-right under the header.
+            Sits above the image area with a translucent black tray so the
+            icons stay legible on bright photos. Disabled state dims to 0.3. */}
+        <View style={s.undoRedoStack} pointerEvents="box-none">
+          <TouchableOpacity
+            onPress={undo}
+            disabled={!canUndo}
+            style={[s.undoRedoBtn, !canUndo && { opacity: 0.3 }]}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            accessibilityLabel="Undo"
+          >
+            <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+              <Path d="M9 14L4 9l5-5" />
+              <Path d="M4 9h11a5 5 0 0 1 0 10h-4" />
+            </Svg>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={redo}
+            disabled={!canRedo}
+            style={[s.undoRedoBtn, !canRedo && { opacity: 0.3 }]}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            accessibilityLabel="Redo"
+          >
+            <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+              <Path d="M15 14l5-5-5-5" />
+              <Path d="M20 9H9a5 5 0 0 0 0 10h4" />
+            </Svg>
           </TouchableOpacity>
         </View>
 
@@ -832,13 +1009,14 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
                 resizeMode="contain"
               />
 
-              {/* Filter overlay */}
+              {/* Filter overlay — opacity reflects intensity slider */}
               {currentFilter?.overlay && (
                 <View
                   style={[s.filterOverlay, {
                     width: displayDims.w,
                     height: displayDims.h,
                     backgroundColor: currentFilter.overlay,
+                    opacity: Math.max(0, Math.min(1, filterIntensity / 100)),
                   }]}
                   pointerEvents="none"
                 />
@@ -1017,78 +1195,129 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
           {/* Tab-specific controls */}
           <View style={s.controlContent}>
             {activeTab === 'crop' && (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.ratioRow}>
-                {CROP_RATIOS.map((r) => {
-                  const isActive = selectedRatio === r.value;
-                  const label = r.value === null ? t(r.label) : r.label;
-                  return (
-                    <TouchableOpacity
-                      key={r.label}
-                      style={[s.ratioBtn, isActive && s.ratioBtnActive]}
-                      onPress={() => applyCropRatio(r.value)}
-                    >
-                      <Text style={[s.ratioBtnText, isActive && s.ratioBtnTextActive]}>{label}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            )}
-
-            {activeTab === 'rotate' && (
-              <View style={s.rotateRow}>
-                <TouchableOpacity style={s.rotateBtn} onPress={rotateLeft}>
-                  <IconRotateCcw size={26} color="#fff" />
-                  <Text style={s.rotateBtnText}>{t('photos.rotateLeft')}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={s.rotateBtn} onPress={rotateRight}>
-                  <IconRotateCw size={26} color="#fff" />
-                  <Text style={s.rotateBtnText}>{t('photos.rotateRight')}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[s.rotateBtn, flipH && s.activeTool]} onPress={toggleFlipH}>
-                  <IconFlipH size={26} color="#fff" />
-                  <Text style={s.rotateBtnText}>{t('photos.flipH')}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[s.rotateBtn, flipV && s.activeTool]} onPress={toggleFlipV}>
-                  <IconFlipV size={26} color="#fff" />
-                  <Text style={s.rotateBtnText}>{t('photos.flipV')}</Text>
-                </TouchableOpacity>
+              <View>
+                {/* Rotate / flip helpers stay reachable from crop tab — they
+                    were previously gated behind a "rotate" tab but the new
+                    8-slot toolbar drops that tab to make room for music/tag.
+                    Compact 36pt icon row above the aspect chips. */}
+                <View style={s.cropTransformRow}>
+                  <TouchableOpacity style={s.transformBtn} onPress={rotateLeft}>
+                    <IconRotateCcw size={20} color="#fff" />
+                  </TouchableOpacity>
+                  <TouchableOpacity style={s.transformBtn} onPress={rotateRight}>
+                    <IconRotateCw size={20} color="#fff" />
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[s.transformBtn, flipH && s.transformBtnActive]} onPress={toggleFlipH}>
+                    <IconFlipH size={20} color="#fff" />
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[s.transformBtn, flipV && s.transformBtnActive]} onPress={toggleFlipV}>
+                    <IconFlipV size={20} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.ratioRow}>
+                  {CROP_RATIOS.map((r) => {
+                    const isActive = selectedRatio === r.value;
+                    return (
+                      <TouchableOpacity
+                        key={r.label}
+                        style={[s.ratioBtn, isActive && s.ratioBtnActive]}
+                        onPress={() => applyCropRatio(r.value)}
+                        activeOpacity={0.85}
+                      >
+                        <Text style={[s.ratioBtnText, isActive && s.ratioBtnTextActive]}>{r.label}</Text>
+                        {r.sub && (
+                          <Text style={[s.ratioBtnSub, isActive && s.ratioBtnSubActive]}>{r.sub}</Text>
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
               </View>
             )}
 
+            {/* rotate tab folded into crop — see s.cropTransformRow above */}
+
             {activeTab === 'filters' && (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.filterRow}>
-                {FILTERS.map((f) => {
-                  const isActive = selectedFilter === f.key;
-                  return (
-                    <TouchableOpacity
-                      key={f.key}
-                      style={[s.filterItem, isActive && s.filterItemActive]}
-                      onPress={() => setSelectedFilter(f.key)}
-                    >
-                      <View style={s.filterThumb}>
-                        {imageUri && (
-                          <Image
-                            source={{ uri: imageUri }}
-                            style={[
-                              s.filterThumbImg,
-                              f.grayscale && Platform.OS === 'web' && {
-                                filter: 'grayscale(1)',
-                              },
-                            ]}
-                            resizeMode="cover"
-                          />
-                        )}
-                        {f.overlay && (
-                          <View style={[s.filterThumbOverlay, { backgroundColor: f.overlay }]} />
-                        )}
-                      </View>
-                      <Text style={[s.filterLabel, isActive && s.filterLabelActive]}>
-                        {filterI18n[f.key] || f.key}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
+              <View>
+                {/* Intensity slider — only meaningful for non-Original
+                    filters. Hides for Original to avoid no-op UI. The
+                    track uses a purple→darker-purple gradient via two
+                    layered fills (web also gets the real CSS gradient). */}
+                {selectedFilter !== 'original' && (
+                  <View style={s.intensityRow}>
+                    <Text style={s.intensityLabel}>{Math.round(filterIntensity)}</Text>
+                    <View style={s.intensitySliderContainer}>
+                      <View style={s.intensityTrackBg} />
+                      <View
+                        style={[
+                          s.intensityTrackFill,
+                          {
+                            width: `${filterIntensity}%`,
+                            ...(Platform.OS === 'web'
+                              ? { backgroundImage: `linear-gradient(90deg, ${BRAND_DARK}, ${BRAND})` }
+                              : { backgroundColor: BRAND }
+                            ),
+                          },
+                        ]}
+                      />
+                      <View
+                        style={[s.intensityKnob, { left: `${filterIntensity}%` }]}
+                        {...filterIntensityPan.panHandlers}
+                      />
+                      <TouchableOpacity
+                        style={s.sliderTapArea}
+                        activeOpacity={1}
+                        onPress={(e) => {
+                          const sliderW = screenW - 100;
+                          const tapX = e.nativeEvent.locationX;
+                          const pct = Math.round((tapX / sliderW) * 100);
+                          setFilterIntensity(Math.max(0, Math.min(100, pct)));
+                        }}
+                      />
+                    </View>
+                  </View>
+                )}
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.filterRow}>
+                  {FILTERS.map((f) => {
+                    const isActive = selectedFilter === f.key;
+                    return (
+                      <TouchableOpacity
+                        key={f.key}
+                        style={s.filterItem}
+                        onPress={() => {
+                          if (selectedFilter !== f.key) pushHistory();
+                          setSelectedFilter(f.key);
+                          // Reset to full strength when picking a new filter
+                          // so the user immediately sees the effect.
+                          setFilterIntensity(100);
+                        }}
+                        activeOpacity={0.85}
+                      >
+                        <View style={[s.filterThumb, isActive && s.filterThumbActive]}>
+                          {imageUri && (
+                            <Image
+                              source={{ uri: imageUri }}
+                              style={[
+                                s.filterThumbImg,
+                                f.grayscale && Platform.OS === 'web' && {
+                                  filter: 'grayscale(1)',
+                                },
+                              ]}
+                              resizeMode="cover"
+                            />
+                          )}
+                          {f.overlay && (
+                            <View style={[s.filterThumbOverlay, { backgroundColor: f.overlay }]} />
+                          )}
+                        </View>
+                        <Text style={[s.filterLabel, isActive && s.filterLabelActive]} numberOfLines={1}>
+                          {filterI18n[f.key] || f.key}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
             )}
 
             {activeTab === 'text' && (
@@ -1097,7 +1326,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
                   <TextInput
                     value={textInputValue}
                     onChangeText={setTextInputValue}
-                    placeholder={t('photos.text') || 'Type text…'}
+                    placeholder={t('photos.text') || 'Toque na foto e digite…'}
                     placeholderTextColor="#888"
                     style={s.textInput}
                     onSubmitEditing={addTextItem}
@@ -1112,40 +1341,94 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
                     <Text style={s.textAddBtnLabel}>+</Text>
                   </TouchableOpacity>
                 </View>
-                <View style={s.colorRow}>
+                {/* 10 colors in a single row + a "+" custom slot. The custom
+                    slot is a placeholder (real picker is TODO); pressing it
+                    just resets to white so users see immediate feedback. */}
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.colorRow}>
                   {PEN_COLORS.map(c => (
                     <TouchableOpacity
                       key={c}
                       onPress={() => setTextColor(c)}
-                      style={[s.colorSwatch, { backgroundColor: c, borderWidth: textColor === c ? 2 : 1 }]}
+                      style={[
+                        s.colorSwatch,
+                        {
+                          backgroundColor: c,
+                          borderColor: textColor === c ? '#fff' : 'rgba(255,255,255,0.4)',
+                          borderWidth: textColor === c ? 2.5 : 1,
+                        },
+                      ]}
+                      activeOpacity={0.8}
                     />
                   ))}
-                </View>
+                  <TouchableOpacity
+                    onPress={() => setTextColor('#ffffff')}
+                    style={s.colorCustomBtn}
+                    activeOpacity={0.8}
+                  >
+                    <Svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                      <Path d="M12 5v14" />
+                      <Path d="M5 12h14" />
+                    </Svg>
+                  </TouchableOpacity>
+                </ScrollView>
               </View>
             )}
 
             {activeTab === 'sticker' && (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.stickerRow}>
-                {STICKER_EMOJI.map((em) => (
-                  <TouchableOpacity
-                    key={em}
-                    onPress={() => addStickerItem(em)}
-                    style={s.stickerBtn}
-                  >
-                    <Text style={{ fontSize: 28 }}>{em}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
+              <View>
+                {/* Pack tabs as pills — only the active pack's grid renders.
+                    Non-emoji packs are placeholders per task spec. */}
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.stickerPackRow}>
+                  {STICKER_PACKS.map(pack => {
+                    const active = pack.key === stickerPack;
+                    return (
+                      <TouchableOpacity
+                        key={pack.key}
+                        onPress={() => setStickerPack(pack.key)}
+                        style={[s.stickerPackPill, active && s.stickerPackPillActive]}
+                      >
+                        <Text style={[s.stickerPackLabel, active && s.stickerPackLabelActive]}>{pack.label}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.stickerRow}>
+                  {(STICKER_PACKS.find(p => p.key === stickerPack)?.items || []).map((em, idx) => (
+                    <TouchableOpacity
+                      key={`${em}-${idx}`}
+                      onPress={() => addStickerItem(em)}
+                      style={s.stickerBtn}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={{ fontSize: 28 }}>{em}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
             )}
 
-            {activeTab === 'blur' && (
-              <View style={s.blurPanel}>
+            {activeTab === 'draw' && (
+              <View style={s.placeholderPanel}>
                 <TouchableOpacity onPress={addBlurRegion} style={s.blurAddBtn}>
-                  <Text style={s.blurAddBtnLabel}>+ {t('photos.blur') || 'Blur region'}</Text>
+                  <Text style={s.blurAddBtnLabel}>+ Pincel (em breve)</Text>
                 </TouchableOpacity>
-                <Text style={s.blurHint}>
-                  {t('photos.blurHint') || 'Drag the region over what you want to hide.'}
+                <Text style={s.placeholderHint}>
+                  Desenhe livre na foto. Cores e espessura em breve.
                 </Text>
+              </View>
+            )}
+
+            {activeTab === 'music' && (
+              <View style={s.placeholderPanel}>
+                <Text style={s.placeholderTitle}>Música</Text>
+                <Text style={s.placeholderHint}>Adicione uma trilha. Em breve.</Text>
+              </View>
+            )}
+
+            {activeTab === 'tag' && (
+              <View style={s.placeholderPanel}>
+                <Text style={s.placeholderTitle}>Marcar pessoas</Text>
+                <Text style={s.placeholderHint}>Toque na foto para marcar amigos. Em breve.</Text>
               </View>
             )}
 
@@ -1230,21 +1513,69 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.8)',
     zIndex: 10,
   },
-  topBtn: {
+  // Bare X / refresh icon — no pill background. 44pt hit target.
+  topIconBtn: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  resetPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 8,
-    gap: 6,
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.12)',
   },
-  topBtnText: {
+  resetPillText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  // Próximo pill — primary purple, white text, generous radius. Becomes
+  // the visual anchor on the right of the header.
+  nextPill: {
+    backgroundColor: BRAND,
+    paddingHorizontal: 18,
+    paddingVertical: 9,
+    borderRadius: 22,
+    minWidth: 92,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: BRAND,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  nextPillText: {
     color: '#fff',
     fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
-  saveBtn: {
-    backgroundColor: '#7C3AED',
-    borderRadius: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+  // Undo/redo vertical stack pinned just under the header on the right.
+  // Sits above the image area as a floating tray so it doesn't push the
+  // photo down. Top must clear topBar (56) + a small 8 gap.
+  undoRedoStack: {
+    position: 'absolute',
+    top: 64,
+    right: 10,
+    zIndex: 9,
+    flexDirection: 'column',
+    gap: 6,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderRadius: 22,
+    padding: 4,
+  },
+  undoRedoBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   imageArea: {
     flex: 1,
@@ -1336,33 +1667,63 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   tabBarScroll: {
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.1)',
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(255,255,255,0.08)',
   },
+  // Toolbar — horizontal scroll, big 44pt hit target per item, 10/600
+  // textTertiary label below each icon. Active item gets a subtle white
+  // background pill + white label so it pops on a busy photo.
   tabBar: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingHorizontal: 8,
+    paddingHorizontal: 6,
     paddingVertical: 10,
-    paddingBottom: 20,
-    gap: 4,
-    flexGrow: 1,
+    paddingBottom: 22,
+    gap: 2,
   },
   tabItem: {
     alignItems: 'center',
-    padding: 6,
-    minWidth: 60,
+    justifyContent: 'flex-start',
+    minWidth: 64,
+    height: 60,
+    paddingTop: 6,
+    paddingHorizontal: 6,
+    borderRadius: 14,
   },
-  tabItemActive: {},
+  tabItemActive: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
   tabText: {
     color: '#888',
-    fontSize: 11,
-    marginTop: 3,
+    fontSize: 10,
+    fontWeight: '600',
+    marginTop: 6,
+    letterSpacing: 0.1,
   },
   tabTextActive: {
-    color: '#7C3AED',
+    color: '#fff',
+    fontWeight: '700',
   },
-  // Crop ratios
+  // Crop ratios — chips with optional sub-label (Quadrado/Stories/Post).
+  // Stacked label/sub uses a tighter line-height so the chip height stays
+  // close to single-line variants.
+  cropTransformRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 14,
+    paddingBottom: 10,
+  },
+  transformBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  transformBtnActive: {
+    backgroundColor: 'rgba(124,58,237,0.4)',
+  },
   ratioRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1370,23 +1731,36 @@ const s = StyleSheet.create({
     gap: 8,
   },
   ratioBtn: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    minWidth: 64,
   },
   ratioBtnActive: {
-    backgroundColor: '#7C3AED',
-    borderColor: '#7C3AED',
+    backgroundColor: BRAND,
+    borderColor: BRAND,
   },
   ratioBtnText: {
     color: '#ccc',
     fontSize: 13,
+    fontWeight: '600',
   },
   ratioBtnTextActive: {
     color: '#fff',
-    fontWeight: '600',
+    fontWeight: '700',
+  },
+  ratioBtnSub: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 9,
+    fontWeight: '500',
+    marginTop: 1,
+    letterSpacing: 0.2,
+  },
+  ratioBtnSubActive: {
+    color: 'rgba(255,255,255,0.85)',
   },
   // Rotate
   rotateRow: {
@@ -1408,24 +1782,83 @@ const s = StyleSheet.create({
   activeTool: {
     backgroundColor: 'rgba(124, 58, 237, 0.3)',
   },
-  // Filters
+  // Filters — filmstrip with 60×80 thumbnails. Active gets a 2px white
+  // border per the design spec (vs the brand color we used to use). The
+  // intensity slider sits above the strip and only renders when a
+  // non-Original filter is selected.
+  intensityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    paddingBottom: 6,
+    gap: 10,
+  },
+  intensityLabel: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+    minWidth: 28,
+    textAlign: 'center',
+  },
+  intensitySliderContainer: {
+    flex: 1,
+    height: 28,
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  intensityTrackBg: {
+    position: 'absolute',
+    left: 0, right: 0,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    top: 12,
+  },
+  intensityTrackFill: {
+    position: 'absolute',
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: BRAND,
+    top: 12,
+    left: 0,
+  },
+  intensityKnob: {
+    position: 'absolute',
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: BRAND,
+    marginLeft: -9,
+    top: 5,
+    borderWidth: 2,
+    borderColor: '#fff',
+    shadowColor: BRAND,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.5,
+    shadowRadius: 4,
+    elevation: 4,
+    ...Platform.select({ web: { cursor: 'grab' }, default: {} }),
+  },
   filterRow: {
     flexDirection: 'row',
     paddingHorizontal: 12,
-    gap: 10,
+    paddingTop: 4,
+    gap: 8,
   },
   filterItem: {
     alignItems: 'center',
     width: 64,
   },
-  filterItemActive: {},
   filterThumb: {
-    width: 56,
-    height: 56,
-    borderRadius: 8,
+    width: 60,
+    height: 80,
+    borderRadius: 10,
     overflow: 'hidden',
     borderWidth: 2,
     borderColor: 'transparent',
+  },
+  filterThumbActive: {
+    borderColor: '#fff',
   },
   filterThumbImg: {
     width: '100%',
@@ -1435,14 +1868,16 @@ const s = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
   },
   filterLabel: {
-    color: '#999',
+    color: '#aaa',
     fontSize: 10,
-    marginTop: 4,
+    fontWeight: '600',
+    marginTop: 5,
     textAlign: 'center',
+    letterSpacing: 0.2,
   },
   filterLabelActive: {
-    color: '#7C3AED',
-    fontWeight: '600',
+    color: '#fff',
+    fontWeight: '700',
   },
   // Adjust
   adjustPanel: {
@@ -1542,17 +1977,53 @@ const s = StyleSheet.create({
   },
   colorRow: {
     flexDirection: 'row',
-    gap: 12,
-    marginTop: 10,
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 12,
     paddingHorizontal: 4,
   },
   colorSwatch: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    borderColor: '#fff',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
   },
-  // Sticker panel
+  colorCustomBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.4)',
+    borderStyle: 'dashed',
+  },
+  // Sticker pack pills + grid
+  stickerPackRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingBottom: 8,
+    gap: 8,
+  },
+  stickerPackPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  stickerPackPillActive: {
+    backgroundColor: BRAND,
+  },
+  stickerPackLabel: {
+    color: '#aaa',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  stickerPackLabelActive: {
+    color: '#fff',
+    fontWeight: '700',
+  },
   stickerRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1566,6 +2037,23 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.06)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  // Generic placeholder (draw / music / tag — features TODO)
+  placeholderPanel: {
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    alignItems: 'center',
+    gap: 4,
+  },
+  placeholderTitle: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  placeholderHint: {
+    color: '#888',
+    fontSize: 11,
+    textAlign: 'center',
   },
   // Blur panel
   blurPanel: {

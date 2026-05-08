@@ -9,7 +9,7 @@ import {
   IconHeart, IconHeartOutline, IconMessageCircle, IconShare,
   IconBookmark, IconBookmarkFilled, IconMusic, IconPlay, IconPause,
   IconX, IconSend, IconChevronDown, IconCamera, IconVolume2, IconVolumeX, IconEye,
-  IconRepeat, IconLink, IconCopy,
+  IconRepeat, IconLink, IconCopy, IconMoreHorizontal,
 } from './Icons';
 import * as api from '../services/api';
 
@@ -561,6 +561,64 @@ const PauseFlash = memo(function PauseFlash({ visible }) {
   );
 });
 
+// ── Heart Particle Burst ──
+// Eight tiny hearts radiate from the center on like — TikTok-grade fizz
+// that sells the action. Each particle gets its own translation vector
+// (computed from index → angle) plus its own scale/opacity timeline.
+// Mounted only briefly via `key` change so the parent can retrigger
+// without us tracking visibility ourselves.
+const HeartParticleBurst = memo(function HeartParticleBurst() {
+  const COUNT = 8;
+  const particles = useRef(
+    Array.from({ length: COUNT }, () => ({
+      tx: new Animated.Value(0),
+      ty: new Animated.Value(0),
+      scale: new Animated.Value(0),
+      opacity: new Animated.Value(1),
+    }))
+  ).current;
+
+  useEffect(() => {
+    const anims = particles.map((p, i) => {
+      const angle = (i / COUNT) * Math.PI * 2;
+      const radius = 70 + Math.random() * 30;
+      const dx = Math.cos(angle) * radius;
+      const dy = Math.sin(angle) * radius - 20; // slight upward bias
+      p.tx.setValue(0);
+      p.ty.setValue(0);
+      p.scale.setValue(0);
+      p.opacity.setValue(1);
+      return Animated.parallel([
+        Animated.timing(p.tx, { toValue: dx, duration: 700, useNativeDriver: true }),
+        Animated.timing(p.ty, { toValue: dy, duration: 700, useNativeDriver: true }),
+        Animated.sequence([
+          Animated.spring(p.scale, { toValue: 1, tension: 200, friction: 8, useNativeDriver: true }),
+          Animated.timing(p.scale, { toValue: 0.4, duration: 280, useNativeDriver: true }),
+        ]),
+        Animated.timing(p.opacity, { toValue: 0, duration: 700, delay: 100, useNativeDriver: true }),
+      ]);
+    });
+    Animated.parallel(anims).start();
+  }, []);
+
+  return (
+    <View pointerEvents="none" style={styles.particleBurstWrap}>
+      {particles.map((p, i) => (
+        <Animated.View
+          key={i}
+          style={{
+            position: 'absolute',
+            transform: [{ translateX: p.tx }, { translateY: p.ty }, { scale: p.scale }],
+            opacity: p.opacity,
+          }}
+        >
+          <IconHeart size={18} color="#FF2D55" />
+        </Animated.View>
+      ))}
+    </View>
+  );
+});
+
 // ── Share Bottom Sheet ──
 // In-app drawer offering Repost / Copy link / External share. Replaces the
 // previous one-shot navigator.share() call so users can pick a destination
@@ -630,6 +688,9 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
   const [progress, setProgress] = useState(0);
   const [currentMs, setCurrentMs] = useState(0);
   const [showPauseFlash, setShowPauseFlash] = useState(false);
+  // Burst particle key — bump to remount HeartParticleBurst so the
+  // animation reruns on every double-tap or like-button trigger.
+  const [particleKey, setParticleKey] = useState(0);
   const [viewCount, setViewCount] = useState(Number(reel.view_count) || 0);
   // Subtitles (TikTok auto-captions). Toggle persists per-session inside
   // this list — defaults to ON when segments are present so first-time
@@ -758,6 +819,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
       }
       return newMuted;
     });
+    try { require('expo-haptics').selectionAsync(); } catch {}
   }, []);
 
   const togglePause = useCallback(() => {
@@ -820,13 +882,17 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
     const wasLiked = liked;
     setLiked(!wasLiked);
     setLikeCount(prev => wasLiked ? Math.max(0, prev - 1) : prev + 1);
-    likeScale.setValue(0.5);
-    Animated.spring(likeScale, {
-      toValue: 1,
-      tension: 300,
-      friction: 8,
-      useNativeDriver: true,
-    }).start();
+    // Scale-pop 1 → 1.4 → 1 spring (matches TikTok button feedback). Burst
+    // particles + light haptic only when *becoming* liked, not on un-like.
+    likeScale.setValue(1);
+    Animated.sequence([
+      Animated.spring(likeScale, { toValue: 1.4, tension: 300, friction: 5, useNativeDriver: true }),
+      Animated.spring(likeScale, { toValue: 1, tension: 220, friction: 9, useNativeDriver: true }),
+    ]).start();
+    if (!wasLiked) {
+      setParticleKey(k => k + 1);
+      try { require('expo-haptics').impactAsync('light'); } catch {}
+    }
     try {
       const r = await api.feedLike(reel.id);
       if (r.success && r.data) {
@@ -844,9 +910,13 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
   const handleDoubleTap = useCallback(() => {
     const now = Date.now();
     if (now - lastTapRef.current < DOUBLE_TAP_DELAY) {
-      // Double tap - like
+      // Double tap = like (with medium haptic + particle burst). Always
+      // burst even when already liked — the affordance feels good and
+      // matches TikTok behavior of always firing the heart on double-tap.
       if (!liked) toggleLike();
       showHeartAnimation();
+      setParticleKey(k => k + 1);
+      try { require('expo-haptics').impactAsync('medium'); } catch {}
       lastTapRef.current = 0;
     } else {
       lastTapRef.current = now;
@@ -989,6 +1059,12 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
         <IconHeart size={110} color="#fff" />
       </Animated.View>
 
+      {/* Particle burst — fires on like (double-tap or button). `key`
+          remount is what restarts the per-particle Animated timeline. */}
+      {particleKey > 0 && (
+        <HeartParticleBurst key={particleKey} />
+      )}
+
       {/* ── TOP BAR (right side only - tabs are rendered by parent) ── */}
       <View style={styles.topBar}>
         <View />
@@ -997,7 +1073,16 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
             onPress={toggleMute}
             activeOpacity={0.7}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            style={{ backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 20, width: 36, height: 36, alignItems: 'center', justifyContent: 'center' }}
+            style={{
+              backgroundColor: muted ? 'rgba(124,58,237,0.85)' : 'rgba(0,0,0,0.45)',
+              borderRadius: 20,
+              width: 36,
+              height: 36,
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderWidth: muted ? 0 : StyleSheet.hairlineWidth,
+              borderColor: 'rgba(255,255,255,0.18)',
+            }}
             accessibilityLabel={muted ? (t('feed.unmute') || 'Unmute') : (t('feed.mute') || 'Mute')}
             accessibilityRole="button"
           >
@@ -1131,6 +1216,19 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
             )}
           </TouchableOpacity>
         </Animated.View>
+
+        {/* More (kebab) — opens the share/options drawer. Until a dedicated
+            "report / not interested" sheet exists, share covers the same
+            surface and matches user expectation that something happens. */}
+        <TouchableOpacity
+          style={styles.sidebarBtn}
+          onPress={handleShare}
+          activeOpacity={0.7}
+          accessibilityLabel={t?.('common.more') || 'More'}
+          accessibilityRole="button"
+        >
+          <IconMoreHorizontal size={26} color="#fff" />
+        </TouchableOpacity>
 
         {/* Spinning album art disc */}
         <SpinningDisc authorEmail={reel.author_email} authorName={reel.author_name} />
@@ -1520,11 +1618,11 @@ const styles = StyleSheet.create({
   // ── Right sidebar ──
   rightSidebar: {
     position: 'absolute',
-    right: 12,
-    bottom: 100,
+    right: 8,
+    bottom: 90,
     alignItems: 'center',
     zIndex: 10,
-    gap: 20,
+    gap: 16,
   },
   profileAvatarBtn: {
     alignItems: 'center',
@@ -1558,13 +1656,21 @@ const styles = StyleSheet.create({
   },
   sidebarBtn: {
     alignItems: 'center',
-    gap: 3,
+    justifyContent: 'center',
+    width: 48,
+    minHeight: 48,
+    gap: 4,
   },
+  // Bumped from 12/600 → 11/700 with stronger shadow so the count reads as
+  // a label glued to the icon (TikTok pattern) instead of floating text.
   sidebarCount: {
     color: '#fff',
-    fontSize: 12,
-    fontWeight: '600',
-    ...TEXT_SHADOW,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+    textShadowColor: 'rgba(0,0,0,0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
 
   // ── Spinning album art ──
@@ -1597,11 +1703,13 @@ const styles = StyleSheet.create({
   },
 
   // ── Bottom info ──
+  // Reserve 76px on the right so the caption/marquee never overlaps the
+  // 48-wide sidebar rail (right:8 + 48 + 20 breathing room).
   bottomInfo: {
     position: 'absolute',
     bottom: 24,
     left: 14,
-    right: 72,
+    right: 76,
     zIndex: 10,
     gap: 8,
   },
@@ -1677,27 +1785,37 @@ const styles = StyleSheet.create({
   },
 
   // ── Progress bar ──
+  // Trimmed to 1.5px (was 3px) — TikTok-thin so the bar is informative
+  // without intruding on the video. Track tinted faintly so the fill
+  // visibly wins.
   progressBar: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    height: 3,
+    height: 1.5,
     backgroundColor: 'rgba(255,255,255,0.18)',
     zIndex: 15,
   },
-  // Progress fill on web gets a tasty cyan→white→cyan gradient with a
-  // soft glow at the leading edge, signalling "watch progress" with a
-  // tech feel instead of a flat white bar. Native still uses solid
-  // white (RN Animated doesn't render gradient inline cheaply).
+  // Brand purple → pink gradient with a soft halo on web. Native uses a
+  // solid brand purple (RN Animated doesn't render CSS gradients cheaply
+  // and react-native-svg <LinearGradient> on a 1.5px bar isn't worth it).
   progressFill: {
     height: '100%',
-    backgroundColor: '#fff',
+    backgroundColor: '#7C3AED',
     borderRadius: 1.5,
     ...(isWeb ? {
-      backgroundImage: 'linear-gradient(90deg, rgba(255,255,255,0.85) 0%, #fff 50%, rgba(124,58,237,0.95) 100%)',
-      boxShadow: '0 0 10px rgba(255,255,255,0.6), 0 0 18px rgba(124,58,237,0.4)',
+      backgroundImage: 'linear-gradient(90deg, #7C3AED 0%, #EC4899 100%)',
+      boxShadow: '0 0 8px rgba(236,72,153,0.55), 0 0 14px rgba(124,58,237,0.4)',
     } : {}),
+  },
+
+  // ── Particle burst (anchored to screen center for the like-celebration) ──
+  particleBurstWrap: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 19,
   },
 
   // ── Empty state ──

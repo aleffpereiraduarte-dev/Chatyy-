@@ -9,9 +9,24 @@
  * Works on both web (mouse wheel zoom + drag) and native (touch gestures).
  */
 import React, { useRef, useState, useCallback } from 'react';
-import { View, Image, StyleSheet, Platform, Animated, PanResponder, TouchableOpacity, Text } from 'react-native';
+import { View, Image, StyleSheet, Platform, Animated, PanResponder, TouchableOpacity, Text, Dimensions } from 'react-native';
 
-const SNAP_ANGLE_THRESHOLD = 12; // degrees — snap to cardinal when within this
+const SNAP_ANGLE_THRESHOLD = 8; // degrees — snap to cardinal/diagonal when within this
+const SNAP_CENTER_THRESHOLD = 14; // px — snap pan to center
+const VIEWPORT = Dimensions.get('window');
+
+// Optional haptics — gracefully no-op if expo-haptics isn't installed.
+let _Haptics = null;
+try { _Haptics = require('expo-haptics'); } catch {}
+function _hapticLight() {
+  try {
+    if (_Haptics?.impactAsync) {
+      _Haptics.impactAsync(_Haptics.ImpactFeedbackStyle?.Light ?? 'light');
+    } else if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.vibrate) {
+      navigator.vibrate(8);
+    }
+  } catch {}
+}
 
 function distance(t1, t2) {
   const dx = t2.pageX - t1.pageX;
@@ -25,15 +40,18 @@ function angle(t1, t2) {
   return (Math.atan2(dy, dx) * 180) / Math.PI;
 }
 
+// Snap to cardinals AND diagonals (0/45/90/-45/-90 in IG terms; we cover the
+// full circle: 0/45/90/135/180/225/270/315). Returns the snapped value plus
+// a flag so the caller can fire a haptic exactly when a fresh snap occurs.
 function snapRotation(deg) {
   const norm = ((deg % 360) + 360) % 360;
-  const cardinals = [0, 90, 180, 270, 360];
-  for (const c of cardinals) {
+  const targets = [0, 45, 90, 135, 180, 225, 270, 315, 360];
+  for (const c of targets) {
     if (Math.abs(norm - c) < SNAP_ANGLE_THRESHOLD) {
-      return c === 360 ? 0 : c;
+      return { value: c === 360 ? 0 : c, snapped: true };
     }
   }
-  return deg;
+  return { value: deg, snapped: false };
 }
 
 export default function ImageEditorGestures({
@@ -48,9 +66,16 @@ export default function ImageEditorGestures({
   const [scale, setScale] = useState(1);
   const [rotation, setRotation] = useState(0);
 
+  // Live UI guides (computed during gesture, not committed). Purple lines
+  // light up while the user is snapping the image to center, mimicking the
+  // Instagram editor.
+  const [guideX, setGuideX] = useState(false);
+  const [guideY, setGuideY] = useState(false);
+
   // Gesture state refs
   const gestureStart = useRef({ distance: 0, angle: 0, tx: 0, ty: 0, scale: 1, rotation: 0 });
   const lastTap = useRef(0);
+  const lastSnappedRotation = useRef(null); // for one-shot haptic on snap entry
 
   // For panResponder — doesn't cause re-renders during gesture
   const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
@@ -108,7 +133,8 @@ export default function ImageEditorGestures({
         const start = gestureStart.current;
 
         if (touches.length === 2) {
-          // Pinch zoom + rotation
+          // Pinch zoom + rotation. Live snap with haptic feedback when the
+          // angle crosses a cardinal/diagonal threshold (0/45/90/...).
           const d = distance(touches[0], touches[1]);
           const a = angle(touches[0], touches[1]);
           if (start.distance > 0) {
@@ -117,12 +143,46 @@ export default function ImageEditorGestures({
             animScale.setValue(newScale);
 
             const deltaAngle = a - start.angle;
-            const newRotation = start.rotation + deltaAngle;
-            animRotation.setValue(newRotation);
+            const rawRotation = start.rotation + deltaAngle;
+            const snap = snapRotation(rawRotation);
+            if (snap.snapped) {
+              if (lastSnappedRotation.current !== snap.value) {
+                lastSnappedRotation.current = snap.value;
+                _hapticLight();
+              }
+              animRotation.setValue(snap.value);
+            } else {
+              lastSnappedRotation.current = null;
+              animRotation.setValue(rawRotation);
+            }
           }
         } else if (touches.length === 1) {
-          // Single-finger pan
-          pan.setValue({ x: start.tx + gs.dx, y: start.ty + gs.dy });
+          // Single-finger pan with center-snap + viewport boundary clamp.
+          let nx = start.tx + gs.dx;
+          let ny = start.ty + gs.dy;
+
+          // Snap to center (purple guide). Threshold is in pixels; a fresh
+          // entry into the snap zone fires a haptic.
+          const snapToCenterX = Math.abs(nx) < SNAP_CENTER_THRESHOLD;
+          const snapToCenterY = Math.abs(ny) < SNAP_CENTER_THRESHOLD;
+          if (snapToCenterX) nx = 0;
+          if (snapToCenterY) ny = 0;
+          if (snapToCenterX !== guideX) {
+            setGuideX(snapToCenterX);
+            if (snapToCenterX) _hapticLight();
+          }
+          if (snapToCenterY !== guideY) {
+            setGuideY(snapToCenterY);
+            if (snapToCenterY) _hapticLight();
+          }
+
+          // Boundary clamp: don't let the image leave the viewport entirely.
+          const maxX = VIEWPORT.width * 0.45;
+          const maxY = VIEWPORT.height * 0.45;
+          nx = Math.max(-maxX, Math.min(maxX, nx));
+          ny = Math.max(-maxY, Math.min(maxY, ny));
+
+          pan.setValue({ x: nx, y: ny });
         }
       },
       onPanResponderRelease: () => {
@@ -130,10 +190,14 @@ export default function ImageEditorGestures({
         const cx = pan.x.__getValue();
         const cy = pan.y.__getValue();
         const cs = animScale.__getValue();
-        let cr = animRotation.__getValue();
-        cr = snapRotation(cr);
+        const rawR = animRotation.__getValue();
+        const cr = snapRotation(rawR).value;
         // Animate to snapped rotation
         Animated.spring(animRotation, { toValue: cr, useNativeDriver: true, damping: 20, stiffness: 180 }).start();
+        // Clear live guides
+        setGuideX(false);
+        setGuideY(false);
+        lastSnappedRotation.current = null;
         _commit(cx, cy, cs, cr);
       },
     })
@@ -166,6 +230,11 @@ export default function ImageEditorGestures({
         {filterOverlay}
       </Animated.View>
 
+      {/* Purple alignment guides — appear only while user is snapped to
+          the viewport center on that axis. */}
+      {guideX && <View pointerEvents="none" style={styles.guideVertical} />}
+      {guideY && <View pointerEvents="none" style={styles.guideHorizontal} />}
+
       {/* Floating rotate button — bottom-left */}
       <TouchableOpacity onPress={_rotate90} style={styles.rotateBtn} activeOpacity={0.7}>
         <Text style={styles.rotateBtnText}>↻ 90°</Text>
@@ -197,4 +266,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14, paddingVertical: 10, borderRadius: 20,
   },
   resetBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  guideVertical: {
+    position: 'absolute', top: 0, bottom: 0, left: '50%',
+    width: 1.5, marginLeft: -0.75,
+    backgroundColor: '#BF5AF2',
+    ...(Platform.OS === 'web' ? { boxShadow: '0 0 8px rgba(191,90,242,0.7)' } : {}),
+  },
+  guideHorizontal: {
+    position: 'absolute', left: 0, right: 0, top: '50%',
+    height: 1.5, marginTop: -0.75,
+    backgroundColor: '#BF5AF2',
+    ...(Platform.OS === 'web' ? { boxShadow: '0 0 8px rgba(191,90,242,0.7)' } : {}),
+  },
 });

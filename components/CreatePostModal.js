@@ -520,6 +520,10 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
   const [multiSelectMode, setMultiSelectMode] = useState(true);
   const [gallerySelectedIds, setGallerySelectedIds] = useState([]);
   const [postAsReel, setPostAsReel] = useState(false);
+  // Cross-post toggles ("Compartilhar também em" — placeholder mock).
+  // Selecting them just toggles UI; actual fan-out lands when the platform
+  // bridges (Status/Stories/Twitter) are wired up server-side.
+  const [crossPosts, setCrossPosts] = useState({ status: false, stories: false, twitter: false });
   const scrollRef = useRef(null);
 
   const isWeb = Platform.OS === 'web';
@@ -565,6 +569,7 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
     setMultiSelectMode(true);
     setGallerySelectedIds([]);
     setPostAsReel(false);
+    setCrossPosts({ status: false, stories: false, twitter: false });
   }, []);
 
   const handleClose = useCallback(() => {
@@ -1124,6 +1129,22 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                   )}
                 </View>
               )}
+              {/* Floating "Editar" pill — placeholder; surfaces feedback if PhotoEditor isn't wired */}
+              {mediaFiles.some(m => m.type === 'image') ? (
+                <TouchableOpacity
+                  style={gs.editFab}
+                  activeOpacity={0.85}
+                  onPress={() => {
+                    setError(t('post.editorComingSoon') || 'Editor de foto em breve');
+                    setTimeout(() => setError(''), 2200);
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('post.edit') || 'Editar'}
+                >
+                  <IconSparkles size={14} color="#fff" />
+                  <Text style={gs.editFabText}>{t('post.edit') || 'Editar'}</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
 
             {/* Filter bar */}
@@ -1218,7 +1239,7 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
                     ? (captionRemaining < 20 ? '#ef4444' : '#f59e0b')
                     : colors.textTertiary,
                 }]}>
-                  {captionRemaining}
+                  {`${caption.length}/${MAX_CAPTION}`}
                 </Text>
               </View>
             </View>
@@ -1285,13 +1306,59 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
               style={[gs.optionRow, { borderTopColor: borderColor }]}
               activeOpacity={0.7}
               onPress={() => setShowAudienceModal(true)}
+              accessibilityRole="button"
+              accessibilityLabel={t('post.audience') || 'Audience'}
             >
               <AudienceIcon size={22} color={colors.textSecondary} />
-              <Text style={[gs.optionLabel, { color: colors.text }]}>
-                {audienceLabel}
-              </Text>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: colors.textTertiary, fontSize: 12, fontWeight: '500' }}>
+                  {t('post.whoCanSee') || 'Quem pode ver'}
+                </Text>
+                <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600', marginTop: 1 }}>
+                  {audienceLabel}
+                </Text>
+              </View>
               <IconChevronRight size={18} color={colors.textTertiary} />
             </TouchableOpacity>
+
+            {/* Cross-post pills ("Compartilhar também em") */}
+            <View style={[gs.crossPostRow, { borderTopColor: borderColor }]}>
+              <Text style={[gs.crossPostLabel, { color: colors.textSecondary }]}>
+                {t('post.alsoShareIn') || 'Compartilhar também em'}
+              </Text>
+              <View style={gs.crossPostPills}>
+                {[
+                  { key: 'status', label: t('post.status') || 'Status' },
+                  { key: 'stories', label: t('post.stories') || 'Stories' },
+                  { key: 'twitter', label: 'Twitter' },
+                ].map(({ key, label }) => {
+                  const active = !!crossPosts[key];
+                  return (
+                    <TouchableOpacity
+                      key={key}
+                      style={[
+                        gs.crossPostPill,
+                        active
+                          ? { backgroundColor: ACCENT, borderColor: ACCENT }
+                          : { borderColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.12)' },
+                      ]}
+                      onPress={() => setCrossPosts(prev => ({ ...prev, [key]: !prev[key] }))}
+                      activeOpacity={0.75}
+                      accessibilityRole="switch"
+                      accessibilityState={{ checked: active }}
+                      accessibilityLabel={label}
+                    >
+                      <Text style={[
+                        gs.crossPostPillText,
+                        { color: active ? '#fff' : colors.text },
+                      ]}>
+                        {label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
 
             {/* Post as Reel toggle (only if there's video content) */}
             {mediaFiles.some(m => m.type === 'video') && (
@@ -1347,9 +1414,35 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
               </View>
             ) : null}
 
-            <View style={{ height: 120 }} />
+            <View style={{ height: 24 }} />
           </ScrollView>
         )}
+
+        {/* ---- BOTTOM SHARE BUTTON (Step 2 only) ---- */}
+        {step === 2 ? (
+          <View style={[gs.bottomShareWrap, { borderTopColor: borderColor, backgroundColor: bgColor }]}>
+            <TouchableOpacity
+              onPress={publish}
+              disabled={publishing || mediaFiles.length === 0}
+              activeOpacity={0.85}
+              style={[
+                gs.bottomShareBtn,
+                { backgroundColor: ACCENT },
+                (publishing || mediaFiles.length === 0) && gs.bottomShareBtnDisabled,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={t('post.share') || 'Share'}
+            >
+              {publishing ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <Text style={gs.bottomShareText}>
+                  {scheduleDate ? (t('post.schedule') || 'Agendar') : (t('post.share') || 'Compartilhar')}
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        ) : null}
       </KeyboardAvoidingView>
 
       {/* Modals */}
@@ -1517,8 +1610,16 @@ const gs = StyleSheet.create({
   },
   headerBtn: { padding: 6, width: 80 },
   headerTitle: { fontSize: 18, fontWeight: '700', textAlign: 'center', flex: 1, letterSpacing: 0.1 },
-  publishBtn: { paddingHorizontal: 18, paddingVertical: 9, borderRadius: 20, minWidth: 80, alignItems: 'center' },
-  publishText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  publishBtn: {
+    paddingHorizontal: 18, paddingVertical: 9, borderRadius: 22, minWidth: 84,
+    alignItems: 'center', justifyContent: 'center',
+    ...Platform.select({
+      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.28, shadowRadius: 8 },
+      android: { elevation: 3 },
+      default: { boxShadow: '0 3px 8px rgba(124,58,237,0.28)' },
+    }),
+  },
+  publishText: { color: '#fff', fontWeight: '700', fontSize: 14, letterSpacing: 0.2 },
 
   // Step 1
   step1Wrap: { flex: 1 },
@@ -1595,10 +1696,15 @@ const gs = StyleSheet.create({
   galleryDurationText: { color: '#fff', fontSize: 10, fontWeight: '600' },
   gallerySel: {
     position: 'absolute', top: 6, right: 6,
-    width: 24, height: 24, borderRadius: 12, borderWidth: 2,
+    width: 26, height: 26, borderRadius: 13, borderWidth: 2,
     alignItems: 'center', justifyContent: 'center',
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.25, shadowRadius: 2 },
+      android: { elevation: 2 },
+      default: { boxShadow: '0 1px 2px rgba(0,0,0,0.25)' },
+    }),
   },
-  gallerySelText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  gallerySelText: { color: '#fff', fontSize: 12, fontWeight: '700', letterSpacing: 0.2 },
 
   // Floating error
   floatingError: {
@@ -1645,15 +1751,16 @@ const gs = StyleSheet.create({
   filterName: { fontSize: 11, textAlign: 'center', letterSpacing: 0.1 },
 
   // Caption section
-  captionSection: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 8, borderTopWidth: StyleSheet.hairlineWidth },
+  captionSection: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 10, borderTopWidth: StyleSheet.hairlineWidth },
   captionHeader: { flexDirection: 'row', alignItems: 'flex-start' },
   captionWrap: { flex: 1 },
   captionInput: {
-    fontSize: 16, lineHeight: 22, minHeight: 60, maxHeight: 160, textAlignVertical: 'top',
+    fontSize: 16, lineHeight: 23, minHeight: 78, maxHeight: 200, textAlignVertical: 'top',
+    paddingTop: 2, paddingBottom: 2,
     ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
   },
-  captionFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 },
-  charCount: { fontSize: 12, fontVariant: ['tabular-nums'] },
+  captionFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 },
+  charCount: { fontSize: 12, fontWeight: '500', fontVariant: ['tabular-nums'], letterSpacing: 0.2 },
 
   // AI suggest button
   aiBtn: {
@@ -1694,6 +1801,56 @@ const gs = StyleSheet.create({
     flex: 1, fontSize: 15, paddingVertical: 0,
     ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
   },
+
+  // Cross-post pills row
+  crossPostRow: {
+    paddingHorizontal: 16, paddingTop: 14, paddingBottom: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  crossPostLabel: { fontSize: 13, fontWeight: '600', marginBottom: 10, letterSpacing: 0.1 },
+  crossPostPills: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  crossPostPill: {
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1,
+  },
+  crossPostPillText: { fontSize: 13, fontWeight: '700', letterSpacing: 0.1 },
+
+  // Bottom share button (full-width 56pt purple pill)
+  bottomShareWrap: {
+    paddingHorizontal: 16, paddingTop: 12, paddingBottom: Platform.OS === 'ios' ? 32 : 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  bottomShareBtn: {
+    height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center',
+    flexDirection: 'row', gap: 8,
+    ...Platform.select({
+      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.32, shadowRadius: 14 },
+      android: { elevation: 6 },
+      default: { boxShadow: '0 6px 14px rgba(124,58,237,0.32)' },
+    }),
+  },
+  bottomShareBtnDisabled: {
+    ...Platform.select({
+      ios: { shadowOpacity: 0 },
+      android: { elevation: 0 },
+      default: { boxShadow: 'none' },
+    }),
+    opacity: 0.55,
+  },
+  bottomShareText: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.3 },
+
+  // Editar floating pill on carousel
+  editFab: {
+    position: 'absolute', bottom: 14, right: 14,
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.62)',
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4 },
+      android: { elevation: 3 },
+      default: { boxShadow: '0 2px 6px rgba(0,0,0,0.3)' },
+    }),
+  },
+  editFabText: { color: '#fff', fontSize: 13, fontWeight: '700', letterSpacing: 0.2 },
 
   // Error
   errorRow: { paddingHorizontal: 16, paddingVertical: 10 },

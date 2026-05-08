@@ -3,7 +3,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform,
   Modal, TextInput, Image, Animated, Dimensions, KeyboardAvoidingView,
   ActivityIndicator, PanResponder, Pressable, Alert, StatusBar,
-  Linking,
+  Linking, RefreshControl,
 } from 'react-native';
 
 // Android status bar safe area — `StatusBar.currentHeight` is null on iOS
@@ -779,6 +779,35 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   const [viewersModal, setViewersModal] = useState(false);
   const [viewersList, setViewersList] = useState([]);
 
+  // Pull-to-refresh state — feeds RefreshControl on the home scroll.
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Muted section expand toggle (Instagram-style: muted users collapsed
+  // until tapped). Starts collapsed so the recent/viewed dominate.
+  const [showMuted, setShowMuted] = useState(false);
+
+  // Heart-pulse Animated.Value driven by WS incoming-status events. When
+  // a contact publishes while the home feed is open, we trigger a brief
+  // ring scale pulse on their tile so the user notices a fresh story
+  // arrived without having to scroll. Map: ownerEmail → Animated.Value.
+  const pulseRefs = useRef({}).current;
+  const getPulseFor = useCallback((email) => {
+    const key = String(email || '').toLowerCase();
+    if (!pulseRefs[key]) pulseRefs[key] = new Animated.Value(1);
+    return pulseRefs[key];
+  }, [pulseRefs]);
+  const triggerPulse = useCallback((email) => {
+    const v = getPulseFor(email);
+    Animated.sequence([
+      Animated.timing(v, { toValue: 1.16, duration: 220, useNativeDriver: true }),
+      Animated.spring(v, { toValue: 1, friction: 3, tension: 80, useNativeDriver: true }),
+    ]).start();
+  }, [getPulseFor]);
+
+  // Own-status view-count badge. Sums views across all my active items so
+  // we can render "123 visualizações" pill on the big tile.
+  const myViewCount = (myStatuses || []).reduce((acc, s) => acc + (Number(s?.view_count) || 0), 0);
+
   // Caption translation cache + busy state. Keyed by status id; value is
   // either a translated string or the sentinel '__loading__' / '__none__'.
   const [translatedCaptions, setTranslatedCaptions] = useState({});
@@ -1190,9 +1219,28 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     } else {
       setMyStatuses(hookMine);
     }
+    // Detect newly-arrived owner emails to fire the ring pulse animation —
+    // any owner present in hookOthers that wasn't in the previous snapshot
+    // gets a one-shot scale pop so the user sees "this just arrived".
+    const prevSet = new Set((contactStatuses || []).map(g => String(g.ownerEmail || '').toLowerCase()));
+    for (const g of hookOthers || []) {
+      const k = String(g.ownerEmail || '').toLowerCase();
+      if (!prevSet.has(k)) {
+        try { triggerPulse(k); } catch {}
+      }
+    }
     setContactStatuses(hookOthers);
     if (hookLoading === false && loading) setLoading(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hookMine, hookOthers, hookLoading, loading, archivedStatusIds]);
+
+  // Pull-to-refresh handler — re-runs the hook's refetch and clears the
+  // spinner once the network round-trip resolves (or fails silently).
+  const onPullRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try { await loadStatuses?.(); } catch {}
+    setRefreshing(false);
+  }, [loadStatuses]);
 
   // Profile screen routes here with new=1 when user taps the "Novo" circle.
   // Kick the composer open as soon as the tab mounts so they don't also have
@@ -1219,10 +1267,20 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     return s.ownerName.toLowerCase().includes(q) || s.ownerEmail.toLowerCase().includes(q);
   });
 
-  const recentStatuses = filteredStatuses.filter(
+  // 3-way partition (Instagram-style): muted users go to a collapsed
+  // "Silenciados" section, the rest split into "Recentes" (any unviewed)
+  // and "Vistos" (all viewed). The hook flags muted groups via `s.muted`
+  // when known; we also fall back to a backend hint at `s.is_muted`.
+  const mutedStatuses = filteredStatuses.filter(
+    (s) => !!(s.muted || s.is_muted)
+  );
+  const audibleStatuses = filteredStatuses.filter(
+    (s) => !(s.muted || s.is_muted)
+  );
+  const recentStatuses = audibleStatuses.filter(
     (s) => !s.items.every((item) => item.viewed)
   );
-  const viewedStatuses = filteredStatuses.filter(
+  const viewedStatuses = audibleStatuses.filter(
     (s) => s.items.every((item) => item.viewed)
   );
 
@@ -1928,10 +1986,12 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
         delayLongPress={350}
         activeOpacity={0.7}
       >
-        <View style={styles.avatarWrapper}>
+        <Animated.View style={[styles.avatarWrapper, {
+          transform: [{ scale: getPulseFor(statusGroup.ownerEmail) }],
+        }]}>
           <SegmentedRing items={statusGroup.items} size={52} viewed={allViewed} />
           <AvatarCircle name={statusGroup.ownerName} email={statusGroup.ownerEmail} size={52} />
-        </View>
+        </Animated.View>
         <View style={styles.statusInfo}>
           <Text style={[styles.statusName, { color: colors.text }]} numberOfLines={1}>
             {statusGroup.ownerName}
@@ -2018,7 +2078,19 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
         </View>
       )}
 
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.scrollView}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onPullRefresh}
+            tintColor={ACCENT}
+            colors={[ACCENT, '#6D28D9']}
+            progressBackgroundColor={isDark ? '#1a1a1a' : '#fff'}
+          />
+        }
+      >
         {/* Horizontal story scroller */}
         {(filteredStatuses.length > 0 || hasMyStatus) && (
           <StoryScroller
@@ -2034,7 +2106,11 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
           />
         )}
 
-        {/* My Status Card */}
+        {/* My Status Hero Tile — 96px circular avatar with dashed purple
+            ring (empty) or solid gradient ring (active). "Quem viu" view
+            count pill surfaces below when there's an active story.
+            Replaces the old rectangular row card for an Instagram-grade
+            hero feel. */}
         <View style={[styles.myStatusCard, {
           backgroundColor: isDark ? colors.card : '#fff',
           ...(Platform.OS === 'web' ? { boxShadow: '0 2px 12px rgba(0,0,0,0.08)' } : {}),
@@ -2043,33 +2119,77 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
             <TouchableOpacity
               onPress={() => hasMyStatus ? openViewer(myStatusGroup) : openCreator()}
               activeOpacity={0.7}
-              style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}
+              style={{ alignItems: 'center', justifyContent: 'center', marginRight: 16 }}
             >
-              <View style={styles.myAvatarWrapper}>
-                {hasMyStatus && (
-                  <SegmentedRing items={myStatuses} size={56} viewed={false} />
+              <View style={styles.myAvatarWrapperHero}>
+                {hasMyStatus ? (
+                  // Solid gradient ring when there's an active story.
+                  <Svg width={108} height={108} style={{ position: 'absolute', top: -6, left: -6 }}>
+                    <Defs>
+                      <LinearGradient id="heroRing" x1="0" y1="0" x2="1" y2="1">
+                        <Stop offset="0" stopColor="#7C3AED" />
+                        <Stop offset="0.5" stopColor="#9333EA" />
+                        <Stop offset="1" stopColor="#6D28D9" />
+                      </LinearGradient>
+                    </Defs>
+                    <SvgCircle cx="54" cy="54" r="51" stroke="url(#heroRing)" strokeWidth={3.5} fill="none" />
+                  </Svg>
+                ) : (
+                  // Dashed purple "tap to add" ring when empty.
+                  <Svg width={108} height={108} style={{ position: 'absolute', top: -6, left: -6 }}>
+                    <SvgCircle cx="54" cy="54" r="51" stroke={ACCENT} strokeWidth={2.5} strokeDasharray="6 5" fill="none" opacity={0.65} />
+                  </Svg>
                 )}
-                <AvatarCircle name={currentName} email={currentEmail} size={56} />
+                <AvatarCircle name={currentName} email={currentEmail} size={96} />
                 {!hasMyStatus && (
-                  <View style={[styles.plusBadge, {
+                  <View style={[styles.plusBadgeHero, {
                     borderColor: isDark ? colors.card : '#fff',
                   }]}>
-                    <IconPlus size={14} color="#fff" />
+                    <IconPlus size={16} color="#fff" />
                   </View>
                 )}
               </View>
-              <View style={styles.statusInfo}>
-                <Text style={[styles.myStatusName, { color: colors.text }]}>
-                  {myStatusLabel}
-                </Text>
-                <Text style={[styles.myStatusSub, { color: colors.textSecondary }]}>
-                  {hasMyStatus
-                    ? `${myStatuses.length} ${myStatuses.length > 1 ? 'status' : 'status'} - ${timeAgo(myStatuses[myStatuses.length - 1]?.timestamp, t)}`
-                    : addStatusLabel
-                  }
-                </Text>
-              </View>
             </TouchableOpacity>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.myStatusName, { color: colors.text }]}>
+                {myStatusLabel}
+              </Text>
+              <Text style={[styles.myStatusSub, { color: colors.textSecondary }]} numberOfLines={1}>
+                {hasMyStatus
+                  ? `${myStatuses.length} ${myStatuses.length > 1 ? 'atualizações' : 'atualização'} • ${timeAgo(myStatuses[myStatuses.length - 1]?.timestamp, t)}`
+                  : addStatusLabel
+                }
+              </Text>
+              {/* "Quem viu" badge — only when own status is active and has
+                  any views. Tapping opens the viewers sheet for the latest
+                  item (same flow as the in-viewer eye icon). */}
+              {hasMyStatus && myViewCount > 0 && (
+                <TouchableOpacity
+                  style={[styles.viewCountPill, {
+                    backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)',
+                    borderColor: isDark ? 'rgba(124,58,237,0.35)' : 'rgba(124,58,237,0.22)',
+                  }]}
+                  activeOpacity={0.7}
+                  onPress={async () => {
+                    const last = myStatuses[myStatuses.length - 1];
+                    if (!last?.id) return;
+                    try { Haptics.impactAsync?.(Haptics.ImpactFeedbackStyle.Light); } catch {}
+                    try {
+                      const r = await statusViewers(last.id);
+                      const list = (r?.data?.viewers || r?.viewers || []);
+                      setViewersList(list);
+                      setViewersModal(true);
+                    } catch {}
+                  }}
+                  accessibilityLabel={`${myViewCount} visualizações`}
+                >
+                  <IconEye size={12} color={ACCENT} />
+                  <Text style={styles.viewCountPillText}>
+                    {myViewCount} {myViewCount === 1 ? 'visualização' : 'visualizações'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
             <View style={styles.myStatusActions}>
               {hasMyStatus && (
                 <TouchableOpacity
@@ -2148,6 +2268,23 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
           </View>
         </View>
 
+        {/* "Meus" — surfaces the user's own status as a row only when they
+            have one. Sits between the hero tile and the Recentes section,
+            mirrors Instagram's layout where your own story shows up in the
+            highlights row before others' stories. */}
+        {hasMyStatus && (
+          <View style={styles.section}>
+            <View style={styles.sectionHeader}>
+              <View style={styles.sectionAccent} />
+              <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
+                {t?.('status.mine') || 'Meus'}
+              </Text>
+              <Text style={[styles.sectionCount, { color: colors.textSecondary }]}>{myStatuses.length}</Text>
+            </View>
+            {renderStatusRow(myStatusGroup)}
+          </View>
+        )}
+
         {/* Recent Updates */}
         {recentStatuses.length > 0 && (
           <View style={styles.section}>
@@ -2172,16 +2309,44 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
           </View>
         )}
 
+        {/* Silenciados — collapsed by default. Tapping the section header
+            expands the list. Mirrors Instagram's hidden-stories pattern so
+            muted users don't pollute the main feed. */}
+        {mutedStatuses.length > 0 && (
+          <View style={styles.section}>
+            <TouchableOpacity
+              style={styles.sectionHeader}
+              activeOpacity={0.7}
+              onPress={() => {
+                try { Haptics.selectionAsync?.(); } catch {}
+                setShowMuted(v => !v);
+              }}
+            >
+              <View style={[styles.sectionAccent, { backgroundColor: isDark ? '#555' : '#bbb' }]} />
+              <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
+                {t?.('status.muted') || 'Silenciados'}
+              </Text>
+              <Text style={[styles.sectionCount, { color: colors.textSecondary }]}>{mutedStatuses.length}</Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 14, marginRight: 16 }}>
+                {showMuted ? '−' : '+'}
+              </Text>
+            </TouchableOpacity>
+            {showMuted && mutedStatuses.map((s) => renderStatusRow(s))}
+          </View>
+        )}
+
         {/* Empty state */}
-        {recentStatuses.length === 0 && viewedStatuses.length === 0 && !hasMyStatus && (
+        {recentStatuses.length === 0 && viewedStatuses.length === 0 && mutedStatuses.length === 0 && !hasMyStatus && (
           <View style={styles.emptyContainer}>
             <EmptyStatusIllustration isDark={isDark} />
-            <Text style={[styles.emptyText, { color: colors.text }]}>{emptyLabel}</Text>
+            <Text style={[styles.emptyText, { color: colors.text }]}>
+              {t?.('status.firstTitle') || 'Adicione seu primeiro status'}
+            </Text>
             <Text style={[styles.emptySubtext, { color: colors.textSecondary }]}>{disappearsLabel}</Text>
             <TouchableOpacity
               style={styles.emptyButton}
               onPress={() => openCreator()}
-              activeOpacity={0.8}
+              activeOpacity={0.85}
             >
               <IconPlus size={18} color="#fff" />
               <Text style={styles.emptyButtonText}>{t?.('status.addStatus') || 'Adicionar status'}</Text>
@@ -2266,37 +2431,98 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
               </Pressable>
             );
           })()}
-          {/* Mute action — long-press menu pattern. Only for OTHER users'
-              status (don't show on your own card). Hides this contact's
-              status from the home top row going forward. */}
+          {/* Long-press action sheet — Silenciar / Reportar / Compartilhar
+              (Instagram parity). Only renders for OTHER users' status (don't
+              show on your own card). Each button is a glass-tinted pill. */}
           {previewGroup && String(previewGroup.ownerEmail || '').toLowerCase() !== String(currentEmail || '').toLowerCase() && (
-            <Pressable
-              onPress={async () => {
-                const targetEmail = previewGroup.ownerEmail;
-                const targetName = previewGroup.ownerName;
-                setPreviewGroup(null);
-                try { await api.statusMute(targetEmail); } catch {}
-                try { Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Success); } catch {}
-                // Optimistic: drop this contact from the local list so the
-                // row disappears immediately without waiting for a refetch.
-                setContactStatuses(prev => prev.filter(g =>
-                  String(g.ownerEmail || '').toLowerCase() !== String(targetEmail || '').toLowerCase()
-                ));
-                try { Alert.alert?.(t?.('status.muteSuccess') || 'Silenciado', `${t?.('status.mutedBody') || 'Status de'} ${targetName} ${t?.('status.mutedSuffix') || 'foi silenciado.'}`); } catch {}
-              }}
-              style={{ marginTop: 16, paddingHorizontal: 18, paddingVertical: 10, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 22, flexDirection: 'row', alignItems: 'center', gap: 8 }}
-            >
-              <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                <Path d="M13.73 21a2 2 0 0 1-3.46 0" />
-                <Path d="M18.63 13A17.89 17.89 0 0 1 18 8" />
-                <Path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14" />
-                <Path d="M18 8a6 6 0 0 0-9.33-5" />
-                <Path d="m1 1 22 22" />
-              </Svg>
-              <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>
-                {t?.('status.muteAction') || 'Silenciar status'}
-              </Text>
-            </Pressable>
+            <View style={{ flexDirection: 'row', marginTop: 18, gap: 10 }}>
+              <Pressable
+                onPress={async () => {
+                  const targetEmail = previewGroup.ownerEmail;
+                  const targetName = previewGroup.ownerName;
+                  setPreviewGroup(null);
+                  try { await api.statusMute(targetEmail); } catch {}
+                  try { Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Success); } catch {}
+                  setContactStatuses(prev => prev.filter(g =>
+                    String(g.ownerEmail || '').toLowerCase() !== String(targetEmail || '').toLowerCase()
+                  ));
+                  try { Alert.alert?.(t?.('status.muteSuccess') || 'Silenciado', `${t?.('status.mutedBody') || 'Status de'} ${targetName} ${t?.('status.mutedSuffix') || 'foi silenciado.'}`); } catch {}
+                }}
+                style={({ pressed }) => ({
+                  paddingHorizontal: 16, paddingVertical: 11,
+                  backgroundColor: pressed ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.15)',
+                  borderRadius: 22, flexDirection: 'row', alignItems: 'center', gap: 7,
+                })}
+              >
+                <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <Path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                  <Path d="M18.63 13A17.89 17.89 0 0 1 18 8" />
+                  <Path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14" />
+                  <Path d="M18 8a6 6 0 0 0-9.33-5" />
+                  <Path d="m1 1 22 22" />
+                </Svg>
+                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>
+                  {t?.('status.muteAction') || 'Silenciar'}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={async () => {
+                  const targetEmail = previewGroup.ownerEmail;
+                  setPreviewGroup(null);
+                  try { Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Warning); } catch {}
+                  try {
+                    if (typeof api.statusReport === 'function') {
+                      await api.statusReport(targetEmail);
+                    } else {
+                      await api.apiCall?.('status_report', { email: targetEmail }, 'POST');
+                    }
+                  } catch {}
+                  try { Alert.alert?.(t?.('status.reportSent') || 'Denúncia enviada', t?.('status.reportBody') || 'Obrigado. Vamos revisar este conteúdo.'); } catch {}
+                }}
+                style={({ pressed }) => ({
+                  paddingHorizontal: 16, paddingVertical: 11,
+                  backgroundColor: pressed ? 'rgba(255,80,80,0.42)' : 'rgba(255,80,80,0.25)',
+                  borderRadius: 22, flexDirection: 'row', alignItems: 'center', gap: 7,
+                })}
+              >
+                <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <Path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
+                  <Path d="M4 22V4" />
+                </Svg>
+                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>
+                  {t?.('status.reportAction') || 'Reportar'}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={async () => {
+                  const targetName = previewGroup.ownerName;
+                  setPreviewGroup(null);
+                  try { Haptics.impactAsync?.(Haptics.ImpactFeedbackStyle.Light); } catch {}
+                  try {
+                    const Share = require('react-native').Share;
+                    await Share?.share?.({
+                      message: `${t?.('status.shareMsg') || 'Olha o status de'} ${targetName} no Chatyy!`,
+                    });
+                  } catch {}
+                }}
+                style={({ pressed }) => ({
+                  paddingHorizontal: 16, paddingVertical: 11,
+                  backgroundColor: pressed ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.15)',
+                  borderRadius: 22, flexDirection: 'row', alignItems: 'center', gap: 7,
+                })}
+              >
+                <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <SvgCircle cx="18" cy="5" r="3" />
+                  <SvgCircle cx="6" cy="12" r="3" />
+                  <SvgCircle cx="18" cy="19" r="3" />
+                  <Path d="m8.59 13.51 6.83 3.98" />
+                  <Path d="m15.41 6.51-6.82 3.98" />
+                </Svg>
+                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>
+                  {t?.('status.shareAction') || 'Compartilhar'}
+                </Text>
+              </Pressable>
+            </View>
           )}
         </Pressable>
       </Modal>
@@ -3940,10 +4166,59 @@ const styles = StyleSheet.create({
   myStatusRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 18,
-    paddingVertical: 16,
+    paddingHorizontal: 22,
+    paddingVertical: 22,
   },
   myAvatarWrapper: { position: 'relative' },
+  // Hero tile wrapper — 96px circular avatar with breathing room for the
+  // 108px outer ring (dashed empty / solid gradient active). Centered so
+  // the dashed ring doesn't get clipped by the surrounding card.
+  myAvatarWrapperHero: {
+    position: 'relative',
+    width: 96,
+    height: 96,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Bigger plus badge for the 96px hero avatar — centered on the bottom-
+  // right edge, with shadow to lift it above the dashed ring.
+  plusBadgeHero: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: ACCENT,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 3,
+    ...Platform.select({
+      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.4, shadowRadius: 5 },
+      android: { elevation: 5 },
+      web: { boxShadow: '0 2px 8px rgba(124,58,237,0.4)' },
+    }),
+  },
+  // "Quem viu" pill — sits under the name/sub on the hero card. Soft
+  // tinted background + thin border so it reads as informational rather
+  // than as a button.
+  viewCountPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 5,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 11,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginTop: 8,
+  },
+  viewCountPillText: {
+    color: ACCENT,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
   plusBadge: {
     position: 'absolute',
     bottom: -1,

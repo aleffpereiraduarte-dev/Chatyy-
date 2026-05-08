@@ -25,6 +25,26 @@ const OUTLINE_COLORS = { '#ffffff': '#000000', '#000000': '#ffffff', '#FF3B30': 
 // Curated emoji for quick-tag. Tapping one adds it to the tag list.
 const QUICK_EMOJIS = ['😀', '😂', '🥰', '😎', '😢', '😡', '🤔', '🔥', '❤️', '👍', '👎', '🎉', '💯', '🙏', '👻', '🥳', '😴', '🤯'];
 
+// Instagram-style sticker library tabs. Each one is a quick-insert overlay
+// type that appears as a chip at the top of the editor. Tapping a chip adds
+// a draggable widget on top of the canvas (text/emoji/etc).
+const STICKER_TABS = [
+  { id: 'emoji',    label: 'Emoji',     glyph: '😀' },
+  { id: 'text',     label: 'Texto',     glyph: 'Aa' },
+  { id: 'gif',      label: 'GIF',       glyph: 'GIF' },
+  { id: 'location', label: 'Local',     glyph: '📍' },
+  { id: 'time',     label: 'Hora',      glyph: '🕒' },
+  { id: 'music',    label: 'Música',    glyph: '🎵' },
+  { id: 'mention',  label: 'Mention',   glyph: '@' },
+  { id: 'question', label: 'Pergunta',  glyph: '❓' },
+  { id: 'poll',     label: 'Poll',      glyph: '📊' },
+  { id: 'quiz',     label: 'Quiz',      glyph: '🧠' },
+  { id: 'slider',   label: 'Slider',    glyph: '🎚️' },
+];
+
+// Trash-zone hit area, centered horizontally near the bottom of the canvas.
+const TRASH_ZONE = { y: CANVAS - 64, w: 96, h: 64 };
+
 export default function StickerEditor({ visible, imageUri, onCancel, onSave, t, colors, userEmail }) {
   const [text, setText] = useState('');
   const [color, setColor] = useState(TEXT_COLORS[0]);
@@ -32,10 +52,16 @@ export default function StickerEditor({ visible, imageUri, onCancel, onSave, t, 
   const [emojiTags, setEmojiTags] = useState([]);
   const [primaryEmoji, setPrimaryEmoji] = useState('');
   const [removeBg, setRemoveBg] = useState(false);
+  const [activeTab, setActiveTab] = useState('text');
+  const [trashHot, setTrashHot] = useState(false);
+  const [textDeleted, setTextDeleted] = useState(false);
   const shotRef = useRef(null);
 
-  // Draggable text position
+  // Draggable text position. PanResponder also tracks whether the current
+  // drag is overlapping the bottom trash zone — when released over it we
+  // delete the text overlay (Instagram pattern).
   const pan = useRef({ x: new Animated.Value(0), y: new Animated.Value(0) }).current;
+  const lastDrag = useRef({ x: 0, y: 0 });
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -43,7 +69,29 @@ export default function StickerEditor({ visible, imageUri, onCancel, onSave, t, 
         pan.x.extractOffset();
         pan.y.extractOffset();
       },
-      onPanResponderMove: Animated.event([null, { dx: pan.x, dy: pan.y }], { useNativeDriver: false }),
+      onPanResponderMove: (e, gs) => {
+        pan.x.setValue(gs.dx);
+        pan.y.setValue(gs.dy);
+        // Compute current absolute position of text (canvas-local) and check
+        // overlap with the trash zone. Text anchor sits ~CANVAS/2 + dy.
+        const absY = CANVAS / 2 + pan.y._value + pan.y._offset;
+        const absX = CANVAS / 2 + pan.x._value + pan.x._offset;
+        const inX = Math.abs(absX - CANVAS / 2) < TRASH_ZONE.w / 2;
+        const inY = absY > TRASH_ZONE.y;
+        const hot = inX && inY;
+        if (hot !== trashHot) setTrashHot(hot);
+        lastDrag.current = { x: pan.x._value + pan.x._offset, y: pan.y._value + pan.y._offset };
+      },
+      onPanResponderRelease: () => {
+        pan.x.flattenOffset();
+        pan.y.flattenOffset();
+        if (trashHot) {
+          setText('');
+          setTextDeleted(true);
+          pan.x.setValue(0); pan.y.setValue(0);
+        }
+        setTrashHot(false);
+      },
     })
   ).current;
 
@@ -166,6 +214,46 @@ export default function StickerEditor({ visible, imageUri, onCancel, onSave, t, 
     <Modal visible transparent animationType="fade" onRequestClose={onCancel}>
       <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center', alignItems: 'center', padding: 16 }}>
         <ScrollView contentContainerStyle={{ alignItems: 'center', paddingVertical: 20 }} showsVerticalScrollIndicator={false}>
+          {/* Sticker library tabs — Instagram-style horizontal chip rail.
+              Tapping a chip selects the active overlay type. Currently only
+              `text` and `emoji` are wired into the canvas; the other chips
+              are placeholders so the UI matches IG's affordance set. */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: 12, gap: 8, marginBottom: 12 }}
+            style={{ width: CANVAS + 24, maxHeight: 44 }}
+          >
+            {STICKER_TABS.map(tab => {
+              const active = activeTab === tab.id;
+              return (
+                <TouchableOpacity
+                  key={tab.id}
+                  onPress={() => {
+                    setActiveTab(tab.id);
+                    if (tab.id === 'emoji' && QUICK_EMOJIS[0]) {
+                      // Tap-to-insert: append a curated emoji into the text overlay
+                      setText(prev => (prev + ' ' + QUICK_EMOJIS[Math.floor(Math.random() * QUICK_EMOJIS.length)]).trim().slice(0, 40));
+                      setTextDeleted(false);
+                    }
+                  }}
+                  style={{
+                    height: 36, paddingHorizontal: 14, borderRadius: 18,
+                    backgroundColor: active ? '#0A84FF' : 'rgba(255,255,255,0.10)',
+                    borderWidth: active ? 0 : 1,
+                    borderColor: 'rgba(255,255,255,0.14)',
+                    flexDirection: 'row', alignItems: 'center', gap: 6,
+                  }}
+                >
+                  <Text style={{ fontSize: 14 }}>{tab.glyph}</Text>
+                  <Text style={{ color: '#fff', fontSize: 13, fontWeight: active ? '700' : '500' }}>
+                    {tab.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
           {/* Canvas */}
           <Canvas ref={shotRef} style={{
             width: CANVAS, height: CANVAS, borderRadius: 12, overflow: 'hidden',
@@ -176,7 +264,7 @@ export default function StickerEditor({ visible, imageUri, onCancel, onSave, t, 
             ) : (
               <CachedImage source={{ uri: imageUri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
             )}
-            {!!text.trim() && (
+            {!!text.trim() && !textDeleted && (
               <Animated.View
                 {...panResponder.panHandlers}
                 style={{
@@ -197,13 +285,38 @@ export default function StickerEditor({ visible, imageUri, onCancel, onSave, t, 
                 </Text>
               </Animated.View>
             )}
+
+            {/* Trash drop zone — appears while a sticker is being dragged.
+                Drag a sticker over it and release to delete (Instagram-style). */}
+            {!!text.trim() && !textDeleted && (
+              <View
+                pointerEvents="none"
+                style={{
+                  position: 'absolute',
+                  left: (CANVAS - TRASH_ZONE.w) / 2,
+                  top: TRASH_ZONE.y,
+                  width: TRASH_ZONE.w, height: TRASH_ZONE.h,
+                  borderRadius: TRASH_ZONE.h / 2,
+                  alignItems: 'center', justifyContent: 'center',
+                  backgroundColor: trashHot ? 'rgba(255,59,48,0.85)' : 'rgba(0,0,0,0.45)',
+                  borderWidth: trashHot ? 2 : 1,
+                  borderColor: trashHot ? '#FF3B30' : 'rgba(255,255,255,0.25)',
+                  transform: [{ scale: trashHot ? 1.1 : 1 }],
+                  ...(Platform.OS === 'web' && trashHot
+                    ? { boxShadow: '0 0 24px 6px rgba(255,59,48,0.7)' }
+                    : {}),
+                }}
+              >
+                <Text style={{ fontSize: 22 }}>🗑️</Text>
+              </View>
+            )}
           </Canvas>
 
           {/* Text input */}
           <View style={{ width: CANVAS, marginTop: 16 }}>
             <TextInput
               value={text}
-              onChangeText={setText}
+              onChangeText={(v) => { setText(v); if (v) setTextDeleted(false); }}
               placeholder={t?.('chat.stickerText') || 'Adicione texto'}
               placeholderTextColor="rgba(255,255,255,0.5)"
               maxLength={40}
