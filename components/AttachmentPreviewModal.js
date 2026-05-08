@@ -47,6 +47,11 @@ export default function AttachmentPreviewModal({ visible, attachments, initialIn
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+      return;
+    }
+    // Native — open in system handler (Files app on iOS, downloads on Android)
+    if (url) {
+      import('expo-linking').then(Linking => Linking.openURL(url)).catch(() => {});
     }
   };
 
@@ -83,6 +88,50 @@ export default function AttachmentPreviewModal({ visible, attachments, initialIn
               style={{ width: '100%', height: '100%', border: 'none', borderRadius: 8 }}
               title={current?.filename}
             />
+          ) : isPdf && url ? (
+            // Native PDF viewer — same pattern as chat ChatMediaViewer:
+            // iOS WKWebView has built-in PDF reader when the PDF URL loads as
+            // the document root (not embedded). Android renders via Google
+            // Docs viewer wrapper since native WebView doesn't ship a PDF
+            // engine. Without this branch the user just saw "cannot preview"
+            // and had to download — reported 2026-05-08 ("PDF deveria abrir,
+            // não só baixar").
+            (() => {
+              try {
+                const { WebView } = require('react-native-webview');
+                const src = Platform.OS === 'ios'
+                  ? { uri: url }
+                  : { uri: `https://docs.google.com/gview?embedded=true&url=${encodeURIComponent(url)}` };
+                return (
+                  <View style={{ flex: 1, width: '100%', backgroundColor: '#fff', borderRadius: 8, overflow: 'hidden' }}>
+                    <WebView
+                      source={src}
+                      style={{ flex: 1 }}
+                      startInLoadingState
+                      originWhitelist={['*']}
+                      javaScriptEnabled
+                      domStorageEnabled
+                      allowsInlineMediaPlayback
+                      mediaPlaybackRequiresUserAction={false}
+                      // iOS: enable native PDF preview, allow tap zoom, etc
+                      automaticallyAdjustContentInsets={false}
+                      // Android: needed by Google Docs viewer iframe
+                      mixedContentMode="always"
+                    />
+                  </View>
+                );
+              } catch {
+                return (
+                  <View style={s.noPreview}>
+                    <Text style={s.noPreviewText}>{t('attachment.cannotPreview')}</Text>
+                    <TouchableOpacity onPress={handleDownload} style={[s.downloadBtn, { backgroundColor: colors.primary }]}>
+                      <IconDownload size={16} color="#fff" />
+                      <Text style={s.downloadBtnText}>{t('attachment.download')}</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              }
+            })()
           ) : (
             <View style={s.noPreview}>
               <Text style={s.noPreviewText}>{t('attachment.cannotPreview')}</Text>
