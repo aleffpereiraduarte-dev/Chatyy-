@@ -1093,7 +1093,7 @@ export default function ComposeScreen() {
       onLongPress={() => { if (!sending) setShowSendOptions(true); }}
       delayLongPress={350}
       disabled={sending}
-      activeOpacity={0.7}
+      activeOpacity={0.85}
       accessibilityLabel={t('compose.send') + ' (Ctrl+Enter)'}
       accessibilityRole="button"
     >

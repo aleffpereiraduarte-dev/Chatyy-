@@ -4204,7 +4204,11 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           since this is informational, not an error — most reconnects succeed
           in seconds and the user shouldn't feel the app is broken. */}
       {wsDownBanner && (
-        <View style={{
+        <View
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+          accessibilityLabel={t?.('chat.reconnecting') || 'Reconectando…'}
+          style={{
           flexDirection: 'row', alignItems: 'center', gap: 8,
           paddingHorizontal: 14, paddingVertical: 6,
           backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',

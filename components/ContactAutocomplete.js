@@ -121,6 +121,11 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
     // Then update parent state
     if (!already) {
       onChange([...value, fixed]);
+      if (Platform.OS !== 'web') {
+        try {
+          require('expo-haptics').selectionAsync?.();
+        } catch {}
+      }
     }
 
     // Finally restore focus

@@ -2667,7 +2667,7 @@ const s = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 8,
     padding: 12, borderRadius: 8, marginBottom: 16, borderWidth: 1,
   },
-  errorText: { fontSize: 13, flex: 1, fontWeight: '500' },
+  errorText: { fontSize: 13, flex: 1, fontWeight: '600' },
 
   /* Input — Material Design outlined */
   inputBox: {

@@ -192,7 +192,7 @@ export default function ReadScreen() {
       <View style={[s.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}>
         {Platform.OS !== 'web' && (
           <View style={[s.navBar, { backgroundColor: colors.surface, borderBottomColor: colors.borderLight }]}>
-            <TouchableOpacity onPress={() => router.back()} style={s.backBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <TouchableOpacity onPress={() => router.back()} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 16, right: 12 }}>
               <IconChevronLeft size={22} color={colors.primary} />
               <Text style={[s.backText, { color: colors.primary }]}>{t('reader.back')}</Text>
             </TouchableOpacity>
@@ -206,7 +206,7 @@ export default function ReadScreen() {
   // Back nav bar (mobile) with prev/next navigation
   const navBar = Platform.OS !== 'web' ? (
     <View style={[s.navBar, { backgroundColor: colors.surface, borderBottomColor: colors.borderLight }]}>
-      <TouchableOpacity onPress={() => router.back()} style={s.backBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel={t('reader.back')} accessibilityRole="button">
+      <TouchableOpacity onPress={() => router.back()} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 16, right: 12 }} accessibilityLabel={t('reader.back')} accessibilityRole="button">
         <IconChevronLeft size={22} color={colors.primary} />
         <Text style={[s.backText, { color: colors.primary }]}>{t('reader.back')}</Text>
       </TouchableOpacity>
@@ -216,7 +216,7 @@ export default function ReadScreen() {
           onPress={() => navigateToEmail(prevUid)}
           style={[s.navArrowBtn, !prevUid && { opacity: 0.3 }]}
           disabled={!prevUid}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          hitSlop={{ top: 12, bottom: 12, left: 16, right: 12 }}
           accessibilityLabel={t('reader.prevEmail')}
           accessibilityRole="button"
         >
@@ -226,7 +226,7 @@ export default function ReadScreen() {
           onPress={() => navigateToEmail(nextUid)}
           style={[s.navArrowBtn, !nextUid && { opacity: 0.3 }]}
           disabled={!nextUid}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          hitSlop={{ top: 12, bottom: 12, left: 16, right: 12 }}
           accessibilityLabel={t('reader.nextEmail')}
           accessibilityRole="button"
         >
