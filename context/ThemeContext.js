@@ -7,8 +7,11 @@ const ThemeContext = createContext(null);
 
 export const DENSITY_CONFIG = {
   compact: { rowMinHeight: 48, paddingV: 6, avatarSize: 28, showPreview: false, fontSize: 13 },
-  comfortable: { rowMinHeight: 72, paddingV: 14, avatarSize: 40, showPreview: true, fontSize: 14 },
-  spacious: { rowMinHeight: 92, paddingV: 18, avatarSize: 44, showPreview: true, fontSize: 15 },
+  // Wave 5 polish 2026-05-08: avatar default bumpado 40→46 pra alinhar com
+  // ChatList (50). Antes parecia que email row era de outro app por ter
+  // avatares menores. Spacious 44→50 = paridade total.
+  comfortable: { rowMinHeight: 76, paddingV: 14, avatarSize: 46, showPreview: true, fontSize: 14 },
+  spacious: { rowMinHeight: 96, paddingV: 18, avatarSize: 50, showPreview: true, fontSize: 15 },
 };
 
 export const ACCENT_PRESETS = [

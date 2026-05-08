@@ -25,7 +25,7 @@ export default function CategoryTabs({ activeCategory = 'all', onCategoryChange,
       horizontal
       showsHorizontalScrollIndicator={false}
       contentContainerStyle={s.container}
-      style={[s.scroll, { borderBottomColor: colors.borderLight, borderBottomWidth: StyleSheet.hairlineWidth }]}
+      style={s.scroll}
     >
       {CATEGORIES.map((cat) => {
         const isActive = activeCategory === cat.key;
@@ -41,7 +41,11 @@ export default function CategoryTabs({ activeCategory = 'all', onCategoryChange,
                 ? {
                     backgroundColor: activeColor,
                     borderColor: activeColor,
-                    ...(Platform.OS === 'web' ? { boxShadow: `0 6px 18px ${activeColor}40` } : {}),
+                    ...Platform.select({
+                      ios: { shadowColor: activeColor, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.32, shadowRadius: 10 },
+                      android: { elevation: 4 },
+                      web: { boxShadow: `0 6px 18px ${activeColor}40` },
+                    }),
                   }
                 : {
                     backgroundColor: colors.surface,
