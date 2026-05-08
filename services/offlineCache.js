@@ -301,9 +301,16 @@ export async function queueOfflineAction(action) {
   setJSON(QUEUE_KEY, queue);
 }
 
+// 7d TTL — WhatsApp keeps unsent indefinitely, but at some point a stuck
+// action (server schema changed, recipient deleted, etc.) is dead weight.
+// 7 days matches WhatsApp's media-resend window and the user's mental model
+// for "I sent that last week and it never went". Anything older is dropped
+// silently — the optimistic bubble already flipped to ❗ at attempt 5.
+const OFFLINE_QUEUE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 export async function getOfflineQueue() {
   const queue = getJSON(QUEUE_KEY) || [];
-  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  const cutoff = Date.now() - OFFLINE_QUEUE_TTL_MS;
   const fresh = queue.filter(a => !a?.ts || a.ts >= cutoff);
   if (fresh.length !== queue.length) setJSON(QUEUE_KEY, fresh);
   return fresh;

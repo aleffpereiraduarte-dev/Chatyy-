@@ -1761,6 +1761,7 @@ export default function LoginScreen() {
                                       transform: [{ scale: phoneOtpCellAnims[i] }],
                                       ...(_focused && Platform.OS === 'web' ? { boxShadow: `0 0 0 4px ${colors.primary}22` } : {}),
                                       ...(_focused && Platform.OS === 'ios' ? { shadowColor: colors.primary, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.35, shadowRadius: 6 } : {}),
+                                      ...(_focused && Platform.OS === 'android' ? { elevation: 4 } : {}),
                                     }}
                                   >
                                     <Text style={{ fontSize: 22, fontWeight: '700', color: colors.text }}>

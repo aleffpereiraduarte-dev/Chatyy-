@@ -14,7 +14,7 @@
  * `client_message_id` is the final safety net.
  */
 import { Platform } from 'react-native';
-import { getAllPendingMessages, removePendingMessage } from './chatCache';
+import { getAllPendingMessages, removePendingMessage, savePendingMessage } from './chatCache';
 import * as api from './api';
 
 let _draining = false;
@@ -22,22 +22,77 @@ let _initialized = false;
 let _lastDrainAt = 0;
 const MIN_DRAIN_GAP_MS = 2000; // don't re-drain more often than every 2s
 
+// 7d hard TTL — rows older than this are presumed dead (server schema change,
+// account deleted, etc.). UI already flipped them to ❗ at attempt 5; the user
+// has had a week to tap-to-retry. Avoids the outbox growing forever when the
+// server is permanently rejecting one specific message.
+const PENDING_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// Exponential backoff per row — 0s, 30s, 2m, 10m, 30m, 1h cap. Mirrors the
+// offlineCache replay schedule so the two retry paths don't fight each other.
+const BACKOFF_LADDER_MS = [0, 30000, 120000, 600000, 1800000, 3600000];
+
+function isHardError(r) {
+  // Server returned a structured failure (not network) that won't get better
+  // by retrying — e.g. blocked content, banned, parental gate denied. We drop
+  // these from the outbox rather than burning attempts forever. 401/auth
+  // errors handled separately by the chat-conversation send path.
+  if (!r || typeof r !== 'object') return false;
+  const code = r.code || r.error_code || '';
+  if (typeof code === 'string' && /^(blocked|banned|forbidden|invalid_content|parental)/.test(code)) return true;
+  // Backend message strings that signal "no point retrying" — chat.php uses
+  // these literal phrases for permanent-rejection paths. Keep this list short
+  // and conservative; unknown messages stay in retry mode.
+  const msg = String(r.message || r.error || '').toLowerCase();
+  if (/parental|blocked|forbidden|conversation not found|not a member|content not allowed/.test(msg)) return true;
+  // HTTP 4xx that's NOT 408/429 (which ARE retriable). Preserve unknown
+  // shapes — better to keep retrying a transient issue than discard real msgs.
+  const status = Number(r.status || r.http_status || 0);
+  if (status >= 400 && status < 500 && status !== 408 && status !== 429) return true;
+  return false;
+}
+
 async function drainOnce(reason = 'manual') {
   if (_draining) return { skipped: 'already-draining' };
   if (Date.now() - _lastDrainAt < MIN_DRAIN_GAP_MS) return { skipped: 'cooldown' };
   _draining = true;
   _lastDrainAt = Date.now();
-  let sent = 0, failed = 0;
+  let sent = 0, failed = 0, dropped = 0;
   try {
     const pending = await getAllPendingMessages();
     if (!pending || pending.length === 0) return { sent: 0, failed: 0, reason };
-    for (const p of pending) {
+    // Order preservation: send in the same order the user typed them. Without
+    // sorting, MMKV key iteration order can flip msg #2 ahead of msg #1 across
+    // restarts, and the recipient sees them in wrong order on first delivery.
+    const sorted = [...pending].sort((a, b) => {
+      const ta = Date.parse(a?.created_at || '') || 0;
+      const tb = Date.parse(b?.created_at || '') || 0;
+      return ta - tb;
+    });
+    // Track convs that hit a network error this drain so later messages in
+    // the SAME conversation don't overtake the failed one.
+    const blockedConvIds = new Set();
+    const now = Date.now();
+    for (const p of sorted) {
       if (!p?.temp_id || !p?.conversation_id) continue;
+      // Per-row TTL: drop messages stuck >7d. The optimistic bubble already
+      // shows ❗; user can tap-to-retry which re-queues a fresh row.
+      const createdAt = Date.parse(p.created_at || '') || 0;
+      if (createdAt && now - createdAt > PENDING_TTL_MS) {
+        try { await removePendingMessage(p.conversation_id, p.temp_id); } catch {}
+        dropped++;
+        continue;
+      }
       // Skip rows still being held by the open conversation; that screen has
       // its own retry that already runs. We only want to cover *closed*
       // conversations + cold boots.
-      const ageMs = Date.now() - new Date(p.created_at || 0).getTime();
+      const ageMs = now - createdAt;
       if (ageMs < 5000) continue; // give in-screen retry the first 5s
+      // Per-row backoff: respect next_retry_at written on previous failure so
+      // a permanently-rejecting send doesn't hammer the server every periodic
+      // tick (was: every 60s forever).
+      if (p.next_retry_at && p.next_retry_at > now) continue;
+      // Order: don't overtake an earlier message that just failed in this drain.
+      if (blockedConvIds.has(p.conversation_id)) continue;
       try {
         const clientId = p.client_message_id || p.temp_id;
         const r = await api.chatSend(
@@ -52,6 +107,15 @@ async function drainOnce(reason = 'manual') {
         );
         if (r?.success && r?.data?.id) {
           removePendingMessage(p.conversation_id, p.temp_id).catch(() => {});
+          // Cancel any duplicate offline-queue retry for the SAME message —
+          // chat-conversation's send-catch path queues into offlineCache when
+          // the HTTP fails, but if outboxDrainer succeeds first we must purge
+          // that twin entry or replayOfflineQueue will fire it later (server
+          // dedups via UNIQUE client_message_id but UI flickers).
+          try {
+            const { removeChatSendFromQueueByClientMsgId } = require('./offlineCache');
+            removeChatSendFromQueueByClientMsgId(clientId).catch(() => {});
+          } catch {}
           sent++;
           // Relay over WS so the open conversation (if any) sees the
           // confirmed message instantly instead of waiting for the next
@@ -67,18 +131,51 @@ async function drainOnce(reason = 'manual') {
               );
             }
           } catch {}
+        } else if (isHardError(r)) {
+          // Server says no — drop instead of looping forever.
+          try { await removePendingMessage(p.conversation_id, p.temp_id); } catch {}
+          dropped++;
+          // Surface to the open conversation so its bubble flips to ❗ if visible.
+          try {
+            const evt = require('./sendFailEvents');
+            evt.emitSendFail?.(p.conversation_id, p.temp_id, clientId);
+          } catch {}
         } else {
+          // Soft failure — bump attempt counter + schedule next try via backoff.
+          // Persist the bumped row so reboots don't reset the ladder.
           failed++;
+          const attempts = (p.attempts || 0) + 1;
+          const delay = BACKOFF_LADDER_MS[Math.min(attempts, BACKOFF_LADDER_MS.length - 1)];
+          try {
+            await savePendingMessage(p.conversation_id, {
+              ...p, attempts, next_retry_at: now + delay,
+            });
+          } catch {}
+          blockedConvIds.add(p.conversation_id);
+          if (attempts >= 5) {
+            try {
+              const evt = require('./sendFailEvents');
+              evt.emitSendFail?.(p.conversation_id, p.temp_id, clientId);
+            } catch {}
+          }
         }
       } catch {
         failed++;
-        // Network-level error → stop draining; we'll get retriggered when
-        // the network or WS reconnects. Avoids burning the rest of the
-        // queue against the same offline failure.
-        break;
+        // Network-level error → bump backoff for THIS row and block this
+        // conversation, but keep going for OTHER conversations (was: hard
+        // break, which left messages in unrelated convs stuck on the same
+        // tick even though one of them might have succeeded).
+        const attempts = (p.attempts || 0) + 1;
+        const delay = BACKOFF_LADDER_MS[Math.min(attempts, BACKOFF_LADDER_MS.length - 1)];
+        try {
+          await savePendingMessage(p.conversation_id, {
+            ...p, attempts, next_retry_at: now + delay,
+          });
+        } catch {}
+        blockedConvIds.add(p.conversation_id);
       }
     }
-    return { sent, failed, reason };
+    return { sent, failed, dropped, reason };
   } finally {
     _draining = false;
   }

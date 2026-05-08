@@ -1933,7 +1933,11 @@ export default function PlansScreen() {
                 width: 36, height: 36, borderRadius: 11,
                 backgroundColor: PLUS_COLOR + '18',
                 alignItems: 'center', justifyContent: 'center',
-                ...(Platform.OS === 'web' ? { boxShadow: `0 4px 12px ${PLUS_COLOR}33` } : {}),
+                ...Platform.select({
+                  web: { boxShadow: `0 4px 12px ${PLUS_COLOR}33` },
+                  ios: { shadowColor: PLUS_COLOR, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 12 },
+                  android: { elevation: 4 },
+                }),
               }}>
                 <IconStarFilled size={20} color={PLUS_COLOR} />
               </View>
@@ -2143,7 +2147,11 @@ export default function PlansScreen() {
                 width: 36, height: 36, borderRadius: 11,
                 backgroundColor: FAMILY_COLOR + '18',
                 alignItems: 'center', justifyContent: 'center',
-                ...(Platform.OS === 'web' ? { boxShadow: `0 4px 12px ${FAMILY_COLOR}33` } : {}),
+                ...Platform.select({
+                  web: { boxShadow: `0 4px 12px ${FAMILY_COLOR}33` },
+                  ios: { shadowColor: FAMILY_COLOR, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 12 },
+                  android: { elevation: 4 },
+                }),
               }}>
                 <IconUsers size={20} color={FAMILY_COLOR} />
               </View>
@@ -2156,10 +2164,14 @@ export default function PlansScreen() {
                 flexDirection: 'row',
                 alignItems: 'center',
                 gap: 4,
-                ...(Platform.OS === 'web' ? {
-                  backgroundImage: 'linear-gradient(135deg, #f59e0b, #d97706)',
-                  boxShadow: '0 2px 8px rgba(245, 158, 11, 0.3)',
-                } : {}),
+                ...Platform.select({
+                  web: {
+                    backgroundImage: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                    boxShadow: '0 2px 8px rgba(245, 158, 11, 0.3)',
+                  },
+                  ios: { shadowColor: '#f59e0b', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 8 },
+                  android: { elevation: 3 },
+                }),
               }}>
                 <IconStarFilled size={10} color="#fff" />
                 <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.5 }}>{t('plans.mostPopular')}</Text>

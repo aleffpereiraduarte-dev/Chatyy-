@@ -298,14 +298,33 @@ export async function cacheMedia(url, opts = {}) {
       if (!dirInfo.exists) {
         await fs.makeDirectoryAsync(dir, { intermediates: true });
       }
-      // 20s timeout so a stuck CDN (slow 3G, dead edge node) doesn't hold the
-      // promise forever and freeze downstream awaits.
-      const download = await Promise.race([
-        fs.downloadAsync(url, localPath),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('download_timeout')), 20000)),
-      ]);
-      if (download?.status === 200) { registerSyncKey(url, localPath); return localPath; }
-      try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
+      // Retry com exponential backoff em 5xx / network failures. 4xx
+      // (404, 410, 403) são bug nosso ou link expirado — retry só queima
+      // bateria. Backoff: 0ms → 500ms → 1500ms (3 tentativas no total).
+      const BACKOFFS_MS = [0, 500, 1500];
+      let lastStatus = 0;
+      for (let attempt = 0; attempt < BACKOFFS_MS.length; attempt++) {
+        if (BACKOFFS_MS[attempt] > 0) {
+          await new Promise(r => setTimeout(r, BACKOFFS_MS[attempt]));
+        }
+        try {
+          // 20s timeout so a stuck CDN (slow 3G, dead edge node) doesn't hold the
+          // promise forever and freeze downstream awaits.
+          const download = await Promise.race([
+            fs.downloadAsync(url, localPath),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('download_timeout')), 20000)),
+          ]);
+          if (download?.status === 200) { registerSyncKey(url, localPath); return localPath; }
+          lastStatus = download?.status || 0;
+          try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
+          // Abort em 4xx — não vai mudar com retry. Recursos ausentes /
+          // tokens inválidos são bug, não flaky network.
+          if (lastStatus >= 400 && lastStatus < 500) break;
+        } catch {
+          // Network/timeout — vale tentar de novo.
+          try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
+        }
+      }
     } catch {
       try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
     }
@@ -313,7 +332,12 @@ export async function cacheMedia(url, opts = {}) {
   })();
   _inflightDownloads.set(key, dlPromise);
   try { return await dlPromise; }
-  finally { _inflightDownloads.delete(key); }
+  finally {
+    _inflightDownloads.delete(key);
+    // Fire-and-forget LRU sweep (debounced inside) — keeps saved dir
+    // bounded after each new download lands.
+    try { evictIfNeeded(); } catch {}
+  }
 }
 
 // Pre-cache an array of URLs (for batch caching when entering a conversation)
@@ -427,6 +451,67 @@ export async function getSavedSize() {
     const info = await fs.getInfoAsync(dir);
     return info.exists ? (info.size || 0) : 0;
   } catch { return 0; }
+}
+
+// LRU eviction: scan saved/cache dirs, sum sizes, if over MAX_CACHE_MB
+// delete oldest files (by modificationTime) until under the cap. Without
+// this the saved dir grows unbounded — first-time users hit photos heavy
+// channels and end up with multi-GB sandboxes after a few weeks.
+// Called opportunistically (debounced) — not blocking on every download.
+let _lastEvictAt = 0;
+let _evictInflight = null;
+export async function evictIfNeeded() {
+  if (Platform.OS === 'web') return;
+  // Debounce: at most one sweep every 5 min. Scanning the dir on every
+  // cacheMedia call is its own perf problem on accounts with thousands
+  // of media files.
+  const now = Date.now();
+  if (now - _lastEvictAt < 5 * 60 * 1000) return;
+  if (_evictInflight) return _evictInflight;
+  const fs = getFS();
+  if (!fs) return;
+  _evictInflight = (async () => {
+    try {
+      const limitBytes = MAX_CACHE_MB * 1024 * 1024;
+      const entries = [];
+      for (const dir of [getCacheDir(), getSavedDir()]) {
+        if (!dir) continue;
+        try {
+          const info = await fs.getInfoAsync(dir);
+          if (!info.exists) continue;
+          const names = await fs.readDirectoryAsync(dir);
+          for (const name of names) {
+            const path = dir + name;
+            try {
+              const st = await fs.getInfoAsync(path);
+              if (st.exists && !st.isDirectory) {
+                entries.push({ path, size: st.size || 0, mtime: st.modificationTime || 0, name });
+              }
+            } catch {}
+          }
+        } catch {}
+      }
+      const total = entries.reduce((a, e) => a + e.size, 0);
+      if (total <= limitBytes) return;
+      // Oldest first — purge LRU until under cap.
+      entries.sort((a, b) => a.mtime - b.mtime);
+      let freed = 0;
+      const need = total - limitBytes;
+      for (const e of entries) {
+        if (freed >= need) break;
+        try {
+          await fs.deleteAsync(e.path, { idempotent: true });
+          syncIndex.delete(e.name);
+          freed += e.size;
+        } catch {}
+      }
+      _schedulePersistIndex();
+    } finally {
+      _lastEvictAt = Date.now();
+      _evictInflight = null;
+    }
+  })();
+  return _evictInflight;
 }
 
 // Clear the entire cache (not saved media)

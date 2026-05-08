@@ -70,6 +70,7 @@ if (Platform.OS === 'ios') {
 function NativeImageViewerWithLoading({ url }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [retryEpoch, setRetryEpoch] = useState(0);
 
   useEffect(() => {
     setLoading(true);
@@ -94,12 +95,12 @@ function NativeImageViewerWithLoading({ url }) {
         setError('Não consegui carregar a imagem');
       });
     return () => { cancelled = true; clearTimeout(timeout); };
-  }, [url]);
+  }, [url, retryEpoch]);
 
   return (
     <View style={s.mediaContainer}>
       {!loading && !error && (
-        <_NativeImageZoomView style={s.mediaContainer} uri={url} />
+        <_NativeImageZoomView key={retryEpoch} style={s.mediaContainer} uri={url} />
       )}
       {loading && (
         <View style={[s.mediaContainer, { alignItems: 'center', justifyContent: 'center' }]}>
@@ -114,9 +115,17 @@ function NativeImageViewerWithLoading({ url }) {
           <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600', marginBottom: 6 }}>
             Ops!
           </Text>
-          <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, textAlign: 'center' }}>
+          <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, textAlign: 'center', marginBottom: 16 }}>
             {error}
           </Text>
+          <TouchableOpacity
+            onPress={() => setRetryEpoch(e => e + 1)}
+            style={{ backgroundColor: '#7C3AED', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10 }}
+            accessibilityLabel="Tentar novamente"
+            accessibilityRole="button"
+          >
+            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>Tentar novamente</Text>
+          </TouchableOpacity>
         </View>
       )}
     </View>
@@ -137,12 +146,21 @@ function ImageViewer({ url }) {
   const translateY = useRef(new Animated.Value(0)).current;
   const [loading, setLoading] = useState(true);
   const [imageError, setImageError] = useState(null);
+  // Bump on retry tap → forces RN <Image> to remount + re-fetch (changing
+  // the `key` prop is the only reliable way; setting state alone won't
+  // re-trigger the network request after onError fired).
+  const [retryEpoch, setRetryEpoch] = useState(0);
   // Reset state whenever the URL changes so the spinner stops spinning on
   // the previous image when the modal is opened for a new one.
   useEffect(() => {
     setLoading(true);
     setImageError(null);
   }, [url]);
+  const handleRetry = useCallback(() => {
+    setLoading(true);
+    setImageError(null);
+    setRetryEpoch(e => e + 1);
+  }, []);
   const lastScale = useRef(1);
   const lastTranslateX = useRef(0);
   const lastTranslateY = useRef(0);
@@ -185,9 +203,17 @@ function ImageViewer({ url }) {
     <View style={s.mediaContainer}>
       {loading && !imageError && <ActivityIndicator size="large" color="#fff" style={s.loader} />}
       {imageError && (
-        <View style={[s.loader, { alignItems: 'center', justifyContent: 'center', padding: 24 }]} pointerEvents="none">
+        <View style={[s.loader, { alignItems: 'center', justifyContent: 'center', padding: 24 }]}>
           <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginBottom: 8 }}>Não consegui abrir</Text>
-          <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, textAlign: 'center' }} numberOfLines={3}>{imageError}</Text>
+          <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, textAlign: 'center', marginBottom: 16 }} numberOfLines={3}>{imageError}</Text>
+          <TouchableOpacity
+            onPress={handleRetry}
+            style={{ backgroundColor: '#7C3AED', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10 }}
+            accessibilityLabel="Tentar novamente"
+            accessibilityRole="button"
+          >
+            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>Tentar novamente</Text>
+          </TouchableOpacity>
         </View>
       )}
       <Animated.View
@@ -201,6 +227,7 @@ function ImageViewer({ url }) {
         }]}
       >
         <Image
+          key={retryEpoch}
           source={{ uri: url }}
           style={s.fullImage}
           resizeMode="contain"

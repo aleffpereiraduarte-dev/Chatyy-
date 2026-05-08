@@ -322,11 +322,15 @@ function PrivacyScreen({ colors, t }) {
         // it from the same key when dispatching sends.
         const ss = await AsyncStorage.getItem('chatyy_sealed_sender');
         if (ss === 'true') setSealedSender(true);
-        // Restore phone_visibility from local cache when backend doesn't
-        // return it yet (TODO backend: phone_visibility field in
-        // chat_user_privacy).
-        const pv = await AsyncStorage.getItem('privacy_phone_visibility');
-        if (pv) setSettings(prev => (prev.phone_visibility ? prev : { ...prev, phone_visibility: pv }));
+        // Phone_visibility is now authoritative on the server (chat.php
+        // chat_user_privacy.phone_visibility). We only fall back to the
+        // local cache if chat_privacy_get didn't return it (cold start with
+        // no network) — this avoids the previous bug where stale local
+        // state silently overrode the server's current value.
+        if (!settings.phone_visibility) {
+          const pv = await AsyncStorage.getItem('privacy_phone_visibility');
+          if (pv) setSettings(prev => (prev.phone_visibility ? prev : { ...prev, phone_visibility: pv }));
+        }
       } catch {}
       setLoading(false);
     })();
@@ -335,7 +339,9 @@ function PrivacyScreen({ colors, t }) {
   const update = async (patch) => {
     setSettings(prev => ({ ...prev, ...patch }));
     if (patch.phone_visibility) {
-      // TODO backend: phone_visibility field in chat_user_privacy
+      // Mirror to local cache for offline hydration. Backend
+      // chat_user_privacy.phone_visibility is authoritative — the cache is
+      // only read when chat_privacy_get hasn't returned yet on cold start.
       try {
         const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
         await AsyncStorage.setItem('privacy_phone_visibility', patch.phone_visibility);

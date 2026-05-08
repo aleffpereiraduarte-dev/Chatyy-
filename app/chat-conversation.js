@@ -10404,8 +10404,16 @@ export default function ChatConversationScreen() {
     // fire Haptics.notificationAsync(Success) but this one was missing the
     // bump after the recorder finalizes, so the gesture felt unconfirmed.
     try { if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
-    // Optimistic: show audio message immediately with uploading indicator
-    const tempId = 'tmp_audio_' + Date.now();
+    // Optimistic: show audio message immediately with uploading indicator.
+    // tempId previously was just `tmp_audio_${Date.now()}` — same-ms voice
+    // sends (rare but possible: pre-uploaded session + immediate send) would
+    // collide, and the dedup paths (WS receive, sync replay, retry replace)
+    // would replace one bubble with the other. Add a random suffix to match
+    // the text/gif/sticker send paths. Also set `_client_id` so server-side
+    // `client_message_id` retry-dedup works (was missing → if upload retried
+    // after a transient 5xx, server created two rows for the same voice).
+    const tempId = `tmp_audio_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const audioMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const localUri = audioData.blob ? URL.createObjectURL(audioData.blob) : audioData.uri;
     const optimisticMsg = {
       id: tempId,
@@ -10419,6 +10427,7 @@ export default function ChatConversationScreen() {
       created_at: new Date().toISOString(),
       _pending: true,
       _uploading: true,
+      _client_id: audioMsgId,
     };
     setMessages(prev => [...prev, optimisticMsg]);
     setUploadProgress(prev => ({ ...prev, [tempId]: 0 }));
@@ -12635,6 +12644,69 @@ export default function ChatConversationScreen() {
   const msgKeyExtractor = useCallback((item) => (
     item._key || (item.deleted_at ? `${item.id}_d` : String(item.id))
   ), []);
+
+  // PERF: pinnedMessages is consulted PER ROW inside renderMessage
+  // (`pinnedMessages.find(p => String(p.id) === String(msg.id))`). With N
+  // rows × M pinned that's O(N*M) on every parent re-render. Pre-build a
+  // Set<string> once per pinnedMessages change so per-row lookup is O(1).
+  const pinnedIdSet = useMemo(() => {
+    const s = new Set();
+    for (let i = 0; i < pinnedMessages.length; i++) {
+      const p = pinnedMessages[i];
+      if (p && p.id != null) s.add(String(p.id));
+    }
+    return s;
+  }, [pinnedMessages]);
+
+  // PERF: was an inline IIFE on the FlatList `data` prop — that runs the
+  // full filter loop on every parent re-render (typing, presence WS, etc.)
+  // and returns a new array reference each time, which forces FlatList to
+  // re-diff every cell. Memoize so the no-op (non-saved) path returns the
+  // same `enrichedMessages` reference and the saved path only recomputes
+  // when filter/query actually changes.
+  const flatListData = useMemo(() => {
+    if (!isSavedMode) return enrichedMessages;
+    const q = String(savedSearch || '').trim().toLowerCase();
+    const f = savedFilter;
+    return enrichedMessages.filter(m => {
+      const isMeta = !m || m._type === 'separator' || m._type === 'unread_separator' || m.type === 'system';
+      // type filter
+      if (!isMeta) {
+        if (f !== 'all') {
+          if (f === 'photo' && m.type !== 'image') return false;
+          if (f === 'video' && m.type !== 'video') return false;
+          if (f === 'audio' && m.type !== 'audio' && m.type !== 'voice') return false;
+          if (f === 'doc' && m.type !== 'file') return false;
+          if (f === 'link' && !(m.type === 'text' && /https?:\/\//i.test(String(m.content || '')))) return false;
+        }
+      }
+      // query filter
+      if (q && !isMeta) {
+        const hay = ((m.content || '') + ' ' + (m.file_name || '')).toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [enrichedMessages, isSavedMode, savedSearch, savedFilter]);
+
+  // PERF: stable callback for FlatList — was an inline arrow recreated
+  // every render, which `windowSize`-aware FlatList treats as a new prop
+  // and may invalidate internal scheduling.
+  const handleScrollToIndexFailed = useCallback((info) => {
+    const offset = (info.averageItemLength || 80) * info.index;
+    try { flatListRef.current?.scrollToOffset?.({ offset, animated: false }); } catch {}
+    setTimeout(() => {
+      try { flatListRef.current?.scrollToIndex?.({ index: info.index, animated: false, viewPosition: 0.5 }); } catch {}
+    }, 200);
+  }, []);
+
+  // PERF: was `[styles.messageList, { paddingTop: Spacing.sm }]` inline —
+  // a new array literal on every render forces FlatList shadow node to
+  // re-evaluate contentContainerStyle each frame.
+  const messageListContentStyle = useMemo(
+    () => [styles.messageList, { paddingTop: Spacing.sm }],
+    []
+  );
 
   // Edit history viewer
   const [editHistoryModal, setEditHistoryModal] = useState({ visible: false, loading: false, versions: [], currentContent: '' });
@@ -15572,7 +15644,7 @@ export default function ChatConversationScreen() {
           {(() => {
             const isText = msg.type === 'text';
             const longText = isText && (String(msg.content || '').length > 300);
-            const isPinnedHere = !!pinnedMessages.find(p => String(p.id) === String(msg.id));
+            const isPinnedHere = pinnedIdSet.has(String(msg.id));
             const showStar = !!msg.starred && (longText || isPinnedHere);
             const showPin  = isPinnedHere && (longText || msg.type !== 'text');
             const showAny = (longText && (msg.starred || isPinnedHere)) || isPinnedHere;
@@ -17257,36 +17329,11 @@ export default function ChatConversationScreen() {
         )}
         <FlatList
           ref={flatListRef}
-          data={(() => {
-            // Saved-mode filtering — keep separators/system rows so date
-            // headers don't disappear when the user picks "Fotos". Filter
-            // only the actual message rows by media type + free-text
-            // query. No-op when isSavedMode is false.
-            if (!isSavedMode) return enrichedMessages;
-            const q = String(savedSearch || '').trim().toLowerCase();
-            const f = savedFilter;
-            const matchType = (m) => {
-              if (!m || m._type === 'separator' || m._type === 'unread_separator' || m.type === 'system') return true;
-              if (f === 'all') return true;
-              if (f === 'photo') return m.type === 'image';
-              if (f === 'video') return m.type === 'video';
-              if (f === 'audio') return m.type === 'audio' || m.type === 'voice';
-              if (f === 'doc')   return m.type === 'file';
-              if (f === 'link')  return m.type === 'text' && /https?:\/\//i.test(String(m.content || ''));
-              return true;
-            };
-            const matchQuery = (m) => {
-              if (!q) return true;
-              if (!m || m._type === 'separator' || m._type === 'unread_separator') return true;
-              const hay = ((m.content || '') + ' ' + (m.file_name || '')).toLowerCase();
-              return hay.includes(q);
-            };
-            return enrichedMessages.filter(m => matchType(m) && matchQuery(m));
-          })()}
+          data={flatListData}
           inverted
           keyExtractor={msgKeyExtractor}
           renderItem={memoizedRenderItem}
-          contentContainerStyle={[styles.messageList, { paddingTop: Spacing.sm }]}
+          contentContainerStyle={messageListContentStyle}
           keyboardDismissMode="interactive"
           keyboardShouldPersistTaps="handled"
           bounces={false}
@@ -17300,14 +17347,7 @@ export default function ChatConversationScreen() {
           scrollEventThrottle={16}
           viewabilityConfig={viewabilityConfig}
           onViewableItemsChanged={onViewableItemsChanged}
-          onScrollToIndexFailed={(info) => {
-            // FlatList may not have measured target item yet — fall back to offset estimate
-            const offset = (info.averageItemLength || 80) * info.index;
-            try { flatListRef.current?.scrollToOffset?.({ offset, animated: false }); } catch {}
-            setTimeout(() => {
-              try { flatListRef.current?.scrollToIndex?.({ index: info.index, animated: false, viewPosition: 0.5 }); } catch {}
-            }, 200);
-          }}
+          onScrollToIndexFailed={handleScrollToIndexFailed}
           initialNumToRender={Platform.OS === 'android' ? 12 : 15}
           maxToRenderPerBatch={Platform.OS === 'android' ? 6 : 10}
           // windowSize: 7 (vs default 21) on Android means FlatList only keeps
@@ -19399,9 +19439,9 @@ export default function ChatConversationScreen() {
                   onPress={() => handlePinMessage(selectedMsg)}
                   activeOpacity={0.6}
                 >
-                  <IconPin size={18} color={pinnedMessages.find(p => p.id === selectedMsg?.id) ? '#f59e0b' : colors.text} />
+                  <IconPin size={18} color={pinnedIdSet.has(String(selectedMsg?.id)) ? '#f59e0b' : colors.text} />
                   <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>
-                    {pinnedMessages.find(p => p.id === selectedMsg?.id) ? (t('chatConv.unpinMessage') || 'Unpin') : (t('chatConv.pinMessage') || 'Pin')}
+                    {pinnedIdSet.has(String(selectedMsg?.id)) ? (t('chatConv.unpinMessage') || 'Unpin') : (t('chatConv.pinMessage') || 'Pin')}
                   </Text>
                 </TouchableOpacity>
               )}

@@ -153,7 +153,21 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
           const cid = hydrated.client_message_id;
           if (cid && indexByClientId.has(cid)) {
             const i = indexByClientId.get(cid);
-            next[i] = { ...hydrated, _animateIn: false };
+            // Preserve local-only fields the optimistic bubble carries that
+            // the hydrated server row CAN'T know about: file:// blob/local
+            // URI for instant media preview, and locally-decrypted plaintext
+            // (`_e2e` rows) so we don't briefly re-render the encrypted
+            // ciphertext after the swap. Without this, a fresh sync replay
+            // would flash "🔒 …" or re-fetch the media URL from R2.
+            const optimistic = next[i] || {};
+            const preserved = {};
+            if (optimistic._localUri && !hydrated._localUri) preserved._localUri = optimistic._localUri;
+            if (optimistic._e2e && typeof optimistic.content === 'string'
+                && !optimistic.content.startsWith('🔒')) {
+              preserved.content = optimistic.content;
+              preserved._e2e = true;
+            }
+            next[i] = { ...hydrated, ...preserved, _animateIn: false };
             indexById.set(mid, i);
             indexByClientId.delete(cid);
             break;

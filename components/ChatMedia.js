@@ -33,8 +33,8 @@
  * bubbles where the URL is a chat-media asset (image, gif, sticker,
  * video thumbnail).
  */
-import React, { useEffect } from 'react';
-import { View, Platform, ActivityIndicator } from 'react-native';
+import React, { useEffect, useState, useCallback } from 'react';
+import { View, Platform, ActivityIndicator, TouchableOpacity, Text } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { getLocalUriSyncJs, cacheMedia } from '../services/mediaCache';
 import * as api from '../services/api';
@@ -106,6 +106,26 @@ export default function ChatMedia({
   // re-check + bump swap us to file://. Without the fallback, a single
   // miss leaves the bubble stuck on the spinner indefinitely.
   const localUri = useChatMediaUri(uri, { allowRemoteFallback: true });
+  // Failure state: ExpoImage reports onError when the source is broken.
+  // We surface a tap-to-retry chip instead of the platform's "broken
+  // image" icon — that icon is jarring inside a polished chat bubble
+  // and gives the user no path forward when (e.g.) the file expired or
+  // CDN is briefly down.
+  const [failed, setFailed] = useState(false);
+  const [retryEpoch, setRetryEpoch] = useState(0);
+  // Reset failure when the URI changes (FlashList row recycling +
+  // fresh cache hit).
+  useEffect(() => { setFailed(false); }, [localUri]);
+  const handleRetry = useCallback(() => {
+    setFailed(false);
+    setRetryEpoch(e => e + 1);
+    // Re-trigger background download — syncIndex was already evicted
+    // by cacheMedia's failure path, so this kicks a fresh attempt.
+    if (uri && Platform.OS !== 'web') {
+      try { cacheMedia(resolveAbsolute(uri)).catch(() => {}); } catch {}
+    }
+  }, [uri]);
+
   if (!localUri) {
     return (
       <View style={[{ backgroundColor: placeholderColor, alignItems: 'center', justifyContent: 'center' }, style]}>
@@ -113,8 +133,23 @@ export default function ChatMedia({
       </View>
     );
   }
+  if (failed) {
+    return (
+      <TouchableOpacity
+        onPress={handleRetry}
+        style={[{ backgroundColor: placeholderColor, alignItems: 'center', justifyContent: 'center', padding: 12 }, style]}
+        accessibilityLabel="Tentar baixar novamente"
+        accessibilityRole="button"
+      >
+        <Text style={{ fontSize: 11, color: 'rgba(0,0,0,0.55)', fontWeight: '600', textAlign: 'center' }}>
+          Falha ao carregar{'\n'}Toque pra tentar
+        </Text>
+      </TouchableOpacity>
+    );
+  }
   return (
     <ExpoImage
+      key={retryEpoch}
       source={{ uri: localUri }}
       style={style}
       contentFit={contentFit}
@@ -124,6 +159,7 @@ export default function ChatMedia({
       cachePolicy={localUri.startsWith('file://') ? 'memory' : 'memory-disk'}
       recyclingKey={recyclingKey}
       transition={transition}
+      onError={() => setFailed(true)}
       {...rest}
     />
   );

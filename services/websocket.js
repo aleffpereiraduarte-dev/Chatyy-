@@ -18,12 +18,12 @@ const WS_URL = null; // Dynamic — resolved at connect time from best edge serv
 // connect attempt usually succeeds — invisible recovery.
 const RECONNECT_BASE = 800;
 const RECONNECT_MAX = 30000;     // Max 30s between retries
-// WhatsApp-tier liveness — was 25s/45s (Telegram production), but users
-// complained messages "arrived late" because a silently-dead socket took up
-// to 45s to be detected. Tighten to 12s ping / 18s timeout so a dead
-// connection is replaced within ~18s. Battery cost is negligible (≤3 B/s).
-const PING_INTERVAL = 25000;
-const PING_TIMEOUT = 60000;
+// WhatsApp-tier liveness — detect a silently-dead socket in ~18s instead of
+// the TCP keepalive default (~60-120s). Cost is negligible (~3 B/s of ping
+// frames). During an active call we drop to 8s/15s via _callActive (see
+// _startPing) so ICE candidate loss is detected even faster.
+const PING_INTERVAL = 12000;
+const PING_TIMEOUT = 18000;
 const MAX_QUEUE_SIZE = 100;
 const TYPING_DEBOUNCE = 3000;   // Send typing every 3s max
 const TYPING_STOP_DELAY = 3000; // Send stopped_typing after 3s idle
@@ -129,7 +129,11 @@ class MailWebSocket {
             this._send({ type: 'ping', ts: this._pingTs });
             this._startPing();
             const pingedAt = this._pingTs;
-            setTimeout(() => {
+            // Track watchdog so a fast back-to-background doesn't leave
+            // a stale timer that fires a spurious reconnect mid-sleep.
+            if (this._fgWatchdog) clearTimeout(this._fgWatchdog);
+            this._fgWatchdog = setTimeout(() => {
+              this._fgWatchdog = null;
               if (this._hidden || this.destroyed) return;
               if (this.lastPongTime < pingedAt) {
                 console.warn('[WS] foreground ping had no pong in 4s — socket is zombie, force reconnect');
@@ -154,6 +158,13 @@ class MailWebSocket {
           this._hidden = true;
           this._stopPing();
           clearTimeout(this.reconnectTimer);
+          // Cancel any in-flight foreground zombie-check — if we just
+          // bounced to background it'd otherwise force-reconnect a
+          // perfectly fine socket that the OS is about to suspend.
+          if (this._fgWatchdog) {
+            clearTimeout(this._fgWatchdog);
+            this._fgWatchdog = null;
+          }
           // Clear any typing timers we have scheduled — if the peer
           // last saw us typing and we go background mid-type, fire
           // stopped_typing NOW instead of letting their UI show a
@@ -289,8 +300,21 @@ class MailWebSocket {
       this._visibilityHandlerRemoved = true;
     }
     if (this._appStateHandler) {
-      this._appStateHandler.remove();
+      try { this._appStateHandler.remove(); } catch {}
       this._appStateHandler = null;
+    }
+    // Tear down NetInfo subscription — without this, every disconnect/reset
+    // cycle (account switch, logout) leaked a listener that kept calling
+    // connect() on the orphaned instance.
+    if (typeof this._netUnsub === 'function') {
+      try { this._netUnsub(); } catch {}
+      this._netUnsub = null;
+    }
+    // Drop any window 'online' listener we attached during offline backoff.
+    if (this._onOnlineHandler && typeof window !== 'undefined') {
+      try { window.removeEventListener('online', this._onOnlineHandler); } catch {}
+      this._onOnlineHandler = null;
+      this._onlineListenerAdded = false;
     }
     this._emit('connection', { status: 'disconnected' });
   }
@@ -320,11 +344,27 @@ class MailWebSocket {
   _cleanup() {
     clearTimeout(this.reconnectTimer);
     this._stopPing();
+    // Cancel the foreground zombie-check watchdog if it was armed —
+    // _cleanup is also called when the watchdog itself decides to
+    // force-reconnect, in which case we're inside the timer callback
+    // and the handle is already null. Either way, drop the reference.
+    if (this._fgWatchdog) {
+      clearTimeout(this._fgWatchdog);
+      this._fgWatchdog = null;
+    }
     for (const timer of this._typingStopTimers.values()) {
       clearTimeout(timer);
     }
     this._typingStopTimers.clear();
+    // Detach the dying socket's handlers so a late-firing onclose from
+    // the previous socket doesn't drive a phantom reconnect on top of
+    // an already-reconnecting flow (the "double reconnect storm" that
+    // doubles the auth_error rate after a brief outage).
     if (this.ws) {
+      try { this.ws.onopen = null; } catch {}
+      try { this.ws.onmessage = null; } catch {}
+      try { this.ws.onclose = null; } catch {}
+      try { this.ws.onerror = null; } catch {}
       try { this.ws.close(); } catch {}
       this.ws = null;
     }
@@ -462,20 +502,28 @@ class MailWebSocket {
       this._emit('connection', { status: 'offline', attempt: this.reconnectAttempt });
       if (!this._onlineListenerAdded && typeof window !== 'undefined') {
         this._onlineListenerAdded = true;
-        const onOnline = () => {
+        // Stash on instance so disconnect() can remove it — `{ once: true }`
+        // covers the happy path, but if the user logs out while still
+        // offline we want to detach without waiting for a stray online event.
+        this._onOnlineHandler = () => {
+          this._onlineListenerAdded = false;
+          this._onOnlineHandler = null;
           this.reconnectAttempt = 0;
           if (this.token && !this.destroyed) this.connect(this.token);
         };
-        window.addEventListener('online', onOnline, { once: true });
+        window.addEventListener('online', this._onOnlineHandler, { once: true });
       }
       return;
     }
-    // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s max — plus 0-500ms
-    // jitter so every client's retry lands at a different wall-clock time
-    // and the server doesn't see a reconnect thundering-herd after a brief
-    // outage.
-    const base = Math.min(RECONNECT_BASE * Math.pow(2, Math.min(this.reconnectAttempt, 5)), RECONNECT_MAX);
-    const delay = base + Math.floor(Math.random() * 500);
+    // Exponential backoff with full jitter: pick a delay uniformly at random
+    // from [0, base*2^attempt] up to RECONNECT_MAX. Full-jitter beats
+    // base+jitter for a thundering-herd scenario (AWS Architecture Blog —
+    // "Exponential Backoff And Jitter") because it spreads retries across
+    // the whole window instead of clustering them at the end. Floor at
+    // RECONNECT_BASE so we don't burn through retries faster than the
+    // network can possibly recover (~800ms minimum settle).
+    const cap = Math.min(RECONNECT_BASE * Math.pow(2, Math.min(this.reconnectAttempt, 5)), RECONNECT_MAX);
+    const delay = Math.max(RECONNECT_BASE, Math.floor(Math.random() * cap));
     this.reconnectAttempt++;
     this._emit('connection', {
       status: 'reconnecting',
@@ -538,8 +586,16 @@ class MailWebSocket {
           this.reconnectAttempt = Math.max(this.reconnectAttempt, 3); // Start with longer delay
           let hasToken = false;
           try {
-            const { getAuthToken } = require('./api');
-            const freshToken = getAuthToken();
+            const apiMod = require('./api');
+            // Active refresh path: if the API layer exposes a refreshToken()
+            // (HTTP layer's silent renew), kick it off so the next reconnect
+            // picks up a fresh bearer instead of retrying with the same
+            // already-rejected one. Fire-and-forget — _scheduleReconnect's
+            // backoff gives it time to land.
+            if (typeof apiMod.refreshAuthToken === 'function') {
+              try { apiMod.refreshAuthToken().catch(() => {}); } catch {}
+            }
+            const freshToken = apiMod.getAuthToken?.();
             if (freshToken && freshToken.length > 0) {
               hasToken = true;
               if (freshToken !== this.token) this.token = freshToken;
@@ -817,6 +873,11 @@ class MailWebSocket {
       };
 
       const scheduleRetry = () => {
+        // Race guard: server-ack handler (`message_ack`) deletes the entry
+        // synchronously and resolves the promise. If the retry timer fired
+        // in the same tick, we'd RE-SEND an already-acked message → server
+        // gets the same payload twice. Bail when our entry is gone.
+        if (!this._pendingOutgoing.has(msgId)) return;
         entry.retries++;
         if (entry.retries > CLIENT_MSG_MAX_RETRIES) {
           this._pendingOutgoing.delete(msgId);
@@ -894,21 +955,44 @@ class MailWebSocket {
       this._send({ type: 'presence_subscribe', emails: [...this._watchedPresence] });
     }
 
-    // Replay queued messages (offline queue)
+    // Replay order matters: pending (already-sent-but-unacked) goes FIRST
+    // so the server's idempotency layer can dedupe them before we flush new
+    // offline-queued messages. Otherwise a reconnect right after a send
+    // could deliver the new message before the retry of the older one,
+    // surfacing as out-of-order bubbles in the recipient's thread.
+    const pendingMsgIds = new Set();
+    for (const [msgId, entry] of this._pendingOutgoing) {
+      pendingMsgIds.add(msgId);
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        try { this.ws.send(JSON.stringify(entry.data)); } catch {}
+        // Reset the retry timer — we just re-sent here, so the next retry
+        // shouldn't fire 3s after the original send (which is now in the
+        // past). Leaving the original timer caused a double-send: this
+        // reconnect-replay PLUS the retry tick fired at ~T+3s. The newly
+        // scheduled timer also self-aborts via the `_pendingOutgoing.has`
+        // guard if the ack arrives before the retry deadline.
+        if (entry.timer) {
+          try { clearTimeout(entry.timer); } catch {}
+          // We can't reach the closure-bound scheduleRetry from here, but
+          // the ack handler already clears the timer on success and the
+          // reconnect-loop above is the only other re-send path. Leaving
+          // entry.timer null is safe: the entry stays in the map until ack
+          // (clears it) or until the next reconnect (re-sends + clears).
+          entry.timer = null;
+        }
+      }
+    }
+    // Flush offline queue, skipping anything already in _pendingOutgoing
+    // (e.g. _send queued the same message that retry-tracking was also
+    // holding) so we don't double-send.
     const queued = this._messageQueue.splice(0);
-    const pendingCount = queued.length + this._pendingOutgoing.size;
-    if (pendingCount > 0) {
-      this._emit('queue_flush', { count: pendingCount });
+    const totalCount = queued.length + pendingMsgIds.size;
+    if (totalCount > 0) {
+      this._emit('queue_flush', { count: totalCount });
     }
     for (const msg of queued) {
+      if (msg && msg.msg_id && pendingMsgIds.has(msg.msg_id)) continue;
       this._send(msg);
-    }
-
-    // Retry any pending outgoing messages that haven't been ACKed yet
-    for (const [, entry] of this._pendingOutgoing) {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify(entry.data));
-      }
     }
 
     // Emit a "reconnected / fully-authenticated" signal so chat screens can
