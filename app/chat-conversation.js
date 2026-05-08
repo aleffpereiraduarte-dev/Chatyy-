@@ -6143,6 +6143,12 @@ export default function ChatConversationScreen() {
   const [pendingLoading, setPendingLoading] = useState(false);
   const [showPendingModal, setShowPendingModal] = useState(false);
   const [pendingActionEmail, setPendingActionEmail] = useState(null);
+  // forwardingDisabled: admin-only group setting. When TRUE, non-admin
+  // members cannot forward messages out of this conv (Telegram parity —
+  // "Restrict saving content"). Persisted via chat_update_group;
+  // backend enforces in chat_forward / chat_forward_multi.
+  const [forwardingDisabled, setForwardingDisabled] = useState(false);
+
   // hideMembers: when ON, non-admins shouldn't see the member list. Persisted
   // server-side via chat_group_admin (the backend may add the flag separately;
   // for now we only persist + reflect the toggle locally).
@@ -7623,6 +7629,88 @@ export default function ChatConversationScreen() {
     setAutoTranslateLocale(locale || null);
     try { await api.chatSetAutoTranslate?.(conversationId, locale || ''); } catch {}
   }, [conversationId]);
+
+  // Auto-translate apply pipeline (Telegram parity).
+  // When the user has a target locale set, we walk the visible message list
+  // and ensure each text-bearing INCOMING message has a translation in
+  // `translatedMessages`. Backend already injects msg.auto_translation when
+  // it has the cache hit, so the cheap-path is the seed below — no API
+  // call. Misses queue a chatTranslateMessage(messageId) per message; the
+  // result lands in translatedMessages exactly the same shape used by the
+  // existing manual-translate flow, so the bubble renders unchanged.
+  // Throttled to 4 inflight to keep OpenAI rate-limit / cost in check.
+  const autoTranslateInflightRef = useRef(new Set());
+  useEffect(() => {
+    if (!autoTranslateLocale) return;
+    if (!Array.isArray(messages) || messages.length === 0) return;
+    const targetShort = String(autoTranslateLocale).toLowerCase().split('-')[0];
+
+    // 1) Seed from server-provided cached translations. This is the warm
+    //    cache path — each chat_messages response carries
+    //    auto_translation/auto_translate_locale per row when the user has
+    //    auto-translate set; we mirror that into the local map so the UI
+    //    re-renders with the translated text immediately.
+    const seedPatch = {};
+    for (const m of messages) {
+      if (!m || typeof m.id !== 'number') continue;
+      if (m.sender_email && currentEmail && String(m.sender_email).toLowerCase() === String(currentEmail).toLowerCase()) continue;
+      if (m.type !== 'text' && m.type !== 'audio' && m.type !== 'voice') continue;
+      const existing = translatedMessages[m.id];
+      if (existing && (existing.text || existing.loading)) continue;
+      if (m.auto_translation && m.auto_translate_locale && String(m.auto_translate_locale).toLowerCase().split('-')[0] === targetShort) {
+        seedPatch[m.id] = { text: m.auto_translation, loading: false, targetLang: targetShort, _auto: true };
+      }
+    }
+    if (Object.keys(seedPatch).length > 0) {
+      setTranslatedMessages(prev => ({ ...prev, ...seedPatch }));
+    }
+
+    // 2) Misses: fire chatTranslateMessage for incoming text rows that have
+    //    no translation yet. Cap inflight at 4 to avoid hammering the
+    //    backend on initial load.
+    const fire = (mid) => {
+      autoTranslateInflightRef.current.add(mid);
+      setTranslatedMessages(prev => ({ ...prev, [mid]: { ...(prev[mid] || {}), loading: true, targetLang: targetShort, _auto: true } }));
+      api.chatTranslateMessage?.(mid, targetShort).then(r => {
+        autoTranslateInflightRef.current.delete(mid);
+        if (r?.success && r.data?.translated) {
+          setTranslatedMessages(prev => ({ ...prev, [mid]: { text: r.data.translated, loading: false, targetLang: targetShort, _auto: true } }));
+        } else {
+          setTranslatedMessages(prev => {
+            const copy = { ...prev };
+            delete copy[mid];
+            return copy;
+          });
+        }
+      }).catch(() => {
+        autoTranslateInflightRef.current.delete(mid);
+        setTranslatedMessages(prev => {
+          const copy = { ...prev };
+          delete copy[mid];
+          return copy;
+        });
+      });
+    };
+    for (const m of messages) {
+      if (!m || typeof m.id !== 'number' || m.id <= 0) continue;
+      if (autoTranslateInflightRef.current.size >= 4) break;
+      if (autoTranslateInflightRef.current.has(m.id)) continue;
+      if (m.sender_email && currentEmail && String(m.sender_email).toLowerCase() === String(currentEmail).toLowerCase()) continue;
+      // Text bubbles: translate raw content. Voice/audio bubbles: translate
+      // the transcript only (skip if not yet transcribed — handleTranslate
+      // chains transcribe→translate manually for voice).
+      if (m.type === 'text') {
+        if (!m.content || !m.content.trim()) continue;
+      } else if (m.type === 'audio' || m.type === 'voice') {
+        if (!m.transcript || !m.transcript.trim()) continue;
+      } else {
+        continue;
+      }
+      const existing = translatedMessages[m.id];
+      if (existing && (existing.text || existing.loading)) continue;
+      fire(m.id);
+    }
+  }, [messages, autoTranslateLocale, currentEmail, translatedMessages]);
   useEffect(() => () => {
     if (aiTypingTimerRef.current) {
       clearTimeout(aiTypingTimerRef.current);
@@ -9183,6 +9271,17 @@ export default function ChatConversationScreen() {
       const _sendOpts = {};
       if (replyTo?.quoteText) _sendOpts.replyQuoteText = replyTo.quoteText;
       if (stagedEffect) _sendOpts.effect = stagedEffect;
+      // Sealed-sender (Signal-mode metadata hiding) — when the user has the
+      // privacy toggle on, every send goes out with `sealed=true` so the
+      // server scrubs sender_email/sender_name from the row recipients see.
+      // Async-loaded in-place to avoid ballooning the component scope; cheap
+      // because AsyncStorage hits are local and the chatSend path is already
+      // async. Failure to read defaults to OFF (safe).
+      try {
+        const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+        const ss = await AsyncStorage.getItem('chatyy_sealed_sender');
+        if (ss === 'true') _sendOpts.sealed = true;
+      } catch {}
       const _stagedEffectForThisSend = stagedEffect; // capture for optimistic bubble + receipt overlay
       // Effect is one-shot: clear it the moment we hand off the send. If the
       // user long-presses again to set another effect before the request
@@ -11259,6 +11358,9 @@ export default function ChatConversationScreen() {
         if (typeof conv.hide_members !== 'undefined') {
           setHideMembers(!!conv.hide_members);
         }
+        if (typeof conv.forwarding_disabled !== 'undefined') {
+          setForwardingDisabled(!!conv.forwarding_disabled);
+        }
       }
       // Pending join requests count — admins only. Silent on non-admin (403).
       try {
@@ -11345,6 +11447,21 @@ export default function ChatConversationScreen() {
       if (!r?.success) setHideMembers(!next);
     } catch {
       setHideMembers(!next);
+    }
+  };
+
+  // forwarding_disabled toggle — admin-only group setting that blocks
+  // non-admin members from chat_forward / chat_forward_multi out of this
+  // conv (Telegram "Restrict saving content"). Optimistic UI; rolls back
+  // when chat_update_group rejects the write.
+  const handleToggleForwardingDisabled = async () => {
+    const next = !forwardingDisabled;
+    setForwardingDisabled(next);
+    try {
+      const r = await api.chatUpdateGroup(conversationId, { forwarding_disabled: next });
+      if (!r?.success) setForwardingDisabled(!next);
+    } catch {
+      setForwardingDisabled(!next);
     }
   };
 
@@ -11480,7 +11597,15 @@ export default function ChatConversationScreen() {
     muteInflightRef.current = true;
     setShowMuteModal(false);
     let muteUntil = null;
-    if (duration === '8h') {
+    // Telegram-parity chips: 30m / 1h / 8h / 1w / forever / null (unmute).
+    // Keep aligned with ChatNotificationSettingsSheet.handleMuteFor — both
+    // paths write the same mute_until format so the bell badge in the row
+    // and the bottom-sheet picker stay in sync.
+    if (duration === '30m') {
+      muteUntil = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    } else if (duration === '1h') {
+      muteUntil = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    } else if (duration === '8h') {
       muteUntil = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString();
     } else if (duration === '1w') {
       muteUntil = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -11490,7 +11615,24 @@ export default function ChatConversationScreen() {
     // null = unmute
     try {
       const r = await api.chatMute(conversationId, muteUntil);
-      if (r.success) setMutedUntil(muteUntil);
+      if (r.success) {
+        setMutedUntil(muteUntil);
+        // Mirror to chat_user_conv_settings so the bottom-sheet picker
+        // reflects the choice on next open. Best-effort — failure here
+        // doesn't roll back the bell badge (chatMute already succeeded).
+        try { api.chatSetConvSettings(conversationId, { mute_until: muteUntil }); } catch {}
+        // Quick-confirmation toast — reuses existing scheduleToast slot
+        // (no new component). Auto-dismisses in 2s.
+        try {
+          const label = muteUntil
+            ? (duration === 'forever'
+                ? (t('chatConv.muteForever') || 'Silenciar sempre')
+                : (t('chatConv.muted') || 'Silenciada'))
+            : (t('chatConv.unmuted') || 'Som reativado');
+          setScheduleToast(label);
+          setTimeout(() => setScheduleToast(''), 2000);
+        } catch {}
+      }
     } catch {} finally {
       muteInflightRef.current = false;
     }
@@ -14893,6 +15035,13 @@ export default function ChatConversationScreen() {
           const urlMatch = msg.content && msg.content.match(URL_REGEX);
           const firstUrl = urlMatch ? urlMatch[0] : null;
           const msgTranslation = translatedMessages[msg.id];
+          // Telegram auto-translate UX: when the translation came from the
+          // per-conversation auto-translate (msgTranslation._auto) AND the
+          // user hasn't expanded the source via the "(original)" toggle, we
+          // hide the raw original text from the bubble body and let the
+          // translation block become the primary surface. Manual one-off
+          // translates keep the legacy stacked layout.
+          const autoHideOriginal = !!(msgTranslation && msgTranslation._auto && !msgTranslation._showOriginal && msgTranslation.text);
           return (
             <View>
               {msg._filtered && msg._hidden && (
@@ -14901,7 +15050,7 @@ export default function ChatConversationScreen() {
                   <Text style={{ fontSize: 12, color: '#f59e0b' }}>Mensagem bloqueada pelo controle parental</Text>
                 </View>
               )}
-              {(() => {
+              {!autoHideOriginal && (() => {
                 // Jumbo emoji shortcut: skip TextWithLinks (no URLs/mentions
                 // possible inside a pure-emoji message anyway) so the giant
                 // glyph isn't dragged through link-detection regex.
@@ -14914,6 +15063,42 @@ export default function ChatConversationScreen() {
                       color: isOwn ? ownTextColor : colors.text,
                       paddingVertical: 2,
                     }}>{msg.content}</Text>
+                  );
+                }
+                // Saved-mode "Cabeçalho": when the bubble starts with `## `,
+                // render it bigger + bolder + with a divider below so users
+                // can scan their own notes like a TODO doc. Only applies in
+                // Saved Messages so regular chats don't surprise-render
+                // markdown that random users typed.
+                if (isSavedMode && typeof msg.content === 'string' && /^##\s+/.test(msg.content)) {
+                  const heading = msg.content.replace(/^##\s+/, '').split('\n')[0];
+                  const rest = msg.content.replace(/^##\s+[^\n]*\n?/, '');
+                  return (
+                    <View>
+                      <Text style={{
+                        fontSize: msgFontSize + 6,
+                        lineHeight: msgLineHeight + 8,
+                        fontWeight: '800',
+                        color: isOwn ? ownTextColor : colors.text,
+                        paddingTop: 2,
+                      }}>{heading}</Text>
+                      <View style={{
+                        height: 1,
+                        backgroundColor: isOwn ? 'rgba(255,255,255,0.25)' : (isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)'),
+                        marginTop: 6,
+                        marginBottom: rest ? 6 : 0,
+                      }} />
+                      {rest ? (
+                        <TextWithLinks
+                          text={rest}
+                          style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight }]}
+                          linkColor={isOwn ? '#7C3AED' : colors.primary}
+                          mentionColor={isOwn ? '#7C3AED' : '#1a73e8'}
+                          colors={colors}
+                          router={router}
+                        />
+                      ) : null}
+                    </View>
                   );
                 }
                 return (
@@ -14931,7 +15116,12 @@ export default function ChatConversationScreen() {
                 // Translation block: tinted callout with a globe icon prefix.
                 // Reads as a distinct "annotation" rather than appended text,
                 // so the translated copy never visually merges with the original.
-                <View style={{
+                // For auto-translate (msgTranslation._auto=true) the styling
+                // softens to read as primary content (the original is hidden
+                // above) and a small "(original)" toggle expands the source.
+                <View style={msgTranslation._auto ? {
+                  marginTop: msg._filtered && msg._hidden ? 4 : 0,
+                } : {
                   marginTop: 6, padding: 8, borderRadius: 10,
                   backgroundColor: isOwn ? 'rgba(255,255,255,0.13)' : 'rgba(124,58,237,0.08)',
                   borderLeftWidth: 2,
@@ -14946,18 +15136,46 @@ export default function ChatConversationScreen() {
                     </View>
                   ) : (
                     <View>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 3 }}>
-                        <IconGlobe size={11} color={isOwn ? ownMetaColor : '#7C3AED'} />
-                        <Text style={{ fontSize: 10, fontWeight: '700', color: isOwn ? ownMetaColor : '#7C3AED', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                          {t('chatConv.translated')}
-                          {msgTranslation.sourceLang && msgTranslation.targetLang
-                            ? `  ${msgTranslation.sourceLang.toUpperCase()} → ${msgTranslation.targetLang.toUpperCase()}`
-                            : (msgTranslation.targetLang ? `  → ${msgTranslation.targetLang.toUpperCase()}` : '')}
-                        </Text>
-                      </View>
+                      {!msgTranslation._auto && (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 3 }}>
+                          <IconGlobe size={11} color={isOwn ? ownMetaColor : '#7C3AED'} />
+                          <Text style={{ fontSize: 10, fontWeight: '700', color: isOwn ? ownMetaColor : '#7C3AED', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                            {t('chatConv.translated')}
+                            {msgTranslation.sourceLang && msgTranslation.targetLang
+                              ? `  ${msgTranslation.sourceLang.toUpperCase()} → ${msgTranslation.targetLang.toUpperCase()}`
+                              : (msgTranslation.targetLang ? `  → ${msgTranslation.targetLang.toUpperCase()}` : '')}
+                          </Text>
+                        </View>
+                      )}
                       <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight }]}>
                         {msgTranslation.text}
                       </Text>
+                      {msgTranslation._auto && (
+                        // "(original)" toggle: small inline link below the
+                        // translated body that expands the source. Tapping it
+                        // flips _showOriginal so the original block above
+                        // re-renders. Tap again to re-collapse.
+                        <TouchableOpacity
+                          activeOpacity={0.65}
+                          onPress={() => {
+                            setTranslatedMessages(prev => ({
+                              ...prev,
+                              [msg.id]: { ...(prev[msg.id] || msgTranslation), _showOriginal: !msgTranslation._showOriginal },
+                            }));
+                          }}
+                          style={{ marginTop: 4, alignSelf: 'flex-start' }}
+                        >
+                          <Text style={{
+                            fontSize: 11,
+                            color: isOwn ? ownMetaColor : (isDark ? '#a78bfa' : '#7C3AED'),
+                            textDecorationLine: 'underline',
+                          }}>
+                            {msgTranslation._showOriginal
+                              ? `(${(t('chatConv.translated') || 'translated').toLowerCase()})`
+                              : '(original)'}
+                          </Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
                   )}
                 </View>
@@ -16690,6 +16908,56 @@ export default function ChatConversationScreen() {
         />
       ) : (
         <>
+        {isSavedMode && pinnedMessages.length > 0 && (
+          /* Saved Messages — sticky pinned/TODO strip.
+             In Saved Messages we treat pinned items as "TODO" cards. They
+             stay above the tabs strip so the user can see their open
+             todos at a glance even after scrolling deep into history. */
+          <View style={{
+            paddingHorizontal: Spacing.sm,
+            paddingTop: 6, paddingBottom: 6,
+            backgroundColor: colors.background,
+            borderBottomWidth: StyleSheet.hairlineWidth,
+            borderBottomColor: colors.borderLight,
+          }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              <IconPin size={12} color="#f59e0b" />
+              <Text style={{ fontSize: 11, fontWeight: '700', color: '#f59e0b', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                {t('chatConv.pinnedMessages') || 'Fixados'}
+              </Text>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingRight: 8 }}>
+              {pinnedMessages.slice(0, 8).map(p => {
+                const preview = String(p.content || p.file_name || '').slice(0, 60);
+                return (
+                  <TouchableOpacity
+                    key={p.id}
+                    onPress={() => {
+                      // Best-effort scroll-to. scrollToItem can throw silently
+                      // if the row isn't yet windowed in — we wrap in try/catch
+                      // and let the user re-tap to re-attempt.
+                      try {
+                        const idx = messages.findIndex(m => String(m.id) === String(p.id));
+                        if (idx >= 0 && flatListRef.current?.scrollToIndex) {
+                          flatListRef.current.scrollToIndex({ index: idx, animated: true, viewPosition: 0.3 });
+                        }
+                      } catch {}
+                    }}
+                    style={{
+                      maxWidth: 220,
+                      backgroundColor: 'rgba(245,158,11,0.12)',
+                      borderLeftWidth: 3, borderLeftColor: '#f59e0b',
+                      paddingHorizontal: 10, paddingVertical: 6,
+                      borderRadius: 6,
+                    }}
+                  >
+                    <Text numberOfLines={2} style={{ fontSize: 12, color: colors.text }}>{preview || '(...)'}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
         {isSavedMode && (
           /* Saved Messages — tabs + in-chat search bar.
              Tabs filter the list to media types; search filters by free
@@ -18034,7 +18302,9 @@ export default function ChatConversationScreen() {
               { code: 'fr', label: '🇫🇷 Français' },
               { code: 'it', label: '🇮🇹 Italiano' },
               { code: 'de', label: '🇩🇪 Deutsch' },
+              { code: 'zh', label: '🇨🇳 中文' },
               { code: 'ja', label: '🇯🇵 日本語' },
+              { code: 'ru', label: '🇷🇺 Русский' },
             ].map(opt => {
               const isCurrent = (autoTranslateLocale || '') === opt.code;
               return (
@@ -18675,8 +18945,13 @@ export default function ChatConversationScreen() {
                 </TouchableOpacity>
               )}
 
-              {/* Forward */}
-              {!selectedMsg?.deleted_at && (
+              {/* Forward — hidden for non-admin members of a group that
+                  has forwarding_disabled set. Admins keep the action so
+                  group settings can still be policed (matches Telegram
+                  "Restrict saving content" behavior). Backend enforces
+                  the same rule in chat_forward — UI just keeps the
+                  option out of view to avoid a confusing 403 toast. */}
+              {!selectedMsg?.deleted_at && !(forwardingDisabled && !isGroupAdmin) && (
                 <TouchableOpacity
                   style={styles.ctxIconBtn}
                   onPress={() => handleForward(selectedMsg)}
@@ -20529,6 +20804,33 @@ export default function ChatConversationScreen() {
                       <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff', alignSelf: hideMembers ? 'flex-end' : 'flex-start' }} />
                     </View>
                   </TouchableOpacity>
+                  {/* forwarding_disabled — Telegram parity. When ON,
+                      non-admin members can't use the bubble Forward
+                      action; the long-press menu hides Encaminhar for
+                      non-admins on this conv (see ctxMenu render below).
+                      Backend enforces the same rule in chat_forward. */}
+                  <TouchableOpacity
+                    onPress={handleToggleForwardingDisabled}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.md, gap: 10 }}
+                    accessibilityRole="switch"
+                    accessibilityState={{ checked: forwardingDisabled }}
+                    accessibilityLabel={t('chatConv.disableForwarding') || 'Não permitir encaminhar mensagens deste grupo'}
+                  >
+                    <IconForward size={20} color={forwardingDisabled ? '#dc2626' : colors.textSecondary} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: FontSize.md, color: colors.text, fontWeight: '600' }}>
+                        {t('chatConv.disableForwarding') || 'Não permitir encaminhar mensagens deste grupo'}
+                      </Text>
+                      <Text style={{ fontSize: 12, color: colors.textSecondary }}>
+                        {forwardingDisabled
+                          ? (t('chatConv.disableForwardingOn') || 'Ativado — apenas admins encaminham mensagens')
+                          : (t('chatConv.disableForwardingOff') || 'Desativado — todos podem encaminhar')}
+                      </Text>
+                    </View>
+                    <View style={{ width: 44, height: 26, borderRadius: 13, backgroundColor: forwardingDisabled ? '#dc2626' : colors.border, justifyContent: 'center', padding: 3 }}>
+                      <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff', alignSelf: forwardingDisabled ? 'flex-end' : 'flex-start' }} />
+                    </View>
+                  </TouchableOpacity>
                 </View>
               );
             })()}
@@ -20946,28 +21248,56 @@ export default function ChatConversationScreen() {
         </Pressable>
       </Modal>
 
-      {/* Mute Chat Modal */}
+      {/* Mute Chat Modal — quick-snooze chips (Telegram parity).
+          Renders 30m / 1h / 8h / 1 semana / Sempre + a Cancelar mute pill
+          when the conv is already muted. handleMuteChat takes care of
+          mirroring the picked value to chat_user_conv_settings + showing
+          a confirmation toast. */}
       <Modal visible={showMuteModal} transparent animationType="fade" onRequestClose={() => setShowMuteModal(false)}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }} onPress={() => setShowMuteModal(false)}>
-          <Pressable style={{ backgroundColor: colors.surface, borderRadius: 16, width: 300, padding: 20 }} onPress={e => e.stopPropagation()}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+          <Pressable style={{ backgroundColor: colors.surface, borderRadius: 16, width: 320, padding: 20 }} onPress={e => e.stopPropagation()}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 }}>
               <IconClock size={20} color={colors.primary} />
               <Text style={{ fontSize: 17, fontWeight: '600', color: colors.text }}>{t('chatConv.muteChat') || 'Silenciar conversa'}</Text>
             </View>
-            {[
-              { label: t('chatConv.muteFor8h') || 'Silenciar por 8 horas', value: '8h' },
-              { label: t('chatConv.muteFor1w') || 'Silenciar por 1 semana', value: '1w' },
-              { label: t('chatConv.muteForever') || 'Silenciar sempre', value: 'forever' },
-              ...(mutedUntil ? [{ label: t('chatConv.unmute') || 'Remover silêncio', value: null }] : []),
-            ].map((opt, idx) => (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {[
+                { label: t('chatConv.muteFor30m') || '30 min', value: '30m' },
+                { label: t('chatConv.muteFor1h') || '1 hora', value: '1h' },
+                { label: t('chatConv.muteFor8h') || '8 horas', value: '8h' },
+                { label: t('chatConv.muteFor1w') || '1 semana', value: '1w' },
+                { label: t('chatConv.muteForever') || 'Sempre', value: 'forever' },
+              ].map((opt) => (
+                <TouchableOpacity
+                  key={opt.value}
+                  onPress={() => handleMuteChat(opt.value)}
+                  activeOpacity={0.7}
+                  style={{
+                    paddingHorizontal: 14, paddingVertical: 10, borderRadius: 999,
+                    backgroundColor: colors.background,
+                    borderWidth: 1, borderColor: colors.border,
+                  }}
+                >
+                  <Text style={{ fontSize: 14, color: colors.text, fontWeight: '500' }}>{opt.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            {mutedUntil ? (
               <TouchableOpacity
-                key={opt.value || 'unmute'}
-                onPress={() => handleMuteChat(opt.value)}
-                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, borderBottomWidth: idx === (mutedUntil ? 3 : 2) ? 0 : 0.5, borderBottomColor: colors.border }}
+                onPress={() => handleMuteChat(null)}
+                activeOpacity={0.7}
+                style={{
+                  marginTop: 14, alignSelf: 'flex-start',
+                  paddingHorizontal: 14, paddingVertical: 10, borderRadius: 999,
+                  backgroundColor: 'rgba(245,158,11,0.14)',
+                  borderWidth: 1, borderColor: '#f59e0b66',
+                }}
               >
-                <Text style={{ fontSize: 15, color: opt.value === null ? '#f59e0b' : colors.text }}>{opt.label}</Text>
+                <Text style={{ fontSize: 14, color: '#f59e0b', fontWeight: '600' }}>
+                  {t('chatConv.unmute') || 'Cancelar mute'}
+                </Text>
               </TouchableOpacity>
-            ))}
+            ) : null}
           </Pressable>
         </Pressable>
       </Modal>

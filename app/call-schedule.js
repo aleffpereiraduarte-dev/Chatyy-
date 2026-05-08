@@ -109,7 +109,7 @@ export default function CallScheduleScreen() {
             { text: t('common.delete') || 'Excluir', style: 'destructive', onPress: () => resolve(true) },
           ]
         ));
-    const ok = await confirmFn(t('common.confirm') || `Cancelar "${call.title}"?`);
+    const ok = await confirmFn(`${t('calls.cancelConfirm') || 'Cancelar'} "${call.title || ''}"?`);
     if (!ok) return;
     try {
       const r = await api.callScheduleCancel(call.id);

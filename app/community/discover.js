@@ -54,7 +54,12 @@ export default function CommunityDiscoverScreen() {
     } catch (_) {}
   }, []);
 
-  useEffect(() => { load(); loadMy(); }, [load, loadMy]);
+  // Only re-fire `load` when the category changes or on initial mount —
+  // not on every keystroke of the search input. Submitting the search
+  // (onSubmitEditing on the TextInput) calls load() explicitly.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [cat]);
+  useEffect(() => { loadMy(); }, [loadMy]);
 
   const onJoin = async (item) => {
     const r = await api.communityJoin(item.id);
@@ -210,11 +215,11 @@ const makeStyles = (colors, isDark) => StyleSheet.create({
   headerBtnText: { fontSize: 28, fontWeight: '300' },
   headerTitle: { flex: 1, textAlign: 'center', fontSize: 17, fontWeight: '600' },
   searchWrap: { padding: 12 },
-  search: { borderRadius: BorderRadius.medium, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
+  search: { borderRadius: BorderRadius.md, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
   chip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999, marginRight: 8 },
   chipText: { fontSize: 13, fontWeight: '600' },
   sectionTitle: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 },
-  row: { flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: BorderRadius.medium, marginBottom: 8, gap: 12 },
+  row: { flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: BorderRadius.md, marginBottom: 8, gap: 12 },
   avatarWrap: { width: 48, height: 48, borderRadius: 24 },
   avatar: { width: 48, height: 48, borderRadius: 24 },
   name: { fontSize: 15, fontWeight: '600' },

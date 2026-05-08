@@ -77,7 +77,7 @@ try {
 } catch {}
 
 import React, { Suspense } from "react";
-import { Platform, View as RNView, Text as RNText, Linking, Alert, Animated as _RNAnimated } from 'react-native';
+import { Platform, View as RNView, Text as RNText, Linking, Alert, Animated as _RNAnimated, InteractionManager } from 'react-native';
 
 // Web has no native Animated module — force useNativeDriver:false globally
 // so every animation across the app stops spamming "RCTAnimation missing"
@@ -595,8 +595,18 @@ function AppInit({ onNotification, setOtaToast }) {
   }, []);
 
   useEffect(() => {
-    // Initialize global error handlers (Sentry + crash reporter) on first mount
-    initGlobalErrorHandlers();
+    // Initialize global error handlers (Sentry + crash reporter) — deferred
+    // ~1s past first paint via InteractionManager so cold start doesn't pay
+    // Sentry's native init cost on the critical path. Errors thrown before
+    // this fires fall through to the native handler, which is fine — Sentry
+    // ScopedSpans / native breadcrumbs catch them once it's up.
+    if (Platform.OS !== 'web') {
+      InteractionManager.runAfterInteractions(() => {
+        setTimeout(initGlobalErrorHandlers, 0);
+      });
+    } else {
+      initGlobalErrorHandlers();
+    }
 
     // Inject CSS animations for auth background decorations
     if (Platform.OS === 'web' && typeof document !== 'undefined') {
@@ -981,6 +991,7 @@ export default function RootLayout() {
                   <Stack.Screen name="profile-insights" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="starred-messages" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="linked-devices" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
+                  <Stack.Screen name="companion-qr" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="profile-qr" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="email-signatures" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="spotlight" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 180 }} />

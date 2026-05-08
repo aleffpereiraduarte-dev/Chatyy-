@@ -5,7 +5,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, FlatList,
-  Image, ActivityIndicator, RefreshControl, TextInput, Alert, Pressable,
+  Image, ActivityIndicator, RefreshControl, TextInput, Alert, Pressable, Platform,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -39,6 +39,10 @@ export default function CommunityScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [announceText, setAnnounceText] = useState('');
   const [posting, setPosting] = useState(false);
+  // Members tab — quick filter by name/email substring.
+  const [memberQuery, setMemberQuery] = useState('');
+  // Announcement composer — toggle between Edit and Preview.
+  const [announcePreview, setAnnouncePreview] = useState(false);
 
   const myEmail = (user?.email || '').toLowerCase();
   const isAdmin = community && (community.my_role === 'owner' || community.my_role === 'admin');
@@ -125,18 +129,95 @@ export default function CommunityScreen() {
     } finally { setPosting(false); }
   };
 
-  const onAddGroup = () => {
-    Alert.prompt(
-      t('community.newGroup') || 'Novo grupo',
-      t('community.newGroupPrompt') || 'Nome do sub-grupo',
-      async (name) => {
-        if (!name || !name.trim()) return;
-        const r = await api.communityAddGroup(community.id, { name: name.trim(), kind: 'topic' });
-        if (r.success) load(true);
-        else Alert.alert(t('common.error') || 'Erro', r.error || 'Falha');
-      },
-    );
+  const onAddGroup = async () => {
+    // Confirmation gate — admin tapping the dashed "+ Adicionar sub-grupo"
+    // by accident has zero downside but creates an empty group + audit
+    // entry. Quick OK/Cancel before we ask for a name.
+    const confirmed = await new Promise(resolve => {
+      const msg = (t('community.newGroupConfirm') || 'Criar um novo sub-grupo em "{n}"?').replace('{n}', community?.name || '');
+      if (Platform.OS === 'web') {
+        try { resolve(typeof window !== 'undefined' && window.confirm ? window.confirm(msg) : true); }
+        catch { resolve(true); }
+        return;
+      }
+      Alert.alert(
+        t('community.newGroup') || 'Novo grupo',
+        msg,
+        [
+          { text: t('common.cancel') || 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
+          { text: t('common.confirm') || 'Continuar', onPress: () => resolve(true) },
+        ],
+      );
+    });
+    if (!confirmed) return;
+    // Alert.prompt is iOS-only — on Android/web it's a no-op or crashes.
+    // Use window.prompt on web; on Android fall back to a synthesized
+    // "Topic" name (best-effort) and rely on the rename flow afterwards.
+    let name = null;
+    if (Platform.OS === 'ios') {
+      // Wrap iOS Alert.prompt in a Promise so the rest of the flow stays
+      // a single async path.
+      name = await new Promise(resolve => {
+        Alert.prompt(
+          t('community.newGroup') || 'Novo grupo',
+          t('community.newGroupPrompt') || 'Nome do sub-grupo',
+          [
+            { text: t('common.cancel') || 'Cancelar', style: 'cancel', onPress: () => resolve(null) },
+            { text: t('common.create') || 'Criar', onPress: (v) => resolve(v) },
+          ],
+        );
+      });
+    } else if (Platform.OS === 'web' && typeof window !== 'undefined' && window.prompt) {
+      name = window.prompt(t('community.newGroupPrompt') || 'Nome do sub-grupo', '');
+    } else {
+      // Android: ship a default name; admin can rename in the group settings.
+      name = (t('community.newGroupDefault') || 'Novo grupo');
+    }
+    if (!name || !name.trim()) return;
+    const r = await api.communityAddGroup(community.id, { name: name.trim(), kind: 'topic' });
+    if (r.success) load(true);
+    else Alert.alert(t('common.error') || 'Erro', r.error || 'Falha');
   };
+
+  // Cheap inline markdown for the announcement preview. Supports bold,
+  // italic, and bullet lines. Anything fancier is overkill for the preview
+  // surface — server still stores the raw text and renders it in chat.
+  const renderMdPreview = (raw) => {
+    const lines = String(raw || '').split('\n');
+    return lines.map((ln, i) => {
+      const isBullet = /^\s*[-*]\s+/.test(ln);
+      const text = isBullet ? ln.replace(/^\s*[-*]\s+/, '') : ln;
+      const out = [];
+      let cursor = 0;
+      const re = /(\*\*([^*]+)\*\*|\*([^*]+)\*)/g;
+      let m;
+      let key = 0;
+      while ((m = re.exec(text)) !== null) {
+        if (m.index > cursor) out.push(<Text key={`p${key++}`}>{text.slice(cursor, m.index)}</Text>);
+        if (m[2] != null) out.push(<Text key={`b${key++}`} style={{ fontWeight: '800' }}>{m[2]}</Text>);
+        else if (m[3] != null) out.push(<Text key={`i${key++}`} style={{ fontStyle: 'italic' }}>{m[3]}</Text>);
+        cursor = m.index + m[0].length;
+      }
+      if (cursor < text.length) out.push(<Text key={`p${key++}`}>{text.slice(cursor)}</Text>);
+      return (
+        <View key={i} style={{ flexDirection: 'row', marginBottom: 2 }}>
+          {isBullet ? <Text style={{ marginRight: 6, color: colors.text }}>•</Text> : null}
+          <Text style={{ flex: 1, fontSize: 14, lineHeight: 20, color: colors.text }}>{out}</Text>
+        </View>
+      );
+    });
+  };
+
+  // Members list filtered by the search box.
+  const filteredMembers = useMemo(() => {
+    const q = String(memberQuery || '').trim().toLowerCase();
+    if (!q) return members;
+    return members.filter(m => {
+      const name = String(m?.display_name || '').toLowerCase();
+      const email = String(m?.email || '').toLowerCase();
+      return name.includes(q) || email.includes(q);
+    });
+  }, [members, memberQuery]);
 
   const onChangeRole = (member) => {
     if (!isOwner && member.role === 'admin') return;
@@ -310,17 +391,38 @@ export default function CommunityScreen() {
             )}
             {isAdmin && (
               <View style={[sty.composer, { backgroundColor: isDark ? '#1c1c1e' : '#f8f8fa' }]}>
-                <Text style={[sty.composerLabel, { color: colors.textSecondary }]}>
-                  {t('community.postAnnouncement') || 'Postar anúncio'}
-                </Text>
-                <TextInput
-                  value={announceText}
-                  onChangeText={setAnnounceText}
-                  multiline
-                  placeholder={t('community.announcementPlaceholder') || 'Escreva um anúncio…'}
-                  placeholderTextColor={colors.textSecondary}
-                  style={[sty.composerInput, { color: colors.text, borderColor: colors.border }]}
-                />
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={[sty.composerLabel, { color: colors.textSecondary }]}>
+                    {t('community.postAnnouncement') || 'Postar anúncio'}
+                  </Text>
+                  {/* Edit/Preview toggle — pressing "Preview" renders a cheap
+                      markdown view of the current draft (bold/italic/bullets)
+                      so admins can sanity-check the layout before publishing. */}
+                  <TouchableOpacity
+                    onPress={() => setAnnouncePreview(p => !p)}
+                    disabled={!announceText.trim()}
+                    hitSlop={6}
+                    style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, backgroundColor: announcePreview ? colors.primary : 'transparent', borderWidth: 1, borderColor: colors.primary }}
+                  >
+                    <Text style={{ color: announcePreview ? '#fff' : colors.primary, fontSize: 12, fontWeight: '700' }}>
+                      {announcePreview ? (t('common.edit') || 'Editar') : (t('common.preview') || 'Preview')}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                {announcePreview ? (
+                  <View style={[sty.composerInput, { borderColor: colors.border, backgroundColor: isDark ? '#101011' : '#fff' }]}>
+                    {renderMdPreview(announceText)}
+                  </View>
+                ) : (
+                  <TextInput
+                    value={announceText}
+                    onChangeText={setAnnounceText}
+                    multiline
+                    placeholder={t('community.announcementPlaceholder') || 'Escreva um anúncio…'}
+                    placeholderTextColor={colors.textSecondary}
+                    style={[sty.composerInput, { color: colors.text, borderColor: colors.border }]}
+                  />
+                )}
                 <TouchableOpacity
                   onPress={onAnnounce}
                   disabled={!announceText.trim() || posting}
@@ -368,7 +470,31 @@ export default function CommunityScreen() {
 
         {tab === 'members' && (
           <View style={sty.tabContent}>
-            {members.map(m => (
+            {/* Quick filter — name or email substring. Saves the user from
+                scrolling 200+ rows in big communities just to find one mod. */}
+            <View style={{
+              flexDirection: 'row', alignItems: 'center',
+              backgroundColor: isDark ? '#1c1c1e' : '#f0f0f3',
+              borderRadius: BorderRadius.medium,
+              paddingHorizontal: 10, paddingVertical: 6,
+              marginBottom: 6,
+            }}>
+              <TextInput
+                value={memberQuery}
+                onChangeText={setMemberQuery}
+                placeholder={t('common.search') || 'Buscar…'}
+                placeholderTextColor={colors.textSecondary}
+                autoCapitalize="none"
+                autoCorrect={false}
+                style={{ flex: 1, color: colors.text, paddingVertical: 4 }}
+              />
+              {!!memberQuery && (
+                <TouchableOpacity onPress={() => setMemberQuery('')} hitSlop={6}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 18 }}>×</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            {filteredMembers.map(m => (
               <Pressable
                 key={m.email}
                 onLongPress={() => isAdmin && m.email !== myEmail && onChangeRole(m)}
@@ -470,30 +596,30 @@ const makeStyles = (colors, isDark) => StyleSheet.create({
     position: 'absolute', bottom: -40, left: 16,
     width: 88, height: 88, borderRadius: 44,
     backgroundColor: isDark ? '#1c1c1e' : '#fff', padding: 3,
-    ...Shadow.medium,
+    ...Shadow.md,
   },
   photo: { width: 82, height: 82, borderRadius: 41 },
   titleBlock: { paddingTop: 48, paddingHorizontal: 16, paddingBottom: 12 },
   commName: { fontSize: 22, fontWeight: '700' },
   handle: { fontSize: 14, marginTop: 2 },
   memberCount: { fontSize: 13, marginTop: 6 },
-  primaryBtn: { paddingVertical: 12, borderRadius: BorderRadius.medium, alignItems: 'center', marginTop: 12 },
+  primaryBtn: { paddingVertical: 12, borderRadius: BorderRadius.md, alignItems: 'center', marginTop: 12 },
   primaryBtnText: { color: '#fff', fontSize: 15, fontWeight: '600' },
-  secondaryBtn: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: BorderRadius.medium, borderWidth: 1, alignItems: 'center', flex: 1 },
+  secondaryBtn: { paddingVertical: 10, paddingHorizontal: 16, borderRadius: BorderRadius.md, borderWidth: 1, alignItems: 'center', flex: 1 },
   secondaryBtnText: { fontSize: 14, fontWeight: '600' },
   tabs: { flexDirection: 'row', borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth },
   tab: { flex: 1, paddingVertical: 12, alignItems: 'center' },
   tabText: { fontSize: 14, fontWeight: '600' },
   tabContent: { padding: 12, gap: 10 },
-  row: { padding: 14, borderRadius: BorderRadius.medium, marginBottom: 8 },
+  row: { padding: 14, borderRadius: BorderRadius.md, marginBottom: 8 },
   rowTitle: { fontSize: 15, fontWeight: '600' },
   rowSubtitle: { fontSize: 13, marginTop: 2 },
   tag: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
   tagText: { color: '#fff', fontSize: 11, fontWeight: '700' },
-  composer: { padding: 12, borderRadius: BorderRadius.medium, marginTop: 12 },
+  composer: { padding: 12, borderRadius: BorderRadius.md, marginTop: 12 },
   composerLabel: { fontSize: 12, fontWeight: '600', marginBottom: 6 },
   composerInput: {
-    minHeight: 80, borderWidth: 1, borderRadius: BorderRadius.medium,
+    minHeight: 80, borderWidth: 1, borderRadius: BorderRadius.md,
     paddingHorizontal: 12, paddingVertical: 8, fontSize: 14, textAlignVertical: 'top',
   },
   section: { marginBottom: 16 },

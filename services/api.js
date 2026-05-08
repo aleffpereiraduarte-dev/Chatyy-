@@ -1972,6 +1972,14 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
   if (opts?.replyQuoteText && replyToId) {
     payload.reply_quote_text = String(opts.replyQuoteText).slice(0, 240);
   }
+  // Sealed-sender (Signal-mode): when the user has the privacy toggle on,
+  // we ask the server NOT to log/return who-sent-what to peers. Sender's
+  // own clients still see their messages normally; recipients get the
+  // bubble without sender_email/sender_name. Ambient global flag set by
+  // ProfileSettingsSheet → AsyncStorage, read by chat-conversation when
+  // dispatching the send (passed as opts.sealed) — kept opt-in to avoid
+  // breaking spam control unless the user explicitly wants it.
+  if (opts?.sealed) payload.sealed = true;
   // Try Rust — inserts in PG, broadcasts to WS hub, returns ~5ms vs 30-50ms PHP.
   // topic_id still goes through PHP (threaded replies not yet in Rust).
   //
@@ -1982,7 +1990,7 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
   // Skip Rust when an effect is set — the Rust signal-server insert path
   // doesn't know about the `effect` column and silently drops it. Force
   // the PHP path so the persisted row carries the effect for replay.
-  if (!topicId && !opts?.skipRust && !opts?.effect) {
+  if (!topicId && !opts?.skipRust && !opts?.effect && !opts?.sealed) {
     const rust = await _rustChatPost('send', payload);
     if (rust?.success) return rust;
   }
@@ -5107,7 +5115,12 @@ export async function iapSubscriptionInfo() { return apiCall('iap_subscription_i
 // and the bearer comes back as `token`/`bearer_token`; the frontend was
 // written to expect status='confirmed' and `auth_token`. Normalize here so
 // callers see a stable shape.
-export async function qrGenerate() { return apiCall('chat_qr_login_create', {}, 'POST'); }
+// device_kind defaults to 'web' on the backend; legacy desktop QR calls keep
+// working without changes. Pass 'mobile' for companion-mode pairing.
+export async function qrGenerate(deviceKind) {
+  const body = deviceKind ? { device_kind: deviceKind } : {};
+  return apiCall('chat_qr_login_create', body, 'POST');
+}
 export async function qrCheck(token) {
   const r = await apiCall('chat_qr_login_status', { token }, 'POST');
   if (r?.success && r.data) {
@@ -5117,7 +5130,10 @@ export async function qrCheck(token) {
   }
   return r;
 }
-export async function qrConfirm(token) { return apiCall('chat_qr_login_approve', { token }, 'POST'); }
+export async function qrConfirm(token, deviceKind) {
+  const body = deviceKind ? { token, device_kind: deviceKind } : { token };
+  return apiCall('chat_qr_login_approve', body, 'POST');
+}
 
 // ============================================================
 // CHECK CONTACTS (Chatyy registration lookup)
@@ -5660,14 +5676,19 @@ export async function voipVerifiedNumberConfirm(code) {
 }
 
 // ─── QR login pairing ───
-export async function chatQrLoginCreate() {
-  return apiCall('chat_qr_login_create', {}, 'POST');
+// device_kind ('web'|'mobile'|'desktop') is optional; backend defaults to
+// 'web' to keep desktop QR login behavior identical when callers omit it.
+// Companion mode (mobile-to-mobile) uses device_kind='mobile' on both sides.
+export async function chatQrLoginCreate(deviceKind) {
+  const body = deviceKind ? { device_kind: deviceKind } : {};
+  return apiCall('chat_qr_login_create', body, 'POST');
 }
 export async function chatQrLoginStatus(token) {
   return apiCall('chat_qr_login_status', { token }, 'POST');
 }
-export async function chatQrLoginApprove(code) {
-  return apiCall('chat_qr_login_approve', { code }, 'POST');
+export async function chatQrLoginApprove(code, deviceKind) {
+  const body = deviceKind ? { code, device_kind: deviceKind } : { code };
+  return apiCall('chat_qr_login_approve', body, 'POST');
 }
 
 

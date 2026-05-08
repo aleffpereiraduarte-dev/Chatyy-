@@ -35,9 +35,25 @@ function BotsEmptyIllustration({ tint }) {
   );
 }
 
-const safeAlert = (title, msg) => Platform.OS === 'web'
-  ? window.alert(`${title}\n${msg || ''}`)
-  : Alert.alert(title, msg);
+// Cross-platform alert. Accepts buttons[] like Alert.alert, falling back to
+// window.confirm on web so destructive flows (regenerate token, delete bot)
+// can still get a yes/no answer instead of being silently dismissed.
+const safeAlert = (title, msg, buttons) => {
+  if (Platform.OS === 'web') {
+    if (Array.isArray(buttons) && buttons.length > 1) {
+      // Find the destructive / confirm button (anything not 'cancel').
+      const confirmBtn = buttons.find(b => b && b.style !== 'cancel' && typeof b.onPress === 'function');
+      const cancelBtn = buttons.find(b => b && b.style === 'cancel');
+      const ok = window.confirm(`${title}\n${msg || ''}`);
+      if (ok && confirmBtn) confirmBtn.onPress?.();
+      else if (!ok && cancelBtn) cancelBtn.onPress?.();
+      return;
+    }
+    window.alert(`${title}\n${msg || ''}`);
+    return;
+  }
+  Alert.alert(title, msg, buttons);
+};
 
 export default function BotsScreen() {
   const { colors, isDark } = useTheme();
@@ -182,7 +198,18 @@ export default function BotsScreen() {
             />
           ) : null
         }
-        renderItem={({ item }) => (
+        renderItem={({ item }) => {
+          // Commands can be returned as an array of strings, an array of
+          // {name, ...} objects, or a comma-separated list. Normalize once
+          // so the chip row below is dumb. Falls back to common defaults
+          // (start/help) so the UI isn't empty for fresh bots.
+          const cmds = (() => {
+            const c = item?.commands;
+            if (Array.isArray(c)) return c.map(x => typeof x === 'string' ? x : (x?.name || '')).filter(Boolean);
+            if (typeof c === 'string') return c.split(',').map(s => s.trim()).filter(Boolean);
+            return [];
+          })();
+          return (
           <View style={{ backgroundColor: colors.surface, padding: 14, borderRadius: 14, marginBottom: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center' }}>
@@ -202,13 +229,49 @@ export default function BotsScreen() {
             {!!item.description && (
               <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 8 }}>{item.description}</Text>
             )}
+            {/* Command chips — surfaces /start, /help, etc. so the creator
+                can scan their bot's surface area at a glance. */}
+            {cmds.length > 0 && (
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                {cmds.slice(0, 8).map((cmd, idx) => (
+                  <View key={idx} style={{
+                    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
+                    backgroundColor: '#7C3AED22',
+                  }}>
+                    <Text style={{ fontSize: 11, color: '#7C3AED', fontWeight: '700' }}>
+                      /{String(cmd).replace(/^\//, '')}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
             {!!item.webhook_url && (
               <Text style={{ fontSize: 11, color: colors.textTertiary || colors.textSecondary, marginTop: 6 }} numberOfLines={1}>
                 🔗 {item.webhook_url}
               </Text>
             )}
+            {/* Testar bot — opens a fake DM with the bot for webhook
+                debugging. chat-new turns ?bot=<username> into a 1:1 with
+                the bot account so the dev can poke it without leaving the app. */}
+            <TouchableOpacity
+              onPress={() => {
+                try {
+                  router.push(`/chat-new?bot=${encodeURIComponent(item.username)}&debug=1`);
+                } catch {}
+              }}
+              style={{
+                marginTop: 10, alignSelf: 'flex-start',
+                paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999,
+                backgroundColor: colors.primary,
+              }}
+            >
+              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+                {t?.('bots.test') || 'Testar bot'}
+              </Text>
+            </TouchableOpacity>
           </View>
-        )}
+          );
+        }}
       />
       )}
 
@@ -271,11 +334,18 @@ export default function BotsScreen() {
             {tokenReveal && (
               <>
                 <Text style={{ fontSize: 14, color: colors.text, marginBottom: 4 }}>@{tokenReveal.username}</Text>
-                <View style={{ backgroundColor: isDark ? '#0a0a0a' : '#f1f5f9', padding: 10, borderRadius: 10, marginBottom: 12 }}>
+                <View style={{ backgroundColor: isDark ? '#0a0a0a' : '#f1f5f9', padding: 10, borderRadius: 10, marginBottom: 8 }}>
                   <Text selectable style={{ fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace', fontSize: 12, color: colors.text }}>
                     {tokenReveal.token}
                   </Text>
                 </View>
+                {/* HMAC hint — make it explicit that this same token doubles
+                    as the secret for signing webhook payloads, so devs don't
+                    go hunting for a separate "public key" field that doesn't
+                    exist in our backend. */}
+                <Text style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 12 }}>
+                  {t?.('bots.hmacHint') || 'Use este token como segredo HMAC para validar webhooks (header X-Chatyy-Signature).'}
+                </Text>
                 <View style={{ flexDirection: 'row', gap: 8 }}>
                   <TouchableOpacity
                     onPress={() => copyToken(tokenReveal.token)}

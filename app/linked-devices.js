@@ -1,11 +1,21 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Platform } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Platform, Modal } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { IconArrowLeft, IconShield, IconMonitor, IconSmartphone } from '../components/Icons';
+import { IconArrowLeft, IconShield, IconMonitor, IconSmartphone, IconCamera, IconUserPlus, IconX } from '../components/Icons';
 import * as api from '../services/api';
+
+// Lazy-load expo-camera so web doesn't crash if it's not bundled. Same
+// pattern as profile-qr.js / chat-new.js.
+let CameraView = null;
+let useCameraPermissions = null;
+try {
+  const cam = require('expo-camera');
+  CameraView = cam.CameraView;
+  useCameraPermissions = cam.useCameraPermissions;
+} catch {}
 
 function parseUserAgent(ua) {
   if (!ua) return { device: '', os: '', browser: '', ip: '' };
@@ -54,6 +64,14 @@ export default function LinkedDevicesScreen() {
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [revoking, setRevoking] = useState(null);
+  // Companion-mode scanner state. We use the same modal-camera shape that
+  // profile-qr.js / chat-new.js do — lazy-loaded expo-camera, with a
+  // fallback message for web where it can't bundle.
+  const [scanOpen, setScanOpen] = useState(false);
+  const [scanned, setScanned] = useState(false);
+  const [scanBusy, setScanBusy] = useState(false);
+  const _useCamPerm = useCameraPermissions || (() => [null, () => {}]);
+  const [permission, requestPermission] = _useCamPerm();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -68,6 +86,76 @@ export default function LinkedDevicesScreen() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Companion-mode scanner handler. Decodes the chatyy://companion?token=...
+  // payload from a sibling phone, calls _approve from this primary device,
+  // and the secondary picks up the bearer via its _status poll. We pass
+  // device_kind='mobile' explicitly so the backend marks the row as a
+  // mobile-to-mobile pair (the secondary's create call already did the
+  // same, so this is a belt-and-suspenders check).
+  const handleScanned = ({ data }) => {
+    if (scanned || scanBusy) return;
+    if (typeof data !== 'string' || !data.startsWith('chatyy://companion')) {
+      // Reject anything else silently — the contact-QR scanner in /profile-qr
+      // handles "chatyy://add-contact" links; we shouldn't accept either side
+      // by mistake.
+      return;
+    }
+    setScanned(true);
+    setScanBusy(true);
+    (async () => {
+      try {
+        const q = data.split('?')[1] || '';
+        const params = new URLSearchParams(q);
+        const token = params.get('token') || '';
+        if (!token || !/^[a-f0-9]{32}$/.test(token)) {
+          throw new Error('invalid token');
+        }
+        const r = await api.chatQrLoginApprove(token, 'mobile');
+        if (!r?.success) throw new Error(r?.message || 'approve_failed');
+        setScanOpen(false);
+        const okMsg = t('devices.companionLinkedTitle') || 'Celular vinculado';
+        const okBody = t('devices.companionLinkedBody') || 'O outro celular já está conectado.';
+        if (Platform.OS === 'web') {
+          if (window?.alert) window.alert(`${okMsg}\n\n${okBody}`);
+        } else {
+          Alert.alert(okMsg, okBody);
+        }
+        // Reload sessions list — the new device should show up there.
+        load();
+      } catch (e) {
+        const errTitle = t('common.error') || 'Erro';
+        const errBody = (e?.message) || 'failed';
+        if (Platform.OS === 'web') {
+          if (window?.alert) window.alert(`${errTitle}: ${errBody}`);
+        } else {
+          Alert.alert(errTitle, errBody);
+        }
+      } finally {
+        setScanBusy(false);
+        // Allow another scan attempt without re-mounting the camera.
+        setTimeout(() => setScanned(false), 800);
+      }
+    })();
+  };
+
+  const openScanner = async () => {
+    if (Platform.OS === 'web' || !CameraView) {
+      const msg = t('profile.qrScanWebUnavailable') || 'Use o aplicativo móvel pra escanear';
+      if (Platform.OS === 'web') {
+        if (window?.alert) window.alert(msg);
+      } else {
+        Alert.alert(t('common.notice') || 'Aviso', msg);
+      }
+      return;
+    }
+    if (!permission?.granted) {
+      const r = await requestPermission?.();
+      if (!r?.granted) return;
+    }
+    setScanned(false);
+    setScanOpen(true);
+  };
 
   const revoke = (session) => {
     const confirmFn = Platform.OS === 'web'
@@ -182,6 +270,34 @@ export default function LinkedDevicesScreen() {
         </Text>
       </View>
 
+      {/* Companion-mode CTAs. Two paths into the same /chat_qr_login_*
+          flow: (a) "Mostrar QR" — this primary becomes the show-side and the
+          OTHER phone scans, then THIS device approves via the URL handler;
+          (b) "Escanear QR de outro celular" — opens the camera to consume a
+          chatyy://companion?token=... payload from a sibling phone and
+          confirms the link from here. WhatsApp/Telegram offer both
+          directions; we mirror that. */}
+      <View style={styles.ctaRow}>
+        <TouchableOpacity
+          style={[styles.ctaBtn, { backgroundColor: '#7C3AED' }]}
+          onPress={() => router.push('/companion-qr')}
+        >
+          <IconUserPlus size={18} color="#fff" />
+          <Text style={styles.ctaBtnText}>
+            {t('devices.linkAnotherPhone') || 'Vincular outro celular'}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.ctaBtn, styles.ctaBtnSecondary, { borderColor: '#7C3AED' }]}
+          onPress={openScanner}
+        >
+          <IconCamera size={18} color="#7C3AED" />
+          <Text style={[styles.ctaBtnText, { color: '#7C3AED' }]}>
+            {t('devices.scanCompanion') || 'Escanear QR'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
       {loading ? (
         <View style={styles.loading}><ActivityIndicator color="#7C3AED" size="large" /></View>
       ) : (
@@ -213,6 +329,49 @@ export default function LinkedDevicesScreen() {
           )}
         </>
       )}
+
+      {/* Camera-scan modal for the "I want to scan another phone" flow. We
+          keep this inline (rather than a separate route) so the busy state +
+          confirmation alert stays attached to this screen — the user lands
+          back on the device list immediately after the link succeeds. */}
+      <Modal visible={scanOpen} animationType="slide" presentationStyle="fullScreen" onRequestClose={() => setScanOpen(false)}>
+        <View style={styles.scanRoot}>
+          <View style={styles.scanHeader}>
+            <TouchableOpacity onPress={() => setScanOpen(false)} style={styles.backBtn}>
+              <IconX size={24} color="#fff" />
+            </TouchableOpacity>
+            <Text style={styles.scanTitle}>
+              {t('devices.scanCompanion') || 'Escanear QR'}
+            </Text>
+          </View>
+          {Platform.OS !== 'web' && CameraView && permission?.granted ? (
+            <View style={styles.cameraBox}>
+              <CameraView
+                style={StyleSheet.absoluteFill}
+                facing="back"
+                barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+                onBarcodeScanned={scanned ? undefined : handleScanned}
+              />
+              <View style={styles.scanFrame} />
+              {scanBusy && (
+                <View style={styles.scanBusy}>
+                  <ActivityIndicator color="#fff" size="large" />
+                </View>
+              )}
+            </View>
+          ) : (
+            <View style={styles.scanFallback}>
+              <IconCamera size={48} color="#fff" />
+              <Text style={styles.scanFallbackText}>
+                {t('profile.qrCameraNeeded') || 'Permissão de câmera necessária'}
+              </Text>
+            </View>
+          )}
+          <Text style={styles.scanHint}>
+            {t('devices.scanHint') || 'Aponte para o QR mostrado no outro celular.'}
+          </Text>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -243,4 +402,17 @@ const styles = StyleSheet.create({
   emptyText: { textAlign: 'center', fontSize: 13, paddingHorizontal: 16 },
   revokeAllBtn: { margin: 16, padding: 14, borderRadius: 12, backgroundColor: '#FEF2F2', alignItems: 'center', borderWidth: 1, borderColor: '#FEE2E2' },
   revokeAllText: { color: '#EF4444', fontSize: 14, fontWeight: '700' },
+  ctaRow: { flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingTop: 8 },
+  ctaBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12, borderRadius: 12 },
+  ctaBtnSecondary: { backgroundColor: 'transparent', borderWidth: 1 },
+  ctaBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  scanRoot: { flex: 1, backgroundColor: '#000' },
+  scanHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: 50, paddingBottom: 14 },
+  scanTitle: { color: '#fff', fontSize: 18, fontWeight: '700', marginLeft: 8 },
+  cameraBox: { flex: 1, backgroundColor: '#000' },
+  scanFrame: { position: 'absolute', top: '20%', left: '15%', right: '15%', bottom: '20%', borderRadius: 18, borderWidth: 2, borderColor: '#fff' },
+  scanBusy: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' },
+  scanFallback: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 14 },
+  scanFallbackText: { color: '#fff', fontSize: 14, paddingHorizontal: 32, textAlign: 'center' },
+  scanHint: { color: '#fff', textAlign: 'center', fontSize: 13, padding: 16 },
 });

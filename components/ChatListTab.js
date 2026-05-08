@@ -3954,70 +3954,59 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   }, [notes]);
 
   const renderItem = useCallback(({ item, index }) => {
+    // Resolve the peer email ONCE per render (was three separate IIFEs walking
+    // item.members + lowercasing currentEmail + scanning, called for every row
+    // every render). On a list of 200 convs that's 600 array walks per scroll
+    // tick — visible in JS profile as the dominant cost when the list updates.
+    let otherEmail = null;
+    let presenceVal = null;
+    if (item.type !== 'group') {
+      const _meLc = (user?.email || '').toLowerCase();
+      const members = item.members;
+      let other = null;
+      if (members && members.length) {
+        for (let i = 0; i < members.length; i++) {
+          const m = members[i];
+          const e = typeof m === 'string' ? m : (m?.email || '');
+          if (e && e.toLowerCase() !== _meLc) { other = m; break; }
+        }
+      }
+      otherEmail = (other ? (typeof other === 'string' ? other : other?.email) : null)
+        || item.other_email || item.contact_email || null;
+      if (otherEmail) {
+        const p = presencesRef.current;
+        if (p instanceof Map) presenceVal = p.get(otherEmail);
+      }
+    }
+    const isOnline = !!(presenceVal && (presenceVal.status === 'online' || presenceVal === 'online'));
+    const lastSeen = (presenceVal && presenceVal.last_seen) || null;
+    const noteText = (item.type === 'direct' && otherEmail) ? (notesMap[otherEmail] || null) : null;
     return (
-      <>
-        <ConversationRow
-          conversation={item}
-          colors={colors}
-          isDark={isDark}
-          t={t}
-          onPress={() => handleConversationPress(item)}
-          onPressIn={() => { try { prefetchConversation(item.id); } catch {} }}
-          onDelete={handleDeleteConversation}
-          onArchive={handleArchiveConversation}
-          onMute={handleMuteConversation}
-          onPin={handlePinConversation}
-          onMarkUnread={handleMarkUnreadConversation}
-          onEmail={handleEmailConversation}
-          currentEmail={user?.email}
-          isOnline={(() => {
-            if (item.type === 'group') return false;
-            const members = item.members || [];
-            const _meLc = (user?.email || '').toLowerCase();
-            const other = members.find(m => {
-              const e = typeof m === 'string' ? m : (m?.email || '');
-              return e && e.toLowerCase() !== _meLc;
-            });
-            const otherEmail = (other ? (typeof other === 'string' ? other : other?.email) : null) || item.other_email || item.contact_email || null;
-            if (!otherEmail) return false;
-            const p = presencesRef.current;
-            if (p instanceof Map) { const v = p.get(otherEmail); return v?.status === 'online' || v === 'online'; }
-            return false;
-          })()}
-          lastSeen={(() => {
-            if (item.type === 'group') return null;
-            const members = item.members || [];
-            const _meLc = (user?.email || '').toLowerCase();
-            const other = members.find(m => {
-              const e = typeof m === 'string' ? m : (m?.email || '');
-              return e && e.toLowerCase() !== _meLc;
-            });
-            const otherEmail = (other ? (typeof other === 'string' ? other : other?.email) : null) || item.other_email || item.contact_email || null;
-            if (!otherEmail) return null;
-            const p = presencesRef.current;
-            if (p instanceof Map) { const v = p.get(otherEmail); return v?.last_seen || null; }
-            return null;
-          })()}
-          isLocked={lockedIds.has(item.id) && !unlockedIds.has(item.id)}
-          typingUsers={typingUsers}
-          selectionMode={selectionMode}
-          isSelected={selectedIds.has(item.id)}
-          onLongPress={() => showLongPressMenu(item)}
-          onToggleSelect={() => toggleSelected(item.id)}
-          draftText={drafts[String(item.id)] || null}
-          noteText={(() => {
-            if (item.type !== 'direct') return null;
-            const members = item.members || [];
-            const _meLc = (user?.email || '').toLowerCase();
-            const other = members.find(m => {
-              const e = typeof m === 'string' ? m : (m?.email || '');
-              return e && e.toLowerCase() !== _meLc;
-            });
-            const otherEmail = (other ? (typeof other === 'string' ? other : other?.email) : null) || item.other_email || item.contact_email || null;
-            return otherEmail ? (notesMap[otherEmail] || null) : null;
-          })()}
-        />
-      </>
+      <ConversationRow
+        conversation={item}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+        onPress={() => handleConversationPress(item)}
+        onPressIn={() => { try { prefetchConversation(item.id); } catch {} }}
+        onDelete={handleDeleteConversation}
+        onArchive={handleArchiveConversation}
+        onMute={handleMuteConversation}
+        onPin={handlePinConversation}
+        onMarkUnread={handleMarkUnreadConversation}
+        onEmail={handleEmailConversation}
+        currentEmail={user?.email}
+        isOnline={isOnline}
+        lastSeen={lastSeen}
+        isLocked={lockedIds.has(item.id) && !unlockedIds.has(item.id)}
+        typingUsers={typingUsers}
+        selectionMode={selectionMode}
+        isSelected={selectedIds.has(item.id)}
+        onLongPress={() => showLongPressMenu(item)}
+        onToggleSelect={() => toggleSelected(item.id)}
+        draftText={drafts[String(item.id)] || null}
+        noteText={noteText}
+      />
     );
   }, [filter, pinnedCount, isDark, colors, t, handleConversationPress, handleDeleteConversation, handleArchiveConversation, handleMuteConversation, handlePinConversation, handleMarkUnreadConversation, user?.email, lockedIds, unlockedIds, typingUsers, selectionMode, selectedIds, enterSelectionMode, toggleSelected, drafts, notesMap]);
   // NOTE: presenceVersion removed from deps to prevent 15s flicker cycle

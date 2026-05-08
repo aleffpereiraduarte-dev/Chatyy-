@@ -40,6 +40,8 @@ export default function VoicemailRecorder() {
   const reason = String(params.reason || 'missed'); // 'missed' | 'declined'
 
   // 'idle' → user just landed here, mic shown
+  // 'countdown' → 3..2..1 prep before mic opens (so the user has a beat
+  //   to clear their throat instead of fumbling their first word)
   // 'recording' → countdown ticking, stop button shown
   // 'preview' → preview controls (play / re-record / send)
   // 'sending' → upload in flight, spinner
@@ -49,6 +51,14 @@ export default function VoicemailRecorder() {
   const [duration, setDuration] = useState(0);
   const [errorMsg, setErrorMsg] = useState(null);
   const [previewPlaying, setPreviewPlaying] = useState(false);
+  const [countdownTick, setCountdownTick] = useState(3);
+  // Cheap waveform during recording — random-walk 12 bars, mirrors the
+  // "calling/connected" waveform style already used in ChatCallsTab. We
+  // can't tap into the actual mic level on web/native without extra deps,
+  // so we drive bars off a timer that visually breathes while recording.
+  const waveBars = useRef(Array.from({ length: 14 }, () => new Animated.Value(0.25))).current;
+  const countdownAnim = useRef(new Animated.Value(0)).current;
+  const countdownTimerRef = useRef(null);
 
   // Native recorder ref. For web we use MediaRecorder + a Blob.
   const recRef = useRef(null);          // expo-audio recorder OR MediaRecorder (web)
@@ -68,6 +78,7 @@ export default function VoicemailRecorder() {
     return () => {
       mountedRef.current = false;
       if (timerRef.current) clearInterval(timerRef.current);
+      if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
       // Best-effort cleanup of any in-flight recorder on hard back-out.
       cleanupRecorder();
       cleanupPreview();
@@ -88,6 +99,65 @@ export default function VoicemailRecorder() {
     loop.start();
     return () => loop.stop();
   }, [phase, pulseAnim]);
+
+  // Waveform jitter loop — runs only while recording, mirrors the
+  // ChatCallsTab AudioWaveform pattern so we keep visual language consistent
+  // without pulling the mic level from native (would need a heavier dep).
+  useEffect(() => {
+    if (phase !== 'recording') {
+      waveBars.forEach(b => b.setValue(0.25));
+      return;
+    }
+    const anims = waveBars.map((bar, i) => Animated.loop(
+      Animated.sequence([
+        Animated.timing(bar, {
+          toValue: 0.4 + Math.random() * 0.6,
+          duration: 280 + i * 40,
+          useNativeDriver: false,
+        }),
+        Animated.timing(bar, {
+          toValue: 0.15 + Math.random() * 0.3,
+          duration: 240 + i * 50,
+          useNativeDriver: false,
+        }),
+      ])
+    ));
+    anims.forEach(a => a.start());
+    return () => anims.forEach(a => a.stop());
+  }, [phase, waveBars]);
+
+  // 3-2-1 prep countdown before recording actually begins.
+  // Honors phase changes so a quick back-out cancels cleanly.
+  const startCountdown = useCallback(() => {
+    setErrorMsg(null);
+    setCountdownTick(3);
+    setPhase('countdown');
+    if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+    // Pop animation for each tick.
+    const pop = () => {
+      countdownAnim.setValue(0);
+      Animated.timing(countdownAnim, { toValue: 1, duration: 600, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+    };
+    pop();
+    countdownTimerRef.current = setInterval(() => {
+      setCountdownTick(prev => {
+        const next = prev - 1;
+        if (next <= 0) {
+          clearInterval(countdownTimerRef.current);
+          countdownTimerRef.current = null;
+          // Defer to next tick so the React state from setPhase
+          // doesn't race the recorder permission prompt.
+          setTimeout(() => {
+            if (mountedRef.current) startRecording();
+          }, 50);
+          return 0;
+        }
+        pop();
+        try { Haptics.selectionAsync(); } catch {}
+        return next;
+      });
+    }, 800);
+  }, [countdownAnim]);
 
   function cleanupRecorder() {
     try {
@@ -278,6 +348,7 @@ export default function VoicemailRecorder() {
     try {
       // Step 1 — get presigned PUT URL.
       const initResp = await api.voicemailInitUpload(conversationId || 0, recordingMimeRef.current);
+      if (!mountedRef.current) return;
       if (!initResp?.success || !initResp?.data?.upload_url || !initResp?.data?.object_key) {
         throw new Error(initResp?.message || 'init_failed');
       }
@@ -294,7 +365,9 @@ export default function VoicemailRecorder() {
         // Read native file into a blob the fetch layer can stream.
         const uri = recordingUriRef.current;
         const resp = await fetch(uri);
+        if (!mountedRef.current) return;
         body = await resp.blob();
+        if (!mountedRef.current) return;
       }
       if (!body || (body.size != null && body.size === 0)) {
         throw new Error('empty_recording');
@@ -304,12 +377,14 @@ export default function VoicemailRecorder() {
         body,
         headers: { 'Content-Type': mime },
       });
+      if (!mountedRef.current) return;
       if (!putResp.ok) {
         throw new Error('r2_upload_' + putResp.status);
       }
 
       // Step 3 — register voicemail row + post chat bubble.
       const sendResp = await api.voicemailSend(recipientEmail, objectKey, duration, conversationId || null);
+      if (!mountedRef.current) return;
       if (!sendResp?.success) {
         throw new Error(sendResp?.message || 'send_failed');
       }
@@ -330,6 +405,10 @@ export default function VoicemailRecorder() {
         }
       }, 600);
     } catch (e) {
+      // Surface to console so devs investigating support tickets can see the
+      // exact failure step (init / put / send) instead of just a banner.
+      try { console.warn('[voicemail] send failed', e?.message || e); } catch {}
+      if (!mountedRef.current) return;
       setErrorMsg((t('voicemail.sendError') || 'Erro ao enviar mensagem de voz') + ': ' + (e?.message || ''));
       setPhase('error');
     }
@@ -374,22 +453,57 @@ export default function VoicemailRecorder() {
               {t('voicemail.tapToRecord') || 'Toque no microfone para gravar (até 1 minuto).'}
             </Text>
             <View style={{ height: 32 }} />
-            <TouchableOpacity onPress={startRecording} style={styles.micButton} accessibilityLabel="Gravar mensagem de voz">
+            <TouchableOpacity onPress={startCountdown} style={styles.micButton} accessibilityLabel="Gravar mensagem de voz">
               <Text style={styles.micEmoji}>🎤</Text>
             </TouchableOpacity>
+          </>
+        )}
+
+        {phase === 'countdown' && (
+          <>
+            <Animated.Text style={[styles.countdownDigit, {
+              transform: [
+                { scale: countdownAnim.interpolate({ inputRange: [0, 1], outputRange: [1.6, 1] }) },
+              ],
+              opacity: countdownAnim.interpolate({ inputRange: [0, 0.6, 1], outputRange: [1, 1, 0.6] }),
+            }]}>{countdownTick}</Animated.Text>
+            <Text style={styles.bodyText}>{t('voicemail.getReady') || 'Prepare-se…'}</Text>
           </>
         )}
 
         {phase === 'recording' && (
           <>
             <Text style={styles.timer}>{fmt(duration)} / {fmt(MAX_DURATION_SEC)}</Text>
-            <View style={{ height: 24 }} />
+            {/* Live waveform — purely visual; recorder itself runs unaffected. */}
+            <View style={styles.waveRow}>
+              {waveBars.map((bar, i) => (
+                <Animated.View
+                  key={i}
+                  style={{
+                    width: 4,
+                    borderRadius: 2,
+                    marginHorizontal: 2,
+                    backgroundColor: '#EF4444',
+                    height: bar.interpolate({ inputRange: [0, 1], outputRange: [6, 36] }),
+                  }}
+                />
+              ))}
+            </View>
+            <View style={{ height: 14 }} />
             <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
               <TouchableOpacity onPress={stopRecording} style={[styles.micButton, styles.recordingActive]}>
                 <View style={styles.stopSquare} />
               </TouchableOpacity>
             </Animated.View>
             <Text style={styles.bodyText}>{t('voicemail.tapToStop') || 'Toque para parar'}</Text>
+            {/* Auto-stop hint when within 10s of the cap. Keeps the user from
+                being surprised by the hard 60s ceiling. */}
+            {duration >= MAX_DURATION_SEC - 10 && (
+              <Text style={[styles.bodyText, { color: '#fbbf24', marginTop: 8 }]}>
+                {(t('voicemail.cappingSoon') || 'Limite chegando — para automaticamente em {n}s')
+                  .replace('{n}', String(MAX_DURATION_SEC - duration))}
+              </Text>
+            )}
           </>
         )}
 
@@ -428,9 +542,18 @@ export default function VoicemailRecorder() {
           <>
             <Text style={[styles.bodyText, { color: '#EF4444' }]}>{errorMsg}</Text>
             <View style={{ height: 16 }} />
-            <TouchableOpacity onPress={() => { setPhase('idle'); setErrorMsg(null); }} style={[styles.previewBtn, styles.sendBtn]}>
-              <Text style={[styles.previewBtnText, { color: '#fff' }]}>{t('voicemail.tryAgain') || 'Tentar novamente'}</Text>
-            </TouchableOpacity>
+            <View style={styles.previewRow}>
+              {/* Re-send: keep the recording, retry just the upload step.
+                  Without this, an upload flake forced the user to re-record. */}
+              {(recordingUriRef.current || recordingBlobRef.current) ? (
+                <TouchableOpacity onPress={sendVoicemail} style={[styles.previewBtn, styles.sendBtn]}>
+                  <Text style={[styles.previewBtnText, { color: '#fff' }]}>{t('voicemail.retrySend') || 'Reenviar'}</Text>
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity onPress={() => { setPhase('idle'); setErrorMsg(null); }} style={[styles.previewBtn]}>
+                <Text style={styles.previewBtnText}>{t('voicemail.tryAgain') || 'Tentar novamente'}</Text>
+              </TouchableOpacity>
+            </View>
           </>
         )}
 
@@ -457,6 +580,8 @@ function makeStyles(colors) {
     body: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
     bodyText: { color: colors.textSecondary || 'rgba(255,255,255,0.7)', fontSize: 15, textAlign: 'center', lineHeight: 22 },
     timer: { color: colors.text || '#fff', fontSize: 32, fontWeight: '300', fontVariant: ['tabular-nums'] },
+    countdownDigit: { color: colors.text || '#fff', fontSize: 96, fontWeight: '700', marginBottom: 12 },
+    waveRow: { flexDirection: 'row', alignItems: 'center', height: 40, marginTop: 12, marginBottom: 4 },
     micButton: {
       width: 96, height: 96, borderRadius: 48,
       backgroundColor: colors.primary || '#7c3aed',

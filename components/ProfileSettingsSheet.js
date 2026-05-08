@@ -267,12 +267,24 @@ function PrivacyScreen({ colors, t }) {
     story_privacy: 'everyone',
     group_add: 'everyone',
     phone_visibility: 'contacts',
+    // Telegram Cloud parity: default TRUE (server-stored + multi-device).
+    // When toggled OFF, new conversations the user creates inherit
+    // cloud_storage=false → chat_send relays via WS only, peers store
+    // locally in SQLite. Tradeoff surfaced in description.
+    cloud_chats_default: true,
   });
   const [loading, setLoading] = useState(true);
   // Default ON: strip EXIF (location/camera/date) on photo send. The flag
   // lives only in AsyncStorage — sender-local privacy decision, no server
   // round-trip needed. Read by chat-conversation.js before upload.
   const [stripExif, setStripExif] = useState(true);
+  // Sealed-sender (Signal-mode metadata hiding). Local AsyncStorage flag —
+  // chat-conversation.js reads it via opts.sealed when calling chatSend.
+  // OFF by default because sealed mode weakens spam control.
+  const [sealedSender, setSealedSender] = useState(false);
+  // Global default disappearing-messages timer (seconds). Server-side state
+  // surfaced through chat_privacy_get's `default_disappearing_seconds`. 0 = off.
+  const [defaultDisappearing, setDefaultDisappearing] = useState(0);
 
   useEffect(() => {
     (async () => {
@@ -280,6 +292,11 @@ function PrivacyScreen({ colors, t }) {
         const r = await api.apiCall?.('chat_privacy_get', {}, 'POST');
         if (r?.success && r.data) {
           setSettings(prev => ({ ...prev, ...r.data }));
+          // chat_privacy_get now also surfaces the user's global default
+          // disappearing-messages timer in seconds (0 = off).
+          if (typeof r.data.default_disappearing_seconds === 'number') {
+            setDefaultDisappearing(r.data.default_disappearing_seconds | 0);
+          }
         }
       } catch {}
       try {
@@ -287,6 +304,10 @@ function PrivacyScreen({ colors, t }) {
         const v = await AsyncStorage.getItem('chatyy_strip_exif');
         // Default ON when key is absent — only flip OFF on explicit 'false'.
         if (v === 'false') setStripExif(false);
+        // Sealed-sender flag persists locally — chat-conversation.js reads
+        // it from the same key when dispatching sends.
+        const ss = await AsyncStorage.getItem('chatyy_sealed_sender');
+        if (ss === 'true') setSealedSender(true);
         // Restore phone_visibility from local cache when backend doesn't
         // return it yet (TODO backend: phone_visibility field in
         // chat_user_privacy).
@@ -315,6 +336,38 @@ function PrivacyScreen({ colors, t }) {
       const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
       await AsyncStorage.setItem('chatyy_strip_exif', v ? 'true' : 'false');
     } catch {}
+  };
+
+  const updateSealedSender = async (v) => {
+    setSealedSender(v);
+    try {
+      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+      await AsyncStorage.setItem('chatyy_sealed_sender', v ? 'true' : 'false');
+    } catch {}
+  };
+
+  // Cycle through the allowed disappearing-timer values: Off → 24h → 7d → 90d.
+  // Mirrors the chat_set_default_disappearing whitelist on the server (we
+  // include only the most useful subset so the picker stays simple — server
+  // also accepts 1h / 30d but a 4-state picker covers the practical range).
+  const DISAPPEARING_OPTS = [0, 86400, 604800, 7776000];
+  const updateDefaultDisappearing = async (next) => {
+    const allowed = DISAPPEARING_OPTS.includes(next) ? next : 0;
+    setDefaultDisappearing(allowed);
+    try {
+      await api.apiCall?.('chat_set_default_disappearing', { seconds: allowed }, 'POST');
+    } catch {}
+  };
+  const cycleDefaultDisappearing = () => {
+    const idx = DISAPPEARING_OPTS.indexOf(defaultDisappearing);
+    const nxt = DISAPPEARING_OPTS[(idx + 1) % DISAPPEARING_OPTS.length];
+    updateDefaultDisappearing(nxt);
+  };
+  const labelDisappearing = (s) => {
+    if (s >= 7776000) return t?.('privacy.disappearing90d') || '90 dias';
+    if (s >= 604800)  return t?.('privacy.disappearing7d')  || '7 dias';
+    if (s >= 86400)   return t?.('privacy.disappearing24h') || '24 horas';
+    return t?.('privacy.disappearingOff') || 'Desligado';
   };
 
   // Triple-state row: tap cycles everyone → contacts → nobody → everyone.
@@ -398,6 +451,54 @@ function PrivacyScreen({ colors, t }) {
           onChange={updateStripExif}
           colors={colors}
         />
+        {/* Telegram Cloud parity: when ON, conversations created from this
+            account persist server-side and sync between devices. When OFF,
+            chat_send only relays via WebSocket — peers store locally in
+            SQLite and messages disappear if both are offline. Tradeoff
+            spelled out inline (avoids new i18n keys / tooltip surface). */}
+        <ToggleRow
+          icon={IconStar}
+          label="Salvar conversas na nuvem (sincronizar entre dispositivos)"
+          description="Quando desligado, mensagens só ficam nos aparelhos dos dois e somem se ambos estiverem offline."
+          value={settings.cloud_chats_default !== false}
+          onChange={(v) => update({ cloud_chats_default: !!v })}
+          colors={colors}
+        />
+        {/* Sealed sender (Signal-mode metadata hiding). When on, every chat
+            message goes out with `sealed=true` so the server stores no
+            who-sent-what record for peers. The sender's own clients still
+            render their messages normally (they own the local SQLite).
+            Trade-off displayed inline so the user understands the cost. */}
+        <ToggleRow
+          icon={IconLock}
+          label="Modo sealed sender"
+          description="Oculta quem enviou no servidor (Signal-mode, spam control mais fraco)"
+          value={sealedSender}
+          onChange={updateSealedSender}
+          colors={colors}
+        />
+        {/* Default disappearing-messages timer (global). Tap-to-cycle row
+            mirrors the PrivacyRow shape so the visual stays consistent
+            with the rest of the list. Backend stores in chat_user_defaults
+            and applies it to every chat_create going forward. */}
+        <TouchableOpacity
+          onPress={cycleDefaultDisappearing}
+          activeOpacity={0.65}
+          style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14 }}
+        >
+          <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors?.surface, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+            <IconClock size={18} color={colors?.text} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: colors?.text, fontSize: 15, fontWeight: '500' }}>
+              Apagar mensagens automaticamente
+            </Text>
+            <Text style={{ color: colors?.textTertiary, fontSize: 12, marginTop: 2 }}>
+              {labelDisappearing(defaultDisappearing)}
+            </Text>
+          </View>
+          <IconChevronRight size={18} color={colors?.textTertiary} />
+        </TouchableOpacity>
       </Section>
       <Section title={t?.('privacy.groupsSection') || 'Grupos'} colors={colors}>
         <PrivacyRow

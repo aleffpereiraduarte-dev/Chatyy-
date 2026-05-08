@@ -274,9 +274,14 @@ export default function ChildRestrictionGuard({ children }) {
   const [gradName, setGradName] = useState('');
   const [askParentSent, setAskParentSent] = useState(false);
   const [minsLeft, setMinsLeft] = useState(null);
+  const [parentEmail, setParentEmail] = useState(null);
   const router = useRouter();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const bounceAnim = useRef(new Animated.Value(0.8)).current;
+  // Curtain pulls down when bedtime activates so the transition feels
+  // intentional (not a glitch). Drives Y-translation + opacity together.
+  const curtainAnim = useRef(new Animated.Value(0)).current;
+  const lastBlockedRef = useRef(null);
 
   let tFunc;
   try { tFunc = useLanguage().t; } catch { tFunc = (k) => k; }
@@ -289,6 +294,23 @@ export default function ChildRestrictionGuard({ children }) {
     ]).start();
   }, []);
 
+  // Curtain pull-down: only animates on the bedtime ENTER transition. Once
+  // we're already in bedtime, the curtain is fully down so a 60s recheck
+  // doesn't replay the animation. Reset when blocker clears.
+  useEffect(() => {
+    if (blocked === 'bedtime' && lastBlockedRef.current !== 'bedtime') {
+      curtainAnim.setValue(0);
+      Animated.timing(curtainAnim, {
+        toValue: 1,
+        duration: 700,
+        useNativeDriver: true,
+      }).start();
+    } else if (blocked !== 'bedtime' && lastBlockedRef.current === 'bedtime') {
+      curtainAnim.setValue(0);
+    }
+    lastBlockedRef.current = blocked;
+  }, [blocked, curtainAnim]);
+
   const checkRestrictions = useCallback(async () => {
     if (!isChildAccount()) { setBlocked(null); return; }
     // Refresh restrictions silently — covers the case where parent flipped a
@@ -296,9 +318,27 @@ export default function ChildRestrictionGuard({ children }) {
     try { await refreshChildRestrictions(); } catch {}
     const r = getChildRestrictions();
     if (!r) { setBlocked(null); return; }
+    // Track the parent contact (used by the emergency "minha mãe/pai" CTA).
+    if (r.parent_email && r.parent_email !== parentEmail) setParentEmail(r.parent_email);
     if (isInBedtime(r)) {
       setBlocked('bedtime');
-      setMinsLeft(minutesUntilEnd(r));
+      // Honor a granted bonus_minutes from parental_screen_time_bonus —
+      // backend exposes it on the restrictions blob (`bonus_minutes`). If
+      // the bonus is still active we delay the block and shrink the visible
+      // remaining time accordingly.
+      const bonus = parseInt(r.bonus_minutes || 0, 10) || 0;
+      const baseLeft = minutesUntilEnd(r) || 0;
+      // Bonus REDUCES the time left until bedtime ends because the parent
+      // already granted extra screen time before bedtime should kick in.
+      // Negative result means bedtime should not block at all yet.
+      const adjusted = baseLeft - bonus;
+      if (adjusted <= 0 && bonus > 0) {
+        // Bonus still covers the user — let them through.
+        setBlocked(null);
+        setMinsLeft(null);
+        return;
+      }
+      setMinsLeft(adjusted > 0 ? adjusted : baseLeft);
       return;
     }
     // Screen time limit enforcement
@@ -481,12 +521,37 @@ export default function ChildRestrictionGuard({ children }) {
   // Bedtime blocker - friendly, not scary
   if (blocked === 'bedtime') {
     const r = getChildRestrictions();
+    // Curtain top-strip \u2014 translates DOWN from above the screen on enter.
+    // 220px is enough to feel like a real "curtain" without dominating the
+    // whole layout. Honors `useNativeDriver` for 60fps on low-end Android.
+    const curtainY = curtainAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [-220, 0],
+    });
     return (
       <Animated.View style={[sty.bedtime, { opacity: fadeAnim }]}>
         <StarsField />
+        {/* Decorative top curtain \u2014 purely visual, sits behind content. */}
+        <Animated.View pointerEvents="none" style={{
+          position: 'absolute',
+          top: 0, left: 0, right: 0, height: 220,
+          backgroundColor: 'rgba(15,23,42,0.85)',
+          borderBottomLeftRadius: 36, borderBottomRightRadius: 36,
+          transform: [{ translateY: curtainY }],
+          ...(Platform.OS === 'web' ? { backdropFilter: 'blur(18px)' } : {}),
+        }} />
         <Animated.View style={{ alignItems: 'center', zIndex: 1, transform: [{ scale: bounceAnim }] }}>
           <SleepingMascot />
           <Text style={sty.bedTitle}>{t('kids.restriction.bedtime')}</Text>
+          {/* "Boa noite!" greet \u2014 appears once curtain settles. */}
+          <Animated.Text
+            style={[
+              { fontSize: 22, fontWeight: '800', color: '#fbbf24', marginTop: 4 },
+              { opacity: curtainAnim },
+            ]}
+          >
+            {t('kids.restriction.goodnight') || 'Boa noite!'}
+          </Animated.Text>
           <Text style={sty.bedSub}>
             {(t('kids.restriction.blockedUntil') || 'Bloqueado das {start} as {end}')
               .replace('{start}', r?.bedtime_start || '22:00')
@@ -510,6 +575,29 @@ export default function ChildRestrictionGuard({ children }) {
             <Text style={{ fontSize: 24 }}>{'\u2728'}</Text>
           </View>
 
+          {/* Bonus 30min CTA \u2014 distinct from the generic "ask parent" so the
+              backend can route this as a screen-time bonus request specifically
+              (rather than a bedtime unlock). Falls through to the same endpoint. */}
+          <TouchableOpacity
+            style={[sty.askParentBtn, { backgroundColor: '#fbbf24', marginTop: 14 }]}
+            onPress={async () => {
+              try {
+                const apiModule = require('../services/api');
+                if (apiModule.kidsAskParent) {
+                  await apiModule.kidsAskParent('bonus_30min', '', { surface: 'app', minutes: 30 });
+                }
+              } catch {}
+              setAskParentSent(true);
+              setTimeout(() => setAskParentSent(false), 5000);
+            }}
+            disabled={askParentSent}
+            activeOpacity={0.8}
+          >
+            <Text style={[sty.askParentText, { color: '#0f172a' }]}>
+              {t('kids.restriction.bonus30') || 'Pedir mais 30min'}
+            </Text>
+          </TouchableOpacity>
+
           {/* Ask a parent button */}
           <TouchableOpacity
             style={[sty.askParentBtn, askParentSent && { backgroundColor: '#22c55e' }]}
@@ -528,6 +616,26 @@ export default function ChildRestrictionGuard({ children }) {
               </>
             )}
           </TouchableOpacity>
+
+          {/* Emergency direct-chat link \u2014 opens a 1:1 with the registered
+              parent. We do NOT reveal a phone number; we route via the
+              existing chat-conversation deep link with parent_email. */}
+          {parentEmail ? (
+            <TouchableOpacity
+              onPress={() => {
+                try {
+                  router.push(`/chat-new?email=${encodeURIComponent(parentEmail)}&urgent=1`);
+                } catch {}
+              }}
+              hitSlop={6}
+              style={{ marginTop: 14 }}
+              accessibilityRole="link"
+            >
+              <Text style={{ color: '#a5b4fc', fontSize: 14, textDecorationLine: 'underline' }}>
+                {t('kids.restriction.contactParent') || 'Falar com minha m\u00e3e/pai'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
         </Animated.View>
       </Animated.View>
     );

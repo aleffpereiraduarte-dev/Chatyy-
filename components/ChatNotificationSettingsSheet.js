@@ -19,13 +19,37 @@
  * strings with PT-BR fallbacks.
  */
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, Modal, Pressable, TouchableOpacity, ScrollView, Switch,
-  StyleSheet, Platform, ActivityIndicator,
+  StyleSheet, Platform, ActivityIndicator, Vibration,
 } from 'react-native';
 import * as api from '../services/api';
 import { IconX, IconBell, IconCheck } from './Icons';
+
+// Built-in vibration patterns matched to the picker labels. Mirrors the
+// values the native push handler reads when emitting vibration so the
+// preview the user feels here is exactly what arrives on a push.
+const VIB_PRESETS = {
+  default: [0, 250],
+  short:   [0, 80],
+  long:    [0, 600],
+  off:     null,
+};
+
+function previewVibration(name, pattern) {
+  if (Platform.OS === 'web') return;
+  try {
+    Vibration.cancel();
+    if (pattern && Array.isArray(pattern) && pattern.length) {
+      Vibration.vibrate(pattern, false);
+      return;
+    }
+    const preset = VIB_PRESETS[name];
+    if (preset === null || preset === undefined) return;
+    Vibration.vibrate(preset, false);
+  } catch {}
+}
 
 const ACCENT = '#7C3AED';
 
@@ -54,6 +78,7 @@ const DEFAULT_SETTINGS = {
   notify_messages: true,
   sound: 'default',
   vibration: 'default',
+  vibration_pattern: null, // {durations:[100,50,200]} | null
   preview: true,
   mention_exception: true,
   mute_until: null,
@@ -109,13 +134,22 @@ export default function ChatNotificationSettingsSheet({
 
   const handleMuteFor = useCallback(async (duration) => {
     let muteUntil = null;
-    if (duration === '8h') muteUntil = new Date(Date.now() + 8 * 3600 * 1000).toISOString();
+    if (duration === '30m') muteUntil = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    else if (duration === '1h') muteUntil = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    else if (duration === '8h') muteUntil = new Date(Date.now() + 8 * 3600 * 1000).toISOString();
     else if (duration === '1w') muteUntil = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
     else if (duration === 'forever') muteUntil = '2099-12-31T23:59:59Z';
     saveField({ mute_until: muteUntil });
     // Mirror to chatMute so the existing mute UI badge stays in sync.
     try { await api.chatMute(conversationId, muteUntil); } catch {}
   }, [conversationId, saveField]);
+
+  // Custom vibration recorder modal state. Captures press timings inside a
+  // 3-second window and saves the resulting `{durations:[...]}` blob to
+  // chat_user_conv_settings.vibration_pattern. On save, also flips the
+  // `vibration` enum to 'custom' so the native push handler knows to read
+  // the JSON column instead of the preset table.
+  const [showCustomVib, setShowCustomVib] = useState(false);
 
   if (!visible) return null;
 
@@ -191,17 +225,33 @@ export default function ChatNotificationSettingsSheet({
               colors={colors}
             />
 
-            {/* Vibração picker */}
+            {/* Vibração picker — tapping each option fires a haptic preview
+                so the user can FEEL the difference before saving. The
+                "Personalizar" row opens a recorder where they tap-out a
+                custom rhythm; saved pattern is mirrored on the row label. */}
             <SectionHeader text={t?.('notif.vibration') || 'Vibração'} colors={colors} />
             <PickerRow
               options={[
                 { value: 'default', label: t?.('chatNotif.default') || 'Padrão' },
                 { value: 'short',   label: t?.('chatConv.vibShort') || 'Curta' },
                 { value: 'long',    label: t?.('chatConv.vibLong') || 'Longa' },
+                { value: 'custom',  label: (t?.('chatConv.vibCustom') || 'Personalizar') + (settings.vibration_pattern?.durations?.length ? ` (${settings.vibration_pattern.durations.length})` : '') },
                 { value: 'off',     label: t?.('common.off') || 'Desligada' },
               ]}
               value={settings.vibration}
-              onChange={(v) => saveField({ vibration: v })}
+              onChange={(v) => {
+                if (v === 'custom') {
+                  // Open the recorder. If the user already has a saved
+                  // pattern, the recorder pre-loads it so they can extend.
+                  setShowCustomVib(true);
+                  return;
+                }
+                // Preview the preset right when the row is tapped — gives
+                // immediate physical feedback before persisting. Saving the
+                // pattern field to null clears any previous custom blob.
+                previewVibration(v, null);
+                saveField({ vibration: v, vibration_pattern: null });
+              }}
               colors={colors}
             />
 
@@ -221,18 +271,22 @@ export default function ChatNotificationSettingsSheet({
             <SectionHeader text={t?.('chatConv.muteChat') || 'Silenciar conversa'} colors={colors} />
             <PickerRow
               options={[
+                { value: '30m',     label: t?.('chatConv.muteFor30m') || 'Silenciar por 30 minutos' },
+                { value: '1h',      label: t?.('chatConv.muteFor1h') || 'Silenciar por 1 hora' },
                 { value: '8h',      label: t?.('chatConv.muteFor8h') || 'Silenciar por 8 horas' },
                 { value: '1w',      label: t?.('chatConv.muteFor1w') || 'Silenciar por 1 semana' },
                 { value: 'forever', label: t?.('chatConv.muteForever') || 'Silenciar sempre' },
                 { value: null,      label: t?.('chatConv.unmute') || 'Desativar silêncio' },
               ]}
-              // Map mute_until into one of the 4 buckets so the user sees a
+              // Map mute_until into one of the 6 buckets so the user sees a
               // checkmark on the row that matches their current state.
               value={(() => {
                 if (!settings.mute_until) return null;
                 if (settings.mute_until.startsWith('2099-')) return 'forever';
                 const ms = new Date(settings.mute_until).getTime() - Date.now();
                 if (!Number.isFinite(ms) || ms <= 0) return null;
+                if (ms <= 45 * 60 * 1000) return '30m';
+                if (ms <= 90 * 60 * 1000) return '1h';
                 if (ms <= 12 * 3600 * 1000) return '8h';
                 return '1w';
               })()}
@@ -240,6 +294,169 @@ export default function ChatNotificationSettingsSheet({
               colors={colors}
             />
           </ScrollView>
+        </Pressable>
+      </Pressable>
+      <CustomVibrationRecorder
+        visible={showCustomVib}
+        initialPattern={settings.vibration_pattern?.durations}
+        onClose={() => setShowCustomVib(false)}
+        onSave={(durations) => {
+          // Empty save → fall back to "default" preset; clears the pattern.
+          if (!durations || durations.length === 0) {
+            saveField({ vibration: 'default', vibration_pattern: null });
+          } else {
+            saveField({
+              vibration: 'custom',
+              vibration_pattern: { durations },
+            });
+          }
+          setShowCustomVib(false);
+        }}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+      />
+    </Modal>
+  );
+}
+
+// Tap-to-record recorder. Opens a 3-second window — each tap records a
+// `wait` (gap since previous tap) followed by a fixed 50ms buzz, packed
+// into the standard React Native Vibration array `[wait, buzz, wait, buzz, ...]`.
+// Cap at 16 taps to keep the array sane. Replay button uses Vibration.vibrate()
+// on the captured pattern so the user can confirm the rhythm before saving.
+function CustomVibrationRecorder({ visible, onClose, onSave, initialPattern, colors, isDark, t }) {
+  const [recording, setRecording] = useState(false);
+  const [durations, setDurations] = useState(() => Array.isArray(initialPattern) ? initialPattern.slice() : []);
+  const [remaining, setRemaining] = useState(3000);
+  const startRef = useRef(0);
+  const lastTapRef = useRef(0);
+  const tickRef = useRef(null);
+
+  // Reset state every time the modal opens — pre-loads any saved pattern
+  // so users can iterate on a previous recording instead of starting over.
+  useEffect(() => {
+    if (!visible) return;
+    setDurations(Array.isArray(initialPattern) ? initialPattern.slice() : []);
+    setRecording(false);
+    setRemaining(3000);
+    return () => { if (tickRef.current) clearInterval(tickRef.current); };
+  }, [visible]);
+
+  const startRecording = useCallback(() => {
+    setDurations([]);
+    setRecording(true);
+    startRef.current = Date.now();
+    lastTapRef.current = startRef.current;
+    setRemaining(3000);
+    if (tickRef.current) clearInterval(tickRef.current);
+    tickRef.current = setInterval(() => {
+      const elapsed = Date.now() - startRef.current;
+      const left = Math.max(0, 3000 - elapsed);
+      setRemaining(left);
+      if (left <= 0) {
+        clearInterval(tickRef.current);
+        tickRef.current = null;
+        setRecording(false);
+      }
+    }, 50);
+  }, []);
+
+  const stopRecording = useCallback(() => {
+    if (tickRef.current) clearInterval(tickRef.current);
+    tickRef.current = null;
+    setRecording(false);
+  }, []);
+
+  const onTap = useCallback(() => {
+    if (!recording) return;
+    const now = Date.now();
+    const wait = Math.max(20, now - lastTapRef.current);
+    lastTapRef.current = now;
+    setDurations(prev => {
+      if (prev.length >= 32) return prev;
+      const buzz = 50; // fixed 50ms haptic per tap, like Telegram
+      return [...prev, wait, buzz];
+    });
+    // Tactile confirmation that the tap registered.
+    try { Vibration.vibrate(20); } catch {}
+  }, [recording]);
+
+  const replay = useCallback(() => {
+    if (Platform.OS === 'web' || durations.length === 0) return;
+    try { Vibration.cancel(); Vibration.vibrate(durations, false); } catch {}
+  }, [durations]);
+
+  if (!visible) return null;
+
+  return (
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center' }} onPress={onClose}>
+        <Pressable
+          onPress={e => e.stopPropagation?.()}
+          style={{ width: 320, borderRadius: 18, padding: 22, backgroundColor: colors?.background || (isDark ? '#0f0f12' : '#fff') }}
+        >
+          <Text style={{ fontSize: 17, fontWeight: '700', color: colors?.text, marginBottom: 6 }}>
+            {t?.('chatConv.vibCustom') || 'Vibração personalizada'}
+          </Text>
+          <Text style={{ fontSize: 12, color: colors?.textSecondary, marginBottom: 14 }}>
+            {t?.('chatConv.vibCustomHint') || 'Toque o ritmo na área abaixo durante 3 segundos.'}
+          </Text>
+
+          <Pressable
+            onPress={recording ? onTap : undefined}
+            disabled={!recording}
+            style={{
+              height: 140, borderRadius: 14, alignItems: 'center', justifyContent: 'center',
+              backgroundColor: recording ? ACCENT + '22' : (isDark ? '#1a1a1f' : '#f3f4f6'),
+              borderWidth: recording ? 2 : 1,
+              borderColor: recording ? ACCENT : (colors?.border || '#ddd'),
+            }}
+          >
+            <Text style={{ fontSize: 36, fontWeight: '700', color: recording ? ACCENT : colors?.textSecondary }}>
+              {recording ? `${(remaining / 1000).toFixed(1)}s` : `${Math.floor(durations.length / 2)}`}
+            </Text>
+            <Text style={{ fontSize: 12, color: colors?.textSecondary, marginTop: 4 }}>
+              {recording
+                ? (t?.('chatConv.vibTapHere') || 'Toque aqui no ritmo')
+                : (t?.('chatConv.vibTapsCount') || 'toques gravados')}
+            </Text>
+          </Pressable>
+
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 14 }}>
+            <TouchableOpacity
+              onPress={recording ? stopRecording : startRecording}
+              style={{ flex: 1, height: 42, borderRadius: 10, backgroundColor: ACCENT, alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '600' }}>
+                {recording ? (t?.('common.stop') || 'Parar') : (t?.('common.start') || 'Iniciar')}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={replay}
+              disabled={durations.length === 0 || recording}
+              style={{
+                flex: 1, height: 42, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
+                backgroundColor: (durations.length === 0 || recording) ? (colors?.border || '#ddd') : (colors?.surface || '#f3f4f6'),
+                borderWidth: 1, borderColor: colors?.border || '#ddd',
+              }}
+            >
+              <Text style={{ color: colors?.text, fontWeight: '600' }}>{t?.('common.preview') || 'Prévia'}</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+            <TouchableOpacity onPress={onClose} style={{ flex: 1, height: 40, alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ color: colors?.textSecondary, fontWeight: '500' }}>{t?.('common.cancel') || 'Cancelar'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => onSave(durations)}
+              disabled={recording}
+              style={{ flex: 1, height: 40, borderRadius: 10, backgroundColor: recording ? (colors?.border || '#ddd') : '#10B981', alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '600' }}>{t?.('common.save') || 'Salvar'}</Text>
+            </TouchableOpacity>
+          </View>
         </Pressable>
       </Pressable>
     </Modal>

@@ -149,7 +149,7 @@ export default function CommunityCreateScreen() {
             <Text style={[sty.hint, { color: colors.textSecondary }]}>
               {t('community.qHandleHint') || '3-32 chars: letras, números e underscore. Pessoas usarão pra encontrar.'}
             </Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: colors.border, borderRadius: BorderRadius.medium, paddingHorizontal: 12 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: colors.border, borderRadius: BorderRadius.md, paddingHorizontal: 12 }}>
               <Text style={{ color: colors.textSecondary, fontSize: 16 }}>@</Text>
               <TextInput
                 value={handle} onChangeText={(s) => setHandle(s.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
@@ -269,13 +269,13 @@ const makeStyles = (colors, isDark) => StyleSheet.create({
   q: { fontSize: 22, fontWeight: '700', marginBottom: 8 },
   hint: { fontSize: 13, marginBottom: 16 },
   label: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 },
-  input: { borderWidth: 1, borderRadius: BorderRadius.medium, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16 },
+  input: { borderWidth: 1, borderRadius: BorderRadius.md, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16 },
   inputInline: { flex: 1, paddingVertical: 12, fontSize: 16 },
   multiline: { minHeight: 100, textAlignVertical: 'top' },
-  photoBtn: { borderWidth: 2, borderStyle: 'dashed', borderRadius: BorderRadius.medium, padding: 24, alignItems: 'center' },
+  photoBtn: { borderWidth: 2, borderStyle: 'dashed', borderRadius: BorderRadius.md, padding: 24, alignItems: 'center' },
   photoBtnText: { fontSize: 15, fontWeight: '600' },
   checkbox: { width: 22, height: 22, borderRadius: 6, borderWidth: 1.5, borderColor: '#888', alignItems: 'center', justifyContent: 'center' },
   footer: { padding: 16, borderTopWidth: StyleSheet.hairlineWidth },
-  primaryBtn: { paddingVertical: 14, borderRadius: BorderRadius.medium, alignItems: 'center' },
+  primaryBtn: { paddingVertical: 14, borderRadius: BorderRadius.md, alignItems: 'center' },
   primaryBtnText: { color: '#fff', fontSize: 16, fontWeight: '600' },
 });

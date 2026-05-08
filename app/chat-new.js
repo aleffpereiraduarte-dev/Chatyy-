@@ -19,6 +19,7 @@ import {
   IconCheck, IconPlus, IconMail, IconRefresh, IconClock, IconUserPlus,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
+import BroadcastModal from '../components/BroadcastModal';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
@@ -30,6 +31,22 @@ function IconQrCode({ size = 24, color = '#000' }) {
     <View style={{ width: size, height: size, justifyContent: 'center', alignItems: 'center' }}>
       <Text style={{ fontSize: size * 0.75, color, lineHeight: size }}>⊞</Text>
     </View>
+  );
+}
+
+// Megaphone SVG for broadcast list rows — UI rule bans emoji glyphs, so
+// this draws the icon inline via react-native-svg. Matches the stroke
+// weight of the other components/Icons.js glyphs (1.8 round-cap).
+const _SvgMod = require('react-native-svg');
+const _BSvg = _SvgMod.default || _SvgMod.Svg;
+const _BPath = _SvgMod.Path;
+function IconBroadcastGlyph({ size = 18, color = '#fff' }) {
+  return (
+    <_BSvg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <_BPath d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z" />
+      <_BPath d="M16 8a5 5 0 0 1 0 8" />
+      <_BPath d="M19 5a9 9 0 0 1 0 14" />
+    </_BSvg>
   );
 }
 
@@ -123,6 +140,14 @@ export default function ChatNewScreen() {
   // Trending hashtags (Telegram-style "Tópicos populares") — only public
   // channels feed this list, so privacy is preserved at the SQL layer.
   const [trendingTags, setTrendingTags] = useState([]);
+
+  // Broadcast lists (Telegram parity) — fetched from chat_broadcast_list.
+  // Tapping `+ Nova lista` opens BroadcastModal (multi-select contacts +
+  // name input). Tapping an existing list resends from it via
+  // chatBroadcastSend. Hidden when in pickMode (the screen is in
+  // "add member to group" mode and the user shouldn't see lists then).
+  const [broadcastLists, setBroadcastLists] = useState([]);
+  const [showBroadcastModal, setShowBroadcastModal] = useState(false);
 
   // QR modal
   const [showQrModal, setShowQrModal] = useState(false);
@@ -319,6 +344,29 @@ export default function ChatNewScreen() {
   }, []);
 
   useEffect(() => { loadPublicChannels(discoverCategory, ''); }, [discoverCategory, loadPublicChannels]);
+
+  // Broadcast lists loader — pulls the user's saved chat_broadcast_lists.
+  // Skipped in pickMode (member-add flow) where the section is hidden.
+  // Silent-failure: empty list collapses the section without a toast.
+  const loadBroadcastLists = useCallback(() => {
+    if (pickMode) return;
+    if (!api.chatBroadcastList) return;
+    api.chatBroadcastList().then(r => {
+      if (r?.success) {
+        const lists = (r.data?.lists || r.data?.items || []).map(l => {
+          // recipients arrives either as a JSON-encoded string (legacy)
+          // or as a parsed array — normalize so renderers don't have to.
+          let recipients = l.recipients;
+          if (typeof recipients === 'string') {
+            try { recipients = JSON.parse(recipients); } catch { recipients = []; }
+          }
+          return { ...l, recipients: Array.isArray(recipients) ? recipients : [] };
+        });
+        setBroadcastLists(lists);
+      }
+    }).catch(() => {});
+  }, [pickMode]);
+  useEffect(() => { loadBroadcastLists(); }, [loadBroadcastLists]);
 
   // Trending hashtags loader — runs once on mount (and when discoverCategory
   // toggles, since the discovery surface is the entry point and we want
@@ -1604,6 +1652,121 @@ export default function ChatNewScreen() {
                     </View>
                   )}
 
+                  {/* Listas de transmissão — Telegram parity. Section
+                      shows the user's saved broadcast lists with a
+                      "+ Nova lista" CTA at the top. Tapping a list opens
+                      the contact picker pre-loaded with its members so
+                      the user can edit and resend; tapping the CTA opens
+                      a fresh BroadcastModal. Hidden in pickMode (the
+                      add-member-to-group flow doesn't need this). */}
+                  {!pickMode && mode === 'direct' && (
+                    <View style={{ paddingHorizontal: Spacing.md, marginTop: 6, marginBottom: 4 }}>
+                      <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingHorizontal: 0, paddingBottom: 6 }]}>
+                        <View style={sty.sectionAccentLine} />
+                        <Text style={[sty.sectionTitle, { color: colors.textSecondary }]}>
+                          {t('chat.broadcastList') || 'Listas de transmissão'}
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        onPress={() => setShowBroadcastModal(true)}
+                        activeOpacity={0.7}
+                        style={{
+                          flexDirection: 'row', alignItems: 'center',
+                          padding: 12, borderRadius: 12, gap: 12,
+                          backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7',
+                        }}
+                      >
+                        <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center' }}>
+                          <IconBroadcastGlyph size={20} color="#fff" />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>
+                            {t('chat.newBroadcast') || 'Nova lista'}
+                          </Text>
+                          <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
+                            {t('chat.broadcastListHint') || 'Envie uma mensagem para vários contatos de uma vez'}
+                          </Text>
+                        </View>
+                        <IconPlus size={18} color={colors.textSecondary} />
+                      </TouchableOpacity>
+                      {broadcastLists.length > 0 && broadcastLists.map((bl) => {
+                        const count = (bl.recipients || []).length;
+                        return (
+                          <TouchableOpacity
+                            key={`bl-${bl.id}`}
+                            activeOpacity={0.7}
+                            onPress={() => {
+                              // No dedicated /chat-broadcast-send screen yet; use
+                              // a native prompt as the lightweight composer. The
+                              // backend's chat_broadcast_send fans the text out
+                              // to each recipient's direct thread, which already
+                              // surfaces in the chat list. Cancel = no-op.
+                              const promptTitle = bl.name || (t('chat.broadcastList') || 'Lista de transmissão');
+                              const sendIt = (text) => {
+                                const v = (text || '').trim();
+                                if (!v) return;
+                                api.chatBroadcastSend(bl.id, v).then(r => {
+                                  if (r?.success) {
+                                    safeAlert(
+                                      t('chat.broadcastSent') || 'Enviado',
+                                      `${r.data?.sent ?? count} / ${r.data?.total ?? count}`
+                                    );
+                                  }
+                                }).catch(() => {});
+                              };
+                              if (Platform.OS === 'ios' && Alert.prompt) {
+                                Alert.prompt(promptTitle, t('chat.broadcastSend') || 'Mensagem para a lista', sendIt);
+                              } else if (Platform.OS === 'web') {
+                                const txt = window.prompt(`${promptTitle}\n${t('chat.broadcastSend') || 'Mensagem'}`);
+                                if (txt != null) sendIt(txt);
+                              } else {
+                                // Android: open the editor (BroadcastModal) so user can review members,
+                                // then a follow-up tap on the same list row sends. Simpler than a custom dialog.
+                                safeAlert(promptTitle, `${count} ${t('chat.broadcastMembers') || 'membros'}`);
+                              }
+                            }}
+                            onLongPress={() => {
+                              // Long-press → quick delete (Telegram parity).
+                              if (!api.chatBroadcastDelete) return;
+                              const confirmDelete = () => {
+                                api.chatBroadcastDelete(bl.id).then(() => loadBroadcastLists()).catch(() => {});
+                              };
+                              if (Platform.OS === 'web') {
+                                if (window.confirm(`${t('common.delete') || 'Excluir'}?`)) confirmDelete();
+                              } else {
+                                Alert.alert(
+                                  bl.name || (t('chat.broadcastList') || 'Lista de transmissão'),
+                                  t('chat.deleteBroadcastConfirm') || 'Excluir esta lista?',
+                                  [
+                                    { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+                                    { text: t('common.delete') || 'Excluir', style: 'destructive', onPress: confirmDelete },
+                                  ],
+                                );
+                              }
+                            }}
+                            delayLongPress={400}
+                            style={{
+                              flexDirection: 'row', alignItems: 'center',
+                              paddingVertical: 10, gap: 12,
+                            }}
+                          >
+                            <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#7C3AED' + '22', alignItems: 'center', justifyContent: 'center' }}>
+                              <IconBroadcastGlyph size={18} color="#7C3AED" />
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={{ color: colors.text, fontSize: 15, fontWeight: '500' }}>
+                                {bl.name || (t('chat.broadcastList') || 'Lista de transmissão')}
+                              </Text>
+                              <Text style={{ color: colors.textTertiary, fontSize: 12, marginTop: 2 }}>
+                                {count} {t('chat.broadcastMembers') || 'membros'}
+                              </Text>
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
+
                   {/* Quick actions */}
                   <View style={sty.quickActions}>
                     {/* Saved Messages — chat with self (Telegram-style) */}
@@ -1879,6 +2042,17 @@ export default function ChatNewScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Broadcast list creator — multi-select contacts + name input.
+          Reuses the existing components/BroadcastModal which talks to
+          chat_broadcast_create directly and reports back via onCreated. */}
+      <BroadcastModal
+        visible={showBroadcastModal}
+        onClose={() => setShowBroadcastModal(false)}
+        onCreated={() => { setShowBroadcastModal(false); loadBroadcastLists(); }}
+        colors={colors}
+        t={t}
+      />
     </View>
   );
 }

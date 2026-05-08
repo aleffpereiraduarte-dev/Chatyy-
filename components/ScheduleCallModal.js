@@ -45,6 +45,13 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
   // Suggestion list — basic chat_check_chatyy lookup by email/handle prefix.
   const [suggestions, setSuggestions] = useState([]);
   const [suggesting, setSuggesting] = useState(false);
+  // Recurrence stub — backend doesn't yet wire repeating jobs, but UI
+  // captures intent and tags it onto the title so we can light it up
+  // server-side later without a frontend deploy.
+  const [recurrence, setRecurrence] = useState('none'); // 'none' | 'daily' | 'weekly'
+  // Existing scheduled calls — loaded once when the modal opens so we can
+  // warn if the picked time collides with another booking ±30min.
+  const [otherCalls, setOtherCalls] = useState([]);
 
   const [submitting, setSubmitting] = useState(false);
 
@@ -58,8 +65,54 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
       setParticipantInput('');
       setParticipants([]);
       setSuggestions([]);
+      setRecurrence('none');
+      setOtherCalls([]);
+    } else {
+      // Best-effort prefetch of the user's already-scheduled calls so the
+      // conflict check below has data. If the API errors out we silently
+      // proceed without conflict warnings.
+      if (api.callScheduleList) {
+        api.callScheduleList().then(r => {
+          if (r?.success) {
+            const arr = r.data?.calls || r.data?.scheduled || r.data || [];
+            setOtherCalls(Array.isArray(arr) ? arr : []);
+          }
+        }).catch(() => {});
+      }
     }
   }, [visible]);
+
+  // Local timezone label — surfaced under the date picker so the user
+  // doesn't pick "10:00" thinking it's UTC. Falls back to the offset
+  // when Intl isn't available (older RN runtimes).
+  const tzLabel = (() => {
+    try {
+      if (typeof Intl !== 'undefined' && Intl.DateTimeFormat) {
+        const opts = Intl.DateTimeFormat().resolvedOptions();
+        if (opts?.timeZone) return opts.timeZone;
+      }
+    } catch {}
+    const off = -new Date().getTimezoneOffset();
+    const sign = off >= 0 ? '+' : '-';
+    const h = Math.floor(Math.abs(off) / 60);
+    const m = Math.abs(off) % 60;
+    return `UTC${sign}${pad(h)}:${pad(m)}`;
+  })();
+
+  // Conflict detection — flag if any existing call sits within 30 minutes
+  // of the chosen slot. Uses the call's scheduled_at field; ignores its
+  // duration on purpose to keep the check simple and predictable.
+  const conflictCall = (() => {
+    if (!otherCalls.length) return null;
+    const target = scheduledDate.getTime();
+    const WINDOW = 30 * 60 * 1000;
+    for (const c of otherCalls) {
+      const at = Date.parse(c?.scheduled_at || c?.scheduledAt || '');
+      if (!at || isNaN(at)) continue;
+      if (Math.abs(at - target) <= WINDOW) return c;
+    }
+    return null;
+  })();
 
   // Suggestion lookup — debounced. Reuses chatCheckChatyy if available so
   // we hit the same discovery surface as /chat-new instead of inventing
@@ -71,11 +124,13 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
     setSuggesting(true);
     const tm = setTimeout(async () => {
       try {
-        const r = api.chatSyncContacts ? null : null;
         // No dedicated suggestion endpoint — fall back to a simple check
         // call so the user gets validation hints without a 2nd round trip.
+        // chatCheckChatyy expects a destructured object; route by '@'
+        // presence so phone-style input still gets resolved.
         if (api.chatCheckChatyy) {
-          const res = await api.chatCheckChatyy(q);
+          const isEmail = q.includes('@');
+          const res = await api.chatCheckChatyy(isEmail ? { email: q } : { phone: q });
           if (!cancelled && res?.success && res.data?.users) {
             setSuggestions(res.data.users.slice(0, 5));
           }
@@ -117,11 +172,38 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
       else Alert.alert('', msg);
       return;
     }
+    // If there's a nearby call, ask the user to confirm before booking
+    // a colliding slot. They can still proceed; we just want a beat of
+    // friction so accidental double-bookings don't slip through.
+    if (conflictCall) {
+      const ok = await new Promise(resolve => {
+        const msg = (t('calls.conflictWarning') || 'Você já tem outra chamada perto desse horário. Continuar mesmo assim?');
+        if (Platform.OS === 'web') {
+          try { resolve(typeof window !== 'undefined' && window.confirm ? window.confirm(msg) : true); }
+          catch { resolve(true); }
+          return;
+        }
+        Alert.alert(
+          t('calls.scheduleNew') || 'Agendar',
+          msg,
+          [
+            { text: t('common.cancel') || 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
+            { text: t('common.continue') || 'Continuar', onPress: () => resolve(true) },
+          ],
+        );
+      });
+      if (!ok) return;
+    }
     setSubmitting(true);
     try {
+      // Encode recurrence in the title as `[repeat:weekly]` so the
+      // backend can pick it up later without breaking today's plain-title
+      // codepath. None = stripped from the payload.
+      const baseTitle = title.trim() || (t('calls.scheduled') || 'Chamada agendada');
+      const finalTitle = recurrence !== 'none' ? `${baseTitle} [repeat:${recurrence}]` : baseTitle;
       const r = await api.callSchedule({
         participants,
-        title: title.trim() || (t('calls.scheduled') || 'Chamada agendada'),
+        title: finalTitle,
         scheduledAt: scheduledDate.toISOString(),
         durationMin: duration,
       });
@@ -244,6 +326,58 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
             ) : (
               <Text style={{ color: colors.text }}>{scheduledDate.toLocaleString()}</Text>
             )}
+
+            {/* Timezone + conflict warning — surfaces under the picker so
+                the user knows what zone they just picked in (no more "I
+                meant 10am my time but it saved as UTC" support tickets). */}
+            <Text style={{ fontSize: 11, color: colors.textTertiary, marginTop: 4 }}>
+              {(t('calls.timezone') || 'Fuso: {tz}').replace('{tz}', tzLabel)}
+            </Text>
+            {conflictCall && (
+              <View style={{
+                marginTop: 6, padding: 8, borderRadius: 8,
+                backgroundColor: '#f59e0b22', borderLeftWidth: 3, borderLeftColor: '#f59e0b',
+              }}>
+                <Text style={{ fontSize: 12, color: '#b45309', fontWeight: '600' }}>
+                  {(t('calls.conflictWarning') || '⚠ Você já tem outra chamada perto de {time}')
+                    .replace('{time}', new Date(conflictCall.scheduled_at || conflictCall.scheduledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}
+                </Text>
+              </View>
+            )}
+
+            {/* Recurrence — UI captures the intent and tags it onto the
+                title so the backend can wire repeating jobs later without
+                a frontend change. */}
+            <Text style={[styles.label, { color: colors.textSecondary }]}>
+              {t('calls.repeat') || 'Repetir'}
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              {[
+                { k: 'none',   label: t('calls.repeatNone')   || 'Não' },
+                { k: 'daily',  label: t('calls.repeatDaily')  || 'Diário' },
+                { k: 'weekly', label: t('calls.repeatWeekly') || 'Semanal' },
+              ].map(opt => {
+                const sel = recurrence === opt.k;
+                return (
+                  <TouchableOpacity
+                    key={opt.k}
+                    onPress={() => setRecurrence(opt.k)}
+                    style={[
+                      styles.chip,
+                      {
+                        backgroundColor: sel ? colors.primary : colors.surface,
+                        borderColor: sel ? colors.primary : colors.border,
+                      },
+                    ]}
+                  >
+                    <Text style={{
+                      color: sel ? '#fff' : colors.text,
+                      fontSize: FontSize.sm, fontWeight: '600',
+                    }}>{opt.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
 
             {/* Duration */}
             <Text style={[styles.label, { color: colors.textSecondary }]}>

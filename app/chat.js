@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo, Suspense } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Animated, Dimensions, TextInput, Modal, Pressable } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,12 +15,17 @@ import Svg, { Circle as SvgCircle, Path, Rect, Line, Defs, LinearGradient, Stop 
 import ChatListTab from '../components/ChatListTab';
 import AvatarCircle from '../components/AvatarCircle';
 import ChatCallsTab from '../components/ChatCallsTab';
-import ChatFeedTab from '../components/ChatFeedTab';
-import ChatStatusTab from '../components/ChatStatusTab';
-import ChannelsTab from '../components/ChannelsTab';
-import CommunitiesTab from '../components/CommunitiesTab';
-import KidsLearnTab from '../components/KidsLearnTab';
-import KidsTVTab from '../components/KidsTVTab';
+// Heavy non-default tabs — code-split via React.lazy so cold start doesn't pay
+// the ChatStatusTab (4.5k LOC), ChatFeedTab, ChannelsTab, CommunitiesTab, kids
+// tabs parse cost upfront. Each chunk only loads when the user actually opens
+// the tab. ChatCallsTab stays eager because chat.js has a require() reference
+// to its `getCallHistoryCached` named export at startup (missed-calls badge).
+const ChatFeedTab = React.lazy(() => import('../components/ChatFeedTab'));
+const ChatStatusTab = React.lazy(() => import('../components/ChatStatusTab'));
+const ChannelsTab = React.lazy(() => import('../components/ChannelsTab'));
+const CommunitiesTab = React.lazy(() => import('../components/CommunitiesTab'));
+const KidsLearnTab = React.lazy(() => import('../components/KidsLearnTab'));
+const KidsTVTab = React.lazy(() => import('../components/KidsTVTab'));
 import SyncBar from '../components/SyncBar';
 import { isSyncComplete, runInitialSync } from '../services/initialSync';
 import PlusOnboardingTour, { checkShouldShowPlusOnboarding } from '../components/PlusOnboardingTour';
@@ -631,24 +636,24 @@ function ChatHub() {
               <ChatErrorBoundary><ChatCallsTab {...tabProps} /></ChatErrorBoundary>
             </View>}
             {mountedTabs.has('feed') && <View style={{ display: activeTab === 'feed' ? 'flex' : 'none', flex: activeTab === 'feed' ? 1 : undefined }}>
-              <ChatErrorBoundary><ChatFeedTab {...tabProps} /></ChatErrorBoundary>
+              <ChatErrorBoundary><Suspense fallback={null}><ChatFeedTab {...tabProps} /></Suspense></ChatErrorBoundary>
             </View>}
             {mountedTabs.has('status') && <View style={{ display: activeTab === 'status' ? 'flex' : 'none', flex: activeTab === 'status' ? 1 : undefined }}>
-              <ChatErrorBoundary><ChatStatusTab {...tabProps} /></ChatErrorBoundary>
+              <ChatErrorBoundary><Suspense fallback={null}><ChatStatusTab {...tabProps} /></Suspense></ChatErrorBoundary>
             </View>}
             {/* Removed: 'config' tab rendered ChatProfileTab which duplicated
                 the unified profile. Taps on the header avatar now open /u/{me}. */}
             {mountedTabs.has('learn') && <View style={{ display: activeTab === 'learn' ? 'flex' : 'none', flex: activeTab === 'learn' ? 1 : undefined }}>
-              <ChatErrorBoundary><KidsLearnTab {...tabProps} /></ChatErrorBoundary>
+              <ChatErrorBoundary><Suspense fallback={null}><KidsLearnTab {...tabProps} /></Suspense></ChatErrorBoundary>
             </View>}
             {mountedTabs.has('tv') && <View style={{ display: activeTab === 'tv' ? 'flex' : 'none', flex: activeTab === 'tv' ? 1 : undefined }}>
-              <ChatErrorBoundary><KidsTVTab {...tabProps} /></ChatErrorBoundary>
+              <ChatErrorBoundary><Suspense fallback={null}><KidsTVTab {...tabProps} /></Suspense></ChatErrorBoundary>
             </View>}
             {mountedTabs.has('channels') && <View style={{ display: activeTab === 'channels' ? 'flex' : 'none', flex: activeTab === 'channels' ? 1 : undefined }}>
-              <ChatErrorBoundary><ChannelsTab {...tabProps} /></ChatErrorBoundary>
+              <ChatErrorBoundary><Suspense fallback={null}><ChannelsTab {...tabProps} /></Suspense></ChatErrorBoundary>
             </View>}
             {mountedTabs.has('communities') && <View style={{ display: activeTab === 'communities' ? 'flex' : 'none', flex: activeTab === 'communities' ? 1 : undefined }}>
-              <ChatErrorBoundary><CommunitiesTab {...tabProps} /></ChatErrorBoundary>
+              <ChatErrorBoundary><Suspense fallback={null}><CommunitiesTab {...tabProps} /></Suspense></ChatErrorBoundary>
             </View>}
           </Animated.View>
           {/* ChatListTab has its own FAB (new chat/group/channel), and
@@ -738,20 +743,20 @@ function ChatHub() {
           <ChatErrorBoundary><ChatCallsTab {...tabProps} /></ChatErrorBoundary>
         </View>}
         {mountedTabs.has('feed') && <View style={{ display: activeTab === 'feed' ? 'flex' : 'none', flex: activeTab === 'feed' ? 1 : undefined }}>
-          <ChatErrorBoundary><ChatFeedTab {...tabProps} /></ChatErrorBoundary>
+          <ChatErrorBoundary><Suspense fallback={null}><ChatFeedTab {...tabProps} /></Suspense></ChatErrorBoundary>
         </View>}
         {mountedTabs.has('status') && <View style={{ display: activeTab === 'status' ? 'flex' : 'none', flex: activeTab === 'status' ? 1 : undefined }}>
-          <ChatErrorBoundary><ChatStatusTab {...tabProps} /></ChatErrorBoundary>
+          <ChatErrorBoundary><Suspense fallback={null}><ChatStatusTab {...tabProps} /></Suspense></ChatErrorBoundary>
         </View>}
         {/* Removed: config/profile duplicate — header avatar routes to /u/{me} */}
         {mountedTabs.has('learn') && <View style={{ display: activeTab === 'learn' ? 'flex' : 'none', flex: activeTab === 'learn' ? 1 : undefined }}>
-          <ChatErrorBoundary><KidsLearnTab {...tabProps} /></ChatErrorBoundary>
+          <ChatErrorBoundary><Suspense fallback={null}><KidsLearnTab {...tabProps} /></Suspense></ChatErrorBoundary>
         </View>}
         {mountedTabs.has('channels') && <View style={{ display: activeTab === 'channels' ? 'flex' : 'none', flex: activeTab === 'channels' ? 1 : undefined }}>
-          <ChatErrorBoundary><ChannelsTab {...tabProps} /></ChatErrorBoundary>
+          <ChatErrorBoundary><Suspense fallback={null}><ChannelsTab {...tabProps} /></Suspense></ChatErrorBoundary>
         </View>}
         {mountedTabs.has('communities') && <View style={{ display: activeTab === 'communities' ? 'flex' : 'none', flex: activeTab === 'communities' ? 1 : undefined }}>
-          <ChatErrorBoundary><CommunitiesTab {...tabProps} /></ChatErrorBoundary>
+          <ChatErrorBoundary><Suspense fallback={null}><CommunitiesTab {...tabProps} /></Suspense></ChatErrorBoundary>
         </View>}
       </Animated.View>
 
