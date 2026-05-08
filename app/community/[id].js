@@ -6,6 +6,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, FlatList,
   Image, ActivityIndicator, RefreshControl, TextInput, Alert, Pressable, Platform,
+  Animated, Easing,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -32,6 +33,37 @@ export default function CommunityScreen() {
   const insets = useSafeAreaInsets();
 
   const [tab, setTab] = useState('announcements');
+  // Cross-fade between tab contents — prev tab fades to 0 while new tab
+  // fades 0→1. 220ms duration is short enough to feel snappy without
+  // looking like a hard cut.
+  const tabFade = useRef(new Animated.Value(1)).current;
+  const setTabAnimated = useCallback((nextKey) => {
+    if (nextKey === tab) return;
+    Animated.timing(tabFade, {
+      toValue: 0,
+      duration: 110,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: true,
+    }).start(() => {
+      setTab(nextKey);
+      Animated.timing(tabFade, {
+        toValue: 1,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    });
+  }, [tab, tabFade]);
+  // Announcement composer focus grow — textarea minHeight ramps from 80→140
+  // on focus so the user has visual room to type without instantly tapping
+  // a tiny field. Driver:false because we animate height (layout).
+  const composerHeight = useRef(new Animated.Value(80)).current;
+  const onComposerFocus = useCallback(() => {
+    Animated.timing(composerHeight, { toValue: 140, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
+  }, [composerHeight]);
+  const onComposerBlur = useCallback(() => {
+    Animated.timing(composerHeight, { toValue: 80, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
+  }, [composerHeight]);
   const [community, setCommunity] = useState(null);
   const [groups, setGroups] = useState([]);
   const [members, setMembers] = useState([]);
@@ -363,7 +395,7 @@ export default function CommunityScreen() {
           {TABS.map(tabDef => (
             <TouchableOpacity
               key={tabDef.key}
-              onPress={() => setTab(tabDef.key)}
+              onPress={() => setTabAnimated(tabDef.key)}
               style={[sty.tab, tab === tabDef.key && { borderBottomColor: colors.primary, borderBottomWidth: 2 }]}
             >
               <Text style={[sty.tabText, { color: tab === tabDef.key ? colors.primary : colors.textSecondary }]}>
@@ -373,7 +405,8 @@ export default function CommunityScreen() {
           ))}
         </View>
 
-        {/* Tab content */}
+        {/* Tab content — wrapped in fade animator so swap doesn't flash. */}
+        <Animated.View style={{ opacity: tabFade }}>
         {tab === 'announcements' && (
           <View style={sty.tabContent}>
             {community.announcement_conv_id && (
@@ -414,14 +447,18 @@ export default function CommunityScreen() {
                     {renderMdPreview(announceText)}
                   </View>
                 ) : (
-                  <TextInput
-                    value={announceText}
-                    onChangeText={setAnnounceText}
-                    multiline
-                    placeholder={t('community.announcementPlaceholder') || 'Escreva um anúncio…'}
-                    placeholderTextColor={colors.textSecondary}
-                    style={[sty.composerInput, { color: colors.text, borderColor: colors.border }]}
-                  />
+                  <Animated.View style={{ minHeight: composerHeight }}>
+                    <TextInput
+                      value={announceText}
+                      onChangeText={setAnnounceText}
+                      multiline
+                      onFocus={onComposerFocus}
+                      onBlur={onComposerBlur}
+                      placeholder={t('community.announcementPlaceholder') || 'Escreva um anúncio…'}
+                      placeholderTextColor={colors.textSecondary}
+                      style={[sty.composerInput, { color: colors.text, borderColor: colors.border, minHeight: undefined, height: '100%' }]}
+                    />
+                  </Animated.View>
                 )}
                 <TouchableOpacity
                   onPress={onAnnounce}
@@ -494,22 +531,23 @@ export default function CommunityScreen() {
                 </TouchableOpacity>
               )}
             </View>
-            {filteredMembers.map(m => (
-              <Pressable
-                key={m.email}
-                onLongPress={() => isAdmin && m.email !== myEmail && onChangeRole(m)}
-                style={[sty.row, { backgroundColor: isDark ? '#1c1c1e' : '#f8f8fa', flexDirection: 'row', alignItems: 'center' }]}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={[sty.rowTitle, { color: colors.text }]}>{m.display_name || m.email}</Text>
-                  <Text style={[sty.rowSubtitle, { color: colors.textSecondary }]}>{m.email}</Text>
-                </View>
-                {m.role !== 'member' && (
-                  <View style={[sty.tag, { backgroundColor: roleColor(m.role) }]}>
-                    <Text style={sty.tagText}>{roleLabel(m.role, t)}</Text>
+            {filteredMembers.map((m, idx) => (
+              <AnimatedMemberRow key={m.email} index={idx}>
+                <Pressable
+                  onLongPress={() => isAdmin && m.email !== myEmail && onChangeRole(m)}
+                  style={[sty.row, { backgroundColor: isDark ? '#1c1c1e' : '#f8f8fa', flexDirection: 'row', alignItems: 'center' }]}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={[sty.rowTitle, { color: colors.text }]}>{m.display_name || m.email}</Text>
+                    <Text style={[sty.rowSubtitle, { color: colors.textSecondary }]}>{m.email}</Text>
                   </View>
-                )}
-              </Pressable>
+                  {m.role !== 'member' && (
+                    <View style={[sty.tag, { backgroundColor: roleColor(m.role) }]}>
+                      <Text style={sty.tagText}>{roleLabel(m.role, t)}</Text>
+                    </View>
+                  )}
+                </Pressable>
+              </AnimatedMemberRow>
             ))}
             {isAdmin && (
               <Text style={[sty.hint, { color: colors.textSecondary }]}>
@@ -558,8 +596,40 @@ export default function CommunityScreen() {
             </View>
           </View>
         )}
+        </Animated.View>
       </ScrollView>
     </View>
+  );
+}
+
+// Spring-in member row: scale 0.92→1 + opacity 0→1, staggered by index.
+// Native driver only (transform + opacity) — keeps scrolling smooth on
+// big communities.
+function AnimatedMemberRow({ index, children, style }) {
+  const enter = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const t = setTimeout(() => {
+      Animated.spring(enter, {
+        toValue: 1,
+        friction: 7,
+        tension: 90,
+        useNativeDriver: true,
+      }).start();
+    }, Math.min(index, 10) * 50);
+    return () => clearTimeout(t);
+  }, [enter, index]);
+  return (
+    <Animated.View
+      style={[
+        style,
+        {
+          opacity: enter,
+          transform: [{ scale: enter.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] }) }],
+        },
+      ]}
+    >
+      {children}
+    </Animated.View>
   );
 }
 

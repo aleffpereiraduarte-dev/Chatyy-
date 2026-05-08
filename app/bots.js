@@ -1,16 +1,91 @@
 // Bots — Telegram-style bot management (create, list, webhook)
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, FlatList, Modal, Platform,
-  StyleSheet, ScrollView, Pressable, Alert,
+  StyleSheet, ScrollView, Pressable, Alert, Animated, Easing,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
-import { IconArrowLeft, IconPlus, IconTrash, IconRefresh, IconCopy } from '../components/Icons';
+import { IconArrowLeft, IconPlus, IconTrash, IconRefresh, IconCopy, IconLink, IconCheckCircle } from '../components/Icons';
 import EmptyStateCard from '../components/EmptyStateCard';
 import { ListSkeleton } from '../components/SkeletonLoader';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+// Stagger entrance for bot rows. Each row drifts in 60ms after the previous,
+// translateY 16px → 0 + opacity 0 → 1. Native driver (transform + opacity).
+function StaggeredRow({ index, children }) {
+  const enter = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const t = setTimeout(() => {
+      Animated.timing(enter, {
+        toValue: 1,
+        duration: 320,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    }, Math.min(index, 8) * 60);
+    return () => clearTimeout(t);
+  }, [enter, index]);
+  return (
+    <Animated.View
+      style={{
+        opacity: enter,
+        transform: [{ translateY: enter.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }],
+      }}
+    >
+      {children}
+    </Animated.View>
+  );
+}
+
+// Idle pulse + scale-on-tap wrapper for the "create" header button.
+// While idle (no bots yet, or just rendering), a soft pulse ring breathes
+// behind the icon every ~1.4s to signal interactivity. On tap the inner
+// content squishes briefly for tactile feedback.
+function PulsingCreateButton({ onPress, idle, children }) {
+  const ring = useRef(new Animated.Value(0)).current;
+  const press = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (!idle) return;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(ring, { toValue: 1, duration: 1400, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+        Animated.timing(ring, { toValue: 0, duration: 0, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [idle, ring]);
+  const handlePress = () => {
+    Animated.sequence([
+      Animated.timing(press, { toValue: 0.86, duration: 80, useNativeDriver: true }),
+      Animated.spring(press, { toValue: 1, friction: 4, tension: 220, useNativeDriver: true }),
+    ]).start();
+    onPress?.();
+  };
+  return (
+    <View style={{ position: 'relative' }}>
+      {idle ? (
+        <Animated.View
+          pointerEvents="none"
+          style={{
+            position: 'absolute', left: 0, right: 0, top: 0, bottom: 0,
+            borderRadius: 24, borderWidth: 2, borderColor: '#7C3AED',
+            opacity: ring.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0] }),
+            transform: [{ scale: ring.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1.55] }) }],
+          }}
+        />
+      ) : null}
+      <Animated.View style={{ transform: [{ scale: press }] }}>
+        <TouchableOpacity onPress={handlePress} style={{ padding: 8 }}>
+          {children}
+        </TouchableOpacity>
+      </Animated.View>
+    </View>
+  );
+}
 
 // Tiny SVG-free bot illustration: stacked rounded squares mimicking the
 // Bots tile in the app drawer. Uses purely View+gradient for parity with
@@ -59,6 +134,7 @@ export default function BotsScreen() {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   const [bots, setBots] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -97,9 +173,20 @@ export default function BotsScreen() {
       safeAlert(t?.('common.error') || 'Erro', t?.('bots.usernameMustEndBot') || 'Username deve terminar com "bot"');
       return;
     }
+    // Webhook URL must be HTTPS — backend (chat.php bot_create ~L8930)
+    // rejects http:// outright. Without this client guard the user gets a
+    // generic 400 banner with no hint of what to fix.
+    const webhookTrim = newWebhook.trim();
+    if (webhookTrim !== '' && !/^https:\/\//i.test(webhookTrim)) {
+      safeAlert(
+        t?.('common.error') || 'Erro',
+        t?.('bots.webhookHttps') || 'Webhook URL precisa começar com https://',
+      );
+      return;
+    }
     setBusy(true);
     try {
-      const r = await api.botCreate(newName.trim(), newUsername.trim().toLowerCase(), newWebhook.trim(), newDesc.trim());
+      const r = await api.botCreate(newName.trim(), newUsername.trim().toLowerCase(), webhookTrim, newDesc.trim());
       if (r?.success) {
         setTokenReveal({ username: r.data.username, token: r.data.token });
         setCreateOpen(false);
@@ -156,16 +243,16 @@ export default function BotsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: Platform.OS === 'ios' ? 50 : 16, paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingTop: Math.max(insets.top, Platform.OS === 'ios' ? 12 : 16), paddingBottom: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}>
         <TouchableOpacity onPress={() => router.back()} style={{ padding: 8 }}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <Text style={{ flex: 1, fontSize: 18, fontWeight: '700', color: colors.text, marginLeft: 4 }}>
           {t?.('bots.title') || 'Bots'}
         </Text>
-        <TouchableOpacity onPress={() => setCreateOpen(true)} style={{ padding: 8 }}>
+        <PulsingCreateButton onPress={() => setCreateOpen(true)} idle={!loading && bots.length === 0}>
           <IconPlus size={22} color={colors.primary} />
-        </TouchableOpacity>
+        </PulsingCreateButton>
       </View>
 
       {/* Loading skeleton (first paint only — pull-to-refresh keeps the list). */}
@@ -198,7 +285,7 @@ export default function BotsScreen() {
             />
           ) : null
         }
-        renderItem={({ item }) => {
+        renderItem={({ item, index }) => {
           // Commands can be returned as an array of strings, an array of
           // {name, ...} objects, or a comma-separated list. Normalize once
           // so the chip row below is dumb. Falls back to common defaults
@@ -210,10 +297,20 @@ export default function BotsScreen() {
             return [];
           })();
           return (
+          <StaggeredRow index={index}>
           <View style={{ backgroundColor: colors.surface, padding: 14, borderRadius: 14, marginBottom: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center' }}>
-                <Text style={{ color: '#fff', fontSize: 20 }}>🤖</Text>
+                {/* Bot avatar mark — composed of Views (no emoji) */}
+                <View style={{ width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
+                  <View style={{ flexDirection: 'row', gap: 4, marginBottom: 3 }}>
+                    <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: '#fff' }} />
+                    <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: '#fff' }} />
+                  </View>
+                  <View style={{ width: 10, height: 2, borderRadius: 1, backgroundColor: '#fff' }} />
+                </View>
+                {/* Antenna */}
+                <View style={{ position: 'absolute', top: 6, width: 2, height: 5, borderRadius: 1, backgroundColor: '#fff' }} />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>{item.name}</Text>
@@ -246,9 +343,12 @@ export default function BotsScreen() {
               </View>
             )}
             {!!item.webhook_url && (
-              <Text style={{ fontSize: 11, color: colors.textTertiary || colors.textSecondary, marginTop: 6 }} numberOfLines={1}>
-                🔗 {item.webhook_url}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6 }}>
+                <IconLink size={12} color={colors.textTertiary || colors.textSecondary} />
+                <Text style={{ fontSize: 11, color: colors.textTertiary || colors.textSecondary, flex: 1 }} numberOfLines={1}>
+                  {item.webhook_url}
+                </Text>
+              </View>
             )}
             {/* Testar bot — opens a fake DM with the bot for webhook
                 debugging. chat-new turns ?bot=<username> into a 1:1 with
@@ -270,6 +370,7 @@ export default function BotsScreen() {
               </Text>
             </TouchableOpacity>
           </View>
+          </StaggeredRow>
           );
         }}
       />
@@ -325,9 +426,12 @@ export default function BotsScreen() {
       <Modal visible={!!tokenReveal} transparent animationType="fade" onRequestClose={() => setTokenReveal(null)}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: 20 }} onPress={() => setTokenReveal(null)}>
           <Pressable style={{ backgroundColor: colors.surface, borderRadius: 16, padding: 22 }} onPress={e => e.stopPropagation()}>
-            <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, marginBottom: 8 }}>
-              {t?.('bots.tokenReady') || '🎉 Bot criado!'}
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <IconCheckCircle size={20} color="#22c55e" />
+              <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>
+                {t?.('bots.tokenReady') || 'Bot criado!'}
+              </Text>
+            </View>
             <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 12 }}>
               {t?.('bots.saveToken') || 'Guarde seu token. Ele não será mostrado novamente.'}
             </Text>

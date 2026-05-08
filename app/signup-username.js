@@ -508,12 +508,15 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 56 : 24, paddingBottom: 12 },
   backBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
   brand: { fontSize: 22, fontWeight: '800', letterSpacing: -0.5 },
-  scroll: { paddingHorizontal: 22, paddingBottom: 120 },
+  scroll: { paddingHorizontal: 22, paddingBottom: 24 },
   title: { fontSize: 30, fontWeight: '800', letterSpacing: -0.8, marginBottom: 8, lineHeight: 36 },
   sub: { fontSize: 15, lineHeight: 22, fontWeight: '400' },
   hint: { fontSize: 12, marginTop: 12, lineHeight: 17 },
+  // Sticky footer — NOT position:absolute, otherwise on web/Android it
+  // anchors to the screen and the keyboard occludes it. KeyboardAvoidingView
+  // (padding behavior on iOS) pushes the whole flex column up so the footer
+  // floats just above the keyboard naturally.
   footer: {
-    position: 'absolute', left: 0, right: 0, bottom: 0,
     paddingHorizontal: 22, paddingTop: 12,
     paddingBottom: Platform.OS === 'ios' ? 30 : 16,
     borderTopWidth: StyleSheet.hairlineWidth,

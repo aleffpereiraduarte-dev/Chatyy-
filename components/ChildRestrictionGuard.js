@@ -142,6 +142,59 @@ function SleepingMascot() {
   );
 }
 
+// Curtain twinkles — small SVG dots packed behind the curtain area at the
+// top of the screen. They fade in/out independently with random delays so
+// the curtain feels alive (not a flat panel) without being noisy. Sits
+// inside the top 220px region so they read as "starlight behind the curtain"
+// rather than scattered across the whole layout.
+function CurtainTwinkles() {
+  const dots = useRef(
+    Array.from({ length: 18 }, (_, i) => ({
+      id: i,
+      // Position twinkles within the curtain band (top 220px, 0-100% wide).
+      x: 4 + Math.random() * 92,
+      y: 8 + Math.random() * 180,
+      size: 3 + Math.random() * 4,
+      opacity: new Animated.Value(0),
+    }))
+  ).current;
+  useEffect(() => {
+    const anims = dots.map((dot, i) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(i * 90),
+          Animated.timing(dot.opacity, { toValue: 0.85, duration: 1100 + Math.random() * 800, useNativeDriver: true }),
+          Animated.timing(dot.opacity, { toValue: 0, duration: 1100 + Math.random() * 800, useNativeDriver: true }),
+        ])
+      )
+    );
+    anims.forEach(a => a.start());
+    return () => anims.forEach(a => a.stop());
+  }, []);
+  return (
+    <View
+      pointerEvents="none"
+      style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 220 }}
+    >
+      {dots.map(dot => (
+        <Animated.View
+          key={dot.id}
+          style={{
+            position: 'absolute',
+            left: dot.x + '%',
+            top: dot.y,
+            width: dot.size,
+            height: dot.size,
+            borderRadius: dot.size / 2,
+            backgroundColor: '#fde68a',
+            opacity: dot.opacity,
+          }}
+        />
+      ))}
+    </View>
+  );
+}
+
 // Animated stars background for bedtime - with clouds
 function StarsField() {
   const stars = useRef(
@@ -531,6 +584,10 @@ export default function ChildRestrictionGuard({ children }) {
     return (
       <Animated.View style={[sty.bedtime, { opacity: fadeAnim }]}>
         <StarsField />
+        {/* Twinkles behind the curtain \u2014 small dots fading in/out at random
+            offsets, packed into the top 220px so they read as starlight
+            beyond the pulled-down curtain. */}
+        <CurtainTwinkles />
         {/* Decorative top curtain \u2014 purely visual, sits behind content. */}
         <Animated.View pointerEvents="none" style={{
           position: 'absolute',

@@ -5623,6 +5623,49 @@ export async function chatStickerMyStickers({ packId = null, q = '' } = {}) {
 export async function chatStickerSearch(q) {
   return apiCall('chat_sticker_search', { q }, 'POST');
 }
+// ─── Sticker store / custom animated emoji (Telegram Premium-style) ───
+// New marketplace endpoints introduced for /stickers/store + /stickers/my.
+// Authors create packs, add R2-uploaded items, and other users install +
+// browse via Trending / New / Animated / Premium filters. Custom animated
+// emoji is Pro-tier gated server-side (HTTP 402 on free/plus accounts).
+export async function stickerPackCreate({ name, description = '', coverR2Key = '' } = {}) {
+  return apiCall('sticker_pack_create', { name, description, cover_r2_key: coverR2Key }, 'POST');
+}
+export async function stickerPackAddItem({ packId, stickerR2Key, emojiAlt = '' } = {}) {
+  return apiCall('sticker_pack_add_item', {
+    pack_id: packId,
+    sticker_r2_key: stickerR2Key,
+    emoji_alt: emojiAlt,
+  }, 'POST');
+}
+export async function stickerPackInstall(packId) {
+  return apiCall('sticker_pack_install', { pack_id: packId }, 'POST');
+}
+export async function stickerPackUninstall(packId) {
+  return apiCall('sticker_pack_uninstall', { pack_id: packId }, 'POST');
+}
+export async function stickerPackMy() {
+  return apiCall('sticker_pack_my', {}, 'POST');
+}
+export async function stickerPackBrowse(filter = 'trending') {
+  return apiCall('sticker_pack_browse', { filter }, 'POST');
+}
+export async function stickerPackSearch(q) {
+  return apiCall('sticker_pack_search', { q }, 'POST');
+}
+export async function customEmojiUpload({ emojiHandle, webpR2Key } = {}) {
+  return apiCall('custom_emoji_upload', {
+    emoji_handle: emojiHandle,
+    webp_r2_key: webpR2Key,
+  }, 'POST');
+}
+export async function customEmojiMy() {
+  return apiCall('custom_emoji_my', {}, 'POST');
+}
+export async function customEmojiDelete(id) {
+  return apiCall('custom_emoji_delete', { id }, 'POST');
+}
+
 export async function chatStickerRemoveBg(file) {
   const formData = new FormData();
   if (Platform.OS === 'web') {

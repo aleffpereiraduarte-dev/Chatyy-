@@ -80,8 +80,16 @@ const getAgePresets = (age) => {
 
 // Pulsing online dot — Instagram/WhatsApp-style. Each card mounts its own
 // instance so animations are independent and clean up on unmount.
-function OnlineDot({ dark }) {
+//
+// `justWentOnline` triggers a one-shot green flash + scale-pop overlay so the
+// offline→online transition feels alive instead of silently swapping in.
+function OnlineDot({ dark, justWentOnline }) {
   const scale = useRef(new Animated.Value(1)).current;
+  // Flash overlay: bigger green halo + opacity that pulses ONCE when
+  // justWentOnline flips true. Independent from the steady-state pulse loop.
+  const flash = useRef(new Animated.Value(0)).current;
+  // One-shot scale-pop on the dot itself for the transition.
+  const popScale = useRef(new Animated.Value(1)).current;
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
@@ -92,10 +100,36 @@ function OnlineDot({ dark }) {
     loop.start();
     return () => loop.stop();
   }, [scale]);
+  useEffect(() => {
+    if (!justWentOnline) return;
+    // Reset both animators so the burst replays cleanly even if the user
+    // toggles connectivity rapidly. Total duration ≈ 380ms — well under
+    // the 400ms cap.
+    flash.setValue(1);
+    popScale.setValue(0.6);
+    Animated.parallel([
+      Animated.timing(flash, { toValue: 0, duration: 380, useNativeDriver: true }),
+      Animated.spring(popScale, { toValue: 1, friction: 4, tension: 220, useNativeDriver: true }),
+    ]).start();
+  }, [justWentOnline, flash, popScale]);
   return (
     <View style={{ position: 'absolute', bottom: 2, right: 2, width: 14, height: 14, borderRadius: 7, alignItems: 'center', justifyContent: 'center' }}>
+      {/* Steady-state pulse — always running while online. */}
       <Animated.View style={{ position: 'absolute', width: 14, height: 14, borderRadius: 7, backgroundColor: '#22c55e', opacity: 0.35, transform: [{ scale }] }} />
-      <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#22c55e', borderWidth: 2, borderColor: dark ? '#1a2332' : '#fff' }} />
+      {/* Transition flash — bigger ring that fades from 1 → 0 once when
+          the avatar just went online. Native driver. */}
+      <Animated.View
+        pointerEvents="none"
+        style={{
+          position: 'absolute', width: 14, height: 14, borderRadius: 7,
+          backgroundColor: '#22c55e',
+          opacity: flash,
+          transform: [{ scale: flash.interpolate({ inputRange: [0, 1], outputRange: [1, 2.6] }) }],
+        }}
+      />
+      <Animated.View style={{ transform: [{ scale: popScale }] }}>
+        <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#22c55e', borderWidth: 2, borderColor: dark ? '#1a2332' : '#fff' }} />
+      </Animated.View>
     </View>
   );
 }
@@ -166,6 +200,11 @@ export default function ParentalScreen() {
   const isMountedRef = useIsMounted();
   const nameInputRef = useRef(null);
   const mascotFrameRef = useRef(0);
+  // Track per-child online state so we can fire a one-shot flash + scale-pop
+  // animation on the offline→online transition. Keyed by child_email; value
+  // is the timestamp of the last detected transition (used as a render cue).
+  const prevOnlineRef = useRef(new Map());
+  const [onlineFlashes, setOnlineFlashes] = useState({}); // { email: timestamp }
 
   // Animate step transitions
   useEffect(() => {
@@ -272,6 +311,26 @@ export default function ParentalScreen() {
     const suggestions = suggestUsername(childName);
     if (suggestions.length > 0) setSuggestedUser(suggestions[0]);
   }, [childName]);
+
+  // Detect offline→online transitions per child. When a child's `online`
+  // flips from false to true we stamp `onlineFlashes[email] = Date.now()`,
+  // which the OnlineDot reads as a key prop to replay its flash animation.
+  useEffect(() => {
+    if (!Array.isArray(children) || children.length === 0) return;
+    const flashes = { ...onlineFlashes };
+    let dirty = false;
+    children.forEach(c => {
+      const isOn = c.status === 'active' && isOnline(c);
+      const wasOn = prevOnlineRef.current.get(c.child_email) || false;
+      if (isOn && !wasOn) {
+        flashes[c.child_email] = Date.now();
+        dirty = true;
+      }
+      prevOnlineRef.current.set(c.child_email, isOn);
+    });
+    if (dirty) setOnlineFlashes(flashes);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [children]);
 
   // Birthdate inline validation (GAP 8): full date entered + age outside 1-18 → error
   useEffect(() => {
@@ -1460,7 +1519,16 @@ export default function ParentalScreen() {
               size={52}
               style={{ borderWidth: 3, borderColor: isDark ? '#1a2332' : '#fff' }}
             />
-            {online && <OnlineDot dark={isDark} />}
+            {online && (
+              // `key` includes the flash timestamp so React remounts the
+              // dot whenever the offline→online transition fires, which
+              // replays the flash + scale-pop animation cleanly.
+              <OnlineDot
+                key={`online-${item.child_email}-${onlineFlashes[item.child_email] || 0}`}
+                dark={isDark}
+                justWentOnline={!!onlineFlashes[item.child_email]}
+              />
+            )}
             {meta.locked && (
               <View style={s.lockBadge}>
                 <IconLock size={10} color="#fff" />

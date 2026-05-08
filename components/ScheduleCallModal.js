@@ -1,10 +1,10 @@
 // Schedule a call — modal opened from the Calls tab. Picks date+time,
 // title, participants (free-form email tokens), and duration. Auto-DMs
 // each participant a system message via the backend.
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, Modal, TouchableOpacity, TextInput, ScrollView, StyleSheet,
-  Platform, Alert, ActivityIndicator, KeyboardAvoidingView,
+  Platform, Alert, ActivityIndicator, KeyboardAvoidingView, Animated, Easing,
 } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -55,6 +55,19 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
 
   const [submitting, setSubmitting] = useState(false);
 
+  // Slide-up entrance for the date-picker container — translates 16px up
+  // and fades in on each modal open, so the picker block doesn't appear
+  // statically. Native driver only.
+  const pickerSlide = useRef(new Animated.Value(0)).current;
+  // Save button scale on tap — squish/release rebound for tactile feedback.
+  const saveScale = useRef(new Animated.Value(1)).current;
+  const bounceSave = useCallback(() => {
+    Animated.sequence([
+      Animated.timing(saveScale, { toValue: 0.92, duration: 90, useNativeDriver: true }),
+      Animated.spring(saveScale, { toValue: 1, friction: 4, tension: 220, useNativeDriver: true }),
+    ]).start();
+  }, [saveScale]);
+
   useEffect(() => {
     if (!visible) {
       setTitle('');
@@ -68,6 +81,16 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
       setRecurrence('none');
       setOtherCalls([]);
     } else {
+      // Restart the slide-up entrance every time the sheet opens so the
+      // picker enters with motion (otherwise it's static after first open).
+      pickerSlide.setValue(0);
+      Animated.timing(pickerSlide, {
+        toValue: 1,
+        duration: 320,
+        delay: 80,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
       // Best-effort prefetch of the user's already-scheduled calls so the
       // conflict check below has data. If the API errors out we silently
       // proceed without conflict warnings.
@@ -172,6 +195,10 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
       else Alert.alert('', msg);
       return;
     }
+    // Note: web `<input type="datetime-local" min={...}>` uses a snapshot
+    // taken at render time. If the modal sat idle for >5min the user could
+    // re-pick a "min" that is now in the past — this server+client pair
+    // catches it. Backend also re-validates.
     // If there's a nearby call, ask the user to confirm before booking
     // a colliding slot. They can still proceed; we just want a beat of
     // friction so accidental double-bookings don't slip through.
@@ -275,6 +302,12 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
             <Text style={[styles.label, { color: colors.textSecondary }]}>
               {t('calls.when') || 'Quando'}
             </Text>
+            <Animated.View
+              style={{
+                opacity: pickerSlide,
+                transform: [{ translateY: pickerSlide.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }],
+              }}
+            >
             {Platform.OS === 'web' ? (
               <input
                 type="datetime-local"
@@ -326,6 +359,7 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
             ) : (
               <Text style={{ color: colors.text }}>{scheduledDate.toLocaleString()}</Text>
             )}
+            </Animated.View>
 
             {/* Timezone + conflict warning — surfaces under the picker so
                 the user knows what zone they just picked in (no more "I
@@ -468,18 +502,21 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
               </View>
             )}
 
-            {/* CTA */}
-            <TouchableOpacity
-              onPress={handleSubmit}
-              disabled={submitting}
-              style={[styles.cta, { backgroundColor: submitting ? colors.surfaceVariant : colors.primary }]}
-            >
-              {submitting ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.ctaText}>{t('calls.schedule') || 'Agendar'}</Text>
-              )}
-            </TouchableOpacity>
+            {/* CTA — wrapped in scale animator so taps feel tactile. */}
+            <Animated.View style={{ transform: [{ scale: saveScale }] }}>
+              <TouchableOpacity
+                onPress={() => { bounceSave(); handleSubmit(); }}
+                disabled={submitting}
+                activeOpacity={0.85}
+                style={[styles.cta, { backgroundColor: submitting ? colors.surfaceVariant : colors.primary }]}
+              >
+                {submitting ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.ctaText}>{t('calls.schedule') || 'Agendar'}</Text>
+                )}
+              </TouchableOpacity>
+            </Animated.View>
           </ScrollView>
         </View>
       </KeyboardAvoidingView>

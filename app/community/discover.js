@@ -1,8 +1,8 @@
 // Community discover — paginated public list with optional search + category filter.
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList, Image,
-  ActivityIndicator, RefreshControl, TextInput,
+  ActivityIndicator, RefreshControl, TextInput, Animated, Easing,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,6 +10,59 @@ import { useTheme } from '../../context/ThemeContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { BorderRadius } from '../../constants/theme';
 import * as api from '../../services/api';
+import { IconArrowLeft, IconPlus } from '../../components/Icons';
+
+// Slide-up entrance for discovery cards. Each card translates 24px up while
+// fading in, staggered 60ms per index. Native driver (transform+opacity).
+function SlideUpCard({ index, children }) {
+  const enter = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const t = setTimeout(() => {
+      Animated.timing(enter, {
+        toValue: 1,
+        duration: 360,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    }, Math.min(index, 8) * 60);
+    return () => clearTimeout(t);
+  }, [enter, index]);
+  return (
+    <Animated.View
+      style={{
+        opacity: enter,
+        transform: [{ translateY: enter.interpolate({ inputRange: [0, 1], outputRange: [24, 0] }) }],
+      }}
+    >
+      {children}
+    </Animated.View>
+  );
+}
+
+// Category chip with scale-pop on tap — gives the chip a quick squish-then-
+// rebound when selected. Independent Animated.Value per chip so taps stay
+// crisp regardless of which one fired last.
+function CategoryChip({ active, onPress, label, activeBg, idleBg, activeColor, idleColor, style }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const handlePress = () => {
+    Animated.sequence([
+      Animated.timing(scale, { toValue: 0.88, duration: 80, useNativeDriver: true }),
+      Animated.spring(scale, { toValue: 1, friction: 4, tension: 220, useNativeDriver: true }),
+    ]).start();
+    onPress?.();
+  };
+  return (
+    <Animated.View style={{ transform: [{ scale }] }}>
+      <TouchableOpacity
+        onPress={handlePress}
+        activeOpacity={0.75}
+        style={[style, { backgroundColor: active ? activeBg : idleBg }]}
+      >
+        <Text style={{ fontSize: 13, fontWeight: '600', color: active ? activeColor : idleColor }}>{label}</Text>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
 
 const CATEGORIES = [
   { key: 'all',      labelKey: 'community.catAll',      fallback: 'Tudo' },
@@ -66,7 +119,8 @@ export default function CommunityDiscoverScreen() {
     if (r.success) router.push(`/community/${item.id}`);
   };
 
-  const renderItem = ({ item }) => (
+  const renderItem = ({ item, index }) => (
+    <SlideUpCard index={index}>
     <TouchableOpacity
       onPress={() => router.push(`/community/${item.id}`)}
       style={[sty.row, { backgroundColor: isDark ? '#1c1c1e' : '#f8f8fa' }]}
@@ -98,19 +152,20 @@ export default function CommunityDiscoverScreen() {
         </TouchableOpacity>
       )}
     </TouchableOpacity>
+    </SlideUpCard>
   );
 
   return (
     <View style={[sty.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
       <View style={sty.header}>
-        <TouchableOpacity onPress={() => router.back()} style={sty.headerBtn}>
-          <Text style={[sty.headerBtnText, { color: colors.primary }]}>‹</Text>
+        <TouchableOpacity onPress={() => router.back()} style={sty.headerBtn} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
+          <IconArrowLeft size={22} color={colors.primary} />
         </TouchableOpacity>
-        <Text style={[sty.headerTitle, { color: colors.text }]}>
+        <Text style={[sty.headerTitle, { color: colors.text }]} numberOfLines={1}>
           {t('community.discoverTitle') || 'Descobrir comunidades'}
         </Text>
-        <TouchableOpacity onPress={() => router.push('/community/create')} style={sty.headerBtn}>
-          <Text style={[sty.headerBtnText, { color: colors.primary, fontSize: 22 }]}>+</Text>
+        <TouchableOpacity onPress={() => router.push('/community/create')} style={sty.headerBtn} accessibilityRole="button" accessibilityLabel={t('community.create') || 'Criar comunidade'}>
+          <IconPlus size={22} color={colors.primary} />
         </TouchableOpacity>
       </View>
 
@@ -131,19 +186,16 @@ export default function CommunityDiscoverScreen() {
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 8 }}
         renderItem={({ item }) => (
-          <TouchableOpacity
+          <CategoryChip
+            active={cat === item.key}
             onPress={() => setCat(item.key)}
-            style={[
-              sty.chip,
-              {
-                backgroundColor: cat === item.key ? colors.primary : (isDark ? '#1c1c1e' : '#f0f0f3'),
-              },
-            ]}
-          >
-            <Text style={[sty.chipText, { color: cat === item.key ? '#fff' : colors.text }]}>
-              {t(item.labelKey) || item.fallback}
-            </Text>
-          </TouchableOpacity>
+            label={t(item.labelKey) || item.fallback}
+            style={sty.chip}
+            activeBg={colors.primary}
+            idleBg={isDark ? '#1c1c1e' : '#f0f0f3'}
+            activeColor="#fff"
+            idleColor={colors.text}
+          />
         )}
       />
 

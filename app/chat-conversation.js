@@ -824,6 +824,47 @@ function SpoilerText({ children, style }) {
 //   ||spoiler||
 const _FORMAT_REGEX = /(\|\|[^|\n]+\|\||```[\s\S]+?```|\*\*[^*\n]+\*\*|__[^_\n]+__|~~[^~\n]+~~|\*[^*\n]+\*|_[^_\n]+_|~[^~\n]+~|`[^`\n]+`)/g;
 
+// Custom animated emoji map (Telegram Premium-style). Populated once per
+// chat session by the input handler when the user's plan == Pro. The shape
+// is { ':handle:' → 'absolute_url' }. Hydrated lazily on first focus of the
+// composer via api.customEmojiMy(). The FormattedText renderer below splits
+// text on these tokens and renders an inline animated WebP <Image>.
+let _customEmojiMap = {};
+let _customEmojiFetched = false;
+export function _setCustomEmojiMap(m) { _customEmojiMap = m || {}; }
+export function _isCustomEmojiFetched() { return _customEmojiFetched; }
+export function _markCustomEmojiFetched() { _customEmojiFetched = true; }
+const CUSTOM_EMOJI_TOKEN_RE = /(:[a-z0-9_]{2,32}:)/gi;
+
+function _resolveCustomEmojiUrl(url) {
+  if (!url) return null;
+  if (/^https?:\/\//.test(url)) return url;
+  if (typeof url === 'string' && url.startsWith('/data/')) return url;
+  return `https://media.chatyy.com.br/${String(url).replace(/^\/+/, '')}`;
+}
+
+// Splits a string on :handle: tokens that match a known custom emoji, returning
+// an array of { text } and { ce: url } entries. Only handles in the user's
+// own custom_animated_emoji table render as images — anything else falls
+// through as raw text.
+function _splitCustomEmoji(str) {
+  if (!str || !Object.keys(_customEmojiMap).length) return [{ text: str }];
+  const out = [];
+  let lastIdx = 0;
+  CUSTOM_EMOJI_TOKEN_RE.lastIndex = 0;
+  let m;
+  while ((m = CUSTOM_EMOJI_TOKEN_RE.exec(str)) !== null) {
+    const handle = m[0].toLowerCase();
+    const url = _customEmojiMap[handle];
+    if (!url) continue;
+    if (m.index > lastIdx) out.push({ text: str.slice(lastIdx, m.index) });
+    out.push({ ce: _resolveCustomEmojiUrl(url) });
+    lastIdx = m.index + m[0].length;
+  }
+  if (lastIdx < str.length) out.push({ text: str.slice(lastIdx) });
+  return out.length ? out : [{ text: str }];
+}
+
 function FormattedText({ text, style, colors }) {
   if (!text) return <Text style={style}>{''}</Text>;
   const parts = [];
@@ -862,7 +903,27 @@ function FormattedText({ text, style, colors }) {
   }
   if (lastIndex < text.length) parts.push({ text: text.slice(lastIndex), fmt: null });
 
-  if (parts.length === 0) return <Text style={style}>{text}</Text>;
+  if (parts.length === 0) {
+    // No markdown — but we still need to interleave custom-animated-emoji
+    // tokens. The split returns text segments + image markers; rendering as
+    // a single <Text> with inline <Image> children works on both native and
+    // web (RN supports <Image> as <Text> child since 0.71+).
+    const ce = _splitCustomEmoji(text);
+    if (ce.length === 1 && ce[0].text) return <Text style={style}>{text}</Text>;
+    return (
+      <Text style={style}>
+        {ce.map((seg, i) =>
+          seg.ce ? (
+            <Image key={i} source={{ uri: seg.ce }}
+              style={{ width: 20, height: 20, marginHorizontal: 1, transform: [{ translateY: 4 }] }}
+              accessibilityLabel="custom-emoji" />
+          ) : (
+            <Text key={i}>{seg.text}</Text>
+          )
+        )}
+      </Text>
+    );
+  }
 
   const hasCodeBlock = parts.some(p => p.codeBlock);
   if (hasCodeBlock) {
@@ -885,13 +946,29 @@ function FormattedText({ text, style, colors }) {
 
   return (
     <Text style={style}>
-      {parts.map((p, i) =>
-        p.spoiler ? (
-          <SpoilerText key={i} style={style}>{p.text}</SpoilerText>
-        ) : (
-          <Text key={i} style={p.fmt}>{p.text}</Text>
-        )
-      )}
+      {parts.map((p, i) => {
+        if (p.spoiler) return <SpoilerText key={i} style={style}>{p.text}</SpoilerText>;
+        // Inline custom emoji rendering for non-formatted segments.
+        if (!p.fmt) {
+          const ce = _splitCustomEmoji(p.text);
+          if (ce.length > 1 || (ce[0] && ce[0].ce)) {
+            return (
+              <Text key={i}>
+                {ce.map((seg, j) =>
+                  seg.ce ? (
+                    <Image key={j} source={{ uri: seg.ce }}
+                      style={{ width: 20, height: 20, marginHorizontal: 1, transform: [{ translateY: 4 }] }}
+                      accessibilityLabel="custom-emoji" />
+                  ) : (
+                    <Text key={j}>{seg.text}</Text>
+                  )
+                )}
+              </Text>
+            );
+          }
+        }
+        return <Text key={i} style={p.fmt}>{p.text}</Text>;
+      })}
     </Text>
   );
 }
@@ -17953,6 +18030,27 @@ export default function ChatConversationScreen() {
               value={inputText}
               onChangeText={(text) => {
                 setInputText(text);
+                // Custom animated emoji (Telegram Premium-style): when the
+                // input contains a `:handle:` token and we haven't hydrated
+                // the user's custom emoji map yet, fetch it once. Cached on
+                // the module so other chats reuse it without a refetch.
+                try {
+                  if (/:[a-z0-9_]{2,32}:/i.test(text) && !_isCustomEmojiFetched()) {
+                    _markCustomEmojiFetched();
+                    api.customEmojiMy?.().then((r) => {
+                      if (r?.success) {
+                        const items = r.items || r.data?.items || [];
+                        const map = {};
+                        for (const it of items) {
+                          if (it?.emoji_handle && it?.webp_url) {
+                            map[it.emoji_handle.toLowerCase()] = it.webp_url;
+                          }
+                        }
+                        _setCustomEmojiMap(map);
+                      }
+                    }).catch(() => {});
+                  }
+                } catch {}
                 if (conversationType === 'group') {
                   // Avoid redundant setShowMentionPopup(false) on every keystroke —
                   // setState still schedules a render pass even if the value is

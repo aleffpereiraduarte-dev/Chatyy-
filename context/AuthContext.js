@@ -71,6 +71,42 @@ async function _maybeOfferCloudRestore() {
   } catch {}
 }
 
+// What's-New tour state — exposed via subscribe pattern so any screen can
+// react to "hey, we just upgraded the app and the user is now logged in."
+// AuthProvider sets this to true after a successful login lands when the
+// stored chatyy_whatsnew_v2_5_0 flag is missing AND chatyy_last_seen_version
+// is set (= existing user). The WhatsNewGate component in _layout.js
+// subscribes here so it can pop the sheet without each consumer re-running
+// the AsyncStorage probe.
+let _whatsNewState = false;
+const _whatsNewListeners = new Set();
+function _notifyWhatsNewChange() {
+  for (const fn of _whatsNewListeners) { try { fn(_whatsNewState); } catch {} }
+}
+export function getWhatsNewState() { return _whatsNewState; }
+export function subscribeWhatsNew(fn) {
+  _whatsNewListeners.add(fn);
+  return () => _whatsNewListeners.delete(fn);
+}
+export function setWhatsNewState(v) {
+  _whatsNewState = !!v;
+  _notifyWhatsNewChange();
+}
+async function _maybeOfferWhatsNew() {
+  try {
+    const dismissed = await AsyncStorage.getItem('chatyy_whatsnew_v2_5_0');
+    if (dismissed === 'true') return;
+    const lastSeen = await AsyncStorage.getItem('chatyy_last_seen_version');
+    // Cold install: bookmark version, never show on first run.
+    if (!lastSeen) {
+      try { await AsyncStorage.setItem('chatyy_last_seen_version', '2.5.0'); } catch {}
+      return;
+    }
+    if (lastSeen === '2.5.0') return;
+    setWhatsNewState(true);
+  } catch {}
+}
+
 // Child account restrictions (loaded after login)
 let _childRestrictions = null;
 export function getChildRestrictions() { return _childRestrictions; }
@@ -553,6 +589,10 @@ export function AuthProvider({ children }) {
       // fire-and-forget so the login flow returns immediately; the chat
       // list listens to subscribeRestorePrompt() and renders the modal.
       _maybeOfferCloudRestore().catch(() => {});
+      // What's-New tour — same fire-and-forget pattern. Only fires for
+      // upgraded users (last-seen-version differs from CURRENT_VERSION);
+      // cold installs simply bookmark the version and skip.
+      _maybeOfferWhatsNew().catch(() => {});
     }
     return r;
   }, [loadAccounts, registerPushAfterAuth, prefetchAvatar, prefetchProfile]);
@@ -575,6 +615,7 @@ export function AuthProvider({ children }) {
     loadAccounts();
     registerPushAfterAuth();
     _maybeOfferCloudRestore().catch(() => {});
+    _maybeOfferWhatsNew().catch(() => {});
   }, [loadAccounts, registerPushAfterAuth]);
 
   // Log in using a previously-saved bearer token (QR flow, biometric flow).
@@ -642,6 +683,7 @@ export function AuthProvider({ children }) {
     // when chatyy_restored_once is unset, so QR/Face-ID re-logins of the
     // same user on the same device won't re-trigger it.
     _maybeOfferCloudRestore().catch(() => {});
+    _maybeOfferWhatsNew().catch(() => {});
     return { success: true, data };
   }, [loadAccounts, registerPushAfterAuth]);
 

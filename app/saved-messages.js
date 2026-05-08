@@ -11,8 +11,8 @@
 //
 // Why not duplicate chat-conversation.js? It's 21k lines — reusing the
 // same screen via a flag keeps fixes/perf wins shared instead of forking.
-import { useEffect, useState } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet, TouchableOpacity, Platform } from 'react-native';
+import { useEffect, useState, useRef } from 'react';
+import { View, Text, ActivityIndicator, StyleSheet, TouchableOpacity, Platform, Animated, Easing } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as api from '../services/api';
 import { useTheme } from '../context/ThemeContext';
@@ -23,6 +23,17 @@ export default function SavedMessagesScreen() {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const [err, setErr] = useState(null);
+  // Heading-bubble entrance — labelled "saved" badge gets an extra delayed
+  // fade so it visually distinguishes itself from regular text/spinner.
+  // The conversation screen reuses this `saved=1` flag to render the
+  // dedicated saved-messages tabs/ink-bar; here on the loader we set the
+  // tone with a slow heading fade-in (380ms vs 220ms for the spinner).
+  const headingFade = useRef(new Animated.Value(0)).current;
+  const spinnerFade = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(spinnerFade, { toValue: 1, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+    Animated.timing(headingFade, { toValue: 1, duration: 380, delay: 140, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+  }, [headingFade, spinnerFade]);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,7 +56,11 @@ export default function SavedMessagesScreen() {
       }
     })();
     return () => { cancelled = true; };
-  }, [router, t]);
+    // Mount-once: previously depended on `[router, t]` — a language switch
+    // mid-flight refired chatSavedConv() and could race router.replace()
+    // with the freshly resolved conversation id.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -58,10 +73,14 @@ export default function SavedMessagesScreen() {
         </>
       ) : (
         <>
-          <ActivityIndicator color={colors.primary} />
-          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+          <Animated.View style={{ opacity: spinnerFade }}>
+            <ActivityIndicator color={colors.primary} />
+          </Animated.View>
+          {/* Heading bubble — fades in 140ms after the spinner for a
+              distinct, brand-y reveal. Saved Messages parity with chat. */}
+          <Animated.Text style={[styles.loadingText, { color: colors.textSecondary, opacity: headingFade }]}>
             {t('chat.savedMessages') || 'Mensagens Salvas'}
-          </Text>
+          </Animated.Text>
         </>
       )}
     </View>

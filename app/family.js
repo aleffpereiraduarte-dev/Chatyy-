@@ -13,8 +13,8 @@
  * are TODO-stubbed — most return success:false until PHP handlers ship.
  * UI degrades gracefully (skeleton, fallbacks).
  */
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform, Alert, ActivityIndicator, TextInput, Modal, Share } from 'react-native';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Platform, Alert, ActivityIndicator, TextInput, Modal, Share, Animated, Easing } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
@@ -104,11 +104,48 @@ function FeatureRow({ icon: Icon, color, title, subtitle, onPress, colors, badge
   );
 }
 
-function MemberRow({ member, colors, isMe, onRemove }) {
+function MemberRow({ member, colors, isMe, onRemove, index = 0 }) {
   const palette = ROLE_PALETTE[member.role] || ROLE_PALETTE.child;
+  // Staggered entrance: each row drifts in 60ms after the previous, scaling
+  // from 0.9 → 1 + fading 0 → 1. Native driver (transform+opacity only).
+  const enter = useRef(new Animated.Value(0)).current;
+  // Avatar bounce on press — quick squish/release loop. Keeps interactions
+  // feeling tactile without dependencies.
+  const avatarScale = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const t = setTimeout(() => {
+      Animated.timing(enter, {
+        toValue: 1,
+        duration: 320,
+        delay: 0,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    }, Math.min(index, 8) * 60);
+    return () => clearTimeout(t);
+  }, [enter, index]);
+  const bounceAvatar = () => {
+    Animated.sequence([
+      Animated.timing(avatarScale, { toValue: 0.9, duration: 90, useNativeDriver: true }),
+      Animated.spring(avatarScale, { toValue: 1, friction: 4, tension: 220, useNativeDriver: true }),
+    ]).start();
+  };
   return (
-    <View style={[s.memberRow, { borderBottomColor: colors.border }]}>
-      <AvatarCircle email={member.email} name={member.name} size={44} online={!!member.online} showStatus />
+    <Animated.View
+      style={[
+        s.memberRow,
+        { borderBottomColor: colors.border },
+        {
+          opacity: enter,
+          transform: [{ scale: enter.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1] }) }],
+        },
+      ]}
+    >
+      <TouchableOpacity activeOpacity={0.85} onPress={bounceAvatar} accessibilityRole="image" accessibilityLabel={member.name || member.email}>
+        <Animated.View style={{ transform: [{ scale: avatarScale }] }}>
+          <AvatarCircle email={member.email} name={member.name} size={44} online={!!member.online} showStatus />
+        </Animated.View>
+      </TouchableOpacity>
       <View style={{ flex: 1, marginLeft: 12 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <Text style={[s.memberName, { color: colors.text }]} numberOfLines={1}>
@@ -130,7 +167,36 @@ function MemberRow({ member, colors, isMe, onRemove }) {
           <Text style={{ color: '#ef4444', fontSize: 13, fontWeight: '700' }}>Remover</Text>
         </TouchableOpacity>
       )}
-    </View>
+    </Animated.View>
+  );
+}
+
+// Idle pulse ring for the "Convidar familiar" CTA. Non-blocking — sits
+// behind the row as a subtle accent ring that breathes once every ~1.4s.
+function InvitePulseRing({ active }) {
+  const ring = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!active) return;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(ring, { toValue: 1, duration: 1400, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+        Animated.timing(ring, { toValue: 0, duration: 0, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [active, ring]);
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={{
+        position: 'absolute', left: 8, top: '50%', marginTop: -22,
+        width: 44, height: 44, borderRadius: 22,
+        borderWidth: 2, borderColor: ACCENT,
+        opacity: ring.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0] }),
+        transform: [{ scale: ring.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1.7] }) }],
+      }}
+    />
   );
 }
 
@@ -229,6 +295,23 @@ export default function FamilyScreen() {
       Alert.alert('Convite', 'Informe o e-mail ou telefone do familiar.');
       return;
     }
+    // Reject self-invite client-side. Backend doesn't currently catch this
+    // (family_invite at email.php:6868 just inserts the row), so without
+    // this guard a user could invite themselves and end up with a stuck
+    // pending invite they can't dismiss.
+    const tgtLower = target.toLowerCase();
+    if (tgtLower === myEmail) {
+      Alert.alert('Convite', 'Você não pode se convidar.');
+      return;
+    }
+    // Reject if the target email is already a member of THIS family. Same
+    // backend gap as above — the INSERT would succeed and you'd see a stuck
+    // duplicate pending invite for someone already in the household.
+    const already = (info?.members || []).some(m => (m.email || '').toLowerCase() === tgtLower);
+    if (already) {
+      Alert.alert('Convite', 'Esse familiar já está na sua família.');
+      return;
+    }
     setInviteSending(true);
     try {
       const r = await api.familyInvite(target, inviteRole);
@@ -322,6 +405,7 @@ export default function FamilyScreen() {
                 <MemberRow
                   key={m.email || idx}
                   member={m}
+                  index={idx}
                   colors={colors}
                   isMe={(m.email || '').toLowerCase() === myEmail}
                   onRemove={(m.email || '').toLowerCase() !== myEmail ? confirmRemove : null}
@@ -334,6 +418,9 @@ export default function FamilyScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Convidar familiar"
               >
+                {/* Idle pulse ring around the icon — only when family is small
+                    (≤1 member) so the CTA is unmistakable on first launch. */}
+                <InvitePulseRing active={memberCount <= 1} />
                 <View style={[s.rowIcon, { backgroundColor: ACCENT + '22' }]}>
                   <IconPlus size={20} color={ACCENT} />
                 </View>

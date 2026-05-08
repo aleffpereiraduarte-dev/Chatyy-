@@ -22,7 +22,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, Modal, Pressable, TouchableOpacity, ScrollView, Switch,
-  StyleSheet, Platform, ActivityIndicator, Vibration,
+  StyleSheet, Platform, ActivityIndicator, Vibration, Animated, Easing,
 } from 'react-native';
 import * as api from '../services/api';
 import { IconX, IconBell, IconCheck } from './Icons';
@@ -496,25 +496,62 @@ function ToggleRow({ label, value, onChange, colors }) {
 function PickerRow({ options, value, onChange, colors }) {
   return (
     <View>
-      {options.map((opt, idx) => {
-        const active = String(opt.value) === String(value);
-        return (
-          <TouchableOpacity
-            key={String(opt.value)}
-            onPress={() => onChange(opt.value)}
-            activeOpacity={0.7}
-            style={{
-              flexDirection: 'row', alignItems: 'center',
-              paddingHorizontal: 18, paddingVertical: 12,
-              borderBottomWidth: idx === options.length - 1 ? 0 : StyleSheet.hairlineWidth,
-              borderBottomColor: colors?.border,
-            }}
-          >
-            <Text style={{ flex: 1, fontSize: 15, color: colors?.text }}>{opt.label}</Text>
-            {active ? <IconCheck size={18} color={ACCENT} /> : null}
-          </TouchableOpacity>
-        );
-      })}
+      {options.map((opt, idx) => (
+        <PickerRowItem
+          key={String(opt.value)}
+          opt={opt}
+          active={String(opt.value) === String(value)}
+          isLast={idx === options.length - 1}
+          onPress={() => onChange(opt.value)}
+          colors={colors}
+        />
+      ))}
     </View>
+  );
+}
+
+// Each picker option owns its own scale + check fade animators so taps stay
+// independent and the row that just got selected gets a satisfying scale-
+// pop together with the checkmark fading in (instead of popping in cold).
+function PickerRowItem({ opt, active, isLast, onPress, colors }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const checkFade = useRef(new Animated.Value(active ? 1 : 0)).current;
+  // Animate the checkmark in/out when `active` changes — fades 0↔1 over
+  // 200ms so the selection feels intentional, not flickery.
+  useEffect(() => {
+    Animated.timing(checkFade, {
+      toValue: active ? 1 : 0,
+      duration: 200,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [active, checkFade]);
+  const handlePress = () => {
+    // Scale-pop — 0.94 → 1 spring rebound. Native driver keeps it smooth
+    // even on big picker lists.
+    Animated.sequence([
+      Animated.timing(scale, { toValue: 0.94, duration: 80, useNativeDriver: true }),
+      Animated.spring(scale, { toValue: 1, friction: 4, tension: 220, useNativeDriver: true }),
+    ]).start();
+    onPress();
+  };
+  return (
+    <Animated.View style={{ transform: [{ scale }] }}>
+      <TouchableOpacity
+        onPress={handlePress}
+        activeOpacity={0.7}
+        style={{
+          flexDirection: 'row', alignItems: 'center',
+          paddingHorizontal: 18, paddingVertical: 12,
+          borderBottomWidth: isLast ? 0 : StyleSheet.hairlineWidth,
+          borderBottomColor: colors?.border,
+        }}
+      >
+        <Text style={{ flex: 1, fontSize: 15, color: colors?.text }}>{opt.label}</Text>
+        <Animated.View style={{ opacity: checkFade, transform: [{ scale: checkFade }] }}>
+          <IconCheck size={18} color={ACCENT} />
+        </Animated.View>
+      </TouchableOpacity>
+    </Animated.View>
   );
 }

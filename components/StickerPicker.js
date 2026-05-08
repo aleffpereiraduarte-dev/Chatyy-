@@ -3,6 +3,7 @@ import {
   View, Text, TouchableOpacity, FlatList, ScrollView, Platform, Image,
   Alert, ActivityIndicator, TextInput, Animated,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 import CachedImage from './CachedImage';
 import { IconX, IconPlus, IconSearch, IconHeart, IconStar, IconTrash } from './Icons';
 import * as api from '../services/api';
@@ -143,6 +144,7 @@ async function storageSet(key, value) {
 }
 
 export default function StickerPicker({ onSelect, onClose, colors, t, userEmail }) {
+  const router = useRouter();
   const [activePack, setActivePack] = useState('recent');
   const [recents, setRecents] = useState([]);
   const [mine, setMine] = useState([]);            // cached URL-only list for offline
@@ -157,6 +159,11 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
   const [selectedMyPack, setSelectedMyPack] = useState(null); // pack_id filter inside Mine tab
   const [showPackCreate, setShowPackCreate] = useState(false);
   const [newPackName, setNewPackName] = useState('');
+  // Marketplace (sticker_packs / sticker_pack_items) — Telegram Premium-style
+  // store. installedMarketPacks holds pack metadata; marketPackItems caches
+  // items per pack id (lazy-loaded when a pack tab is selected).
+  const [installedMarketPacks, setInstalledMarketPacks] = useState([]);
+  const [marketPackItems, setMarketPackItems] = useState({});
   const searchRef = useRef(null);
 
   useEffect(() => {
@@ -181,8 +188,32 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
           setMyPacks(p.items || p.data?.items || []);
         }
       } catch {}
+      // Hydrate marketplace packs (sticker_pack_my). These are packs the user
+      // installed from /stickers/store. Each will get its own pill tab and
+      // grid view. Keep silent on failure — picker still works without it.
+      try {
+        const mp = await api.stickerPackMy();
+        if (mp?.success) {
+          const arr = mp.items || mp.data?.items || [];
+          if (Array.isArray(arr)) setInstalledMarketPacks(arr);
+        }
+      } catch {}
     })();
   }, []);
+
+  // Lazy-load items for a marketplace pack when its tab activates.
+  useEffect(() => {
+    if (typeof activePack !== 'string' || !activePack.startsWith('mkt-')) return;
+    const id = parseInt(activePack.slice(4), 10);
+    if (!id || marketPackItems[id]) return;
+    (async () => {
+      try {
+        const r = await api.chatStickerPackStickers(id);
+        const items = r?.items || r?.data?.items || r?.stickers || [];
+        setMarketPackItems(prev => ({ ...prev, [id]: Array.isArray(items) ? items : [] }));
+      } catch {}
+    })();
+  }, [activePack, marketPackItems]);
 
   const handleSelect = useCallback(async (item) => {
     const next = [item, ...recents.filter(r => r !== item)].slice(0, 40);
@@ -508,6 +539,14 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
       currentStickers = mineFull.length ? mineFull.map(s => s.url).filter(Boolean) : mine;
     }
   }
+  else if (typeof activePack === 'string' && activePack.startsWith('mkt-')) {
+    // Marketplace pack — items rendered as image URLs / R2 keys.
+    const id = parseInt(activePack.slice(4), 10);
+    const items = marketPackItems[id] || [];
+    currentStickers = items
+      .map(it => it.url || it.image_url || it.sticker_id)
+      .filter(Boolean);
+  }
   else currentStickers = STICKER_PACKS.find(p => p.id === activePack)?.stickers
     || ANIMATED_PACKS.find(p => p.id === activePack)?.stickers
     || [];
@@ -585,6 +624,33 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
           </>
         )}
       </View>
+
+      {/* Recently-used preview row — pinned at the very top so the most-used
+          stickers are always one tap away (Telegram parity). Renders only when
+          the user has actually used something and isn't on the recent tab. */}
+      {!showSearch && activePack !== 'recent' && recents.length > 0 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={{ borderBottomWidth: 1, borderBottomColor: colors.border, maxHeight: 48 }}
+          contentContainerStyle={{ paddingHorizontal: 6, alignItems: 'center', gap: 4 }}
+        >
+          {recents.slice(0, 14).map((item, i) => (
+            <TouchableOpacity
+              key={`recent-strip-${i}-${typeof item === 'string' ? item.slice(0, 16) : i}`}
+              onPress={() => handleSelect(item)}
+              style={{ paddingHorizontal: 4, paddingVertical: 6, alignItems: 'center', justifyContent: 'center' }}
+              activeOpacity={0.6}
+            >
+              {isImg(item) ? (
+                <CachedImage source={{ uri: resolveStickerUri(item) }} style={{ width: 32, height: 32 }} resizeMode="contain" />
+              ) : (
+                <Text style={{ fontSize: 22 }}>{item}</Text>
+              )}
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      )}
 
       {/* My-packs pill row — only visible on Mine tab. Lets the user filter
           their personal stickers by pack, create a new pack, and see sticker
@@ -739,6 +805,62 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
         {ANIMATED_PACKS.map(pack => (
           <PackTab key={pack.id} emoji={pack.thumb} active={activePack === pack.id} onPress={() => setActivePack(pack.id)} colors={colors} />
         ))}
+        {/* Installed marketplace packs (Telegram Premium-style store).
+            Render each as a pill tab with the pack's cover thumb. */}
+        {installedMarketPacks.length > 0 && (
+          <View style={{ width: 1, height: 20, backgroundColor: colors.border, marginHorizontal: 4 }} />
+        )}
+        {installedMarketPacks.map((pack) => {
+          const tabKey = `mkt-${pack.id}`;
+          const cover = (() => {
+            const u = pack.cover_url;
+            if (!u) return null;
+            if (/^https?:\/\//.test(u)) return u;
+            if (u.startsWith('/data/')) {
+              let base = '';
+              try { base = (typeof api.getCurrentBaseUrl === 'function' ? api.getCurrentBaseUrl() : api.BASE_URL) || ''; } catch {}
+              if (!base) base = api.BASE_URL || '';
+              base = String(base).replace(/\/$/, '');
+              return base ? base + u : 'https://chatyy.com.br' + u;
+            }
+            return `https://media.chatyy.com.br/${u.replace(/^\/+/, '')}`;
+          })();
+          return (
+            <TouchableOpacity
+              key={tabKey}
+              onPress={() => setActivePack(tabKey)}
+              style={{
+                paddingHorizontal: 8, paddingVertical: 6,
+                borderBottomWidth: activePack === tabKey ? 2.5 : 0,
+                borderBottomColor: colors.primary,
+                backgroundColor: activePack === tabKey ? (colors.primary + '08') : 'transparent',
+                borderRadius: activePack === tabKey ? 8 : 0,
+                borderBottomLeftRadius: 0,
+                borderBottomRightRadius: 0,
+              }}
+              activeOpacity={0.6}
+            >
+              {cover ? (
+                <CachedImage source={{ uri: cover }} style={{ width: 24, height: 24, borderRadius: 4 }} resizeMode="cover" />
+              ) : (
+                <Text style={{ fontSize: 20 }}>{pack.animated ? '🎬' : '📦'}</Text>
+              )}
+            </TouchableOpacity>
+          );
+        })}
+        {/* "+" tab — opens the sticker store. Placed last so users always
+            know where to discover more packs. */}
+        <TouchableOpacity
+          onPress={() => router.push('/stickers/store')}
+          style={{
+            paddingHorizontal: 10, paddingVertical: 8, marginLeft: 4,
+            backgroundColor: colors.primary + '12',
+            borderRadius: 14, alignItems: 'center', justifyContent: 'center',
+          }}
+          activeOpacity={0.6}
+        >
+          <IconPlus size={16} color={colors.primary} />
+        </TouchableOpacity>
       </ScrollView>
     </View>
   );

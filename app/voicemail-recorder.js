@@ -26,6 +26,7 @@ import { useLanguage } from '../context/LanguageContext';
 import AvatarCircle from '../components/AvatarCircle';
 import * as api from '../services/api';
 import * as Haptics from 'expo-haptics';
+import { IconMic, IconPlay, IconPause } from '../components/Icons';
 
 const MAX_DURATION_SEC = 60; // matches server-side cap
 
@@ -68,10 +69,51 @@ export default function VoicemailRecorder() {
   const timerRef = useRef(null);
   const previewPlayerRef = useRef(null);
   const mountedRef = useRef(true);
+  // Ref-based "send in flight" guard. `phase` is closed over in the
+  // sendVoicemail callback, so a double-tap in the same render tick would
+  // fire two uploads (state hasn't propagated). Using a ref makes the
+  // gate synchronous so the duplicate send call no-ops.
+  const sendingRef = useRef(false);
+  // Track the active mic stream on web. cleanupRecorder previously only
+  // stopped tracks when MediaRecorder was still 'recording'; if the user
+  // backed out during the brief 'inactive' window, the mic LED stayed on.
+  const webStreamRef = useRef(null);
 
   // Mic-pulse animation while recording. Cheap fade scale loop — purely
   // visual, no impact on recording itself.
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  // Red halo behind the mic — breathing 1.5s loop. Sits behind the
+  // recording mic button as a soft pulsing ring (scale + opacity), only
+  // active in the 'recording' phase. Uses native driver.
+  const haloAnim = useRef(new Animated.Value(0)).current;
+  // Confetti burst on stop — 12 dot Animated.Values that radiate from the
+  // center then fade. Only fired once per stop transition so we don't loop.
+  const confettiAnims = useRef(
+    Array.from({ length: 12 }, () => ({
+      x: new Animated.Value(0),
+      y: new Animated.Value(0),
+      opacity: new Animated.Value(0),
+      scale: new Animated.Value(0),
+    }))
+  ).current;
+  const fireConfetti = useCallback(() => {
+    confettiAnims.forEach((dot, i) => {
+      const angle = (i / confettiAnims.length) * Math.PI * 2;
+      const distance = 64 + Math.random() * 28;
+      const dx = Math.cos(angle) * distance;
+      const dy = Math.sin(angle) * distance;
+      dot.x.setValue(0);
+      dot.y.setValue(0);
+      dot.opacity.setValue(1);
+      dot.scale.setValue(0);
+      Animated.parallel([
+        Animated.timing(dot.x, { toValue: dx, duration: 380, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        Animated.timing(dot.y, { toValue: dy, duration: 380, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+        Animated.timing(dot.scale, { toValue: 1, duration: 200, useNativeDriver: true }),
+        Animated.timing(dot.opacity, { toValue: 0, duration: 380, delay: 60, useNativeDriver: true }),
+      ]).start();
+    });
+  }, [confettiAnims]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -88,6 +130,7 @@ export default function VoicemailRecorder() {
   useEffect(() => {
     if (phase !== 'recording') {
       pulseAnim.setValue(1);
+      haloAnim.setValue(0);
       return;
     }
     const loop = Animated.loop(
@@ -96,9 +139,27 @@ export default function VoicemailRecorder() {
         Animated.timing(pulseAnim, { toValue: 1, duration: 700, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
       ])
     );
+    // Red halo breathing loop — 1.5s in/out. Native driver.
+    const haloLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(haloAnim, { toValue: 1, duration: 750, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(haloAnim, { toValue: 0, duration: 750, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+      ])
+    );
     loop.start();
-    return () => loop.stop();
-  }, [phase, pulseAnim]);
+    haloLoop.start();
+    return () => { loop.stop(); haloLoop.stop(); };
+  }, [phase, pulseAnim, haloAnim]);
+
+  // Fire confetti exactly when we transition into 'preview' (i.e. the user
+  // just stopped recording successfully). Skip on initial mount.
+  const prevPhaseRef = useRef(phase);
+  useEffect(() => {
+    if (prevPhaseRef.current === 'recording' && phase === 'preview') {
+      fireConfetti();
+    }
+    prevPhaseRef.current = phase;
+  }, [phase, fireConfetti]);
 
   // Waveform jitter loop — runs only while recording, mirrors the
   // ChatCallsTab AudioWaveform pattern so we keep visual language consistent
@@ -162,13 +223,23 @@ export default function VoicemailRecorder() {
   function cleanupRecorder() {
     try {
       const r = recRef.current;
-      if (!r) return;
-      if (Platform.OS === 'web' && r.state === 'recording') {
-        try { r.stop(); } catch {}
-        // Stop tracks so the mic LED turns off immediately.
-        try { r.stream?.getTracks?.().forEach(t => t.stop()); } catch {}
-      } else if (r.__native && typeof r.stop === 'function') {
+      if (Platform.OS === 'web') {
+        if (r && r.state === 'recording') {
+          try { r.stop(); } catch {}
+        }
+        // Always kill the mic stream — the recorder may already be
+        // 'inactive' (post-stop, pre-onstop fire) when the user backs out.
+        // Without this the mic LED stays on after navigation.
+        try { webStreamRef.current?.getTracks?.().forEach(t => t.stop()); } catch {}
+        try { r?.stream?.getTracks?.().forEach(t => t.stop()); } catch {}
+        webStreamRef.current = null;
+      } else if (r?.__native && typeof r.stop === 'function') {
         r.stop().catch(() => {});
+        // Release audio mode so the OS doesn't think we're still capturing.
+        try {
+          const expoAudio = require('expo-audio');
+          expoAudio.setAudioModeAsync?.({ allowsRecording: false }).catch(() => {});
+        } catch {}
       }
     } catch {}
     recRef.current = null;
@@ -198,6 +269,13 @@ export default function VoicemailRecorder() {
           return;
         }
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // If the user already navigated away while waiting on the
+        // permission prompt, kill the freshly-granted stream and bail.
+        if (!mountedRef.current) {
+          try { stream.getTracks().forEach(t => t.stop()); } catch {}
+          return;
+        }
+        webStreamRef.current = stream;
         const mime = (typeof MediaRecorder?.isTypeSupported === 'function' && MediaRecorder.isTypeSupported('audio/webm;codecs=opus'))
           ? 'audio/webm;codecs=opus' : 'audio/webm';
         recordingMimeRef.current = mime.startsWith('audio/webm') ? 'audio/webm' : mime;
@@ -333,6 +411,11 @@ export default function VoicemailRecorder() {
   }, []);
 
   const sendVoicemail = useCallback(async () => {
+    // Synchronous double-tap guard. `phase === 'sending'` lags by a render
+    // cycle, so two taps in the same tick (e.g. user double-taps the Send
+    // button) used to fire two voicemail_init_upload + voicemail_send
+    // pairs and the recipient saw the bubble twice.
+    if (sendingRef.current) return;
     if (phase === 'sending') return;
     if (!recipientEmail) {
       setErrorMsg(t('voicemail.noRecipient') || 'Destinatário inválido');
@@ -343,6 +426,7 @@ export default function VoicemailRecorder() {
       setErrorMsg(t('voicemail.noRecording') || 'Sem gravação para enviar');
       return;
     }
+    sendingRef.current = true;
     setPhase('sending');
     setErrorMsg(null);
     try {
@@ -411,6 +495,10 @@ export default function VoicemailRecorder() {
       if (!mountedRef.current) return;
       setErrorMsg((t('voicemail.sendError') || 'Erro ao enviar mensagem de voz') + ': ' + (e?.message || ''));
       setPhase('error');
+    } finally {
+      // Release the in-flight gate so a retry from the error-state UI
+      // (which keeps the recording around) can fire again.
+      sendingRef.current = false;
     }
   }, [conversationId, duration, recipientEmail, t, router, phase]);
 
@@ -428,7 +516,7 @@ export default function VoicemailRecorder() {
   const styles = makeStyles(colors);
 
   const headerLine = reason === 'declined'
-    ? (t('voicemail.declinedTitle') || 'Não atendeu — gravar mensagem de voz?')
+    ? (t('voicemail.declinedTitle') || 'Não pôde atender — gravar mensagem de voz?')
     : (t('voicemail.missedTitle') || 'Não atendeu — gravar mensagem de voz?');
 
   return (
@@ -454,7 +542,7 @@ export default function VoicemailRecorder() {
             </Text>
             <View style={{ height: 32 }} />
             <TouchableOpacity onPress={startCountdown} style={styles.micButton} accessibilityLabel="Gravar mensagem de voz">
-              <Text style={styles.micEmoji}>🎤</Text>
+              <IconMic size={40} color="#fff" />
             </TouchableOpacity>
           </>
         )}
@@ -490,11 +578,25 @@ export default function VoicemailRecorder() {
               ))}
             </View>
             <View style={{ height: 14 }} />
-            <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
-              <TouchableOpacity onPress={stopRecording} style={[styles.micButton, styles.recordingActive]}>
-                <View style={styles.stopSquare} />
-              </TouchableOpacity>
-            </Animated.View>
+            <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+              {/* Breathing red halo — sits behind the mic button at low
+                  opacity. Scales out + fades synchronously with haloAnim. */}
+              <Animated.View
+                pointerEvents="none"
+                style={{
+                  position: 'absolute',
+                  width: 96, height: 96, borderRadius: 48,
+                  backgroundColor: '#EF4444',
+                  opacity: haloAnim.interpolate({ inputRange: [0, 1], outputRange: [0.18, 0.42] }),
+                  transform: [{ scale: haloAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.55] }) }],
+                }}
+              />
+              <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+                <TouchableOpacity onPress={stopRecording} style={[styles.micButton, styles.recordingActive]}>
+                  <View style={styles.stopSquare} />
+                </TouchableOpacity>
+              </Animated.View>
+            </View>
             <Text style={styles.bodyText}>{t('voicemail.tapToStop') || 'Toque para parar'}</Text>
             {/* Auto-stop hint when within 10s of the cap. Keeps the user from
                 being surprised by the hard 60s ceiling. */}
@@ -509,14 +611,38 @@ export default function VoicemailRecorder() {
 
         {phase === 'preview' && (
           <>
+            {/* Confetti burst — dots radiate from center on the
+                recording→preview transition. Pointer-events-none so they
+                don't intercept the preview row buttons. */}
+            <View pointerEvents="none" style={{ position: 'absolute', top: '40%', left: 0, right: 0, alignItems: 'center', justifyContent: 'center' }}>
+              {confettiAnims.map((dot, i) => {
+                const colorRing = ['#7c3aed', '#10B981', '#fbbf24', '#EC4899', '#3B82F6', '#EF4444'];
+                return (
+                  <Animated.View
+                    key={i}
+                    style={{
+                      position: 'absolute',
+                      width: 8, height: 8, borderRadius: 4,
+                      backgroundColor: colorRing[i % colorRing.length],
+                      opacity: dot.opacity,
+                      transform: [
+                        { translateX: dot.x },
+                        { translateY: dot.y },
+                        { scale: dot.scale },
+                      ],
+                    }}
+                  />
+                );
+              })}
+            </View>
             <Text style={styles.timer}>{fmt(duration)}</Text>
             <View style={{ height: 24 }} />
             <View style={styles.previewRow}>
               <TouchableOpacity onPress={reRecord} style={styles.previewBtn}>
                 <Text style={styles.previewBtnText}>{t('voicemail.reRecord') || 'Regravar'}</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={previewPlaying ? stopPreview : playPreview} style={[styles.previewBtn, styles.playBtn]}>
-                <Text style={styles.previewBtnText}>{previewPlaying ? '⏸' : '▶'}</Text>
+              <TouchableOpacity onPress={previewPlaying ? stopPreview : playPreview} style={[styles.previewBtn, styles.playBtn]} accessibilityLabel={previewPlaying ? (t('voicemail.pause') || 'Pausar') : (t('voicemail.play') || 'Tocar')}>
+                {previewPlaying ? <IconPause size={26} color="#fff" /> : <IconPlay size={26} color="#fff" />}
               </TouchableOpacity>
               <TouchableOpacity onPress={sendVoicemail} style={[styles.previewBtn, styles.sendBtn]}>
                 <Text style={[styles.previewBtnText, { color: '#fff' }]}>{t('voicemail.send') || 'Enviar'}</Text>

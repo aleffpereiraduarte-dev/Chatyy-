@@ -217,6 +217,7 @@ const IncomingCallListener = React.lazy(() => import('../components/IncomingCall
 const ActiveCallBar = React.lazy(() => import('../components/ActiveCallBar').then(m => ({ default: () => { const B = m.ActiveCallBridge; return React.createElement(B, null); } })));
 import LoginChallengePrompt from '../components/LoginChallengePrompt';
 import PWAPrompts from '../components/PWAPrompts';
+import WhatsNewSheet, { shouldShowWhatsNew } from '../components/WhatsNewSheet';
 import { registerBackgroundSync } from '../services/backgroundSync';
 import { initAutoBackup } from '../services/autoBackup';
 import { trackPageview, trackAppOpen } from '../services/analytics';
@@ -797,6 +798,50 @@ function AppInit({ onNotification, setOtaToast }) {
   return null;
 }
 
+// What's New tour gate — checks AsyncStorage on each login transition and
+// pops the WhatsNewSheet once per upgrade. Mounts inside AuthProvider so
+// `useAuth()` is available; renders nothing for cold-installs (gated by
+// shouldShowWhatsNew which only returns true when last-seen-version differs
+// from CURRENT_VERSION, never on first run).
+function WhatsNewGate() {
+  const auth = useAuth();
+  const router = useRouter();
+  const [show, setShow] = useState(false);
+  const probedForRef = useRef(null);
+
+  useEffect(() => {
+    const email = auth?.user?.email;
+    if (!email) {
+      probedForRef.current = null;
+      return;
+    }
+    if (auth?.loading) return;
+    if (probedForRef.current === email) return;
+    probedForRef.current = email;
+    // Defer so first-frame render isn't blocked by AsyncStorage roundtrip.
+    const timer = setTimeout(async () => {
+      try {
+        const ok = await shouldShowWhatsNew();
+        if (ok) setShow(true);
+      } catch {}
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [auth?.user?.email, auth?.loading]);
+
+  const handleClose = useCallback(() => setShow(false), []);
+  const handleTileCta = useCallback((tile) => {
+    setShow(false);
+    if (tile?.ctaRoute) {
+      // Brief delay so the sheet's close animation can play before nav.
+      setTimeout(() => {
+        try { router.push(tile.ctaRoute); } catch {}
+      }, 220);
+    }
+  }, [router]);
+
+  return <WhatsNewSheet visible={show} onClose={handleClose} onTileCta={handleTileCta} />;
+}
+
 // Live share-intent watcher. Fires whenever the iOS Share Extension hands
 // a payload to the main app (including while the app is already running in
 // the background). WhatsApp parity — without this hook, only the first-launch
@@ -1029,6 +1074,8 @@ export default function RootLayout() {
                   <Stack.Screen name="forgot" options={{ animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="marketplace" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="business" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="stickers/store" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="stickers/my" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                 </Stack>
                 </ChildRestrictionGuard>
                 <Suspense fallback={null}>
@@ -1039,6 +1086,7 @@ export default function RootLayout() {
                   <IncomingCallListener />
                 </Suspense>
                 <LoginChallengePrompt />
+                <WhatsNewGate />
                 <PWAPromptsThemed />
                 <NotificationToast
                   notification={toastNotif}

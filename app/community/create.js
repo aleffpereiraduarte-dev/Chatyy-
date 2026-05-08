@@ -8,10 +8,12 @@ import {
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
+import { Image } from 'react-native';
 import { useTheme } from '../../context/ThemeContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { BorderRadius, Spacing } from '../../constants/theme';
 import * as api from '../../services/api';
+import { IconArrowLeft, IconCheck } from '../../components/Icons';
 
 const STEPS = ['name', 'handle', 'description', 'photo', 'rules'];
 
@@ -107,10 +109,10 @@ export default function CommunityCreateScreen() {
     >
       {/* Header */}
       <View style={sty.header}>
-        <TouchableOpacity onPress={() => step === 0 ? router.back() : setStep(step - 1)} style={sty.headerBtn}>
-          <Text style={[sty.headerBtnText, { color: colors.primary }]}>‹</Text>
+        <TouchableOpacity onPress={() => step === 0 ? router.back() : setStep(step - 1)} style={sty.headerBtn} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
+          <IconArrowLeft size={22} color={colors.primary} />
         </TouchableOpacity>
-        <Text style={[sty.headerTitle, { color: colors.text }]}>
+        <Text style={[sty.headerTitle, { color: colors.text }]} numberOfLines={1}>
           {t('community.createTitle') || 'Criar comunidade'}
         </Text>
         <View style={sty.headerBtn} />
@@ -183,22 +185,22 @@ export default function CommunityCreateScreen() {
             <Text style={[sty.q, { color: colors.text }]}>
               {t('community.qPhoto') || 'Adicione uma foto (opcional)'}
             </Text>
-            <TouchableOpacity onPress={onPickPhoto} style={[sty.photoBtn, { borderColor: colors.primary }]}>
-              {photoUrl ? (
-                <Text style={[sty.photoBtnText, { color: colors.primary }]}>
-                  {t('community.changePhoto') || 'Trocar foto'}
-                </Text>
-              ) : (
+            {photoUrl ? (
+              <View style={{ alignItems: 'center', marginTop: 8 }}>
+                <Image source={{ uri: photoUrl }} style={{ width: 120, height: 120, borderRadius: 60, marginBottom: 14 }} />
+                <TouchableOpacity onPress={onPickPhoto} style={[sty.photoBtn, { borderColor: colors.primary, alignSelf: 'stretch' }]}>
+                  <Text style={[sty.photoBtnText, { color: colors.primary }]}>
+                    {t('community.changePhoto') || 'Trocar foto'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <TouchableOpacity onPress={onPickPhoto} style={[sty.photoBtn, { borderColor: colors.primary }]}>
                 <Text style={[sty.photoBtnText, { color: colors.primary }]}>
                   {t('community.choosePhoto') || 'Escolher foto'}
                 </Text>
-              )}
-            </TouchableOpacity>
-            {photoUrl ? (
-              <Text style={[sty.hint, { color: colors.textSecondary, marginTop: 8 }]} numberOfLines={1}>
-                {photoUrl}
-              </Text>
-            ) : null}
+              </TouchableOpacity>
+            )}
           </View>
         )}
 
@@ -224,9 +226,9 @@ export default function CommunityCreateScreen() {
               placeholderTextColor={colors.textSecondary} maxLength={1000} multiline
               style={[sty.input, sty.multiline, { color: colors.text, borderColor: colors.border }]}
             />
-            <TouchableOpacity onPress={() => setDiscoverable(!discoverable)} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16, gap: 10 }}>
+            <TouchableOpacity onPress={() => setDiscoverable(!discoverable)} style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16, gap: 10 }} accessibilityRole="checkbox" accessibilityState={{ checked: discoverable }}>
               <View style={[sty.checkbox, discoverable && { backgroundColor: colors.primary, borderColor: colors.primary }]}>
-                {discoverable && <Text style={{ color: '#fff', fontWeight: '700' }}>✓</Text>}
+                {discoverable && <IconCheck size={14} color="#fff" />}
               </View>
               <Text style={{ color: colors.text, flex: 1 }}>
                 {t('community.discoverable') || 'Mostrar em Descobrir comunidades'}
