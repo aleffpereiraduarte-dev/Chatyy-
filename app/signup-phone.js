@@ -49,12 +49,22 @@ export default function SignupPhone() {
 
   // 5 steps: welcome → phone → otp → name → handle → done.
   // welcome is the Telegram-style 5-slide carousel (SignupIntro component).
-  // Skip it when the user came here AFTER typing a phone on /login (params
-  // .fromLogin === '1' OR params.phone present) — they already dismissed
-  // the same SignupIntro on /login (chatyy_intro_seen flag), and showing
-  // it again right after they hit "Continuar" on the phone step felt like
-  // the carousel "abriu sozinho" (reported 2026-05-07).
-  const _initialStep = (params?.fromLogin === '1' || params?.phone) ? 'phone' : 'welcome';
+  // Step routing — what the entry point looks like depends on params:
+  //   1. params.step === 'name' + params.verify_token → user already
+  //      verified the OTP on /login; jump straight to the name input.
+  //      This is the unified flow (2026-05-07): /login sends OTP via
+  //      verifySend, verifies via phoneLoginVerify, and on `exists=false`
+  //      hands off the verify_token + phone here so the user never sees
+  //      the welcome / phone / otp screens again (no duplicate SMS).
+  //   2. params.fromLogin === '1' OR params.phone → user came here from
+  //      a fallback path that didn't hit (1) — start at the phone input
+  //      (skip the carousel, they already dismissed it on /login).
+  //   3. otherwise → welcome carousel (first-time signup direct entry).
+  const _initialStep = (params?.step === 'name' && params?.verify_token)
+    ? 'name'
+    : (params?.fromLogin === '1' || params?.phone)
+      ? 'phone'
+      : 'welcome';
   const [step, setStep] = useState(_initialStep);
   // Safe-area insets to keep the header off the status bar / notch on
   // Android (Pixel center punch-hole, Samsung notch, etc) and the
@@ -93,7 +103,11 @@ export default function SignupPhone() {
     } catch { return 'BR'; }
   }); // PhoneInput espera ISO code
   const [code, setCode] = useState('');
-  const [verifyToken, setVerifyToken] = useState('');
+  // Hydrated from params.verify_token when /login forwards us straight to
+  // the name step after a successful OTP verify on its side. finishSignup
+  // requires verifyToken to be non-empty — without seeding it from params
+  // here, the unified flow would dead-end with "Verificação expirou".
+  const [verifyToken, setVerifyToken] = useState(() => String(params?.verify_token || ''));
   // Telegram pattern: split into First / Last name (two stacked underline
   // inputs). `name` is the joined value sent to the phone_signup API and
   // used for handle suggestion / welcome message.
@@ -529,7 +543,13 @@ export default function SignupPhone() {
       else safeBack();
     }
     else if (step === 'otp')    goStep('phone');
-    else if (step === 'name')   goStep('otp');
+    else if (step === 'name')   {
+      // Unified flow: when /login forwarded us straight to name (with
+      // verify_token), the otp step has no context — back from name
+      // belongs on /login itself, not on a blank otp screen.
+      if (params?.verify_token && params?.step === 'name') safeBack();
+      else goStep('otp');
+    }
     else if (step === 'handle') goStep('name');
   };
 

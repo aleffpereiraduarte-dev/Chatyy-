@@ -856,23 +856,19 @@ export default function LoginScreen() {
     setPhoneSending(true);
     try {
       const fullPhone = phoneCountryCode + cleaned;
-      const r = await api.requestPhoneOtp(fullPhone);
+      // Unified flow (user feedback 2026-05-07): just send the SMS — don't
+      // pre-flight an exists check that interrupts with "não encontramos
+      // sua conta, vamos criar uma" before the OTP screen. After the user
+      // types the code, phoneLoginVerify decides:
+      //   • exists=true   → returns token → log in
+      //   • exists=false  → returns verify_token → continue to signup name
+      //                     step with phone+verify_token pre-filled
+      // verifySend is the bare SMS endpoint (no exists gating). The
+      // exists-aware "Já tem conta" / "Vamos criar" copy still surfaces
+      // via the debounced phoneAccountState helper text underneath the
+      // input, so the user has the affordance without a forced redirect.
+      const r = await api.verifySend(fullPhone);
       if (!mountedRef.current) return;
-      // Telegram pattern: phone not registered → go straight to signup.
-      // No popup, no "convidar via SMS" — the helper text already told the
-      // user "Primeiro acesso? Criamos sua conta na hora", so the next
-      // step is signup with the phone pre-filled. Faster and matches the
-      // approved login-unified.html flow exactly.
-      if (r.success && r.data && r.data.exists === false) {
-        setPhoneSending(false);
-        try {
-          router.push(`/signup-phone?phone=${encodeURIComponent(fullPhone)}&country=${encodeURIComponent(_isoFromDial(phoneCountryCode))}&fromLogin=1`);
-        } catch (e) {
-          setError(t('login.phoneNoAccount') || 'Conta não encontrada. Crie uma nova com este número.');
-          shake();
-        }
-        return;
-      }
       if (r.success) {
         setPhoneStep('otp');
         setPhoneResendTimer(60);
@@ -916,14 +912,17 @@ export default function LoginScreen() {
     setPhoneVerifying(true);
     try {
       const fullPhone = phoneCountryCode + phoneNumber.replace(/[^0-9]/g, '');
-      const r = await api.verifyPhoneOtp(fullPhone, code);
+      // Unified verify (user feedback 2026-05-07): same OTP code resolves
+      // both branches in one call. Server returns either a bearer token
+      // (existing account → log in) or a verify_token (new account → go
+      // straight to the name step in /signup-phone, skipping welcome +
+      // phone + otp since we already have phone+verify_token). No
+      // intermediate "não encontramos sua conta" screen.
+      const r = await api.phoneLoginVerify(fullPhone, code);
       if (!mountedRef.current) return;
       if (r.success && r.data?.token) {
         safeHaptic(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success));
         await loginWithToken(r.data.token, r.data.email);
-        // Success overlay — pops the check, holds, then routes. Spring
-        // 0 → 1 over ~360ms, hold ~440ms (covers the existing 800ms gap)
-        // before the navigate fires.
         setLoginSuccess(true);
         Animated.spring(successAnim, {
           toValue: 1, friction: 5, tension: 90, useNativeDriver: true,
@@ -931,18 +930,28 @@ export default function LoginScreen() {
         setTimeout(() => {
           if (mountedRef.current) router.replace(isChildAccount() ? '/chat' : '/inbox');
         }, 800);
-      } else {
-        const msg = r.message || t('login.phoneOtpInvalid');
-        if (msg.includes('No account')) setError(t('login.phoneNoAccount'));
-        else if (msg.includes('expired') || msg.includes('No valid')) setError(t('login.phoneOtpExpired'));
-        else setError(msg);
-        shake();
-        setPhoneOtp(['', '', '', '', '', '']);
-        // Auto-refocus the hidden OTP input so retyping works without an
-        // extra tap. WhatsApp/Telegram parity. setTimeout 0 lets the reset
-        // commit before focus() fires (otherwise it can be eaten).
-        setTimeout(() => { try { phoneOtpRefs.current?.[0]?.focus?.(); } catch {} }, 0);
+        return;
       }
+      if (r.success && r.data?.exists === false && r.data?.verify_token) {
+        // New account path — jump to the name step with verify_token in
+        // hand. signup-phone reads `step` and `verify_token` params and
+        // mounts directly at the name input.
+        safeHaptic(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium));
+        try {
+          const url = `/signup-phone?phone=${encodeURIComponent(fullPhone)}&country=${encodeURIComponent(_isoFromDial(phoneCountryCode))}&verify_token=${encodeURIComponent(r.data.verify_token)}&step=name`;
+          router.replace(url);
+        } catch {
+          setError(t('login.errorConnection'));
+          shake();
+        }
+        return;
+      }
+      const msg = r.message || t('login.phoneOtpInvalid');
+      if (msg.includes('expired') || msg.includes('No valid')) setError(t('login.phoneOtpExpired'));
+      else setError(msg);
+      shake();
+      setPhoneOtp(['', '', '', '', '', '']);
+      setTimeout(() => { try { phoneOtpRefs.current?.[0]?.focus?.(); } catch {} }, 0);
     } catch {
       if (!mountedRef.current) return;
       setError(t('login.errorConnection'));
