@@ -9,6 +9,7 @@ import {
   IconHeart, IconHeartOutline, IconMessageCircle, IconShare,
   IconBookmark, IconBookmarkFilled, IconMusic, IconPlay, IconPause,
   IconX, IconSend, IconChevronDown, IconCamera, IconVolume2, IconVolumeX, IconEye,
+  IconRepeat, IconLink, IconCopy,
 } from './Icons';
 import * as api from '../services/api';
 
@@ -560,14 +561,59 @@ const PauseFlash = memo(function PauseFlash({ visible }) {
   );
 });
 
+// ── Share Bottom Sheet ──
+// In-app drawer offering Repost / Copy link / External share. Replaces the
+// previous one-shot navigator.share() call so users can pick a destination
+// (cross-post into the feed, stash the URL, or hand off to the OS sheet).
+function ShareSheet({ visible, reel, t, onClose, onRepost, onCopyLink, onExternal }) {
+  const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+  useEffect(() => {
+    if (visible) {
+      Animated.spring(slideAnim, { toValue: 0, tension: 65, friction: 11, useNativeDriver: true }).start();
+    } else {
+      Animated.timing(slideAnim, { toValue: SCREEN_HEIGHT, duration: 220, useNativeDriver: true }).start();
+    }
+  }, [visible]);
+  if (!visible) return null;
+  const Row = ({ icon: Icon, label, onPress }) => (
+    <TouchableOpacity activeOpacity={0.7} onPress={onPress} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 22, paddingVertical: 16, gap: 14 }}>
+      <Icon size={22} color="#fff" />
+      <Text style={{ flex: 1, fontSize: 15.5, fontWeight: '600', color: '#fff', letterSpacing: -0.1 }}>{label}</Text>
+    </TouchableOpacity>
+  );
+  return (
+    <Modal transparent visible={visible} animationType="none" onRequestClose={onClose} statusBarTranslucent>
+      <Pressable style={styles.sheetBackdrop} onPress={onClose}>
+        <Animated.View style={[styles.sheetContainer, { transform: [{ translateY: slideAnim }], minHeight: 220, paddingBottom: 24 }]}>
+          <Pressable onPress={() => {}}>
+            <View style={styles.sheetHandle}><View style={styles.sheetHandleBar} /></View>
+            <View style={[styles.sheetHeader, { borderBottomWidth: 0, paddingBottom: 4 }]}>
+              <Text style={styles.sheetTitle}>{t?.('feed.share') || 'Compartilhar'}</Text>
+              <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <IconX size={22} color="#999" />
+              </TouchableOpacity>
+            </View>
+            <Row icon={IconRepeat} label={t?.('feed.repost') || 'Repostar'} onPress={onRepost} />
+            <Row icon={IconLink}   label={t?.('feed.copyLink') || t?.('common.copy') || 'Copiar link'} onPress={onCopyLink} />
+            <Row icon={IconShare}  label={t?.('feed.shareOutside') || t?.('feed.shareExternal') || 'Compartilhar fora'} onPress={onExternal} />
+          </Pressable>
+        </Animated.View>
+      </Pressable>
+    </Modal>
+  );
+}
+
 // ── Single Reel Item ──
-const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, user, containerHeight, onOpenComments, onOpenLikers, onOpenProfile, overlayOpen }) {
+const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, user, containerHeight, onOpenComments, onOpenLikers, onOpenProfile, overlayOpen, router }) {
   const [paused, setPaused] = useState(false);
+  // Share drawer (Repost / Copy link / External). Declared early so the
+  // effectivePaused expression on the next line can reference it.
+  const [shareSheetOpen, setShareSheetOpen] = useState(false);
   // When the comments/likers/share sheet opens above this reel, pause so the
   // user isn't trying to read with audio blasting underneath. Without this,
   // the Modal stack doesn't pause the underlying video — the reel keeps
   // playing unmuted and you have to manually pause before reading replies.
-  const effectivePaused = paused || !!overlayOpen;
+  const effectivePaused = paused || !!overlayOpen || shareSheetOpen;
   // TikTok-style speed selector: cycle 1x → 1.5x → 2x → 0.5x → 1x. Stored
   // per-reel in this component instance so swiping between reels resets to
   // 1x (matches TikTok behavior where each reel starts at default speed).
@@ -833,7 +879,12 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
     }
   }, [bookmarked, reel.id, bookmarkScale]);
 
-  const handleShare = useCallback(async () => {
+  const handleShare = useCallback(() => {
+    setShareSheetOpen(true);
+  }, []);
+
+  const handleShareExternal = useCallback(async () => {
+    setShareSheetOpen(false);
     const url = `${BASE_URL}/feed/${reel.id}`;
     if (isWeb && typeof navigator !== 'undefined' && navigator.share) {
       try { await navigator.share({ title: reel.caption || '', url }); } catch {}
@@ -841,6 +892,40 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
       try { await Share.share({ message: url }); } catch {}
     }
   }, [reel.id, reel.caption]);
+
+  const handleShareCopyLink = useCallback(async () => {
+    setShareSheetOpen(false);
+    const url = `${BASE_URL}/feed/${reel.id}`;
+    try {
+      if (isWeb && typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(url);
+      } else if (!isWeb) {
+        // expo-clipboard is the canonical RN clipboard API; fall back silently
+        // if the module isn't bundled (some older binaries skipped it).
+        try {
+          const Clipboard = require('expo-clipboard');
+          await Clipboard.setStringAsync(url);
+        } catch {
+          try { require('react-native').Clipboard.setString(url); } catch {}
+        }
+      }
+      try { require('expo-haptics').notificationAsync('success'); } catch {}
+    } catch {}
+  }, [reel.id]);
+
+  const handleShareRepost = useCallback(() => {
+    setShareSheetOpen(false);
+    // Mirror FeedPost.handleRepost — defer to the feed surface with a
+    // ?repost_of=… query so the existing CreatePostModal flow can pick it up.
+    try {
+      if (router?.push) {
+        router.push(`/feed?repost_of=${reel.id}`);
+        return;
+      }
+    } catch {}
+    // Web/standalone fallback: just copy the link so the user can paste it.
+    handleShareCopyLink();
+  }, [reel.id, router, handleShareCopyLink]);
 
   const height = containerHeight || SCREEN_HEIGHT;
 
@@ -1096,6 +1181,17 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
       <View style={styles.progressBar}>
         <View style={[styles.progressFill, { width: `${Math.min(progress * 100, 100)}%` }]} />
       </View>
+
+      {/* Share drawer (Repost / Copy link / External) */}
+      <ShareSheet
+        visible={shareSheetOpen}
+        reel={reel}
+        t={t}
+        onClose={() => setShareSheetOpen(false)}
+        onRepost={handleShareRepost}
+        onCopyLink={handleShareCopyLink}
+        onExternal={handleShareExternal}
+      />
     </View>
   );
 });
@@ -1207,13 +1303,14 @@ export default function ReelsViewer({ colors, isDark, t, user, router }) {
       isDark={isDark}
       t={t}
       user={user}
+      router={router}
       containerHeight={containerHeight}
       onOpenComments={handleOpenComments}
       onOpenLikers={handleOpenLikers}
       onOpenProfile={handleOpenProfile}
       overlayOpen={overlayOpen}
     />
-  ), [currentIndex, colors, isDark, t, user, containerHeight, handleOpenComments, handleOpenLikers, handleOpenProfile, overlayOpen]);
+  ), [currentIndex, colors, isDark, t, user, router, containerHeight, handleOpenComments, handleOpenLikers, handleOpenProfile, overlayOpen]);
 
   const keyExtractor = useCallback((item) => String(item.id), []);
 

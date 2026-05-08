@@ -167,6 +167,12 @@ export default function StoryViewer({
   const [replyText, setReplyText] = useState('');
   const [replying, setReplying] = useState(false);
   const [replySent, setReplySent] = useState(false);
+  // Focused state for the reply input — when true the bottom bar must NOT fade,
+  // even though the viewer is paused. Without this the user's input vanishes
+  // mid-typing because `paused → uiOpacity 0` collapses the whole bottom bar
+  // (including the TextInput they're tapping). Instagram keeps the input lit
+  // up while the rest of the chrome dims; we mirror that.
+  const [replyFocused, setReplyFocused] = useState(false);
   const [reactPop, setReactPop] = useState(null);
   const [emojiPulse, setEmojiPulse] = useState(null); // emoji currently scaling (UI feedback)
   // Per-session video mute pref (defaults unmuted — video status is consciously
@@ -191,14 +197,17 @@ export default function StoryViewer({
   // UI fade when paused (long-press to inspect a story). Mirrors Instagram —
   // header + bottom bar fade to 0 so the photo is unobstructed; tap-release
   // brings them back. Native-driven opacity, free even on cheap Android.
+  // Special case: while the reply input has focus we keep chrome lit so the
+  // user can see what they're typing — paused-but-typing is a different state
+  // than paused-because-long-press.
   const uiOpacity = useRef(new Animated.Value(1)).current;
   useEffect(() => {
     Animated.timing(uiOpacity, {
-      toValue: paused ? 0 : 1,
+      toValue: (paused && !replyFocused) ? 0 : 1,
       duration: 180,
       useNativeDriver: true,
     }).start();
-  }, [paused, uiOpacity]);
+  }, [paused, replyFocused, uiOpacity]);
 
   // Hold-to-pause visual cue. Goes 0 → 1 when the user holds the story.
   // Used to:
@@ -1190,8 +1199,8 @@ export default function StoryViewer({
                   <TextInput
                     value={replyText}
                     onChangeText={setReplyText}
-                    onFocus={() => setPaused(true)}
-                    onBlur={() => setPaused(false)}
+                    onFocus={() => { setPaused(true); setReplyFocused(true); }}
+                    onBlur={() => { setReplyFocused(false); setPaused(false); }}
                     placeholder={(t?.('status.replyPlaceholder') || 'Responder para') + ' ' + (ownerName || '...')}
                     placeholderTextColor="rgba(255,255,255,0.55)"
                     style={{ flex: 1, color: '#fff', fontSize: 14, paddingVertical: 10, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}

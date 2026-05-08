@@ -18,6 +18,8 @@ import { IconPlus, IconVideo, IconSearch, IconX, IconBell } from './Icons';
 import Svg, { Circle, Rect, Path, Line, Polyline } from 'react-native-svg';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
+import useStatuses from '../hooks/useStatuses';
+import StoryRingAvatar from './status/StoryRingAvatar';
 let mailWs = null;
 try { mailWs = require('../services/websocket').default; } catch {}
 
@@ -169,6 +171,75 @@ function EmptyFeedIllustration({ isDark }) {
   );
 }
 
+
+// ── Stories strip (Instagram-style ribbon at the top of the feed) ──
+// Surfaces the same `useStatuses` data the chat tab uses, so a status
+// posted from any surface appears here without a refetch. Tapping a ring
+// jumps into the chat tab's status viewer (it owns the StoryViewer
+// modal — duplicating that 300-line surface here would drift). The "Seu
+// status" tile is always first; new content has the gradient ring.
+function StoriesStrip({ user, colors, isDark, t, router }) {
+  const { groups } = useStatuses(user?.email, { warmCacheVideos: false });
+  const myEntry = (groups || []).find(g => String(g.email || '').toLowerCase() === String(user?.email || '').toLowerCase());
+  const others = (groups || []).filter(g => String(g.email || '').toLowerCase() !== String(user?.email || '').toLowerCase());
+  const myDisplay = user?.name || user?.email?.split('@')[0] || '';
+
+  // Hide entirely when there's literally nothing to surface — no own status
+  // and zero others. A lone "Seu status" with no rings reads as an empty
+  // glitch on a fresh account, and the FAB already covers post creation.
+  if (!myEntry && others.length === 0) return null;
+
+  const open = () => {
+    try { router?.push('/chat?tab=status'); } catch {}
+  };
+
+  return (
+    <View style={{
+      paddingVertical: 10,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+      backgroundColor: isDark ? colors.background : '#f6f8fa',
+    }}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, gap: 14 }}>
+        {/* Your status — always first */}
+        <TouchableOpacity onPress={open} activeOpacity={0.7} style={{ alignItems: 'center', width: 68 }}>
+          <StoryRingAvatar
+            name={myDisplay}
+            email={user?.email}
+            size={54}
+            ringStyle={myEntry ? 'solid' : 'none'}
+            badge="plus"
+            isDark={isDark}
+            colors={colors}
+          />
+          <Text style={{ fontSize: 11, color: colors.text, marginTop: 5, fontWeight: '500' }} numberOfLines={1}>
+            {myEntry ? myDisplay : (t?.('status.yourStory') || 'Seu status')}
+          </Text>
+        </TouchableOpacity>
+        {/* Others */}
+        {others.map((g) => {
+          const allViewed = (g.items || []).every(it => it.viewed);
+          return (
+            <TouchableOpacity key={`fs-${g.email}`} onPress={open} activeOpacity={0.7} style={{ alignItems: 'center', width: 68 }}>
+              <StoryRingAvatar
+                name={g.name || g.email}
+                email={g.email}
+                size={54}
+                ringStyle="solid"
+                allViewed={allViewed}
+                isDark={isDark}
+                colors={colors}
+              />
+              <Text style={{ fontSize: 11, color: colors.text, marginTop: 5, fontWeight: '500' }} numberOfLines={1}>
+                {g.name || g.email?.split('@')[0]}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+    </View>
+  );
+}
 
 export default function ChatFeedTab({ colors, isDark, t, user, router }) {
   const [feedMode, setFeedMode] = useState('posts'); // 'posts' | 'reels' | 'profile'
@@ -864,7 +935,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
             colors={[colors?.primary || ACCENT]}
           />
         }
-        ListHeaderComponent={() => <>{renderSearchBar()}{renderTabBar()}{renderLiveHeader()}</>}
+        ListHeaderComponent={() => <>{renderSearchBar()}{renderTabBar()}<StoriesStrip user={user} colors={colors} isDark={isDark} t={t} router={router} />{renderLiveHeader()}</>}
         ListEmptyComponent={renderEmpty}
         ListFooterComponent={renderFooter}
         showsVerticalScrollIndicator={false}

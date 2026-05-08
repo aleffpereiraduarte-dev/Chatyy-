@@ -14,7 +14,7 @@ import {
   IconMessageSquare, IconClock, IconPlus, IconSparkles,
   IconX, IconBell, IconMenu, IconMic, IconMicOff, IconVolume2, IconVolumeX,
   IconPhone, IconStop, IconFolder, IconUsers, IconCamera, IconEdit,
-  IconChevronUp, IconTrash,
+  IconChevronUp, IconTrash, IconCopy, IconRepeat,
 } from '../components/Icons';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -1190,21 +1190,31 @@ function getToolLabel(action, t) {
 function CodeBlockWithCopy({ code, isDark }) {
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = useCallback(() => {
-    if (Platform.OS === 'web' && navigator?.clipboard) {
-      navigator.clipboard.writeText(code);
+  const handleCopy = useCallback(async () => {
+    // Why: previously copy worked only on web. Native users had no way to copy code
+    // out of an AI answer — which is the #1 use case for code blocks. Now we use
+    // expo-clipboard everywhere with a graceful fallback.
+    try {
+      if (Platform.OS === 'web' && navigator?.clipboard) {
+        await navigator.clipboard.writeText(code);
+      } else {
+        const Clipboard = require('expo-clipboard');
+        await Clipboard.setStringAsync(code);
+      }
       setCopied(true);
+      try {
+        const Haptics = require('expo-haptics');
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      } catch {}
       setTimeout(() => setCopied(false), 2000);
-    }
+    } catch {}
   }, [code]);
 
   return (
     <View style={st.codeBlockWrap}>
-      {Platform.OS === 'web' && (
-        <TouchableOpacity onPress={handleCopy} style={st.codeCopyBtn} activeOpacity={0.7}>
-          <Text style={st.codeCopyBtnText}>{copied ? 'Copied!' : 'Copy'}</Text>
-        </TouchableOpacity>
-      )}
+      <TouchableOpacity onPress={handleCopy} style={st.codeCopyBtn} activeOpacity={0.7} accessibilityLabel="Copy code">
+        <Text style={st.codeCopyBtnText}>{copied ? '✓ Copied' : 'Copy'}</Text>
+      </TouchableOpacity>
       <View style={[st.codeBlock, isDark && { backgroundColor: '#1a1a1a' }]}>
         <Text style={st.codeText} selectable>{code}</Text>
       </View>
@@ -1258,9 +1268,10 @@ function ToolTypingIndicator({ toolName, isDark, t }) {
   );
 }
 
-function MessageRow({ item, colors, isDark, onSpeak, speakingId, t }) {
+function MessageRow({ item, colors, isDark, onSpeak, speakingId, t, onCopy, onRegenerate, isLastAI }) {
   const isUser = item.role === 'user';
   const isSpeaking = speakingId === item.id;
+  const [justCopied, setJustCopied] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.timing(fadeAnim, { toValue: 1, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
@@ -1342,7 +1353,7 @@ function MessageRow({ item, colors, isDark, onSpeak, speakingId, t }) {
           <ToolTypingIndicator toolName={item._toolName} isDark={isDark} t={t} />
         )}
 
-        {/* Time + speak button */}
+        {/* Time + speak/copy/regenerate buttons */}
         <View style={st.bubbleFooter}>
           {item.content && !isStreaming && (
             <TouchableOpacity
@@ -1356,6 +1367,36 @@ function MessageRow({ item, colors, isDark, onSpeak, speakingId, t }) {
               ) : (
                 <IconVolume2 size={14} color={isDark ? '#6b7b8a' : '#9ba5ab'} />
               )}
+            </TouchableOpacity>
+          )}
+          {/* Copy AI message — gap fix: previously no way to grab the AI's
+              answer except long-press text selection (broken on web). */}
+          {item.content && !isStreaming && onCopy && (
+            <TouchableOpacity
+              onPress={async () => {
+                const ok = await onCopy(item);
+                if (ok) {
+                  setJustCopied(true);
+                  setTimeout(() => setJustCopied(false), 1600);
+                }
+              }}
+              hitSlop={8}
+              style={st.speakBtn}
+              accessibilityLabel={t?.('common.copy') || 'Copy'}
+            >
+              <IconCopy size={14} color={justCopied ? ACCENT_DARK : (isDark ? '#6b7b8a' : '#9ba5ab')} />
+            </TouchableOpacity>
+          )}
+          {/* Regenerate — only on the most recent AI reply. Re-runs the last
+              user message so the user can ask the model to try again. */}
+          {item.content && !isStreaming && isLastAI && onRegenerate && (
+            <TouchableOpacity
+              onPress={() => onRegenerate(item)}
+              hitSlop={8}
+              style={st.speakBtn}
+              accessibilityLabel={t?.('one.regenerate') || 'Regenerate'}
+            >
+              <IconRepeat size={14} color={isDark ? '#6b7b8a' : '#9ba5ab'} />
             </TouchableOpacity>
           )}
           {!isStreaming && (
@@ -2659,9 +2700,63 @@ export default function OneScreen() {
 
   const hasMessages = messages.length > 0;
 
+  // Copy AI message → clipboard. Strips markdown so users get clean text by default,
+  // matching ChatGPT's "Copy" behavior. Returns boolean for the row to show its checkmark.
+  const copyMessage = useCallback(async (item) => {
+    try {
+      const plain = stripMarkdown(item.content || '');
+      const text = plain || item.content || '';
+      if (!text) return false;
+      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const Clipboard = require('expo-clipboard');
+        await Clipboard.setStringAsync(text);
+      }
+      try {
+        const Haptics = require('expo-haptics');
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      } catch {}
+      return true;
+    } catch { return false; }
+  }, []);
+
+  // Regenerate — drop the last AI message and re-send the immediately preceding
+  // user message so the model takes another shot at it. ChatGPT-style affordance.
+  const regenerateLast = useCallback((aiItem) => {
+    if (!aiItem) return;
+    const idx = messages.findIndex(m => m.id === aiItem.id);
+    if (idx <= 0) return;
+    // Walk back to the most recent user message before this AI reply.
+    let userMsg = null;
+    for (let i = idx - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') { userMsg = messages[i]; break; }
+    }
+    if (!userMsg) return;
+    // Trim AI reply (and any later messages) so the regenerate flow looks fresh.
+    setMessages(prev => prev.slice(0, idx));
+    // Small delay so React commits the trimmed list before the new send.
+    setTimeout(() => { sendMessage(userMsg.content || ''); }, 60);
+  }, [messages, sendMessage]);
+
+  // Track the index of the latest assistant message so only that bubble shows
+  // the regenerate icon (mirrors ChatGPT — older replies stay clean).
+  const lastAIId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'assistant' && !messages[i]._streaming) return messages[i].id;
+    }
+    return null;
+  }, [messages]);
+
   const renderMessage = useCallback(({ item }) => (
-    <MessageRow item={item} colors={colors} isDark={isDark} onSpeak={speakMessage} speakingId={speakingId} t={t} />
-  ), [colors, isDark, speakMessage, speakingId, t]);
+    <MessageRow
+      item={item} colors={colors} isDark={isDark}
+      onSpeak={speakMessage} speakingId={speakingId} t={t}
+      onCopy={copyMessage}
+      onRegenerate={regenerateLast}
+      isLastAI={item.id === lastAIId}
+    />
+  ), [colors, isDark, speakMessage, speakingId, t, copyMessage, regenerateLast, lastAIId]);
 
   // ─── Empty state - WhatsApp chat style ───
   const renderEmpty = () => {

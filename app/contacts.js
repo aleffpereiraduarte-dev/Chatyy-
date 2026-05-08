@@ -21,6 +21,7 @@ import {
   IconDownload, IconUpload, IconRefresh, IconSmartphone,
   IconChevronDown, IconChevronUp, IconStar, IconEdit, IconFileText,
   IconBuilding, IconBriefcase, IconCake, IconMapPin, IconGlobe,
+  IconMessageSquare, IconVideo,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 import SwipeAction from '../components/SwipeAction';
@@ -114,13 +115,26 @@ const BATCH_SIZE = 50;
 
 // ---------- Memoized contact row components ----------
 
-const DeviceContactRow = React.memo(({ dc, colors, saved, onAdd, t, isRegistered }) => {
+const DeviceContactRow = React.memo(({ dc, colors, saved, onAdd, t, isRegistered, onOpenProfile, onQuickActions }) => {
   const name = dc.name || `${dc.firstName || ''} ${dc.lastName || ''}`.trim() || t('contacts.unknown');
   const email = dc.emails?.[0]?.email || '';
   const phone = dc.phoneNumbers?.[0]?.number || '';
 
+  // Registered Chatyy users get the same tap = profile / long-press = quick
+  // actions affordance the saved-contacts list has. Non-registered rows stay
+  // passive (only the Add button does anything) — there's no profile to open.
+  const Wrapper = isRegistered && (onOpenProfile || onQuickActions) ? TouchableOpacity : View;
+  const wrapperProps = isRegistered && (onOpenProfile || onQuickActions)
+    ? {
+        onPress: () => onOpenProfile?.({ email, name, phone }),
+        onLongPress: () => onQuickActions?.({ email, name, phone }),
+        delayLongPress: 350,
+        activeOpacity: 0.6,
+      }
+    : {};
+
   return (
-    <View style={[s.contactRow, { borderBottomColor: colors.borderLight }]}>
+    <Wrapper style={[s.contactRow, { borderBottomColor: colors.borderLight }]} {...wrapperProps}>
       <View style={[s.avatar, { backgroundColor: getAvatarColor(name) }]}>
         <Text style={s.avatarText}>{(name?.[0] || '?').toUpperCase()}</Text>
       </View>
@@ -145,13 +159,19 @@ const DeviceContactRow = React.memo(({ dc, colors, saved, onAdd, t, isRegistered
           <IconPlus size={14} color={colors.primary} />
         </TouchableOpacity>
       )}
-    </View>
+    </Wrapper>
   );
 });
 
-const FamilyUserRow = React.memo(({ user, colors, saved, onAdd, t }) => {
+const FamilyUserRow = React.memo(({ user, colors, saved, onAdd, t, onOpenProfile, onQuickActions }) => {
   return (
-    <View style={[s.contactRow, { borderBottomColor: colors.borderLight }]}>
+    <TouchableOpacity
+      style={[s.contactRow, { borderBottomColor: colors.borderLight }]}
+      onPress={() => onOpenProfile?.(user)}
+      onLongPress={() => onQuickActions?.(user)}
+      delayLongPress={350}
+      activeOpacity={0.6}
+    >
       <View style={[s.avatar, { backgroundColor: getAvatarColor(user.display_name || user.email) }]}>
         <Text style={s.avatarText}>{(user.display_name || user.email || '?')[0].toUpperCase()}</Text>
       </View>
@@ -175,11 +195,11 @@ const FamilyUserRow = React.memo(({ user, colors, saved, onAdd, t }) => {
           <IconPlus size={14} color={colors.primary} />
         </TouchableOpacity>
       )}
-    </View>
+    </TouchableOpacity>
   );
 });
 
-const MyContactRow = React.memo(({ c, colors, onEdit, onDelete, onToggleFav }) => {
+const MyContactRow = React.memo(({ c, colors, onEdit, onDelete, onToggleFav, onOpenProfile, onQuickActions }) => {
   return (
     <SwipeAction
       onSwipeLeft={() => onDelete(c.email)}
@@ -193,7 +213,9 @@ const MyContactRow = React.memo(({ c, colors, onEdit, onDelete, onToggleFav }) =
     >
     <TouchableOpacity
       style={[s.contactRow, { borderBottomColor: colors.borderLight, backgroundColor: colors.background }]}
-      onPress={() => onEdit(c)}
+      onPress={() => onOpenProfile ? onOpenProfile(c) : onEdit(c)}
+      onLongPress={() => onQuickActions?.(c)}
+      delayLongPress={350}
       activeOpacity={0.6}
     >
       <AvatarCircle name={c.name || c.email} email={c.email} size={40} style={{ marginRight: Spacing.md }} />
@@ -644,6 +666,56 @@ function ContactsScreenInner() {
     setShowAdd(true);
   }, []);
 
+  // Tap on a contact opens the public profile screen (Instagram/WhatsApp
+  // pattern). Falls back to the edit form if there's no email to route on.
+  const handleOpenProfile = useCallback((c) => {
+    const email = c?.email;
+    if (!email) { handleEditContact(c); return; }
+    try {
+      router.push(`/u/${encodeURIComponent(email)}`);
+    } catch {
+      handleEditContact(c);
+    }
+  }, [router, handleEditContact]);
+
+  // Long-press shows an action sheet — the WhatsApp "row hold" affordance.
+  // Avoids forcing the user into the profile screen just to send a message.
+  const handleQuickActions = useCallback((c) => {
+    const email = c?.email;
+    if (!email) { handleEditContact(c); return; }
+    const display = c.name || c.display_name || email.split('@')[0];
+    // Lazy haptic — same pattern used elsewhere (chat list long-press).
+    try {
+      const Haptics = require('expo-haptics');
+      Haptics.selectionAsync?.().catch?.(() => {});
+    } catch {}
+    const goChat = () => router.push(`/chat-conversation?name=${encodeURIComponent(display)}&email=${encodeURIComponent(email)}`);
+    const goCall = () => router.push(`/chat-conversation?email=${encodeURIComponent(email)}&startCall=audio`);
+    const goVideo = () => router.push(`/chat-conversation?email=${encodeURIComponent(email)}&startCall=video`);
+    const goEmail = () => router.push(`/compose?to=${encodeURIComponent(email)}`);
+    const goEdit = () => handleEditContact(c);
+
+    if (Platform.OS === 'web') {
+      // Browser has no native action sheet — push straight to profile so
+      // the user gets the same Mensagem/Ligar/Vídeo/Email row.
+      try { router.push(`/u/${encodeURIComponent(email)}`); } catch {}
+      return;
+    }
+    Alert.alert(
+      display,
+      email,
+      [
+        { text: t('profile.message') || 'Mensagem', onPress: goChat },
+        { text: t('profile.call') || 'Ligar', onPress: goCall },
+        { text: t('profile.video') || 'Vídeo', onPress: goVideo },
+        { text: t('profile.email') || 'Email', onPress: goEmail },
+        { text: t('contacts.editContact') || 'Editar', onPress: goEdit },
+        { text: t('common.cancel') || 'Cancel', style: 'cancel' },
+      ],
+      { cancelable: true }
+    );
+  }, [router, handleEditContact, t]);
+
   const handleSave = async () => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!form.email.trim() || !emailRegex.test(form.email.trim())) {
@@ -756,12 +828,16 @@ function ContactsScreenInner() {
     }));
   }, [filteredItems, activeTab, t]);
 
-  // Render favorite contact (larger avatar)
+  // Render favorite contact (larger avatar). Tap = profile (Instagram/WA
+  // pattern) so the favorites row stops being a "shortcut to the edit
+  // form" — that's what long-press is for.
   const renderFavoriteContact = (c, i) => (
     <TouchableOpacity
       key={c.id || i}
       style={[s.favoriteItem]}
-      onPress={() => handleEditContact(c)}
+      onPress={() => handleOpenProfile(c)}
+      onLongPress={() => handleQuickActions(c)}
+      delayLongPress={350}
       activeOpacity={0.6}
     >
       <AvatarCircle name={c.name || c.email} email={c.email} size={56} />
@@ -776,8 +852,19 @@ function ContactsScreenInner() {
     const email = dc.emails?.[0]?.email || '';
     const saved = email ? isContactSaved(email) : false;
     const isRegistered = email ? registeredEmails.has(email.toLowerCase()) : false;
-    return <DeviceContactRow dc={dc} colors={colors} saved={saved} onAdd={addDeviceContact} t={t} isRegistered={isRegistered} />;
-  }, [colors, isContactSaved, addDeviceContact, t, registeredEmails]);
+    return (
+      <DeviceContactRow
+        dc={dc}
+        colors={colors}
+        saved={saved}
+        onAdd={addDeviceContact}
+        t={t}
+        isRegistered={isRegistered}
+        onOpenProfile={handleOpenProfile}
+        onQuickActions={handleQuickActions}
+      />
+    );
+  }, [colors, isContactSaved, addDeviceContact, t, registeredEmails, handleOpenProfile, handleQuickActions]);
 
   // Device contacts split into "On Chatyy" and "Invite to Chatyy" sections
   const deviceSections = useMemo(() => {
@@ -828,13 +915,33 @@ function ContactsScreenInner() {
   // FlatList render items for family tab
   const renderFamilyItem = useCallback(({ item: user }) => {
     const saved = isContactSaved(user.email);
-    return <FamilyUserRow user={user} colors={colors} saved={saved} onAdd={addFamilyContact} t={t} />;
-  }, [colors, isContactSaved, addFamilyContact, t]);
+    return (
+      <FamilyUserRow
+        user={user}
+        colors={colors}
+        saved={saved}
+        onAdd={addFamilyContact}
+        t={t}
+        onOpenProfile={handleOpenProfile}
+        onQuickActions={handleQuickActions}
+      />
+    );
+  }, [colors, isContactSaved, addFamilyContact, t, handleOpenProfile, handleQuickActions]);
 
   // My contacts render for SectionList
   const renderMyContactItem = useCallback(({ item }) => {
-    return <MyContactRow c={item} colors={colors} onEdit={handleEditContact} onDelete={handleDelete} onToggleFav={toggleFavorite} />;
-  }, [colors, handleEditContact, handleDelete, toggleFavorite]);
+    return (
+      <MyContactRow
+        c={item}
+        colors={colors}
+        onEdit={handleEditContact}
+        onDelete={handleDelete}
+        onToggleFav={toggleFavorite}
+        onOpenProfile={handleOpenProfile}
+        onQuickActions={handleQuickActions}
+      />
+    );
+  }, [colors, handleEditContact, handleDelete, toggleFavorite, handleOpenProfile, handleQuickActions]);
 
   // Section list header renderer
   const renderSectionHeader = useCallback(({ section }) => (

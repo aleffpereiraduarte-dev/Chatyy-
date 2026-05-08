@@ -161,7 +161,12 @@ export default function MeetingDetailScreen() {
   };
 
   const handleCopyLink = async () => {
-    const link = `${Platform.OS === 'web' ? window.location.origin : 'https://mail.onemundo.com.br'}/meet/${room_id}`;
+    // Match meetings.js MEET_BASE: web prefers current origin (handles dev +
+    // chatyy.com.br + onemundo.com.br alike), native uses canonical prod host.
+    const base = Platform.OS === 'web'
+      ? (typeof window !== 'undefined' && window.location?.origin) || 'https://chatyy.com.br'
+      : 'https://mail.onemundo.com.br';
+    const link = `${base}/meet/${room_id}`;
     try {
       if (Clipboard?.setStringAsync) {
         await Clipboard.setStringAsync(link);

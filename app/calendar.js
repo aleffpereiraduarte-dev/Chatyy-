@@ -325,6 +325,23 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
   const firstDay = getFirstDayOfWeek(year, month);
   const today = new Date();
 
+  // Subtle fade+slide between months. Native driver — useNativeDriver:true
+  // (opacity + translateX are both transformable). 180ms feels snappy without
+  // delaying the user; runs on every (year, month) change.
+  const fade = useRef(new Animated.Value(1)).current;
+  const slide = useRef(new Animated.Value(0)).current;
+  const prevMonthRef = useRef(month);
+  useEffect(() => {
+    const dir = month > prevMonthRef.current || (month === 0 && prevMonthRef.current === 11) ? 1 : -1;
+    prevMonthRef.current = month;
+    fade.setValue(0);
+    slide.setValue(dir * 12);
+    Animated.parallel([
+      Animated.timing(fade, { toValue: 1, duration: 180, useNativeDriver: true }),
+      Animated.timing(slide, { toValue: 0, duration: 180, useNativeDriver: true, easing: Easing.out(Easing.cubic) }),
+    ]).start();
+  }, [year, month, fade, slide]);
+
   // Previous month days to show
   const prevMonthDays = getDaysInMonth(year, month - 1);
   const rows = [];
@@ -405,6 +422,7 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
       </View>
 
       {/* Calendar rows */}
+      <Animated.View style={{ opacity: fade, transform: [{ translateX: slide }] }}>
       {rows.map((row, ri) => (
         <View key={ri} style={styles.calendarRow}>
           {row.map((cell, ci) => {
@@ -451,16 +469,30 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
                     </TouchableOpacity>
                   )}
                 </View>
-                {/* Mini event previews */}
+                {/* Mini event previews — long-press surfaces a quick peek
+                    (title + time + location) without leaving the grid view. */}
                 {cellEvents.length > 0 && (
                   <View style={styles.cellEventPreviews}>
                     {cellEvents.slice(0, 2).map((evt, ei) => (
-                      <View key={ei} style={[styles.cellEventPreview, { backgroundColor: (evt.color || evt.calendar_color || colors.primary) + '22' }]}>
+                      <TouchableOpacity
+                        key={ei}
+                        activeOpacity={0.7}
+                        style={[styles.cellEventPreview, { backgroundColor: (evt.color || evt.calendar_color || colors.primary) + '22' }]}
+                        onPress={() => onSelectDate(cell.date)}
+                        onLongPress={() => {
+                          const time = evt.all_day
+                            ? (t ? t('calendar.allDay') : 'All day')
+                            : `${formatTime(evt.start_at)} - ${formatTime(evt.end_at)}`;
+                          const loc = evt.location ? `\n${evt.location}` : '';
+                          safeAlert(evt.title || (t ? t('calendar.untitledEvent') : 'Untitled'), `${time}${loc}`);
+                        }}
+                        delayLongPress={300}
+                      >
                         <View style={[styles.cellEventDot, { backgroundColor: evt.color || evt.calendar_color || colors.primary }]} />
                         <Text style={[styles.cellEventText, { color: isOtherMonth ? colors.textTertiary : colors.text }]} numberOfLines={1}>
                           {evt.title || ''}
                         </Text>
-                      </View>
+                      </TouchableOpacity>
                     ))}
                     {cellEvents.length > 2 && (
                       <Text style={[styles.cellEventMore, { color: colors.textTertiary }]}>+{cellEvents.length - 2}</Text>
@@ -472,6 +504,7 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
           })}
         </View>
       ))}
+      </Animated.View>
     </View>
   );
 }
@@ -885,7 +918,7 @@ function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, onJoinMe
 // ============================================================
 // Add Event Modal
 // ============================================================
-function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDate, t }) {
+function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDate, existingEvents, t }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [location, setLocation] = useState('');
@@ -953,6 +986,24 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
       setReminder('none');
     }
   }, [visible, selectedDate, calendars]);
+
+  // Conflict detection — warns (non-blocking) if the proposed window overlaps
+  // an existing event on the same day. Skip when allDay (would always clash).
+  const conflictingEvents = useMemo(() => {
+    if (allDay || !startDate || !startTime || !endTime) return [];
+    try {
+      const newStart = new Date(`${startDate}T${startTime}:00`).getTime();
+      const newEnd = new Date(`${endDate || startDate}T${endTime}:00`).getTime();
+      if (!Number.isFinite(newStart) || !Number.isFinite(newEnd) || newEnd <= newStart) return [];
+      return (existingEvents || []).filter(evt => {
+        if (!evt?.start_at || !evt?.end_at || evt.all_day) return false;
+        const s = new Date(evt.start_at).getTime();
+        const e = new Date(evt.end_at).getTime();
+        if (!Number.isFinite(s) || !Number.isFinite(e)) return false;
+        return s < newEnd && e > newStart;
+      }).slice(0, 3);
+    } catch { return []; }
+  }, [allDay, startDate, startTime, endDate, endTime, existingEvents]);
 
   const handleSave = async () => {
     if (!title.trim()) {
@@ -1176,6 +1227,21 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
                 </View>
               )}
             </View>
+
+            {/* Conflict warning — non-blocking, just informs of overlap */}
+            {conflictingEvents.length > 0 && (
+              <View style={[styles.conflictWarning, { backgroundColor: '#FEF3C7', borderColor: '#FCD34D' }]}>
+                <IconClock size={14} color="#92400E" />
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.conflictWarningTitle, { color: '#92400E' }]} numberOfLines={1}>
+                    {conflictingEvents[0].title || t('calendar.untitledEvent')}{conflictingEvents.length > 1 ? ` +${conflictingEvents.length - 1}` : ''}
+                  </Text>
+                  <Text style={[styles.conflictWarningText, { color: '#92400E' }]} numberOfLines={1}>
+                    {formatTime(conflictingEvents[0].start_at)} - {formatTime(conflictingEvents[0].end_at)}
+                  </Text>
+                </View>
+              </View>
+            )}
 
             {/* Description */}
             <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>{t('calendar.description')}</Text>
@@ -2205,6 +2271,7 @@ function CalendarScreenInner() {
         colors={colors}
         calendars={calendars}
         selectedDate={selectedDate}
+        existingEvents={dayEvents}
         t={t}
       />
     </View>
@@ -2536,4 +2603,14 @@ const styles = StyleSheet.create({
     fontSize: FontSize.md,
     borderRadius: BorderRadius.lg || 12,
   },
+
+  // Conflict warning chip in AddEventModal
+  conflictWarning: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: Spacing.sm + 2, paddingVertical: Spacing.xs + 2,
+    borderRadius: BorderRadius.md, borderWidth: 1,
+    marginTop: Spacing.xs, marginBottom: Spacing.xs,
+  },
+  conflictWarningTitle: { fontSize: FontSize.sm, fontWeight: '700', letterSpacing: -0.1 },
+  conflictWarningText: { fontSize: FontSize.xs, fontWeight: '500', marginTop: 1 },
 });

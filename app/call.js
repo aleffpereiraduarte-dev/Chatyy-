@@ -134,6 +134,18 @@ export default function CallScreen() {
   // small overlay with countdown + cancel button instead of a blocking Alert.
   // null when idle; { secondsLeft } when waiting for peer to accept.
   const [videoUpgradeToast, setVideoUpgradeToast] = useState(null);
+  // audit gap #5 — TURN refresh failure toast (3 strikes from webrtc.js).
+  // Auto-fades after 4s; user can still call but media may stall mid-network
+  // change because we have no relay path.
+  const [turnFailedToast, setTurnFailedToast] = useState(false);
+  useEffect(() => {
+    const { DeviceEventEmitter } = require('react-native');
+    const sub = DeviceEventEmitter.addListener('webrtc:turn_refresh_failed', () => {
+      setTurnFailedToast(true);
+      setTimeout(() => setTurnFailedToast(false), 4000);
+    });
+    return () => sub.remove();
+  }, []);
   const videoUpgradeCountdownRef = useRef(null);
   const [noiseCancellation, setNoiseCancellation] = useState(true);
 
@@ -3518,11 +3530,24 @@ export default function CallScreen() {
     // Map quality score (1-5) to bar count (1-5)
     const bars = score || (quality === 'good' ? 4 : quality === 'medium' ? 2 : 1);
     const color = bars >= 4 ? '#7C3AED' : bars === 3 ? '#f59e0b' : '#ef4444';
+    // audit gap #4 — when quality fell below 3 the WebRTC helper drops
+    // bitrate/framerate via adaptBitrate(). Surface that with a tiny ↓
+    // indicator next to the bars so the user knows we're already
+    // compensating for their bad connection (not just rendering a bad call).
+    const bitrateAdapted = bars > 0 && bars < 3;
     return (
-      <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 1.5, height: 14, marginLeft: 8 }}>
+      <View
+        style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 1.5, height: 14, marginLeft: 8 }}
+        accessibilityLabel={bitrateAdapted ? (t?.('call.qualityAutoLowered') || 'Reduzimos a qualidade pra manter conexão') : undefined}
+      >
         {[1, 2, 3, 4, 5].map(i => (
           <View key={i} style={{ width: 3, height: 2 + i * 2.5, borderRadius: 1, backgroundColor: i <= bars ? color : 'rgba(255,255,255,0.2)' }} />
         ))}
+        {bitrateAdapted && (
+          <Svg width={9} height={11} viewBox="0 0 24 24" style={{ marginLeft: 3 }}>
+            <SvgPath d="M12 5v14M5 12l7 7 7-7" stroke={color} strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+          </Svg>
+        )}
         {rtt !== null && rtt !== undefined && (
           <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 9, marginLeft: 3, fontVariant: ['tabular-nums'] }}>{rtt}ms</Text>
         )}
@@ -3650,6 +3675,17 @@ export default function CallScreen() {
           {showWeakBanner && peerConnected && !ended && !reconnecting && (
             <View style={styles.weakBanner}>
               <Text style={styles.weakBannerText}>{t('call.poorConnection') || 'Conexao fraca'}</Text>
+            </View>
+          )}
+
+          {/* TURN refresh failure toast — surfaced after 3 strikes from
+              webrtc.js. Tells the user we can't relay if they roam to a
+              network that needs TURN; auto-fades after 4s. (audit gap #5) */}
+          {turnFailedToast && !ended && (
+            <View style={[styles.weakBanner, { backgroundColor: 'rgba(127,29,29,0.92)' }]}>
+              <Text style={[styles.weakBannerText, { flex: 1 }]} numberOfLines={2}>
+                {t?.('call.turnFailedReducedQuality') || 'Qualidade reduzida (sem relay disponível)'}
+              </Text>
             </View>
           )}
 

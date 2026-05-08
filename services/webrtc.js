@@ -543,10 +543,19 @@ class WebRTCCall {
   // Refresh TURN credentials every hour (they expire in 24h, but refresh early to avoid mid-call expiry)
   startTurnRefresh() {
     this.stopTurnRefresh();
+    // audit gap #5 — track consecutive refresh failures so the call screen
+    // can surface a "Qualidade reduzida (sem relay disponível)" toast after
+    // 3 strikes. Without this, repeated silent failures slow-degrade the
+    // call quality and the user has no idea TURN is unavailable.
+    this._turnRefreshFailures = 0;
     this._turnRefreshInterval = setInterval(async () => {
+      let success = false;
       try {
         // Skip if TURN creds are still fresh (more than 2h remaining)
-        if (this._turnExpiresAt && (this._turnExpiresAt - Date.now()) > 2 * 60 * 60 * 1000) return;
+        if (this._turnExpiresAt && (this._turnExpiresAt - Date.now()) > 2 * 60 * 60 * 1000) {
+          this._turnRefreshFailures = 0;
+          return;
+        }
 
         if (mailWs.isConnected) {
           const creds = await new Promise((resolve) => {
@@ -566,9 +575,22 @@ class WebRTCCall {
               this.pc.setConfiguration(config);
             } catch {}
             console.log('[WebRTC] TURN credentials refreshed');
+            this._turnRefreshFailures = 0;
+            success = true;
           }
         }
       } catch {}
+      if (!success) {
+        this._turnRefreshFailures = (this._turnRefreshFailures || 0) + 1;
+        if (this._turnRefreshFailures >= 3) {
+          // Notify the call screen exactly once per 3-strike streak.
+          // call.js listens via DeviceEventEmitter and shows a toast.
+          try {
+            const { DeviceEventEmitter } = require('react-native');
+            DeviceEventEmitter.emit('webrtc:turn_refresh_failed', { count: this._turnRefreshFailures });
+          } catch {}
+        }
+      }
     }, 60 * 60 * 1000); // Every hour
   }
 

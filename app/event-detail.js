@@ -98,6 +98,23 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
   const [startTime, setStartTime] = useState('09:00');
   const [endDate, setEndDate] = useState('');
   const [endTime, setEndTime] = useState('10:00');
+
+  // Auto-format YYYY-MM-DD as user types (digits only → punctuated)
+  const formatDateInput = (text, setter) => {
+    let clean = (text || '').replace(/[^0-9]/g, '');
+    if (clean.length >= 5) clean = clean.slice(0, 4) + '-' + clean.slice(4);
+    if (clean.length >= 8) clean = clean.slice(0, 7) + '-' + clean.slice(7, 9);
+    if (clean.length > 10) clean = clean.slice(0, 10);
+    setter(clean);
+  };
+  // Auto-format HH:MM (digits only → punctuated)
+  const formatTimeInput = (text, current, setter) => {
+    let clean = (text || '').replace(/[^0-9]/g, '');
+    if (clean.length >= 3) clean = clean.slice(0, 2) + ':' + clean.slice(2, 4);
+    else if (clean.length === 2 && (text || '').length > (current || '').length) clean = clean + ':';
+    if (clean.length > 5) clean = clean.slice(0, 5);
+    setter(clean);
+  };
   const [selectedColor, setSelectedColor] = useState('#4285F4');
   const [recurrence, setRecurrence] = useState('');
   const [attendeesText, setAttendeesText] = useState('');
@@ -260,7 +277,9 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
               placeholder="YYYY-MM-DD"
               placeholderTextColor={colors.textTertiary}
               value={startDate}
-              onChangeText={setStartDate}
+              onChangeText={(txt) => formatDateInput(txt, setStartDate)}
+              keyboardType="numeric"
+              maxLength={10}
             />
           </View>
           {!allDay && (
@@ -271,7 +290,9 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
                 placeholder="HH:MM"
                 placeholderTextColor={colors.textTertiary}
                 value={startTime}
-                onChangeText={setStartTime}
+                onChangeText={(txt) => formatTimeInput(txt, startTime, setStartTime)}
+                keyboardType="numeric"
+                maxLength={5}
               />
             </View>
           )}
@@ -288,7 +309,9 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
               placeholder="YYYY-MM-DD"
               placeholderTextColor={colors.textTertiary}
               value={endDate}
-              onChangeText={setEndDate}
+              onChangeText={(txt) => formatDateInput(txt, setEndDate)}
+              keyboardType="numeric"
+              maxLength={10}
             />
           </View>
           {!allDay && (
@@ -299,7 +322,9 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
                 placeholder="HH:MM"
                 placeholderTextColor={colors.textTertiary}
                 value={endTime}
-                onChangeText={setEndTime}
+                onChangeText={(txt) => formatTimeInput(txt, endTime, setEndTime)}
+                keyboardType="numeric"
+                maxLength={5}
               />
             </View>
           )}

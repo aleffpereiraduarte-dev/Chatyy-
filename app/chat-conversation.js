@@ -10400,6 +10400,10 @@ export default function ChatConversationScreen() {
   const handleSendAudio = async (audioData) => {
     setIsRecording(false);
     setUploading(true);
+    // audit gap #7 — voice send haptic. Other send paths (text/media) already
+    // fire Haptics.notificationAsync(Success) but this one was missing the
+    // bump after the recorder finalizes, so the gesture felt unconfirmed.
+    try { if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
     // Optimistic: show audio message immediately with uploading indicator
     const tempId = 'tmp_audio_' + Date.now();
     const localUri = audioData.blob ? URL.createObjectURL(audioData.blob) : audioData.uri;
@@ -14342,11 +14346,15 @@ export default function ChatConversationScreen() {
                 {/* WhatsApp parity: bubble sempre mostra thumb/snippet do
                     snapshot, sem badge "expirado". Quando o user toca, ai sim
                     o toast "Status nao disponivel" aparece (foto 2026-05-05
-                    user pediu: bubble normal, feedback so no tap). */}
+                    user pediu: bubble normal, feedback so no tap). Excecao:
+                    quando o snapshot tem mediaUrl mas o status ja expirou
+                    (>24h), pintamos um overlay sutil 'Expirou' pra justificar
+                    visualmente porque o tap nao abre — sem isso o user toca
+                    multiple times achando que e bug. */}
                 {mediaUrl ? (
                   <View style={{ width: 44, height: 56, borderRadius: 6, overflow: 'hidden', backgroundColor: '#222' }}>
-                    <Image source={{ uri: mediaUrl }} style={{ width: '100%', height: '100%' }} />
-                    {isVideo ? (
+                    <Image source={{ uri: mediaUrl }} style={{ width: '100%', height: '100%', opacity: isStatusExpired ? 0.55 : 1 }} />
+                    {isVideo && !isStatusExpired ? (
                       <View style={{
                         position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
                         alignItems: 'center', justifyContent: 'center',
@@ -14355,10 +14363,37 @@ export default function ChatConversationScreen() {
                         <IconPlay size={14} color="#fff" />
                       </View>
                     ) : null}
+                    {isStatusExpired ? (
+                      <View style={{
+                        position: 'absolute', left: 0, right: 0, bottom: 0,
+                        backgroundColor: 'rgba(0,0,0,0.62)',
+                        paddingVertical: 2, alignItems: 'center',
+                      }}>
+                        <Text style={{ color: '#fff', fontSize: 8, fontWeight: '700', letterSpacing: 0.3 }} numberOfLines={1}>
+                          {(t('status.expiredShort') !== 'status.expiredShort' ? t('status.expiredShort') : 'EXPIROU')}
+                        </Text>
+                      </View>
+                    ) : null}
                   </View>
                 ) : (
-                  <View style={{ width: 44, height: 56, borderRadius: 6, backgroundColor: st.bg_color || '#6D28D9', alignItems: 'center', justifyContent: 'center' }}>
+                  <View style={{
+                    width: 44, height: 56, borderRadius: 6,
+                    backgroundColor: st.bg_color || '#6D28D9',
+                    alignItems: 'center', justifyContent: 'center',
+                    opacity: isStatusExpired ? 0.55 : 1,
+                  }}>
                     <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Aa</Text>
+                    {isStatusExpired ? (
+                      <View style={{
+                        position: 'absolute', left: 0, right: 0, bottom: 0,
+                        backgroundColor: 'rgba(0,0,0,0.62)',
+                        paddingVertical: 2, alignItems: 'center',
+                      }}>
+                        <Text style={{ color: '#fff', fontSize: 8, fontWeight: '700', letterSpacing: 0.3 }} numberOfLines={1}>
+                          {(t('status.expiredShort') !== 'status.expiredShort' ? t('status.expiredShort') : 'EXPIROU')}
+                        </Text>
+                      </View>
+                    ) : null}
                   </View>
                 )}
                 <View style={{ flex: 1, justifyContent: 'center' }}>
@@ -15528,6 +15563,29 @@ export default function ChatConversationScreen() {
               <IconLock size={12} color={isOwn ? 'rgba(255,255,255,0.85)' : (colors.primary || '#7C3AED')} />
             </View>
           )}
+          {/* audit gap #8 — pin / star surface for long messages. Long-form
+              text (>300 chars) or anything pinned/starred gets a small
+              indicator at the top-LEFT corner so the user can spot pinned
+              context without scrolling to the banner. Top-left avoids the
+              top-right e2e lock above. Skipped on media/sticker bubbles
+              where it would clash with the artwork. */}
+          {(() => {
+            const isText = msg.type === 'text';
+            const longText = isText && (String(msg.content || '').length > 300);
+            const isPinnedHere = !!pinnedMessages.find(p => String(p.id) === String(msg.id));
+            const showStar = !!msg.starred && (longText || isPinnedHere);
+            const showPin  = isPinnedHere && (longText || msg.type !== 'text');
+            const showAny = (longText && (msg.starred || isPinnedHere)) || isPinnedHere;
+            if (!showAny) return null;
+            if (msg.type === 'sticker' || msg.type === 'gif' || msg.type === 'image' || msg.type === 'video') return null;
+            const tint = isOwn ? 'rgba(255,255,255,0.85)' : '#f59e0b';
+            return (
+              <View pointerEvents="none" style={{ position: 'absolute', top: 4, left: 6, opacity: 0.85, zIndex: 2, flexDirection: 'row', gap: 3 }}>
+                {showPin ? <IconPin size={11} color={tint} /> : null}
+                {showStar ? <IconStarFilled size={11} color={tint} /> : null}
+              </View>
+            );
+          })()}
           {/* Forwarded label (above reply, above content) — Telegram-style:
               "↪ Encaminhada de [Nome]" when origin sender is known and not
               the current user. Hide entirely if forwarded_from === currentEmail

@@ -345,7 +345,7 @@ function formatActivityStatus(isOnline, lastSeen, t) {
 const ConversationRow = React.memo(function ConversationRow({
   conversation, colors, onPress, onPressIn, onDelete, onArchive, onMute, onPin, onMarkUnread, onEmail,
   currentEmail, t, isOnline: isOnlineProp, isDark, isLocked, typingUsers,
-  selectionMode, isSelected, onLongPress, onToggleSelect, draftText, noteText, lastSeen,
+  selectionMode, isSelected, onLongPress, onToggleSelect, draftText, draftEditedAt, noteText, lastSeen,
 }) {
   const isGroup = conversation.type === 'group';
   const isChannel = conversation.type === 'channel';
@@ -800,16 +800,40 @@ const ConversationRow = React.memo(function ConversationRow({
                     {t('chat.lockedChat') || 'Chat bloqueado'}
                   </Text>
                 </View>
-              ) : !typingName && draftText ? (
-                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', marginRight: 10 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(220,38,38,0.08)', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1, flex: 1 }}>
-                    <Text style={[s.rowPreview, { color: '#dc2626', fontWeight: '500', flex: 1 }]} numberOfLines={1}>
-                      <Text style={{ color: '#dc2626', fontWeight: '700' }}>{t('chat.draft') || 'Rascunho'}: </Text>
-                      {draftText}
-                    </Text>
+              ) : !typingName && draftText ? (() => {
+                // audit gap #2 — fade red → grey based on draft age. Fresh
+                // (<1h) gets the urgent red treatment users already know
+                // from WhatsApp; older keeps the "draft" semantics but in
+                // muted text + a "há Xh" hint so it doesn't keep shouting
+                // for attention forever.
+                const ageMs = draftEditedAt ? (Date.now() - draftEditedAt) : null;
+                const isFresh = ageMs !== null && ageMs < 3600000; // 1h
+                const ageLabel = (() => {
+                  if (ageMs === null || ageMs < 3600000) return null;
+                  const hours = Math.floor(ageMs / 3600000);
+                  if (hours < 24) return `há ${hours}h`;
+                  const days = Math.floor(hours / 24);
+                  return `há ${days}d`;
+                })();
+                const muted = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.45)';
+                const tint = isFresh ? '#dc2626' : muted;
+                const bg = isFresh
+                  ? 'rgba(220,38,38,0.08)'
+                  : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)');
+                return (
+                  <View style={{ flex: 1, marginRight: 10 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: bg, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1 }}>
+                      <Text style={[s.rowPreview, { color: tint, fontWeight: '500', flex: 1 }]} numberOfLines={1}>
+                        <Text style={{ color: tint, fontWeight: '700' }}>{t('chat.draft') || 'Rascunho'}: </Text>
+                        {draftText}
+                      </Text>
+                    </View>
+                    {ageLabel ? (
+                      <Text style={{ fontSize: 10, color: muted, marginTop: 2, marginLeft: 6 }}>{ageLabel}</Text>
+                    ) : null}
                   </View>
-                </View>
-              ) : typingName ? (
+                );
+              })() : typingName ? (
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, marginRight: 10 }}>
                   <TypingDotsInline color={ACCENT} />
                   <Text style={[s.rowPreview, { color: ACCENT, fontStyle: 'italic', fontWeight: '600', flex: 0 }]} numberOfLines={1}>
@@ -945,6 +969,7 @@ const ConversationRow = React.memo(function ConversationRow({
   if (prev.selectionMode !== next.selectionMode) return false;
   if (prev.isSelected !== next.isSelected) return false;
   if (prev.draftText !== next.draftText) return false;
+  if (prev.draftEditedAt !== next.draftEditedAt) return false;
 
   // Compare conversation properties, not reference
   const prevConv = prev.conversation;
@@ -2723,6 +2748,19 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
 
   const onRefresh = useCallback(() => { setRefreshing(true); loadConversations(false); }, [loadConversations]);
 
+  // Pull-to-refresh sync: when the user pulls from the very top of the list,
+  // negative scrollY translates the StatusStoriesRow downward so the strip
+  // tracks the gesture instead of the spinner appearing in front of a static
+  // strip. Only kicks in for negative offsets (overscroll); regular scroll
+  // leaves the strip in place. Native driver because translateY only.
+  const pullTranslateY = useRef(new Animated.Value(0)).current;
+  const onListScroll = useCallback((e) => {
+    const y = e?.nativeEvent?.contentOffset?.y;
+    if (typeof y !== 'number') return;
+    // Damp by 0.6 so the strip doesn't out-pace the pull (matches iOS feel).
+    pullTranslateY.setValue(y < 0 ? Math.max(y * 0.6, -120) : 0);
+  }, [pullTranslateY]);
+
   const navigateToConversation = useCallback((conv) => {
     // Debounce guard: without this a double-tap pushed two chat-conversation
     // screens onto the stack, so the user had to hit back twice to escape.
@@ -3235,6 +3273,12 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   // map in place so the list shows "Rascunho: ..." immediately without
   // waiting for a re-render of the whole conversations array.
   const [drafts, setDrafts] = useState({});
+  // Tracks when each draft was last edited in this session (audit gap #2 —
+  // draft timestamp relative). Persisted alongside the draft text so the row
+  // can show a stale-draft hint after >1h. Initial hydrate has no real
+  // timestamp; we approximate "old" by leaving it null and only painting
+  // the urgent red color once we see a fresh edit event during the session.
+  const [draftTimes, setDraftTimes] = useState({});
   // Feature C — drafts grouping: collapsible "Rascunhos" section at top
   // when 2+ drafts exist. Default = collapsed if 3+, expanded if exactly 2.
   const [draftsSectionOpen, setDraftsSectionOpen] = useState(true);
@@ -3278,11 +3322,20 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       const { DeviceEventEmitter } = require('react-native');
       const sub = DeviceEventEmitter.addListener('chatyy:draft', (p) => {
         if (!p?.conversationId) return;
+        const cid = String(p.conversationId);
         setDrafts(prev => {
           const next = { ...prev };
           const t = (p.text || '').trim();
-          if (t) next[String(p.conversationId)] = t;
-          else delete next[String(p.conversationId)];
+          if (t) next[cid] = t;
+          else delete next[cid];
+          return next;
+        });
+        // Stamp the edit time on every draft event (audit gap #2) so the row
+        // can fade red→grey as the draft ages past 1h.
+        setDraftTimes(prev => {
+          const next = { ...prev };
+          if ((p.text || '').trim()) next[cid] = Date.now();
+          else delete next[cid];
           return next;
         });
       });
@@ -4055,10 +4108,11 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         onLongPress={() => showLongPressMenu(item)}
         onToggleSelect={() => toggleSelected(item.id)}
         draftText={drafts[String(item.id)] || null}
+        draftEditedAt={draftTimes[String(item.id)] || null}
         noteText={noteText}
       />
     );
-  }, [filter, pinnedCount, isDark, colors, t, handleConversationPress, handleDeleteConversation, handleArchiveConversation, handleMuteConversation, handlePinConversation, handleMarkUnreadConversation, user?.email, lockedIds, unlockedIds, typingUsers, selectionMode, selectedIds, enterSelectionMode, toggleSelected, drafts, notesMap]);
+  }, [filter, pinnedCount, isDark, colors, t, handleConversationPress, handleDeleteConversation, handleArchiveConversation, handleMuteConversation, handlePinConversation, handleMarkUnreadConversation, user?.email, lockedIds, unlockedIds, typingUsers, selectionMode, selectedIds, enterSelectionMode, toggleSelected, drafts, draftTimes, notesMap]);
   // NOTE: presenceVersion removed from deps to prevent 15s flicker cycle
   // isOnline calculated inside ConversationRow using presencesRef directly
 
@@ -4196,9 +4250,13 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         </TouchableOpacity>
       )}
 
-      {/* Status stories (Instagram-style) — only when not searching */}
+      {/* Status stories (Instagram-style) — only when not searching.
+          Wrapped in an Animated.View tied to pullTranslateY so the strip
+          slides down with the pull-to-refresh gesture (audit gap #1). */}
       {!(searchQuery || '').trim() && (
-        <StatusStoriesRow colors={colors} isDark={isDark} user={user} router={router} t={t} setActiveTab={setActiveTab} />
+        <Animated.View style={{ transform: [{ translateY: pullTranslateY }] }}>
+          <StatusStoriesRow colors={colors} isDark={isDark} user={user} router={router} t={t} setActiveTab={setActiveTab} />
+        </Animated.View>
       )}
       {renderArchivedHeader()}
       {/* Contact-discovery banner (WhatsApp pattern) — auto-shown only on
@@ -4554,6 +4612,8 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             />
           }
           extraData={{ typingUsers, selectionMode, lockedIds, unlockedIds, isDark, colors, presenceVersion }}
+          onScroll={onListScroll}
+          scrollEventThrottle={16}
         />
       )}
 

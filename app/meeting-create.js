@@ -68,6 +68,7 @@ export default function MeetingCreateScreen() {
   const [meetingPassword, setMeetingPassword] = useState('');
   const [inviteEmail, setInviteEmail] = useState('');
   const [invitees, setInvitees] = useState([]);
+  const [inviteError, setInviteError] = useState('');
   const [recurrenceOpen, setRecurrenceOpen] = useState(false);
   const [frequency, setFrequency] = useState('none');
   const [untilDate, setUntilDate] = useState('');
@@ -126,11 +127,19 @@ export default function MeetingCreateScreen() {
 
   const addInvitee = useCallback(() => {
     const email = inviteEmail.trim().toLowerCase();
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return;
-    if (invitees.some((i) => i.email === email)) return;
+    if (!email) return;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setInviteError(t('meetingCreate.titleRequired') ? (t('common.invalidEmail') || 'E-mail inválido') : 'Invalid email');
+      return;
+    }
+    if (invitees.some((i) => i.email === email)) {
+      setInviteError(t('common.invalidEmail') || (t('_locale')?.startsWith('pt') ? 'Já adicionado' : 'Already added'));
+      return;
+    }
+    setInviteError('');
     setInvitees((prev) => [...prev, { email, name: '' }]);
     setInviteEmail('');
-  }, [inviteEmail, invitees]);
+  }, [inviteEmail, invitees, t]);
 
   const removeInvitee = useCallback((email) => {
     setInvitees((prev) => prev.filter((i) => i.email !== email));
@@ -383,9 +392,9 @@ export default function MeetingCreateScreen() {
         <Text style={s.label}>{t('meetingCreate.inviteLabel')}</Text>
         <View style={s.inviteRow}>
           <TextInput
-            style={[s.input, { flex: 1, marginBottom: 0 }]}
+            style={[s.input, { flex: 1, marginBottom: 0 }, inviteError && s.inputError]}
             value={inviteEmail}
-            onChangeText={setInviteEmail}
+            onChangeText={(v) => { setInviteEmail(v); if (inviteError) setInviteError(''); }}
             placeholder="participante@email.com"
             placeholderTextColor={colors.textSecondary}
             keyboardType="email-address"
@@ -397,6 +406,7 @@ export default function MeetingCreateScreen() {
             <Text style={s.addBtnText}>{t('meetingCreate.addButton')}</Text>
           </TouchableOpacity>
         </View>
+        {inviteError ? <Text style={s.errorText}>{inviteError}</Text> : null}
         {invitees.map((inv) => (
           <View key={inv.email} style={s.inviteeChip}>
             <Text style={s.inviteeEmail} numberOfLines={1}>{inv.email}</Text>

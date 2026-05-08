@@ -233,19 +233,27 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
   const [newFolderName, setNewFolderName] = useState('');
   const [dragOverFolder, setDragOverFolder] = useState(null);
   const [chatUnread, setChatUnread] = useState(0);
+  const [notifsUnread, setNotifsUnread] = useState(0);
   const [showMoreQuick, setShowMoreQuick] = useState(false);
 
-  // Fetch chat unread count
+  // Fetch chat + notifications unread counts. Two badges users actually scan
+  // for in the rail — Notificações was previously a "dead" entry with no
+  // signal, so users had to open it to find out if anything was waiting.
   useEffect(() => {
     let mounted = true;
-    const fetchChatUnread = async () => {
+    const fetchCounts = async () => {
       try {
-        const r = await api.chatUnreadCount();
-        if (mounted && r.success) setChatUnread(r.data?.count || 0);
+        const [chat, notifs] = await Promise.all([
+          api.chatUnreadCount?.().catch(() => null),
+          api.notificationsUnreadCount?.().catch(() => null),
+        ]);
+        if (!mounted) return;
+        if (chat?.success) setChatUnread(chat.data?.count || 0);
+        if (notifs?.success) setNotifsUnread(notifs.data?.count || notifs.data?.unread || 0);
       } catch {}
     };
-    fetchChatUnread();
-    const interval = setInterval(fetchChatUnread, 30000);
+    fetchCounts();
+    const interval = setInterval(fetchCounts, 30000);
     return () => { mounted = false; clearInterval(interval); };
   }, []);
 
@@ -432,7 +440,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
         // Reclamação do usuário: "abre todas as funções de novo no menu lateral".
         const primary = [
           { label: t('sidebar.search') || 'Buscar', icon: IconSearch, route: '__search__', color: '#7C3AED' },
-          { label: t('notifications.title') || 'Notificações', icon: IconBell, route: '__notifications__', color: '#f59e0b' },
+          { label: t('notifications.title') || 'Notificações', icon: IconBell, route: '__notifications__', color: '#f59e0b', badge: notifsUnread },
           { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', badge: chatUnread },
         ];
         const secondary = [

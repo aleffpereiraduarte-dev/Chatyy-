@@ -238,6 +238,26 @@ function FileCard({ file, colors, onPress, onLongPress, onContextMenu, onStar, t
   const thumbUrl = hasThumb ? (file.thumbnail_url || file.cdn_url || api.fileDownloadUrl(file.id)) : null;
   const typeColors = getTypeColors(file.icon_type, isDark);
   const typeBadge = getFileTypeBadge(file.icon_type);
+
+  // Trash 30-day auto-purge countdown (audit gap #3). Backend stamps
+  // `updated_at` when a file is moved to trash, so we compute days remaining
+  // from that field. Renders red+urgent in the final week, muted otherwise.
+  const trashCountdown = (() => {
+    if (!file.is_trashed) return null;
+    const stamp = file.updated_at || file.deleted_at || file.trashed_at;
+    if (!stamp) return null;
+    const ms = typeof stamp === 'number' ? stamp : Date.parse(stamp);
+    if (!Number.isFinite(ms)) return null;
+    const ageDays = Math.max(0, Math.floor((Date.now() - ms) / 86400000));
+    const remaining = Math.max(0, 30 - ageDays);
+    const urgent = remaining <= 7;
+    const label = remaining <= 0
+      ? (t?.('files.trashExpiring') || 'Será removida em breve')
+      : remaining === 1
+        ? (t?.('files.trashTomorrow') || 'Removida em 1 dia')
+        : `${(t?.('files.trashIn') || 'Removida em')} ${remaining} ${(t?.('files.days') || 'dias')}`;
+    return { label, urgent };
+  })();
   const hoverAnim = useRef(new Animated.Value(0)).current;
 
   const onHoverIn = () => {
@@ -326,6 +346,16 @@ function FileCard({ file, colors, onPress, onLongPress, onContextMenu, onStar, t
               </Text>
             ) : null}
           </View>
+          {trashCountdown ? (
+            <Text style={{
+              fontSize: 11,
+              fontWeight: trashCountdown.urgent ? '700' : '500',
+              color: trashCountdown.urgent ? '#dc2626' : colors.textTertiary,
+              marginTop: 3,
+            }} numberOfLines={1}>
+              {trashCountdown.label}
+            </Text>
+          ) : null}
         </View>
         <TouchableOpacity onPress={onStar} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={styles.starBtn}>
           {file.is_starred === 1 ? (

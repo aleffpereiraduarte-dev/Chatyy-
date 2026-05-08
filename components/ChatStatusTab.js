@@ -16,7 +16,7 @@ import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
 import StatusCamera from './StatusCamera';
 import BrandFab from './BrandFab';
-import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin, IconLink, IconArrowRight, IconArchive } from './Icons';
+import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconRotateCw, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin, IconLink, IconArrowRight, IconArchive } from './Icons';
 import * as api from '../services/api';
 import * as Haptics from 'expo-haptics';
 import { cacheMedia } from '../services/mediaCache';
@@ -1003,6 +1003,58 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   const [drawColor, setDrawColor] = useState('#fff');
   const [drawPaths, setDrawPaths] = useState([]); // [{ points: [{x,y}], color }]
   const currentDrawPath = useRef(null);
+
+  // Composer history — unified undo/redo across stickers + textOverlays +
+  // drawPaths. Stack of snapshots `{ stickers, textOverlays, drawPaths }` so
+  // the user can step back through every edit, not just draw strokes.
+  // Push a snapshot BEFORE every mutation; pop on undo and re-apply.
+  const historyRef = useRef({ past: [], future: [] });
+  const HISTORY_CAP = 30; // hard ceiling so a 5-min editing session can't OOM
+  const pushHistory = useCallback((snapshot) => {
+    const past = historyRef.current.past;
+    past.push(snapshot);
+    if (past.length > HISTORY_CAP) past.shift();
+    // Any new mutation invalidates the redo stack — Photoshop pattern.
+    historyRef.current.future = [];
+  }, []);
+  const [historyVer, setHistoryVer] = useState(0); // bumps to re-render the toolbar's enabled state
+  const snapshot = useCallback(() => ({
+    stickers: stickers.map(s => ({ ...s })),
+    textOverlays: textOverlays.map(t => ({ ...t })),
+    drawPaths: drawPaths.map(p => ({ ...p, points: p.points.map(pt => ({ ...pt })) })),
+  }), [stickers, textOverlays, drawPaths]);
+  const recordEdit = useCallback(() => {
+    pushHistory(snapshot());
+    setHistoryVer(v => v + 1);
+  }, [pushHistory, snapshot]);
+  const undoEdit = useCallback(() => {
+    const past = historyRef.current.past;
+    if (past.length === 0) return;
+    const prev = past.pop();
+    historyRef.current.future.push(snapshot());
+    setStickers(prev.stickers);
+    setTextOverlays(prev.textOverlays);
+    setDrawPaths(prev.drawPaths);
+    setHistoryVer(v => v + 1);
+    try { Haptics.selectionAsync?.(); } catch {}
+  }, [snapshot]);
+  const redoEdit = useCallback(() => {
+    const future = historyRef.current.future;
+    if (future.length === 0) return;
+    const next = future.pop();
+    historyRef.current.past.push(snapshot());
+    setStickers(next.stickers);
+    setTextOverlays(next.textOverlays);
+    setDrawPaths(next.drawPaths);
+    setHistoryVer(v => v + 1);
+    try { Haptics.selectionAsync?.(); } catch {}
+  }, [snapshot]);
+  // Reset history when composer closes — fresh session, fresh stack.
+  const resetHistory = useCallback(() => {
+    historyRef.current = { past: [], future: [] };
+    setHistoryVer(0);
+  }, []);
+
   const [publishing, setPublishing] = useState(false);
   const [sendingReply, setSendingReply] = useState(false);
   const [nativeAudioSrc, setNativeAudioSrc] = useState(null);
@@ -2286,6 +2338,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                 }
                 const w = Math.max(1, Number(gif?.width) || 200);
                 const h = Math.max(1, Number(gif?.height) || 200);
+                recordEdit();
                 setStickers(prev => [...prev, {
                   id: Date.now() + Math.random(),
                   type: 'gif',
@@ -3211,7 +3264,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
             )}
 
             <View style={styles.creatorHeader}>
-              <TouchableOpacity onPress={() => { setCreatorVisible(false); setMusicPickerVisible(false); setPhotoFilter('normal'); setStickers([]); setShowStickerPicker(false); setTextOverlays([]); setShowAddTextInput(false); setDrawMode(false); setDrawPaths([]); }} style={styles.creatorCloseBtn}>
+              <TouchableOpacity onPress={() => { setCreatorVisible(false); setMusicPickerVisible(false); setPhotoFilter('normal'); setStickers([]); setShowStickerPicker(false); setTextOverlays([]); setShowAddTextInput(false); setDrawMode(false); setDrawPaths([]); resetHistory(); }} style={styles.creatorCloseBtn}>
                 <IconX size={26} color="#fff" />
               </TouchableOpacity>
 
@@ -3435,16 +3488,29 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                   >
                     <IconBrush size={22} color="#fff" />
                   </TouchableOpacity>
-                  {drawPaths.length > 0 && (
-                    <TouchableOpacity
-                      onPress={() => setDrawPaths(prev => prev.slice(0, -1))}
-                      style={editorToolBtnStyle}
-                      accessibilityLabel="Desfazer"
-                      accessibilityRole="button"
-                    >
-                      <IconUndo2 size={20} color="#fff" />
-                    </TouchableOpacity>
-                  )}
+                  {/* Undo / Redo — unified across stickers, text overlays,
+                      drawn strokes. The `historyVer` state bumps on every
+                      mutation so this re-renders and reads `historyRef.current`
+                      fresh. Greyed out when the corresponding stack is empty
+                      instead of disappearing — keeps toolbar layout stable. */}
+                  <TouchableOpacity
+                    onPress={undoEdit}
+                    style={[editorToolBtnStyle, { opacity: historyRef.current.past.length === 0 ? 0.35 : 1 }]}
+                    accessibilityLabel="Desfazer"
+                    accessibilityRole="button"
+                    disabled={historyRef.current.past.length === 0}
+                  >
+                    <IconUndo2 size={20} color="#fff" />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={redoEdit}
+                    style={[editorToolBtnStyle, { opacity: historyRef.current.future.length === 0 ? 0.35 : 1 }]}
+                    accessibilityLabel="Refazer"
+                    accessibilityRole="button"
+                    disabled={historyRef.current.future.length === 0}
+                  >
+                    <IconRotateCw size={20} color="#fff" />
+                  </TouchableOpacity>
                 </View>
               )}
 
@@ -3468,6 +3534,10 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                   onMoveShouldSetResponder={() => drawMode}
                   onResponderGrant={(e) => {
                     if (!drawMode) return;
+                    // Snapshot BEFORE the stroke starts so undo collapses the
+                    // whole stroke, not point-by-point. recordEdit captures
+                    // the pre-stroke state; the move handler appends.
+                    recordEdit();
                     const { locationX, locationY } = e.nativeEvent;
                     currentDrawPath.current = { points: [{ x: locationX, y: locationY }], color: drawColor };
                   }}
@@ -3518,6 +3588,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                       <TouchableOpacity onPress={() => {
                         if (newOverlayText.trim()) {
                           const colors = ['#fff', '#FFD700', '#FF6B6B', '#7C3AED', '#10B981', '#3B82F6'];
+                          recordEdit();
                           setTextOverlays(prev => [...prev, {
                             id: Date.now(), text: newOverlayText.trim(),
                             x: SCREEN_WIDTH / 2 - 60, y: SCREEN_HEIGHT / 3,
@@ -3570,6 +3641,10 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                             return;
                           }
                           setShowStickerPicker(false);
+                          // Snapshot BEFORE the sticker drop so a single undo
+                          // removes it cleanly. recordEdit captures current
+                          // state; the mutation below replaces it.
+                          recordEdit();
                           if (s.key === 'poll') {
                             setStickers(prev => [...prev, { id: Date.now(), type: 'poll', x: 40, y: 200, question: 'Sim ou Não?', optionA: 'Sim', optionB: 'Não' }]);
                           } else if (s.key === 'question') {
@@ -3646,6 +3721,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                               if (!isValidStickerUrl(linkPromptUrl)) return;
                               const url = String(linkPromptUrl || '').trim();
                               const label = String(linkPromptLabel || '').trim();
+                              recordEdit();
                               setStickers(prev => [...prev, {
                                 id: Date.now(),
                                 type: 'link',
@@ -3675,6 +3751,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
                       {['😂','❤️','🔥','👏','🎉','😍','🥺','💀','🤩','😎','🥳','💯','🙌','✨','💕','🦋','🌈','⭐','🎵','📍','⏰','🗓️'].map(em => (
                         <TouchableOpacity key={em} onPress={() => {
+                          recordEdit();
                           setStickers(prev => [...prev, { id: Date.now() + Math.random(), emoji: em, x: 80 + Math.random() * 100, y: 100 + Math.random() * 200 }]);
                           setShowStickerPicker(false);
                         }} style={{ width: 38, height: 38, alignItems: 'center', justifyContent: 'center' }}>
