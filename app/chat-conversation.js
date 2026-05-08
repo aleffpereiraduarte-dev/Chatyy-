@@ -22423,13 +22423,15 @@ const styles = StyleSheet.create({
     marginVertical: 14,
   },
   dateText: {
-    fontSize: 11.5, fontWeight: '600', letterSpacing: 0.2,
+    fontSize: 11.5, fontWeight: '600', letterSpacing: 0.3,
     paddingHorizontal: 14, paddingVertical: 6,
     borderRadius: 14, overflow: 'hidden',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.08)',
     ...Platform.select({
       ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 4 },
       android: { elevation: 1 },
-      web: { boxShadow: '0 1px 4px rgba(0,0,0,0.05)' },
+      web: { boxShadow: '0 1px 4px rgba(0,0,0,0.05)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' },
     }),
   },
   systemMsg: { alignItems: 'center', marginVertical: 8, paddingHorizontal: Spacing.lg },
@@ -22485,29 +22487,30 @@ const styles = StyleSheet.create({
   replyName: { fontSize: 13.5, fontWeight: '700', letterSpacing: -0.1, marginBottom: 2 },
   replyText: { fontSize: 13, lineHeight: 17, marginTop: 1, opacity: 0.85 },
   bubble: {
-    // Telegram-level polish: cantos ~14 (mais sutil que 18), tail mais
-    // marcante (4 em vez de 6), padding mais compacto, sombra mais leve.
-    borderRadius: 14, paddingHorizontal: 11,
+    // Telegram-level polish: cantos ~16 (mais soft que 14), tail mais
+    // marcante (4 em vez de 6), padding mais compacto, sombra com profundidade
+    // — ant. opacity 0.06/radius 3 era invisível, agora dá um lift sutil.
+    borderRadius: 16, paddingHorizontal: 11,
     paddingTop: 6, paddingBottom: 5,
     minWidth: 82,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 3 },
-      android: { elevation: 1 },
-      web: { boxShadow: '0 1px 2px rgba(0,0,0,0.06)' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 6 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 2px 6px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04)' },
     }),
   },
   bubbleWithReply: { minWidth: 230 },
   bubbleOwn: {
-    borderTopLeftRadius: 14, borderTopRightRadius: 14,
-    borderBottomLeftRadius: 14, borderBottomRightRadius: 4,
+    borderTopLeftRadius: 16, borderTopRightRadius: 16,
+    borderBottomLeftRadius: 16, borderBottomRightRadius: 4,
   },
   bubbleOther: {
-    borderTopLeftRadius: 14, borderTopRightRadius: 14,
-    borderBottomLeftRadius: 4, borderBottomRightRadius: 14,
+    borderTopLeftRadius: 16, borderTopRightRadius: 16,
+    borderBottomLeftRadius: 4, borderBottomRightRadius: 16,
     borderWidth: 0, borderColor: 'transparent',
   },
   bubbleDeleted: { opacity: 0.55, paddingHorizontal: 12, paddingVertical: 8 },
-  msgText: { fontSize: 15.5, lineHeight: 20.5, letterSpacing: -0.01 },
+  msgText: { fontSize: 15.5, lineHeight: 20.5, letterSpacing: -0.05 },
   // Time + tick row. Always one line inside the bubble. Minimum width is
   // enforced by bubble.minWidth so the row never wraps and the V never
   // "falls behind" the bubble when the bubble is narrow.
@@ -22521,7 +22524,7 @@ const styles = StyleSheet.create({
     minHeight: 14,
   },
   editedLabel: { fontSize: 10, fontStyle: 'italic', opacity: 0.55 },
-  msgTime: { fontSize: 11, fontWeight: '400', letterSpacing: 0, opacity: 0.6, flexShrink: 0 },
+  msgTime: { fontSize: 10.5, fontWeight: '500', letterSpacing: 0.3, opacity: 0.55, flexShrink: 0 },
   videoOverlayAbsolute: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     alignItems: 'center', justifyContent: 'center',
