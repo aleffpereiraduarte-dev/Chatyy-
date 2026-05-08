@@ -979,6 +979,29 @@ function SettingsScreenInner() {
               </View>
               <Text style={{ color: colors.textTertiary, fontSize: 20 }}>›</Text>
             </TouchableOpacity>
+
+            {/* Alterar número de telefone (SIM swap recovery, WhatsApp pattern).
+                Migrates the account to a NEW phone while keeping all chats /
+                contacts / handle. Routes to /change-phone for the multi-step
+                flow (confirm old → pick new → OTP → success). */}
+            <TouchableOpacity
+              style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
+              onPress={() => router.push('/change-phone')}
+              activeOpacity={0.65}
+            >
+              <View style={[s.settingInfo, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
+                <IconPhone size={18} color={colors.primary} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.settingLabel, { color: colors.text }]}>
+                    {t('settings.changePhone') || 'Alterar número de telefone'}
+                  </Text>
+                  <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                    {t('settings.changePhoneDesc') || 'Migre sua conta para um novo número mantendo seus chats e contatos.'}
+                  </Text>
+                </View>
+              </View>
+              <Text style={{ color: colors.textTertiary, fontSize: 20 }}>›</Text>
+            </TouchableOpacity>
           </View>
         )}
 

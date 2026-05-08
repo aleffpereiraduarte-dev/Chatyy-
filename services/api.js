@@ -2860,6 +2860,23 @@ export async function verifyPhoneCheck(phone, code) {
   return apiCall('verify_phone_check', { phone, code }, 'POST');
 }
 
+// Phone NUMBER CHANGE (SIM swap recovery, WhatsApp pattern). Authenticated
+// flow that swaps an active account's phone while keeping every chat /
+// contact / handle. Three-call dance:
+//   phoneChangeRequest — sends OTP to the NEW phone, persists pending flag
+//   phoneChangeVerify  — confirms OTP, swaps verified_phone +
+//                        chat_phone_registry, fan-outs a system DM
+//   phoneChangeCancel  — drops the pending flag if user backs out
+export async function phoneChangeRequest(newPhone) {
+  return apiCall('phone_change_request', { new_phone: newPhone }, 'POST');
+}
+export async function phoneChangeVerify(newPhone, code) {
+  return apiCall('phone_change_verify', { new_phone: newPhone, code }, 'POST');
+}
+export async function phoneChangeCancel() {
+  return apiCall('phone_change_cancel', {}, 'POST');
+}
+
 export async function chatBlockUser(email) {
   return apiCall('chat_block_user', { email }, 'POST');
 }
@@ -3439,6 +3456,30 @@ export async function chatLeaveChannel(conversationId) {
 }
 export async function chatChannelInfo(conversationId) {
   return apiCall('chat_channel_info', { conversation_id: conversationId });
+}
+
+// Public channel discovery (Telegram-style)
+export async function chatChannelCreatePublic(conversationId, handle, opts = {}) {
+  return apiCall('chat_channel_create_public', {
+    conversation_id: conversationId,
+    handle,
+    category: opts.category || '',
+    description: opts.description || '',
+  }, 'POST');
+}
+export async function chatDiscoverPublic(opts = {}) {
+  const params = {};
+  if (opts.category) params.category = opts.category;
+  if (opts.q) params.q = opts.q;
+  if (opts.sort) params.sort = opts.sort;
+  return apiCall('chat_discover_public', params);
+}
+export async function chatChannelJoin(conversationIdOrHandle) {
+  // Accepts either a numeric conv id or an @handle string.
+  const params = (typeof conversationIdOrHandle === 'number')
+    ? { conversation_id: conversationIdOrHandle }
+    : { handle: String(conversationIdOrHandle || '').replace(/^@/, '') };
+  return apiCall('chat_channel_join', params, 'POST');
 }
 
 // Media gallery
@@ -4480,6 +4521,18 @@ export async function feedUserPosts(email, page = 1) {
 
 export async function feedHashtagPosts(tag, page = 1, limit = 20) {
   return apiCall('feed_hashtag_posts', { tag, page, limit });
+}
+
+// ─── Chat hashtag trending + search (Telegram-style) ───
+// chat_hashtag_trending returns { tags: [{hashtag, mentions, last_used}, ...] }
+// scoped to PUBLIC channels (discoverable=true) over the last 7 days.
+// chat_hashtag_search returns recent messages tagged with `tag` from public
+// channels (limit 50 server-side).
+export async function chatHashtagTrending(limit = 20) {
+  return apiCall('chat_hashtag_trending', { limit }, 'POST');
+}
+export async function chatHashtagSearch(tag) {
+  return apiCall('chat_hashtag_search', { tag: String(tag || '').replace(/^#/, '') }, 'POST');
 }
 
 export async function vacationGet() {

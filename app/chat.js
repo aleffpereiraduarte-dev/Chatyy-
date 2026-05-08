@@ -258,8 +258,53 @@ function ChatHub() {
   // whenever the drawer opens — no need to keep this hot in the
   // background since the badges only matter when the drawer is visible.
   const [appsBadges, setAppsBadges] = useState({});
+  // Missed-call badge for the bottom-bar "Ligações" tab. Derived from the
+  // local call history cache (any unread missed call) plus an opportunistic
+  // fetch — keeps the dot live without spinning a network call on every
+  // render. Cleared when the user opens the Calls tab.
+  const [missedCallBadge, setMissedCallBadge] = useState(0);
 
   const closeAppsDrawer = useCallback(() => setShowAppsDrawer(false), []);
+
+  // Compute missed-call count from cached call history; fallback to API
+  // when the cache is empty. Runs on mount and whenever activeTab changes
+  // — opening the calls tab resets it (user has seen them).
+  React.useEffect(() => {
+    let cancelled = false;
+    const compute = async () => {
+      let count = 0;
+      try {
+        const { getCallHistoryCached } = require('../components/ChatCallsTab');
+        const cached = (typeof getCallHistoryCached === 'function') ? getCallHistoryCached() : [];
+        // A row is considered "unread missed" when type === 'missed' and
+        // either read === false or no read field at all (legacy rows).
+        count = (cached || []).reduce((acc, c) => {
+          if (c?.type !== 'missed') return acc;
+          if (c?.read === true || c?.read === 1) return acc;
+          return acc + 1;
+        }, 0);
+      } catch {}
+      if (count === 0) {
+        try {
+          const api = require('../services/api');
+          if (api.callsMissedCount) {
+            const r = await api.callsMissedCount().catch(() => null);
+            count = Number(r?.data?.missed || r?.data?.count || 0);
+          }
+        } catch {}
+      }
+      if (!cancelled) setMissedCallBadge(count);
+    };
+    compute();
+    return () => { cancelled = true; };
+  }, [activeTab]);
+
+  // Clear the badge as soon as the user lands on the Calls tab — they're
+  // looking at the list, so the surfaced "you have missed calls" hint has
+  // done its job.
+  React.useEffect(() => {
+    if (activeTab === 'calls' && missedCallBadge > 0) setMissedCallBadge(0);
+  }, [activeTab, missedCallBadge]);
 
   // Refresh badge counts on drawer open. Pulls a single quick endpoint
   // that returns { email_unread, notifications_unread, calls_missed }
@@ -810,6 +855,7 @@ function ChatHub() {
               active={activeTab === 'calls'}
               onPress={() => handleTabPress('calls')}
               isDark={isDark}
+              badge={missedCallBadge}
             />
             <TabBarItem
               icon={(active) => <IconAppsTab size={22} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}

@@ -54,8 +54,13 @@ export default function GroupCallScreen() {
   // origin extrai só o host:port — antes mantinha o path do BASE_URL e
   // gerava URLs tipo `/api/livekit-room.html` que não existem.
   const origin = (() => { try { return new URL(BASE_URL).origin; } catch { return BASE_URL; } })();
+  // Pass features=raisehand to the LiveKit room HTML so the hosted UI knows
+  // to render the raise-hand button (LiveKit metadata-based; gracefully
+  // ignored by older /livekit-room.html builds that don't read the param).
+  // Mirrors the WebRTC mesh raise-hand surfaced in /call so users get the
+  // same primitive whether they fall back to mesh or use the SFU path.
   const pageUrl = token
-    ? `${origin}/livekit-room.html?token=${encodeURIComponent(token)}&url=${encodeURIComponent(livekitUrl || 'wss://chatyy.com.br:7880')}&room=${encodeURIComponent(roomName)}&video=${video === '1' ? '1' : '0'}`
+    ? `${origin}/livekit-room.html?token=${encodeURIComponent(token)}&url=${encodeURIComponent(livekitUrl || 'wss://chatyy.com.br:7880')}&room=${encodeURIComponent(roomName)}&video=${video === '1' ? '1' : '0'}&features=raisehand,noise`
     : null;
 
   if (err) {
@@ -113,6 +118,23 @@ export default function GroupCallScreen() {
           try {
             const msg = JSON.parse(evt.nativeEvent.data);
             if (msg.type === 'leave') router.back();
+            // 'raise_hand' / 'lower_hand' from the LiveKit room HTML are
+            // forwarded through the WS so peers on the mesh side (older
+            // builds, audio-only etc.) see the same indicator. Defensive:
+            // we don't depend on these; the mesh build broadcasts its own
+            // call_hand_raise events directly.
+            if (msg.type === 'raise_hand' || msg.type === 'lower_hand') {
+              try {
+                const ws = require('../services/websocket').default;
+                if (ws?.isConnected) ws._send({
+                  type: 'call_hand_raise',
+                  call_id: msg.call_id || roomName,
+                  conversation_id: conversation_id,
+                  raised: msg.type === 'raise_hand',
+                  name: msg.name,
+                });
+              } catch {}
+            }
           } catch {}
         }}
       />

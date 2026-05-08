@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react'
 import {
   View, Text, TouchableOpacity, StyleSheet, Modal, Image,
   useWindowDimensions, Animated, PanResponder, Platform, ActivityIndicator,
-  ScrollView,
+  ScrollView, TextInput,
 } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -102,7 +102,18 @@ function IconSun({ size = 22, color = '#fff' }) {
 
 // ── Constants ──
 
-const TABS = ['crop', 'rotate', 'filters', 'adjust'];
+// Tab order: spatial transforms first (crop/rotate), then color (filters/adjust),
+// then on-top overlays (text/sticker/blur). Overlays only get baked into the
+// output on web (canvas path) for now — native flatten would need
+// react-native-view-shot, marked TODO in the save fn.
+const TABS = ['crop', 'rotate', 'filters', 'adjust', 'text', 'sticker', 'blur'];
+
+// Pen/text colors — small palette per the design brief (3-4 colors).
+const PEN_COLORS = ['#ffffff', '#FF3B30', '#FFCC00', '#0A84FF'];
+
+// Stickers panel — basic emoji set. Tapping inserts the glyph centered
+// onto the photo; user can drag it via PanResponder.
+const STICKER_EMOJI = ['😀', '😂', '😍', '🥳', '🔥', '✨', '❤️', '👍', '👏', '🎉', '💯', '⭐'];
 
 const CROP_RATIOS = [
   { label: 'photos.free', value: null },
@@ -125,6 +136,49 @@ const FILTERS = [
 
 const HANDLE_SIZE = 28;
 const MIN_CROP = 40;
+
+// ── DraggableOverlay ──
+// Wraps a positioned absolute element with a PanResponder so the user can
+// drag text/sticker/blur items around the photo. When `active`, renders a
+// thin selection outline + a small × delete button. Children are typed
+// freely so this works for any overlay variant.
+function DraggableOverlay({ responder, active, onDelete, style, children }) {
+  return (
+    <View
+      {...(responder?.panHandlers || {})}
+      style={[
+        {
+          position: 'absolute',
+          padding: 4,
+          borderWidth: active ? 1 : 0,
+          borderColor: 'rgba(255,255,255,0.7)',
+          borderStyle: 'dashed',
+          borderRadius: 4,
+        },
+        style,
+      ]}
+    >
+      {children}
+      {active && (
+        <TouchableOpacity
+          onPress={onDelete}
+          style={{
+            position: 'absolute',
+            top: -10, right: -10,
+            width: 20, height: 20, borderRadius: 10,
+            backgroundColor: 'rgba(0,0,0,0.85)',
+            alignItems: 'center', justifyContent: 'center',
+            borderWidth: 1, borderColor: 'rgba(255,255,255,0.5)',
+            zIndex: 30,
+          }}
+          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+        >
+          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700', lineHeight: 13 }}>×</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+}
 
 // ── Main Component ──
 
@@ -149,9 +203,24 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
   const [selectedRatio, setSelectedRatio] = useState(null); // null = free
   const [dragging, setDragging] = useState(null); // 'tl','tr','bl','br','move' or null
 
+  // Overlay state — text, stickers, blur regions. Each item carries
+  // a position in display-pixel coordinates; the save path scales them
+  // to source pixels using the same dispW/dispH math as crop. New items
+  // get a unique id so they can be selected/dragged/deleted independently.
+  // text: { id, x, y, value, color, size }
+  const [textItems, setTextItems] = useState([]);
+  // sticker: { id, x, y, emoji, size }
+  const [stickerItems, setStickerItems] = useState([]);
+  // blur: { id, x, y, w, h, intensity } (intensity 0-1 → CSS blur radius)
+  const [blurRegions, setBlurRegions] = useState([]);
+  const [activeOverlayId, setActiveOverlayId] = useState(null);
+  const [textInputValue, setTextInputValue] = useState('');
+  const [textColor, setTextColor] = useState(PEN_COLORS[0]);
+
   // Refs for pan tracking
   const dragStartRef = useRef(null);
   const cropStartRef = useRef(null);
+  const overlayDragStartRef = useRef(null);
 
   // Image display area
   const toolbarH = 120;
@@ -196,6 +265,12 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
       setSelectedRatio(null);
       setImageLoaded(false);
       setSaving(false);
+      setTextItems([]);
+      setStickerItems([]);
+      setBlurRegions([]);
+      setActiveOverlayId(null);
+      setTextInputValue('');
+      setTextColor(PEN_COLORS[0]);
     }
   }, [visible]);
 
@@ -309,6 +384,90 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
   const brPan = useMemo(() => createHandleResponder('br'), [createHandleResponder]);
   const movePan = useMemo(() => createHandleResponder('move'), [createHandleResponder]);
 
+  // ── Overlay helpers (text / sticker / blur) ──
+
+  const genId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+  const addTextItem = useCallback(() => {
+    const value = (textInputValue || '').trim();
+    if (!value) return;
+    const id = genId();
+    setTextItems(prev => [...prev, {
+      id,
+      // Drop new text at center of crop area (display coords)
+      x: cropPixels.x + cropPixels.w / 2 - 60,
+      y: cropPixels.y + cropPixels.h / 2 - 16,
+      value,
+      color: textColor,
+      size: 28,
+    }]);
+    setActiveOverlayId(id);
+    setTextInputValue('');
+  }, [textInputValue, textColor, cropPixels]);
+
+  const addStickerItem = useCallback((emoji) => {
+    const id = genId();
+    setStickerItems(prev => [...prev, {
+      id,
+      x: cropPixels.x + cropPixels.w / 2 - 28,
+      y: cropPixels.y + cropPixels.h / 2 - 28,
+      emoji,
+      size: 56,
+    }]);
+    setActiveOverlayId(id);
+  }, [cropPixels]);
+
+  const addBlurRegion = useCallback(() => {
+    const id = genId();
+    const w = Math.min(160, cropPixels.w * 0.5);
+    const h = Math.min(160, cropPixels.h * 0.5);
+    setBlurRegions(prev => [...prev, {
+      id,
+      x: cropPixels.x + cropPixels.w / 2 - w / 2,
+      y: cropPixels.y + cropPixels.h / 2 - h / 2,
+      w, h,
+      intensity: 0.7,
+    }]);
+    setActiveOverlayId(id);
+  }, [cropPixels]);
+
+  const removeOverlay = useCallback((id) => {
+    setTextItems(prev => prev.filter(t => t.id !== id));
+    setStickerItems(prev => prev.filter(s => s.id !== id));
+    setBlurRegions(prev => prev.filter(b => b.id !== id));
+    if (activeOverlayId === id) setActiveOverlayId(null);
+  }, [activeOverlayId]);
+
+  // PanResponder factory for moving an overlay item by id+kind.
+  // Mirrors the crop-handle pattern: capture starting pos on grant, then
+  // translate by gesture delta on each move event.
+  const createOverlayResponder = useCallback((id, kind) => {
+    return PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => {
+        setActiveOverlayId(id);
+        const list = kind === 'text' ? textItems : kind === 'sticker' ? stickerItems : blurRegions;
+        const item = list.find(i => i.id === id);
+        if (item) overlayDragStartRef.current = { x: item.x, y: item.y };
+      },
+      onPanResponderMove: (_, gs) => {
+        const start = overlayDragStartRef.current;
+        if (!start) return;
+        const nx = start.x + gs.dx;
+        const ny = start.y + gs.dy;
+        if (kind === 'text') {
+          setTextItems(prev => prev.map(t => t.id === id ? { ...t, x: nx, y: ny } : t));
+        } else if (kind === 'sticker') {
+          setStickerItems(prev => prev.map(s => s.id === id ? { ...s, x: nx, y: ny } : s));
+        } else {
+          setBlurRegions(prev => prev.map(b => b.id === id ? { ...b, x: nx, y: ny } : b));
+        }
+      },
+      onPanResponderRelease: () => { overlayDragStartRef.current = null; },
+    });
+  }, [textItems, stickerItems, blurRegions]);
+
   // ── Rotate / Flip ──
 
   const rotateLeft = useCallback(() => setRotation(r => (r + 270) % 360), []);
@@ -326,6 +485,10 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
     setBrightness(0);
     setCropRect({ x: 0, y: 0, w: 1, h: 1 });
     setSelectedRatio(null);
+    setTextItems([]);
+    setStickerItems([]);
+    setBlurRegions([]);
+    setActiveOverlayId(null);
   }, []);
 
   // ── Save ──
@@ -334,17 +497,28 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
     if (!imageUri) return;
     setSaving(true);
     try {
+      // Web: canvas path bakes EVERYTHING in one pass (transforms + filter
+      // + overlays). It's cheaper than ImageManipulator → re-load → overlay.
+      if (Platform.OS === 'web') {
+        const result = await saveWithCanvas();
+        if (result) { onSave?.(result); return; }
+      }
+
       let ImageManipulator = null;
       try { ImageManipulator = require('expo-image-manipulator'); } catch {}
 
       if (!ImageManipulator?.manipulateAsync) {
-        // On web without ImageManipulator, try canvas approach
-        if (Platform.OS === 'web') {
-          const result = await saveWithCanvas();
-          if (result) { onSave?.(result); return; }
-        }
         onSave?.(imageUri);
         return;
+      }
+
+      const hasOverlays = textItems.length + stickerItems.length + blurRegions.length > 0;
+      // TODO(native overlay flatten): use react-native-view-shot to capture
+      // the rendered overlay layer and composite onto ImageManipulator output.
+      // For now native saves transforms+filter only — overlays are visible
+      // in-editor but skipped on save. Web canvas path is fully functional.
+      if (hasOverlays && __DEV__) {
+        console.warn('[PhotoEditor] overlays only baked on web for now; native flatten TODO.');
       }
 
       const actions = [];
@@ -391,7 +565,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
     } finally {
       setSaving(false);
     }
-  }, [imageUri, rotation, flipH, flipV, cropRect, imageSize, selectedFilter, onSave]);
+  }, [imageUri, rotation, flipH, flipV, cropRect, imageSize, selectedFilter, onSave, textItems, stickerItems, blurRegions]);
 
   // Canvas-based save for web
   const saveWithCanvas = useCallback(async () => {
@@ -471,12 +645,76 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
         ctx.putImageData(imgData, 0, 0);
       }
 
+      // ── Bake overlays (text + stickers + blur regions) ──
+      // Overlays are stored in display-pixel coords (relative to displayDims).
+      // Convert them to canvas coords by:
+      //   1. subtracting the crop origin (in display px)
+      //   2. multiplying by srcW/displayDims.w (display→source scale)
+      // Both ops use the SAME math the crop already used, so positions match
+      // exactly what the user saw in the editor preview.
+      if (textItems.length || stickerItems.length || blurRegions.length) {
+        const dispScaleX = displayDims.w > 0 ? srcW / displayDims.w : 1;
+        const dispScaleY = displayDims.h > 0 ? srcH / displayDims.h : 1;
+        const cropOriginX = cropRect.x * displayDims.w;
+        const cropOriginY = cropRect.y * displayDims.h;
+
+        // Blur first (under text/stickers). Implement via re-sampling: copy
+        // a region, scale-down then scale-up, draw back. Cheap pixelate
+        // effect — visually similar to a Gaussian blur for moderate areas.
+        for (const b of blurRegions) {
+          const bx = (b.x - cropOriginX) * dispScaleX;
+          const by = (b.y - cropOriginY) * dispScaleY;
+          const bw = b.w * dispScaleX;
+          const bh = b.h * dispScaleY;
+          if (bw <= 0 || bh <= 0) continue;
+          // Pixelate: shrink to ~1/16 then grow back with imageSmoothingEnabled=false
+          const tmp = document.createElement('canvas');
+          const pixSize = Math.max(4, Math.round(Math.min(bw, bh) / 16));
+          tmp.width = Math.max(1, Math.round(bw / pixSize));
+          tmp.height = Math.max(1, Math.round(bh / pixSize));
+          const tctx = tmp.getContext('2d');
+          tctx.imageSmoothingEnabled = false;
+          tctx.drawImage(canvas, bx, by, bw, bh, 0, 0, tmp.width, tmp.height);
+          ctx.save();
+          ctx.imageSmoothingEnabled = false;
+          ctx.drawImage(tmp, 0, 0, tmp.width, tmp.height, bx, by, bw, bh);
+          ctx.restore();
+        }
+
+        // Text — draw with shadow for legibility on busy photos
+        for (const t of textItems) {
+          const tx = (t.x - cropOriginX) * dispScaleX;
+          const ty = (t.y - cropOriginY) * dispScaleY;
+          const fontPx = (t.size || 28) * Math.min(dispScaleX, dispScaleY);
+          ctx.save();
+          ctx.font = `700 ${fontPx}px sans-serif`;
+          ctx.textBaseline = 'top';
+          ctx.shadowColor = 'rgba(0,0,0,0.6)';
+          ctx.shadowBlur = fontPx * 0.15;
+          ctx.fillStyle = t.color || '#fff';
+          ctx.fillText(t.value, tx, ty);
+          ctx.restore();
+        }
+
+        // Stickers (emoji glyphs)
+        for (const st of stickerItems) {
+          const sx2 = (st.x - cropOriginX) * dispScaleX;
+          const sy2 = (st.y - cropOriginY) * dispScaleY;
+          const stSize = (st.size || 56) * Math.min(dispScaleX, dispScaleY);
+          ctx.save();
+          ctx.font = `${stSize}px sans-serif`;
+          ctx.textBaseline = 'top';
+          ctx.fillText(st.emoji, sx2, sy2);
+          ctx.restore();
+        }
+      }
+
       return canvas.toDataURL('image/jpeg', 0.92);
     } catch (err) {
       console.warn('Canvas save error:', err);
       return null;
     }
-  }, [imageUri, rotation, flipH, flipV, cropRect, brightness, selectedFilter]);
+  }, [imageUri, rotation, flipH, flipV, cropRect, brightness, selectedFilter, textItems, stickerItems, blurRegions, displayDims]);
 
   // ── Filter overlay for current filter ──
   const currentFilter = useMemo(() => FILTERS.find(f => f.key === selectedFilter), [selectedFilter]);
@@ -513,13 +751,31 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
     rotate: <IconRotateCw size={20} color={activeTab === 'rotate' ? colors.primary : '#aaa'} />,
     filters: <IconFilters size={20} color={activeTab === 'filters' ? colors.primary : '#aaa'} />,
     adjust: <IconSliders size={20} color={activeTab === 'adjust' ? colors.primary : '#aaa'} />,
+    text: <Text style={{ fontSize: 16, fontWeight: '900', color: activeTab === 'text' ? colors.primary : '#aaa' }}>T</Text>,
+    sticker: <Text style={{ fontSize: 18 }}>{activeTab === 'sticker' ? '😀' : '🙂'}</Text>,
+    blur: (
+      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={activeTab === 'blur' ? colors.primary : '#aaa'} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+        <Circle cx="6" cy="12" r="2" />
+        <Circle cx="12" cy="12" r="2" />
+        <Circle cx="18" cy="12" r="2" />
+        <Circle cx="9" cy="6" r="1.5" />
+        <Circle cx="15" cy="6" r="1.5" />
+        <Circle cx="9" cy="18" r="1.5" />
+        <Circle cx="15" cy="18" r="1.5" />
+      </Svg>
+    ),
   };
 
+  // Reuse photos.* keys when present, fall back to English label inline (no
+  // new i18n keys per task constraints).
   const tabLabels = {
     crop: t('photos.crop'),
     rotate: t('photos.rotate'),
     filters: t('photos.filters'),
     adjust: t('photos.adjust'),
+    text: t('photos.text') || 'Text',
+    sticker: t('photos.sticker') || 'Sticker',
+    blur: t('photos.blur') || 'Blur',
   };
 
   return (
@@ -699,6 +955,57 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
                   </View>
                 </>
               )}
+
+              {/* Overlay layer — text, stickers, blur regions. Always
+                  rendered (independent of active tab) so the user can see
+                  prior work while continuing on a different tab. Each
+                  child gets its own PanResponder via DraggableOverlay. */}
+              {blurRegions.map(b => (
+                <DraggableOverlay
+                  key={b.id}
+                  responder={createOverlayResponder(b.id, 'blur')}
+                  active={activeOverlayId === b.id}
+                  onDelete={() => removeOverlay(b.id)}
+                  style={{
+                    left: b.x, top: b.y, width: b.w, height: b.h,
+                    // CSS blur on web preview; native shows a translucent
+                    // box (real pixelate happens at save time on web only).
+                    ...(Platform.OS === 'web'
+                      ? { backdropFilter: `blur(${(b.intensity || 0.7) * 12}px)`, WebkitBackdropFilter: `blur(${(b.intensity || 0.7) * 12}px)` }
+                      : { backgroundColor: 'rgba(255,255,255,0.45)' }
+                    ),
+                  }}
+                />
+              ))}
+              {textItems.map(it => (
+                <DraggableOverlay
+                  key={it.id}
+                  responder={createOverlayResponder(it.id, 'text')}
+                  active={activeOverlayId === it.id}
+                  onDelete={() => removeOverlay(it.id)}
+                  style={{ left: it.x, top: it.y }}
+                >
+                  <Text style={{
+                    color: it.color || '#fff',
+                    fontSize: it.size || 28,
+                    fontWeight: '800',
+                    textShadowColor: 'rgba(0,0,0,0.6)',
+                    textShadowOffset: { width: 0, height: 1 },
+                    textShadowRadius: 4,
+                  }}>{it.value}</Text>
+                </DraggableOverlay>
+              ))}
+              {stickerItems.map(it => (
+                <DraggableOverlay
+                  key={it.id}
+                  responder={createOverlayResponder(it.id, 'sticker')}
+                  active={activeOverlayId === it.id}
+                  onDelete={() => removeOverlay(it.id)}
+                  style={{ left: it.x, top: it.y }}
+                >
+                  <Text style={{ fontSize: it.size || 56 }}>{it.emoji}</Text>
+                </DraggableOverlay>
+              ))}
             </View>
           ) : (
             <ActivityIndicator size="large" color="#fff" />
@@ -784,6 +1091,64 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
               </ScrollView>
             )}
 
+            {activeTab === 'text' && (
+              <View style={s.textPanel}>
+                <View style={s.textInputRow}>
+                  <TextInput
+                    value={textInputValue}
+                    onChangeText={setTextInputValue}
+                    placeholder={t('photos.text') || 'Type text…'}
+                    placeholderTextColor="#888"
+                    style={s.textInput}
+                    onSubmitEditing={addTextItem}
+                    returnKeyType="done"
+                    maxLength={140}
+                  />
+                  <TouchableOpacity
+                    onPress={addTextItem}
+                    disabled={!textInputValue.trim()}
+                    style={[s.textAddBtn, !textInputValue.trim() && { opacity: 0.4 }]}
+                  >
+                    <Text style={s.textAddBtnLabel}>+</Text>
+                  </TouchableOpacity>
+                </View>
+                <View style={s.colorRow}>
+                  {PEN_COLORS.map(c => (
+                    <TouchableOpacity
+                      key={c}
+                      onPress={() => setTextColor(c)}
+                      style={[s.colorSwatch, { backgroundColor: c, borderWidth: textColor === c ? 2 : 1 }]}
+                    />
+                  ))}
+                </View>
+              </View>
+            )}
+
+            {activeTab === 'sticker' && (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.stickerRow}>
+                {STICKER_EMOJI.map((em) => (
+                  <TouchableOpacity
+                    key={em}
+                    onPress={() => addStickerItem(em)}
+                    style={s.stickerBtn}
+                  >
+                    <Text style={{ fontSize: 28 }}>{em}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+
+            {activeTab === 'blur' && (
+              <View style={s.blurPanel}>
+                <TouchableOpacity onPress={addBlurRegion} style={s.blurAddBtn}>
+                  <Text style={s.blurAddBtnLabel}>+ {t('photos.blur') || 'Blur region'}</Text>
+                </TouchableOpacity>
+                <Text style={s.blurHint}>
+                  {t('photos.blurHint') || 'Drag the region over what you want to hide.'}
+                </Text>
+              </View>
+            )}
+
             {activeTab === 'adjust' && (
               <View style={s.adjustPanel}>
                 <View style={s.adjustRow}>
@@ -821,8 +1186,15 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
             )}
           </View>
 
-          {/* Tab bar */}
-          <View style={s.tabBar}>
+          {/* Tab bar — horizontal scroll fits 7 tabs without cramping the
+              labels on phones. justifyContent on the contentContainer keeps
+              tabs centered when the row IS narrow enough to fit. */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={s.tabBarScroll}
+            contentContainerStyle={s.tabBar}
+          >
             {TABS.map((tab) => (
               <TouchableOpacity
                 key={tab}
@@ -835,7 +1207,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
                 </Text>
               </TouchableOpacity>
             ))}
-          </View>
+          </ScrollView>
         </View>
       </View>
     </Modal>
@@ -963,13 +1335,18 @@ const s = StyleSheet.create({
     minHeight: 70,
     justifyContent: 'center',
   },
+  tabBarScroll: {
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.1)',
+  },
   tabBar: {
     flexDirection: 'row',
     justifyContent: 'space-around',
+    paddingHorizontal: 8,
     paddingVertical: 10,
     paddingBottom: 20,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255,255,255,0.1)',
+    gap: 4,
+    flexGrow: 1,
   },
   tabItem: {
     alignItems: 'center',
@@ -1128,5 +1505,89 @@ const s = StyleSheet.create({
   sliderTapArea: {
     ...StyleSheet.absoluteFillObject,
     zIndex: -1,
+  },
+  // Text overlay panel
+  textPanel: {
+    paddingHorizontal: 16,
+    paddingVertical: 4,
+  },
+  textInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  textInput: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 14,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+  },
+  textAddBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#7C3AED',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  textAddBtnLabel: {
+    color: '#fff',
+    fontSize: 22,
+    fontWeight: '700',
+    lineHeight: 22,
+  },
+  colorRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 10,
+    paddingHorizontal: 4,
+  },
+  colorSwatch: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderColor: '#fff',
+  },
+  // Sticker panel
+  stickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    gap: 6,
+  },
+  stickerBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Blur panel
+  blurPanel: {
+    paddingHorizontal: 16,
+    paddingVertical: 4,
+    alignItems: 'center',
+    gap: 6,
+  },
+  blurAddBtn: {
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    borderRadius: 18,
+    backgroundColor: '#7C3AED',
+  },
+  blurAddBtnLabel: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  blurHint: {
+    color: '#aaa',
+    fontSize: 11,
+    textAlign: 'center',
   },
 });

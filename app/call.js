@@ -5,7 +5,14 @@ import {
   Modal, Pressable, ScrollView, ActivityIndicator,
 } from 'react-native';
 import { IconSmile, IconSparkles } from '../components/Icons';
+import Svg, { Path as SvgPath, Circle as SvgCircleHand, Line as SvgLine } from 'react-native-svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+// Lazy haptic — not all platforms have it; we want a tap on noise/hand toggles
+let _hapticTap = () => {};
+try {
+  const _h = require('../services/haptics');
+  if (_h?.tap) _hapticTap = (intensity) => { try { _h.tap(intensity || 'light'); } catch {} };
+} catch {}
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
@@ -124,6 +131,17 @@ export default function CallScreen() {
   const isGroupCall = params.groupCall === '1' || params.groupCall === 'true';
   const [groupPeers, setGroupPeers] = useState(new Map());
   const groupPeersRef = useRef(new Map()); // { email -> { pc, stream, name } }
+  // Raise-hand state — group call only.
+  // `handRaised` is local; `raisedHands` maps participant email → { name, ts }
+  // Auto-lower fires after 60s; the timer ref lets the user lower manually
+  // and reset cleanly. The host (call starter, isCaller===true) sees the
+  // list as a banner; everyone else just sees the per-tile overlay on the
+  // raised participant.
+  const [handRaised, setHandRaised] = useState(false);
+  const [raisedHands, setRaisedHands] = useState(new Map());
+  const raisedHandsRef = useRef(new Map());
+  const handRaiseTimerRef = useRef(null);
+  const handLowerTimersRef = useRef(new Map()); // email → timeout id (for remote auto-lower)
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
   const recordingStartTimeRef = useRef(null);
@@ -2319,8 +2337,63 @@ export default function CallScreen() {
       }
       setNoiseCancellation(newVal);
     }
+    _hapticTap('light');
     resetControlsTimer();
   }, [noiseCancellation, resetControlsTimer]);
+
+  // Toggle raise-hand (group calls only). Broadcasts via the existing
+  // call_reaction-style signaling channel; mirrors locally for the user's
+  // own tile, then auto-lowers after 60s. Manual re-tap clears the timer.
+  const handleToggleHandRaise = useCallback(() => {
+    if (!isGroupCall) return;
+    const next = !handRaised;
+    setHandRaised(next);
+    _hapticTap(next ? 'medium' : 'light');
+    try {
+      sendSignaling('call_hand_raise', {
+        call_id: callId,
+        conversation_id: conversationId,
+        raised: next,
+        name: user?.name || (user?.email || '').split('@')[0],
+      });
+    } catch {}
+    // Update local raisedHands so the host's banner reflects ourselves too.
+    try {
+      const me = (user?.email || '').toLowerCase();
+      if (me) {
+        if (next) {
+          raisedHandsRef.current.set(me, { name: user?.name || me.split('@')[0], ts: Date.now(), self: true });
+        } else {
+          raisedHandsRef.current.delete(me);
+        }
+        setRaisedHands(new Map(raisedHandsRef.current));
+      }
+    } catch {}
+    if (handRaiseTimerRef.current) { try { clearTimeout(handRaiseTimerRef.current); } catch {} handRaiseTimerRef.current = null; }
+    if (next) {
+      handRaiseTimerRef.current = setTimeout(() => {
+        // Self-lower after 60s — re-enter the toggle so signaling fires.
+        setHandRaised(false);
+        try {
+          sendSignaling('call_hand_raise', {
+            call_id: callId,
+            conversation_id: conversationId,
+            raised: false,
+            name: user?.name || (user?.email || '').split('@')[0],
+          });
+        } catch {}
+        try {
+          const me = (user?.email || '').toLowerCase();
+          if (me) {
+            raisedHandsRef.current.delete(me);
+            setRaisedHands(new Map(raisedHandsRef.current));
+          }
+        } catch {}
+        handRaiseTimerRef.current = null;
+      }, 60000);
+    }
+    resetControlsTimer();
+  }, [isGroupCall, handRaised, callId, conversationId, user, sendSignaling, resetControlsTimer]);
 
   // Toggle video (supports upgrading audio-only call to video)
   const handleToggleVideo = useCallback(async () => {
@@ -3113,11 +3186,53 @@ export default function CallScreen() {
         });
       });
 
+      // call_hand_raise — group-call only; remote participant raised or
+      // lowered their hand. We mirror into raisedHandsRef so the host's
+      // banner re-renders, and add a per-email auto-lower timer in case
+      // the WS lower event never arrives (network drop, app backgrounded).
+      const unsubHandRaise = mailWs.on('call_hand_raise', (data) => {
+        if (data?.call_id && data.call_id !== callId) return;
+        const fromEmail = ((data?.email || data?.from_email || '') + '').toLowerCase();
+        if (!fromEmail) return;
+        // Skip own echo — Go WS broadcasts to the sender's other sessions.
+        try {
+          const me = (user?.email || '').toLowerCase();
+          if (me && fromEmail === me) return;
+        } catch {}
+        const raised = !!data?.raised;
+        // Clear any existing auto-lower timer for this email — either we're
+        // lowering now or starting a fresh 60s window.
+        const existingTimer = handLowerTimersRef.current.get(fromEmail);
+        if (existingTimer) { try { clearTimeout(existingTimer); } catch {} handLowerTimersRef.current.delete(fromEmail); }
+        if (raised) {
+          raisedHandsRef.current.set(fromEmail, {
+            name: data?.name || fromEmail.split('@')[0],
+            ts: Date.now(),
+          });
+          // Defensive auto-lower in case the WS lower event drops.
+          const timer = setTimeout(() => {
+            raisedHandsRef.current.delete(fromEmail);
+            setRaisedHands(new Map(raisedHandsRef.current));
+            handLowerTimersRef.current.delete(fromEmail);
+          }, 60000);
+          handLowerTimersRef.current.set(fromEmail, timer);
+        } else {
+          raisedHandsRef.current.delete(fromEmail);
+        }
+        setRaisedHands(new Map(raisedHandsRef.current));
+      });
+
       return () => {
         try { unsub(); } catch {}
         try { unsubReaction(); } catch {}
         try { unsubMuted(); } catch {}
         try { unsubVideoReq(); } catch {}
+        try { unsubHandRaise(); } catch {}
+        try {
+          handLowerTimersRef.current.forEach(t => { try { clearTimeout(t); } catch {} });
+          handLowerTimersRef.current.clear();
+        } catch {}
+        try { if (handRaiseTimerRef.current) { clearTimeout(handRaiseTimerRef.current); handRaiseTimerRef.current = null; } } catch {}
       };
     } catch {}
   }, [callId]);
@@ -3259,6 +3374,25 @@ export default function CallScreen() {
               </View>
             )}
           </Animated.View>
+
+          {/* Raised-hand banner — only the host (call starter) sees the
+              full list. Compact chip per raised hand, ordered by ts. Hides
+              automatically when raisedHands clears. */}
+          {isGroupCall && isCaller && raisedHands.size > 0 && peerConnected && !ended && (
+            <View style={styles.handRaiseBanner}>
+              <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" style={{ marginRight: 6 }}>
+                <SvgPath d="M9 11V5.5a1.5 1.5 0 113 0V11M12 11V4a1.5 1.5 0 113 0v8M15 11V5a1.5 1.5 0 113 0v8.5M9 11V8.5a1.5 1.5 0 10-3 0V14a6 6 0 0012 0v-1.5" stroke="#fff" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+              </Svg>
+              <Text style={styles.handRaiseBannerText} numberOfLines={1}>
+                {(() => {
+                  const arr = Array.from(raisedHands.entries()).sort((a, b) => (a[1].ts || 0) - (b[1].ts || 0));
+                  const names = arr.map(([, v]) => v.name || 'Participante').slice(0, 3).join(', ');
+                  const extra = arr.length > 3 ? ` +${arr.length - 3}` : '';
+                  return `${names}${extra} · ${t('call.handRaisedSuffix') || 'mão levantada'}`;
+                })()}
+              </Text>
+            </View>
+          )}
 
           {/* Recording indicator banner */}
           {(isRecording || remoteIsRecording) && peerConnected && !ended && (
@@ -3411,6 +3545,31 @@ export default function CallScreen() {
               )}
               <Animated.View style={{ transform: [{ scale: peerConnected ? 1 : pulseAnim }] }}>
                 <AvatarCircle name={callerName} email={contactEmail} size={140} />
+                {/* Raised-hand overlay — appears on the contact's avatar
+                    when they (or, in 1:1, the only remote) have their hand
+                    up. In group calls each peer's tile would render its own;
+                    here we surface raisedHands.has(contactEmail). */}
+                {(() => {
+                  if (!isGroupCall) return null;
+                  const key = (contactEmail || '').toLowerCase();
+                  if (!key || !raisedHands.has(key)) return null;
+                  return (
+                    <View style={styles.handRaiseOverlay}>
+                      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
+                        <SvgPath d="M9 11V5.5a1.5 1.5 0 113 0V11M12 11V4a1.5 1.5 0 113 0v8M15 11V5a1.5 1.5 0 113 0v8.5M9 11V8.5a1.5 1.5 0 10-3 0V14a6 6 0 0012 0v-1.5" stroke="#fff" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+                      </Svg>
+                    </View>
+                  );
+                })()}
+                {/* When the local user has their hand raised, mirror the
+                    same chip near the avatar so they see their own state. */}
+                {isGroupCall && handRaised && (
+                  <View style={[styles.handRaiseOverlay, { right: -8, top: -8, backgroundColor: '#fbbf24' }]}>
+                    <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
+                      <SvgPath d="M9 11V5.5a1.5 1.5 0 113 0V11M12 11V4a1.5 1.5 0 113 0v8M15 11V5a1.5 1.5 0 113 0v8.5M9 11V8.5a1.5 1.5 0 10-3 0V14a6 6 0 0012 0v-1.5" stroke="#fff" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+                    </Svg>
+                  </View>
+                )}
               </Animated.View>
               <Text style={styles.centerName}>{callerName}</Text>
               <Text style={[styles.centerStatus, connectionFailed && { color: '#ef4444' }]}>{statusText}</Text>
@@ -3619,6 +3778,64 @@ export default function CallScreen() {
               </View>
               <Text style={styles.controlLabel} numberOfLines={1}>{audioMuted ? (t('call.unmute') || 'Ativar') : (t('call.mute') || 'Mudo')}</Text>
             </TouchableOpacity>
+
+            {/* Noise suppression toggle — surfaces the existing
+                noiseSuppression constraint (was buried in the More sheet).
+                Distinct icon for on (waveform line) vs off (waveform with
+                a slash) so the state is glance-able. */}
+            <TouchableOpacity
+              style={styles.controlBtn}
+              onPress={handleToggleNoiseCancellation}
+              activeOpacity={0.7}
+              accessibilityLabel={noiseCancellation ? (t('call.noiseOn') || 'Ruído ON') : (t('call.noiseOff') || 'Ruído OFF')}
+              accessibilityRole="button"
+            >
+              <View style={[styles.controlBtnCircle, noiseCancellation && styles.controlBtnCircleActive]}>
+                <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
+                  {/* Waveform — symmetric vertical bars resembling audio levels */}
+                  <SvgLine x1="4" y1="10" x2="4" y2="14" stroke="#fff" strokeWidth={2} strokeLinecap="round" />
+                  <SvgLine x1="8" y1="7" x2="8" y2="17" stroke="#fff" strokeWidth={2} strokeLinecap="round" />
+                  <SvgLine x1="12" y1="4" x2="12" y2="20" stroke="#fff" strokeWidth={2} strokeLinecap="round" />
+                  <SvgLine x1="16" y1="7" x2="16" y2="17" stroke="#fff" strokeWidth={2} strokeLinecap="round" />
+                  <SvgLine x1="20" y1="10" x2="20" y2="14" stroke="#fff" strokeWidth={2} strokeLinecap="round" />
+                  {!noiseCancellation && (
+                    <SvgLine x1="3" y1="21" x2="21" y2="3" stroke="#ef4444" strokeWidth={2.4} strokeLinecap="round" />
+                  )}
+                </Svg>
+              </View>
+              <Text style={styles.controlLabel} numberOfLines={1}>
+                {noiseCancellation ? (t('call.noiseOn') || 'Ruído ON') : (t('call.noiseOff') || 'Ruído OFF')}
+              </Text>
+            </TouchableOpacity>
+
+            {/* Raise hand — group call only. Toggles handRaised state and
+                signals call_hand_raise to peers. ✋ palette + waving lines
+                kept in plain SVG (no emoji per project guidelines). */}
+            {isGroupCall && (
+              <TouchableOpacity
+                style={styles.controlBtn}
+                onPress={handleToggleHandRaise}
+                activeOpacity={0.7}
+                accessibilityLabel={handRaised ? (t('call.handLower') || 'Abaixar mão') : (t('call.handRaise') || 'Levantar mão')}
+                accessibilityRole="button"
+              >
+                <View style={[styles.controlBtnCircle, handRaised && styles.controlBtnCircleActive]}>
+                  <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
+                    {/* Stylized open palm: thumb + 4 fingers */}
+                    <SvgPath
+                      d="M9 11V5.5a1.5 1.5 0 113 0V11M12 11V4a1.5 1.5 0 113 0v8M15 11V5a1.5 1.5 0 113 0v8.5M9 11V8.5a1.5 1.5 0 10-3 0V14a6 6 0 0012 0v-1.5"
+                      stroke="#fff"
+                      strokeWidth={1.8}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </Svg>
+                </View>
+                <Text style={styles.controlLabel} numberOfLines={1}>
+                  {handRaised ? (t('call.handLower') || 'Abaixar') : (t('call.handRaise') || 'Mão')}
+                </Text>
+              </TouchableOpacity>
+            )}
 
             {/* Screen share — sempre visivel. Antes era gated por
                 peerConnected, dando sensacao de "botao quebrado" durante o
@@ -4209,6 +4426,44 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 13,
     fontWeight: '500',
+  },
+  // Raise-hand overlay sits in the avatar's top-right corner — bright
+  // amber circle so it pops on both video bg and dark gradient bg.
+  handRaiseOverlay: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#f59e0b',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#000',
+    shadowColor: '#000',
+    shadowOpacity: 0.35,
+    shadowRadius: 4,
+    zIndex: 8,
+  },
+  handRaiseBanner: {
+    position: 'absolute',
+    top: 70,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(245, 158, 11, 0.95)',
+    borderRadius: 18,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    maxWidth: '85%',
+    zIndex: 17,
+  },
+  handRaiseBannerText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '600',
+    flexShrink: 1,
   },
   videoRequestSheet: {
     position: 'absolute',

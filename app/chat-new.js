@@ -114,6 +114,16 @@ export default function ChatNewScreen() {
   const [showInviteInput, setShowInviteInput] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
 
+  // Public channel discovery (Telegram-style)
+  const [publicChannels, setPublicChannels] = useState([]);
+  const [discoverCategory, setDiscoverCategory] = useState('all');
+  const [searchChannelResults, setSearchChannelResults] = useState([]);
+  const [joiningChannelId, setJoiningChannelId] = useState(null);
+
+  // Trending hashtags (Telegram-style "Tópicos populares") — only public
+  // channels feed this list, so privacy is preserved at the SQL layer.
+  const [trendingTags, setTrendingTags] = useState([]);
+
   // QR modal
   const [showQrModal, setShowQrModal] = useState(false);
   const [qrMode, setQrMode] = useState('show'); // 'show' or 'scan'
@@ -282,6 +292,90 @@ export default function ChatNewScreen() {
     return () => { alive = false; if (unsub) unsub(); };
   }, [user?.email, refreshSuggestions]);
 
+  // ---- Public channel discovery (Telegram-style) ----
+  // Hard-coded categories in pt-BR; no new i18n keys per task constraint —
+  // all labels use t() with inline fallback so existing locales still work.
+  const DISCOVER_CATEGORIES = useMemo(() => ([
+    { key: 'all',      label: t('chat.discoverAll')      || 'Tudo' },
+    { key: 'news',     label: t('chat.discoverNews')     || 'Notícias' },
+    { key: 'tech',     label: t('chat.discoverTech')     || 'Tech' },
+    { key: 'sports',   label: t('chat.discoverSports')   || 'Esportes' },
+    { key: 'music',    label: t('chat.discoverMusic')    || 'Música' },
+    { key: 'business', label: t('chat.discoverBusiness') || 'Negócios' },
+    { key: 'other',    label: t('chat.discoverOther')    || 'Outros' },
+  ]), [t]);
+
+  const loadPublicChannels = useCallback((category = 'all', q = '') => {
+    if (!api.chatDiscoverPublic) { setPublicChannels([]); return; }
+    const opts = { sort: 'members_desc' };
+    if (category && category !== 'all') opts.category = category;
+    if (q && q.trim()) opts.q = q.trim();
+    api.chatDiscoverPublic(opts).then(r => {
+      if (r?.success) {
+        const list = r.data?.channels || [];
+        setPublicChannels(list);
+      }
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => { loadPublicChannels(discoverCategory, ''); }, [discoverCategory, loadPublicChannels]);
+
+  // Trending hashtags loader — runs once on mount (and when discoverCategory
+  // toggles, since the discovery surface is the entry point and we want
+  // fresh tags whenever the user lands here). Failure is silent: empty list
+  // just hides the row without a console-noise error.
+  useEffect(() => {
+    if (!api.chatHashtagTrending) return;
+    let cancelled = false;
+    api.chatHashtagTrending(20).then(r => {
+      if (cancelled) return;
+      if (r?.success && Array.isArray(r.data?.tags)) {
+        setTrendingTags(r.data.tags);
+      }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleOpenHashtag = useCallback((tag) => {
+    const bare = String(tag || '').replace(/^#/, '').trim();
+    if (!bare) return;
+    try {
+      router.push({ pathname: '/hashtag/[tag]', params: { tag: bare } });
+    } catch {}
+  }, [router]);
+
+  const handleJoinChannel = useCallback(async (channel) => {
+    if (!channel?.id) return;
+    if (joiningChannelId) return;
+    setJoiningChannelId(channel.id);
+    try {
+      const r = await api.chatChannelJoin(Number(channel.id));
+      if (r?.success) {
+        const cid = r.data?.conversation_id || channel.id;
+        router.replace({
+          pathname: '/chat-conversation',
+          params: { id: String(cid), name: channel.name || '', type: channel.type || 'channel' },
+        });
+      } else {
+        safeAlert(t('common.error') || 'Erro', r?.message || 'Falha ao entrar no canal');
+      }
+    } catch (e) {
+      safeAlert(t('common.error') || 'Erro', String(e?.message || e));
+    } finally {
+      setJoiningChannelId(null);
+    }
+  }, [joiningChannelId, router, t]);
+
+  // Open the channel preview (read-only / direct entry — same screen).
+  // The chat-conversation screen handles preview vs. member view.
+  const handleOpenChannel = useCallback((channel) => {
+    if (!channel?.id) return;
+    router.push({
+      pathname: '/chat-conversation',
+      params: { id: String(channel.id), name: channel.name || '', type: channel.type || 'channel' },
+    });
+  }, [router]);
+
   // Merge contacts for display list
   // WhatsApp-like: on native, ONLY show phone contacts that matched + recent chats.
   // On web (no phone access), show directory users as fallback.
@@ -381,6 +475,7 @@ export default function ChatNewScreen() {
     clearTimeout(searchTimeout.current);
     if (!text || text.length < 1) {
       setSearchResults([]);
+      setSearchChannelResults([]);
       return;
     }
 
@@ -440,6 +535,18 @@ export default function ChatNewScreen() {
     const looksLikePhone = digitsOnly.length >= 8 && digitsOnly.length === qClean.replace(/[\s+()\-.]/g, '').length;
 
     searchTimeout.current = setTimeout(async () => {
+      // Also search public channels in parallel — discovery feed extends the
+      // search bar (per task spec). Result fed into a separate state used by
+      // the Descobrir canais section above the contacts list.
+      try {
+        if (api.chatDiscoverPublic) {
+          api.chatDiscoverPublic({ q: text, sort: 'members_desc' }).then(r => {
+            if (r?.success) setSearchChannelResults(r.data?.channels || []);
+            else setSearchChannelResults([]);
+          }).catch(() => setSearchChannelResults([]));
+        }
+      } catch {}
+
       try {
         // Build parallel API calls; include @username search if query starts with @
         const promises = [
@@ -808,6 +915,155 @@ export default function ChatNewScreen() {
     }
   }, [allChatyyUsers]);
 
+  // ---- Render public channel discovery card ----
+  const renderChannelCard = (channel) => {
+    const handleStr = channel.public_handle ? `@${channel.public_handle}` : '';
+    const memberCount = Number(channel.member_count || 0);
+    const memberLabel = (t('chat.memberCount') || '{n} membros').replace('{n}', String(memberCount));
+    const desc = (channel.description || '').toString().trim();
+    return (
+      <View
+        key={`channel-${channel.id}`}
+        style={[sty.channelCard, { borderBottomColor: colors.border }]}
+      >
+        <TouchableOpacity
+          onPress={() => handleOpenChannel(channel)}
+          activeOpacity={0.7}
+          style={{ flexDirection: 'row', flex: 1, alignItems: 'center', gap: 12 }}
+        >
+          <AvatarCircle email={channel.public_handle || String(channel.id)} name={channel.name || handleStr} size={48} colors={colors} />
+          <View style={{ flex: 1 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={[sty.contactName, { color: colors.text }]} numberOfLines={1}>
+                {channel.name || handleStr}
+              </Text>
+              {handleStr ? (
+                <Text style={{ fontSize: 12, color: '#7C3AED', fontWeight: '600' }} numberOfLines={1}>
+                  {handleStr}
+                </Text>
+              ) : null}
+            </View>
+            <Text style={[sty.contactSub, { color: colors.textTertiary }]} numberOfLines={1}>
+              {memberLabel}
+            </Text>
+            {desc ? (
+              <Text style={[sty.contactAbout, { color: colors.textSecondary, fontStyle: 'normal' }]} numberOfLines={2}>
+                {desc}
+              </Text>
+            ) : null}
+          </View>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[sty.inviteBtn, { backgroundColor: '#7C3AED' }]}
+          onPress={() => handleJoinChannel(channel)}
+          disabled={joiningChannelId === channel.id}
+          activeOpacity={0.7}
+        >
+          {joiningChannelId === channel.id ? (
+            <ActivityIndicator size={14} color="#fff" />
+          ) : (
+            <Text style={sty.inviteBtnText}>{t('chat.join') || 'Entrar'}</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  // ---- Render Descobrir canais block (header + chips + list) ----
+  // ---- Tópicos populares (trending hashtags) horizontal chip row ----
+  // Renders nothing when the trending list is empty — server returns []
+  // when no hashtags have been used in public channels yet, so the UI
+  // gracefully hides instead of showing an empty row.
+  const renderTrendingTagsBlock = () => {
+    if (!trendingTags || trendingTags.length === 0) return null;
+    return (
+      <View style={{ paddingTop: 6, paddingBottom: 8 }}>
+        <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingBottom: 4 }]}>
+          <View style={sty.sectionAccentLine} />
+          <Text style={[sty.sectionTitle, { color: colors.textSecondary }]}>
+            {t('chat.trendingTopicsTitle') || 'Tópicos populares'}
+          </Text>
+        </View>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: Spacing.md, gap: 8 }}
+          style={{ flexGrow: 0 }}
+        >
+          {trendingTags.map((it, i) => {
+            const tag = String(it.hashtag || '').replace(/^#/, '');
+            if (!tag) return null;
+            return (
+              <TouchableOpacity
+                key={'th_' + i + '_' + tag}
+                onPress={() => handleOpenHashtag(tag)}
+                style={[
+                  sty.discoverChip,
+                  { backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7', borderColor: colors.border },
+                ]}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel={'#' + tag}
+              >
+                <Text style={{ color: '#7C3AED', fontSize: 13, fontWeight: '700' }}>
+                  {'#' + tag}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
+    );
+  };
+
+  const renderDiscoverBlock = (channels) => {
+    if (!channels || channels.length === 0) return null;
+    return (
+      <View style={{ paddingTop: 4, paddingBottom: 8 }}>
+        <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingBottom: 4 }]}>
+          <View style={sty.sectionAccentLine} />
+          <Text style={[sty.sectionTitle, { color: colors.textSecondary }]}>
+            {t('chat.discoverChannelsTitle') || 'Descobrir canais'}
+          </Text>
+        </View>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: Spacing.md, gap: 8 }}
+          style={{ flexGrow: 0, marginBottom: 6 }}
+        >
+          {DISCOVER_CATEGORIES.map(cat => {
+            const active = discoverCategory === cat.key;
+            return (
+              <TouchableOpacity
+                key={cat.key}
+                onPress={() => setDiscoverCategory(cat.key)}
+                style={[
+                  sty.discoverChip,
+                  active
+                    ? { backgroundColor: '#7C3AED', borderColor: '#7C3AED' }
+                    : { backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7', borderColor: colors.border },
+                ]}
+                activeOpacity={0.7}
+              >
+                <Text style={{
+                  color: active ? '#fff' : colors.textSecondary,
+                  fontSize: 13,
+                  fontWeight: '600',
+                }}>
+                  {cat.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+        <View>
+          {channels.map(renderChannelCard)}
+        </View>
+      </View>
+    );
+  };
+
   // ---- Render recent contacts (horizontal scroll) ----
   const renderRecentItem = ({ item }) => (
     <TouchableOpacity
@@ -1165,6 +1421,19 @@ export default function ChatNewScreen() {
             data={searchResults}
             keyExtractor={(item, i) => item.email || String(i)}
             renderItem={renderContact}
+            ListHeaderComponent={(searchChannelResults && searchChannelResults.length > 0)
+              ? (
+                <View style={{ paddingTop: 4, paddingBottom: 8 }}>
+                  <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingBottom: 4 }]}>
+                    <View style={sty.sectionAccentLine} />
+                    <Text style={[sty.sectionTitle, { color: colors.textSecondary }]}>
+                      {t('chat.discoverChannelsTitle') || 'Descobrir canais'}
+                    </Text>
+                  </View>
+                  {searchChannelResults.map(renderChannelCard)}
+                </View>
+              )
+              : null}
             contentContainerStyle={sty.contactList}
             ListEmptyComponent={(() => {
               // Phone-shaped query with no matches → this number isn't on Chatyy yet.
@@ -1242,6 +1511,17 @@ export default function ChatNewScreen() {
               stickySectionHeadersEnabled
               ListHeaderComponent={
                 <View>
+                  {/* Tópicos populares — Telegram-style trending hashtags
+                      from public channels (last 7 days). Renders nothing
+                      when the server returns no tags yet. */}
+                  {mode === 'direct' && !pickMode && renderTrendingTagsBlock()}
+
+                  {/* Descobrir canais — Telegram-style public channel feed.
+                      Only on the default "direct" mode (when picking who to
+                      chat with). Hidden in group/channel-create flows where
+                      the user is selecting members. */}
+                  {mode === 'direct' && !pickMode && renderDiscoverBlock(publicChannels)}
+
                   {/* Contacts-on-Chatyy count chip — sits above "Pessoas que você
                       pode conhecer" so users immediately see how much of their
                       phone book overlaps with the network. */}
@@ -1752,6 +2032,18 @@ const sty = StyleSheet.create({
     elevation: 3,
   },
   emptyActionText: { color: '#fff', fontSize: 14, fontWeight: '600' },
+
+  // Public channel discovery
+  discoverChip: {
+    paddingHorizontal: 14, height: 32,
+    borderRadius: 16, borderWidth: 1,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  channelCard: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: Spacing.md, paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth, gap: 12,
+  },
 
   sectionHeader: {
     flexDirection: 'row', alignItems: 'center',

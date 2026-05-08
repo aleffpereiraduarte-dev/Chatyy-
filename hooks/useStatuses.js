@@ -43,6 +43,41 @@ try { _mailWs = require('../services/websocket').default; } catch {}
 let _cacheMedia = null;
 try { _cacheMedia = require('../services/mediaCache').cacheMedia; } catch {}
 
+// Allowed CDN hosts for GIF stickers. We deliberately keep the list narrow:
+// Tenor + Giphy are the two providers GifPicker.js queries (chatSearchGifs →
+// Tenor by default), and chatyy R2 covers any GIF the user uploaded directly.
+// Anything else is rejected at composer time and at viewer-render time so a
+// malicious payload can't smuggle a tracking pixel via the gif sticker path.
+//
+// We compare against the URL's hostname (lowercased) and accept exact matches
+// or any subdomain of an allowed root. e.g. "media1.tenor.com" matches "tenor.com".
+export const ALLOWED_GIF_HOSTS = [
+  'tenor.com',
+  'giphy.com',
+  'media.tenor.com',
+  'media.giphy.com',
+  'chatyy.com.br',
+  'media.chatyy.com.br',
+  'r2.chatyy.com.br',
+];
+
+export function isAllowedGifUrl(raw) {
+  try {
+    const s = String(raw || '').trim();
+    if (!s) return false;
+    if (!/^https?:\/\//i.test(s)) return false;
+    // URL parser is reliable enough cross-platform; falls through on invalid.
+    const u = new URL(s);
+    const host = (u.hostname || '').toLowerCase();
+    if (!host) return false;
+    for (const allowed of ALLOWED_GIF_HOSTS) {
+      if (host === allowed) return true;
+      if (host.endsWith('.' + allowed)) return true;
+    }
+    return false;
+  } catch { return false; }
+}
+
 // MMKV preload runs ONCE per JS bundle. Subsequent hook mounts get the
 // already-parsed object. Keeps cold start instant on native.
 let _mmkvPreloaded = null;

@@ -25,7 +25,11 @@ import StoryRingAvatar from './status/StoryRingAvatar';
 // loadStatuses + MMKV preload + fingerprint diff that used to live below;
 // the local mine/others state stays as a mirror so the optimistic mutation
 // paths (mark-viewed, delete) keep working unchanged.
-import useStatuses from '../hooks/useStatuses';
+import useStatuses, { isAllowedGifUrl } from '../hooks/useStatuses';
+// GifPickerPanel mounts inline inside the sticker picker when the user taps
+// the GIF tile. It already does Tenor search + mediaCache prefetching; we
+// just hand it an onSelect that creates a new sticker with type='gif'.
+import GifPickerPanel from './GifPicker';
 import { BASE_URL, chatCreate, chatSend, chatConversations, statusViewers, emailToDisplayName, searchDeezerMusic } from '../services/api';
 // (cache helpers moved into useStatuses hook)
 // Lazy import to avoid circular dependency / initialization errors on web
@@ -359,6 +363,49 @@ function DraggableSticker({ sticker, onMove, onRemove }) {
         ))}
       </View>
     );
+    // GIF sticker — composer preview. Renders as an animated WebP/GIF via
+    // expo-image on native (which supports animated formats) or <img> on web.
+    // Width/height come from the GIF metadata so the dragged frame is sized
+    // proportionally — capped at 200x200 in the composer so a tall GIF
+    // doesn't dominate the canvas (the viewer rendering uses the stored
+    // dimensions, this is just composer sizing).
+    if (sticker.type === 'gif' && sticker.url) {
+      const maxDim = 200;
+      const w = Math.max(1, Number(sticker.width) || 200);
+      const h = Math.max(1, Number(sticker.height) || 200);
+      const ratio = w / h;
+      const renderW = ratio >= 1 ? Math.min(maxDim, w) : Math.min(maxDim, w * (maxDim / h));
+      const renderH = ratio >= 1 ? Math.min(maxDim, h * (maxDim / w)) : Math.min(maxDim, h);
+      if (Platform.OS === 'web') {
+        return (
+          <img
+            src={sticker.url}
+            alt=""
+            style={{ width: renderW, height: renderH, borderRadius: 8, objectFit: 'cover' }}
+          />
+        );
+      }
+      // Native: prefer expo-image (animated webp/gif support) → fallback Image.
+      try {
+        const { Image: ExpoImage } = require('expo-image');
+        return (
+          <ExpoImage
+            source={{ uri: sticker.url }}
+            style={{ width: renderW, height: renderH, borderRadius: 8 }}
+            contentFit="cover"
+            cachePolicy="memory-disk"
+          />
+        );
+      } catch {
+        return (
+          <Image
+            source={{ uri: sticker.url }}
+            style={{ width: renderW, height: renderH, borderRadius: 8 }}
+            resizeMode="cover"
+          />
+        );
+      }
+    }
     // Link sticker — composer preview. Mirrors the in-viewer pill so the
     // creator sees roughly what viewers will see (white pill, purple CTA
     // arrow). Drag it like any other sticker; the live tappable surface
@@ -418,6 +465,141 @@ function DraggableTextOverlay({ text, color, fontSize, onMove, onRemove }) {
     >
       <Text style={{ color: color || '#fff', fontSize: fontSize || 24, fontWeight: '700', textAlign: 'center' }}>{text}</Text>
     </Animated.View>
+  );
+}
+
+// ─── Animated long-press peek ───
+//
+// Shown while the user is HOLDING on a status circle. Renders a mini story
+// player that auto-advances through the user's items at 1.5× speed
+// (~3.3s per item vs the in-viewer 5s). Includes the same segmented
+// progress bar row Instagram shows so the user can see the carousel length
+// without committing to the full viewer.
+//
+// Implementation notes:
+//   - Single Animated.Value driving the active segment width — no per-frame
+//     setState. The "advance to next item" step is the only setState the
+//     component does, and only once per ~3.3s tick.
+//   - Native driver is OFF for the width interpolation (RN can't drive %
+//     widths natively), but the animation still runs off the JS thread's
+//     setInterval — we use Animated.timing which is paint-frame driven.
+//   - Stops at the last item and freezes the frame (no auto-close); user
+//     releases finger → Pressable parent dismisses the peek modal.
+//   - Releases its timer + Animated cleanly on unmount so a quick tap-and-
+//     release doesn't leave an orphan animation incrementing in the bg.
+const PEEK_DURATION_MS = Math.round(5000 / 1.5); // 5s @ normal → 3.33s @ 1.5×
+function AnimatedPeekPreview({ group, ownerName, t }) {
+  const items = group?.items || [];
+  const [activeIdx, setActiveIdx] = useState(0);
+  const progress = useRef(new Animated.Value(0)).current;
+  const animRef = useRef(null);
+
+  useEffect(() => {
+    if (!items.length) return undefined;
+    let cancelled = false;
+    progress.setValue(0);
+    animRef.current?.stop?.();
+    animRef.current = Animated.timing(progress, {
+      toValue: 1,
+      duration: PEEK_DURATION_MS,
+      useNativeDriver: false,
+    });
+    animRef.current.start(({ finished }) => {
+      if (cancelled) return;
+      if (finished) {
+        // Auto-advance — but freeze on the last item so the peek doesn't
+        // loop forever. Releasing dismisses the modal.
+        setActiveIdx(prev => Math.min(prev + 1, items.length - 1));
+      }
+    });
+    return () => {
+      cancelled = true;
+      animRef.current?.stop?.();
+    };
+  }, [activeIdx, items.length, progress]);
+
+  if (!items.length) return null;
+  const cur = items[activeIdx] || items[items.length - 1];
+  const url = ((cur?.media_url || cur?.content || '').split('\n')[0] || '');
+  const fullUrl = url.startsWith('/') ? BASE_URL + url : url;
+  const posterRaw = cur?.thumbnail_url;
+  const posterUrl = posterRaw ? (posterRaw.startsWith('/') ? BASE_URL + posterRaw : posterRaw) : '';
+
+  return (
+    <View style={{ flex: 1 }}>
+      {/* Media */}
+      {cur?.type === 'video' && url ? (
+        // Use the server poster as the visual — keeps the peek lightweight
+        // (no real video decoder spin-up just for a hold preview).
+        posterUrl ? (
+          <View style={{ flex: 1 }}>
+            <CachedImage source={{ uri: posterUrl }} style={{ flex: 1 }} resizeMode="cover" />
+            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
+              <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ color: '#fff', fontSize: 20 }}>▶</Text>
+              </View>
+            </View>
+          </View>
+        ) : (
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ color: '#fff', fontSize: 14 }}>▶ {ownerName}</Text>
+          </View>
+        )
+      ) : url ? (
+        <CachedImage source={{ uri: fullUrl }} style={{ flex: 1 }} resizeMode="cover" />
+      ) : (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 16, backgroundColor: cur?.background || cur?.bg_color || '#1a1a1a' }}>
+          <Text style={{ color: '#fff', fontSize: 18, textAlign: 'center', fontWeight: '600' }}>{cur?.content || ''}</Text>
+        </View>
+      )}
+
+      {/* Segmented progress bars — Instagram parity. The active segment
+          width interpolates from 0 → 100% over PEEK_DURATION_MS. Past
+          segments stay solid white, future segments stay dim. */}
+      <View style={{
+        position: 'absolute', top: 8, left: 8, right: 8,
+        flexDirection: 'row', gap: 3,
+      }}>
+        {items.map((_, i) => (
+          <View key={i} style={{
+            flex: 1, height: 2.5, borderRadius: 1.5,
+            backgroundColor: 'rgba(255,255,255,0.28)', overflow: 'hidden',
+          }}>
+            {i < activeIdx ? (
+              <View style={{ width: '100%', height: '100%', backgroundColor: '#fff' }} />
+            ) : i === activeIdx ? (
+              <Animated.View style={{
+                height: '100%',
+                width: progress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
+                backgroundColor: '#fff',
+              }} />
+            ) : null}
+          </View>
+        ))}
+      </View>
+
+      {/* Footer — owner + relative time */}
+      <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 12, backgroundColor: 'rgba(0,0,0,0.5)' }}>
+        <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }} numberOfLines={1}>
+          {ownerName}
+        </Text>
+        <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11 }}>
+          {(() => {
+            try {
+              const ts = cur?.timestamp || cur?.created_at;
+              if (!ts) return '';
+              let iso = String(ts).replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00');
+              const ms = new Date(iso).getTime();
+              if (!Number.isFinite(ms)) return '';
+              const h = Math.round((Date.now() - ms) / 3600000);
+              if (h < 1) return t?.('time.now') || 'Agora';
+              if (h < 24) return `${h}h`;
+              return `${Math.floor(h / 24)}d`;
+            } catch { return ''; }
+          })()}
+        </Text>
+      </View>
+    </View>
   );
 }
 
@@ -804,6 +986,11 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   const [linkPromptVisible, setLinkPromptVisible] = useState(false);
   const [linkPromptUrl, setLinkPromptUrl] = useState('');
   const [linkPromptLabel, setLinkPromptLabel] = useState('');
+  // GIF sticker picker — opened from the sticker tray's "GIF" tile. Reuses
+  // the existing GifPickerPanel (Tenor search + cached previews). On select
+  // we drop a new gif-type sticker on the canvas at a randomized origin so
+  // the user can see it land + drag it where they want.
+  const [gifPickerVisible, setGifPickerVisible] = useState(false);
   // Locally-archived status IDs. Backend doesn't yet expose status_archive,
   // so we hide them from the strip optimistically + memoize so the next
   // refetch (which DOES include them) still respects the user's choice
@@ -2006,60 +2193,24 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
           {(() => {
             if (!previewGroup) return null;
             const items = previewGroup.items || [];
-            const latest = items[items.length - 1];
-            if (!latest) return null;
-            const url = ((latest.media_url || latest.content || '').split('\n')[0] || '');
-            const fullUrl = url.startsWith('/') ? BASE_URL + url : url;
+            if (!items.length) return null;
             return (
               <Pressable
                 onPress={() => { const g = previewGroup; setPreviewGroup(null); setTimeout(() => openViewer(g), 80); }}
                 style={{
                   width: SCREEN_WIDTH * 0.7, height: SCREEN_HEIGHT * 0.55,
-                  borderRadius: 16, overflow: 'hidden', backgroundColor: latest.background || latest.bg_color || '#1a1a1a',
+                  borderRadius: 16, overflow: 'hidden',
+                  backgroundColor: items[0]?.background || items[0]?.bg_color || '#1a1a1a',
                 }}
               >
-                {latest.type === 'video' && url ? (
-                  // Long-press peek for video: render the server-generated
-                  // .thumb.jpg poster as the preview frame instead of the
-                  // bare "▶ Name" placeholder over a black box. Falls back
-                  // to the play-icon if the post is older than the
-                  // ffmpeg-poster pipeline (round 18 backend, 2026-04-29).
-                  (() => {
-                    const t = latest.thumbnail_url;
-                    const posterUrl = t ? (t.startsWith('/') ? BASE_URL + t : t) : null;
-                    if (posterUrl) {
-                      return (
-                        <View style={{ flex: 1 }}>
-                          <CachedImage source={{ uri: posterUrl }} style={{ flex: 1 }} resizeMode="cover" />
-                          <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
-                            <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' }}>
-                              <Text style={{ color: '#fff', fontSize: 20 }}>▶</Text>
-                            </View>
-                          </View>
-                        </View>
-                      );
-                    }
-                    return (
-                      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                        <Text style={{ color: '#fff', fontSize: 14 }}>▶ {previewGroup.ownerName}</Text>
-                      </View>
-                    );
-                  })()
-                ) : url ? (
-                  <CachedImage source={{ uri: fullUrl }} style={{ flex: 1 }} resizeMode="cover" />
-                ) : (
-                  <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-                    <Text style={{ color: '#fff', fontSize: 18, textAlign: 'center', fontWeight: '600' }}>{latest.content || ''}</Text>
-                  </View>
-                )}
-                <View style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: 12, backgroundColor: 'rgba(0,0,0,0.5)' }}>
-                  <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }} numberOfLines={1}>
-                    {previewGroup.ownerName}
-                  </Text>
-                  <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11 }}>
-                    {timeAgo(latest.timestamp || latest.created_at, t)}
-                  </Text>
-                </View>
+                {/* Animated mini-player — auto-advances at 1.5× through the
+                    user's stories while the long-press is held. Releases
+                    on Pressable parent dismiss; tap-to-open still works. */}
+                <AnimatedPeekPreview
+                  group={previewGroup}
+                  ownerName={previewGroup.ownerName}
+                  t={t}
+                />
               </Pressable>
             );
           })()}
@@ -2095,6 +2246,59 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
               </Text>
             </Pressable>
           )}
+        </Pressable>
+      </Modal>
+
+      {/* ─── GIF sticker picker ─── */}
+      {/* Pops the existing GifPickerPanel so the user can search Tenor +
+          drop a GIF onto the canvas. Validates the URL against an allow-list
+          (Tenor / Giphy / chatyy R2) before adding the sticker so a
+          malicious payload (e.g. tracking pixel disguised as gif) can't
+          land in someone else's published status. */}
+      <Modal
+        visible={gifPickerVisible}
+        transparent
+        animationType="slide"
+        statusBarTranslucent
+        onRequestClose={() => setGifPickerVisible(false)}
+      >
+        <Pressable
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}
+          onPress={() => setGifPickerVisible(false)}
+        >
+          <Pressable onPress={(e) => e.stopPropagation && e.stopPropagation()}>
+            <GifPickerPanel
+              colors={colors}
+              t={t}
+              onClose={() => setGifPickerVisible(false)}
+              onSelect={(gif) => {
+                // Tenor returns { id, url, preview, width, height } via
+                // chatSearchGifs. Prefer the full URL but fall back to
+                // preview for older API shapes.
+                const rawUrl = gif?.url || gif?.preview || '';
+                if (!isAllowedGifUrl(rawUrl)) {
+                  // Silent reject: GifPickerPanel only surfaces results from
+                  // our backend (Tenor) so this should never legitimately
+                  // fire. Keeping the guard so a future mistake (e.g.
+                  // pasting a URL from elsewhere) can't bypass the allow-list.
+                  setGifPickerVisible(false);
+                  return;
+                }
+                const w = Math.max(1, Number(gif?.width) || 200);
+                const h = Math.max(1, Number(gif?.height) || 200);
+                setStickers(prev => [...prev, {
+                  id: Date.now() + Math.random(),
+                  type: 'gif',
+                  url: rawUrl,
+                  width: w,
+                  height: h,
+                  x: 60 + Math.random() * 80,
+                  y: 200 + Math.random() * 60,
+                }]);
+                setGifPickerVisible(false);
+              }}
+            />
+          </Pressable>
         </Pressable>
       </Modal>
 
@@ -3342,6 +3546,10 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                         { key: 'quiz', Icon: IconAward, label: 'Quiz' },
                         { key: 'location', Icon: IconMapPin, label: 'Local' },
                         { key: 'link', Icon: IconLink, label: 'Link' },
+                        // 'gif' opens an inline GifPickerPanel modal (reuses the
+                        // chat composer's GIF picker). Uses IconSearch as a
+                        // generic stand-in since there's no IconGif in Icons.js.
+                        { key: 'gif', Icon: IconSearch, label: 'GIF' },
                       ].map(s => (
                         <TouchableOpacity key={s.key} onPress={() => {
                           if (s.key === 'link') {
@@ -3351,6 +3559,14 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                             setLinkPromptUrl('');
                             setLinkPromptLabel('');
                             setLinkPromptVisible(true);
+                            return;
+                          }
+                          if (s.key === 'gif') {
+                            // Pop the GIF search modal. We close the sticker
+                            // picker so the GIF picker has full screen height
+                            // (its FlatList is internally scrollable).
+                            setShowStickerPicker(false);
+                            setGifPickerVisible(true);
                             return;
                           }
                           setShowStickerPicker(false);

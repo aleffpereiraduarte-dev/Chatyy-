@@ -1043,8 +1043,18 @@ function TextWithLinks({ text, style, linkColor, colors, mentionColor, router: r
       p.t === '#' ? (
         <Text
           key={`${kp}_h${j}`}
-          style={{ color: linkColor, fontWeight: '600' }}
-          onPress={() => { try { routerProp?.push({ pathname: '/chat-conversation', params: { searchHashtag: p.v } }); } catch {} }}
+          style={{ color: '#7C3AED', fontWeight: '700' }}
+          onPress={() => {
+            // Telegram-style hashtag tap: route to the dedicated hashtag
+            // results screen which queries chat_hashtag_search and lists
+            // recent matches from public channels. Strip the leading #
+            // before passing — the route param expects the bare tag.
+            try {
+              const bare = String(p.v || '').replace(/^#/, '');
+              if (!bare) return;
+              routerProp?.push({ pathname: '/hashtag/[tag]', params: { tag: bare } });
+            } catch {}
+          }}
         >{p.v}</Text>
       ) : (
         <FormattedText key={`${kp}_x${j}`} text={p.v} colors={colors} />
@@ -3653,18 +3663,36 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
   // dramatic) and adjust brightness before sending. Reuses the standalone
   // PhotoEditor already shipped for the Photos screen.
   const [cropOpen, setCropOpen] = useState(false);
+  // Tracks whether the editor was auto-opened on entry (so Cancel = abort
+  // the whole send) vs opened later via the crop toolbar button (Cancel =
+  // just close the editor and return to preview).
+  const editorAutoOpenedRef = useRef(false);
   const DrawOverlay = require('../components/DrawOverlay').default;
   const PhotoEditor = require('../components/PhotoEditor').default;
 
   // Seed local state whenever the modal opens with a fresh batch.
+  // For SINGLE-image picks we auto-open the PhotoEditor as the first
+  // step (Telegram/IG pattern): user sees editor → Save bakes edits and
+  // returns to MediaPreview for caption/view-once/send. Multi-batch and
+  // video skip the auto-open since editor is per-image and only handles
+  // stills. On Cancel inside the editor, MediaPreview closes entirely.
   useEffect(() => {
     if (!visible) return;
-    setFiles(Array.isArray(filesProp) ? filesProp : (filesProp ? [filesProp] : []));
+    const list = Array.isArray(filesProp) ? filesProp : (filesProp ? [filesProp] : []);
+    setFiles(list);
     setActiveIdx(0);
     setEdits({});
     setCaption('');
     setViewOnce(false);
     setDrawOpen(false);
+    const only = list.length === 1 ? list[0] : null;
+    const onlyIsVideo = only && (
+      (only.type || '').startsWith('video') ||
+      /\.(mp4|mov|webm|avi|mkv|m4v|3gp)$/i.test(only.name || only.uri || '')
+    );
+    const shouldAutoOpen = !!only && !onlyIsVideo;
+    editorAutoOpenedRef.current = shouldAutoOpen;
+    setCropOpen(shouldAutoOpen);
   }, [visible, filesProp]);
 
   if (!visible || files.length === 0) return null;
@@ -3753,7 +3781,7 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
                   <IconUndo size={20} color="#7C3AED" />
                 </TouchableOpacity>
               )}
-              <TouchableOpacity onPress={() => setCropOpen(true)} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel={t('chatConv.crop') || 'Recortar'}>
+              <TouchableOpacity onPress={() => { editorAutoOpenedRef.current = false; setCropOpen(true); }} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel={t('chatConv.crop') || 'Recortar'}>
                 <IconCrop size={20} color="#fff" />
               </TouchableOpacity>
               <TouchableOpacity onPress={() => setDrawOpen(true)} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel={t('chatConv.draw') || 'Desenhar'}>
@@ -3779,8 +3807,19 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
           <PhotoEditor
             visible={cropOpen}
             imageUri={currentUri}
-            onClose={() => setCropOpen(false)}
+            // Cancel from the AUTO-opened editor aborts the whole send
+            // (per spec: "On Cancel, return to chat without sending"). If
+            // the user opened the editor manually via the toolbar Crop
+            // button, Cancel just closes the editor and returns to the
+            // preview — preserving prior behavior for that path.
+            onClose={() => {
+              const wasAuto = editorAutoOpenedRef.current;
+              editorAutoOpenedRef.current = false;
+              setCropOpen(false);
+              if (wasAuto) onClose?.();
+            }}
             onSave={(uri) => {
+              editorAutoOpenedRef.current = false;
               if (uri && uri !== currentUri) setEdits(prev => ({ ...prev, [activeIdx]: uri }));
               setCropOpen(false);
             }}
@@ -5901,6 +5940,38 @@ export default function ChatConversationScreen() {
   const [forwardSearch, setForwardSearch] = useState('');
   const [showGifPicker, setShowGifPicker] = useState(false);
   const [showStickerPicker, setShowStickerPicker] = useState(false);
+
+  // Telegram-style swipe-on-composer to toggle the GIF picker. Threshold
+  // is 60px horizontal with strong horizontal-over-vertical bias so the
+  // user can still scroll/keyboard-flick without accidentally toggling.
+  // Recreated once via useMemo (state setters are stable refs anyway).
+  const composerSwipeHandlers = useMemo(() => {
+    const responder = PanResponder.create({
+      // Don't take over taps — let the inner inputs receive them.
+      onStartShouldSetPanResponder: () => false,
+      onStartShouldSetPanResponderCapture: () => false,
+      // Only take over once the gesture is clearly horizontal AND over
+      // a meaningful threshold. Avoids stealing scrolls in the textarea
+      // (vertical) and tiny accidental drags.
+      onMoveShouldSetPanResponder: (_, g) => {
+        return Math.abs(g.dx) > 24 && Math.abs(g.dx) > Math.abs(g.dy) * 1.6;
+      },
+      onMoveShouldSetPanResponderCapture: () => false,
+      onPanResponderRelease: (_, g) => {
+        // Swipe LEFT → reveal GIF (consistent with Telegram). Swipe RIGHT
+        // → close GIF picker if it's open. Don't fight the keyboard:
+        // when the picker isn't already mounted we just open it.
+        if (g.dx < -60) {
+          setShowGifPicker(true);
+          setShowStickerPicker(false);
+          try { Keyboard.dismiss(); } catch {}
+        } else if (g.dx > 60) {
+          setShowGifPicker(false);
+        }
+      },
+    });
+    return responder.panHandlers;
+  }, []);
   // iMessage Send-with-Effect: long-press on send opens this picker. The
   // staged effect rides along on the next chatSend (cleared right after).
   const [showEffectPicker, setShowEffectPicker] = useState(false);
@@ -17100,8 +17171,16 @@ export default function ChatConversationScreen() {
           backgroundColor: isDark ? '#0E0A18' : '#F3EFF8',
           paddingBottom: keyboardHeight > 0 ? Spacing.sm : Math.max(insets.bottom, Spacing.sm),
         }]}>
-          {/* WhatsApp pill container — 2026 refined */}
-          <View style={{
+          {/* WhatsApp pill container — 2026 refined.
+              Telegram-style horizontal swipe: a short flick LEFT on the
+              pill toggles the GIF picker so the user can discover GIFs
+              without hunting for the small button. We attach a
+              PanResponder via composerSwipeHandlers; the inner TextInput
+              still gets normal touches because the responder only takes
+              over once movement crosses a horizontal threshold. */}
+          <View
+            {...composerSwipeHandlers}
+            style={{
             flex: 1, flexDirection: 'row', alignItems: 'flex-end',
             backgroundColor: isDark ? '#1a1625' : '#ffffff',
             borderRadius: 26, minHeight: 48,

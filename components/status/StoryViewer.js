@@ -69,6 +69,40 @@ function _extractLinkSticker(item) {
   return null;
 }
 
+// Walk `stickers` + `meta.stickers` and surface every gif sticker so the
+// viewer can paint them on top of the media. Each gif is validated against
+// the allow-list (Tenor / Giphy / chatyy R2) so a malicious publisher can't
+// smuggle a tracking pixel through this surface.
+let _isAllowedGifUrl = (() => true);
+try { _isAllowedGifUrl = require('../../hooks/useStatuses').isAllowedGifUrl || _isAllowedGifUrl; } catch {}
+function _extractGifStickers(item) {
+  if (!item) return [];
+  const lists = [];
+  if (Array.isArray(item.stickers)) lists.push(item.stickers);
+  if (Array.isArray(item.meta?.stickers)) lists.push(item.meta.stickers);
+  const out = [];
+  const seen = new Set();
+  for (const list of lists) {
+    for (const s of list) {
+      if (!s || s.type !== 'gif' || !s.url) continue;
+      if (!_isAllowedGifUrl(s.url)) continue;
+      // Dedup across `stickers` + `meta.stickers` (some backends serialize
+      // both for compat) — keyed by url + position.
+      const key = `${s.url}:${s.x || 0}:${s.y || 0}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        url: String(s.url),
+        x: Number(s.x) || 0,
+        y: Number(s.y) || 0,
+        width: Math.max(1, Number(s.width) || 200),
+        height: Math.max(1, Number(s.height) || 200),
+      });
+    }
+  }
+  return out;
+}
+
 // Format "h ago / d ago" — same logic ChatListTab used inline. PG returns
 // "2026-04-22 01:30:00.123+00" which Safari can't parse, so we normalize.
 function formatRelTime(createdAt, t) {
@@ -250,17 +284,52 @@ export default function StoryViewer({
     outputRange: [1, 0.5, 0],
     extrapolate: 'clamp',
   });
+  // Swipe-up always reads the freshest link target — refreshed below in a
+  // useEffect once we know `linkSticker` for the current item. Declared
+  // BEFORE panResponder so its onPanResponderRelease closure can read the
+  // ref without a TDZ at gesture-time.
+  const activeLinkRef = useRef(null);
+  // Track whether the current drag is in the swipe-up CTA zone (bottom 30%
+  // of the screen). Captured on the move-start event by reading pageY against
+  // window height. Reset every release so a new touch reads fresh.
+  const swipeUpFromBottomRef = useRef(false);
   const panResponder = useRef(
     PanResponder.create({
-      onMoveShouldSetPanResponder: (_evt, gs) => {
-        // Only claim vertical drags > 12px, so taps + horizontal scrolls keep working.
-        return Math.abs(gs.dy) > 12 && Math.abs(gs.dy) > Math.abs(gs.dx) * 1.5 && gs.dy > 0;
+      onMoveShouldSetPanResponder: (evt, gs) => {
+        // Need a clean vertical gesture — beats taps + horizontal scrolls.
+        if (Math.abs(gs.dy) <= 12 || Math.abs(gs.dy) <= Math.abs(gs.dx) * 1.5) return false;
+        if (gs.dy > 0) return true; // swipe-down → close
+        // Swipe-up only claims the responder when it started in the bottom
+        // 30% of the screen — otherwise the user might be reaching for the
+        // header or a sticker and we'd swallow their tap.
+        try {
+          const { height: H } = require('react-native').Dimensions.get('window');
+          const startY = (evt?.nativeEvent?.pageY || 0) - gs.dy;
+          swipeUpFromBottomRef.current = (startY / H) >= 0.7;
+        } catch { swipeUpFromBottomRef.current = false; }
+        // Only claim if user actually has a link target — pointless otherwise.
+        return swipeUpFromBottomRef.current && !!activeLinkRef.current && gs.dy < -12;
       },
       onPanResponderGrant: () => { setPaused(true); },
       onPanResponderMove: (_evt, gs) => {
+        // We only animate the swipe-DOWN drag visually; swipe-up is a
+        // discrete "pull up to reveal" gesture that fires on release.
         if (gs.dy >= 0) dragY.setValue(gs.dy);
       },
       onPanResponderRelease: (_evt, gs) => {
+        // Swipe-up commit — > 60px upward + bottom-30% origin → open link.
+        if (gs.dy < -60 && swipeUpFromBottomRef.current) {
+          const target = activeLinkRef.current;
+          swipeUpFromBottomRef.current = false;
+          if (target) {
+            if (_Haptics && Platform.OS !== 'web') {
+              try { _Haptics.impactAsync(_Haptics.ImpactFeedbackStyle.Medium); } catch {}
+            }
+            try { Linking.openURL(target).catch(() => {}); } catch {}
+          }
+          setPaused(false);
+          return;
+        }
         if (gs.dy > 120 || gs.vy > 0.6) {
           Animated.timing(dragY, { toValue: 600, duration: 180, useNativeDriver: true })
             .start(() => { dragY.setValue(0); onClose?.(); });
@@ -272,9 +341,52 @@ export default function StoryViewer({
       onPanResponderTerminate: () => {
         Animated.spring(dragY, { toValue: 0, useNativeDriver: true }).start();
         setPaused(false);
+        swipeUpFromBottomRef.current = false;
       },
     })
   ).current;
+
+  // (activeLinkRef is declared earlier — its useEffect sync lives below
+  // alongside the pulse animation effect.)
+
+  // Pulsing "↑ Saiba mais" hint. Pulses every 4s (0.7→1.0 opacity + tiny
+  // scale) so the gesture is discoverable without being annoying. Native-
+  // driven so it stays free even on cheap Android.
+  //
+  // Note: this effect re-extracts the link sticker for the active idx
+  // since `linkSticker` isn't computed until after the early-return guards
+  // below. Cheap (per idx change), keeps the hook order stable.
+  const ctaPulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const _curForEffect = stories?.[Math.min(Math.max(0, idx), Math.max(0, (stories?.length || 1) - 1))];
+    const _linkForEffect = _extractLinkSticker(_curForEffect);
+    activeLinkRef.current = _linkForEffect?.url || null;
+    if (!visible || !_linkForEffect) {
+      ctaPulse.setValue(0);
+      return undefined;
+    }
+    let cancelled = false;
+    // Wait 1.2s after the story opens before the first pulse so the user
+    // gets a chance to read the content first.
+    const initial = setTimeout(() => {
+      if (cancelled) return;
+      const loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(ctaPulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+          Animated.timing(ctaPulse, { toValue: 0, duration: 700, useNativeDriver: true }),
+          // 4s gap (~ matches Instagram cadence) before the next pulse.
+          Animated.delay(2600),
+        ])
+      );
+      loop.start();
+    }, 1200);
+    return () => {
+      cancelled = true;
+      clearTimeout(initial);
+      ctaPulse.stopAnimation?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, idx, stories]);
 
   const _haptic = useCallback((style = 'light') => {
     if (!_Haptics || Platform.OS === 'web') return;
@@ -402,6 +514,10 @@ export default function StoryViewer({
   // varies by status version. Returns null if no link sticker is attached so
   // existing surfaces (poll/quiz/mention/music) keep their layout untouched.
   const linkSticker = _extractLinkSticker(cur);
+  // GIF stickers — animated overlays positioned over the media. Same dual-
+  // path extraction as link stickers; allow-list validated so a malicious
+  // publisher can't smuggle a tracking pixel through.
+  const gifStickers = _extractGifStickers(cur);
 
   // Caption: text status uses `content` AS the caption-rendered-as-big-text
   // (handled in renderMedia below). Image/video status uses `content` as
@@ -803,6 +919,71 @@ export default function StoryViewer({
           </Animated.View>
         ) : null}
 
+        {/* GIF stickers — animated overlays positioned at the publisher's
+            chosen (x, y). Rendered ABOVE the media but BELOW the chrome so
+            the user can drag past them. Allow-list + dimension caps applied
+            in _extractGifStickers above so a malicious publisher can't
+            smuggle a tracking pixel through this surface. */}
+        {gifStickers.length > 0 ? (
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 4,
+            }}
+          >
+            {gifStickers.map((g, gi) => {
+              // Cap render size at 220px so a huge gif can't dominate the
+              // viewer canvas. Maintains aspect ratio on the smaller side.
+              const cap = 220;
+              const ratio = g.width / g.height;
+              const renderW = ratio >= 1 ? Math.min(cap, g.width) : Math.min(cap, g.width * (cap / g.height));
+              const renderH = ratio >= 1 ? Math.min(cap, g.height * (cap / g.width)) : Math.min(cap, g.height);
+              if (WEB) {
+                return (
+                  <img
+                    key={gi}
+                    src={g.url}
+                    alt=""
+                    style={{
+                      position: 'absolute', left: g.x, top: g.y,
+                      width: renderW, height: renderH,
+                      borderRadius: 8, objectFit: 'cover',
+                    }}
+                  />
+                );
+              }
+              if (_ExpoImage) {
+                // expo-image natively decodes animated webp/gif. cachePolicy
+                // memory-disk dedupes across re-renders so the gif keeps
+                // looping without re-downloading.
+                return (
+                  <_ExpoImage
+                    key={gi}
+                    source={{ uri: g.url }}
+                    style={{
+                      position: 'absolute', left: g.x, top: g.y,
+                      width: renderW, height: renderH, borderRadius: 8,
+                    }}
+                    contentFit="cover"
+                    cachePolicy="memory-disk"
+                  />
+                );
+              }
+              return (
+                <Image
+                  key={gi}
+                  source={{ uri: g.url }}
+                  style={{
+                    position: 'absolute', left: g.x, top: g.y,
+                    width: renderW, height: renderH, borderRadius: 8,
+                  }}
+                  resizeMode="cover"
+                />
+              );
+            })}
+          </View>
+        ) : null}
+
         {/* Link sticker — Instagram-style "Saiba mais" pill, bottom-center.
             Tap forwards to the URL via Linking.openURL (Android opens
             default browser, iOS uses Safari, web opens new tab). zIndex 7
@@ -845,6 +1026,46 @@ export default function StoryViewer({
                 <IconArrowRight size={13} color="#fff" />
               </View>
             </TouchableOpacity>
+          </Animated.View>
+        ) : null}
+
+        {/* Swipe-up CTA hint — small "↑ Saiba mais" line at the bottom that
+            pulses every 4s while a link sticker is present. Tells the user
+            they can swipe up from the bottom 30% to open the link in
+            addition to tapping the pill. zIndex 6 so it sits below the pill
+            but above tap zones. pointerEvents none so the swipe-up gesture
+            in the parent panResponder gets the touch. */}
+        {linkSticker ? (
+          <Animated.View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              bottom: Platform.OS === 'ios' ? 36 : 22,
+              left: 0, right: 0,
+              alignItems: 'center',
+              zIndex: 6,
+              opacity: Animated.multiply(
+                uiOpacity,
+                ctaPulse.interpolate({ inputRange: [0, 1], outputRange: [0.55, 1] })
+              ),
+              transform: [
+                { translateY: ctaPulse.interpolate({ inputRange: [0, 1], outputRange: [0, -4] }) },
+              ],
+            }}
+          >
+            <View style={{
+              flexDirection: 'row', alignItems: 'center', gap: 4,
+              backgroundColor: 'rgba(0,0,0,0.35)',
+              paddingHorizontal: 12, paddingVertical: 5,
+              borderRadius: 14,
+            }}>
+              <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
+                {/* Reusing the link sticker's CTA label keeps the hint and
+                    the pill consistent — if the publisher set "Comprar"
+                    the swipe hint also says "Comprar". */}
+                {`↑ ${linkSticker.label}`}
+              </Text>
+            </View>
           </Animated.View>
         ) : null}
 

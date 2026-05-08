@@ -167,6 +167,57 @@ class WebRTCCall {
     return this.localStream;
   }
 
+  // Toggle noise suppression on the live audio track.
+  // Tries applyConstraints first (cheap, no track replacement). If the
+  // platform refuses (Safari quirks, some Android variants), falls back to
+  // re-acquiring the stream with the new constraint and swapping the track
+  // on the active sender so the call doesn't drop.
+  async setNoiseSuppression(enabled) {
+    const stream = this.localStream;
+    if (!stream) return false;
+    const audioTrack = stream.getAudioTracks()[0];
+    if (!audioTrack) return false;
+    try {
+      if (typeof audioTrack.applyConstraints === 'function') {
+        await audioTrack.applyConstraints({
+          noiseSuppression: !!enabled,
+          echoCancellation: !!enabled,
+          autoGainControl: !!enabled,
+        });
+        return true;
+      }
+    } catch (e) {
+      // fall through to track swap
+    }
+    try {
+      const fresh = await mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: !!enabled,
+          noiseSuppression: !!enabled,
+          autoGainControl: !!enabled,
+        },
+        video: false,
+      });
+      const newTrack = fresh.getAudioTracks()[0];
+      if (!newTrack) return false;
+      // Replace on the existing sender so the peer doesn't see a new
+      // negotiation flap.
+      try {
+        const sender = this.pc?.getSenders?.().find(s => s.track && s.track.kind === 'audio');
+        if (sender && sender.replaceTrack) await sender.replaceTrack(newTrack);
+      } catch {}
+      // Swap on the local stream so getTracks() reflects the new track.
+      try {
+        stream.removeTrack(audioTrack);
+        audioTrack.stop();
+        stream.addTrack(newTrack);
+      } catch {}
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // Create RTCPeerConnection
   _createPeerConnection() {
     if (this.pc) {
