@@ -663,8 +663,9 @@ function ChatHub() {
               // when that tab becomes active so the dot stays meaningful.
               const tabBadge = key === 'chats' ? chatsBadge
                 : key === 'status' ? statusBadge
+                : key === 'feed' ? feedBadge
+                : key === 'calls' ? missedCallBadge
                 : 0;
-              const tabDot = key === 'calls' && missedCallBadge > 0;
               return (
                 <DesktopTabItem
                   key={key}
@@ -675,7 +676,6 @@ function ChatHub() {
                   onPress={() => handleTabPress(key)}
                   isDark={isDark}
                   badge={tabBadge}
-                  dot={tabDot}
                 />
               );
             })}
@@ -963,6 +963,7 @@ function ChatHub() {
               active={false}
               onPress={() => handleTabPress('reels')}
               isDark={isDark}
+              badge={feedBadge}
             />
             <TabBarItem
               icon={(active) => <IconChatsTab size={22} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
@@ -978,7 +979,7 @@ function ChatHub() {
               active={activeTab === 'calls'}
               onPress={() => handleTabPress('calls')}
               isDark={isDark}
-              dot={missedCallBadge > 0}
+              badge={missedCallBadge}
             />
             <TabBarItem
               icon={(active) => <IconAppsTab size={22} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
