@@ -34,7 +34,15 @@ import { useTheme, ACCENT_PRESETS } from '../context/ThemeContext';
 const ACCENT = '#7C3AED';
 
 // ─── Shared building blocks ──────────────────────────────────────────
-function Row({ icon: Icon, label, value, onPress, colors, destructive, right }) {
+// Row — iconTint is the brand colour for the icon glyph + a 14% bg tint
+// behind it. When omitted, falls back to the previous neutral "surface
+// chip" look. Instagram 2024 uses tinted square icons per section
+// (Account=purple, Privacy=red, Notifications=amber, Language=blue,
+// Help=gray) and we mirror that. `right` overrides the trailing chevron
+// for switches/value labels. `noChevron` hides it when there's no
+// navigation (terminal info rows).
+function Row({ icon: Icon, label, value, onPress, colors, destructive, right, iconTint, noChevron }) {
+  const tint = destructive ? '#ef4444' : iconTint;
   return (
     <Pressable
       onPress={onPress}
@@ -51,10 +59,12 @@ function Row({ icon: Icon, label, value, onPress, colors, destructive, right }) 
     >
       <View style={{
         width: 34, height: 34, borderRadius: 9,
-        backgroundColor: destructive ? '#ef444422' : (colors?.surface || '#f3f4f6'),
+        backgroundColor: tint
+          ? tint + '1F'  // 1F = ~12% alpha — Instagram-style colored chip
+          : (colors?.surface || '#f3f4f6'),
         alignItems: 'center', justifyContent: 'center',
       }}>
-        {Icon && <Icon size={18} color={destructive ? '#ef4444' : (colors?.textSecondary || '#64748b')} />}
+        {Icon && <Icon size={18} color={tint || (colors?.textSecondary || '#64748b')} />}
       </View>
       <View style={{ flex: 1 }}>
         <Text style={{ fontSize: 15, fontWeight: '500', color: destructive ? '#ef4444' : (colors?.text || '#111') }}>
@@ -66,7 +76,11 @@ function Row({ icon: Icon, label, value, onPress, colors, destructive, right }) 
           </Text>
         )}
       </View>
-      {right || <IconChevronRight size={16} color={colors?.textTertiary || '#bbb'} />}
+      {right !== undefined
+        ? right
+        : (noChevron || !onPress
+            ? null
+            : <IconChevronRight size={18} color={colors?.textTertiary || '#bbb'} />)}
     </Pressable>
   );
 }
@@ -163,45 +177,331 @@ function AccentColorRow({ colors, t }) {
 }
 
 // ─── Screen: Main menu ───────────────────────────────────────────────
-function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, onClose, closeAndRun }) {
+// Instagram 2024-style settings:
+//  • Hero card (avatar + name + email + "edit profile" tap target)
+//  • Plus upsell card (gradient) — only when user has no active plan
+//  • Sticky search bar that fuzzy-filters all rows by label
+//  • Section icons in tinted squares (purple Account, red Privacy,
+//    amber Notifications, blue Language, gray Help) — 1F (~12%) bg
+//  • "Sua atividade" surface for time/sessions/devices
+//  • "Para criadores e empresas" placeholder section (-> /plans)
+//  • Logout/Delete pushed to bottom with strong 6px divider on top
+//
+// Section colour palette (kept inline so tweaks live next to the rows):
+const ICON_PURPLE = '#7C3AED';
+const ICON_RED    = '#ef4444';
+const ICON_AMBER  = '#f59e0b';
+const ICON_BLUE   = '#3b82f6';
+const ICON_TEAL   = '#0ea5e9';
+const ICON_GRAY   = '#64748b';
+const ICON_PINK   = '#ec4899';
+const ICON_GREEN  = '#10b981';
+
+// ─── Hero card (avatar + name + email) ───────────────────────────────
+function HeroCard({ colors, userEmail, onPress, t }) {
+  // We avoid pulling AvatarCircle (which has its own caching pipeline)
+  // here to keep the sheet light — a simple letter avatar in a
+  // gradient-ish purple chip mirrors Instagram's settings hero, and the
+  // proper avatar is one tap away in the edit-profile screen.
+  const initial = (userEmail || '?').trim().charAt(0).toUpperCase() || '?';
+  const handle = userEmail ? userEmail.split('@')[0] : '';
   return (
-    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
-      <Section title={t?.('settings.account') || 'Conta'} colors={colors}>
-        <Row icon={IconUser}      label={t?.('settings.editProfile') || 'Editar perfil'}       onPress={onEditProfile} colors={colors} />
-        <Row icon={IconLock}      label={t?.('settings.security') || 'Segurança e senha'}      onPress={() => push('security')} colors={colors} />
-        <Row icon={IconEye}       label={t?.('settings.privacy') || 'Privacidade'}             onPress={() => push('privacy')} colors={colors} />
-      </Section>
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => ({
+        marginHorizontal: 16,
+        marginTop: 12,
+        padding: 14,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 14,
+        borderRadius: 14,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: colors?.border || '#e5e7eb',
+        backgroundColor: pressed
+          ? (colors?.surfaceVariant || colors?.surface || '#f3f4f6')
+          : (colors?.surface || '#fff'),
+      })}
+      accessibilityRole="button"
+      accessibilityLabel={t?.('settings.editProfile') || 'Editar perfil'}
+    >
+      <View style={{
+        width: 64, height: 64, borderRadius: 32,
+        backgroundColor: ICON_PURPLE + '22',
+        alignItems: 'center', justifyContent: 'center',
+        borderWidth: 2, borderColor: ICON_PURPLE + '55',
+      }}>
+        <Text style={{ fontSize: 26, fontWeight: '700', color: ICON_PURPLE }}>{initial}</Text>
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={{ fontSize: 17, fontWeight: '700', color: colors?.text || '#111' }} numberOfLines={1}>
+          {handle || (t?.('settings.yourProfile') || 'Seu perfil')}
+        </Text>
+        {!!handle && (
+          <Text style={{ fontSize: 13, color: colors?.textSecondary, marginTop: 1 }} numberOfLines={1}>
+            @{handle}
+          </Text>
+        )}
+        {!!userEmail && (
+          <Text style={{ fontSize: 12, color: colors?.textTertiary, marginTop: 2 }} numberOfLines={1}>
+            {userEmail}
+          </Text>
+        )}
+      </View>
+      <IconChevronRight size={18} color={colors?.textTertiary || '#bbb'} />
+    </Pressable>
+  );
+}
 
-      <Section title={t?.('settings.preferences') || 'Preferências'} colors={colors}>
-        <Row icon={IconBell}  label={t?.('settings.notifications') || 'Notificações'}          onPress={() => push('notifications')} colors={colors} />
-        <Row icon={IconGlobe} label={t?.('settings.language') || 'Idioma'}                     onPress={() => push('language')} colors={colors} />
-        <Row icon={IconEye}   label={t?.('settings.reading') || 'Leitura'}                     onPress={() => push('reading')} colors={colors} />
-        <AccentColorRow colors={colors} t={t} />
-      </Section>
+// ─── Plus upsell card (gradient) ────────────────────────────────────
+function PlusUpsellCard({ colors, onPress, t }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => ({
+        marginHorizontal: 16,
+        marginTop: 10,
+        padding: 14,
+        borderRadius: 14,
+        backgroundColor: '#5B21B6',
+        opacity: pressed ? 0.92 : 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        // Subtle inner stroke to suggest gradient depth in flat-RN.
+        borderWidth: 1,
+        borderColor: '#7C3AED',
+      })}
+      accessibilityRole="button"
+    >
+      <View style={{
+        width: 40, height: 40, borderRadius: 12,
+        backgroundColor: 'rgba(255,255,255,0.18)',
+        alignItems: 'center', justifyContent: 'center',
+      }}>
+        <IconSparkles size={22} color="#fff" />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={{ fontSize: 14, fontWeight: '700', color: '#fff' }} numberOfLines={1}>
+          {t?.('settings.plusTeaserTitle') || 'Plus está esperando você'}
+        </Text>
+        <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.82)', marginTop: 2 }} numberOfLines={1}>
+          {t?.('settings.plusTeaserSubtitle') || 'Mais armazenamento, IA ilimitada e selo verificado'}
+        </Text>
+      </View>
+      <IconChevronRight size={18} color="rgba(255,255,255,0.85)" />
+    </Pressable>
+  );
+}
 
-      <Section title={t?.('settings.email') || 'Email'} colors={colors}>
-        <Row icon={IconMail}     label={t?.('settings.emailCompose') || 'Email e composição'} onPress={() => push('email')} colors={colors} />
-        <Row icon={IconClock}    label={t?.('settings.vacation') || 'Resposta automática'}    onPress={() => push('vacation')} colors={colors} />
-        <Row icon={IconSparkles} label={t?.('settings.aiFeatures') || 'Recursos com IA'}      onPress={() => push('ai')} colors={colors} />
-      </Section>
+// ─── Search bar ──────────────────────────────────────────────────────
+function SettingsSearchBar({ value, onChangeText, colors, t }) {
+  return (
+    <View style={{
+      marginHorizontal: 16, marginTop: 12, marginBottom: 4,
+      flexDirection: 'row', alignItems: 'center', gap: 8,
+      paddingHorizontal: 12, height: 38, borderRadius: 10,
+      backgroundColor: colors?.surfaceVariant || colors?.surface || '#f1f5f9',
+    }}>
+      <IconSearch size={16} color={colors?.textSecondary || '#64748b'} />
+      <TextInput
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={t?.('settings.search') || 'Pesquisar'}
+        placeholderTextColor={colors?.textTertiary || '#9ca3af'}
+        style={{ flex: 1, fontSize: 14, color: colors?.text || '#111', padding: 0 }}
+        autoCorrect={false}
+        autoCapitalize="none"
+        returnKeyType="search"
+      />
+      {!!value && (
+        <TouchableOpacity onPress={() => onChangeText('')} accessibilityLabel="Clear search">
+          <IconX size={16} color={colors?.textSecondary || '#64748b'} />
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+}
 
-      <Section title={t?.('settings.community') || 'Comunidade'} colors={colors}>
-        <Row icon={IconUserPlus} label={t?.('referral.inviteFriends') || 'Convidar amigos'}    onPress={() => push('invite')} colors={colors} />
-      </Section>
+// Fuzzy filter — case-insensitive substring on label, no fancy ranking.
+// Good enough for ~30 rows. We keep section visibility based on whether
+// at least one row inside matches.
+function matches(label, q) {
+  if (!q) return true;
+  return (label || '').toLowerCase().includes(q.toLowerCase());
+}
 
-      <Section title={t?.('settings.help') || 'Ajuda'} colors={colors}>
-        <Row icon={IconHelp} label={t?.('settings.support') || 'Suporte'}                      onPress={() => push('support')} colors={colors} />
-        <Row icon={IconInfo} label={t?.('settings.about') || 'Sobre o Chatyy'}                 onPress={() => push('about')} colors={colors} />
-      </Section>
+function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, onClose, closeAndRun, userEmail }) {
+  const [query, setQuery] = useState('');
 
-      <Section title={t?.('settings.privacy') || 'Privacidade'} colors={colors}>
-        <Row icon={IconDatabase} label={t?.('settings.exportData') || 'Baixar meus dados'} onPress={() => push('export')} colors={colors} />
-      </Section>
+  // Build the row catalogue once (stable refs are not critical — the
+  // list is tiny). Each entry knows its label, icon, tint and the push
+  // target. `q` filters the visible set; sections render only if at
+  // least one row inside passed the filter.
+  const sections = useMemo(() => ([
+    {
+      key: 'account',
+      title: t?.('settings.account') || 'Conta',
+      rows: [
+        { icon: IconUser, label: t?.('settings.editProfile') || 'Editar perfil', tint: ICON_PURPLE, onPress: onEditProfile },
+        { icon: IconLock, label: t?.('settings.security') || 'Segurança e senha', tint: ICON_PURPLE, onPress: () => push('security') },
+        { icon: IconEye,  label: t?.('settings.privacy') || 'Privacidade',         tint: ICON_RED,    onPress: () => push('privacy') },
+      ],
+    },
+    {
+      key: 'activity',
+      title: t?.('settings.yourActivity') || 'Sua atividade',
+      rows: [
+        { icon: IconClock,    label: t?.('settings.timeOnApp') || 'Tempo no app',                  tint: ICON_TEAL, onPress: () => push('about') },
+        { icon: IconUsers,    label: t?.('settings.linkedDevices') || 'Dispositivos conectados',  tint: ICON_TEAL, onPress: () => push('security') },
+        { icon: IconDatabase, label: t?.('settings.exportData') || 'Baixar meus dados',           tint: ICON_TEAL, onPress: () => push('export') },
+      ],
+    },
+    {
+      key: 'preferences',
+      title: t?.('settings.preferences') || 'Preferências',
+      rows: [
+        { icon: IconBell,  label: t?.('settings.notifications') || 'Notificações', tint: ICON_AMBER, onPress: () => push('notifications') },
+        { icon: IconGlobe, label: t?.('settings.language') || 'Idioma',            tint: ICON_BLUE,  onPress: () => push('language') },
+        { icon: IconEye,   label: t?.('settings.reading') || 'Leitura',            tint: ICON_BLUE,  onPress: () => push('reading') },
+      ],
+      // The accent picker is a custom inline row, kept always visible
+      // when the section is visible (filtered out when query is non-empty).
+      tail: (visible) => visible && !query ? <AccentColorRow colors={colors} t={t} /> : null,
+    },
+    {
+      key: 'email',
+      title: t?.('settings.email') || 'Email',
+      rows: [
+        { icon: IconMail,     label: t?.('settings.emailCompose') || 'Email e composição', tint: ICON_PINK, onPress: () => push('email') },
+        { icon: IconClock,    label: t?.('settings.vacation') || 'Resposta automática',    tint: ICON_PINK, onPress: () => push('vacation') },
+        { icon: IconSparkles, label: t?.('settings.aiFeatures') || 'Recursos com IA',      tint: ICON_PURPLE, onPress: () => push('ai') },
+      ],
+    },
+    {
+      key: 'creators',
+      // Instagram has "For creators / For business" right above Help.
+      // We don't have separate flows yet so both rows route to /plans.
+      title: t?.('settings.creatorsTitle') || 'Para criadores e empresas',
+      rows: [
+        {
+          icon: IconStar,
+          label: t?.('settings.plansSubscriptions') || 'Planos e assinaturas',
+          tint: ICON_PURPLE,
+          onPress: () => closeAndRun(() => router?.push?.('/plans')),
+        },
+        {
+          icon: IconUsers,
+          label: t?.('settings.forBusiness') || 'Ferramentas para empresas',
+          tint: ICON_GREEN,
+          onPress: () => closeAndRun(() => router?.push?.('/plans')),
+        },
+      ],
+    },
+    {
+      key: 'community',
+      title: t?.('settings.community') || 'Comunidade',
+      rows: [
+        { icon: IconUserPlus, label: t?.('referral.inviteFriends') || 'Convidar amigos', tint: ICON_GREEN, onPress: () => push('invite') },
+      ],
+    },
+    {
+      key: 'help',
+      title: t?.('settings.help') || 'Ajuda',
+      rows: [
+        { icon: IconHelp, label: t?.('settings.support') || 'Suporte',         tint: ICON_GRAY, onPress: () => push('support') },
+        { icon: IconInfo, label: t?.('settings.about') || 'Sobre o Chatyy',    tint: ICON_GRAY, onPress: () => push('about') },
+      ],
+    },
+  ]), [t, push, onEditProfile, closeAndRun, router, colors, query]);
 
-      <Section title={t?.('settings.dangerZone') || 'Zona de perigo'} colors={colors}>
-        <Row icon={IconLogOut}         label={t?.('settings.logout') || 'Sair'}                 onPress={onLogout} colors={colors} />
-        <Row icon={IconAlertTriangle}  label={t?.('settings.deleteAccount') || 'Excluir conta'} onPress={() => push('delete')} colors={colors} destructive />
-      </Section>
+  const visibleSections = sections
+    .map(s => ({ ...s, rows: s.rows.filter(r => matches(r.label, query)) }))
+    .filter(s => s.rows.length > 0);
+
+  // Logout/Delete are always visible at the bottom unless user is
+  // searching — when filtering, surface them only if matched.
+  const dangerRows = [
+    { key: 'logout', icon: IconLogOut,        label: t?.('settings.logout') || 'Sair',                   onPress: onLogout },
+    { key: 'delete', icon: IconAlertTriangle, label: t?.('settings.deleteAccount') || 'Excluir conta', destructive: true, onPress: () => push('delete') },
+  ];
+  const visibleDanger = query ? dangerRows.filter(r => matches(r.label, query)) : dangerRows;
+
+  return (
+    <ScrollView
+      showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+      contentContainerStyle={{ paddingBottom: 40 }}
+      // Sticky search bar — Instagram has search pinned at top of
+      // settings even as you scroll. Hero/upsell scroll out under it.
+      // Index is computed dynamically: when query is empty we have 2
+      // children before search (hero, upsell) → sticky index = 2.
+      // While searching we hide hero+upsell so search is the first
+      // child → sticky index = 0. We always render search wrapped in
+      // a coloured-background container so the rows scrolling under
+      // it don't bleed through.
+      stickyHeaderIndices={query ? [0] : [2]}
+    >
+      {/* Hero + plus card hide while searching to keep results focused. */}
+      {!query && <HeroCard colors={colors} userEmail={userEmail} onPress={onEditProfile} t={t} />}
+      {!query && (
+        <PlusUpsellCard
+          colors={colors}
+          t={t}
+          onPress={() => closeAndRun(() => router?.push?.('/plans'))}
+        />
+      )}
+
+      <View style={{ backgroundColor: colors?.background || '#fff' }}>
+        <SettingsSearchBar value={query} onChangeText={setQuery} colors={colors} t={t} />
+      </View>
+
+      {visibleSections.map(s => (
+        <Section key={s.key} title={s.title} colors={colors}>
+          {s.rows.map((r, i) => (
+            <Row
+              key={s.key + '-' + i}
+              icon={r.icon}
+              label={r.label}
+              iconTint={r.tint}
+              onPress={r.onPress}
+              colors={colors}
+            />
+          ))}
+          {s.tail ? s.tail(true) : null}
+        </Section>
+      ))}
+
+      {visibleDanger.length > 0 && (
+        <View style={{
+          marginTop: 32,
+          borderTopWidth: 6,
+          borderTopColor: colors?.surfaceVariant || colors?.borderLight || '#f1f5f9',
+        }}>
+          <Section title={t?.('settings.dangerZone') || 'Zona de perigo'} colors={colors}>
+            {visibleDanger.map(r => (
+              <Row
+                key={r.key}
+                icon={r.icon}
+                label={r.label}
+                iconTint={r.destructive ? undefined : ICON_GRAY}
+                destructive={r.destructive}
+                onPress={r.onPress}
+                colors={colors}
+              />
+            ))}
+          </Section>
+        </View>
+      )}
+
+      {/* Empty-state when search returns nothing. */}
+      {query && visibleSections.length === 0 && visibleDanger.length === 0 && (
+        <View style={{ alignItems: 'center', paddingVertical: 48 }}>
+          <Text style={{ fontSize: 14, color: colors?.textSecondary }}>
+            {t?.('settings.noResults') || 'Nenhuma configuração encontrada'}
+          </Text>
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -1704,7 +2004,7 @@ const SCREEN_TITLE_FALLBACK = {
 };
 
 export default function ProfileSettingsSheet({
-  visible, onClose, colors, isDark, t, router, onLogout, onEditProfile,
+  visible, onClose, colors, isDark, t, router, onLogout, onEditProfile, userEmail,
 }) {
   const [stack, setStack] = useState(['main']);
   const currentScreen = stack[stack.length - 1];
@@ -1794,6 +2094,7 @@ export default function ProfileSettingsSheet({
             router={router}
             onClose={onClose}
             closeAndRun={closeAndRun}
+            userEmail={userEmail}
           />
         );
     }

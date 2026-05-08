@@ -5,11 +5,11 @@
  * screen for now since it needs the image picker pipeline.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, Modal, Pressable,
   ScrollView, ActivityIndicator, Platform, StyleSheet, KeyboardAvoidingView,
-  Alert,
+  Alert, Switch, Animated, Easing,
 } from 'react-native';
 import * as api from '../services/api';
 import AvatarCircle from './AvatarCircle';
@@ -18,46 +18,137 @@ import { Image as ExpoImage } from 'expo-image';
 
 const MAX_BIO = 150;
 
-function Field({ label, value, onChangeText, placeholder, multiline, maxLength, colors, prefix, required }) {
+// Instagram-style row: label on the left (textSecondary 13), input on the
+// right (text 16, weight 500), hairline divider underneath. Replaces the
+// old top-stacked label + input layout. Bio is multiline so the input
+// wraps below the label, but we keep the same divider treatment.
+function Row({
+  label, value, onChangeText, placeholder, multiline, maxLength, colors,
+  prefix, required, rightAdornment, showCounter,
+}) {
   return (
-    <View style={{ paddingHorizontal: 16, paddingVertical: 10, gap: 6 }}>
-      <Text style={{ fontSize: 12, color: colors?.textSecondary, fontWeight: '600', letterSpacing: 0.4 }}>
-        {label}
-        {required ? (
-          <Text style={{ color: colors?.error || '#dc2626' }}>{' *'}</Text>
-        ) : null}
-      </Text>
+    <View style={{
+      paddingHorizontal: 16,
+      paddingVertical: multiline ? 14 : 10,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors?.border || 'rgba(0,0,0,0.08)',
+    }}>
       <View style={{
-        flexDirection: 'row', alignItems: 'center',
-        borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors?.border || '#eee',
+        flexDirection: multiline ? 'column' : 'row',
+        alignItems: multiline ? 'stretch' : 'center',
+        gap: multiline ? 6 : 12,
       }}>
-        {prefix ? (
-          <Text style={{ fontSize: 15, color: colors?.textTertiary || '#999', paddingRight: 4 }}>{prefix}</Text>
-        ) : null}
-        <TextInput
-          value={value}
-          onChangeText={onChangeText}
-          placeholder={placeholder}
-          placeholderTextColor={colors?.textTertiary}
-          style={{
-            flex: 1,
-            fontSize: 15, color: colors?.text,
-            paddingVertical: 8, paddingHorizontal: 0,
-            minHeight: multiline ? 60 : 36,
-          }}
-          multiline={!!multiline}
-          maxLength={maxLength}
-          autoCapitalize={prefix === '@' ? 'none' : 'sentences'}
-          autoCorrect={prefix === '@' ? false : true}
-        />
+        <Text style={{
+          fontSize: 13,
+          color: colors?.textSecondary || '#6b7280',
+          fontWeight: '500',
+          width: multiline ? undefined : 92,
+        }}>
+          {label}
+          {required ? (
+            <Text style={{ color: colors?.error || '#dc2626' }}>{' *'}</Text>
+          ) : null}
+        </Text>
+        <View style={{
+          flex: multiline ? undefined : 1,
+          flexDirection: 'row',
+          alignItems: multiline ? 'flex-start' : 'center',
+        }}>
+          {prefix ? (
+            <Text style={{
+              fontSize: 16, color: colors?.textTertiary || '#9ca3af',
+              paddingRight: 2, fontWeight: '500',
+            }}>{prefix}</Text>
+          ) : null}
+          <TextInput
+            value={value}
+            onChangeText={onChangeText}
+            placeholder={placeholder}
+            placeholderTextColor={colors?.textTertiary || '#9ca3af'}
+            style={{
+              flex: 1,
+              fontSize: 16,
+              fontWeight: '500',
+              color: colors?.text,
+              paddingVertical: 4, paddingHorizontal: 0,
+              minHeight: multiline ? 56 : 24,
+              textAlignVertical: multiline ? 'top' : 'center',
+            }}
+            multiline={!!multiline}
+            maxLength={maxLength}
+            autoCapitalize={prefix === '@' ? 'none' : 'sentences'}
+            autoCorrect={prefix === '@' ? false : true}
+          />
+          {rightAdornment ? (
+            <View style={{ marginLeft: 8 }}>{rightAdornment}</View>
+          ) : null}
+        </View>
       </View>
-      {multiline && maxLength && (
-        <Text style={{ fontSize: 11, color: colors?.textTertiary, textAlign: 'right' }}>
+      {showCounter && multiline && maxLength ? (
+        <Text style={{
+          fontSize: 12,
+          color: (value?.length || 0) >= maxLength
+            ? (colors?.error || '#ef4444')
+            : (colors?.textTertiary || '#9ca3af'),
+          textAlign: 'right',
+          marginTop: 4,
+        }}>
           {value?.length || 0} / {maxLength}
         </Text>
-      )}
+      ) : null}
     </View>
   );
+}
+
+// Animated availability indicator next to the @username input. Pulses
+// subtly while checking, snaps to a green check or red x once the API
+// answers. Stays compact (16px) so the input baseline doesn't shift.
+function UsernameIndicator({ status, colors }) {
+  const pulse = useRef(new Animated.Value(0.6)).current;
+  useEffect(() => {
+    if (!status?.checking) { pulse.setValue(1); return; }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 500, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.4, duration: 500, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [status?.checking, pulse]);
+
+  if (status?.checking) {
+    return (
+      <Animated.View style={{
+        width: 18, height: 18, borderRadius: 9,
+        backgroundColor: '#f59e0b',
+        opacity: pulse,
+      }} />
+    );
+  }
+  if (status?.available === true) {
+    return (
+      <View style={{
+        width: 18, height: 18, borderRadius: 9,
+        backgroundColor: '#10b981',
+        alignItems: 'center', justifyContent: 'center',
+      }}>
+        <Text style={{ color: '#fff', fontSize: 11, fontWeight: '900', lineHeight: 13 }}>✓</Text>
+      </View>
+    );
+  }
+  if (status?.available === false) {
+    return (
+      <View style={{
+        width: 18, height: 18, borderRadius: 9,
+        backgroundColor: '#ef4444',
+        alignItems: 'center', justifyContent: 'center',
+      }}>
+        <Text style={{ color: '#fff', fontSize: 11, fontWeight: '900', lineHeight: 13 }}>×</Text>
+      </View>
+    );
+  }
+  return null;
 }
 
 export default function ProfileEditSheet({
@@ -71,6 +162,10 @@ export default function ProfileEditSheet({
   const _usernameInitialRef = React.useRef('');
   const [bio, setBio] = useState('');
   const [website, setWebsite] = useState('');
+  const [pronouns, setPronouns] = useState('');
+  const [showProfessional, setShowProfessional] = useState(false);
+  const [proCategory, setProCategory] = useState('');
+  const [proContact, setProContact] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
   // Avatar preview takes priority over the cached AvatarCircle image so the
@@ -92,6 +187,10 @@ export default function ProfileEditSheet({
     setUsernameStatus({ checking: false, available: null, reason: null });
     setBio(initial?.bio || '');
     setWebsite(initial?.website || '');
+    setPronouns(initial?.pronouns || '');
+    setShowProfessional(!!(initial?.proCategory || initial?.proContact));
+    setProCategory(initial?.proCategory || '');
+    setProContact(initial?.proContact || '');
     setErr('');
     setAvatarPreview(null);
   }, [visible, initial]);
@@ -190,7 +289,10 @@ export default function ProfileEditSheet({
     (name || '') !== (initial?.name || '') ||
     (username || '').toLowerCase() !== (initial?.username || '').toLowerCase() ||
     (bio || '') !== (initial?.bio || '') ||
-    (website || '') !== (initial?.website || '');
+    (website || '') !== (initial?.website || '') ||
+    (pronouns || '') !== (initial?.pronouns || '') ||
+    (proCategory || '') !== (initial?.proCategory || '') ||
+    (proContact || '') !== (initial?.proContact || '');
 
   // Intercepts close attempts. If form has unsaved edits, prompt the user
   // before dismissing — same pattern iOS Settings / Instagram use.
@@ -222,9 +324,17 @@ export default function ProfileEditSheet({
         username: cleanedUsername,
         bio: bio.trim(),
         website: website.trim(),
+        pronouns: pronouns.trim(),
+        proCategory: showProfessional ? proCategory.trim() : '',
+        proContact: showProfessional ? proContact.trim() : '',
       });
       if (r?.success) {
-        onSaved?.({ name, username: cleanedUsername, bio, website });
+        onSaved?.({
+          name, username: cleanedUsername, bio, website,
+          pronouns,
+          proCategory: showProfessional ? proCategory : '',
+          proContact: showProfessional ? proContact : '',
+        });
         onClose?.();
       } else {
         setErr(r?.message || t?.('profile.saveFailed') || 'Não foi possível salvar');
@@ -235,6 +345,9 @@ export default function ProfileEditSheet({
       setSaving(false);
     }
   };
+
+  const dirty = isDirty();
+  const headerCanSave = dirty && !saving;
 
   return (
     <Modal visible={!!visible} transparent animationType="slide" onRequestClose={requestClose}>
@@ -256,65 +369,101 @@ export default function ProfileEditSheet({
               <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: isDark ? '#333' : '#ddd' }} />
             </View>
 
-            {/* Header with Cancel / Save. The Save control switches between
-                a flat text label (no changes pending — the sheet feels calm)
-                and a filled pill (dirty form — clearly the primary action).
-                Same iOS Settings.app pattern. */}
-            {(() => {
-              const dirty = isDirty();
-              return (
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16 }}>
-                  <TouchableOpacity onPress={requestClose} disabled={saving}>
-                    <Text style={{ fontSize: 15, color: colors?.textSecondary }}>{t?.('common.cancel') || 'Cancelar'}</Text>
-                  </TouchableOpacity>
-                  <Text style={{ fontSize: 16, fontWeight: '700', color: colors?.text }}>
-                    {t?.('profile.edit') || 'Editar perfil'}
-                  </Text>
-                  <TouchableOpacity onPress={handleSave} disabled={saving || !dirty} activeOpacity={0.75}>
-                    {saving ? (
-                      <ActivityIndicator size="small" color="#7C3AED" />
-                    ) : dirty ? (
-                      <View style={{
-                        paddingHorizontal: 14, paddingVertical: 7, borderRadius: 16,
-                        backgroundColor: '#7C3AED',
-                        ...(Platform.OS === 'web' ? { boxShadow: '0 2px 8px rgba(124,58,237,0.4)' } : {}),
-                      }}>
-                        <Text style={{ fontSize: 14, fontWeight: '700', color: '#fff' }}>
-                          {t?.('common.save') || 'Salvar'}
-                        </Text>
-                      </View>
-                    ) : (
-                      <Text style={{ fontSize: 15, fontWeight: '700', color: colors?.textTertiary || '#999' }}>
-                        {t?.('common.save') || 'Salvar'}
-                      </Text>
-                    )}
-                  </TouchableOpacity>
-                </View>
-              );
-            })()}
+            {/* Header — Instagram pattern: X icon left, title center, "Concluído"
+                pill right. Pill goes filled-purple when dirty, ghost-grey when
+                clean — same affordance Instagram uses to telegraph "you have
+                changes to commit". */}
+            <View style={{
+              flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+              paddingHorizontal: 12, paddingVertical: 10,
+              borderBottomWidth: StyleSheet.hairlineWidth,
+              borderBottomColor: colors?.border || 'rgba(0,0,0,0.08)',
+            }}>
+              <TouchableOpacity
+                onPress={requestClose}
+                disabled={saving}
+                style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }}
+                accessibilityRole="button"
+                accessibilityLabel={t?.('common.cancel') || 'Cancelar'}
+              >
+                <IconX size={22} color={colors?.text || '#111'} />
+              </TouchableOpacity>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: colors?.text }}>
+                {t?.('profile.edit') || 'Editar perfil'}
+              </Text>
+              <TouchableOpacity onPress={handleSave} disabled={saving || !dirty} activeOpacity={0.75}>
+                {saving ? (
+                  <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
+                    <ActivityIndicator size="small" color="#7C3AED" />
+                  </View>
+                ) : (
+                  <View style={{
+                    paddingHorizontal: 16, paddingVertical: 8, borderRadius: 18,
+                    backgroundColor: headerCanSave ? '#7C3AED' : 'transparent',
+                    ...(headerCanSave && Platform.OS === 'web'
+                      ? { boxShadow: '0 2px 10px rgba(124,58,237,0.45)' }
+                      : {}),
+                  }}>
+                    <Text style={{
+                      fontSize: 15,
+                      fontWeight: '700',
+                      color: headerCanSave ? '#fff' : (colors?.textTertiary || '#9ca3af'),
+                    }}>
+                      {t?.('common.done') || 'Concluído'}
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
+            </View>
 
-            <ScrollView showsVerticalScrollIndicator={false}>
-              {/* Avatar — tap to change. Preview overlays the cached avatar
-                  during upload so the user sees the new image immediately. */}
-              <View style={{ alignItems: 'center', paddingVertical: 10 }}>
-                <TouchableOpacity onPress={handlePickAvatar} activeOpacity={0.75} disabled={uploadingAvatar} accessibilityRole="button" accessibilityLabel={t?.('profile.changePhoto') || 'Trocar foto'}>
-                  <View style={{ width: 84, height: 84, borderRadius: 42, overflow: 'hidden', backgroundColor: colors?.surface }}>
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              {/* Hero photo section — 96px avatar centered over a subtle
+                  purple radial-ish gradient. "Trocar foto" link below acts
+                  as the secondary tap affordance (the avatar itself is also
+                  tappable). Replaces the small camera-badge-only treatment. */}
+              <View style={{ alignItems: 'center', paddingTop: 24, paddingBottom: 20 }}>
+                {/* Soft purple wash sitting behind the avatar */}
+                <View pointerEvents="none" style={{
+                  position: 'absolute', top: 0, left: 0, right: 0, height: 140,
+                  backgroundColor: 'rgba(124,58,237,0.05)',
+                }} />
+                <TouchableOpacity
+                  onPress={handlePickAvatar}
+                  activeOpacity={0.8}
+                  disabled={uploadingAvatar}
+                  accessibilityRole="button"
+                  accessibilityLabel={t?.('profile.changePhoto') || 'Trocar foto'}
+                  style={{
+                    width: 104, height: 104, borderRadius: 52,
+                    alignItems: 'center', justifyContent: 'center',
+                    backgroundColor: 'rgba(124,58,237,0.10)',
+                    ...(Platform.OS === 'web' ? { boxShadow: '0 8px 24px rgba(124,58,237,0.18)' } : {}),
+                  }}
+                >
+                  <View style={{
+                    width: 96, height: 96, borderRadius: 48, overflow: 'hidden',
+                    backgroundColor: colors?.surface || '#f5f5f5',
+                    borderWidth: 3, borderColor: colors?.background || '#fff',
+                  }}>
                     {avatarPreview ? (
-                      <ExpoImage source={{ uri: avatarPreview }} style={{ width: 84, height: 84 }} contentFit="cover" />
+                      <ExpoImage source={{ uri: avatarPreview }} style={{ width: 96, height: 96 }} contentFit="cover" />
                     ) : (
-                      <AvatarCircle name={name || initial?.name} email={currentEmail} size={84} />
+                      <AvatarCircle name={name || initial?.name} email={currentEmail} size={96} />
                     )}
                     {uploadingAvatar && (
-                      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center' }}>
+                      <View style={{
+                        position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+                        backgroundColor: 'rgba(0,0,0,0.45)',
+                        alignItems: 'center', justifyContent: 'center',
+                      }}>
                         <ActivityIndicator color="#fff" size="small" />
                       </View>
                     )}
                   </View>
-                  {/* Camera badge — Instagram/WhatsApp style. SVG icon
-                      replaces the 📷 emoji so it stays sharp on every density
-                      and follows the project's no-emoji-in-UI rule. */}
+                  {/* Tiny camera badge — kept as a glanceable affordance even
+                      though the "Trocar foto" link does the same thing. */}
                   <View style={{
-                    position: 'absolute', right: -2, bottom: -2,
+                    position: 'absolute', right: 4, bottom: 4,
                     width: 28, height: 28, borderRadius: 14,
                     backgroundColor: '#7C3AED',
                     alignItems: 'center', justifyContent: 'center',
@@ -324,23 +473,29 @@ export default function ProfileEditSheet({
                     <IconCamera size={15} color="#fff" />
                   </View>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={handlePickAvatar} disabled={uploadingAvatar} style={{ marginTop: 10 }} activeOpacity={0.6}>
-                  <Text style={{ fontSize: 14, color: '#7C3AED', fontWeight: '600' }}>
+                <TouchableOpacity
+                  onPress={handlePickAvatar}
+                  disabled={uploadingAvatar}
+                  style={{ marginTop: 14, paddingVertical: 4, paddingHorizontal: 8 }}
+                  activeOpacity={0.6}
+                >
+                  <Text style={{ fontSize: 15, color: '#7C3AED', fontWeight: '600' }}>
                     {t?.('profile.changePhoto') || 'Trocar foto'}
                   </Text>
                 </TouchableOpacity>
               </View>
 
-              <Field
-                label={t?.('profile.name') || 'NOME'}
+              {/* Form rows — Instagram side-by-side label/input layout */}
+              <Row
+                label={t?.('profile.name') || 'Nome'}
                 value={name}
                 onChangeText={setName}
                 placeholder={t?.('profile.namePh') || 'Seu nome'}
                 maxLength={50}
                 colors={colors}
               />
-              <Field
-                label={t?.('profile.username') || 'USUÁRIO'}
+              <Row
+                label={t?.('profile.username') || 'Usuário'}
                 required
                 prefix="@"
                 value={username}
@@ -374,16 +529,18 @@ export default function ProfileEditSheet({
                 placeholder={t?.('profile.usernamePh') || 'usuario'}
                 maxLength={30}
                 colors={colors}
+                rightAdornment={<UsernameIndicator status={usernameStatus} colors={colors} />}
               />
-              {/* Status do @ — verde se disponível, vermelho se ocupado/reservado */}
-              {(usernameStatus.checking || usernameStatus.available !== null) && (
+              {/* Status text — short helper below the username row */}
+              {(usernameStatus.checking || usernameStatus.available !== null) ? (
                 <Text style={{
                   fontSize: 12,
-                  marginTop: -8,
-                  marginBottom: 8,
-                  marginLeft: 4,
+                  paddingHorizontal: 16,
+                  paddingTop: 6,
+                  paddingBottom: 2,
+                  marginLeft: 92 + 12, // align under input column
                   color: usernameStatus.checking
-                    ? (colors?.textTertiary || '#999')
+                    ? (colors?.textTertiary || '#9ca3af')
                     : (usernameStatus.available ? '#10b981' : '#ef4444'),
                 }}>
                   {usernameStatus.checking
@@ -398,18 +555,27 @@ export default function ProfileEditSheet({
                             ? (t?.('profile.usernameTooShort') || 'Mínimo 3 caracteres')
                             : (t?.('profile.usernameInvalid') || 'Indisponível')}
                 </Text>
-              )}
-              <Field
-                label={t?.('profile.bio') || 'BIO'}
+              ) : null}
+              <Row
+                label={t?.('profile.pronouns') || 'Pronomes'}
+                value={pronouns}
+                onChangeText={setPronouns}
+                placeholder={t?.('profile.pronounsPh') || 'Adicionar pronomes'}
+                maxLength={40}
+                colors={colors}
+              />
+              <Row
+                label={t?.('profile.bio') || 'Bio'}
                 value={bio}
                 onChangeText={setBio}
                 placeholder={t?.('profile.bioPh') || 'Conte algo sobre você'}
                 multiline
                 maxLength={MAX_BIO}
                 colors={colors}
+                showCounter
               />
-              <Field
-                label={t?.('profile.website') || 'LINK'}
+              <Row
+                label={t?.('profile.website') || 'Site'}
                 value={website}
                 onChangeText={setWebsite}
                 placeholder="https://..."
@@ -417,8 +583,63 @@ export default function ProfileEditSheet({
                 colors={colors}
               />
 
+              {/* Professional info section — collapsed by default. Toggle row
+                  mirrors Instagram's "Mostrar conta profissional" switch.
+                  Sub-fields slide in below when enabled. */}
+              <View style={{ marginTop: 16, marginBottom: 4, paddingHorizontal: 16 }}>
+                <Text style={{
+                  fontSize: 12, fontWeight: '700', letterSpacing: 0.6,
+                  color: colors?.textSecondary || '#6b7280',
+                  textTransform: 'uppercase',
+                }}>
+                  {t?.('profile.businessSection') || 'Informações comerciais'}
+                </Text>
+              </View>
+              <View style={{
+                paddingHorizontal: 16, paddingVertical: 12,
+                flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                borderBottomWidth: showProfessional ? 0 : StyleSheet.hairlineWidth,
+                borderBottomColor: colors?.border || 'rgba(0,0,0,0.08)',
+              }}>
+                <View style={{ flex: 1, paddingRight: 12 }}>
+                  <Text style={{ fontSize: 16, fontWeight: '500', color: colors?.text }}>
+                    {t?.('profile.showBusinessInfo') || 'Mostrar info profissional'}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: colors?.textSecondary || '#6b7280', marginTop: 2 }}>
+                    {t?.('profile.showBusinessInfoHint') || 'Categoria e contato visíveis no perfil'}
+                  </Text>
+                </View>
+                <Switch
+                  value={showProfessional}
+                  onValueChange={setShowProfessional}
+                  trackColor={{ false: '#d1d5db', true: '#7C3AED' }}
+                  thumbColor={Platform.OS === 'android' ? (showProfessional ? '#fff' : '#f4f3f4') : undefined}
+                  ios_backgroundColor="#d1d5db"
+                />
+              </View>
+              {showProfessional ? (
+                <View>
+                  <Row
+                    label={t?.('profile.proCategory') || 'Categoria'}
+                    value={proCategory}
+                    onChangeText={setProCategory}
+                    placeholder={t?.('profile.proCategoryPh') || 'Ex: Designer, Loja, Artista'}
+                    maxLength={50}
+                    colors={colors}
+                  />
+                  <Row
+                    label={t?.('profile.proContact') || 'Contato'}
+                    value={proContact}
+                    onChangeText={setProContact}
+                    placeholder={t?.('profile.proContactPh') || 'Email ou telefone comercial'}
+                    maxLength={120}
+                    colors={colors}
+                  />
+                </View>
+              ) : null}
+
               {!!err && (
-                <Text style={{ color: '#ef4444', fontSize: 13, paddingHorizontal: 16, paddingVertical: 8 }}>
+                <Text style={{ color: '#ef4444', fontSize: 13, paddingHorizontal: 16, paddingVertical: 12 }}>
                   {err}
                 </Text>
               )}

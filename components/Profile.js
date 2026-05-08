@@ -291,16 +291,19 @@ function Stat({ value, label, onPress, colors }) {
       accessibilityLabel={onPress ? `${label}: ${formatCount(value)}` : undefined}
       style={{ flex: 1, alignItems: 'center', paddingVertical: 6 }}
     >
+      {/* Instagram parity: number 18/700 above label 13/500. Tabular-nums
+          locks digit width so 1.2K → 1.3K doesn't shift the column. */}
       <Animated.View style={{ alignItems: 'center', transform: [{ scale }] }}>
         <Text style={{
-          fontSize: 22, fontWeight: '800', color: colors?.text, letterSpacing: -0.5,
+          fontSize: 18, fontWeight: '700', color: colors?.text, letterSpacing: -0.3,
           fontVariant: ['tabular-nums'],
         }}>
           {formatCount(value)}
         </Text>
         <Text style={{
-          fontSize: 12, color: colors?.textSecondary, marginTop: 4,
-          letterSpacing: 0.1, fontWeight: '500',
+          fontSize: 13, color: colors?.text, marginTop: 2,
+          letterSpacing: 0, fontWeight: '400',
+          opacity: 0.85,
         }}>
           {label}
         </Text>
@@ -396,41 +399,38 @@ function AnimatedTabBar({ tabs, activeKey, onChange, colors }) {
             accessibilityState={{ selected: active }}
             accessibilityLabel={tb.label}
             activeOpacity={0.75}
-            style={{ flex: 1, paddingVertical: 12, alignItems: 'center' }}
+            style={{ flex: 1, paddingVertical: 11, alignItems: 'center' }}
           >
             {Icon ? (
-              <Icon size={22} color={active ? accent : muted} />
+              // Instagram parity: pure icon, no count badge — thicker stroke
+              // when active so the difference reads at a glance.
+              <Icon size={24} color={active ? accent : muted} />
             ) : (
-              <Text style={{ fontSize: 13, color: active ? accent : muted, fontWeight: active ? '700' : '500' }}>
+              <Text style={{ fontSize: 13, color: active ? accent : muted, fontWeight: active ? '700' : '500', letterSpacing: 0.2, textTransform: 'uppercase' }}>
                 {tb.label}
               </Text>
             )}
           </TouchableOpacity>
         );
       })}
-      {/* Sliding underline. We render only when we know the bar width so
-          there's no first-frame jump from x=0. */}
+      {/* Sliding underline — Instagram-grade: full-slot width, brand purple
+          accent, slightly thicker (2.5px) so it reads from a glance. Lives
+          on the GPU via translateX. */}
       {barW > 0 && (
         <Animated.View
           pointerEvents="none"
           style={{
             position: 'absolute',
-            bottom: 0,
+            bottom: -StyleSheet.hairlineWidth,
             left: 0,
             width: slotW,
-            height: 2,
+            height: 2.5,
             transform: [{ translateX: indicatorX }],
-            alignItems: 'center',
-            justifyContent: 'center',
+            backgroundColor: '#7C3AED',
+            borderTopLeftRadius: 2,
+            borderTopRightRadius: 2,
           }}
-        >
-          <View style={{
-            width: Math.max(28, slotW * 0.45),
-            height: 2,
-            borderRadius: 2,
-            backgroundColor: accent,
-          }} />
-        </Animated.View>
+        />
       )}
     </View>
   );
@@ -567,16 +567,47 @@ function GridItem({ item, size, onPress, isReel }) {
     }
     return <Image source={{ uri: url }} style={{ width: '100%', height: '100%', borderRadius: 3 }} resizeMode="cover" />;
   };
+  // Instagram-grade grid: full-bleed 1:1 cells with hairline 0.5px gutters
+  // (vs. the previous 1px padding which doubled to 2px between siblings and
+  // made the grid feel airier than IG's tight mosaic). The play badge moves
+  // top-right with a soft scrim so reels still read as motion-content even on
+  // a bright thumbnail. View count surfaces bottom-left for reels (when
+  // available) — matches Instagram's "1.2K" overlay on profile reels grid.
+  const viewCount = (isReel || item.type === 'video' || item.media_type === 'video')
+    ? (item.view_count || item.views || item.play_count || 0)
+    : 0;
+  const viewLabel = viewCount >= 1000
+    ? `${(viewCount / 1000).toFixed(viewCount >= 10000 ? 0 : 1)}K`
+    : (viewCount > 0 ? String(viewCount) : '');
   return (
     <TouchableOpacity onPress={onPress} activeOpacity={0.85}
-      style={{ width: size, height: size, padding: 1 }}
+      style={{ width: size, height: size, padding: 0.5 }}
     >
-      {renderImg()}
-      {(item.type === 'video' || isReel) && (
-        <View style={{ position: 'absolute', top: 6, right: 6 }}>
-          <IconVideo size={14} color="#fff" />
-        </View>
-      )}
+      <View style={{ width: '100%', height: '100%', overflow: 'hidden', backgroundColor: '#0a0a0a' }}>
+        {renderImg()}
+        {(item.type === 'video' || isReel) && (
+          <>
+            <View style={{
+              position: 'absolute', top: 6, right: 6,
+              width: 22, height: 22, borderRadius: 11,
+              backgroundColor: 'rgba(0,0,0,0.35)',
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <IconVideo size={13} color="#fff" />
+            </View>
+            {!!viewLabel && (
+              <View style={{
+                position: 'absolute', bottom: 6, left: 6,
+                flexDirection: 'row', alignItems: 'center', gap: 4,
+              }}>
+                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 3 }}>
+                  ▶ {viewLabel}
+                </Text>
+              </View>
+            )}
+          </>
+        )}
+      </View>
     </TouchableOpacity>
   );
 }
@@ -945,6 +976,71 @@ export default function Profile({
     } catch {}
   }, [identity]);
 
+  // ─── Story Highlights row (Instagram parity) ────────────────────────
+  // Horizontal-scroll row of circular highlight covers (64px). When the
+  // viewer is `is_self` and there are zero highlights, show a "Novo" tile
+  // with a + icon as the first slot — Instagram pattern that nudges users
+  // to start curating. Backend doesn't expose highlights yet so we mock
+  // gracefully off `data.highlights` (array of {id, title, cover_url}).
+  const renderHighlights = () => {
+    const highlights = Array.isArray(data?.highlights) ? data.highlights : [];
+    const isSelf = !!actions?.is_self;
+    if (highlights.length === 0 && !isSelf) return null;
+    const SIZE = 64;
+    const RING = SIZE + 6; // 3px ring on each side
+    const tone = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.06)';
+    const borderTone = isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.10)';
+    return (
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 6, gap: 16 }}
+      >
+        {isSelf && (
+          <TouchableOpacity activeOpacity={0.8} style={{ alignItems: 'center', width: SIZE + 8 }}>
+            <View style={{
+              width: RING, height: RING, borderRadius: RING / 2,
+              borderWidth: 1.5, borderColor: borderTone,
+              alignItems: 'center', justifyContent: 'center',
+              backgroundColor: tone,
+            }}>
+              <IconPlus size={26} color={colors?.text} strokeWidth={2} />
+            </View>
+            <Text style={{ fontSize: 12, color: colors?.text, marginTop: 5, fontWeight: '500' }} numberOfLines={1}>
+              {t?.('profile.newHighlight') || 'Novo'}
+            </Text>
+          </TouchableOpacity>
+        )}
+        {highlights.map(h => {
+          const cover = h.cover_url ? resolveMedia(h.cover_url) : null;
+          return (
+            <TouchableOpacity key={h.id} activeOpacity={0.85} style={{ alignItems: 'center', width: SIZE + 8 }}>
+              <View style={{
+                width: RING, height: RING, borderRadius: RING / 2,
+                borderWidth: 1.5, borderColor: borderTone,
+                alignItems: 'center', justifyContent: 'center',
+                backgroundColor: tone, padding: 2,
+              }}>
+                {cover ? (
+                  WEB
+                    ? <img src={cover} alt="" style={{ width: SIZE - 4, height: SIZE - 4, borderRadius: (SIZE - 4) / 2, objectFit: 'cover' }} />
+                    : (_ExpoImage
+                        ? <_ExpoImage source={{ uri: cover }} style={{ width: SIZE - 4, height: SIZE - 4, borderRadius: (SIZE - 4) / 2 }} contentFit="cover" cachePolicy="memory-disk" />
+                        : <Image source={{ uri: cover }} style={{ width: SIZE - 4, height: SIZE - 4, borderRadius: (SIZE - 4) / 2 }} resizeMode="cover" />)
+                ) : (
+                  <View style={{ width: SIZE - 4, height: SIZE - 4, borderRadius: (SIZE - 4) / 2, backgroundColor: '#7C3AED22' }} />
+                )}
+              </View>
+              <Text style={{ fontSize: 12, color: colors?.text, marginTop: 5, fontWeight: '500', maxWidth: SIZE + 8 }} numberOfLines={1}>
+                {h.title || ''}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+    );
+  };
+
   const renderHeader = () => {
     if (!identity) return null;
     const postsTotal = (posts.length || 0) + (reels.length || 0);
@@ -954,23 +1050,35 @@ export default function Profile({
             headerLeadingSpace reserves room for the back arrow overlay in `full` mode so the
             @username doesn't get clipped behind it. Only row 1 gets the offset — posts/reels
             grid stays edge-to-edge so cells don't overflow off-screen on mobile widths. */}
+        {/* Instagram top bar: @handle (24/700) on left, badge if verified,
+            then on the right: discover-people (+) for self / chevron + kebab
+            for others. Matches Instagram's hierarchy where username reads as
+            the page title. */}
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingLeft: headerLeadingSpace }}>
           <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Text style={{ fontSize: 20, fontWeight: '700', color: colors?.text }} numberOfLines={1}>
+            <Text style={{ fontSize: 24, fontWeight: '700', color: colors?.text, letterSpacing: -0.4 }} numberOfLines={1}>
               {identity.username ? `@${identity.username}` : identity.name}
             </Text>
             {identity.verified && (
-              <View style={{ width: 18, height: 18, borderRadius: 9, backgroundColor: '#1DA1F2', alignItems: 'center', justifyContent: 'center' }}>
-                <IconCheck size={11} color="#fff" strokeWidth={3} />
+              <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#1DA1F2', alignItems: 'center', justifyContent: 'center' }}>
+                <IconCheck size={12} color="#fff" strokeWidth={3} />
               </View>
             )}
+            {/* Lock icon for private accounts — Instagram parity */}
+            {identity.is_private && (
+              <IconLock size={16} color={colors?.text} />
+            )}
           </View>
-          {actions.is_self && (
-            <TouchableOpacity onPress={() => (onOpenSettings ? onOpenSettings() : setSettingsOpen(true))} style={{ padding: 6 }} accessibilityLabel={t?.('settings.title') || 'Configurações'}>
-              <IconSettings size={24} color={colors?.text} />
-            </TouchableOpacity>
-          )}
-          {!actions.is_self && (
+          {actions.is_self ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <TouchableOpacity onPress={() => router?.push?.('/chat-new')} style={{ padding: 6 }} accessibilityLabel={t?.('profile.discover') || 'Descobrir pessoas'}>
+                <IconUserPlus size={24} color={colors?.text} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => (onOpenSettings ? onOpenSettings() : setSettingsOpen(true))} style={{ padding: 6 }} accessibilityLabel={t?.('settings.title') || 'Configurações'}>
+                <IconMoreHorizontal size={24} color={colors?.text} />
+              </TouchableOpacity>
+            </View>
+          ) : (
             <TouchableOpacity onPress={() => setMenuOpen(true)} style={{ padding: 6 }} accessibilityLabel="More">
               <IconMoreHorizontal size={24} color={colors?.text} />
             </TouchableOpacity>
@@ -1114,8 +1222,11 @@ export default function Profile({
               >{inner}</TouchableOpacity>
             );
           })()}
-          <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-around' }}>
-            <Stat value={postsTotal} label={t?.('profile.posts') || 'Posts'} colors={colors} />
+          {/* Instagram pattern: 3-column stats row to the right of the avatar.
+              Uses justifyContent: space-around with each Stat as flex:1 column
+              so numbers/labels stay vertically centered with the avatar. */}
+          <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 4 }}>
+            <Stat value={postsTotal} label={t?.('profile.posts') || 'Publicações'} colors={colors} />
             <Stat value={social?.followers_count || 0} label={t?.('profile.followers') || 'Seguidores'} colors={colors}
               onPress={() => (onOpenFollowers ? onOpenFollowers(identity.email, 'followers') : setFollowersTab('followers'))} />
             <Stat value={social?.following_count || 0} label={t?.('profile.following') || 'Seguindo'} colors={colors}
@@ -1201,7 +1312,11 @@ export default function Profile({
           </View>
         )}
         {actions.is_self && (
-          <View style={{ flexDirection: 'row', gap: 8 }}>
+          // Instagram-grade self action row: Editar perfil + Compartilhar
+          // perfil + a square "+" tile for "discover/add people". The +
+          // button is fixed-width (44) so the two text pills get the most
+          // breathing room — matches Instagram exactly.
+          <View style={{ flexDirection: 'row', gap: 8, alignItems: 'stretch' }}>
             <FlatButton
               label={t?.('profile.edit') || 'Editar perfil'}
               onPress={() => setEditOpen(true)}
@@ -1214,6 +1329,20 @@ export default function Profile({
               colors={colors}
               isDark={isDark}
             />
+            <TouchableOpacity
+              onPress={() => router?.push?.('/chat-new')}
+              activeOpacity={0.85}
+              accessibilityLabel={t?.('profile.discover') || 'Descobrir pessoas'}
+              style={{
+                width: 44, paddingVertical: 11,
+                borderRadius: 999,
+                alignItems: 'center', justifyContent: 'center',
+                borderWidth: 1,
+                borderColor: isDark ? 'rgba(167,139,250,0.55)' : 'rgba(124,58,237,0.30)',
+              }}
+            >
+              <IconUserPlus size={16} color={colors?.text || (isDark ? '#fff' : '#111')} />
+            </TouchableOpacity>
           </View>
         )}
       </View>
@@ -1502,7 +1631,11 @@ export default function Profile({
     <>
       {renderHeader()}
       {/* renderStoriesRow removido — agora o ring fica ao redor do avatar
-          principal (Instagram-style) e o tap abre direto o viewer. */}
+          principal (Instagram-style) e o tap abre direto o viewer.
+          Story Highlights row (curated covers) lives between header and tabs
+          em `full` mode pra parear com o layout do Instagram. Self viewers
+          sempre veem o tile "Novo +" pra começar a curar. */}
+      {mode === 'full' && renderHighlights()}
       {mode === 'peek' ? renderPeekBody() : renderFullBody()}
     </>
   );
