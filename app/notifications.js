@@ -1,5 +1,5 @@
 import ErrorBoundary from '../components/ErrorBoundary';
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, FlatList, StyleSheet,
   Platform, RefreshControl, Animated, Easing,
@@ -17,19 +17,27 @@ import {
 import EmptyStateCard from '../components/EmptyStateCard';
 import * as api from '../services/api';
 
-// ─── Tab filter config ────────────────────────────────────────────────────────
+// Brand color (Chatyy purple)
+const BRAND = '#7C3AED';
+
+// ─── Tab filter config ─ Instagram Activity 4-segment layout ──────────────────
+// "Todas" / "Pra você" / "Seguindo" / "Você"
+//   - Todas:    everything
+//   - Pra você: things relevant to me (likes, comments, mentions, follows on me)
+//   - Seguindo: activity from accounts I follow (placeholder: chat/live/email)
+//   - Você:     direct interactions on my content (mentions + comments + likes)
 const TABS = [
-  { key: 'all',       labelKey: 'notifications.tabAll',       types: null },
-  { key: 'mentions',  labelKey: 'notifications.tabMentions',  types: ['mention'] },
-  { key: 'likes',     labelKey: 'notifications.tabLikes',     types: ['like'] },
-  { key: 'followers', labelKey: 'notifications.tabFollowers', types: ['follow'] },
+  { key: 'all',       labelKey: 'notifications.tabAll',       label: 'Todas',     types: null },
+  { key: 'foryou',    labelKey: 'notifications.tabForYou',    label: 'Pra você',  types: ['like', 'comment', 'mention', 'follow'] },
+  { key: 'following', labelKey: 'notifications.tabFollowing', label: 'Seguindo',  types: ['chat', 'live', 'email'] },
+  { key: 'you',       labelKey: 'notifications.tabYou',       label: 'Você',      types: ['mention', 'comment', 'like'] },
 ];
 
 // ─── Per-type icon & colour ───────────────────────────────────────────────────
 function TypeBadge({ type, size = 18 }) {
   const map = {
-    email:   { Icon: IconMail,          bg: '#7C3AED', color: '#fff' },
-    chat:    { Icon: IconMessageSquare, bg: '#7C3AED', color: '#fff' },
+    email:   { Icon: IconMail,          bg: BRAND,    color: '#fff' },
+    chat:    { Icon: IconMessageSquare, bg: BRAND,    color: '#fff' },
     mention: { Icon: IconAtSign,        bg: '#0ea5e9', color: '#fff' },
     like:    { Icon: IconHeart,         bg: '#ef4444', color: '#fff' },
     comment: { Icon: IconMessageSquare, bg: '#f59e0b', color: '#fff' },
@@ -52,6 +60,29 @@ const badge = StyleSheet.create({
   },
 });
 
+// ─── Avatar stack (for grouped likes) ─────────────────────────────────────────
+function AvatarStack({ emails = [], size = 28 }) {
+  const list = emails.slice(0, 3);
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', height: size }}>
+      {list.map((e, idx) => (
+        <View
+          key={e || idx}
+          style={{
+            marginLeft: idx === 0 ? 0 : -10,
+            borderRadius: size / 2,
+            borderWidth: 2,
+            borderColor: '#fff',
+            zIndex: list.length - idx,
+          }}
+        >
+          <AvatarCircle email={e} size={size} />
+        </View>
+      ))}
+    </View>
+  );
+}
+
 // ─── Relative time helper ─────────────────────────────────────────────────────
 function timeAgo(dateStr, t) {
   if (!dateStr) return '';
@@ -63,65 +94,265 @@ function timeAgo(dateStr, t) {
   {const _d = new Date(dateStr); return isNaN(_d.getTime()) ? "" : _d.toLocaleDateString();}
 }
 
-// ─── Single notification row ──────────────────────────────────────────────────
-function NotifRow({ item, colors, isDark, onPress, t }) {
-  // Build display text
+// ─── Date bucket: Hoje / Ontem / Esta semana / Mais antigas ───────────────────
+function dateBucket(dateStr) {
+  if (!dateStr) return 'older';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return 'older';
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const ts = d.getTime();
+  if (ts >= startOfToday) return 'today';
+  if (ts >= startOfToday - 86400000) return 'yesterday';
+  if (ts >= startOfToday - 7 * 86400000) return 'thisWeek';
+  return 'older';
+}
+
+const BUCKET_LABELS = {
+  today:     { key: 'notifications.bucketToday',     fallback: 'Hoje' },
+  yesterday: { key: 'notifications.bucketYesterday', fallback: 'Ontem' },
+  thisWeek:  { key: 'notifications.bucketThisWeek',  fallback: 'Esta semana' },
+  older:     { key: 'notifications.bucketOlder',     fallback: 'Mais antigas' },
+};
+
+// ─── Single notification row (Instagram-style) ────────────────────────────────
+function NotifRow({ item, colors, isDark, onPress, onAction, t }) {
   const grouped = item.grouped_body || null;
-  const title   = grouped || item.title || '';
-  const body    = grouped ? '' : (item.body || '');
   const ts      = timeAgo(item.created_at || item.latest_at, t);
 
-  const unreadBg = isDark ? 'rgba(37,99,235,0.1)' : 'rgba(37,99,235,0.06)';
+  // Like aggregation: build a "User1, User2 e mais 12 curtiram seu post"
+  const isLikeGroup =
+    item.type === 'like' &&
+    Array.isArray(item.actor_emails) &&
+    item.actor_emails.length > 1;
+
+  let title = grouped || item.title || '';
+  let body  = grouped ? '' : (item.body || '');
+
+  if (isLikeGroup) {
+    const names = (item.actor_names || item.actor_emails).filter(Boolean);
+    const first = names[0] || '';
+    const second = names[1] || '';
+    const rest = names.length - 2;
+    if (rest > 0) {
+      title = `${first}, ${second} e mais ${rest} curtiram seu post`;
+    } else if (second) {
+      title = `${first} e ${second} curtiram seu post`;
+    } else {
+      title = `${first} curtiu seu post`;
+    }
+    body = '';
+  }
+
+  // Inline body verb for follow type — Instagram says "X seguiu você"
+  if (item.type === 'follow' && !grouped) {
+    const name = item.author_name || item.author_email || '';
+    title = name ? `${name} começou a seguir você` : title;
+  }
+
+  const unreadBg = isDark ? 'rgba(124,58,237,0.10)' : 'rgba(124,58,237,0.05)';
+
+  // Right-side thumbnail (post preview) for likes/comments referencing a post
+  const thumbUri = item.thumbnail_url || item.post_thumbnail || null;
+  const showThumb = !!thumbUri && (item.type === 'like' || item.type === 'comment' || item.type === 'mention');
+
+  // Inline action pills — only for follow notifications
+  const showActions = item.type === 'follow' && !item.action_taken;
 
   return (
     <TouchableOpacity
       style={[styles.row, !item.read && { backgroundColor: unreadBg }]}
       onPress={() => onPress(item)}
       activeOpacity={0.7}
+      accessibilityRole="button"
+      accessibilityLabel={title}
     >
-      {/* Avatar with type badge */}
+      {/* Left unread dot rail */}
+      {!item.read ? (
+        <View style={[styles.unreadRail, { backgroundColor: BRAND }]} />
+      ) : (
+        <View style={styles.unreadRailSpacer} />
+      )}
+
+      {/* Avatar (44) — stack for like-groups, single for others */}
       <View style={styles.avatarWrap}>
-        {item.author_email ? (
-          <AvatarCircle email={item.author_email} size={46} />
+        {isLikeGroup ? (
+          <AvatarStack emails={item.actor_emails || []} size={36} />
+        ) : item.author_email ? (
+          <>
+            <AvatarCircle email={item.author_email} size={44} />
+            <TypeBadge type={item.type} size={20} />
+          </>
         ) : (
           <View style={[styles.typeCircle, { backgroundColor: colors.primaryLight || colors.border }]}>
             <TypeBadge type={item.type} size={26} />
           </View>
         )}
-        {item.author_email && <TypeBadge type={item.type} size={20} />}
       </View>
 
-      {/* Text */}
+      {/* Center content: text + inline actions */}
       <View style={styles.rowContent}>
         <Text style={[styles.rowTitle, { color: colors.text }]} numberOfLines={2}>
           {title}
+          {!!ts && (
+            <Text style={[styles.rowTimeInline, { color: colors.textTertiary || colors.textSecondary }]}>
+              {'  · ' + ts}
+            </Text>
+          )}
         </Text>
         {!!body && (
           <Text style={[styles.rowBody, { color: colors.textSecondary }]} numberOfLines={1}>
             {body}
           </Text>
         )}
-        <Text style={[styles.rowTime, { color: colors.textTertiary || colors.textSecondary }]}>
-          {ts}
-        </Text>
+
+        {showActions && (
+          <View style={styles.actionRow}>
+            <TouchableOpacity
+              onPress={(e) => { e?.stopPropagation?.(); onAction?.(item, 'follow_back'); }}
+              style={[styles.pillPrimary, { backgroundColor: BRAND }]}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel={t('notifications.followBack') || 'Seguir de volta'}
+            >
+              <Text style={styles.pillPrimaryText}>
+                {t('notifications.followBack') || 'Seguir de volta'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={(e) => { e?.stopPropagation?.(); onAction?.(item, 'message'); }}
+              style={[styles.pillSecondary, { borderColor: colors.border }]}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel={t('notifications.message') || 'Mensagem'}
+            >
+              <Text style={[styles.pillSecondaryText, { color: colors.text }]}>
+                {t('notifications.message') || 'Mensagem'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
 
-      {/* Unread dot */}
-      {!item.read && (
-        <View style={[styles.unreadDot, { backgroundColor: colors.primary }]} />
+      {/* Right post thumbnail (44 square) */}
+      {showThumb && (
+        <View style={[styles.thumb, { backgroundColor: colors.borderLight || colors.border }]}>
+          {/* Native Image lazy import not needed — we use a styled View as placeholder fallback */}
+          {Platform.OS === 'web' ? (
+            <img
+              src={thumbUri}
+              alt=""
+              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+            />
+          ) : (
+            // RN-side: minimal Image without an extra import — we rely on a runtime require
+            // to avoid touching imports. If unsupported, the placeholder bg shows through.
+            (() => {
+              try {
+                const { Image } = require('react-native');
+                return <Image source={{ uri: thumbUri }} style={{ width: 44, height: 44 }} />;
+              } catch { return null; }
+            })()
+          )}
+        </View>
       )}
     </TouchableOpacity>
   );
 }
 
-// ─── Empty state ──────────────────────────────────────────────────────────────
-function EmptyState({ colors, isDark, t, tab }) {
+// ─── Section header (date bucket) ─────────────────────────────────────────────
+function SectionHeader({ label, colors }) {
   return (
-    <EmptyStateCard
-      Icon={IconBell}
-      title={t('notifications.empty') || 'Nenhuma notificação'}
-      subtitle={t('notifications.emptyDesc') || 'Quando você receber notificações, elas aparecerão aqui.'}
-    />
+    <View style={styles.sectionHeaderWrap}>
+      <Text style={[styles.sectionHeaderText, { color: colors.text }]}>
+        {label}
+      </Text>
+    </View>
+  );
+}
+
+// ─── Animated underline tabs ──────────────────────────────────────────────────
+function TabBar({ activeTab, onChange, colors, t, unreadCounts = {} }) {
+  const indicatorX = useRef(new Animated.Value(0)).current;
+  const [tabWidth, setTabWidth] = useState(0);
+  const activeIdx = TABS.findIndex(tt => tt.key === activeTab);
+
+  useEffect(() => {
+    Animated.timing(indicatorX, {
+      toValue: activeIdx * tabWidth,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [activeIdx, tabWidth, indicatorX]);
+
+  return (
+    <View
+      onLayout={(e) => setTabWidth(e.nativeEvent.layout.width / TABS.length)}
+      style={[styles.tabBar, { borderBottomColor: colors.border, backgroundColor: colors.surface || colors.background }]}
+    >
+      {TABS.map(tab => {
+        const isActive = activeTab === tab.key;
+        const unread = unreadCounts[tab.key] || 0;
+        return (
+          <TouchableOpacity
+            key={tab.key}
+            style={styles.tab}
+            onPress={() => onChange(tab.key)}
+            activeOpacity={0.7}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+              <Text style={[styles.tabText, {
+                color: isActive ? colors.text : colors.textSecondary,
+                fontWeight: isActive ? '700' : '500',
+              }]}>
+                {t(tab.labelKey) || tab.label}
+              </Text>
+              {unread > 0 && (
+                <View style={[styles.tabBadge, { backgroundColor: BRAND }]}>
+                  <Text style={styles.tabBadgeText}>{unread > 99 ? '99+' : unread}</Text>
+                </View>
+              )}
+            </View>
+          </TouchableOpacity>
+        );
+      })}
+      {/* Animated underline */}
+      {tabWidth > 0 && (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.tabIndicator,
+            {
+              width: tabWidth - 32,
+              left: 16,
+              backgroundColor: BRAND,
+              transform: [{ translateX: indicatorX }],
+            },
+          ]}
+        />
+      )}
+    </View>
+  );
+}
+
+// ─── Empty state — Instagram "Você está em dia ✓" ─────────────────────────────
+function EmptyState({ colors, isDark, t }) {
+  return (
+    <View style={styles.empty}>
+      <View style={[styles.emptyIconCircle, { backgroundColor: 'rgba(124,58,237,0.10)' }]}>
+        {/* Inline SVG-ish: bell with a check mark — using existing Icons */}
+        <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+          <IconCheck size={44} color={BRAND} />
+        </View>
+      </View>
+      <Text style={[styles.emptyTitle, { color: colors.text }]}>
+        {t('notifications.allCaughtUp') || 'Você está em dia'}
+      </Text>
+      <Text style={[styles.emptyDesc, { color: colors.textSecondary }]}>
+        {t('notifications.allCaughtUpDesc') || 'Quando rolar algo novo, aparece aqui.'}
+      </Text>
+    </View>
   );
 }
 
@@ -137,7 +368,6 @@ function NotificationsScreenInner() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Per-tab data: fetched lazily and cached in memory during session
   const cacheRef = useRef({});
 
   const fetchTab = useCallback(async (tabKey, force = false) => {
@@ -148,14 +378,13 @@ function NotificationsScreenInner() {
       return;
     }
     try {
-      const tabDef = TABS.find(t => t.key === tabKey);
+      const tabDef = TABS.find(tt => tt.key === tabKey);
       const params = { limit: 60 };
       if (tabDef?.types?.length === 1) params.type = tabDef.types[0];
       const r = await api.notificationsList(params);
       if (r.success) {
         let items = r.data?.notifications || [];
-        // Client-side filter for multi-type tabs
-        if (tabDef?.types && tabDef.types.length > 1) {
+        if (tabDef?.types && tabDef.types.length >= 1) {
           items = items.filter(n => tabDef.types.includes(n.type));
         }
         cacheRef.current[tabKey] = items;
@@ -173,7 +402,6 @@ function NotificationsScreenInner() {
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    // Invalidate all caches on manual refresh
     cacheRef.current = {};
     fetchTab(activeTab, true);
   }, [activeTab, fetchTab]);
@@ -181,7 +409,6 @@ function NotificationsScreenInner() {
   const markAllRead = useCallback(async () => {
     try {
       await api.notificationsRead({ all: true });
-      // Update all cached tabs
       Object.keys(cacheRef.current).forEach(key => {
         cacheRef.current[key] = cacheRef.current[key].map(n => ({ ...n, read: true }));
       });
@@ -189,10 +416,23 @@ function NotificationsScreenInner() {
     } catch (e) {}
   }, []);
 
+  const handleAction = useCallback((notif, kind) => {
+    if (kind === 'follow_back') {
+      // Optimistic — placeholder API hook
+      try { api.followUser?.({ email: notif.author_email }); } catch {}
+      const tag = (n) => n.id === notif.id ? { ...n, action_taken: 'follow_back' } : n;
+      Object.keys(cacheRef.current).forEach(k => {
+        cacheRef.current[k] = cacheRef.current[k].map(tag);
+      });
+      setNotifications(prev => prev.map(tag));
+    } else if (kind === 'message') {
+      router.push({ pathname: '/chat-conversation', params: { peer: notif.author_email } });
+    }
+  }, [router]);
+
   const handleTap = useCallback(async (notif) => {
     if (!notif.read) {
       api.notificationsRead({ ids: [notif.id] }).catch(() => {});
-      // Optimistic update across all caches
       Object.keys(cacheRef.current).forEach(key => {
         cacheRef.current[key] = cacheRef.current[key].map(n =>
           n.id === notif.id ? { ...n, read: true } : n
@@ -231,56 +471,51 @@ function NotificationsScreenInner() {
 
   const hasUnread = notifications.some(n => !n.read);
 
-  // Pill grouping by type — when on the "all" tab, intercalate a soft pill
-  // header before each contiguous block of the same type. Telegram-style: keeps
-  // the eye anchored as it scrolls past 50+ items.
-  const TYPE_PILL_LABELS = {
-    email:   t('notifications.tabAll')      ? (t('toast.typeEmail')   || 'Email')    : 'Email',
-    chat:    t('toast.typeChat')   || 'Chat',
-    mention: t('notifications.tabMentions') || 'Menções',
-    like:    t('notifications.tabLikes')    || 'Curtidas',
-    comment: 'Comentários',
-    follow:  t('notifications.tabFollowers')|| 'Seguidores',
-    live:    'Live',
-  };
-  const TYPE_PILL_TINTS = {
-    email:   { bg: 'rgba(124,58,237,0.10)', fg: '#7C3AED' },
-    chat:    { bg: 'rgba(124,58,237,0.10)', fg: '#7C3AED' },
-    mention: { bg: 'rgba(14,165,233,0.10)',  fg: '#0ea5e9' },
-    like:    { bg: 'rgba(239,68,68,0.10)',   fg: '#ef4444' },
-    comment: { bg: 'rgba(245,158,11,0.10)',  fg: '#f59e0b' },
-    follow:  { bg: 'rgba(16,185,129,0.10)',  fg: '#10b981' },
-    live:    { bg: 'rgba(236,72,153,0.10)',  fg: '#ec4899' },
-  };
-
-  const groupedData = (() => {
-    if (activeTab !== 'all' || notifications.length === 0) return notifications;
-    const out = [];
-    let lastType = null;
+  // Build sectioned list with date-bucket headers
+  const groupedData = useMemo(() => {
+    if (notifications.length === 0) return [];
+    const buckets = { today: [], yesterday: [], thisWeek: [], older: [] };
     for (const n of notifications) {
-      if (n.type !== lastType) {
-        out.push({ __pill: true, type: n.type, id: `pill-${n.type}-${out.length}` });
-        lastType = n.type;
-      }
-      out.push(n);
+      buckets[dateBucket(n.created_at || n.latest_at)].push(n);
+    }
+    const out = [];
+    for (const k of ['today', 'yesterday', 'thisWeek', 'older']) {
+      if (buckets[k].length === 0) continue;
+      out.push({
+        __section: true,
+        id: `section-${k}`,
+        label: t(BUCKET_LABELS[k].key) || BUCKET_LABELS[k].fallback,
+      });
+      for (const n of buckets[k]) out.push(n);
     }
     return out;
-  })();
+  }, [notifications, t]);
+
+  const unreadCounts = useMemo(() => {
+    const c = {};
+    for (const tab of TABS) {
+      const cache = cacheRef.current[tab.key];
+      if (!cache) { c[tab.key] = 0; continue; }
+      c[tab.key] = cache.filter(n => !n.read).length;
+    }
+    return c;
+  }, [notifications]);
 
   const renderItem = useCallback(({ item }) => {
-    if (item.__pill) {
-      const tint = TYPE_PILL_TINTS[item.type] || { bg: 'rgba(107,114,128,0.10)', fg: '#6b7280' };
-      const label = TYPE_PILL_LABELS[item.type] || item.type;
-      return (
-        <View style={styles.pillHeaderWrap}>
-          <View style={[styles.pillHeader, { backgroundColor: tint.bg }]}>
-            <Text style={[styles.pillHeaderText, { color: tint.fg }]}>{label}</Text>
-          </View>
-        </View>
-      );
+    if (item.__section) {
+      return <SectionHeader label={item.label} colors={colors} />;
     }
-    return <NotifRow item={item} colors={colors} isDark={isDark} onPress={handleTap} t={t} />;
-  }, [colors, isDark, handleTap, t]);
+    return (
+      <NotifRow
+        item={item}
+        colors={colors}
+        isDark={isDark}
+        onPress={handleTap}
+        onAction={handleAction}
+        t={t}
+      />
+    );
+  }, [colors, isDark, handleTap, handleAction, t]);
 
   const keyExtractor = useCallback((item) => String(item.id || item.latest_at || Math.random()), []);
 
@@ -301,47 +536,31 @@ function NotificationsScreenInner() {
         </Text>
 
         {hasUnread ? (
-          <TouchableOpacity onPress={markAllRead} style={styles.markAllBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <IconCheck size={16} color={colors.primary} />
-            <Text style={[styles.markAllText, { color: colors.primary }]}>
-              {t('notifications.markAll') || 'Marcar todas'}
+          <TouchableOpacity
+            onPress={markAllRead}
+            style={[styles.markAllPill, { backgroundColor: 'rgba(124,58,237,0.10)' }]}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityRole="button"
+            accessibilityLabel={t('notifications.markAll') || 'Marcar todas'}
+          >
+            <IconCheck size={13} color={BRAND} />
+            <Text style={[styles.markAllPillText, { color: BRAND }]}>
+              {t('notifications.markAllShort') || 'Marcar todas'}
             </Text>
           </TouchableOpacity>
         ) : (
-          <View style={{ width: 90 }} />
+          <View style={{ width: 110 }} />
         )}
       </View>
 
-      {/* Tabs */}
-      <View style={[styles.tabBar, { borderBottomColor: colors.border, backgroundColor: colors.surface || colors.background }]}>
-        {TABS.map(tab => {
-          const isActive = activeTab === tab.key;
-          // Badge: count unread items relevant to this tab
-          const tabTypes = tab.types;
-          const unreadCount = tabTypes
-            ? (cacheRef.current[tab.key] || []).filter(n => !n.read && tabTypes.includes(n.type)).length
-            : (cacheRef.current['all'] || []).filter(n => !n.read).length;
-
-          return (
-            <TouchableOpacity
-              key={tab.key}
-              style={[styles.tab, isActive && { borderBottomColor: colors.primary, borderBottomWidth: 2.5 }]}
-              onPress={() => setActiveTab(tab.key)}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-                <Text style={[styles.tabText, { color: isActive ? colors.primary : colors.textSecondary }]}>
-                  {t(tab.labelKey) || tab.key}
-                </Text>
-                {unreadCount > 0 && (
-                  <View style={[styles.tabBadge, { backgroundColor: colors.primary }]}>
-                    <Text style={styles.tabBadgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
-                  </View>
-                )}
-              </View>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
+      {/* Tabs (animated underline) */}
+      <TabBar
+        activeTab={activeTab}
+        onChange={setActiveTab}
+        colors={colors}
+        t={t}
+        unreadCounts={unreadCounts}
+      />
 
       {/* List */}
       <FlatList
@@ -363,8 +582,7 @@ function NotificationsScreenInner() {
         }
         contentContainerStyle={notifications.length === 0 ? styles.listEmpty : styles.listContent}
         ItemSeparatorComponent={({ leadingItem }) => (
-          // No separator under a pill (and no separator above one either via flat list quirks).
-          leadingItem?.__pill ? null
+          leadingItem?.__section ? null
             : <View style={[styles.separator, { backgroundColor: colors.borderLight || colors.border }]} />
         )}
         removeClippedSubviews={Platform.OS !== 'web'}
@@ -392,89 +610,145 @@ const styles = StyleSheet.create({
     flex: 1, textAlign: 'center',
     fontSize: FontSize.lg, fontWeight: '700', letterSpacing: -0.2,
   },
-  markAllBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 4, width: 90, justifyContent: 'flex-end',
+  markAllPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 10, paddingVertical: 6,
+    borderRadius: 999,
   },
-  markAllText: { fontSize: FontSize.xs, fontWeight: '600' },
+  markAllPillText: { fontSize: 12, fontWeight: '700' },
 
   // Tabs
   tabBar: {
     flexDirection: 'row',
     borderBottomWidth: StyleSheet.hairlineWidth,
+    position: 'relative',
   },
   tab: {
-    flex: 1, paddingVertical: 11, alignItems: 'center',
-    borderBottomWidth: 2.5, borderBottomColor: 'transparent',
+    flex: 1, paddingVertical: 12, alignItems: 'center',
     ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
-  tabText: { fontSize: FontSize.sm, fontWeight: '600' },
+  tabText: { fontSize: FontSize.sm },
   tabBadge: {
     minWidth: 16, height: 16, borderRadius: 8, paddingHorizontal: 4,
     alignItems: 'center', justifyContent: 'center',
   },
   tabBadgeText: { color: '#fff', fontSize: 9, fontWeight: '800' },
+  tabIndicator: {
+    position: 'absolute',
+    bottom: 0,
+    height: 2.5,
+    borderRadius: 2,
+  },
+
+  // Section header (date bucket)
+  sectionHeaderWrap: {
+    paddingHorizontal: Spacing.md,
+    paddingTop: 18,
+    paddingBottom: 8,
+  },
+  sectionHeaderText: {
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: -0.1,
+  },
 
   // Notification row
   row: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.md, paddingVertical: 13, gap: 12,
+    paddingLeft: 4,
+    paddingRight: Spacing.md,
+    paddingVertical: 11,
+    gap: 12,
     ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
+  unreadRail: {
+    width: 3,
+    alignSelf: 'stretch',
+    borderRadius: 1.5,
+    marginRight: 8,
+    marginVertical: 4,
+  },
+  unreadRailSpacer: {
+    width: 3,
+    marginRight: 8,
+  },
   avatarWrap: {
-    width: 46, height: 46, flexShrink: 0,
+    width: 44, height: 44, flexShrink: 0,
   },
   typeCircle: {
-    width: 46, height: 46, borderRadius: 23,
+    width: 44, height: 44, borderRadius: 22,
     alignItems: 'center', justifyContent: 'center',
   },
   rowContent: { flex: 1, minWidth: 0 },
   rowTitle: { fontSize: FontSize.md, fontWeight: '500', lineHeight: 20 },
+  rowTimeInline: { fontSize: FontSize.xs, fontWeight: '400' },
   rowBody:  { fontSize: FontSize.sm, marginTop: 2, opacity: 0.8 },
-  rowTime:  { fontSize: FontSize.xs, marginTop: 4 },
-  unreadDot: { width: 9, height: 9, borderRadius: 5, flexShrink: 0 },
-  separator: { height: StyleSheet.hairlineWidth, marginLeft: 70 },
+  thumb: {
+    width: 44, height: 44, borderRadius: 4,
+    overflow: 'hidden',
+    flexShrink: 0,
+    marginLeft: 8,
+  },
 
-  // Type-group pill header
-  pillHeaderWrap: {
-    paddingHorizontal: Spacing.md,
-    paddingTop: 12,
-    paddingBottom: 4,
+  // Inline action pills
+  actionRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
   },
-  pillHeader: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
+  pillPrimary: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 8,
   },
-  pillHeaderText: {
-    fontSize: 11,
+  pillPrimaryText: {
+    color: '#fff',
+    fontSize: 13,
     fontWeight: '700',
-    letterSpacing: 0.4,
-    textTransform: 'uppercase',
   },
+  pillSecondary: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  pillSecondaryText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+
+  separator: { height: StyleSheet.hairlineWidth, marginLeft: 70 },
 
   // List
   listContent: { paddingBottom: 40 },
   listEmpty:   { flex: 1 },
 
-  // Empty state
-  empty: { flex: 1, alignItems: 'center', paddingTop: 64, paddingHorizontal: Spacing.xl },
-  emptyIconContainer: {
-    width: 160, height: 160,
-    alignItems: 'center', justifyContent: 'center', marginBottom: 24,
-  },
-  emptyOuterRing: {
-    position: 'absolute', width: 160, height: 160, borderRadius: 80, borderWidth: 1.5,
-  },
-  emptyMiddleRing: {
-    position: 'absolute', width: 120, height: 120, borderRadius: 60, borderWidth: 1.5,
+  // Empty state — Instagram "all caught up"
+  empty: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 64,
+    paddingHorizontal: Spacing.xl,
   },
   emptyIconCircle: {
-    width: 88, height: 88, borderRadius: 44,
+    width: 96, height: 96, borderRadius: 48,
     alignItems: 'center', justifyContent: 'center',
+    marginBottom: 20,
   },
-  emptyTitle: { fontSize: FontSize.lg, fontWeight: '700', marginBottom: 8, textAlign: 'center' },
-  emptyDesc:  { fontSize: FontSize.sm, textAlign: 'center', lineHeight: 20, maxWidth: 280 },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 8,
+    textAlign: 'center',
+    letterSpacing: -0.2,
+  },
+  emptyDesc: {
+    fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 20,
+    maxWidth: 280,
+  },
 });
 
 export default function NotificationsScreen() {

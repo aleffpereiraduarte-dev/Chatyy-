@@ -74,6 +74,18 @@ function getRandomRotation(noteId) {
   return ((seed % 7) - 3);
 }
 
+// Notion-style "Salvo há Xs" — re-evaluated whenever savedTick changes
+function formatSavedAgo(savedAt /* ms */, _tick) {
+  if (!savedAt) return '';
+  const sec = Math.max(1, Math.round((Date.now() - savedAt) / 1000));
+  if (sec < 5) return 'agora';
+  if (sec < 60) return `há ${sec}s`;
+  const min = Math.round(sec / 60);
+  if (min < 60) return `há ${min}m`;
+  const h = Math.round(min / 60);
+  return `há ${h}h`;
+}
+
 // Board canvas dimensions
 const BOARD_WIDTH = 4000;
 const BOARD_HEIGHT = 4000;
@@ -2086,6 +2098,8 @@ export default function NotesScreen() {
           stickyRef={editorStickyRef}
           notebookRef={editorNotebookRef}
           tagsRef={editorTagsRef}
+          allNotes={notes}
+          onOpenNote={openEditor}
           onClose={closeEditor}
           onAutoSave={triggerAutoSave}
           onDelete={editingNote ? () => { setEditorVisible(false); deleteNote(editingNote); } : null}
@@ -2379,7 +2393,7 @@ export default function NotesScreen() {
 }
 
 // ---- Note Editor (Full Screen - Premium) ----
-function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, colorRef, pinnedRef, stickyRef, notebookRef, tagsRef, onClose, onAutoSave, onDelete, onSendEmail, onExportPdf, onCopyText, allTags = [] }) {
+function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, colorRef, pinnedRef, stickyRef, notebookRef, tagsRef, allNotes = [], onOpenNote, onClose, onAutoSave, onDelete, onSendEmail, onExportPdf, onCopyText, allTags = [] }) {
   const [title, setTitle] = useState(titleRef.current);
   const [content, setContent] = useState(contentRef.current);
   const [selectedColor, setSelectedColor] = useState(colorRef.current);
@@ -2393,6 +2407,37 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
   const [showTagInput, setShowTagInput] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [tagSuggestions, setTagSuggestions] = useState([]);
+
+  // ---- Notion-grade polish state ----
+  // Slash command menu
+  const [slashMenuOpen, setSlashMenuOpen] = useState(false);
+  const [slashQuery, setSlashQuery] = useState('');
+  const [slashSelIdx, setSlashSelIdx] = useState(0);
+  // Drag/hover for block handles (web)
+  const [hoverBlock, setHoverBlock] = useState(-1);
+  const [dragBlock, setDragBlock] = useState(-1);
+  // Cover + emoji
+  const [coverEmoji, setCoverEmoji] = useState('');
+  const [coverImage, setCoverImage] = useState('');
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  // Sidebar peek
+  const [sidebarPeekOpen, setSidebarPeekOpen] = useState(false);
+  // Auto-save indicator
+  const [savedAgo, setSavedAgo] = useState(null); // ms timestamp of last save
+  const [savingPulse, setSavingPulse] = useState(false);
+  const [savedTick, setSavedTick] = useState(0);
+  // Format toolbar (selection-aware)
+  const [selection, setSelection] = useState({ start: 0, end: 0 });
+  const [showFormatBar, setShowFormatBar] = useState(false);
+
+  const contentInputRef = useRef(null);
+  const BRAND = '#7C3AED';
+
+  // Tick savedAgo every 5s for the pill text
+  useEffect(() => {
+    const id = setInterval(() => setSavedTick(x => x + 1), 5000);
+    return () => clearInterval(id);
+  }, []);
 
   // Color transition animation
   const colorAnim = useRef(new Animated.Value(0)).current;
@@ -2426,8 +2471,83 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
     else if (field === 'sticky') { stickyRef.current = value; setIsSticky(value); }
     else if (field === 'notebook') { notebookRef.current = value; setSelectedNotebookId(value); }
     else if (field === 'tags') { if (tagsRef) tagsRef.current = value; setTags(value); }
+    setSavingPulse(true);
     onAutoSave();
+    // Mock save latency feedback ~600ms
+    setTimeout(() => {
+      setSavingPulse(false);
+      setSavedAgo(Date.now());
+    }, 600);
   }, [onAutoSave]);
+
+  // ---- Slash menu options ----
+  const slashOptions = useMemo(() => ([
+    { id: 'h1', label: 'Heading 1', hint: '# título grande', icon: 'H1', insert: '\n# ' },
+    { id: 'h2', label: 'Heading 2', hint: '## título médio', icon: 'H2', insert: '\n## ' },
+    { id: 'h3', label: 'Heading 3', hint: '### título pequeno', icon: 'H3', insert: '\n### ' },
+    { id: 'bullet', label: 'Lista', hint: 'tópicos com bullet', icon: '•', insert: '\n- ' },
+    { id: 'num', label: 'Numerada', hint: '1. 2. 3.', icon: '1.', insert: '\n1. ' },
+    { id: 'todo', label: 'Tarefa', hint: 'checkbox', icon: '[ ]', insert: '\n[] ' },
+    { id: 'code', label: 'Código', hint: 'bloco mono', icon: '</>', insert: '\n```\n\n```\n' },
+    { id: 'quote', label: 'Citação', hint: 'aspas', icon: '"', insert: '\n> ' },
+    { id: 'divider', label: 'Divisor', hint: '---', icon: '—', insert: '\n---\n' },
+    { id: 'image', label: 'Imagem', hint: 'cole URL', icon: 'IMG', insert: '\n![](url)\n' },
+    { id: 'toggle', label: 'Toggle', hint: 'expandível', icon: '▸', insert: '\n▸ ' },
+  ]), []);
+  const filteredSlash = useMemo(() => {
+    if (!slashQuery) return slashOptions;
+    const q = slashQuery.toLowerCase();
+    return slashOptions.filter(o => o.label.toLowerCase().includes(q) || o.id.includes(q));
+  }, [slashQuery, slashOptions]);
+
+  const applySlash = useCallback((opt) => {
+    const cur = contentRef.current || '';
+    // Strip the trailing "/query"
+    const upTo = selection.end || cur.length;
+    let head = cur.slice(0, upTo);
+    const tail = cur.slice(upTo);
+    head = head.replace(/\/[^\s]*$/, '');
+    const next = head + opt.insert + tail;
+    updateAndSave('content', next);
+    setSlashMenuOpen(false);
+    setSlashQuery('');
+    setSlashSelIdx(0);
+  }, [selection, updateAndSave]);
+
+  // Auto-convert "- " and "[] " on space
+  const handleContentChangeSmart = useCallback((text) => {
+    const prev = contentRef.current || '';
+    let next = text;
+    // Detect slash
+    // Look at the segment after last newline up to caret
+    const upTo = selection.end || next.length;
+    const head = next.slice(0, upTo);
+    const lastNL = head.lastIndexOf('\n');
+    const lineStart = lastNL >= 0 ? lastNL + 1 : 0;
+    const currentLine = head.slice(lineStart);
+    // Slash trigger
+    const slashMatch = currentLine.match(/(?:^|\s)\/([\w-]*)$/);
+    if (slashMatch) {
+      setSlashMenuOpen(true);
+      setSlashQuery(slashMatch[1] || '');
+      setSlashSelIdx(0);
+    } else if (slashMenuOpen) {
+      setSlashMenuOpen(false);
+      setSlashQuery('');
+    }
+    // Autoconverts: only when user just typed a space (length grew by 1 ending with space)
+    if (next.length === prev.length + 1 && next.endsWith(' ')) {
+      // Bullet "- "
+      if (currentLine === '- ') {
+        // already in bullet form, leave as is (visual handled in preview)
+      }
+      // Todo "[] "
+      if (currentLine === '[] ') {
+        // leave; preview renders checkbox
+      }
+    }
+    updateAndSave('content', next);
+  }, [selection, slashMenuOpen, updateAndSave]);
 
   const addTag = useCallback(() => {
     const tag = tagInput.trim().replace(/^#/, '');
@@ -2470,11 +2590,15 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
     updateAndSave('content', text);
   }, [updateAndSave]);
 
-  // Render markdown preview
+  // Render markdown preview (Notion-grade blocks)
   const renderPreview = useCallback(() => {
     if (!content) return null;
     const lines = content.split('\n');
+    let numCounter = 0;
     return lines.map((line, i) => {
+      // Reset numbered list counter on blank line
+      if (!line.match(/^\s*\d+\.\s+/)) numCounter = 0;
+
       // Checklist items
       if (line.match(/^\s*\[\s*\]\s*/)) {
         const text = line.replace(/^\s*\[\s*\]\s*/, '');
@@ -2504,21 +2628,92 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
           </TouchableOpacity>
         );
       }
-      // Bold
+
+      // Headings
+      const h1 = line.match(/^#\s+(.*)$/);
+      if (h1) return <Text key={i} style={[editorStyles.h1, { color: textColor }]}>{h1[1]}</Text>;
+      const h2 = line.match(/^##\s+(.*)$/);
+      if (h2) return <Text key={i} style={[editorStyles.h2, { color: textColor }]}>{h2[1]}</Text>;
+      const h3 = line.match(/^###\s+(.*)$/);
+      if (h3) return <Text key={i} style={[editorStyles.h3, { color: textColor }]}>{h3[1]}</Text>;
+
+      // Bullet
+      const bul = line.match(/^\s*[-*]\s+(.*)$/);
+      if (bul) {
+        return (
+          <View key={i} style={editorStyles.bulletRow}>
+            <Text style={[editorStyles.bulletDot, { color: textColor }]}>•</Text>
+            <Text style={[editorStyles.previewLine, { color: textColor, flex: 1 }]}>{bul[1]}</Text>
+          </View>
+        );
+      }
+      // Numbered
+      const num = line.match(/^\s*(\d+)\.\s+(.*)$/);
+      if (num) {
+        numCounter += 1;
+        return (
+          <View key={i} style={editorStyles.bulletRow}>
+            <Text style={[editorStyles.numberDot, { color: textColor }]}>{num[1]}.</Text>
+            <Text style={[editorStyles.previewLine, { color: textColor, flex: 1 }]}>{num[2]}</Text>
+          </View>
+        );
+      }
+      // Quote
+      const q = line.match(/^>\s+(.*)$/);
+      if (q) {
+        return (
+          <View key={i} style={[editorStyles.quoteBlock, { borderLeftColor: '#7C3AED' }]}>
+            <Text style={[editorStyles.quoteText, { color: textColor }]}>{q[1]}</Text>
+          </View>
+        );
+      }
+      // Divider
+      if (line.match(/^---+$/)) {
+        return <View key={i} style={[editorStyles.divider, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }]} />;
+      }
+      // Toggle
+      const tog = line.match(/^▸\s+(.*)$/);
+      if (tog) {
+        return (
+          <View key={i} style={editorStyles.bulletRow}>
+            <Text style={[editorStyles.toggleArrow, { color: textColor }]}>{'▸'}</Text>
+            <Text style={[editorStyles.previewLine, { color: textColor, flex: 1 }]}>{tog[1]}</Text>
+          </View>
+        );
+      }
+      // Image placeholder
+      const img = line.match(/^!\[.*\]\((.*)\)$/);
+      if (img) {
+        return (
+          <View key={i} style={[editorStyles.imageBlock, {
+            backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+            borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+          }]}>
+            <Text style={[editorStyles.imageBlockText, { color: secondaryText }]}>{`\u{1F5BC} ${img[1] || 'image'}`}</Text>
+          </View>
+        );
+      }
+      // Bold/italic/underline/strike/highlight inline
       let formatted = line;
       const isBold = /\*\*(.+?)\*\*/.test(formatted);
-      const isItalic = /\*(.+?)\*/.test(formatted) && !isBold;
+      const isItalic = /(^|[^*])\*([^*]+?)\*(?!\*)/.test(formatted) && !isBold;
+      formatted = formatted
+        .replace(/\*\*(.+?)\*\*/g, '$1')
+        .replace(/\*(.+?)\*/g, '$1')
+        .replace(/__(.+?)__/g, '$1')
+        .replace(/~~(.+?)~~/g, '$1')
+        .replace(/==(.+?)==/g, '$1');
       return (
         <Text key={i} style={[editorStyles.previewLine, {
           color: textColor,
           fontWeight: isBold ? '700' : '400',
           fontStyle: isItalic ? 'italic' : 'normal',
         }]}>
-          {formatted.replace(/\*\*(.+?)\*\*/g, '$1').replace(/\*(.+?)\*/g, '$1')}
+          {formatted}
         </Text>
       );
     });
-  }, [content, textColor, secondaryText, colors.primary, updateAndSave]);
+  }, [content, textColor, secondaryText, colors.primary, updateAndSave, isDark]);
 
   const selectedNotebook = notebooks.find(n => n.id === selectedNotebookId);
 
@@ -2683,10 +2878,84 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
 
       {/* Title & Content */}
       <ScrollView style={s.editorBody} keyboardShouldPersistTaps="handled">
+        {/* Top bar — cover + emoji affordances */}
+        <View style={s.editorTopBar}>
+          {!coverImage && !coverEmoji ? (
+            <View style={s.editorTopBarRow}>
+              <TouchableOpacity
+                onPress={() => setShowEmojiPicker(true)}
+                style={[s.editorTopBarBtn, {
+                  borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)',
+                }]}
+              >
+                <Text style={{ fontSize: 14 }}>{'\u{1F642}'}</Text>
+                <Text style={[s.editorTopBarBtnText, { color: secondaryText }]}>{t('notes.addEmoji') || 'Add icon'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  // Placeholder: simulate cover via a placeholder gradient marker
+                  setCoverImage('placeholder');
+                }}
+                style={[s.editorTopBarBtn, {
+                  borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)',
+                }]}
+              >
+                <View style={[s.coverIconBox, { borderColor: BRAND }]} />
+                <Text style={[s.editorTopBarBtnText, { color: secondaryText }]}>{t('notes.addCover') || 'Add cover'}</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
+          {/* Cover image (placeholder gradient) */}
+          {coverImage ? (
+            <TouchableOpacity
+              onLongPress={() => setCoverImage('')}
+              style={[s.coverImage, {
+                ...(Platform.OS === 'web' ? {
+                  background: `linear-gradient(135deg, ${BRAND}, #C4B5FD 60%, #FDE68A)`,
+                } : { backgroundColor: BRAND + '88' }),
+              }]}
+            />
+          ) : null}
+
+          {/* Emoji icon */}
+          {coverEmoji ? (
+            <TouchableOpacity onPress={() => setShowEmojiPicker(true)} style={s.coverEmojiWrap}>
+              <Text style={s.coverEmoji}>{coverEmoji}</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          {/* Emoji picker grid */}
+          {showEmojiPicker ? (
+            <View style={[s.emojiPicker, {
+              backgroundColor: isDark ? 'rgba(40,40,60,0.96)' : 'rgba(255,255,255,0.98)',
+              borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
+            }]}>
+              {['\u{1F4DD}','\u{1F4DA}','\u{2728}','\u{1F525}','\u{1F389}','\u{1F4A1}','\u{2705}','\u{1F4CC}','\u{1F4CA}','\u{2B50}','\u{1F308}','\u{1F680}','\u{1F4C5}','\u{1F4D8}','\u{1F4D7}','\u{2615}'].map(em => (
+                <TouchableOpacity
+                  key={em}
+                  onPress={() => { setCoverEmoji(em); setShowEmojiPicker(false); }}
+                  style={s.emojiPickerItem}
+                >
+                  <Text style={{ fontSize: 22 }}>{em}</Text>
+                </TouchableOpacity>
+              ))}
+              {coverEmoji ? (
+                <TouchableOpacity
+                  onPress={() => { setCoverEmoji(''); setShowEmojiPicker(false); }}
+                  style={[s.emojiPickerItem, { borderRadius: 8 }]}
+                >
+                  <IconX size={16} color={secondaryText} />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          ) : null}
+        </View>
+
         <TextInput
           style={[s.editorTitle, { color: textColor }]}
-          placeholder={t('notes.untitled')}
-          placeholderTextColor={secondaryText + '88'}
+          placeholder={t('notes.untitled') || 'Sem título'}
+          placeholderTextColor={secondaryText + '66'}
           value={title}
           onChangeText={(v) => updateAndSave('title', v)}
           multiline
@@ -2697,18 +2966,243 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
             {renderPreview()}
           </View>
         ) : (
-          <TextInput
-            style={[s.editorContent, { color: textColor }]}
-            placeholder={t('notes.contentPlaceholder') || '...'}
-            placeholderTextColor={secondaryText + '66'}
-            value={content}
-            onChangeText={handleContentChange}
-            multiline
-            scrollEnabled={false}
-            textAlignVertical="top"
-          />
+          <View style={{ position: 'relative' }}>
+            {/* Block-based renderer (drag handles on hover, web only) */}
+            {Platform.OS === 'web' ? (
+              <View style={{ position: 'absolute', left: -28, top: 0, bottom: 0, width: 24, zIndex: 2 }} pointerEvents="box-none">
+                {(content || '').split('\n').map((_, i) => (
+                  <View
+                    key={i}
+                    style={{
+                      height: 26,
+                      opacity: hoverBlock === i ? 1 : 0,
+                      transition: 'opacity 0.15s ease',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'grab',
+                    }}
+                    onMouseEnter={() => setHoverBlock(i)}
+                    onMouseLeave={() => setHoverBlock(-1)}
+                    onMouseDown={() => setDragBlock(i)}
+                    onMouseUp={() => setDragBlock(-1)}
+                  >
+                    <View style={{
+                      width: 14, height: 14, borderRadius: 3,
+                      alignItems: 'center', justifyContent: 'center',
+                      backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+                    }}>
+                      <Text style={{
+                        fontSize: 11, lineHeight: 11, color: secondaryText,
+                        fontWeight: '700', letterSpacing: -1,
+                      }}>{'⋮⋮'}</Text>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+            <TextInput
+              ref={contentInputRef}
+              style={[s.editorContent, { color: textColor }]}
+              placeholder={t('notes.contentPlaceholder') || "Pressione '/' para comandos…"}
+              placeholderTextColor={secondaryText + '66'}
+              value={content}
+              onChangeText={handleContentChangeSmart}
+              onSelectionChange={(e) => {
+                const sel = e.nativeEvent.selection;
+                setSelection(sel);
+                setShowFormatBar(sel && sel.start !== sel.end);
+              }}
+              multiline
+              scrollEnabled={false}
+              textAlignVertical="top"
+            />
+
+            {/* Slash menu */}
+            {slashMenuOpen ? (
+              <View style={[s.slashMenu, {
+                backgroundColor: isDark ? 'rgba(28,28,42,0.97)' : 'rgba(255,255,255,0.99)',
+                borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
+              }]}>
+                <Text style={[s.slashMenuHeader, { color: secondaryText }]}>
+                  {filteredSlash.length ? (slashQuery ? `/${slashQuery}` : (t('notes.slashHint') || 'Blocos básicos')) : (t('notes.slashEmpty') || 'Nenhum bloco')}
+                </Text>
+                <ScrollView style={{ maxHeight: 280 }} keyboardShouldPersistTaps="handled">
+                  {filteredSlash.map((opt, i) => (
+                    <TouchableOpacity
+                      key={opt.id}
+                      onPress={() => applySlash(opt)}
+                      style={[s.slashItem, i === slashSelIdx && {
+                        backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.08)',
+                      }]}
+                    >
+                      <View style={[s.slashIconBox, {
+                        backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+                        borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+                      }]}>
+                        <Text style={[s.slashIconText, { color: BRAND }]}>{opt.icon}</Text>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[s.slashLabel, { color: textColor }]}>{opt.label}</Text>
+                        <Text style={[s.slashHint, { color: secondaryText }]}>{opt.hint}</Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              </View>
+            ) : null}
+          </View>
         )}
       </ScrollView>
+
+      {/* Auto-save pill (top-right floating) */}
+      <View pointerEvents="none" style={s.savePillWrap}>
+        <View style={[s.savePill, {
+          backgroundColor: isDark ? 'rgba(28,28,42,0.85)' : 'rgba(255,255,255,0.92)',
+          borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+          ...(Platform.OS === 'web' ? {
+            backdropFilter: 'blur(10px)',
+            WebkitBackdropFilter: 'blur(10px)',
+            transition: 'opacity 0.2s ease',
+          } : {}),
+        }]}>
+          <View style={[s.savePillDot, {
+            backgroundColor: savingPulse ? '#F59E0B' : '#10B981',
+            opacity: savingPulse ? 0.65 : 1,
+          }]} />
+          <Text style={[s.savePillText, { color: isDark ? '#E0E0E0' : '#374151' }]}>
+            {savingPulse
+              ? (t('notes.saving') || 'Salvando…')
+              : savedAgo
+                ? (t('notes.savedAgo') ? `${t('notes.savedAgo')} ${formatSavedAgo(savedAgo, savedTick)}` : `Salvo ${formatSavedAgo(savedAgo, savedTick)}`)
+                : (t('notes.notSaved') || 'Aguardando alterações')}
+          </Text>
+        </View>
+      </View>
+
+      {/* Sidebar peek toggle (left edge) */}
+      <TouchableOpacity
+        onPress={() => setSidebarPeekOpen(true)}
+        style={[s.sidebarPeekHandle, {
+          backgroundColor: isDark ? 'rgba(28,28,42,0.7)' : 'rgba(255,255,255,0.85)',
+          borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+        }]}
+      >
+        <Text style={[s.sidebarPeekArrow, { color: textColor }]}>{'‹'}</Text>
+      </TouchableOpacity>
+
+      {/* Sidebar peek panel */}
+      {sidebarPeekOpen ? (
+        <Pressable style={s.sidebarPeekOverlay} onPress={() => setSidebarPeekOpen(false)}>
+          <Pressable style={[s.sidebarPeekPanel, {
+            backgroundColor: isDark ? 'rgba(20,20,30,0.96)' : 'rgba(255,255,255,0.98)',
+            borderRightColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+            ...(Platform.OS === 'web' ? {
+              backdropFilter: 'blur(18px)',
+              WebkitBackdropFilter: 'blur(18px)',
+              boxShadow: '4px 0 24px rgba(0,0,0,0.18)',
+            } : {}),
+          }]} onPress={(e) => { if (e && e.stopPropagation) e.stopPropagation(); }}>
+            <View style={s.sidebarPeekHeader}>
+              <Text style={[s.sidebarPeekTitle, { color: textColor }]}>{t('notes.allPages') || 'Páginas'}</Text>
+              <TouchableOpacity onPress={() => setSidebarPeekOpen(false)} style={s.sidebarPeekClose}>
+                <IconX size={16} color={secondaryText} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Favorites */}
+            <Text style={[s.sidebarPeekSection, { color: secondaryText }]}>{t('notes.favorites') || 'Favoritos'}</Text>
+            {(allNotes.filter(n => n.is_pinned).slice(0, 6)).length === 0 ? (
+              <Text style={[s.sidebarPeekEmpty, { color: secondaryText }]}>{t('notes.noFavorites') || 'Fixe notas pra ver aqui'}</Text>
+            ) : (
+              allNotes.filter(n => n.is_pinned).slice(0, 6).map(n => (
+                <TouchableOpacity
+                  key={`fav-${n.id}`}
+                  onPress={() => { setSidebarPeekOpen(false); onOpenNote && onOpenNote(n); }}
+                  style={[s.sidebarPeekItem, Platform.OS === 'web' && s.sidebarPeekItemHover]}
+                >
+                  <IconPin size={13} color="#F9A825" />
+                  <Text numberOfLines={1} style={[s.sidebarPeekItemText, { color: textColor }]}>
+                    {n.title || (t('notes.untitled') || 'Sem título')}
+                  </Text>
+                </TouchableOpacity>
+              ))
+            )}
+
+            {/* Recents */}
+            <Text style={[s.sidebarPeekSection, { color: secondaryText, marginTop: 14 }]}>{t('notes.recent') || 'Recentes'}</Text>
+            {allNotes
+              .slice()
+              .sort((a, b) => {
+                const da = (safeParseDate(a.updated_at) || safeParseDate(a.created_at) || new Date(0)).getTime();
+                const db = (safeParseDate(b.updated_at) || safeParseDate(b.created_at) || new Date(0)).getTime();
+                return db - da;
+              })
+              .slice(0, 10)
+              .map(n => (
+                <TouchableOpacity
+                  key={`rec-${n.id}`}
+                  onPress={() => { setSidebarPeekOpen(false); onOpenNote && onOpenNote(n); }}
+                  style={[s.sidebarPeekItem, Platform.OS === 'web' && s.sidebarPeekItemHover]}
+                >
+                  <View style={[s.sidebarPeekDot, { backgroundColor: n.color || '#FFF9C4' }]} />
+                  <Text numberOfLines={1} style={[s.sidebarPeekItemText, { color: textColor }]}>
+                    {n.title || (t('notes.untitled') || 'Sem título')}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+          </Pressable>
+        </Pressable>
+      ) : null}
+
+      {/* Format toolbar (bottom, on selection) */}
+      {showFormatBar ? (
+        <View style={[s.formatBar, {
+          backgroundColor: isDark ? 'rgba(20,20,30,0.96)' : 'rgba(255,255,255,0.98)',
+          borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+          ...(Platform.OS === 'web' ? {
+            backdropFilter: 'blur(14px)',
+            WebkitBackdropFilter: 'blur(14px)',
+            boxShadow: '0 6px 24px rgba(0,0,0,0.18)',
+          } : {}),
+        }]}>
+          {[
+            { id: 'B', label: 'B', wrap: '**', style: { fontWeight: '900' } },
+            { id: 'I', label: 'I', wrap: '*', style: { fontStyle: 'italic' } },
+            { id: 'U', label: 'U', wrap: '__', style: { textDecorationLine: 'underline' } },
+            { id: 'S', label: 'S', wrap: '~~', style: { textDecorationLine: 'line-through' } },
+            { id: 'L', label: '\u{1F517}', wrap: null, style: {} },
+            { id: 'H', label: '\u{2592}', wrap: '==', style: {} },
+          ].map(b => (
+            <TouchableOpacity
+              key={b.id}
+              onPress={() => {
+                const cur = contentRef.current || '';
+                const a = Math.min(selection.start, selection.end);
+                const z = Math.max(selection.start, selection.end);
+                if (a === z) return;
+                const sel = cur.slice(a, z);
+                let next;
+                if (b.id === 'L') {
+                  next = cur.slice(0, a) + `[${sel}](url)` + cur.slice(z);
+                } else if (b.id === 'H') {
+                  next = cur.slice(0, a) + `==${sel}==` + cur.slice(z);
+                } else {
+                  next = cur.slice(0, a) + b.wrap + sel + b.wrap + cur.slice(z);
+                }
+                updateAndSave('content', next);
+                setShowFormatBar(false);
+              }}
+              style={[s.formatBtn, b.id === 'H' && { backgroundColor: '#FEF3C7' }]}
+            >
+              <Text style={[s.formatBtnText, b.style, { color: b.id === 'H' ? '#92400E' : textColor }]}>{b.label}</Text>
+            </TouchableOpacity>
+          ))}
+          <View style={{ width: 1, height: 22, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', marginHorizontal: 4 }} />
+          <TouchableOpacity onPress={() => setShowFormatBar(false)} style={s.formatBtn}>
+            <IconX size={14} color={secondaryText} />
+          </TouchableOpacity>
+        </View>
+      ) : null}
 
       {/* Bottom bar: color picker + sticky toggle + char count */}
       <View style={[s.editorBottomBar, {
@@ -2816,6 +3310,21 @@ const editorStyles = StyleSheet.create({
     textDecorationLine: 'line-through',
     opacity: 0.6,
   },
+  h1: { fontSize: 28, lineHeight: 36, fontWeight: '800', marginTop: 14, marginBottom: 6, letterSpacing: -0.4 },
+  h2: { fontSize: 22, lineHeight: 30, fontWeight: '700', marginTop: 12, marginBottom: 4, letterSpacing: -0.2 },
+  h3: { fontSize: 18, lineHeight: 26, fontWeight: '700', marginTop: 10, marginBottom: 2 },
+  bulletRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, paddingVertical: 2 },
+  bulletDot: { fontSize: 18, lineHeight: 26, width: 16, textAlign: 'center' },
+  numberDot: { fontSize: 14, lineHeight: 26, width: 22, textAlign: 'right', fontWeight: '600' },
+  toggleArrow: { fontSize: 14, lineHeight: 26, width: 16, textAlign: 'center' },
+  quoteBlock: { borderLeftWidth: 3, paddingLeft: 12, paddingVertical: 4, marginVertical: 4 },
+  quoteText: { fontSize: 16, lineHeight: 24, fontStyle: 'italic', opacity: 0.9 },
+  divider: { height: 1, marginVertical: 14 },
+  imageBlock: {
+    borderRadius: 10, borderWidth: 1, padding: 28, alignItems: 'center', marginVertical: 8,
+    ...(Platform.OS === 'web' ? { borderStyle: 'dashed' } : {}),
+  },
+  imageBlockText: { fontSize: 13, fontWeight: '500' },
 });
 
 // ---- Board Styles ----
@@ -3528,14 +4037,158 @@ const s = StyleSheet.create({
 
   editorBody: { flex: 1, paddingHorizontal: 20 },
   editorTitle: {
-    fontSize: 26, fontWeight: '800', marginTop: 16, marginBottom: 8, padding: 0,
-    letterSpacing: -0.4,
-    ...(Platform.OS === 'web' ? { outlineStyle: 'none', fontFamily: '"Segoe UI", system-ui, sans-serif' } : {}),
+    fontSize: 28, fontWeight: '700', marginTop: 12, marginBottom: 10, padding: 0,
+    letterSpacing: -0.6, lineHeight: 36,
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none', fontFamily: '"Inter", "Segoe UI", system-ui, sans-serif' } : {}),
   },
   editorContent: {
-    fontSize: 16, lineHeight: 26, minHeight: 200, padding: 0,
+    fontSize: 16, lineHeight: 26, minHeight: 240, padding: 0,
     ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
   },
+
+  // Top bar (cover + emoji)
+  editorTopBar: { paddingTop: 4 },
+  editorTopBarRow: { flexDirection: 'row', gap: 8, opacity: Platform.OS === 'web' ? 0.78 : 1 },
+  editorTopBarBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 10, paddingVertical: 6,
+    borderRadius: 8, borderWidth: 1,
+    ...(Platform.OS === 'web' ? { transition: 'background-color 0.15s ease, transform 0.15s ease', cursor: 'pointer' } : {}),
+  },
+  editorTopBarBtnText: { fontSize: 12.5, fontWeight: '500' },
+  coverIconBox: {
+    width: 14, height: 12, borderRadius: 3, borderWidth: 1.5,
+  },
+  coverImage: {
+    height: 140, marginTop: 12, marginHorizontal: -20,
+    borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  coverEmojiWrap: { paddingTop: 10, paddingBottom: 2 },
+  coverEmoji: { fontSize: 56, lineHeight: 64 },
+  emojiPicker: {
+    marginTop: 8, padding: 8, borderWidth: 1, borderRadius: 12,
+    flexDirection: 'row', flexWrap: 'wrap', gap: 4,
+    alignSelf: 'flex-start',
+    ...(Platform.OS === 'web' ? { boxShadow: '0 8px 24px rgba(0,0,0,0.12)' } : Shadow.md),
+  },
+  emojiPickerItem: {
+    width: 36, height: 36, borderRadius: 8,
+    alignItems: 'center', justifyContent: 'center',
+    ...(Platform.OS === 'web' ? { transition: 'background-color 0.15s ease', cursor: 'pointer' } : {}),
+  },
+
+  // Slash menu
+  slashMenu: {
+    position: 'absolute',
+    left: 0, right: 0, top: 0,
+    marginTop: 4,
+    borderWidth: 1, borderRadius: 12,
+    paddingVertical: 6,
+    zIndex: 50,
+    maxWidth: 380,
+    ...(Platform.OS === 'web' ? { boxShadow: '0 14px 40px rgba(0,0,0,0.22)' } : Shadow.lg),
+  },
+  slashMenuHeader: {
+    paddingHorizontal: 12, paddingVertical: 6,
+    fontSize: 11, fontWeight: '600', letterSpacing: 0.4, textTransform: 'uppercase',
+  },
+  slashItem: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingHorizontal: 10, paddingVertical: 8,
+    marginHorizontal: 4, borderRadius: 8,
+    ...(Platform.OS === 'web' ? { transition: 'background-color 0.12s ease', cursor: 'pointer' } : {}),
+  },
+  slashIconBox: {
+    width: 32, height: 32, borderRadius: 8, borderWidth: 1,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  slashIconText: { fontSize: 12, fontWeight: '700' },
+  slashLabel: { fontSize: 14, fontWeight: '600' },
+  slashHint: { fontSize: 11, marginTop: 1 },
+
+  // Save pill
+  savePillWrap: {
+    position: 'absolute', top: Platform.OS === 'ios' ? 60 : Platform.OS === 'web' ? 22 : 18,
+    right: 16, zIndex: 30,
+  },
+  savePill: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 10, paddingVertical: 5,
+    borderRadius: 999, borderWidth: 1,
+  },
+  savePillDot: { width: 7, height: 7, borderRadius: 4 },
+  savePillText: { fontSize: 11, fontWeight: '600', letterSpacing: 0.1 },
+
+  // Sidebar peek
+  sidebarPeekHandle: {
+    position: 'absolute', left: 0, top: '40%',
+    width: 18, height: 44,
+    borderTopRightRadius: 10, borderBottomRightRadius: 10,
+    borderWidth: 1, borderLeftWidth: 0,
+    alignItems: 'center', justifyContent: 'center',
+    zIndex: 25,
+    ...(Platform.OS === 'web' ? {
+      transition: 'transform 0.18s ease, background-color 0.18s ease',
+      cursor: 'pointer',
+    } : {}),
+  },
+  sidebarPeekArrow: { fontSize: 18, fontWeight: '600', lineHeight: 18, marginTop: -2 },
+  sidebarPeekOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    flexDirection: 'row',
+    zIndex: 60,
+  },
+  sidebarPeekPanel: {
+    width: Platform.OS === 'web' && SCREEN_WIDTH > 600 ? 320 : Math.min(300, SCREEN_WIDTH * 0.82),
+    height: '100%',
+    borderRightWidth: 1,
+    paddingTop: Platform.OS === 'ios' ? 60 : 18,
+    paddingHorizontal: 14,
+    paddingBottom: 18,
+  },
+  sidebarPeekHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  sidebarPeekTitle: { fontSize: 16, fontWeight: '700', letterSpacing: -0.2 },
+  sidebarPeekClose: { padding: 6, borderRadius: 8 },
+  sidebarPeekSection: {
+    fontSize: 11, fontWeight: '700',
+    textTransform: 'uppercase', letterSpacing: 0.6,
+    marginTop: 8, marginBottom: 4, paddingHorizontal: 6,
+  },
+  sidebarPeekItem: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 8, paddingVertical: 7,
+    borderRadius: 8,
+  },
+  sidebarPeekItemHover: {
+    ...(Platform.OS === 'web' ? { transition: 'background-color 0.12s ease', cursor: 'pointer' } : {}),
+  },
+  sidebarPeekItemText: { fontSize: 13.5, fontWeight: '500', flex: 1 },
+  sidebarPeekDot: { width: 10, height: 10, borderRadius: 5 },
+  sidebarPeekEmpty: { fontSize: 12, paddingHorizontal: 8, paddingVertical: 6, fontStyle: 'italic' },
+
+  // Format bar
+  formatBar: {
+    position: 'absolute',
+    left: 16, right: 16,
+    bottom: Platform.OS === 'ios' ? 90 : 70,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    gap: 2,
+    paddingHorizontal: 6, paddingVertical: 6,
+    borderRadius: 12, borderWidth: 1,
+    alignSelf: 'center',
+    maxWidth: 360,
+    zIndex: 40,
+  },
+  formatBtn: {
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8,
+    minWidth: 34, alignItems: 'center', justifyContent: 'center',
+    ...(Platform.OS === 'web' ? { transition: 'background-color 0.12s ease', cursor: 'pointer' } : {}),
+  },
+  formatBtnText: { fontSize: 14, fontWeight: '600' },
 
   editorBottomBar: {
     paddingHorizontal: 16, paddingVertical: 10,

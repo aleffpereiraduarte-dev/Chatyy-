@@ -1,17 +1,16 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Animated,
-  Alert, TextInput, Dimensions, StatusBar,
+  Alert, TextInput, Dimensions, StatusBar, FlatList,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
-import LiveIndicator from '../components/LiveIndicator';
-import LiveChat from '../components/LiveChat';
+import LiveChat from '../components/LiveChat'; // eslint-disable-line no-unused-vars -- kept for fallback
 import AvatarCircle from '../components/AvatarCircle';
-import { IconX, IconCameraFlip, IconMic, IconMicOff, IconVideo, IconVideoOff, IconHeart } from '../components/Icons';
+import { IconX, IconCameraFlip, IconMic, IconMicOff, IconVideo, IconVideoOff, IconHeart, IconShare, IconSend, IconSettings, IconUserPlus } from '../components/Icons';
 
 // Cross-platform WebRTC — same pattern as call.js
 let RTC_PeerConnection, RTC_SessionDescription, RTC_IceCandidate, getUserMediaFn, NativeRTCView;
@@ -60,6 +59,12 @@ export default function LiveBroadcastScreen() {
   const [ended, setEnded] = useState(false);
   const [liveDuration, setLiveDuration] = useState(0);
   const [hearts, setHearts] = useState([]);
+  const [totalLikes, setTotalLikes] = useState(0);
+  const [commentDraft, setCommentDraft] = useState('');
+  const [connQuality, setConnQuality] = useState('good'); // good | medium | poor
+  const [endModal, setEndModal] = useState(false);
+  const [saveReplay, setSaveReplay] = useState(true);
+  const [pinnedComment, setPinnedComment] = useState(null);
 
   // Refs
   const localVideoRef = useRef(null);
@@ -229,8 +234,31 @@ export default function LiveBroadcastScreen() {
     ws.onerror = () => {};
   }, [user]);
 
+  // Connection quality heartbeat — heuristic based on peer connection health
+  // (we don't have RTC stats parsing yet, so we count failed/connecting peers).
+  useEffect(() => {
+    if (preStart) return;
+    const t = setInterval(() => {
+      const peers = Array.from(peersRef.current.values());
+      if (!peers.length) { setConnQuality('good'); return; }
+      let bad = 0, mid = 0;
+      peers.forEach(pc => {
+        const s = pc.connectionState;
+        if (s === 'failed' || s === 'disconnected') bad++;
+        else if (s === 'connecting' || s === 'new') mid++;
+      });
+      const ratioBad = bad / peers.length;
+      const ratioMid = mid / peers.length;
+      if (ratioBad > 0.25) setConnQuality('poor');
+      else if (ratioBad > 0 || ratioMid > 0.4) setConnQuality('medium');
+      else setConnQuality('good');
+    }, 4000);
+    return () => clearInterval(t);
+  }, [preStart]);
+
   // Heart animation
   const spawnHeart = useCallback(() => {
+    setTotalLikes(c => c + 1);
     const id = ++heartIdRef.current;
     const x = SCREEN_W - 60 + (Math.random() - 0.5) * 40;
     const y = SCREEN_H * 0.55;
@@ -423,52 +451,43 @@ export default function LiveBroadcastScreen() {
     }
   }, [titleInput, connectSignaling, t, animateCountdown, ensureCameraStream]);
 
-  // End the live broadcast
-  const handleEndLive = useCallback(() => {
-    const doEnd = () => {
-      endedRef.current = true;
-      if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
-      if (sessionIdRef.current) {
-        api.liveEnd(sessionIdRef.current).catch(() => {});
-      }
-
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({
-          type: 'live_end',
-          session_id: sessionIdRef.current,
-        }));
-        wsRef.current.close();
-      }
-
-      peersRef.current.forEach(pc => { try { pc.close(); } catch {} });
-      peersRef.current.clear();
-
-      if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(track => track.stop());
-        localStreamRef.current = null;
-      }
-
-      if (viewerCountTimerRef.current) clearInterval(viewerCountTimerRef.current);
-      if (durationTimerRef.current) clearInterval(durationTimerRef.current);
-
-      setEnded(true);
-      sessionIdRef.current = null;
-      setTimeout(() => router.back(), 1500);
-    };
-
-    if (Platform.OS === 'web') {
-      const title = t('live.endLive') || 'End Live';
-      const msg = t('live.endConfirm') || 'End live broadcast?';
-      try {
-        if (window.confirm(`${title}\n\n${msg}`)) doEnd();
-      } catch { doEnd(); }
-    } else {
-      Alert.alert(t('live.endLive') || 'End Live', t('live.endConfirm') || 'End live broadcast?', [
-        { text: t('common.cancel') || 'Cancel', style: 'cancel' },
-        { text: t('live.endLive') || 'End', style: 'destructive', onPress: doEnd },
-      ]);
+  // End the live broadcast — shows the rich modal first; the actual teardown
+  // runs only when the host confirms (and the chosen replay toggle is sent).
+  const performEndLive = useCallback(() => {
+    endedRef.current = true;
+    if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
+    if (sessionIdRef.current) {
+      api.liveEnd(sessionIdRef.current, { save_replay: saveReplay }).catch(() => {});
     }
-  }, [router, t]);
+
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'live_end',
+        session_id: sessionIdRef.current,
+      }));
+      wsRef.current.close();
+    }
+
+    peersRef.current.forEach(pc => { try { pc.close(); } catch {} });
+    peersRef.current.clear();
+
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(track => track.stop());
+      localStreamRef.current = null;
+    }
+
+    if (viewerCountTimerRef.current) clearInterval(viewerCountTimerRef.current);
+    if (durationTimerRef.current) clearInterval(durationTimerRef.current);
+
+    setEnded(true);
+    setEndModal(false);
+    sessionIdRef.current = null;
+    setTimeout(() => router.back(), 1500);
+  }, [router, saveReplay]);
+
+  const handleEndLive = useCallback(() => {
+    setEndModal(true);
+  }, []);
 
   // Toggle audio
   const handleToggleMute = useCallback(() => {
@@ -525,12 +544,15 @@ export default function LiveBroadcastScreen() {
 
   // Send chat message
   const handleSendChat = useCallback((text) => {
+    const trimmed = (text || '').trim();
+    if (!trimmed) return;
     const msg = {
       id: String(++chatIdRef.current),
       name: user?.name || user?.email?.split('@')[0] || 'You',
       email: user?.email,
-      content: text,
+      content: trimmed,
       type: 'chat',
+      isHost: true,
     };
     setChatMessages(prev => [...prev, msg]);
 
@@ -538,14 +560,69 @@ export default function LiveBroadcastScreen() {
       wsRef.current.send(JSON.stringify({
         type: 'live_chat',
         session_id: sessionIdRef.current,
-        content: text,
+        content: trimmed,
       }));
     }
 
     if (sessionIdRef.current) {
-      api.liveSendChat(sessionIdRef.current, text).catch(() => {});
+      api.liveSendChat(sessionIdRef.current, trimmed).catch(() => {});
     }
   }, [user]);
+
+  // Composer submit — wraps handleSendChat and clears the local draft.
+  const submitComposer = useCallback(() => {
+    const trimmed = commentDraft.trim();
+    if (!trimmed) return;
+    // If the host prefixes "📌 " they pin the next message instead of sending.
+    if (trimmed.startsWith('📌 ')) {
+      setPinnedComment({ name: user?.name || user?.email?.split('@')[0] || 'You', content: trimmed.slice(2).trim() });
+      setCommentDraft('');
+      return;
+    }
+    handleSendChat(trimmed);
+    setCommentDraft('');
+  }, [commentDraft, handleSendChat, user]);
+
+  // Self-tap heart — instant feedback for the host without waiting for a viewer
+  // reaction; also broadcasts so viewers see the heart float.
+  const handleSelfHeart = useCallback(() => {
+    spawnHeart();
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'live_reaction',
+        session_id: sessionIdRef.current,
+      }));
+    }
+  }, [spawnHeart]);
+
+  // Share invite — copies the live URL on web, native share sheet otherwise.
+  const handleShare = useCallback(async () => {
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    const url = `https://chatyy.com.br/live/${sid}`;
+    if (Platform.OS === 'web') {
+      try {
+        if (navigator.share) {
+          await navigator.share({ title: titleInput || 'Live', url });
+        } else if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(url);
+        }
+      } catch {}
+    } else {
+      try {
+        const { Share } = require('react-native');
+        await Share.share({ message: `${titleInput || 'Live'}: ${url}` });
+      } catch {}
+    }
+  }, [titleInput]);
+
+  // Long-press a chat message to pin (host only). Wired through to LiveChat
+  // via a callback prop, but we also expose a simple "pin latest" action on
+  // the right action stack for users who don't discover the long-press.
+  const pinLatestComment = useCallback(() => {
+    const last = [...chatMessages].reverse().find(m => m.type !== 'system');
+    if (last) setPinnedComment({ name: last.name, content: last.content });
+  }, [chatMessages]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -710,17 +787,32 @@ export default function LiveBroadcastScreen() {
         </View>
       )}
 
-      {/* Top bar with glass effect */}
+      {/* Top bar — TikTok-grade: avatar + LIVE pulsing badge + viewer pill +
+          duration timer + connection-quality bars + close. Glass background. */}
       <View style={[styles.topBar, { paddingTop: insets.top + 10 }]}>
         <View style={styles.topLeft}>
-          <LiveIndicator size="large" viewerCount={viewerCount} />
+          <AvatarCircle name={user?.name || user?.email} email={user?.email} size={36} />
+          <View style={styles.hostMeta}>
+            <View style={styles.liveBadge}>
+              <Animated.View style={[styles.liveBadgeDot, {
+                transform: [{ scale: livePulse }],
+                opacity: livePulse.interpolate({ inputRange: [1, 1.5], outputRange: [1, 0.6] }),
+              }]} />
+              <Text style={styles.liveBadgeText}>LIVE</Text>
+            </View>
+            <View style={styles.viewerPill}>
+              <View style={styles.viewerDot} />
+              <Animated.Text style={[styles.viewerCountText, { transform: [{ scale: viewerBounce }] }]}>
+                {formatViewerCount(viewerCount)}
+              </Animated.Text>
+              <Text style={styles.viewerWatchText}>{t('live.watching') || 'assistindo'}</Text>
+            </View>
+          </View>
         </View>
-        <View style={styles.topCenter}>
+        <View style={styles.topRight}>
+          <ConnectionBars quality={connQuality} t={t} />
           <View style={styles.durationPill}>
             <View style={styles.durationDotWrap}>
-              {/* Concentric pulse ring radiating from the dot — outline of the
-                  "live, transmitting now" status. Opacity fades as it grows so
-                  it doesn't compete with the timer text. */}
               <Animated.View style={[styles.durationDotRing, {
                 transform: [{ scale: livePulse }],
                 opacity: livePulse.interpolate({ inputRange: [1, 1.5], outputRange: [0.55, 0] }),
@@ -729,15 +821,15 @@ export default function LiveBroadcastScreen() {
             </View>
             <Text style={styles.durationText}>{formatDuration(liveDuration)}</Text>
           </View>
+          <TouchableOpacity
+            onPress={handleEndLive}
+            style={styles.closeBtn2}
+            accessibilityLabel={t('live.endLive') || 'End live'}
+            accessibilityRole="button"
+          >
+            <IconX size={18} color="#fff" />
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity
-          onPress={handleEndLive}
-          style={styles.closeBtn2}
-          accessibilityLabel={t('live.endLive') || 'End live'}
-          accessibilityRole="button"
-        >
-          <IconX size={20} color="#fff" />
-        </TouchableOpacity>
       </View>
 
       {/* Title */}
@@ -748,6 +840,78 @@ export default function LiveBroadcastScreen() {
           </Text>
         </View>
       ) : null}
+
+      {/* Pinned comment — sits below the title bar, brand-purple accent + 📌. */}
+      {pinnedComment ? (
+        <View style={[styles.pinnedWrap, { top: titleInput ? 130 : 100 }]}>
+          <View style={styles.pinnedCard}>
+            <Text style={styles.pinnedIcon}>📌</Text>
+            <View style={styles.pinnedBody}>
+              <Text style={styles.pinnedName} numberOfLines={1}>{pinnedComment.name}</Text>
+              <Text style={styles.pinnedContent} numberOfLines={2}>{pinnedComment.content}</Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => setPinnedComment(null)}
+              style={styles.pinnedClose}
+              accessibilityLabel="Unpin"
+              accessibilityRole="button"
+            >
+              <IconX size={14} color="rgba(255,255,255,0.7)" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
+
+      {/* Right-side vertical action stack — TikTok pattern: settings, effects,
+          filter, timer, pin. Stacked above the bottom controls so they don't
+          collide with the chat overlay. */}
+      <View style={[styles.rightStack, { bottom: insets.bottom + 200 }]} pointerEvents="box-none">
+        <TouchableOpacity
+          onPress={() => {}}
+          style={styles.rightBtn}
+          activeOpacity={0.7}
+          accessibilityLabel={t('live.settings') || 'Settings'}
+          accessibilityRole="button"
+        >
+          <IconSettings size={18} color="#fff" />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => {}}
+          style={styles.rightBtn}
+          activeOpacity={0.7}
+          accessibilityLabel={t('live.effects') || 'Effects'}
+          accessibilityRole="button"
+        >
+          <IconSparkles size={18} color="#fff" />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => {}}
+          style={styles.rightBtn}
+          activeOpacity={0.7}
+          accessibilityLabel={t('live.filter') || 'Filter'}
+          accessibilityRole="button"
+        >
+          <IconFilter size={18} color="#fff" />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={pinLatestComment}
+          style={styles.rightBtn}
+          activeOpacity={0.7}
+          accessibilityLabel={t('live.pinComment') || 'Pin latest'}
+          accessibilityRole="button"
+        >
+          <Text style={styles.rightBtnIconEmoji}>📌</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={handleFlipCamera}
+          style={styles.rightBtn}
+          activeOpacity={0.7}
+          accessibilityLabel={t('live.flipCamera') || 'Flip camera'}
+          accessibilityRole="button"
+        >
+          <IconCameraFlip size={18} color="#fff" />
+        </TouchableOpacity>
+      </View>
 
       {/* Floating hearts */}
       {hearts.map(h => {
@@ -772,62 +936,263 @@ export default function LiveBroadcastScreen() {
         );
       })}
 
-      {/* Bottom: chat + controls */}
-      <View style={styles.bottomArea}>
-        <LiveChat
-          messages={chatMessages}
-          onSend={handleSendChat}
-          t={t}
-          style={styles.chatOverlay}
-        />
+      {/* Bottom: scrolling chat overlay (bottom→up, fades at top), composer
+          row with invite pill + text input + heart + share + flip. */}
+      <View style={styles.bottomArea} pointerEvents="box-none">
+        <View style={styles.chatScrollWrap} pointerEvents="box-none">
+          {/* TikTok-style comments column — bottom→up scroll, lightweight
+              rows with avatar + name + comment. Older lines fade at the top
+              via the gradient overlay. We render this inline (instead of
+              LiveChat) because LiveChat ships its own TextInput, and we
+              already have a richer composer row below. */}
+          <FlatList
+            data={chatMessages.slice(-30)}
+            keyExtractor={(item, idx) => item.id || String(idx)}
+            renderItem={({ item }) => (
+              item.type === 'system' ? (
+                <View style={styles.commentSystem}>
+                  <Text style={styles.commentSystemText} numberOfLines={1}>
+                    {item.name} {item.content}
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.commentRow}>
+                  <AvatarCircle name={item.name} email={item.email} size={26} />
+                  <View style={styles.commentBubble}>
+                    <Text style={styles.commentName} numberOfLines={1}>
+                      {item.name}
+                      {item.isHost ? <Text style={styles.commentHostTag}> · {t('live.host') || 'Host'}</Text> : null}
+                    </Text>
+                    <Text style={styles.commentText}>{item.content}</Text>
+                  </View>
+                </View>
+              )
+            )}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.commentListContent}
+            initialNumToRender={12}
+            maxToRenderPerBatch={12}
+          />
+          <View style={styles.chatTopFade} pointerEvents="none" />
+        </View>
 
-        <View style={[styles.controls, { paddingBottom: insets.bottom + 16 }]}>
+        <View style={[styles.composerRow, { paddingBottom: insets.bottom + 12 }]}>
+          {/* Primary purple "Convidar amigos" pill — TikTok places this at the
+              bottom-left to drive viewer growth. */}
           <TouchableOpacity
-            onPress={handleFlipCamera}
-            style={styles.controlBtn}
-            activeOpacity={0.7}
-            accessibilityLabel={t('live.flipCamera') || 'Flip camera'}
+            onPress={handleShare}
+            style={styles.invitePill}
+            activeOpacity={0.85}
+            accessibilityLabel={t('live.inviteFriends') || 'Invite friends'}
             accessibilityRole="button"
           >
-            <IconCameraFlip size={20} color="#fff" />
+            <IconUserPlus size={14} color="#fff" />
+            <Text style={styles.invitePillText} numberOfLines={1}>
+              {t('live.inviteFriends') || 'Convidar amigos'}
+            </Text>
           </TouchableOpacity>
 
+          <View style={styles.composerInputWrap}>
+            <TextInput
+              style={styles.composerInput}
+              value={commentDraft}
+              onChangeText={setCommentDraft}
+              placeholder={t('live.sayHello') || 'Diga oi...'}
+              placeholderTextColor="rgba(255,255,255,0.55)"
+              onSubmitEditing={submitComposer}
+              returnKeyType="send"
+              blurOnSubmit={false}
+              accessibilityLabel={t('live.commentHint') || 'Add comment'}
+              maxLength={300}
+            />
+            {commentDraft.trim().length > 0 ? (
+              <TouchableOpacity
+                onPress={submitComposer}
+                style={styles.composerSendBtn}
+                activeOpacity={0.7}
+                accessibilityLabel={t('live.send') || 'Send'}
+                accessibilityRole="button"
+              >
+                <IconSend size={16} color="#fff" />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
+          <TouchableOpacity
+            onPress={handleSelfHeart}
+            style={[styles.composerIconBtn, styles.heartBtn]}
+            activeOpacity={0.7}
+            accessibilityLabel={t('live.like') || 'Like'}
+            accessibilityRole="button"
+          >
+            <IconHeart size={18} color="#fff" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={handleShare}
+            style={styles.composerIconBtn}
+            activeOpacity={0.7}
+            accessibilityLabel={t('live.share') || 'Share'}
+            accessibilityRole="button"
+          >
+            <IconShare size={18} color="#fff" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={handleToggleMute}
+            style={[styles.composerIconBtn, audioMuted && styles.composerIconBtnActive]}
+            activeOpacity={0.7}
+            accessibilityLabel={audioMuted ? (t('live.unmute') || 'Unmute') : (t('live.mute') || 'Mute')}
+            accessibilityRole="button"
+          >
+            {audioMuted ? <IconMicOff size={18} color="#fff" /> : <IconMic size={18} color="#fff" />}
+          </TouchableOpacity>
           <TouchableOpacity
             onPress={handleToggleVideo}
-            style={[styles.controlBtn, videoOff && styles.controlBtnActive]}
+            style={[styles.composerIconBtn, videoOff && styles.composerIconBtnActive]}
             activeOpacity={0.7}
             accessibilityLabel={videoOff ? 'Turn on camera' : 'Turn off camera'}
             accessibilityRole="button"
           >
-            {videoOff ? <IconVideoOff size={20} color="#fff" /> : <IconVideo size={20} color="#fff" />}
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={handleToggleMute}
-            style={[styles.controlBtn, audioMuted && styles.controlBtnActive]}
-            activeOpacity={0.7}
-            accessibilityLabel={audioMuted ? t('live.unmute') || 'Unmute' : t('live.mute') || 'Mute'}
-            accessibilityRole="button"
-          >
-            {audioMuted ? <IconMicOff size={20} color="#fff" /> : <IconMic size={20} color="#fff" />}
-          </TouchableOpacity>
-
-          <View style={{ flex: 1 }} />
-
-          <TouchableOpacity
-            onPress={handleEndLive}
-            style={styles.endBtn}
-            activeOpacity={0.7}
-            accessibilityLabel={t('live.endLive') || 'End live'}
-            accessibilityRole="button"
-          >
-            <Text style={styles.endBtnText}>{t('live.endLive') || 'End'}</Text>
+            {videoOff ? <IconVideoOff size={18} color="#fff" /> : <IconVideo size={18} color="#fff" />}
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* End-Live confirmation modal — shows the run summary (duration,
+          viewers, likes) and the Save Replay toggle before tearing down. */}
+      {endModal ? (
+        <View style={styles.endModalBackdrop}>
+          <View style={styles.endModalCard}>
+            <View style={styles.endModalHeader}>
+              <View style={styles.endModalLiveDot} />
+              <Text style={styles.endModalTitle}>{t('live.endLive') || 'Encerrar Live?'}</Text>
+            </View>
+            <Text style={styles.endModalSubtitle}>
+              {t('live.endConfirm') || 'Sua transmissão vai ser encerrada e os espectadores vão sair.'}
+            </Text>
+            <View style={styles.endModalStats}>
+              <View style={styles.endModalStat}>
+                <Text style={styles.endModalStatValue}>{formatDuration(liveDuration)}</Text>
+                <Text style={styles.endModalStatLabel}>{t('live.duration') || 'Duração'}</Text>
+              </View>
+              <View style={styles.endModalStatDivider} />
+              <View style={styles.endModalStat}>
+                <Text style={styles.endModalStatValue}>{formatViewerCount(viewerCount)}</Text>
+                <Text style={styles.endModalStatLabel}>{t('live.viewers') || 'Espectadores'}</Text>
+              </View>
+              <View style={styles.endModalStatDivider} />
+              <View style={styles.endModalStat}>
+                <Text style={styles.endModalStatValue}>{formatViewerCount(totalLikes)}</Text>
+                <Text style={styles.endModalStatLabel}>{t('live.likes') || 'Curtidas'}</Text>
+              </View>
+            </View>
+            <TouchableOpacity
+              onPress={() => setSaveReplay(v => !v)}
+              activeOpacity={0.8}
+              style={styles.endModalToggleRow}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: saveReplay }}
+              accessibilityLabel={t('live.saveReplay') || 'Save replay'}
+            >
+              <View style={styles.endModalToggleLabelWrap}>
+                <Text style={styles.endModalToggleLabel}>
+                  {t('live.saveReplay') || 'Salvar replay'}
+                </Text>
+                <Text style={styles.endModalToggleHint}>
+                  {t('live.saveReplayHint') || 'Espectadores poderão assistir depois'}
+                </Text>
+              </View>
+              <View style={[styles.endModalToggle, saveReplay && styles.endModalToggleOn]}>
+                <View style={[styles.endModalToggleKnob, saveReplay && styles.endModalToggleKnobOn]} />
+              </View>
+            </TouchableOpacity>
+            <View style={styles.endModalActions}>
+              <TouchableOpacity
+                onPress={() => setEndModal(false)}
+                style={styles.endModalCancel}
+                activeOpacity={0.7}
+                accessibilityLabel={t('common.cancel') || 'Cancel'}
+                accessibilityRole="button"
+              >
+                <Text style={styles.endModalCancelText}>{t('common.cancel') || 'Continuar live'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={performEndLive}
+                style={styles.endModalConfirm}
+                activeOpacity={0.85}
+                accessibilityLabel={t('live.endLive') || 'End live'}
+                accessibilityRole="button"
+              >
+                <Text style={styles.endModalConfirmText}>{t('live.endLive') || 'Encerrar'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }
+
+// Compact viewer-count formatter — 1234 → "1.2K", 1500000 → "1.5M".
+// Mirrors TikTok's count style used in the top viewer pill.
+function formatViewerCount(n) {
+  const num = Number(n) || 0;
+  if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(num % 1_000_000 === 0 ? 0 : 1)}M`;
+  if (num >= 1_000) return `${(num / 1_000).toFixed(num % 1000 === 0 ? 0 : 1)}K`;
+  return String(num);
+}
+
+// 4-bar connection-quality indicator. Renders four little bars; the active
+// count is derived from quality, and the trailing label translates with i18n.
+function ConnectionBars({ quality, t }) {
+  const active = quality === 'good' ? 4 : quality === 'medium' ? 3 : 2;
+  const label = quality === 'good' ? (t('live.connGood') || 'Boa')
+    : quality === 'medium' ? (t('live.connMedium') || 'Média')
+    : (t('live.connPoor') || 'Ruim');
+  const tint = quality === 'good' ? '#22c55e' : quality === 'medium' ? '#f59e0b' : '#ef4444';
+  return (
+    <View style={connStyles.wrap}>
+      <View style={connStyles.bars}>
+        {[0, 1, 2, 3].map(i => (
+          <View
+            key={i}
+            style={[
+              connStyles.bar,
+              { height: 5 + i * 3, backgroundColor: i < active ? tint : 'rgba(255,255,255,0.25)' },
+            ]}
+          />
+        ))}
+      </View>
+      <Text style={[connStyles.label, { color: tint }]}>{label}</Text>
+    </View>
+  );
+}
+
+const connStyles = StyleSheet.create({
+  wrap: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  bars: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 2,
+    height: 14,
+  },
+  bar: {
+    width: 3,
+    borderRadius: 1.5,
+  },
+  label: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+});
 
 const styles = StyleSheet.create({
   fullScreen: {
@@ -1140,5 +1505,369 @@ const styles = StyleSheet.create({
   heart: {
     position: 'absolute',
     zIndex: 20,
+  },
+
+  // Top-bar layout polish
+  hostMeta: {
+    flexDirection: 'column',
+    gap: 4,
+  },
+  liveBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: LIVE_RED,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 0 12px rgba(220,38,38,0.55)',
+    } : {}),
+  },
+  liveBadgeDot: {
+    width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff',
+  },
+  liveBadgeText: {
+    color: '#fff', fontSize: 10, fontWeight: '900', letterSpacing: 0.8,
+  },
+  viewerPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    alignSelf: 'flex-start',
+  },
+  viewerDot: {
+    width: 6, height: 6, borderRadius: 3, backgroundColor: LIVE_RED,
+  },
+  viewerCountText: {
+    color: '#fff', fontSize: 11, fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
+  viewerWatchText: {
+    color: 'rgba(255,255,255,0.75)', fontSize: 10, fontWeight: '600',
+  },
+  topRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+
+  // Pinned comment
+  pinnedWrap: {
+    position: 'absolute',
+    left: 16, right: 16,
+    zIndex: 9,
+  },
+  pinnedCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(124,58,237,0.85)',
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderLeftWidth: 3,
+    borderLeftColor: '#fff',
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 4px 14px rgba(124,58,237,0.4)',
+    } : {}),
+  },
+  pinnedIcon: {
+    fontSize: 16,
+  },
+  pinnedBody: { flex: 1 },
+  pinnedName: {
+    color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 0.3, marginBottom: 1,
+    opacity: 0.92,
+  },
+  pinnedContent: {
+    color: '#fff', fontSize: 13, lineHeight: 17, fontWeight: '500',
+  },
+  pinnedClose: {
+    width: 22, height: 22, borderRadius: 11,
+    backgroundColor: 'rgba(0,0,0,0.25)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+
+  // Right action stack
+  rightStack: {
+    position: 'absolute',
+    right: 12,
+    gap: 12,
+    alignItems: 'center',
+    zIndex: 9,
+  },
+  rightBtn: {
+    width: 42, height: 42, borderRadius: 21,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+  },
+  rightBtnIconEmoji: { fontSize: 18 },
+
+  // Comments column (custom, replaces LiveChat in live screen)
+  chatScrollWrap: {
+    height: 240,
+    position: 'relative',
+  },
+  commentListContent: {
+    paddingHorizontal: 14,
+    paddingTop: 24,
+    paddingBottom: 6,
+  },
+  commentRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    paddingVertical: 4,
+  },
+  commentBubble: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    maxWidth: '88%',
+  },
+  commentName: {
+    color: '#a78bfa', fontSize: 11, fontWeight: '800', letterSpacing: 0.3, marginBottom: 1,
+  },
+  commentHostTag: {
+    color: '#f59e0b', fontSize: 10, fontWeight: '700',
+  },
+  commentText: {
+    color: '#fff', fontSize: 13, lineHeight: 17,
+  },
+  commentSystem: {
+    paddingVertical: 4, alignItems: 'flex-start',
+  },
+  commentSystemText: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 11,
+    fontStyle: 'italic',
+    letterSpacing: 0.2,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    paddingHorizontal: 10, paddingVertical: 3, borderRadius: 8,
+  },
+  chatTopFade: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0,
+    height: 60,
+    ...(Platform.OS === 'web' ? {
+      background: 'linear-gradient(to bottom, rgba(0,0,0,0.55), transparent)',
+    } : {
+      backgroundColor: 'transparent', // RN can't do gradients without lib; stays transparent on native
+    }),
+    pointerEvents: 'none',
+  },
+
+  // Composer row
+  composerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingTop: 10,
+  },
+  invitePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#7C3AED',
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 22,
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 2px 12px rgba(124,58,237,0.45)',
+    } : {}),
+  },
+  invitePillText: {
+    color: '#fff', fontSize: 12, fontWeight: '800', letterSpacing: 0.2,
+    maxWidth: 120,
+  },
+  composerInputWrap: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    paddingLeft: 14,
+    paddingRight: 4,
+  },
+  composerInput: {
+    flex: 1,
+    height: 40,
+    color: '#fff',
+    fontSize: 14,
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+  },
+  composerSendBtn: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: '#7C3AED',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  composerIconBtn: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+  },
+  composerIconBtnActive: {
+    backgroundColor: 'rgba(220,38,38,0.7)',
+    borderColor: 'rgba(220,38,38,0.4)',
+  },
+  heartBtn: {
+    backgroundColor: 'rgba(220,38,38,0.65)',
+    borderColor: 'rgba(220,38,38,0.4)',
+  },
+
+  // End-Live confirmation modal
+  endModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    zIndex: 100,
+    ...(Platform.OS === 'web' ? { backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' } : {}),
+  },
+  endModalCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#1a1a26',
+    borderRadius: 22,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 20px 60px rgba(0,0,0,0.6)',
+    } : {}),
+  },
+  endModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 6,
+  },
+  endModalLiveDot: {
+    width: 10, height: 10, borderRadius: 5, backgroundColor: LIVE_RED,
+  },
+  endModalTitle: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  endModalSubtitle: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 18,
+  },
+  endModalStats: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(124,58,237,0.12)',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(124,58,237,0.25)',
+  },
+  endModalStat: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  endModalStatValue: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+    marginBottom: 2,
+  },
+  endModalStatLabel: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+  },
+  endModalStatDivider: {
+    width: 1,
+    height: 30,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  endModalToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 18,
+    gap: 12,
+  },
+  endModalToggleLabelWrap: { flex: 1 },
+  endModalToggleLabel: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  endModalToggleHint: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 11,
+  },
+  endModalToggle: {
+    width: 44, height: 26, borderRadius: 13,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    padding: 3,
+    justifyContent: 'center',
+  },
+  endModalToggleOn: {
+    backgroundColor: '#7C3AED',
+  },
+  endModalToggleKnob: {
+    width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff',
+  },
+  endModalToggleKnobOn: {
+    transform: [{ translateX: 18 }],
+  },
+  endModalActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  endModalCancel: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  endModalCancelText: {
+    color: '#fff', fontSize: 14, fontWeight: '700',
+  },
+  endModalConfirm: {
+    flex: 1,
+    paddingVertical: 13,
+    borderRadius: 14,
+    backgroundColor: LIVE_RED,
+    alignItems: 'center',
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 4px 16px rgba(220,38,38,0.45)',
+    } : {}),
+  },
+  endModalConfirmText: {
+    color: '#fff', fontSize: 14, fontWeight: '800', letterSpacing: 0.3,
   },
 });

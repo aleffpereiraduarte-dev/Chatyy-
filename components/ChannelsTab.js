@@ -5,11 +5,83 @@ import {
 } from 'react-native';
 import AvatarCircle from './AvatarCircle';
 import { IconSearch, IconPlus, IconArrowLeft } from './Icons';
-import Svg, { Path, Circle as SvgCircle } from 'react-native-svg';
+import Svg, { Path, Circle as SvgCircle, Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
 import * as api from '../services/api';
 
 const ACCENT = '#7C3AED';
+const ACCENT_DARK = '#5B21B6';
 const SCREEN_WIDTH = Dimensions.get('window').width;
+
+// Filter chips on Discover (top-level filters: subscribed/discover/suggested/recent)
+const FILTER_CHIPS = [
+  { key: 'subscribed', label: 'Inscritos' },
+  { key: 'discover', label: 'Descobrir' },
+  { key: 'suggested', label: 'Sugeridos' },
+  { key: 'recent', label: 'Recentes' },
+];
+
+// Format follower counts ("12.4K" / "1.2M") for badge display
+function formatCount(n) {
+  const num = parseInt(n) || 0;
+  if (num < 1000) return String(num);
+  if (num < 1_000_000) {
+    const k = num / 1000;
+    return (k >= 10 ? Math.round(k) : k.toFixed(1).replace(/\.0$/, '')) + 'K';
+  }
+  const m = num / 1_000_000;
+  return (m >= 10 ? Math.round(m) : m.toFixed(1).replace(/\.0$/, '')) + 'M';
+}
+
+// Card cover gradient (placeholder when no cover_url available)
+function CardCoverFallback({ seed = 0 }) {
+  // Six brand-harmonized gradients seeded by channel id parity
+  const palettes = [
+    ['#7C3AED', '#5B21B6'],
+    ['#9333EA', '#6D28D9'],
+    ['#A855F7', '#7E22CE'],
+    ['#8B5CF6', '#4C1D95'],
+    ['#C084FC', '#7C3AED'],
+    ['#A78BFA', '#5B21B6'],
+  ];
+  const [a, b] = palettes[Math.abs(seed) % palettes.length];
+  const id = `cardCover-${Math.abs(seed) % palettes.length}`;
+  return (
+    <Svg width="100%" height="100%" style={StyleSheet.absoluteFill} preserveAspectRatio="none">
+      <Defs>
+        <SvgLinearGradient id={id} x1="0" y1="0" x2="1" y2="1">
+          <Stop offset="0" stopColor={a} stopOpacity="1" />
+          <Stop offset="1" stopColor={b} stopOpacity="1" />
+        </SvgLinearGradient>
+      </Defs>
+      <Rect x="0" y="0" width="100%" height="100%" fill={`url(#${id})`} />
+    </Svg>
+  );
+}
+
+// Dark fade overlay for card text legibility
+function CardDarkFade() {
+  return (
+    <Svg width="100%" height="100%" style={StyleSheet.absoluteFill} preserveAspectRatio="none">
+      <Defs>
+        <SvgLinearGradient id="cardFade" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor="#000" stopOpacity="0.05" />
+          <Stop offset="0.55" stopColor="#000" stopOpacity="0.35" />
+          <Stop offset="1" stopColor="#000" stopOpacity="0.78" />
+        </SvgLinearGradient>
+      </Defs>
+      <Rect x="0" y="0" width="100%" height="100%" fill="url(#cardFade)" />
+    </Svg>
+  );
+}
+
+function IconUsersSmall({ size = 11, color = '#fff' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+      <Path d="M9 11a4 4 0 100-8 4 4 0 000 8z" />
+    </Svg>
+  );
+}
 
 const CATEGORIES = [
   { key: 'all', emoji: '\uD83D\uDD25' },
@@ -127,6 +199,7 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('all');
+  const [filter, setFilter] = useState('discover'); // top-level: subscribed/discover/suggested/recent
   const [refreshing, setRefreshing] = useState(false);
   const searchTimeout = useRef(null);
 
@@ -162,6 +235,21 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
     } catch {}
   }, [category, search, load]);
 
+  // Apply top-level filter (client-side; backend doesn't yet split by these keys)
+  const displayed = React.useMemo(() => {
+    if (!Array.isArray(channels)) return [];
+    if (filter === 'subscribed') return channels.filter(c => c.is_member);
+    if (filter === 'suggested') return channels.filter(c => !c.is_member);
+    if (filter === 'recent') {
+      return [...channels].sort((a, b) => {
+        const ta = new Date(a.latest_post_at || a.created_at || 0).getTime();
+        const tb = new Date(b.latest_post_at || b.created_at || 0).getTime();
+        return tb - ta;
+      });
+    }
+    return channels; // 'discover' shows all
+  }, [channels, filter]);
+
   return (
     <View style={{ flex: 1 }}>
       {/* Search */}
@@ -170,15 +258,49 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
         <TextInput
           value={search}
           onChangeText={onSearchChange}
-          placeholder={t('channel.searchPlaceholder') || 'Search channels...'}
+          placeholder={t('channel.searchPlaceholder') || 'Buscar canais...'}
           placeholderTextColor={isDark ? '#555' : '#9ca3af'}
           style={[styles.searchInput, { color: colors.text }]}
           autoCorrect={false}
         />
       </View>
 
-      {/* Category pills */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0, marginBottom: 8 }} contentContainerStyle={{ paddingHorizontal: 12, gap: 8 }}>
+      {/* Top-level filter chips: Inscritos / Descobrir / Sugeridos / Recentes */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={{ flexGrow: 0, marginBottom: 6 }}
+        contentContainerStyle={{ paddingHorizontal: 12, gap: 8 }}
+      >
+        {FILTER_CHIPS.map((f) => {
+          const active = filter === f.key;
+          return (
+            <TouchableOpacity
+              key={f.key}
+              onPress={() => setFilter(f.key)}
+              activeOpacity={0.85}
+              style={[
+                styles.filterChip,
+                active
+                  ? { backgroundColor: ACCENT, borderColor: ACCENT }
+                  : { backgroundColor: 'transparent', borderColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.10)' },
+              ]}
+            >
+              <Text style={{
+                fontSize: 13,
+                fontWeight: '700',
+                color: active ? '#fff' : colors.text,
+                letterSpacing: 0.1,
+              }}>
+                {t(`channel.filter.${f.key}`) || f.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
+
+      {/* Category pills (secondary) */}
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0, marginBottom: 10 }} contentContainerStyle={{ paddingHorizontal: 12, gap: 8 }}>
         {CATEGORIES.map((cat) => (
           <TouchableOpacity
             key={cat.key}
@@ -200,44 +322,67 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
 
       {loading ? (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><ActivityIndicator color={ACCENT} size="large" /></View>
-      ) : channels.length === 0 ? (
+      ) : displayed.length === 0 ? (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 }}>
-          <Text style={{ color: colors.textSecondary, fontSize: 14 }}>{t('channel.noChannels') || 'No channels found'}</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 14 }}>{t('channel.noChannels') || 'Nenhum canal encontrado'}</Text>
         </View>
       ) : (
         <FlatList
-          data={channels}
+          data={displayed}
           keyExtractor={(item) => String(item.id)}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} />}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              activeOpacity={0.7}
-              onPress={() => onOpenChannel(item)}
-              style={[styles.channelRow, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}
-            >
-              <View style={[styles.channelAvatar, { backgroundColor: isDark ? '#1a1a24' : '#f0f0f5' }]}>
-                <IconMegaphone size={24} color={ACCENT} />
-              </View>
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={{ color: colors.text, fontSize: 16, fontWeight: '600' }} numberOfLines={1}>{item.name}</Text>
-                <Text style={{ color: colors.textSecondary, fontSize: 13, marginTop: 2 }} numberOfLines={2}>{item.description || ''}</Text>
-                <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 4 }}>
-                  {item.subscriber_count || 0} {t('channel.followers') || 'followers'}
-                  {item.category && item.category !== 'general' ? ` \u00B7 ${t(`channel.cat.${item.category}`) || item.category}` : ''}
-                </Text>
-              </View>
+          contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 20, gap: 12 }}
+          renderItem={({ item }) => {
+            const subCountNum = parseInt(item.subscriber_count) || 0;
+            const subText = formatCount(subCountNum) + (subCountNum === 1 ? ' membro' : ' membros');
+            const catLabel = item.category && item.category !== 'general'
+              ? (t(`channel.cat.${item.category}`) || item.category)
+              : null;
+            return (
               <TouchableOpacity
-                onPress={() => handleFollow(item)}
-                style={[styles.followBtn, {
-                  backgroundColor: item.is_member ? (isDark ? '#1a1a24' : '#f0f0f5') : ACCENT,
-                }]}
+                activeOpacity={0.85}
+                onPress={() => onOpenChannel(item)}
+                style={styles.coverCard}
               >
-                <Text style={{ color: item.is_member ? colors.text : '#fff', fontSize: 13, fontWeight: '600' }}>
-                  {item.is_member ? (t('channel.joined') || 'Inscrito') : (t('channel.join') || 'Inscrever')}
-                </Text>
+                {/* Cover background \u2014 placeholder gradient until cover_url wired */}
+                <CardCoverFallback seed={item.id || 0} />
+                <CardDarkFade />
+
+                {/* Members badge top-right (12.4K format) */}
+                <View style={styles.coverMembersBadge}>
+                  <IconUsersSmall size={11} color="#fff" />
+                  <Text style={styles.coverMembersBadgeText}>{formatCount(subCountNum)}</Text>
+                </View>
+
+                {/* Content overlay (bottom) \u2014 name + desc + meta + Subscribe pill */}
+                <View style={styles.coverContent}>
+                  <Text style={styles.coverTitle} numberOfLines={1}>{item.name}</Text>
+                  {item.description ? (
+                    <Text style={styles.coverDesc} numberOfLines={2}>{item.description}</Text>
+                  ) : null}
+                  <View style={styles.coverFooterRow}>
+                    <Text style={styles.coverFooterMeta} numberOfLines={1}>
+                      {subText}{catLabel ? `   ${catLabel}` : ''}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => handleFollow(item)}
+                      activeOpacity={0.85}
+                      style={[
+                        styles.coverJoinBtn,
+                        item.is_member
+                          ? { backgroundColor: 'transparent', borderColor: 'rgba(255,255,255,0.7)' }
+                          : { backgroundColor: ACCENT, borderColor: ACCENT },
+                      ]}
+                    >
+                      <Text style={styles.coverJoinBtnText}>
+                        {item.is_member ? (t('channel.joined') || 'Inscrito') : (t('channel.join') || 'Inscrever')}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
               </TouchableOpacity>
-            </TouchableOpacity>
-          )}
+            );
+          }}
         />
       )}
     </View>
@@ -627,6 +772,96 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 20,
+  },
+  filterChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  // Cover card (Telegram Communities-grade)
+  coverCard: {
+    height: 180,
+    borderRadius: 18,
+    overflow: 'hidden',
+    backgroundColor: '#1a1a24',
+    position: 'relative',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOpacity: 0.18,
+        shadowRadius: 10,
+        shadowOffset: { width: 0, height: 4 },
+      },
+      android: { elevation: 3 },
+      default: {},
+    }),
+  },
+  coverMembersBadge: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 14,
+  },
+  coverMembersBadgeText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  coverContent: {
+    position: 'absolute',
+    left: 14,
+    right: 14,
+    bottom: 12,
+    gap: 4,
+  },
+  coverTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '700',
+    letterSpacing: -0.2,
+    textShadowColor: 'rgba(0,0,0,0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  coverDesc: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 13,
+    fontWeight: '400',
+    lineHeight: 17,
+  },
+  coverFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 6,
+    gap: 8,
+  },
+  coverFooterMeta: {
+    flex: 1,
+    color: 'rgba(255,255,255,0.78)',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  coverJoinBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1.5,
+  },
+  coverJoinBtnText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
   },
   followBtn: {
     paddingHorizontal: 16,

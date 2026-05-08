@@ -81,21 +81,66 @@ function PackCard({ pack, onPress, onInstall, onUninstall, installed, installing
           elevation: 2,
         }}
       >
-        {/* Cover */}
+        {/* Cover — 80×80 grid of 4 preview stickers (WhatsApp/Telegram-style) */}
         <View style={{
           width: '100%', aspectRatio: 1,
           backgroundColor: colors.surfaceVariant,
           alignItems: 'center', justifyContent: 'center',
+          padding: 10,
         }}>
-          {pack.cover_url ? (
-            <Image
-              source={{ uri: pack.cover_url }}
-              style={{ width: '100%', height: '100%' }}
-              resizeMode="cover"
-            />
-          ) : (
-            <Text style={{ fontSize: 52 }}>{pack.cover_emoji || '📦'}</Text>
-          )}
+          {(() => {
+            const previews = (pack.preview_stickers || pack.previews || []).slice(0, 4);
+            // Pad to 4 with placeholders so the grid always renders 2×2
+            while (previews.length < 4) previews.push(null);
+            const cellSize = (PACK_CARD_W - 40) / 2; // 2 cols, 4px gap
+            return (
+              <View style={{
+                width: '100%', height: '100%',
+                flexDirection: 'row', flexWrap: 'wrap',
+                justifyContent: 'center', alignItems: 'center',
+                gap: 4,
+              }}>
+                {previews.map((sticker, idx) => {
+                  const url = typeof sticker === 'string' && /^https?:\/\//.test(sticker)
+                    ? sticker
+                    : sticker?.url || null;
+                  const emoji = sticker?.emoji_tag || (!url && typeof sticker === 'string' ? sticker : null);
+                  return (
+                    <View
+                      key={`prev-${idx}`}
+                      style={{
+                        width: cellSize, height: cellSize,
+                        borderRadius: 10,
+                        backgroundColor: colors.background,
+                        alignItems: 'center', justifyContent: 'center',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      {url ? (
+                        <Image
+                          source={{ uri: url }}
+                          style={{ width: '85%', height: '85%' }}
+                          resizeMode="contain"
+                        />
+                      ) : emoji ? (
+                        <Text style={{ fontSize: cellSize * 0.55 }}>{emoji}</Text>
+                      ) : pack.cover_url && idx === 0 ? (
+                        <Image
+                          source={{ uri: pack.cover_url }}
+                          style={{ width: '85%', height: '85%' }}
+                          resizeMode="contain"
+                        />
+                      ) : (
+                        <Text style={{ fontSize: cellSize * 0.5, opacity: 0.3 }}>
+                          {pack.cover_emoji || '📦'}
+                        </Text>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            );
+          })()}
           {pack.is_premium && (
             <View style={{
               position: 'absolute', top: 8, right: 8,
@@ -108,7 +153,7 @@ function PackCard({ pack, onPress, onInstall, onUninstall, installed, installing
           {installed && (
             <View style={{
               position: 'absolute', top: 8, left: 8,
-              backgroundColor: colors.success || '#16a34a',
+              backgroundColor: '#7C3AED',
               borderRadius: 10, width: 20, height: 20,
               alignItems: 'center', justifyContent: 'center',
             }}>
@@ -126,33 +171,33 @@ function PackCard({ pack, onPress, onInstall, onUninstall, installed, installing
             {pack.author || 'Chatyy'} · {pack.sticker_count || 0} fig.
           </Text>
 
-          {/* Add / Remove button */}
+          {/* Pill: "Adicionar" primary filled OR "Instalado" outline */}
           <TouchableOpacity
             onPress={installed ? onUninstall : onInstall}
             disabled={installing}
             style={{
-              marginTop: 8, borderRadius: 10, paddingVertical: 6,
-              backgroundColor: installed
-                ? (colors.error + '15')
-                : (colors.primary + '15'),
+              marginTop: 8, borderRadius: 999, paddingVertical: 7, paddingHorizontal: 12,
+              backgroundColor: installed ? 'transparent' : '#7C3AED',
+              borderWidth: installed ? 1.5 : 0,
+              borderColor: installed ? '#7C3AED' : 'transparent',
               alignItems: 'center', justifyContent: 'center',
               flexDirection: 'row', gap: 4,
             }}
-            activeOpacity={0.7}
+            activeOpacity={0.75}
           >
             {installing ? (
-              <ActivityIndicator size={12} color={colors.primary} />
+              <ActivityIndicator size={12} color={installed ? '#7C3AED' : '#fff'} />
             ) : installed ? (
               <>
-                <IconTrash size={12} color={colors.error || '#dc2626'} />
-                <Text style={{ fontSize: 11, fontWeight: '700', color: colors.error || '#dc2626' }}>
-                  Remover
+                <IconCheck size={12} color="#7C3AED" />
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#7C3AED' }}>
+                  Instalado
                 </Text>
               </>
             ) : (
               <>
-                <IconPlus size={12} color={colors.primary} />
-                <Text style={{ fontSize: 11, fontWeight: '700', color: colors.primary }}>
+                <IconPlus size={12} color="#fff" />
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>
                   Adicionar
                 </Text>
               </>
@@ -840,6 +885,124 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
 // ─── Missing StyleSheet import ─────────────────────────────────────────────────
 import { StyleSheet } from 'react-native';
 
+// ─── Hero "Pack do dia" Card ──────────────────────────────────────────────────
+// Top featured pack with brand gradient + 4-sticker preview row. Used as the
+// first entry above the Em destaque rail.
+
+function HeroPackCard({ pack, onPress, colors, installed }) {
+  if (!pack) return null;
+  const previews = (pack.preview_stickers || pack.previews || []).slice(0, 4);
+  while (previews.length < 4) previews.push(null);
+
+  // Faux-gradient using two stacked overlay layers (RN core has no gradient).
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.9}
+      style={{
+        marginHorizontal: 16, marginTop: 14, marginBottom: 4,
+        borderRadius: 20, overflow: 'hidden',
+        backgroundColor: '#7C3AED',
+        shadowColor: '#7C3AED', shadowOpacity: 0.25,
+        shadowRadius: 14, shadowOffset: { width: 0, height: 6 },
+        elevation: 6,
+      }}
+    >
+      {/* Gradient overlay (top-left lighter, bottom-right darker) */}
+      <View style={{
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(255,255,255,0.10)',
+      }} />
+      <View style={{
+        position: 'absolute', right: -40, bottom: -40,
+        width: 160, height: 160, borderRadius: 80,
+        backgroundColor: 'rgba(0,0,0,0.18)',
+      }} />
+
+      <View style={{ padding: 16 }}>
+        {/* "Pack do dia" badge */}
+        <View style={{
+          alignSelf: 'flex-start',
+          flexDirection: 'row', alignItems: 'center', gap: 4,
+          backgroundColor: 'rgba(255,255,255,0.22)',
+          borderRadius: 999, paddingHorizontal: 10, paddingVertical: 4,
+          marginBottom: 10,
+        }}>
+          <IconSparkles size={12} color="#fff" />
+          <Text style={{ fontSize: 11, fontWeight: '800', color: '#fff', letterSpacing: 0.4 }}>
+            PACK DO DIA
+          </Text>
+        </View>
+
+        {/* Title + author */}
+        <Text numberOfLines={1} style={{ fontSize: 20, fontWeight: '800', color: '#fff' }}>
+          {pack.name}
+        </Text>
+        <Text numberOfLines={1} style={{ fontSize: 12, color: 'rgba(255,255,255,0.85)', marginTop: 2 }}>
+          por {pack.author || 'Chatyy'} · {pack.sticker_count || 0} figurinhas
+        </Text>
+
+        {/* Sticker preview row */}
+        <View style={{
+          flexDirection: 'row', gap: 8, marginTop: 14, marginBottom: 4,
+        }}>
+          {previews.map((sticker, idx) => {
+            const url = typeof sticker === 'string' && /^https?:\/\//.test(sticker)
+              ? sticker
+              : sticker?.url || null;
+            const emoji = sticker?.emoji_tag || (!url && typeof sticker === 'string' ? sticker : null);
+            return (
+              <View
+                key={`hero-prev-${idx}`}
+                style={{
+                  width: 56, height: 56, borderRadius: 14,
+                  backgroundColor: 'rgba(255,255,255,0.95)',
+                  alignItems: 'center', justifyContent: 'center',
+                  overflow: 'hidden',
+                }}
+              >
+                {url ? (
+                  <Image source={{ uri: url }} style={{ width: '85%', height: '85%' }} resizeMode="contain" />
+                ) : emoji ? (
+                  <Text style={{ fontSize: 30 }}>{emoji}</Text>
+                ) : pack.cover_url && idx === 0 ? (
+                  <Image source={{ uri: pack.cover_url }} style={{ width: '85%', height: '85%' }} resizeMode="contain" />
+                ) : (
+                  <Text style={{ fontSize: 26, opacity: 0.3 }}>{pack.cover_emoji || '📦'}</Text>
+                )}
+              </View>
+            );
+          })}
+        </View>
+
+        {/* CTA pill */}
+        <View style={{
+          alignSelf: 'flex-start', marginTop: 12,
+          flexDirection: 'row', alignItems: 'center', gap: 4,
+          backgroundColor: '#fff',
+          borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7,
+        }}>
+          {installed ? (
+            <>
+              <IconCheck size={13} color="#7C3AED" />
+              <Text style={{ fontSize: 12, fontWeight: '800', color: '#7C3AED' }}>
+                Instalado · ver pack
+              </Text>
+            </>
+          ) : (
+            <>
+              <IconPlus size={13} color="#7C3AED" />
+              <Text style={{ fontSize: 12, fontWeight: '800', color: '#7C3AED' }}>
+                Ver pack
+              </Text>
+            </>
+          )}
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
 // ─── Featured Section ─────────────────────────────────────────────────────────
 
 function FeaturedSection({ packs, onPackPress, colors }) {
@@ -952,9 +1115,9 @@ function CategoryPills({ active, onSelect, colors }) {
 // ─── Main StickerStore Component ──────────────────────────────────────────────
 
 const TABS = [
-  { id: 'store', label: 'Loja', emoji: '🛍️' },
   { id: 'my', label: 'Meus', emoji: '📦' },
-  { id: 'create', label: 'Criar', emoji: '🎨' },
+  { id: 'store', label: 'Loja', emoji: '🛍️' },
+  { id: 'trending', label: 'Trending', emoji: '🔥' },
 ];
 
 export default function StickerStore({ visible, onClose, colors, t, userEmail }) {
@@ -1224,10 +1387,7 @@ export default function StickerStore({ visible, onClose, colors, t, userEmail })
               {TABS.map(tab => (
                 <TouchableOpacity
                   key={tab.id}
-                  onPress={() => {
-                    setActiveTab(tab.id);
-                    if (tab.id === 'create') setShowCreate(true);
-                  }}
+                  onPress={() => setActiveTab(tab.id)}
                   style={{
                     flex: 1, paddingVertical: 10, alignItems: 'center',
                     borderBottomWidth: activeTab === tab.id ? 2.5 : 0,
@@ -1278,11 +1438,21 @@ export default function StickerStore({ visible, onClose, colors, t, userEmail })
                     }
                     ListHeaderComponent={
                       !search && activeCategory === '' && featuredPacks.length > 0 ? (
-                        <FeaturedSection
-                          packs={featuredPacks}
-                          onPackPress={setSelectedPack}
-                          colors={colors}
-                        />
+                        <View>
+                          <HeroPackCard
+                            pack={featuredPacks[0]}
+                            onPress={() => setSelectedPack(featuredPacks[0])}
+                            colors={colors}
+                            installed={installedIds.has(String(featuredPacks[0]?.id))}
+                          />
+                          {featuredPacks.length > 1 && (
+                            <FeaturedSection
+                              packs={featuredPacks.slice(1)}
+                              onPackPress={setSelectedPack}
+                              colors={colors}
+                            />
+                          )}
+                        </View>
                       ) : null
                     }
                     ListEmptyComponent={
@@ -1338,14 +1508,143 @@ export default function StickerStore({ visible, onClose, colors, t, userEmail })
 
             {/* My packs tab */}
             {activeTab === 'my' && (
-              <MyPacksTab
-                colors={colors}
-                installedPacks={installedPacks}
-                onUninstall={handleUninstall}
-                onPackPress={setSelectedPack}
-                uninstallingId={uninstallingId}
-                t={t}
-              />
+              <View style={{ flex: 1 }}>
+                <MyPacksTab
+                  colors={colors}
+                  installedPacks={installedPacks}
+                  onUninstall={handleUninstall}
+                  onPackPress={setSelectedPack}
+                  uninstallingId={uninstallingId}
+                  t={t}
+                />
+                {/* "Criar pack" FAB — purple primary, bottom-right */}
+                <TouchableOpacity
+                  onPress={() => setShowCreate(true)}
+                  activeOpacity={0.85}
+                  style={{
+                    position: 'absolute', bottom: 20, right: 20,
+                    width: 56, height: 56, borderRadius: 28,
+                    backgroundColor: '#7C3AED',
+                    alignItems: 'center', justifyContent: 'center',
+                    shadowColor: '#7C3AED', shadowOpacity: 0.45,
+                    shadowRadius: 12, shadowOffset: { width: 0, height: 6 },
+                    elevation: 8,
+                  }}
+                >
+                  <IconPlus size={26} color="#fff" />
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Trending tab — sorts store packs by install_count desc */}
+            {activeTab === 'trending' && (
+              <View style={{ flex: 1 }}>
+                {loading ? (
+                  <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                    <ActivityIndicator color={colors.primary} size="large" />
+                  </View>
+                ) : (
+                  <FlatList
+                    data={[...storePacks]
+                      .sort((a, b) =>
+                        (b.install_count || b.installs || 0)
+                        - (a.install_count || a.installs || 0)
+                      )
+                      .slice(0, 30)}
+                    keyExtractor={item => `trend-${item.id}`}
+                    showsVerticalScrollIndicator={false}
+                    contentContainerStyle={{ padding: 16, paddingBottom: 24, gap: 8 }}
+                    ListHeaderComponent={
+                      <View style={{
+                        flexDirection: 'row', alignItems: 'center', gap: 8,
+                        marginBottom: 12,
+                      }}>
+                        <Text style={{ fontSize: 20 }}>🔥</Text>
+                        <Text style={{ fontSize: 17, fontWeight: '800', color: colors.text }}>
+                          Mais baixados da semana
+                        </Text>
+                      </View>
+                    }
+                    ListEmptyComponent={
+                      <View style={{ alignItems: 'center', padding: 40 }}>
+                        <Text style={{ fontSize: 44, marginBottom: 12 }}>📊</Text>
+                        <Text style={{ fontSize: 14, color: colors.textTertiary, textAlign: 'center' }}>
+                          Sem dados de trending ainda. Volte em breve!
+                        </Text>
+                      </View>
+                    }
+                    renderItem={({ item, index }) => {
+                      const installed = installedIds.has(String(item.id));
+                      return (
+                        <TouchableOpacity
+                          onPress={() => setSelectedPack(item)}
+                          activeOpacity={0.85}
+                          style={{
+                            flexDirection: 'row', alignItems: 'center', gap: 12,
+                            backgroundColor: colors.surface,
+                            borderRadius: 14, padding: 12,
+                            borderWidth: 1, borderColor: colors.border,
+                          }}
+                        >
+                          {/* Rank */}
+                          <View style={{
+                            width: 28, alignItems: 'center',
+                          }}>
+                            <Text style={{
+                              fontSize: 18, fontWeight: '800',
+                              color: index < 3 ? '#7C3AED' : colors.textTertiary,
+                            }}>
+                              {index + 1}
+                            </Text>
+                          </View>
+                          {/* Cover */}
+                          <View style={{
+                            width: 52, height: 52, borderRadius: 12, overflow: 'hidden',
+                            backgroundColor: colors.surfaceVariant,
+                            alignItems: 'center', justifyContent: 'center',
+                          }}>
+                            {item.cover_url ? (
+                              <Image source={{ uri: item.cover_url }} style={{ width: 52, height: 52 }} resizeMode="cover" />
+                            ) : (
+                              <Text style={{ fontSize: 28 }}>{item.cover_emoji || '📦'}</Text>
+                            )}
+                          </View>
+                          {/* Info */}
+                          <View style={{ flex: 1 }}>
+                            <Text numberOfLines={1} style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>
+                              {item.name}
+                            </Text>
+                            <Text numberOfLines={1} style={{ fontSize: 11, color: colors.textTertiary, marginTop: 2 }}>
+                              {item.author || 'Chatyy'} · {(item.install_count || item.installs || 0).toLocaleString()} downloads
+                            </Text>
+                          </View>
+                          {/* Pill */}
+                          <TouchableOpacity
+                            onPress={(e) => {
+                              e.stopPropagation?.();
+                              installed ? handleUninstall(item.id) : handleInstall(item.id);
+                            }}
+                            disabled={installingId === item.id}
+                            style={{
+                              borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6,
+                              backgroundColor: installed ? 'transparent' : '#7C3AED',
+                              borderWidth: installed ? 1.5 : 0,
+                              borderColor: '#7C3AED',
+                            }}
+                          >
+                            <Text style={{
+                              fontSize: 11, fontWeight: '800',
+                              color: installed ? '#7C3AED' : '#fff',
+                            }}>
+                              {installed ? 'Instalado' : 'Adicionar'}
+                            </Text>
+                          </TouchableOpacity>
+                        </TouchableOpacity>
+                      );
+                    }}
+                  />
+                )}
+              </View>
             )}
           </View>
         )}

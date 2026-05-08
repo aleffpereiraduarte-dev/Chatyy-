@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, FlatList, ScrollView, Platform, Image,
-  Alert, ActivityIndicator, TextInput, Animated,
+  Alert, ActivityIndicator, TextInput, Animated, Modal, Pressable,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import CachedImage from './CachedImage';
@@ -165,6 +165,20 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
   const [installedMarketPacks, setInstalledMarketPacks] = useState([]);
   const [marketPackItems, setMarketPackItems] = useState({});
   const searchRef = useRef(null);
+  // Long-press preview: shows a large rendering + "Adicionar aos favoritos"
+  // affordance. Tapping the backdrop or the close button dismisses it.
+  const [previewItem, setPreviewItem] = useState(null);
+  const previewScale = useRef(new Animated.Value(0.85)).current;
+  const openStickerPreview = useCallback((item) => {
+    setPreviewItem(item);
+    previewScale.setValue(0.85);
+    Animated.spring(previewScale, {
+      toValue: 1, useNativeDriver: true, tension: 280, friction: 18,
+    }).start();
+  }, [previewScale]);
+  const closeStickerPreview = useCallback(() => setPreviewItem(null), []);
+  // "Em breve" placeholder modal for the camera-based create flow.
+  const [showCreateSoon, setShowCreateSoon] = useState(false);
 
   useEffect(() => {
     storageGet(RECENT_KEY).then(setRecents);
@@ -629,27 +643,73 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
           stickers are always one tap away (Telegram parity). Renders only when
           the user has actually used something and isn't on the recent tab. */}
       {!showSearch && activePack !== 'recent' && recents.length > 0 && (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={{ borderBottomWidth: 1, borderBottomColor: colors.border, maxHeight: 48 }}
-          contentContainerStyle={{ paddingHorizontal: 6, alignItems: 'center', gap: 4 }}
-        >
-          {recents.slice(0, 14).map((item, i) => (
-            <TouchableOpacity
-              key={`recent-strip-${i}-${typeof item === 'string' ? item.slice(0, 16) : i}`}
-              onPress={() => handleSelect(item)}
-              style={{ paddingHorizontal: 4, paddingVertical: 6, alignItems: 'center', justifyContent: 'center' }}
-              activeOpacity={0.6}
-            >
-              {isImg(item) ? (
-                <CachedImage source={{ uri: resolveStickerUri(item) }} style={{ width: 32, height: 32 }} resizeMode="contain" />
-              ) : (
-                <Text style={{ fontSize: 22 }}>{item}</Text>
-              )}
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+        <View style={{ borderBottomWidth: 1, borderBottomColor: colors.border }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingTop: 4 }}>
+            <Text style={{ fontSize: 9, fontWeight: '800', color: colors.textTertiary, letterSpacing: 0.6 }}>
+              RECENTES
+            </Text>
+          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={{ maxHeight: 44 }}
+            contentContainerStyle={{ paddingHorizontal: 6, alignItems: 'center', gap: 4 }}
+          >
+            {recents.slice(0, 14).map((item, i) => (
+              <TouchableOpacity
+                key={`recent-strip-${i}-${typeof item === 'string' ? item.slice(0, 16) : i}`}
+                onPress={() => handleSelect(item)}
+                onLongPress={() => openStickerPreview(item)}
+                delayLongPress={350}
+                style={{ paddingHorizontal: 4, paddingVertical: 4, alignItems: 'center', justifyContent: 'center' }}
+                activeOpacity={0.6}
+              >
+                {isImg(item) ? (
+                  <CachedImage source={{ uri: resolveStickerUri(item) }} style={{ width: 30, height: 30 }} resizeMode="contain" />
+                ) : (
+                  <Text style={{ fontSize: 22 }}>{item}</Text>
+                )}
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* Favoritos preview row — only shown when user has favorites and isn't
+          on the favorites or recents tab. Long-press a sticker to add it to
+          favorites (handled in the main grid). */}
+      {!showSearch && activePack !== 'favorites' && activePack !== 'recent' && favorites.length > 0 && (
+        <View style={{ borderBottomWidth: 1, borderBottomColor: colors.border }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingTop: 4, gap: 4 }}>
+            <Text style={{ fontSize: 10 }}>⭐</Text>
+            <Text style={{ fontSize: 9, fontWeight: '800', color: '#7C3AED', letterSpacing: 0.6 }}>
+              FAVORITOS
+            </Text>
+          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={{ maxHeight: 44 }}
+            contentContainerStyle={{ paddingHorizontal: 6, alignItems: 'center', gap: 4 }}
+          >
+            {favorites.slice(0, 14).map((item, i) => (
+              <TouchableOpacity
+                key={`fav-strip-${i}-${typeof item === 'string' ? item.slice(0, 16) : i}`}
+                onPress={() => handleSelect(item)}
+                onLongPress={() => openStickerPreview(item)}
+                delayLongPress={350}
+                style={{ paddingHorizontal: 4, paddingVertical: 4, alignItems: 'center', justifyContent: 'center' }}
+                activeOpacity={0.6}
+              >
+                {isImg(item) ? (
+                  <CachedImage source={{ uri: resolveStickerUri(item) }} style={{ width: 30, height: 30 }} resizeMode="contain" />
+                ) : (
+                  <Text style={{ fontSize: 22 }}>{item}</Text>
+                )}
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
       )}
 
       {/* My-packs pill row — only visible on Mine tab. Lets the user filter
@@ -755,9 +815,9 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
               onPress={() => handleSelect(item)}
               onLongPress={() => {
                 if (activePack === 'mine' && isImg(item)) removeMyStickerLong(item);
-                else toggleFavorite(item);
+                else openStickerPreview(item);
               }}
-              delayLongPress={400}
+              delayLongPress={350}
               style={{
                 flex: 1 / 5, aspectRatio: 1, alignItems: 'center', justifyContent: 'center',
                 padding: 4, borderRadius: 10, margin: 2,
@@ -862,6 +922,160 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
           <IconPlus size={16} color={colors.primary} />
         </TouchableOpacity>
       </ScrollView>
+
+      {/* "Criar sticker" floating button — bottom-right, brand purple. Opens
+          a placeholder "Em breve" modal for now (camera flow scaffolded but
+          deferred behind native rebuild — `createSticker` above is the real
+          gallery/video path). */}
+      <TouchableOpacity
+        onPress={() => setShowCreateSoon(true)}
+        activeOpacity={0.85}
+        style={{
+          position: 'absolute', right: 14, bottom: 60,
+          width: 48, height: 48, borderRadius: 24,
+          backgroundColor: '#7C3AED',
+          alignItems: 'center', justifyContent: 'center',
+          shadowColor: '#7C3AED', shadowOpacity: 0.45,
+          shadowRadius: 10, shadowOffset: { width: 0, height: 4 },
+          elevation: 6,
+        }}
+        accessibilityLabel="Criar sticker"
+      >
+        <IconPlus size={22} color="#fff" />
+      </TouchableOpacity>
+
+      {/* Long-press preview modal — large render of the sticker plus an
+          "Adicionar aos favoritos" affordance. Tapping the dimmed backdrop or
+          the close button dismisses. */}
+      <Modal
+        visible={!!previewItem}
+        transparent
+        animationType="fade"
+        onRequestClose={closeStickerPreview}
+      >
+        <Pressable
+          onPress={closeStickerPreview}
+          style={{
+            flex: 1, backgroundColor: 'rgba(0,0,0,0.55)',
+            alignItems: 'center', justifyContent: 'center', padding: 24,
+          }}
+        >
+          <Animated.View
+            style={{
+              width: 240, padding: 20, borderRadius: 24,
+              backgroundColor: colors.surface,
+              alignItems: 'center', justifyContent: 'center', gap: 14,
+              transform: [{ scale: previewScale }],
+              shadowColor: '#000', shadowOpacity: 0.3,
+              shadowRadius: 20, shadowOffset: { width: 0, height: 8 },
+              elevation: 12,
+            }}
+          >
+            {previewItem && (
+              isImg(previewItem) ? (
+                <CachedImage
+                  source={{ uri: resolveStickerUri(previewItem) }}
+                  style={{ width: 180, height: 180 }}
+                  resizeMode="contain"
+                />
+              ) : (
+                <Text style={{ fontSize: 130 }}>{previewItem}</Text>
+              )
+            )}
+            <TouchableOpacity
+              onPress={() => {
+                if (previewItem != null) toggleFavorite(previewItem);
+              }}
+              activeOpacity={0.85}
+              style={{
+                flexDirection: 'row', alignItems: 'center', gap: 6,
+                paddingHorizontal: 14, paddingVertical: 9,
+                borderRadius: 999,
+                backgroundColor: previewItem != null && isFav(previewItem)
+                  ? 'transparent'
+                  : '#7C3AED',
+                borderWidth: previewItem != null && isFav(previewItem) ? 1.5 : 0,
+                borderColor: '#7C3AED',
+              }}
+            >
+              <IconHeart
+                size={14}
+                color={previewItem != null && isFav(previewItem) ? '#7C3AED' : '#fff'}
+              />
+              <Text style={{
+                fontSize: 12, fontWeight: '800',
+                color: previewItem != null && isFav(previewItem) ? '#7C3AED' : '#fff',
+              }}>
+                {previewItem != null && isFav(previewItem)
+                  ? 'Remover dos favoritos'
+                  : 'Adicionar aos favoritos'}
+              </Text>
+            </TouchableOpacity>
+          </Animated.View>
+        </Pressable>
+      </Modal>
+
+      {/* "Em breve" placeholder modal for the camera-based create flow. */}
+      <Modal
+        visible={showCreateSoon}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCreateSoon(false)}
+      >
+        <Pressable
+          onPress={() => setShowCreateSoon(false)}
+          style={{
+            flex: 1, backgroundColor: 'rgba(0,0,0,0.55)',
+            alignItems: 'center', justifyContent: 'center', padding: 24,
+          }}
+        >
+          <View
+            style={{
+              width: 280, padding: 22, borderRadius: 22,
+              backgroundColor: colors.surface,
+              alignItems: 'center', gap: 10,
+              shadowColor: '#000', shadowOpacity: 0.3,
+              shadowRadius: 20, shadowOffset: { width: 0, height: 8 },
+              elevation: 12,
+            }}
+          >
+            <View style={{
+              width: 60, height: 60, borderRadius: 30,
+              backgroundColor: '#7C3AED' + '18',
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Text style={{ fontSize: 30 }}>📸</Text>
+            </View>
+            <Text style={{
+              fontSize: 17, fontWeight: '800', color: colors.text,
+              textAlign: 'center', marginTop: 4,
+            }}>
+              Criar sticker pela câmera
+            </Text>
+            <Text style={{
+              fontSize: 13, color: colors.textSecondary,
+              textAlign: 'center', lineHeight: 18,
+            }}>
+              Em breve! Por enquanto use o botão "Criar" no topo para fazer
+              stickers a partir da galeria ou vídeo.
+            </Text>
+            <TouchableOpacity
+              onPress={() => setShowCreateSoon(false)}
+              activeOpacity={0.85}
+              style={{
+                marginTop: 8,
+                paddingHorizontal: 18, paddingVertical: 9,
+                borderRadius: 999,
+                backgroundColor: '#7C3AED',
+              }}
+            >
+              <Text style={{ fontSize: 12, fontWeight: '800', color: '#fff' }}>
+                Entendi
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
     </View>
   );
 }

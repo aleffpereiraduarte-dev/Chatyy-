@@ -4385,6 +4385,15 @@ export default {
   'onboarding.featuresDesc': 'Tudo que você precisa em um só app. Email profissional, chat criptografado e armazenamento na nuvem.',
   'onboarding.backupTitle': 'Backup automático',
   'onboarding.backupDesc': 'Suas fotos e arquivos seguros na nuvem. Backup automático do seu celular com proteção total.',
+  'onboarding.slideChatTitle': 'Conversas',
+  'onboarding.slideChatDesc': 'Mensagens, ligações e grupos com criptografia ponta a ponta.',
+  'onboarding.slideReelsTitle': 'Reels & Status',
+  'onboarding.slideReelsDesc': 'Compartilhe momentos, descubra criadores e fique por dentro.',
+  'onboarding.slideEmailTitle': 'Email + Tudo',
+  'onboarding.slideEmailDesc': 'Email profissional, agenda, drive e docs em um só lugar.',
+  'onboarding.slidePrivacyTitle': 'Privacidade total',
+  'onboarding.slidePrivacyDesc': 'Seus dados são seus. E2EE, sem rastreamento, sem anúncios.',
+  'onboarding.haveAccount': 'Já tem conta? Entrar',
 
   // Undo send enhancement
   'compose.undoTapCancel': 'Toque para cancelar',

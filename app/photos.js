@@ -118,7 +118,7 @@ function IconAlbum({ size = 24, color = '#666' }) {
 // ============================================================
 // CONSTANTS
 // ============================================================
-const TABS = ['photos', 'search', 'albums', 'backup'];
+const TABS = ['photos', 'albums', 'search', 'backup'];
 const PAGE_SIZE = Platform.OS === 'web' ? 200 : 60;
 
 function formatGB(bytes) {
@@ -2036,7 +2036,8 @@ export default function PhotosScreen() {
   }, [width, gridColumns]);
 
   const cycleGridColumns = useCallback(() => {
-    const options = isDesktop ? [4, 5, 6] : [3, 4, 5];
+    // Includes 1-col fullbleed mode (Google Photos: pinch-out to one column)
+    const options = isDesktop ? [1, 3, 4, 5, 6] : [1, 3, 4, 5];
     const idx = options.indexOf(gridColumns);
     setGridColumns(options[(idx + 1) % options.length]);
   }, [gridColumns, isDesktop]);
@@ -2372,6 +2373,21 @@ export default function PhotosScreen() {
           </View>
         )}
 
+        {/* Favorite heart overlay (Google Photos style) — top-right */}
+        {photo.starred && !sm && (
+          <View style={s.favoriteOverlay} pointerEvents="none">
+            <View style={s.favoriteOverlayShadow} />
+            <Svg width={16} height={16} viewBox="0 0 24 24">
+              <Path
+                d="M12 21s-7-4.35-7-10a4.5 4.5 0 018-2.83A4.5 4.5 0 0119 11c0 5.65-7 10-7 10z"
+                fill="#fff"
+                stroke="rgba(0,0,0,0.18)"
+                strokeWidth={1}
+              />
+            </Svg>
+          </View>
+        )}
+
         {/* Selection checkmark */}
         {sm && (
           <View style={[
@@ -2416,16 +2432,48 @@ export default function PhotosScreen() {
   // ============================================================
   // SECTION HEADER
   // ============================================================
-  const renderSectionHeader = useCallback(({ section }) => (
-    // Semi-transparent sticky header — looks crisp over the photo grid
-    // (the underlying tiles bleed through behind a soft tint).
-    <View style={[s.sectionHeader, { backgroundColor: isDark ? 'rgba(15,23,42,0.85)' : 'rgba(248,250,252,0.85)' }]}>
-      <Text style={[s.sectionTitle, { color: colors.text, fontSize: 14, fontWeight: '600' }]}>{section.title}</Text>
-      <Text style={[s.sectionCount, { color: colors.textSecondary }]}>
-        {t('photos.photoCount', { n: section.data[0]?.items?.length || section.data.length })}
-      </Text>
-    </View>
-  ), [colors, t, isDark]);
+  const renderSectionHeader = useCallback(({ section }) => {
+    // Total photos in this section (sum across rows)
+    let total = 0;
+    try {
+      (section.data || []).forEach(row => { total += row?.items?.length || 0; });
+    } catch {}
+    return (
+      <View
+        style={[
+          s.sectionHeader,
+          {
+            backgroundColor: isDark
+              ? 'rgba(15,23,42,0.92)'
+              : 'rgba(255,255,255,0.92)',
+          },
+        ]}
+      >
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View style={{ width: 3, height: 14, borderRadius: 2, backgroundColor: '#7C3AED' }} />
+          <Text
+            style={[
+              s.sectionTitle,
+              {
+                color: colors.text,
+                fontSize: 15,
+                fontWeight: '700',
+                letterSpacing: -0.2,
+              },
+            ]}
+            numberOfLines={1}
+          >
+            {section.title}
+          </Text>
+        </View>
+        {total > 0 && (
+          <Text style={[s.sectionCount, { color: colors.textSecondary, fontWeight: '600' }]}>
+            {total}
+          </Text>
+        )}
+      </View>
+    );
+  }, [colors, t, isDark]);
 
   // ============================================================
   // PHOTOS TAB
@@ -2521,7 +2569,8 @@ export default function PhotosScreen() {
       const t2 = e.nativeEvent.touches[1];
       const dist = Math.hypot(t2.pageX - t1.pageX, t2.pageY - t1.pageY);
       const diff = dist - pinchRef.current.startDist;
-      const options = isDesktop ? [3, 4, 5, 6, 7] : [2, 3, 4, 5];
+      // Includes 1 (fullbleed) — Google Photos pinch-out goes all the way to one big photo
+      const options = isDesktop ? [1, 3, 4, 5, 6, 7] : [1, 3, 4, 5];
       const startIdx = options.indexOf(pinchRef.current.startCols);
       const threshold = 50;
       if (diff > threshold && startIdx > 0) {
@@ -2577,25 +2626,94 @@ export default function PhotosScreen() {
           ListHeaderComponent={
             <View>
               {renderBackupBanner()}
-              {/* Memories (Google Photos "On this day") — plain Views, no nested FlatList */}
-              {memoriesData.length > 0 && !searchText && !showFavorites && (
-                <View style={{ marginTop: 8 }}>
-                  <Text style={[s.sectionTitle, { color: colors.text, paddingHorizontal: Spacing.lg, marginBottom: 8 }]}>{t('photos.memories')}</Text>
-                  <View style={{ flexDirection: 'row', paddingHorizontal: Spacing.md, overflow: 'hidden' }}>
-                    {memoriesData.slice(0, 5).map(mem => (
-                      <View key={mem.yearsAgo} style={[s.memoryCard, { backgroundColor: colors.surface, borderColor: colors.border, marginRight: 10 }]}>
-                        {mem.photos[0] && (
-                          mem.photos[0].isDevice && Platform.OS === 'ios'
-                            ? <Image source={{ uri: mem.photos[0].uri }} style={s.memoryCover} resizeMode="cover" />
-                            : <Image source={{ uri: getThumbnailUrl(mem.photos[0]) }} style={s.memoryCover} resizeMode="cover" />
-                        )}
-                        <Text style={[s.memoryLabel, { color: colors.text }]}>
-                          {mem.yearsAgo === 1 ? t('photos.yearsAgo', { n: 1 }) : t('photos.yearsAgoPlural', { n: mem.yearsAgo })}
-                        </Text>
-                        <Text style={[s.memoryCount, { color: colors.textSecondary }]}>{mem.photos.length} {t('photos.items')}</Text>
-                      </View>
-                    ))}
+              {/* Memories — Google Photos-grade horizontal carousel (280×140 with gradient overlay) */}
+              {!searchText && !showFavorites && (memoriesData.length > 0 || filteredPhotos.length > 6) && (
+                <View style={{ marginTop: 4, marginBottom: 4 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, marginBottom: 10 }}>
+                    <Text style={[s.sectionTitle, { color: colors.text, fontSize: 17, letterSpacing: -0.3 }]}>
+                      {t('photos.memories') || 'Memórias'}
+                    </Text>
+                    <View style={{ flex: 1 }} />
+                    <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: '#7C3AED', marginRight: 6 }} />
+                    <Text style={{ fontSize: 12, color: colors.textSecondary, fontWeight: '600' }}>
+                      {(memoriesData.length || 0) + 3}
+                    </Text>
                   </View>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={{ paddingHorizontal: Spacing.md, paddingRight: Spacing.lg, gap: 10 }}
+                    decelerationRate="fast"
+                    snapToInterval={290}
+                  >
+                    {/* "1 ano atrás" / "X anos atrás" cards from real memories */}
+                    {memoriesData.slice(0, 4).map((mem, idx) => {
+                      const cover = mem.photos[0];
+                      const coverUri = cover ? (cover.isDevice && Platform.OS === 'ios'
+                        ? cover.uri
+                        : getThumbnailUrl(cover)) : null;
+                      const label = mem.yearsAgo === 1
+                        ? (t('photos.yearsAgo', { n: 1 }) || '1 ano atrás')
+                        : (t('photos.yearsAgoPlural', { n: mem.yearsAgo }) || `${mem.yearsAgo} anos atrás`);
+                      return (
+                        <Pressable
+                          key={`mem-${mem.yearsAgo}`}
+                          style={[s.memoryCardLg, { backgroundColor: colors.surface }]}
+                          onPress={() => {
+                            // Jump into first photo of memory bucket
+                            const idx0 = filteredPhotos.findIndex(p => p.id === cover?.id);
+                            if (idx0 >= 0) openViewer(idx0);
+                          }}
+                        >
+                          {coverUri ? (
+                            <Image source={{ uri: coverUri }} style={s.memoryCoverLg} resizeMode="cover" />
+                          ) : (
+                            <View style={[s.memoryCoverLg, { backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }]}>
+                              <IconImage size={32} color={colors.textTertiary} />
+                            </View>
+                          )}
+                          <View style={s.memoryGradient} pointerEvents="none" />
+                          <View style={s.memoryGradient2} pointerEvents="none" />
+                          <View style={s.memoryBadge}>
+                            <Text style={s.memoryBadgeText}>{mem.photos.length}</Text>
+                          </View>
+                          <View style={s.memoryTextWrap}>
+                            <Text style={s.memoryTitleLg} numberOfLines={1}>{label}</Text>
+                            <Text style={s.memorySubLg} numberOfLines={1}>{mem.photos.length} {t('photos.items') || 'fotos'}</Text>
+                          </View>
+                        </Pressable>
+                      );
+                    })}
+                    {/* Curated preset cards: "Verão 2025" / "Esta semana" / "Pessoas" */}
+                    {[
+                      { key: 'summer', title: 'Verão 2025', sub: 'Os melhores momentos', tint: ['#7C3AED', '#EC4899'] },
+                      { key: 'thisweek', title: 'Esta semana', sub: 'Novas memórias', tint: ['#0EA5E9', '#7C3AED'] },
+                      { key: 'people', title: 'Pessoas', sub: 'Quem aparece mais', tint: ['#F59E0B', '#7C3AED'] },
+                    ].map((preset, idx) => {
+                      const cover = filteredPhotos[(idx + 1) * 3] || filteredPhotos[idx] || null;
+                      const coverUri = cover ? (cover.isDevice && Platform.OS === 'ios' ? cover.uri : getThumbnailUrl(cover)) : null;
+                      return (
+                        <Pressable
+                          key={`preset-${preset.key}`}
+                          style={[s.memoryCardLg, { backgroundColor: preset.tint[0] }]}
+                          onPress={() => {
+                            const idx0 = filteredPhotos.findIndex(p => p.id === cover?.id);
+                            if (idx0 >= 0) openViewer(idx0);
+                          }}
+                        >
+                          {coverUri ? (
+                            <Image source={{ uri: coverUri }} style={[s.memoryCoverLg, { opacity: 0.78 }]} resizeMode="cover" />
+                          ) : null}
+                          <View style={[s.memoryGradient, { backgroundColor: preset.tint[0] + '40' }]} pointerEvents="none" />
+                          <View style={s.memoryGradient2} pointerEvents="none" />
+                          <View style={s.memoryTextWrap}>
+                            <Text style={s.memoryTitleLg} numberOfLines={1}>{preset.title}</Text>
+                            <Text style={s.memorySubLg} numberOfLines={1}>{preset.sub}</Text>
+                          </View>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
                 </View>
               )}
             </View>
@@ -3610,23 +3728,20 @@ export default function PhotosScreen() {
       {/* Header */}
       <View style={[s.header, { backgroundColor: colors.headerBgSolid, borderBottomColor: colors.headerBorder, paddingTop: insets.top }]}>
         {selectMode ? (
-          // Selection header
+          // Selection header — Google Photos grade with counter chip
           <View style={s.headerRow}>
             <TouchableOpacity onPress={clearSelection} style={s.headerBtn}>
               <IconX size={24} color={colors.text} />
             </TouchableOpacity>
-            <Text style={[s.headerTitle, { color: colors.text }]}>
-              {selectedItems.size} {t('photos.selected')}
-            </Text>
+            <View style={s.selectCounterChip}>
+              <View style={[s.selectCounterDot, { backgroundColor: '#7C3AED' }]} />
+              <Text style={[s.selectCounterText, { color: colors.text }]}>
+                {selectedItems.size} {t('photos.selected') || 'selecionadas'}
+              </Text>
+            </View>
             <View style={{ flex: 1 }} />
-            <TouchableOpacity onPress={selectAll} style={s.headerBtn}>
-              <IconCheckCircle size={22} color={colors.primary} />
-            </TouchableOpacity>
-            <TouchableOpacity onPress={deleteSelected} style={s.headerBtn}>
-              <IconTrash size={22} color={colors.error} />
-            </TouchableOpacity>
-            <TouchableOpacity style={s.headerBtn}>
-              <IconShare size={22} color={colors.text} />
+            <TouchableOpacity onPress={selectAll} style={s.headerBtn} accessibilityLabel="Selecionar tudo">
+              <IconCheckCircle size={22} color="#7C3AED" />
             </TouchableOpacity>
           </View>
         ) : showSearch ? (
@@ -3646,23 +3761,69 @@ export default function PhotosScreen() {
           </View>
         ) : (
           // Normal header
-          <View style={s.headerRow}>
-            <TouchableOpacity onPress={() => { if (Platform.OS === "web" && window.parent !== window) { try { window.parent.postMessage({ type: "close-side-panel", route: "/photos" }, "*"); } catch {} } else { router.back(); } }} style={s.headerBtn}>
-              <IconArrowLeft size={24} color={colors.text} />
-            </TouchableOpacity>
-            <IconCloud size={22} color={colors.primary} />
-            <Text style={[s.headerTitle, { color: colors.text, marginLeft: 8 }]}>{t('photos.title')}</Text>
-            <View style={{ flex: 1 }} />
-            <TouchableOpacity onPress={() => setShowSearch(true)} style={s.headerBtn}>
-              <IconSearch size={22} color={colors.textSecondary} />
-            </TouchableOpacity>
-            {activeTab === 'photos' && (
-              <TouchableOpacity onPress={cycleGridColumns} style={s.headerBtn}>
-                <IconGrid size={22} color={colors.textSecondary} />
-                <Text style={[s.gridLabel, { color: colors.textSecondary }]}>{gridColumns}</Text>
+          <>
+            <View style={s.headerRow}>
+              <TouchableOpacity onPress={() => { if (Platform.OS === "web" && window.parent !== window) { try { window.parent.postMessage({ type: "close-side-panel", route: "/photos" }, "*"); } catch {} } else { router.back(); } }} style={s.headerBtn}>
+                <IconArrowLeft size={24} color={colors.text} />
               </TouchableOpacity>
+              <IconCloud size={22} color="#7C3AED" />
+              <Text style={[s.headerTitle, { color: colors.text, marginLeft: 8 }]}>{t('photos.title')}</Text>
+              <View style={{ flex: 1 }} />
+              {/* Backup status pill — Tudo sincronizado / Enviando / Pausado */}
+              {(() => {
+                const dc = deviceTotalCount || devicePhotos.length || 0;
+                const realPending = Math.max(0, dc - (backedUpTotal || 0));
+                let mode = null;
+                if (backupStatus === 'backing_up') mode = 'uploading';
+                else if (backupEnabled === false || backupStatus === 'paused') mode = 'paused';
+                else if (dc > 0 && realPending === 0) mode = 'synced';
+                if (!mode) return null;
+                const palette = mode === 'synced'
+                  ? { bg: isDark ? 'rgba(34,197,94,0.14)' : '#DCFCE7', fg: '#16A34A', dot: '#22C55E' }
+                  : mode === 'uploading'
+                  ? { bg: isDark ? 'rgba(124,58,237,0.16)' : '#EDE9FE', fg: '#7C3AED', dot: '#7C3AED' }
+                  : { bg: isDark ? 'rgba(245,158,11,0.16)' : '#FEF3C7', fg: '#D97706', dot: '#F59E0B' };
+                const label = mode === 'synced'
+                  ? (t('photos.allSynced') || 'Sincronizado')
+                  : mode === 'uploading'
+                  ? `${t('photos.uploadingShort') || 'Enviando'} ${Math.max(realPending, 1)}`
+                  : (t('photos.paused') || 'Pausado');
+                return (
+                  <Pressable
+                    onPress={() => setActiveTab('backup')}
+                    style={[s.statusPill, { backgroundColor: palette.bg }]}
+                  >
+                    {mode === 'uploading' ? (
+                      <ActivityIndicator size="small" color={palette.fg} style={{ marginRight: 4, transform: [{ scale: 0.7 }] }} />
+                    ) : (
+                      <View style={[s.statusPillDot, { backgroundColor: palette.dot }]} />
+                    )}
+                    <Text style={[s.statusPillText, { color: palette.fg }]} numberOfLines={1}>{label}</Text>
+                  </Pressable>
+                );
+              })()}
+              {activeTab === 'photos' && (
+                <TouchableOpacity onPress={cycleGridColumns} style={[s.headerBtn, { marginLeft: 4 }]}>
+                  <IconGrid size={22} color={colors.textSecondary} />
+                  <Text style={[s.gridLabel, { color: colors.textSecondary }]}>{gridColumns}</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            {/* Always-visible search bar (Google Photos style) */}
+            {(activeTab === 'photos' || activeTab === 'search' || activeTab === 'albums') && (
+              <View style={{ paddingHorizontal: Spacing.md, paddingBottom: 8 }}>
+                <Pressable
+                  onPress={() => { if (activeTab !== 'search') setActiveTab('search'); setShowSearch(true); }}
+                  style={[s.searchPill, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#F3F4F6' }]}
+                >
+                  <IconSearch size={18} color={colors.textSecondary} />
+                  <Text style={[s.searchPillText, { color: colors.textSecondary }]} numberOfLines={1}>
+                    {t('photos.searchPeoplePlaces') || 'Pesquisar pessoas, lugares...'}
+                  </Text>
+                </Pressable>
+              </View>
             )}
-          </View>
+          </>
         )}
 
         {/* Fixed backup progress banner (Google Photos style - visible across all tabs) */}
@@ -3720,29 +3881,42 @@ export default function PhotosScreen() {
           </View>
         )}
 
-        {/* Tabs with sliding indicator */}
-        <View style={s.tabs} onLayout={(e) => { tabWidthRef.current = e.nativeEvent.layout.width / TABS.length; }}>
-          {TABS.map((tab, i) => (
-            <TouchableOpacity
-              key={tab}
-              style={s.tab}
-              onPress={() => {
-                setActiveTab(tab);
-                setViewingAlbum(null); // close album detail view when switching tabs
-                Animated.spring(tabIndicatorLeft, { toValue: i * (tabWidthRef.current || (width - Spacing.md * 2) / TABS.length), friction: 10, tension: 80, useNativeDriver: false }).start();
-              }}
-            >
-              {tab === 'photos' && <IconImage size={16} color={activeTab === tab ? colors.primary : colors.textSecondary} />}
-              {tab === 'search' && <IconSearch size={16} color={activeTab === tab ? colors.primary : colors.textSecondary} />}
-              {tab === 'albums' && <IconAlbum size={16} color={activeTab === tab ? colors.primary : colors.textSecondary} />}
-              {tab === 'backup' && <IconCloud size={16} color={activeTab === tab ? colors.primary : colors.textSecondary} />}
-              <Text style={[s.tabText, { color: activeTab === tab ? colors.primary : colors.textSecondary }]}>
-                {t(`photos.tab_${tab}`)}
-              </Text>
-            </TouchableOpacity>
-          ))}
-          <Animated.View style={[s.tabIndicator, { backgroundColor: colors.primary, width: tabWidthRef.current || ((width - Spacing.md * 2) / TABS.length), transform: [{ translateX: tabIndicatorLeft }] }]} />
-        </View>
+        {/* Tabs — modern pills (Google Photos / Telegram-grade) */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: Spacing.md, paddingBottom: 10, gap: 8 }}
+        >
+          {TABS.map((tab) => {
+            const isActive = activeTab === tab;
+            const Ico = tab === 'photos' ? IconImage : tab === 'search' ? IconSearch : tab === 'albums' ? IconAlbum : IconCloud;
+            return (
+              <Pressable
+                key={tab}
+                onPress={() => {
+                  setActiveTab(tab);
+                  setViewingAlbum(null);
+                }}
+                style={[
+                  s.tabPill,
+                  isActive
+                    ? { backgroundColor: '#7C3AED' }
+                    : { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#F3F4F6' },
+                ]}
+              >
+                <Ico size={15} color={isActive ? '#fff' : colors.textSecondary} />
+                <Text
+                  style={[
+                    s.tabPillText,
+                    { color: isActive ? '#fff' : colors.text },
+                  ]}
+                >
+                  {t(`photos.tab_${tab}`)}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
       </View>
 
       {/* Filter chips (photos tab only) */}
@@ -3856,35 +4030,78 @@ export default function PhotosScreen() {
         </View>
       )}
 
-      {/* Batch operations toolbar */}
+      {/* Batch operations toolbar — Google Photos grade */}
       {selectMode && selectedItems.size > 0 && (
-        <View style={[s.batchToolbar, { backgroundColor: colors.surface, borderTopColor: colors.border }]}>
-          <TouchableOpacity style={s.batchAction} onPress={() => {
-            const selected = filteredPhotos.filter(p => selectedItems.has(p.id));
-            selected.forEach(p => toggleStar(p));
-            clearSelection();
-          }}>
-            <IconStar size={20} color={colors.text} />
-            <Text style={[s.batchActionText, { color: colors.text }]}>{t('photos.favorites')}</Text>
+        <View
+          style={[
+            s.batchToolbar,
+            {
+              backgroundColor: isDark ? 'rgba(15,23,42,0.96)' : 'rgba(255,255,255,0.98)',
+              borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+              paddingBottom: 16 + (insets.bottom || 0),
+            },
+          ]}
+        >
+          <TouchableOpacity
+            style={s.batchAction}
+            onPress={() => {
+              const selected = filteredPhotos.filter(p => selectedItems.has(p.id) && !p.isDevice);
+              if (selected.length > 0) sharePhoto(selected[0]);
+            }}
+            accessibilityLabel={t('photos.share')}
+          >
+            <View style={[s.batchActionPill, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#F3F4F6' }]}>
+              <IconShare size={20} color={colors.text} />
+            </View>
+            <Text style={[s.batchActionText, { color: colors.text }]}>{t('photos.share') || 'Compartilhar'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={s.batchAction} onPress={() => {
-            const selected = filteredPhotos.filter(p => selectedItems.has(p.id) && !p.isDevice);
-            if (selected.length > 0) sharePhoto(selected[0]);
-          }}>
-            <IconShare size={20} color={colors.text} />
-            <Text style={[s.batchActionText, { color: colors.text }]}>{t('photos.share')}</Text>
+          <TouchableOpacity
+            style={s.batchAction}
+            onPress={() => {
+              const selected = filteredPhotos.filter(p => selectedItems.has(p.id));
+              selected.forEach(p => toggleStar(p));
+              clearSelection();
+            }}
+            accessibilityLabel={t('photos.favorites')}
+          >
+            <View style={[s.batchActionPill, { backgroundColor: 'rgba(245,158,11,0.14)' }]}>
+              <IconStar size={20} color="#F59E0B" />
+            </View>
+            <Text style={[s.batchActionText, { color: colors.text }]}>{t('photos.favorites') || 'Favoritar'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={s.batchAction} onPress={deleteSelected}>
-            <IconTrash size={20} color="#dc2626" />
-            <Text style={[s.batchActionText, { color: '#dc2626' }]}>{t('photos.delete')}</Text>
+          <TouchableOpacity
+            style={s.batchAction}
+            onPress={() => setCreateAlbumVisible(true)}
+            accessibilityLabel="Adicionar a album"
+          >
+            <View style={[s.batchActionPill, { backgroundColor: 'rgba(124,58,237,0.14)' }]}>
+              <IconAlbum size={20} color="#7C3AED" />
+            </View>
+            <Text style={[s.batchActionText, { color: colors.text }]}>{t('photos.addToAlbum') || 'Adicionar'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={s.batchAction} onPress={() => {
-            const selected = filteredPhotos.filter(p => selectedItems.has(p.id) && !p.isDevice);
-            selected.forEach(p => downloadPhoto(p));
-            clearSelection();
-          }}>
-            <IconDownload size={20} color={colors.text} />
-            <Text style={[s.batchActionText, { color: colors.text }]}>{t('photos.download')}</Text>
+          <TouchableOpacity
+            style={s.batchAction}
+            onPress={() => {
+              const selected = filteredPhotos.filter(p => selectedItems.has(p.id) && !p.isDevice);
+              selected.forEach(p => downloadPhoto(p));
+              clearSelection();
+            }}
+            accessibilityLabel={t('photos.download')}
+          >
+            <View style={[s.batchActionPill, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#F3F4F6' }]}>
+              <IconDownload size={20} color={colors.text} />
+            </View>
+            <Text style={[s.batchActionText, { color: colors.text }]}>{t('photos.download') || 'Baixar'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={s.batchAction}
+            onPress={deleteSelected}
+            accessibilityLabel={t('photos.delete')}
+          >
+            <View style={[s.batchActionPill, { backgroundColor: 'rgba(220,38,38,0.12)' }]}>
+              <IconTrash size={20} color="#DC2626" />
+            </View>
+            <Text style={[s.batchActionText, { color: '#DC2626' }]}>{t('photos.delete') || 'Excluir'}</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -4410,28 +4627,181 @@ const s = StyleSheet.create({
     padding: 4,
   },
 
-  // Memories
-  memoryCard: {
-    width: 120,
-    borderRadius: 12,
+  // Memories — Google Photos-grade carousel cards
+  memoryCardLg: {
+    width: 280,
+    height: 140,
+    borderRadius: 18,
     overflow: 'hidden',
-    borderWidth: 1,
+    position: 'relative',
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.12, shadowRadius: 12 },
+      android: { elevation: 4 },
+      web: { boxShadow: '0 4px 20px rgba(0,0,0,0.10)' },
+    }),
   },
-  memoryCover: {
-    width: 120,
-    height: 120,
+  memoryCoverLg: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: '#1a1a2e',
   },
-  memoryLabel: {
+  memoryGradient: {
+    position: 'absolute',
+    left: 0, right: 0, bottom: 0,
+    height: '70%',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    ...(Platform.OS === 'web' ? {
+      background: 'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.18) 40%, rgba(0,0,0,0.78) 100%)',
+      backgroundColor: 'transparent',
+    } : {}),
+  },
+  memoryGradient2: {
+    position: 'absolute',
+    left: 0, right: 0, top: 0,
+    height: '40%',
+    ...(Platform.OS === 'web' ? {
+      background: 'linear-gradient(180deg, rgba(0,0,0,0.32) 0%, transparent 100%)',
+    } : {
+      backgroundColor: 'rgba(0,0,0,0.18)',
+    }),
+  },
+  memoryTextWrap: {
+    position: 'absolute',
+    left: 14,
+    right: 14,
+    bottom: 12,
+  },
+  memoryTitleLg: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#fff',
+    letterSpacing: -0.3,
+    textShadowColor: 'rgba(0,0,0,0.4)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+  },
+  memorySubLg: {
     fontSize: 12,
     fontWeight: '600',
-    paddingHorizontal: 8,
-    paddingTop: 6,
+    color: 'rgba(255,255,255,0.86)',
+    marginTop: 2,
+    textShadowColor: 'rgba(0,0,0,0.4)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
-  memoryCount: {
-    fontSize: 10,
+  memoryBadge: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
     paddingHorizontal: 8,
-    paddingBottom: 6,
+    paddingVertical: 3,
+    borderRadius: 11,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    minWidth: 22,
+    alignItems: 'center',
+  },
+  memoryBadgeText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+
+  // Search pill (always visible, Google Photos style)
+  searchPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 14,
+  },
+  searchPillText: {
+    fontSize: 14,
+    fontWeight: '500',
+    flex: 1,
+  },
+
+  // Backup status pill (top header)
+  statusPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    maxWidth: 160,
+  },
+  statusPillDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  statusPillText: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.1,
+  },
+
+  // Tab pills (modern row)
+  tabPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 18,
+  },
+  tabPillText: {
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: -0.1,
+    textTransform: 'capitalize',
+  },
+
+  // Selection counter chip
+  selectCounterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    marginLeft: 4,
+  },
+  selectCounterDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  selectCounterText: {
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: -0.2,
+  },
+
+  // Batch action pill (bottom toolbar)
+  batchActionPill: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+
+  // Favorite heart overlay (top-right of grid item)
+  favoriteOverlay: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 22,
+    height: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  favoriteOverlayShadow: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 11,
+    backgroundColor: 'rgba(0,0,0,0.18)',
   },
 
   // Filter chips

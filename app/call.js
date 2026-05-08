@@ -116,6 +116,12 @@ export default function CallScreen() {
   const [floatingEmojis, setFloatingEmojis] = useState([]);
   const [onHold, setOnHold] = useState(false);
   const [showMoreSheet, setShowMoreSheet] = useState(false);
+  // Quick-reactions row — opens on long-press of the "more" button (or
+  // after user taps a dedicated reactions trigger). Provides a 5-emoji
+  // FaceTime-style row that fires floating reactions without the user
+  // having to drill into the More sheet. Auto-dismisses 4s after open.
+  const [showQuickReactions, setShowQuickReactions] = useState(false);
+  const quickReactionsTimerRef = useRef(null);
   const holdStateRef = useRef({ audioWasMuted: false, videoWasEnabled: false });
   // Tracks whether the local user has sent a "switch to video" request and
   // is waiting for the peer's accept. Used by handleToggleVideo to short-
@@ -2207,6 +2213,7 @@ export default function CallScreen() {
       if (turnRefreshRef.current) clearInterval(turnRefreshRef.current);
       if (videoUpgradeTimeoutRef.current) { clearTimeout(videoUpgradeTimeoutRef.current); videoUpgradeTimeoutRef.current = null; }
       if (videoUpgradeCountdownRef.current) { clearInterval(videoUpgradeCountdownRef.current); videoUpgradeCountdownRef.current = null; }
+      if (quickReactionsTimerRef.current) { clearTimeout(quickReactionsTimerRef.current); quickReactionsTimerRef.current = null; }
 
       // If minimized, don't destroy WebRTC resources — they're saved globally
       if (minimizedRef.current) {
@@ -3578,6 +3585,20 @@ export default function CallScreen() {
         />
       )}
 
+      {/* Subtle vignette / blur around remote video — brand-purple soft
+          edge so the remote frame reads cinematic instead of butting
+          flush against the black bezel. Web uses real backdropFilter,
+          native falls back to a dark vignette ring. Sits between the
+          video (zOrder 0) and the overlay UI (zIndex 5). */}
+      {showRemoteVideo && (
+        <View pointerEvents="none" style={styles.videoVignette}>
+          <View style={styles.videoVignetteTop} />
+          <View style={styles.videoVignetteBottom} />
+          <View style={styles.videoVignetteEdgeLeft} />
+          <View style={styles.videoVignetteEdgeRight} />
+        </View>
+      )}
+
       {/* Tap area to toggle controls in video mode */}
       <TouchableOpacity
         activeOpacity={1}
@@ -3588,23 +3609,83 @@ export default function CallScreen() {
         <View style={[styles.audioOverlay, {
           backgroundColor: showRemoteVideo ? 'transparent' : (isVideoCall ? '#064e3b' : '#1a1a2e'),
         }]}>
+          {/* Status strip — FaceTime parity. Signal bars left, duration
+              center, PiP right. Sits above the WhatsApp-style top bar so
+              the eye finds connection quality + duration at a glance
+              without scanning the (longer) name/status line. */}
+          {peerConnected && !ended && (
+            <Animated.View
+              pointerEvents="box-none"
+              style={[styles.statusStrip, { paddingTop: insets.top + 8, opacity: controlsFadeAnim }]}
+            >
+              <View style={styles.statusStripSide}>
+                <SignalBars quality={connectionQuality} score={qualityScore} rtt={rttMs} />
+              </View>
+              <View style={styles.statusStripCenter} pointerEvents="none">
+                <Text style={styles.statusStripDuration} accessibilityLabel={t('call.duration') || 'Duração'}>
+                  {formatDuration(callDuration)}
+                </Text>
+              </View>
+              <View style={[styles.statusStripSide, { justifyContent: 'flex-end' }]}>
+                <TouchableOpacity
+                  onPress={handleMinimize}
+                  style={styles.pipBtn}
+                  accessibilityLabel={t('call.pip') || 'Picture-in-picture'}
+                  accessibilityRole="button"
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+                    {/* Outer screen */}
+                    <SvgPath
+                      d="M3 6.5A2.5 2.5 0 015.5 4h13A2.5 2.5 0 0121 6.5v11a2.5 2.5 0 01-2.5 2.5h-13A2.5 2.5 0 013 17.5v-11z"
+                      stroke="#fff"
+                      strokeWidth={1.6}
+                      fill="none"
+                    />
+                    {/* Inner PiP rectangle */}
+                    <SvgPath
+                      d="M12.5 12h6v5h-6z"
+                      fill="#fff"
+                    />
+                  </Svg>
+                </TouchableOpacity>
+              </View>
+            </Animated.View>
+          )}
+
           {/* Top bar - WhatsApp style */}
-          <Animated.View style={[styles.topBar, { paddingTop: insets.top + 10, opacity: controlsFadeAnim }]}>
+          <Animated.View style={[styles.topBar, { paddingTop: peerConnected && !ended ? 4 : insets.top + 10, opacity: controlsFadeAnim }]}>
             <TouchableOpacity onPress={handleMinimize} style={styles.backBtn} accessibilityLabel={t('call.minimize') || 'Minimizar'}>
               <IconChevronDown size={22} color="#fff" />
             </TouchableOpacity>
             <View style={styles.topInfo}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Text style={styles.topName} numberOfLines={1}>{callerName}</Text>
-                {peerConnected && !ended && <SignalBars quality={connectionQuality} score={qualityScore} rtt={rttMs} />}
-              </View>
-              <Text style={[styles.topStatus, reconnecting && { color: '#f59e0b' }]}>{statusText}</Text>
+              <Text style={styles.topName} numberOfLines={1}>{callerName}</Text>
+              {!peerConnected && (
+                <Text style={[styles.topStatus, reconnecting && { color: '#f59e0b' }]}>{statusText}</Text>
+              )}
+              {peerConnected && (onHold || screenSharing || peerScreenSharing) && (
+                <Text style={[styles.topStatus, reconnecting && { color: '#f59e0b' }]}>
+                  {onHold ? (t('call.onHold') || 'Em espera')
+                    : screenSharing ? (t('call.screenSharing') || 'Compartilhando tela')
+                    : (t('call.peerSharing') || 'Tela compartilhada')}
+                </Text>
+              )}
             </View>
-            {/* Encryption indicator - WhatsApp style */}
+            {/* Encryption indicator - WhatsApp style. SVG lock per project
+                guideline (no emoji in UI chrome). */}
             {peerConnected && (
               <View style={styles.encryptionBadge}>
-                <Text style={styles.encryptionIcon}>🔒</Text>
-                <Text style={styles.encryptionText}>E2E</Text>
+                <Svg width={11} height={11} viewBox="0 0 24 24" fill="none">
+                  <SvgPath
+                    d="M7 11V8a5 5 0 0110 0v3M5 11h14v9H5z"
+                    stroke="rgba(255,255,255,0.85)"
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    fill="none"
+                  />
+                </Svg>
+                <Text style={[styles.encryptionText, { marginLeft: 4 }]}>E2E</Text>
               </View>
             )}
           </Animated.View>
@@ -3848,7 +3929,11 @@ export default function CallScreen() {
                 </>
               )}
               <Animated.View style={{ transform: [{ scale: peerConnected ? 1 : pulseAnim }] }}>
-                <AvatarCircle name={callerName} email={contactEmail} size={140} />
+                {/* Audio-only gets a larger, more presentational avatar
+                    (FaceTime parity). Video upgrade requests / audio-only
+                    calls keep the smaller 140 footprint to leave space
+                    for the local PiP and reaction row. */}
+                <AvatarCircle name={callerName} email={contactEmail} size={isVideoCall ? 140 : 168} />
                 {/* Raised-hand overlay — appears on the contact's avatar
                     when they (or, in 1:1, the only remote) have their hand
                     up. In group calls each peer's tile would render its own;
@@ -3875,7 +3960,7 @@ export default function CallScreen() {
                   </View>
                 )}
               </Animated.View>
-              <Text style={styles.centerName}>{callerName}</Text>
+              <Text style={[styles.centerName, !isVideoCall && styles.centerNameAudio]} numberOfLines={1}>{callerName}</Text>
               <Text style={[styles.centerStatus, connectionFailed && { color: '#ef4444' }]}>{statusText}</Text>
               {ended && (
                 <Text style={styles.endedHint}>{t('call.ended') || 'Chamada encerrada'}</Text>
@@ -4044,45 +4129,10 @@ export default function CallScreen() {
       {/* Bottom controls — WhatsApp style: 2 rows */}
       {!ended && !connectionFailed && (
         <Animated.View style={[styles.controlsBar, { paddingBottom: insets.bottom + 16, opacity: controlsFadeAnim }]}>
-          {/* Top row: 4 primary controls (kept tight to avoid label
-              truncation on narrow screens) */}
+          {/* Secondary row: advanced controls (noise, hand, screen-share,
+              add participant, filters, more). The primary 5-button row
+              below carries mute / video / hangup / camera / speaker. */}
           <View style={styles.controlsRowTop}>
-            {/* Speaker */}
-            <TouchableOpacity
-              style={styles.controlBtn}
-              onPress={handleToggleSpeaker}
-              activeOpacity={0.7}
-            >
-              <View style={[styles.controlBtnCircle, speakerOn && styles.controlBtnCircleActive]}>
-                <IconVolume2 size={22} color="#fff" />
-              </View>
-              <Text style={styles.controlLabel} numberOfLines={1}>{t('call.speaker') || 'Som'}</Text>
-            </TouchableOpacity>
-
-            {/* Video toggle */}
-            <TouchableOpacity
-              style={styles.controlBtn}
-              onPress={handleToggleVideo}
-              activeOpacity={0.7}
-            >
-              <View style={[styles.controlBtnCircle, videoEnabled && styles.controlBtnCircleActive]}>
-                {videoEnabled ? <IconVideo size={22} color="#fff" /> : <IconVideoOff size={22} color="#fff" />}
-              </View>
-              <Text style={styles.controlLabel} numberOfLines={1}>{t('call.video') || 'Vídeo'}</Text>
-            </TouchableOpacity>
-
-            {/* Mute */}
-            <TouchableOpacity
-              style={styles.controlBtn}
-              onPress={handleToggleMute}
-              activeOpacity={0.7}
-            >
-              <View style={[styles.controlBtnCircle, audioMuted && styles.controlBtnCircleActive]}>
-                {audioMuted ? <IconMicOff size={22} color="#fff" /> : <IconMic size={22} color="#fff" />}
-              </View>
-              <Text style={styles.controlLabel} numberOfLines={1}>{audioMuted ? (t('call.unmute') || 'Ativar') : (t('call.mute') || 'Mudo')}</Text>
-            </TouchableOpacity>
-
             {/* Noise suppression toggle — surfaces the existing
                 noiseSuppression constraint (was buried in the More sheet).
                 Distinct icon for on (waveform line) vs off (waveform with
@@ -4176,64 +4226,168 @@ export default function CallScreen() {
                 <Text style={styles.controlLabel} numberOfLines={1}>{t('call.addParticipant') || 'Adicionar'}</Text>
               </TouchableOpacity>
             )}
+
+            {/* Filters — only when video is on */}
+            {videoEnabled && peerConnected && (
+              <TouchableOpacity
+                style={styles.controlBtn}
+                onPress={() => setShowFilterPicker(prev => !prev)}
+                activeOpacity={0.7}
+                accessibilityLabel={t('call.filters') || 'Efeitos'}
+                accessibilityRole="button"
+              >
+                <View style={[styles.controlBtnCircle, showFilterPicker && styles.controlBtnCircleActive]}>
+                  <IconSparkles size={22} color="#fff" />
+                </View>
+                <Text style={styles.controlLabel} numberOfLines={1}>{t('call.filters') || 'Efeitos'}</Text>
+              </TouchableOpacity>
+            )}
+
+            {/* More — opens the More sheet (record / hold / advanced) */}
+            {peerConnected && (
+              <TouchableOpacity
+                style={styles.controlBtn}
+                onPress={() => setShowMoreSheet(prev => !prev)}
+                activeOpacity={0.7}
+                accessibilityLabel={t('call.more') || 'Mais'}
+                accessibilityRole="button"
+              >
+                <View style={[styles.controlBtnCircle, showMoreSheet && styles.controlBtnCircleActive]}>
+                  <IconMoreHorizontal size={22} color="#fff" />
+                </View>
+                <Text style={styles.controlLabel} numberOfLines={1}>{t('call.more') || 'Mais'}</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
-          {/* Bottom row — End call grande no centro, controles secundarios
-              dos lados. Antes tinha placeholders com largura fixa que
-              desbalanceavam a linha quando flip/filters/more nao
-              renderizavam. Agora justifyContent:center + space-between
-              garante simetria automatica independente de quantos botoes
-              estao visiveis. */}
-          <View style={styles.controlsRowBottom}>
-            {/* Esquerda: flip + filters (so com video) */}
-            <View style={styles.controlsBottomSide}>
-              {videoEnabled ? (
+          {/* Quick-reactions row — FaceTime parity. Long-press the "more"
+              button (or anywhere on the controls bar) to reveal. Floats
+              just above the primary row so the user can tap an emoji
+              without moving their thumb far. Auto-fades after 4s. */}
+          {showQuickReactions && peerConnected && !ended && (
+            <View style={styles.quickReactionsRow}>
+              {['❤️', '🎉', '👏', '😂', '😮'].map(emoji => (
                 <TouchableOpacity
-                  style={styles.controlBtn}
-                  onPress={handleFlipCamera}
+                  key={emoji}
+                  onPress={() => {
+                    handleSendEmoji(emoji);
+                    setShowQuickReactions(false);
+                    if (quickReactionsTimerRef.current) {
+                      clearTimeout(quickReactionsTimerRef.current);
+                      quickReactionsTimerRef.current = null;
+                    }
+                  }}
+                  style={styles.quickReactionBtn}
+                  accessibilityLabel={`React ${emoji}`}
                   activeOpacity={0.7}
                 >
-                  <View style={styles.controlBtnCircle}>
-                    <IconCameraFlip size={22} color="#fff" />
-                  </View>
-                  <Text style={styles.controlLabel}>{t('call.flipCamera') || 'Girar'}</Text>
+                  <Text style={{ fontSize: 30 }}>{emoji}</Text>
                 </TouchableOpacity>
-              ) : null}
-              {videoEnabled && peerConnected && (
-                <TouchableOpacity
-                  style={styles.controlBtn}
-                  onPress={() => setShowFilterPicker(prev => !prev)}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.controlBtnCircle, showFilterPicker && styles.controlBtnCircleActive]}>
-                    <IconSparkles size={22} color="#fff" />
-                  </View>
-                  <Text style={styles.controlLabel}>{t('call.filters') || 'Filters'}</Text>
-                </TouchableOpacity>
-              )}
+              ))}
             </View>
+          )}
 
-            {/* End call sempre centralizado */}
-            <TouchableOpacity style={styles.endCallBtn} onPress={handleEndCall} activeOpacity={0.7}>
-              <IconPhoneOff size={28} color="#fff" />
+          {/* Primary row — 5 big 56pt buttons (FaceTime/WhatsApp parity).
+              Mute, video, HANGUP (destaked red, larger), switch camera,
+              speaker. Hangup sits center-large; everything else uses the
+              same 56pt circle so the row feels structured. Long-press the
+              row to reveal quick reactions. Filters/more/raise-hand etc.
+              live in the wrapping top row above + More sheet. */}
+          <Pressable
+            style={styles.controlsRowPrimary}
+            onLongPress={() => {
+              if (!peerConnected) return;
+              _hapticTap('medium');
+              setShowQuickReactions(true);
+              if (quickReactionsTimerRef.current) clearTimeout(quickReactionsTimerRef.current);
+              quickReactionsTimerRef.current = setTimeout(() => setShowQuickReactions(false), 4000);
+            }}
+            delayLongPress={350}
+          >
+            {/* Mute */}
+            <TouchableOpacity
+              style={styles.primaryBtn}
+              onPress={handleToggleMute}
+              activeOpacity={0.7}
+              accessibilityLabel={audioMuted ? (t('call.unmute') || 'Ativar som') : (t('call.mute') || 'Silenciar')}
+              accessibilityRole="button"
+            >
+              <View style={[styles.primaryBtnCircle, audioMuted && styles.primaryBtnCircleActive]}>
+                {audioMuted ? <IconMicOff size={26} color="#fff" /> : <IconMic size={26} color="#fff" />}
+              </View>
+              <Text style={styles.primaryBtnLabel} numberOfLines={1}>{audioMuted ? (t('call.unmute') || 'Som') : (t('call.mute') || 'Mudo')}</Text>
             </TouchableOpacity>
 
-            {/* Direita: more (so apos conexao) */}
-            <View style={styles.controlsBottomSide}>
-              {peerConnected && (
-                <TouchableOpacity
-                  style={styles.controlBtn}
-                  onPress={() => { setShowMoreSheet(prev => !prev); }}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.controlBtnCircle, showMoreSheet && styles.controlBtnCircleActive]}>
-                    <IconMoreHorizontal size={22} color="#fff" />
-                  </View>
-                  <Text style={styles.controlLabel} numberOfLines={1}>{t('call.more') || 'Mais'}</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          </View>
+            {/* Video toggle */}
+            <TouchableOpacity
+              style={styles.primaryBtn}
+              onPress={handleToggleVideo}
+              activeOpacity={0.7}
+              accessibilityLabel={videoEnabled ? (t('call.videoOff') || 'Desligar vídeo') : (t('call.videoOn') || 'Ligar vídeo')}
+              accessibilityRole="button"
+            >
+              <View style={[styles.primaryBtnCircle, videoEnabled && styles.primaryBtnCircleActive]}>
+                {videoEnabled ? <IconVideo size={26} color="#fff" /> : <IconVideoOff size={26} color="#fff" />}
+              </View>
+              <Text style={styles.primaryBtnLabel} numberOfLines={1}>{t('call.video') || 'Vídeo'}</Text>
+            </TouchableOpacity>
+
+            {/* HANGUP — destaked red, slightly larger to read as primary
+                action. Center of the row so right/left are balanced. */}
+            <TouchableOpacity
+              style={styles.primaryHangupBtn}
+              onPress={handleEndCall}
+              activeOpacity={0.7}
+              accessibilityLabel={t('call.hangUp') || 'Desligar'}
+              accessibilityRole="button"
+            >
+              <IconPhoneOff size={30} color="#fff" />
+            </TouchableOpacity>
+
+            {/* Switch camera — only when video is on; placeholder otherwise
+                so the row keeps 5-slot symmetry. */}
+            {videoEnabled ? (
+              <TouchableOpacity
+                style={styles.primaryBtn}
+                onPress={handleFlipCamera}
+                activeOpacity={0.7}
+                accessibilityLabel={t('call.flipCamera') || 'Girar câmera'}
+                accessibilityRole="button"
+              >
+                <View style={styles.primaryBtnCircle}>
+                  <IconCameraFlip size={26} color="#fff" />
+                </View>
+                <Text style={styles.primaryBtnLabel} numberOfLines={1}>{t('call.flipCamera') || 'Girar'}</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={styles.primaryBtn}
+                onPress={() => { if (peerConnected) setShowMoreSheet(prev => !prev); }}
+                activeOpacity={0.7}
+                accessibilityLabel={t('call.more') || 'Mais'}
+                accessibilityRole="button"
+              >
+                <View style={[styles.primaryBtnCircle, showMoreSheet && styles.primaryBtnCircleActive]}>
+                  <IconMoreHorizontal size={26} color="#fff" />
+                </View>
+                <Text style={styles.primaryBtnLabel} numberOfLines={1}>{t('call.more') || 'Mais'}</Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Speaker */}
+            <TouchableOpacity
+              style={styles.primaryBtn}
+              onPress={handleToggleSpeaker}
+              activeOpacity={0.7}
+              accessibilityLabel={speakerOn ? (t('call.speakerOff') || 'Desligar viva-voz') : (t('call.speakerOn') || 'Viva-voz')}
+              accessibilityRole="button"
+            >
+              <View style={[styles.primaryBtnCircle, speakerOn && styles.primaryBtnCircleActive]}>
+                <IconVolume2 size={26} color="#fff" />
+              </View>
+              <Text style={styles.primaryBtnLabel} numberOfLines={1}>{t('call.speaker') || 'Som'}</Text>
+            </TouchableOpacity>
+          </Pressable>
         </Animated.View>
       )}
 
@@ -4933,5 +5087,165 @@ const styles = StyleSheet.create({
     backgroundColor: '#25D366',
     alignItems: 'center', justifyContent: 'center',
     marginLeft: 10,
+  },
+
+  // ── Polish round (FaceTime/WhatsApp parity) ────────────────────────────
+  // Status strip — sits above the WhatsApp-style topBar. Signal bars left,
+  // duration center (mm:ss), PiP button right.
+  statusStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    zIndex: 11,
+  },
+  statusStripSide: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 24,
+  },
+  statusStripCenter: {
+    minWidth: 64,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statusStripDuration: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+    letterSpacing: 0.4,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  pipBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Audio-only avatar name — bigger / bolder than the video variant so
+  // the call has a presentational subject when there's no remote frame.
+  centerNameAudio: {
+    fontSize: 32,
+    fontWeight: '800',
+    letterSpacing: -0.6,
+    marginTop: 28,
+  },
+
+  // Remote-video vignette ring — soft brand-purple edges so the video
+  // frame reads cinematic instead of butting against the black bezel.
+  // 4 stripes (top/bottom/left/right) keep the GPU cost trivial vs a
+  // real Gaussian blur.
+  videoVignette: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 1,
+  },
+  videoVignetteTop: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0,
+    height: 90,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  videoVignetteBottom: {
+    position: 'absolute',
+    bottom: 0, left: 0, right: 0,
+    height: 220,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  videoVignetteEdgeLeft: {
+    position: 'absolute',
+    top: 90, bottom: 220, left: 0,
+    width: 14,
+    backgroundColor: 'rgba(124,58,237,0.06)',
+  },
+  videoVignetteEdgeRight: {
+    position: 'absolute',
+    top: 90, bottom: 220, right: 0,
+    width: 14,
+    backgroundColor: 'rgba(124,58,237,0.06)',
+  },
+
+  // Primary 5-button row — mute, video, HANGUP (red), camera/more, speaker.
+  // 56pt circles per FaceTime/WhatsApp; hangup is 64pt + brand red so it
+  // reads as primary action without label noise.
+  controlsRowPrimary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 4,
+    marginBottom: 4,
+    gap: 6,
+  },
+  primaryBtn: {
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    flex: 1,
+    gap: 6,
+    paddingTop: 4,
+  },
+  primaryBtnCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  primaryBtnCircleActive: {
+    backgroundColor: 'rgba(255,255,255,0.35)',
+  },
+  primaryBtnLabel: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 11,
+    fontWeight: '600',
+    textAlign: 'center',
+    letterSpacing: -0.1,
+  },
+  primaryHangupBtn: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: '#ef4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+    shadowColor: '#ef4444',
+    shadowOpacity: 0.45,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 8,
+  },
+
+  // Quick reactions row — tap-and-hold the primary controls bar to reveal
+  // 5 emojis (FaceTime parity). Auto-fades after 4s.
+  quickReactionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderRadius: 32,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    marginBottom: 12,
+    alignSelf: 'center',
+    gap: 4,
+    ...Platform.select({
+      web: { backdropFilter: 'blur(12px)' },
+      default: {},
+    }),
+  },
+  quickReactionBtn: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

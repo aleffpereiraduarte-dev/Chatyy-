@@ -4315,6 +4315,15 @@ export default {
   'onboarding.featuresDesc': 'Everything you need in one app. Professional email, encrypted chat, and cloud storage.',
   'onboarding.backupTitle': 'Automatic backup',
   'onboarding.backupDesc': 'Your photos and files safe in the cloud. Automatic backup from your phone with full protection.',
+  'onboarding.slideChatTitle': 'Conversations',
+  'onboarding.slideChatDesc': 'Messages, calls and groups with end-to-end encryption.',
+  'onboarding.slideReelsTitle': 'Reels & Status',
+  'onboarding.slideReelsDesc': 'Share moments, discover creators, stay in the loop.',
+  'onboarding.slideEmailTitle': 'Email + Everything',
+  'onboarding.slideEmailDesc': 'Professional email, calendar, drive and docs in one place.',
+  'onboarding.slidePrivacyTitle': 'Total privacy',
+  'onboarding.slidePrivacyDesc': 'Your data is yours. E2EE, no tracking, no ads.',
+  'onboarding.haveAccount': 'Already have an account? Sign in',
 
   // Undo send enhancement
   'compose.undoTapCancel': 'Tap to cancel',

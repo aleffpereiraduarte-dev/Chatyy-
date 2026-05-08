@@ -15,6 +15,9 @@ import {
 const RECENT_SEARCHES_KEY = '@onemundo_recent_searches';
 const MAX_RECENT = 5;
 
+// Brand accent for operator pills (consistent with global search overlay).
+const BRAND = '#7C3AED';
+
 // --- Search operator definitions ---
 const OPERATORS = [
   { key: 'from:', labelKey: 'search.opFromLabel', desc: 'search.opFrom', icon: IconUser, hasValue: true },
@@ -30,6 +33,18 @@ const OPERATORS = [
   { key: 'smaller:', labelKey: 'search.opSmallerLabel', desc: 'search.opSmaller', icon: IconFilter, hasValue: true },
   { key: 'in:', labelKey: 'search.opInLabel', desc: 'search.opIn', icon: IconMail, hasValue: true },
   { key: 'label:', labelKey: 'search.opLabelLabel', desc: 'search.opLabel', icon: IconStar, hasValue: true },
+];
+
+// Spotlight-style "operator pills" — a curated, ordered subset surfaced as a
+// single horizontally-scrolling row above the wrapped grid. Mirrors the
+// shorthand a power user would actually type (Gmail-grade).
+const PILL_OPERATORS = [
+  { key: 'from:',      label: 'from:',       icon: IconUser },
+  { key: 'to:',        label: 'to:',         icon: IconUser },
+  { key: 'has:link',   label: 'has:link',    icon: IconFilter },
+  { key: 'has:image',  label: 'has:image',   icon: IconPaperclip },
+  { key: 'before:',    label: 'before:date', icon: IconClock },
+  { key: 'after:',     label: 'after:date',  icon: IconClock },
 ];
 
 // --- Quick filter presets ---
@@ -207,6 +222,40 @@ export default function SearchOperators({
         </View>
       )}
 
+      {/* Spotlight-style operator pills — single horizontal row above the
+          dropdown body. One tap inserts the operator at the cursor. Date-based
+          operators show "before:date / after:date" hint so users know to type
+          a value next; backend parses YYYY-MM-DD. */}
+      <View style={[styles.pillBar, { borderBottomColor: colors.borderLight || 'rgba(0,0,0,0.06)' }]}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={styles.pillBarContent}
+        >
+          {PILL_OPERATORS.map(op => {
+            const Icon = op.icon;
+            return (
+              <TouchableOpacity
+                key={op.key}
+                onPress={() => onInsertOperator?.(op.key)}
+                activeOpacity={0.7}
+                style={[
+                  styles.pill,
+                  {
+                    backgroundColor: isDark ? 'rgba(124,58,237,0.14)' : 'rgba(124,58,237,0.08)',
+                    borderColor: isDark ? 'rgba(124,58,237,0.30)' : 'rgba(124,58,237,0.20)',
+                  },
+                ]}
+              >
+                <Icon size={12} color={BRAND} />
+                <Text style={[styles.pillText, { color: BRAND }]}>{op.label}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
+
       <ScrollView
         style={styles.scroll}
         keyboardShouldPersistTaps="handled"
@@ -341,6 +390,36 @@ const styles = StyleSheet.create({
   },
   scroll: {
     maxHeight: 340,
+  },
+
+  // Operator pill bar (Spotlight-style horizontal row)
+  pillBar: {
+    borderBottomWidth: 1,
+  },
+  pillBarContent: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 10,
+    gap: 8,
+    flexDirection: 'row',
+  },
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    borderWidth: 1,
+    marginRight: 8,
+    ...Platform.select({
+      web: { cursor: 'pointer', transition: 'transform 0.12s ease, background-color 0.12s ease' },
+      default: {},
+    }),
+  },
+  pillText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    fontFamily: Platform.OS === 'web' ? 'monospace' : undefined,
   },
 
   // Hint bar

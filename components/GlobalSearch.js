@@ -9,6 +9,7 @@ import {
   View, Text, TextInput, TouchableOpacity, Modal, Pressable,
   ScrollView, ActivityIndicator, Platform, StyleSheet, Image, Keyboard,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
 import CachedImage from './CachedImage';
@@ -16,8 +17,39 @@ import AvatarCircle from './AvatarCircle';
 import EmptyStateCard from './EmptyStateCard';
 import {
   IconSearch, IconX, IconMail, IconMessageSquare, IconImage,
-  IconUser, IconChevronRight,
+  IconUser, IconChevronRight, IconClock, IconFileText, IconFilm,
 } from './Icons';
+
+// Alias — Icons.js exports IconFileText (no plain IconFile), but locally we
+// want a generic "file" symbol for the Files section.
+const IconFile = IconFileText;
+
+// Spotlight-style brand accent — used everywhere the focus needs to pop.
+const BRAND = '#7C3AED';
+const RECENT_KEY = '@chatyy_global_recent_searches';
+const MAX_RECENT = 6;
+// Per-section preview cap. Anything beyond shows "Ver todos →".
+const SECTION_PREVIEW = 3;
+
+// Compact time formatter (Spotlight-grade): "agora", "5m", "2h", "ter", "12 mai".
+function formatTime(ts) {
+  if (!ts) return '';
+  const d = typeof ts === 'number' ? new Date(ts * (ts < 1e12 ? 1000 : 1)) : new Date(ts);
+  if (isNaN(d.getTime())) return '';
+  const now = new Date();
+  const diffMs = now - d;
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return 'agora';
+  if (diffMin < 60) return `${diffMin}m`;
+  const diffH = Math.floor(diffMin / 60);
+  if (diffH < 24) return `${diffH}h`;
+  const diffD = Math.floor(diffH / 24);
+  if (diffD < 7) {
+    const days = ['dom','seg','ter','qua','qui','sex','sáb'];
+    return days[d.getDay()];
+  }
+  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+}
 
 const WEB = Platform.OS === 'web';
 
@@ -47,24 +79,36 @@ function HighlightText({ text, highlight, style, highlightColor }) {
   );
 }
 
-function Section({ title, children, colors, icon: Icon }) {
+function Section({ title, children, colors, icon: Icon, totalCount, onSeeAll }) {
+  // Header doubles as a "see all" affordance when the bucket overflows the
+  // preview cap. Stays subtle (no full row) so the section list feels light.
+  const showSeeAll = typeof totalCount === 'number' && totalCount > SECTION_PREVIEW && !!onSeeAll;
   return (
     <View style={{ marginTop: 8 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 8 }}>
-        {Icon && <Icon size={14} color={colors?.textSecondary} />}
-        <Text style={{ fontSize: 11, fontWeight: '700', color: colors?.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-          {title}
-        </Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+          {Icon && <Icon size={14} color={colors?.textSecondary} />}
+          <Text style={{ fontSize: 11, fontWeight: '700', color: colors?.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            {title}
+          </Text>
+        </View>
+        {showSeeAll && (
+          <TouchableOpacity onPress={onSeeAll} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+            <Text style={{ fontSize: 12, fontWeight: '600', color: BRAND }}>
+              Ver todos →
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
       {children}
     </View>
   );
 }
 
-function Row({ leading, title, subtitle, onPress, colors, query }) {
+function Row({ leading, title, subtitle, time, onPress, colors, query }) {
   const titleStyle = { fontSize: 14.5, fontWeight: '500', color: colors?.text };
   const subtitleStyle = { fontSize: 12, color: colors?.textSecondary, marginTop: 2 };
-  const highlightColor = colors?.primary || '#7C3AED';
+  const highlightColor = colors?.primary || BRAND;
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -73,7 +117,16 @@ function Row({ leading, title, subtitle, onPress, colors, query }) {
     >
       {leading}
       <View style={{ flex: 1 }}>
-        <HighlightText text={title} highlight={query} style={titleStyle} highlightColor={highlightColor} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View style={{ flex: 1 }}>
+            <HighlightText text={title} highlight={query} style={titleStyle} highlightColor={highlightColor} />
+          </View>
+          {!!time && (
+            <Text style={{ fontSize: 11, color: colors?.textTertiary, fontVariant: ['tabular-nums'] }}>
+              {time}
+            </Text>
+          )}
+        </View>
         {!!subtitle && (
           <HighlightText text={subtitle} highlight={query} style={subtitleStyle} highlightColor={highlightColor} />
         )}
@@ -83,17 +136,14 @@ function Row({ leading, title, subtitle, onPress, colors, query }) {
   );
 }
 
-// Filter chips (WhatsApp pattern) — purely client-side post-processing.
-// Keys are stable internal IDs; labels stay PT (per "no new i18n keys").
+// Spotlight-style filter chips — kept tight (5 items) so the row doesn't need
+// to scroll on iPhone widths. Keys are stable internal IDs; labels stay PT.
 const FILTERS = [
   { id: 'all',    label: 'Tudo' },
   { id: 'msg',    label: 'Mensagens' },
-  { id: 'media',  label: 'Mídia' },
-  { id: 'links',  label: 'Links' },
-  { id: 'docs',   label: 'Documentos' },
-  { id: 'audio',  label: 'Áudio' },
   { id: 'people', label: 'Pessoas' },
-  { id: 'convs',  label: 'Conversas' },
+  { id: 'media',  label: 'Mídia' },
+  { id: 'docs',   label: 'Arquivos' },
 ];
 
 // Loose URL detector — matches plain http(s)://… and bare domain.tld/path forms.
@@ -197,6 +247,7 @@ export default function GlobalSearch({
   const [results, setResults] = useState({ users: [], chats: [], emails: [], posts: [] });
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState('all');
+  const [recent, setRecent] = useState([]);
   const inputRef = useRef(null);
   const debounceRef = useRef(null);
   // Cache results per (filter,query) so toggling chips doesn't refetch when
@@ -204,6 +255,34 @@ export default function GlobalSearch({
   // itself is the same regardless of filter (we filter client-side), so this
   // cache is keyed by query alone — the filter purely re-derives.
   const cacheRef = useRef(new Map());
+
+  // Hydrate recent searches when the modal opens (Spotlight empty-state).
+  useEffect(() => {
+    if (!visible) return;
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(RECENT_KEY);
+        if (raw) setRecent(JSON.parse(raw) || []);
+      } catch {}
+    })();
+  }, [visible]);
+
+  // Persist a query to recents on result-tap. LRU + dedup, capped to MAX_RECENT.
+  const pushRecent = useCallback(async (term) => {
+    const v = String(term || '').trim();
+    if (v.length < 2) return;
+    try {
+      const existing = recent.filter(s => s !== v);
+      const next = [v, ...existing].slice(0, MAX_RECENT);
+      setRecent(next);
+      await AsyncStorage.setItem(RECENT_KEY, JSON.stringify(next));
+    } catch {}
+  }, [recent]);
+
+  const clearRecent = useCallback(async () => {
+    setRecent([]);
+    try { await AsyncStorage.removeItem(RECENT_KEY); } catch {}
+  }, []);
 
   // Autofocus when the overlay opens
   useEffect(() => {
@@ -270,7 +349,12 @@ export default function GlobalSearch({
     onClose?.();
   }, [onClose]);
 
-  const go = (path) => { close(); setTimeout(() => router?.push(path), 60); };
+  const go = (path) => {
+    // Persist current query so the Recentes section reflects what user just opened.
+    if (q.trim().length >= 2) pushRecent(q.trim());
+    close();
+    setTimeout(() => router?.push(path), 60);
+  };
 
   const hasAny = (viewResults.users?.length ?? 0) + (viewResults.chats?.length ?? 0) + (viewResults.emails?.length ?? 0) + (viewResults.posts?.length ?? 0) > 0;
 
@@ -291,23 +375,68 @@ export default function GlobalSearch({
           }}
           onPress={e => e.stopPropagation?.()}
         >
-          {/* Search bar */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors?.border }}>
-            <IconSearch size={18} color={colors?.textSecondary} />
+          {/* Search bar — Spotlight-grade. Larger height (52px) + brand-tinted
+              icon container + clear-text X distinct from close-overlay X. */}
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 12,
+              paddingHorizontal: 16,
+              paddingVertical: 14,
+              borderBottomWidth: StyleSheet.hairlineWidth,
+              borderBottomColor: colors?.border,
+            }}
+          >
+            <View
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 10,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)',
+              }}
+            >
+              <IconSearch size={18} color={BRAND} />
+            </View>
             <TextInput
               ref={inputRef}
               value={q}
               onChangeText={setQ}
-              placeholder={t?.('search.placeholder') || 'Buscar emails, chats, pessoas...'}
+              placeholder={t?.('search.placeholder') || 'Buscar em tudo...'}
               placeholderTextColor={colors?.textTertiary}
-              style={{ flex: 1, fontSize: 15, color: colors?.text, paddingVertical: 6 }}
+              style={{
+                flex: 1,
+                fontSize: 18,
+                fontWeight: '500',
+                color: colors?.text,
+                paddingVertical: 4,
+                ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : null),
+              }}
               autoCapitalize="none"
               autoCorrect={false}
               returnKeyType="search"
             />
-            {loading && <ActivityIndicator size="small" color="#7C3AED" />}
-            <TouchableOpacity onPress={close}>
-              <IconX size={20} color={colors?.textSecondary} />
+            {loading && <ActivityIndicator size="small" color={BRAND} />}
+            {!loading && q.length > 0 && (
+              <TouchableOpacity
+                onPress={() => setQ('')}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                style={{
+                  width: 22,
+                  height: 22,
+                  borderRadius: 11,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)',
+                }}
+              >
+                <IconX size={12} color={colors?.textSecondary} />
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity onPress={close} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <IconX size={22} color={colors?.textSecondary} />
             </TouchableOpacity>
           </View>
 
@@ -336,11 +465,54 @@ export default function GlobalSearch({
           )}
 
           <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            {/* Empty state — Spotlight pattern: surface recent searches so the
+                user can re-run prior queries instead of staring at hint text. */}
             {q.trim().length < 2 && (
-              <View style={{ padding: 40, alignItems: 'center' }}>
-                <Text style={{ color: colors?.textSecondary, fontSize: 13 }}>
-                  {t?.('search.hint') || 'Digite pelo menos 2 caracteres'}
-                </Text>
+              <View>
+                {recent.length > 0 ? (
+                  <View style={{ marginTop: 8 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                        <IconClock size={14} color={colors?.textSecondary} />
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: colors?.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                          {t?.('search.recent') || 'Recentes'}
+                        </Text>
+                      </View>
+                      <TouchableOpacity onPress={clearRecent} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                        <Text style={{ fontSize: 12, fontWeight: '600', color: colors?.textTertiary }}>
+                          {t?.('search.clearHistory') || 'Limpar'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                    {recent.map((r, i) => (
+                      <TouchableOpacity
+                        key={`${r}-${i}`}
+                        onPress={() => { setQ(r); inputRef.current?.focus?.(); }}
+                        activeOpacity={0.6}
+                        style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 10 }}
+                      >
+                        <View style={{
+                          width: 32, height: 32, borderRadius: 16,
+                          alignItems: 'center', justifyContent: 'center',
+                          backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+                        }}>
+                          <IconClock size={14} color={colors?.textSecondary} />
+                        </View>
+                        <Text style={{ flex: 1, fontSize: 14.5, color: colors?.text }} numberOfLines={1}>
+                          {r}
+                        </Text>
+                        <IconChevronRight size={16} color={colors?.textTertiary} />
+                      </TouchableOpacity>
+                    ))}
+                    <View style={{ height: 16 }} />
+                  </View>
+                ) : (
+                  <View style={{ padding: 40, alignItems: 'center' }}>
+                    <Text style={{ color: colors?.textSecondary, fontSize: 13, textAlign: 'center' }}>
+                      {t?.('search.hint') || 'Digite pra buscar em conversas, e-mails, pessoas, reels e arquivos.'}
+                    </Text>
+                  </View>
+                )}
               </View>
             )}
 
@@ -353,13 +525,71 @@ export default function GlobalSearch({
               />
             )}
 
-            {/* Users */}
+            {/* Conversas — surface chats first (Spotlight ordem: most-actionable). */}
+            {viewResults.chats.length > 0 && (
+              <Section
+                title={t?.('search.chats') || 'Conversas'}
+                icon={IconMessageSquare}
+                colors={colors}
+                totalCount={viewResults.chats.length}
+                onSeeAll={() => go(`/chat?q=${encodeURIComponent(q.trim())}`)}
+              >
+                {viewResults.chats.slice(0, SECTION_PREVIEW).map(c => (
+                  <Row
+                    key={c.id}
+                    leading={<AvatarCircle name={c.name || String(c.id)} size={40} />}
+                    title={c.name || (t?.('chat.untitled') || 'Conversa')}
+                    subtitle={c.last_message || (c.type === 'group' ? (t?.('chat.group') || 'Grupo') : (t?.('chat.direct') || 'Conversa direta'))}
+                    time={formatTime(c.last_message_at || c.updated_at)}
+                    onPress={() => go(`/chat-conversation?id=${c.id}`)}
+                    colors={colors}
+                    query={q.trim()}
+                  />
+                ))}
+              </Section>
+            )}
+
+            {/* Email */}
+            {viewResults.emails.length > 0 && (
+              <Section
+                title={t?.('search.emails') || 'Email'}
+                icon={IconMail}
+                colors={colors}
+                totalCount={viewResults.emails.length}
+                onSeeAll={() => go(`/inbox?q=${encodeURIComponent(q.trim())}`)}
+              >
+                {viewResults.emails.slice(0, SECTION_PREVIEW).map((e, i) => (
+                  <Row
+                    key={`${e.folder}:${e.uid}:${i}`}
+                    leading={
+                      <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: colors?.surface, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: colors?.border }}>
+                        <IconMail size={18} color={BRAND} />
+                      </View>
+                    }
+                    title={e.subject || '(sem assunto)'}
+                    subtitle={e.from}
+                    time={formatTime(e.date || e.received_at)}
+                    onPress={() => go(`/read?uid=${e.uid}&folder=${encodeURIComponent(e.folder)}`)}
+                    colors={colors}
+                    query={q.trim()}
+                  />
+                ))}
+              </Section>
+            )}
+
+            {/* Pessoas */}
             {viewResults.users.length > 0 && (
-              <Section title={t?.('search.users') || 'Pessoas'} icon={IconUser} colors={colors}>
-                {viewResults.users.map(u => (
+              <Section
+                title={t?.('search.users') || 'Pessoas'}
+                icon={IconUser}
+                colors={colors}
+                totalCount={viewResults.users.length}
+                onSeeAll={() => go(`/contacts?q=${encodeURIComponent(q.trim())}`)}
+              >
+                {viewResults.users.slice(0, SECTION_PREVIEW).map(u => (
                   <Row
                     key={u.email}
-                    leading={<AvatarCircle email={u.email} name={u.name} size={36} />}
+                    leading={<AvatarCircle email={u.email} name={u.name} size={40} />}
                     title={u.name || u.email}
                     subtitle={u.email}
                     onPress={() => go(`/u/${encodeURIComponent(u.email)}`)}
@@ -370,71 +600,126 @@ export default function GlobalSearch({
               </Section>
             )}
 
-            {/* Chats */}
-            {viewResults.chats.length > 0 && (
-              <Section title={t?.('search.chats') || 'Conversas'} icon={IconMessageSquare} colors={colors}>
-                {viewResults.chats.map(c => (
-                  <Row
-                    key={c.id}
-                    leading={<AvatarCircle name={c.name || String(c.id)} size={36} />}
-                    title={c.name || (t?.('chat.untitled') || 'Conversa')}
-                    subtitle={c.type === 'group' ? (t?.('chat.group') || 'Grupo') : (t?.('chat.direct') || 'Direct')}
-                    onPress={() => go(`/chat-conversation?id=${c.id}`)}
-                    colors={colors}
-                    query={q.trim()}
-                  />
-                ))}
-              </Section>
-            )}
+            {/* Reels — only video posts. Files/Status get their own buckets below. */}
+            {(() => {
+              const reels = viewResults.posts.filter(p => {
+                const ty = String(p?.type || '').toLowerCase();
+                return ty === 'video' || ty === 'reel';
+              });
+              if (reels.length === 0) return null;
+              return (
+                <Section
+                  title={t?.('search.reels') || 'Reels'}
+                  icon={IconFilm}
+                  colors={colors}
+                  totalCount={reels.length}
+                  onSeeAll={() => go(`/feed?q=${encodeURIComponent(q.trim())}&type=reels`)}
+                >
+                  {reels.slice(0, SECTION_PREVIEW).map(p => {
+                    const thumbUrl = resolveMedia(p.thumbnail);
+                    return (
+                      <Row
+                        key={p.id}
+                        leading={
+                          thumbUrl ? (
+                            WEB
+                              ? <img src={thumbUrl} style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'cover' }} alt="" />
+                              : <CachedImage source={{ uri: thumbUrl }} style={{ width: 40, height: 40, borderRadius: 8 }} resizeMode="cover" />
+                          ) : (
+                            <View style={{ width: 40, height: 40, borderRadius: 8, backgroundColor: colors?.surface, alignItems: 'center', justifyContent: 'center' }}>
+                              <IconFilm size={16} color={colors?.textSecondary} />
+                            </View>
+                          )
+                        }
+                        title={p.caption || (t?.('feed.untitled') || 'Reel')}
+                        subtitle={p.author_email}
+                        time={formatTime(p.created_at)}
+                        onPress={() => go(`/feed/${p.id}`)}
+                        colors={colors}
+                        query={q.trim()}
+                      />
+                    );
+                  })}
+                </Section>
+              );
+            })()}
 
-            {/* Emails */}
-            {viewResults.emails.length > 0 && (
-              <Section title={t?.('search.emails') || 'Emails'} icon={IconMail} colors={colors}>
-                {viewResults.emails.map((e, i) => (
-                  <Row
-                    key={`${e.folder}:${e.uid}:${i}`}
-                    leading={
-                      <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors?.surface, alignItems: 'center', justifyContent: 'center' }}>
-                        <IconMail size={16} color={colors?.text} />
-                      </View>
-                    }
-                    title={e.subject}
-                    subtitle={e.from}
-                    onPress={() => go(`/read?uid=${e.uid}&folder=${encodeURIComponent(e.folder)}`)}
-                    colors={colors}
-                    query={q.trim()}
-                  />
-                ))}
-              </Section>
-            )}
-
-            {/* Posts */}
-            {viewResults.posts.length > 0 && (
-              <Section title={t?.('search.posts') || 'Publicações'} icon={IconImage} colors={colors}>
-                {viewResults.posts.map(p => {
-                  const thumbUrl = resolveMedia(p.thumbnail);
-                  return (
+            {/* Files / Documentos */}
+            {(() => {
+              const files = viewResults.posts.filter(p => {
+                const ty = String(p?.type || '').toLowerCase();
+                return ty === 'file' || ty === 'document' || ty === 'doc' || ty === 'pdf';
+              });
+              if (files.length === 0) return null;
+              return (
+                <Section
+                  title={t?.('search.files') || 'Arquivos'}
+                  icon={IconFile || IconImage}
+                  colors={colors}
+                  totalCount={files.length}
+                  onSeeAll={() => go(`/files?q=${encodeURIComponent(q.trim())}`)}
+                >
+                  {files.slice(0, SECTION_PREVIEW).map(p => (
                     <Row
                       key={p.id}
                       leading={
-                        thumbUrl ? (
-                          WEB
-                            ? <img src={thumbUrl} style={{ width: 36, height: 36, borderRadius: 6, objectFit: 'cover' }} alt="" />
-                            : <CachedImage source={{ uri: thumbUrl }} style={{ width: 36, height: 36, borderRadius: 6 }} resizeMode="cover" />
-                        ) : (
-                          <View style={{ width: 36, height: 36, borderRadius: 6, backgroundColor: colors?.surface }} />
-                        )
+                        <View style={{ width: 40, height: 40, borderRadius: 8, backgroundColor: colors?.surface, alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth, borderColor: colors?.border }}>
+                          <IconFile size={18} color={BRAND} />
+                        </View>
                       }
-                      title={p.caption || (t?.('feed.untitled') || 'Post')}
+                      title={p.caption || p.filename || (t?.('feed.untitled') || 'Arquivo')}
                       subtitle={p.author_email}
-                      onPress={() => go(`/feed/${p.id}`)}
+                      time={formatTime(p.created_at)}
+                      onPress={() => go(`/files/${p.id}`)}
                       colors={colors}
                       query={q.trim()}
                     />
-                  );
-                })}
-              </Section>
-            )}
+                  ))}
+                </Section>
+              );
+            })()}
+
+            {/* Status / Reels-other / image posts — bucket the rest as "Publicações". */}
+            {(() => {
+              const others = viewResults.posts.filter(p => {
+                const ty = String(p?.type || '').toLowerCase();
+                return !['video','reel','file','document','doc','pdf'].includes(ty);
+              });
+              if (others.length === 0) return null;
+              return (
+                <Section
+                  title={t?.('search.posts') || 'Publicações'}
+                  icon={IconImage}
+                  colors={colors}
+                  totalCount={others.length}
+                  onSeeAll={() => go(`/feed?q=${encodeURIComponent(q.trim())}`)}
+                >
+                  {others.slice(0, SECTION_PREVIEW).map(p => {
+                    const thumbUrl = resolveMedia(p.thumbnail);
+                    return (
+                      <Row
+                        key={p.id}
+                        leading={
+                          thumbUrl ? (
+                            WEB
+                              ? <img src={thumbUrl} style={{ width: 40, height: 40, borderRadius: 8, objectFit: 'cover' }} alt="" />
+                              : <CachedImage source={{ uri: thumbUrl }} style={{ width: 40, height: 40, borderRadius: 8 }} resizeMode="cover" />
+                          ) : (
+                            <View style={{ width: 40, height: 40, borderRadius: 8, backgroundColor: colors?.surface }} />
+                          )
+                        }
+                        title={p.caption || (t?.('feed.untitled') || 'Post')}
+                        subtitle={p.author_email}
+                        time={formatTime(p.created_at)}
+                        onPress={() => go(`/feed/${p.id}`)}
+                        colors={colors}
+                        query={q.trim()}
+                      />
+                    );
+                  })}
+                </Section>
+              );
+            })()}
             <View style={{ height: 16 }} />
           </ScrollView>
         </Pressable>

@@ -1,67 +1,117 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, Animated, Platform,
+  View, Text, TouchableOpacity, StyleSheet, Animated, Platform, Easing,
   FlatList, useWindowDimensions,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { IconMail, IconMessageSquare, IconFolder, IconSparkles, IconZap, IconImage } from './Icons';
-import { FontSize, Spacing, BorderRadius } from '../constants/theme';
+import {
+  IconMessageSquare, IconPlay, IconMail, IconShield,
+} from './Icons';
 
 const ONBOARDING_KEY = '@chatyy_onboarding_done';
+const BRAND = '#7C3AED';
 
 const SLIDES = [
   {
-    key: 'welcome',
-    Icon: IconSparkles,
-    iconColor: '#fff',
-    gradientColors: ['#6366f1', '#8b5cf6', '#a78bfa'],
-    titleKey: 'onboarding.welcomeTitle',
-    descKey: 'onboarding.welcomeDesc',
-    dark: true,
+    key: 'chat',
+    Icon: IconMessageSquare,
+    titleKey: 'onboarding.slideChatTitle',
+    descKey: 'onboarding.slideChatDesc',
+    blob1: '#A78BFA',
+    blob2: '#EC4899',
+    blob3: '#6366F1',
   },
   {
-    key: 'features',
-    icons: [
-      { Icon: IconMail, color: '#7C3AED', labelKey: 'onboarding.emailTitle' },
-      { Icon: IconMessageSquare, color: '#7C3AED', labelKey: 'onboarding.chatSlideTitle' },
-      { Icon: IconFolder, color: '#f59e0b', labelKey: 'onboarding.driveTitle' },
-    ],
-    iconColor: '#7C3AED',
-    gradientColors: ['#5B21B6', '#7C3AED', '#A78BFA'],
-    titleKey: 'onboarding.featuresTitle',
-    descKey: 'onboarding.featuresDesc',
-    dark: true,
-    multiIcon: true,
+    key: 'reels',
+    Icon: IconPlay,
+    titleKey: 'onboarding.slideReelsTitle',
+    descKey: 'onboarding.slideReelsDesc',
+    blob1: '#EC4899',
+    blob2: '#7C3AED',
+    blob3: '#F472B6',
   },
   {
-    key: 'one',
-    Icon: IconZap,
-    iconColor: '#fff',
-    gradientColors: ['#7c3aed', '#8b5cf6', '#a78bfa'],
-    titleKey: 'onboarding.oneTitle',
-    descKey: 'onboarding.oneDesc',
-    dark: true,
+    key: 'email',
+    Icon: IconMail,
+    titleKey: 'onboarding.slideEmailTitle',
+    descKey: 'onboarding.slideEmailDesc',
+    blob1: '#6366F1',
+    blob2: '#A78BFA',
+    blob3: '#7C3AED',
   },
   {
-    key: 'backup',
-    Icon: IconImage,
-    iconColor: '#fff',
-    gradientColors: ['#059669', '#10b981', '#34d399'],
-    titleKey: 'onboarding.backupTitle',
-    descKey: 'onboarding.backupDesc',
-    dark: true,
+    key: 'privacy',
+    Icon: IconShield,
+    titleKey: 'onboarding.slidePrivacyTitle',
+    descKey: 'onboarding.slidePrivacyDesc',
+    blob1: '#7C3AED',
+    blob2: '#6366F1',
+    blob3: '#A78BFA',
   },
 ];
 
+// Animated background blob — soft floating gradient mesh.
+function Blob({ color, size, top, left, right, bottom, delay = 0 }) {
+  const drift = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(drift, {
+          toValue: 1,
+          duration: 6000 + delay,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(drift, {
+          toValue: 0,
+          duration: 6000 + delay,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [drift, delay]);
+
+  const tx = drift.interpolate({ inputRange: [0, 1], outputRange: [-18, 18] });
+  const ty = drift.interpolate({ inputRange: [0, 1], outputRange: [12, -22] });
+  const scale = drift.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] });
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        styles.blob,
+        {
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: color,
+          top, left, right, bottom,
+          transform: [{ translateX: tx }, { translateY: ty }, { scale }],
+        },
+        Platform.OS === 'web' && {
+          filter: 'blur(80px)',
+          WebkitFilter: 'blur(80px)',
+          opacity: 0.55,
+        },
+      ]}
+    />
+  );
+}
+
 export default function Onboarding({ onDone }) {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const [currentIndex, setCurrentIndex] = useState(0);
   const flatListRef = useRef(null);
   const scrollX = useRef(new Animated.Value(0)).current;
   const { width: SCREEN_WIDTH } = useWindowDimensions();
+  const ctaScale = useRef(new Animated.Value(1)).current;
 
   const handleDone = useCallback(async () => {
     try {
@@ -79,6 +129,17 @@ export default function Onboarding({ onDone }) {
     }
   }, [currentIndex, handleDone]);
 
+  const handleLogin = useCallback(async () => {
+    try {
+      await AsyncStorage.setItem(ONBOARDING_KEY, 'true');
+    } catch {}
+    try {
+      router.replace('/login');
+    } catch {
+      onDone?.();
+    }
+  }, [onDone]);
+
   const onViewableItemsChanged = useRef(({ viewableItems }) => {
     if (viewableItems?.length > 0) {
       setCurrentIndex(viewableItems[0].index ?? 0);
@@ -89,99 +150,144 @@ export default function Onboarding({ onDone }) {
 
   const isDesktop = Platform.OS === 'web' && SCREEN_WIDTH > 768;
 
-  const renderSlide = ({ item }) => {
-    const textColor = item.dark ? '#fff' : colors.text;
-    const descColor = item.dark ? 'rgba(255,255,255,0.85)' : colors.textSecondary;
-    const bgColor = item.gradientColors ? item.gradientColors[1] : colors.background;
+  const renderSlide = ({ item, index }) => {
     const Icon = item.Icon;
+    // Per-slide hero entrance animation tied to scrollX.
+    const inputRange = [(index - 1) * SCREEN_WIDTH, index * SCREEN_WIDTH, (index + 1) * SCREEN_WIDTH];
+    const heroScale = scrollX.interpolate({
+      inputRange,
+      outputRange: [0.82, 1, 0.82],
+      extrapolate: 'clamp',
+    });
+    const heroOpacity = scrollX.interpolate({
+      inputRange,
+      outputRange: [0.3, 1, 0.3],
+      extrapolate: 'clamp',
+    });
+    const textTranslate = scrollX.interpolate({
+      inputRange,
+      outputRange: [40, 0, -40],
+      extrapolate: 'clamp',
+    });
 
     return (
-      <View style={[
-        styles.slide,
-        { width: SCREEN_WIDTH, backgroundColor: bgColor },
-        Platform.OS === 'web' && item.gradientColors && {
-          background: `linear-gradient(135deg, ${item.gradientColors[0]}, ${item.gradientColors[1]}, ${item.gradientColors[2]})`,
-        },
-      ]}>
+      <View style={[styles.slide, { width: SCREEN_WIDTH }]}>
         <View style={styles.slideContent}>
-          {item.multiIcon ? (
-            <View style={[styles.multiIconRow, isDesktop && styles.multiIconRowDesktop]}>
-              {item.icons.map((ic, idx) => {
-                const ItemIcon = ic.Icon;
-                return (
-                  <View key={idx} style={styles.multiIconItem}>
-                    <View style={[
-                      styles.iconCircle,
-                      isDesktop && styles.iconCircleDesktop,
-                      { backgroundColor: 'rgba(255,255,255,0.18)' },
-                      Platform.OS === 'web' && {
-                        boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
-                        backdropFilter: 'blur(8px)',
-                        WebkitBackdropFilter: 'blur(8px)',
-                      },
-                    ]}>
-                      <ItemIcon size={isDesktop ? 48 : 40} color="#fff" />
-                    </View>
-                    <Text style={[
-                      styles.multiIconLabel,
-                      { color: descColor },
-                      isDesktop && { fontSize: 15 },
-                    ]}>{t(ic.labelKey)}</Text>
-                  </View>
-                );
-              })}
+          <Animated.View
+            style={[
+              styles.heroWrap,
+              isDesktop && styles.heroWrapDesktop,
+              { transform: [{ scale: heroScale }], opacity: heroOpacity },
+            ]}
+          >
+            <View
+              style={[
+                styles.heroOuter,
+                isDesktop && styles.heroOuterDesktop,
+                Platform.OS === 'web' && {
+                  background: 'linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06))',
+                  backdropFilter: 'blur(20px)',
+                  WebkitBackdropFilter: 'blur(20px)',
+                  boxShadow: '0 24px 60px rgba(124, 58, 237, 0.35), inset 0 1px 0 rgba(255,255,255,0.4)',
+                },
+              ]}
+            >
+              <View
+                style={[
+                  styles.heroInner,
+                  isDesktop && styles.heroInnerDesktop,
+                  Platform.OS === 'web' && {
+                    background: `linear-gradient(135deg, ${item.blob1}, ${item.blob2})`,
+                    boxShadow: `0 16px 48px ${item.blob2}66`,
+                  },
+                  Platform.OS !== 'web' && { backgroundColor: item.blob2 },
+                ]}
+              >
+                <Icon size={isDesktop ? 72 : 56} color="#fff" />
+              </View>
             </View>
-          ) : Icon ? (
-            <View style={[
-              styles.iconCircle,
-              isDesktop && styles.iconCircleDesktop,
-              {
-                backgroundColor: item.dark ? 'rgba(255,255,255,0.15)' : (item.iconColor + '15'),
-              },
-              Platform.OS === 'web' && {
-                boxShadow: `0 12px 40px ${item.gradientColors?.[0]}44`,
-                backdropFilter: 'blur(8px)',
-                WebkitBackdropFilter: 'blur(8px)',
-              },
-            ]}>
-              <Icon size={isDesktop ? 80 : 64} color={item.iconColor} />
-            </View>
-          ) : null}
-          <Text style={[
-            styles.title,
-            { color: textColor },
-            isDesktop && styles.titleDesktop,
-          ]}>
+          </Animated.View>
+
+          <Animated.Text
+            style={[
+              styles.title,
+              isDesktop && styles.titleDesktop,
+              { transform: [{ translateX: textTranslate }] },
+            ]}
+            accessibilityRole="header"
+          >
             {t(item.titleKey)}
-          </Text>
-          <Text style={[
-            styles.description,
-            { color: descColor },
-            isDesktop && styles.descDesktop,
-          ]}>
+          </Animated.Text>
+          <Animated.Text
+            style={[
+              styles.description,
+              isDesktop && styles.descDesktop,
+              { transform: [{ translateX: textTranslate }] },
+            ]}
+          >
             {t(item.descKey)}
-          </Text>
+          </Animated.Text>
         </View>
       </View>
     );
   };
 
   const isLast = currentIndex === SLIDES.length - 1;
-  const currentSlide = SLIDES[currentIndex];
-  const isDarkSlide = currentSlide?.dark;
+
+  // CTA press animations.
+  const onCtaPressIn = () => {
+    Animated.spring(ctaScale, {
+      toValue: 0.96,
+      useNativeDriver: true,
+      friction: 7,
+      tension: 200,
+    }).start();
+  };
+  const onCtaPressOut = () => {
+    Animated.spring(ctaScale, {
+      toValue: 1,
+      useNativeDriver: true,
+      friction: 5,
+      tension: 180,
+    }).start();
+  };
+
+  const baseBg = isDark ? '#0B0617' : '#FAF7FF';
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Skip button */}
+    <View style={[styles.container, { backgroundColor: baseBg }]}>
+      {/* Animated gradient mesh background — purple → pink → indigo */}
+      <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+        <Blob color="#7C3AED" size={420} top={-120} left={-120} delay={0} />
+        <Blob color="#EC4899" size={360} top={120} right={-140} delay={1200} />
+        <Blob color="#6366F1" size={500} bottom={-180} left={-80} delay={2400} />
+        <Blob color="#A78BFA" size={300} bottom={140} right={-60} delay={1800} />
+      </View>
+
+      {/* Skip glass pill top-right */}
       {!isLast && (
         <TouchableOpacity
-          style={[styles.skipBtn, isDesktop && styles.skipBtnDesktop]}
+          style={[
+            styles.skipBtn,
+            isDesktop && styles.skipBtnDesktop,
+            Platform.OS === 'web' && {
+              backdropFilter: 'blur(14px)',
+              WebkitBackdropFilter: 'blur(14px)',
+              background: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.55)',
+              boxShadow: '0 4px 16px rgba(124,58,237,0.18), inset 0 1px 0 rgba(255,255,255,0.5)',
+            },
+            Platform.OS !== 'web' && {
+              backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.65)',
+            },
+          ]}
           onPress={handleDone}
-          activeOpacity={0.7}
+          activeOpacity={0.75}
+          accessibilityRole="button"
+          accessibilityLabel={t('onboarding.skip')}
         >
-          <Text style={[styles.skipText, {
-            color: isDarkSlide ? 'rgba(255,255,255,0.75)' : colors.textSecondary,
-          }]}>{t('onboarding.skip')}</Text>
+          <Text style={[styles.skipText, { color: isDark ? '#fff' : '#3B1F6B' }]}>
+            {t('onboarding.skip')}
+          </Text>
         </TouchableOpacity>
       )}
 
@@ -203,60 +309,111 @@ export default function Onboarding({ onDone }) {
           offset: SCREEN_WIDTH * index,
           index,
         })}
+        style={styles.flatList}
       />
 
-      {/* Dots indicator */}
+      {/* Dots: active = elongated purple gradient pill (24px), inactive = 6px gray */}
       <View style={[styles.dotsContainer, isDesktop && styles.dotsContainerDesktop]}>
         {SLIDES.map((_, i) => {
           const inputRange = [(i - 1) * SCREEN_WIDTH, i * SCREEN_WIDTH, (i + 1) * SCREEN_WIDTH];
           const dotWidth = scrollX.interpolate({
             inputRange,
-            outputRange: [10, 28, 10],
+            outputRange: [6, 24, 6],
             extrapolate: 'clamp',
           });
-          const dotOpacity = scrollX.interpolate({
+          const activeOpacity = scrollX.interpolate({
             inputRange,
-            outputRange: [0.35, 1, 0.35],
+            outputRange: [0, 1, 0],
+            extrapolate: 'clamp',
+          });
+          const inactiveOpacity = scrollX.interpolate({
+            inputRange,
+            outputRange: [1, 0, 1],
             extrapolate: 'clamp',
           });
           return (
-            <Animated.View
-              key={i}
-              style={[
-                styles.dot,
-                {
-                  width: dotWidth,
-                  opacity: dotOpacity,
-                  backgroundColor: isDarkSlide ? '#fff' : (SLIDES[currentIndex]?.gradientColors?.[0] || colors.primary),
-                },
-              ]}
-            />
+            <View key={i} style={styles.dotSlot}>
+              {/* Inactive (gray dot) */}
+              <Animated.View
+                style={[
+                  styles.dotInactive,
+                  {
+                    opacity: inactiveOpacity,
+                    backgroundColor: isDark ? 'rgba(255,255,255,0.28)' : 'rgba(60,30,100,0.22)',
+                  },
+                ]}
+              />
+              {/* Active (gradient pill) */}
+              <Animated.View
+                style={[
+                  styles.dotActive,
+                  {
+                    width: dotWidth,
+                    opacity: activeOpacity,
+                  },
+                  Platform.OS === 'web' && {
+                    background: `linear-gradient(90deg, ${BRAND}, #A78BFA)`,
+                    boxShadow: `0 2px 10px ${BRAND}66`,
+                  },
+                  Platform.OS !== 'web' && { backgroundColor: BRAND },
+                ]}
+              />
+            </View>
           );
         })}
       </View>
 
-      {/* Next / Start button */}
-      <TouchableOpacity
-        style={[
-          styles.nextBtn,
-          isDesktop && styles.nextBtnDesktop,
-          {
-            backgroundColor: isDarkSlide ? 'rgba(255,255,255,0.2)' : (SLIDES[currentIndex]?.gradientColors?.[0] || colors.primary),
-            borderWidth: 1,
-            borderColor: isDarkSlide ? 'rgba(255,255,255,0.15)' : 'transparent',
-          },
-          Platform.OS === 'web' && {
-            boxShadow: '0 6px 24px rgba(0,0,0,0.2)',
-            transition: 'transform 0.2s ease, box-shadow 0.2s ease',
-          },
-        ]}
-        onPress={handleNext}
-        activeOpacity={0.8}
-      >
-        <Text style={[styles.nextBtnText, isDesktop && { fontSize: 18 }]}>
-          {isLast ? t('onboarding.start') : t('onboarding.next')}
-        </Text>
-      </TouchableOpacity>
+      {/* Primary CTA — purple gradient pill, full width, glow */}
+      <View style={[styles.ctaWrap, isDesktop && styles.ctaWrapDesktop]}>
+        <Animated.View style={{ transform: [{ scale: ctaScale }], width: '100%' }}>
+          <TouchableOpacity
+            onPress={handleNext}
+            onPressIn={onCtaPressIn}
+            onPressOut={onCtaPressOut}
+            activeOpacity={0.9}
+            accessibilityRole="button"
+            accessibilityLabel={isLast ? t('onboarding.start') : t('onboarding.next')}
+            style={[
+              styles.cta,
+              Platform.OS === 'web' && {
+                background: `linear-gradient(135deg, ${BRAND} 0%, #9333EA 50%, #A78BFA 100%)`,
+                boxShadow: `0 12px 32px ${BRAND}66, 0 4px 12px ${BRAND}44, inset 0 1px 0 rgba(255,255,255,0.35)`,
+                transition: 'transform 0.18s ease',
+              },
+              Platform.OS !== 'web' && {
+                backgroundColor: BRAND,
+                shadowColor: BRAND,
+                shadowOffset: { width: 0, height: 8 },
+                shadowOpacity: 0.45,
+                shadowRadius: 20,
+                elevation: 12,
+              },
+            ]}
+          >
+            <Text style={styles.ctaText}>
+              {isLast ? t('onboarding.start') : t('onboarding.next')}
+            </Text>
+          </TouchableOpacity>
+        </Animated.View>
+
+        {/* "Já tem conta? Entrar" subtle bottom link */}
+        <TouchableOpacity
+          onPress={handleLogin}
+          activeOpacity={0.6}
+          style={styles.loginLinkBtn}
+          accessibilityRole="link"
+          accessibilityLabel={t('onboarding.haveAccount')}
+        >
+          <Text
+            style={[
+              styles.loginLinkText,
+              { color: isDark ? 'rgba(255,255,255,0.55)' : 'rgba(60,30,100,0.55)' },
+            ]}
+          >
+            {t('onboarding.haveAccount')}
+          </Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
@@ -268,137 +425,181 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    overflow: 'hidden',
     ...Platform.select({
       web: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999 },
     }),
+  },
+  blob: {
+    position: 'absolute',
+  },
+  flatList: {
+    flexGrow: 0,
   },
   skipBtn: {
     position: 'absolute',
     top: 60,
     right: 24,
     zIndex: 10,
-    paddingVertical: 10,
+    paddingVertical: 9,
     paddingHorizontal: 18,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 100,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.35)',
   },
   skipBtnDesktop: {
     top: 32,
     right: 40,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
+    paddingVertical: 11,
+    paddingHorizontal: 22,
   },
   skipText: {
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: '700',
     letterSpacing: 0.3,
   },
   slide: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 40,
+    paddingHorizontal: 32,
   },
   slideContent: {
     alignItems: 'center',
-    maxWidth: 500,
+    maxWidth: 520,
+    width: '100%',
   },
-  iconCircle: {
-    width: 150,
-    height: 150,
-    borderRadius: 75,
-    justifyContent: 'center',
+  heroWrap: {
+    marginBottom: 48,
     alignItems: 'center',
-    marginBottom: 44,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    justifyContent: 'center',
   },
-  iconCircleDesktop: {
+  heroWrapDesktop: {
+    marginBottom: 56,
+  },
+  heroOuter: {
     width: 200,
     height: 200,
     borderRadius: 100,
-    marginBottom: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.25)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  heroOuterDesktop: {
+    width: 240,
+    height: 240,
+    borderRadius: 120,
+    padding: 18,
+  },
+  heroInner: {
+    flex: 1,
+    width: '100%',
+    borderRadius: 100,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroInnerDesktop: {
+    borderRadius: 120,
   },
   title: {
-    fontSize: 30,
+    fontSize: 32,
     fontWeight: '800',
     textAlign: 'center',
-    marginBottom: 16,
-    letterSpacing: -0.5,
+    marginBottom: 14,
+    letterSpacing: -0.7,
+    color: '#1A0938',
     ...Platform.select({
-      web: { fontFamily: '"Segoe UI", system-ui, -apple-system, sans-serif' },
+      web: {
+        fontFamily: '"Segoe UI", system-ui, -apple-system, sans-serif',
+        backgroundImage: `linear-gradient(135deg, #1A0938 0%, ${BRAND} 100%)`,
+        WebkitBackgroundClip: 'text',
+        backgroundClip: 'text',
+        WebkitTextFillColor: 'transparent',
+      },
     }),
   },
   titleDesktop: {
-    fontSize: 40,
-    marginBottom: 20,
+    fontSize: 44,
+    marginBottom: 18,
   },
   description: {
     fontSize: 17,
     textAlign: 'center',
-    lineHeight: 26,
+    lineHeight: 25,
     maxWidth: 380,
-    fontWeight: '400',
+    fontWeight: '500',
+    color: 'rgba(40,20,70,0.72)',
   },
   descDesktop: {
-    fontSize: 20,
-    lineHeight: 32,
-    maxWidth: 440,
-  },
-  multiIconRow: {
-    flexDirection: 'row',
-    gap: 32,
-    marginBottom: 44,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  multiIconRowDesktop: {
-    gap: 48,
-    marginBottom: 52,
-  },
-  multiIconItem: {
-    alignItems: 'center',
-    gap: 10,
-  },
-  multiIconLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
+    fontSize: 19,
+    lineHeight: 30,
+    maxWidth: 460,
   },
   dotsContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 32,
+    marginBottom: 24,
     gap: 8,
+    height: 12,
   },
   dotsContainerDesktop: {
-    marginBottom: 40,
+    marginBottom: 28,
     gap: 10,
   },
-  dot: {
-    height: 10,
-    borderRadius: 5,
+  dotSlot: {
+    width: 24,
+    height: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  nextBtn: {
-    paddingVertical: 18,
-    paddingHorizontal: 52,
-    borderRadius: 30,
-    marginBottom: 60,
-    minWidth: 220,
+  dotInactive: {
+    position: 'absolute',
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  dotActive: {
+    position: 'absolute',
+    height: 6,
+    borderRadius: 3,
+    left: 0,
+  },
+  ctaWrap: {
+    width: '100%',
+    paddingHorizontal: 28,
+    paddingBottom: 40,
     alignItems: 'center',
   },
-  nextBtnDesktop: {
-    paddingVertical: 20,
-    paddingHorizontal: 64,
-    minWidth: 260,
-    marginBottom: 48,
+  ctaWrapDesktop: {
+    paddingBottom: 48,
+    maxWidth: 460,
+    alignSelf: 'center',
   },
-  nextBtnText: {
+  cta: {
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+  },
+  ctaText: {
     color: '#fff',
     fontSize: 17,
     fontWeight: '700',
-    letterSpacing: 0.3,
+    letterSpacing: 0.4,
+  },
+  loginLinkBtn: {
+    marginTop: 18,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+  },
+  loginLinkText: {
+    fontSize: 14,
+    fontWeight: '500',
+    letterSpacing: 0.2,
   },
 });

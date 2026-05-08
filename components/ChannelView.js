@@ -14,10 +14,54 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { IconArrowLeft, IconPlus } from './Icons';
 import AvatarCircle from './AvatarCircle';
-import Svg, { Path } from 'react-native-svg';
+import Svg, { Path, Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
 import * as api from '../services/api';
 
 const ACCENT = '#7C3AED';
+const ACCENT_DARK = '#5B21B6';
+
+// Cover gradient overlay (top-to-bottom dark fade) for header readability
+function CoverGradientOverlay() {
+  return (
+    <Svg width="100%" height="100%" style={StyleSheet.absoluteFill} preserveAspectRatio="none">
+      <Defs>
+        <SvgLinearGradient id="coverFade" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor="#000" stopOpacity="0.15" />
+          <Stop offset="0.6" stopColor="#000" stopOpacity="0.45" />
+          <Stop offset="1" stopColor="#000" stopOpacity="0.85" />
+        </SvgLinearGradient>
+      </Defs>
+      <Rect x="0" y="0" width="100%" height="100%" fill="url(#coverFade)" />
+    </Svg>
+  );
+}
+
+// Default cover background — purple brand gradient when no cover_url
+function DefaultCoverBackground() {
+  return (
+    <Svg width="100%" height="100%" style={StyleSheet.absoluteFill} preserveAspectRatio="none">
+      <Defs>
+        <SvgLinearGradient id="brandCover" x1="0" y1="0" x2="1" y2="1">
+          <Stop offset="0" stopColor={ACCENT} stopOpacity="1" />
+          <Stop offset="1" stopColor={ACCENT_DARK} stopOpacity="1" />
+        </SvgLinearGradient>
+      </Defs>
+      <Rect x="0" y="0" width="100%" height="100%" fill="url(#brandCover)" />
+    </Svg>
+  );
+}
+
+function IconUsers({ size = 12, color = '#fff' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
+      <Path d="M9 11a4 4 0 100-8 4 4 0 000 8z" />
+      <Path d="M23 21v-2a4 4 0 00-3-3.87" />
+      <Path d="M16 3.13a4 4 0 010 7.75" />
+    </Svg>
+  );
+}
 
 // Quick-react emoji row shown on every post
 const QUICK_REACTIONS = ['\uD83D\uDC4D', '\u2764\uFE0F', '\uD83D\uDD25', '\uD83D\uDE02', '\uD83D\uDE2E', '\uD83D\uDE22', '\uD83D\uDC4F', '\uD83E\uDD14'];
@@ -347,8 +391,8 @@ export default function ChannelView({ channel, onBack, colors: propColors, isDar
   return (
     <View style={[styles.container, { backgroundColor: isDark ? '#0a0a0f' : '#f5f5f7' }]}>
 
-      {/* ── Header ── */}
-      <View style={[styles.header, {
+      {/* ── Compact top bar (back + admin badge) ── */}
+      <View style={[styles.topBar, {
         backgroundColor: isDark ? '#0a0a0f' : '#fff',
         borderBottomColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)',
       }]}>
@@ -361,49 +405,89 @@ export default function ChannelView({ channel, onBack, colors: propColors, isDar
         >
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
-
-        <View style={[styles.headerAvatar, { backgroundColor: isDark ? '#1a1a24' : '#ede9fe' }]}>
-          <IconMegaphone size={22} color={ACCENT} />
-        </View>
-
-        <View style={styles.headerInfo}>
-          <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
-            {channel.name}
-          </Text>
-          <View style={styles.headerMeta}>
-            <Text style={[styles.headerSubs, { color: isDark ? '#777' : '#9ca3af' }]}>
-              {subscriberCount.toLocaleString()} {t('channel.followers') || 'seguidores'}
-            </Text>
-            {isAdmin && (
-              <View style={styles.adminBadge}>
-                <IconShield size={10} color="#fff" />
-                <Text style={styles.adminBadgeText}>{t('community.admin') || 'Admin'}</Text>
-              </View>
-            )}
+        <Text style={[styles.topBarTitle, { color: colors.text }]} numberOfLines={1}>
+          {channel.name}
+        </Text>
+        {isAdmin && (
+          <View style={styles.adminBadge}>
+            <IconShield size={10} color="#fff" />
+            <Text style={styles.adminBadgeText}>{t('community.admin') || 'Admin'}</Text>
           </View>
-        </View>
-
-        {/* Follow / Unfollow button */}
-        <TouchableOpacity
-          onPress={handleFollowToggle}
-          style={[
-            styles.followBtn,
-            { backgroundColor: isMember ? (isDark ? '#1a1a24' : '#f3f4f6') : ACCENT },
-          ]}
-          accessibilityLabel={isMember ? (t('channel.joined') || 'Inscrito') : (t('channel.join') || 'Inscrever')}
-          accessibilityRole="button"
-        >
-          <Text style={{ color: isMember ? (isDark ? '#aaa' : '#555') : '#fff', fontSize: 13, fontWeight: '700' }}>
-            {isMember ? (t('channel.joined') || 'Inscrito') : (t('channel.join') || 'Inscrever')}
-          </Text>
-        </TouchableOpacity>
+        )}
       </View>
 
-      {/* ── Description banner ── */}
+      {/* ── Hero header: cover image + gradient overlay + avatar + name + members pill ── */}
+      <View style={styles.heroWrap}>
+        {/* Cover background (placeholder gradient — replace src when cover_url available) */}
+        <View style={styles.coverBg}>
+          <DefaultCoverBackground />
+          <CoverGradientOverlay />
+        </View>
+
+        {/* Hero content */}
+        <View style={styles.heroContent}>
+          <View style={styles.heroAvatar}>
+            <IconMegaphone size={32} color="#fff" />
+          </View>
+
+          <Text style={styles.heroName} numberOfLines={2}>
+            {channel.name}
+          </Text>
+
+          <View style={styles.heroMetaRow}>
+            {/* Members count pill — verde */}
+            <View style={styles.membersPill}>
+              <IconUsers size={11} color="#fff" />
+              <Text style={styles.membersPillText}>
+                {subscriberCount.toLocaleString()} {t('channel.followers') || 'seguidores'}
+              </Text>
+            </View>
+
+            {/* Subscribe pill: primary purple OR outline "Inscrito" */}
+            <TouchableOpacity
+              onPress={handleFollowToggle}
+              style={[
+                styles.subscribePill,
+                isMember
+                  ? { backgroundColor: 'transparent', borderColor: 'rgba(255,255,255,0.7)' }
+                  : { backgroundColor: ACCENT, borderColor: ACCENT },
+              ]}
+              accessibilityLabel={isMember ? (t('channel.joined') || 'Inscrito') : (t('channel.join') || 'Inscrever')}
+              accessibilityRole="button"
+              activeOpacity={0.85}
+            >
+              <Text style={[
+                styles.subscribePillText,
+                { color: '#fff' },
+              ]}>
+                {isMember ? (t('channel.joined') || 'Inscrito') : (t('channel.join') || 'Inscrever')}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </View>
+
+      {/* ── About section card ── */}
       {channel.description ? (
-        <View style={[styles.descBanner, { backgroundColor: isDark ? 'rgba(124,58,237,0.08)' : 'rgba(124,58,237,0.04)', borderBottomColor: isDark ? 'rgba(124,58,237,0.15)' : 'rgba(124,58,237,0.1)' }]}>
-          <Text style={{ color: isDark ? '#a78bfa' : '#6d28d9', fontSize: 13, lineHeight: 18 }}>
+        <View style={[styles.aboutCard, {
+          backgroundColor: isDark ? '#15151c' : '#fff',
+          borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+          shadowColor: '#000',
+        }]}>
+          <Text style={[styles.aboutLabel, { color: ACCENT }]}>
+            {(t('channel.about') || 'Sobre').toUpperCase()}
+          </Text>
+          <Text style={[styles.aboutText, { color: colors.text }]}>
             {channel.description}
+          </Text>
+        </View>
+      ) : null}
+
+      {/* Recent posts label — only when posts exist */}
+      {!loading && posts.length > 0 ? (
+        <View style={styles.recentLabelWrap}>
+          <Text style={[styles.recentLabel, { color: isDark ? '#888' : '#6b7280' }]}>
+            {(t('channel.recentPosts') || 'Publicações recentes').toUpperCase()}
           </Text>
         </View>
       ) : null}
@@ -501,8 +585,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 
-  // Header
-  header: {
+  // Top bar (compact)
+  topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
@@ -510,32 +594,118 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     gap: 10,
   },
-  backBtn: {
-    padding: 2,
-  },
-  headerAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  headerInfo: {
+  topBarTitle: {
     flex: 1,
-  },
-  headerTitle: {
     fontSize: 16,
     fontWeight: '700',
   },
-  headerMeta: {
+  backBtn: {
+    padding: 2,
+  },
+
+  // Hero header (cover + avatar + name + pills)
+  heroWrap: {
+    height: 220,
+    width: '100%',
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  coverBg: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  heroContent: {
+    flex: 1,
+    paddingHorizontal: 20,
+    paddingBottom: 18,
+    justifyContent: 'flex-end',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  heroAvatar: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  heroName: {
+    color: '#fff',
+    fontSize: 22,
+    fontWeight: '700',
+    letterSpacing: -0.3,
+    textShadowColor: 'rgba(0,0,0,0.35)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+  },
+  heroMetaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginTop: 1,
+    gap: 8,
+    flexWrap: 'wrap',
   },
-  headerSubs: {
+  membersPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: '#10B981', // green-500
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+  },
+  membersPillText: {
+    color: '#fff',
     fontSize: 12,
+    fontWeight: '700',
   },
+  subscribePill: {
+    paddingHorizontal: 18,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1.5,
+  },
+  subscribePillText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+
+  // About card
+  aboutCard: {
+    marginHorizontal: 14,
+    marginTop: 14,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 1,
+  },
+  aboutLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    marginBottom: 6,
+  },
+  aboutText: {
+    fontSize: 14,
+    lineHeight: 20,
+  },
+
+  // Recent posts section label
+  recentLabelWrap: {
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 4,
+  },
+  recentLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+  },
+
   adminBadge: {
     flexDirection: 'row',
     alignItems: 'center',

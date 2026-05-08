@@ -3,9 +3,17 @@ import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native
 import { Spacing, BorderRadius, FontSize } from '../constants/theme';
 import { IconSparkles } from './Icons';
 
-const DEBOUNCE_MS = 2000;
-const MIN_CHARS = 30;
+const BRAND = '#7C3AED';
+const DEBOUNCE_MS = 1500;
+const MIN_CHARS = 25;
 
+/**
+ * AISmartCompose — Gmail-style inline ghost-text autocomplete.
+ *
+ * Renders a faint gray suggestion appended to the user's text.
+ * On web: press Tab to accept, Esc to dismiss.
+ * On native: tap the suggestion to accept.
+ */
 export default function AISmartCompose({ bodyText, subject, colors, onAccept, mode, replyContext }) {
   const [suggestion, setSuggestion] = useState('');
   const [loading, setLoading] = useState(false);
@@ -20,10 +28,6 @@ export default function AISmartCompose({ bodyText, subject, colors, onAccept, mo
     setLoading(true);
     try {
       const { aiAssist } = await import('../services/api');
-      // Build context based on mode. For replies/forwards include the
-      // original sender + a snippet of the original body so suggestions
-      // are anchored to "responding to João's question" instead of a
-      // generic professional template.
       const m = mode || 'compose';
       const ctxParts = [];
       if (subject) ctxParts.push(`Subject: ${subject}`);
@@ -43,7 +47,18 @@ export default function AISmartCompose({ bodyText, subject, colors, onAccept, mo
         tone: 'professional',
       });
       if (!controller.signal.aborted && r.success && r.data?.result) {
-        setSuggestion(r.data.result);
+        // Strip leading whitespace overlap so ghost text picks up cleanly.
+        let s = String(r.data.result).replace(/^\s+/, '');
+        // If model echoed last few chars of body, trim them.
+        const tail = text.slice(-40).toLowerCase();
+        const head = s.slice(0, 40).toLowerCase();
+        for (let len = Math.min(tail.length, head.length); len > 4; len--) {
+          if (tail.endsWith(head.slice(0, len))) {
+            s = s.slice(len);
+            break;
+          }
+        }
+        setSuggestion(s);
       }
     } catch {} finally {
       if (!controller.signal.aborted) setLoading(false);
@@ -55,7 +70,6 @@ export default function AISmartCompose({ bodyText, subject, colors, onAccept, mo
       setSuggestion('');
       return;
     }
-
     if (bodyText === lastTextRef.current) return;
     lastTextRef.current = bodyText;
     setSuggestion('');
@@ -63,12 +77,10 @@ export default function AISmartCompose({ bodyText, subject, colors, onAccept, mo
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => fetchCompletion(bodyText), DEBOUNCE_MS);
 
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
   }, [bodyText, fetchCompletion]);
 
-  // Web: Listen for Tab key to accept
+  // Web: Tab accepts, Esc dismisses
   useEffect(() => {
     if (Platform.OS !== 'web' || !suggestion) return;
     const handleKey = (e) => {
@@ -80,78 +92,85 @@ export default function AISmartCompose({ bodyText, subject, colors, onAccept, mo
         setSuggestion('');
       }
     };
-    document.addEventListener('keydown', handleKey);
-    return () => document.removeEventListener('keydown', handleKey);
+    document.addEventListener('keydown', handleKey, true);
+    return () => document.removeEventListener('keydown', handleKey, true);
   }, [suggestion, onAccept]);
 
   if (!suggestion && !loading) return null;
 
+  // Inline ghost-text style: faint gray, italic, with Tab hint badge.
+  const ghostColor = colors.textTertiary || '#9CA3AF';
+
   return (
-    <View style={[s.container, { backgroundColor: colors.surfaceVariant, borderColor: colors.border }]}>
+    <View style={s.ghostWrap} pointerEvents="box-none">
       {loading ? (
-        <View style={s.row}>
-          <IconSparkles size={12} color={colors.textTertiary} />
-          <Text style={[s.loadingText, { color: colors.textTertiary }]}>Thinking...</Text>
+        <View style={s.thinkingRow} pointerEvents="none">
+          <IconSparkles size={11} color={ghostColor} />
+          <Text style={[s.thinkingDot, { color: ghostColor }]}>•</Text>
+          <Text style={[s.thinkingDot, { color: ghostColor }]}>•</Text>
+          <Text style={[s.thinkingDot, { color: ghostColor }]}>•</Text>
         </View>
       ) : suggestion ? (
-        <View style={s.row}>
-          <IconSparkles size={12} color={colors.primary} style={{ marginRight: 4 }} />
-          <Text style={[s.suggestion, { color: colors.textSecondary }]} numberOfLines={2}>{suggestion}</Text>
-          <TouchableOpacity
-            style={[s.acceptBtn, { backgroundColor: colors.primary + '18' }]}
-            onPress={() => { onAccept?.(suggestion); setSuggestion(''); }}
-          >
-            <Text style={[s.acceptText, { color: colors.primary }]}>
-              {Platform.OS === 'web' ? 'Tab' : 'Accept'}
+        <TouchableOpacity
+          style={s.ghostInline}
+          onPress={() => { onAccept?.(suggestion); setSuggestion(''); }}
+          activeOpacity={0.7}
+        >
+          <Text style={[s.ghostText, { color: ghostColor }]} numberOfLines={3}>
+            {suggestion}
+          </Text>
+          <View style={[s.tabBadge, { backgroundColor: BRAND + '15', borderColor: BRAND + '40' }]}>
+            <Text style={[s.tabBadgeText, { color: BRAND }]}>
+              {Platform.OS === 'web' ? 'Tab ↹' : 'Toque'}
             </Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => setSuggestion('')} style={s.dismiss}>
-            <Text style={[s.dismissText, { color: colors.textTertiary }]}>Dismiss</Text>
-          </TouchableOpacity>
-        </View>
+          </View>
+        </TouchableOpacity>
       ) : null}
     </View>
   );
 }
 
 const s = StyleSheet.create({
-  container: {
+  ghostWrap: {
+    marginTop: 2,
+    marginBottom: 4,
+  },
+  ghostInline: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.sm,
+    paddingVertical: 4,
+    paddingHorizontal: 2,
+  },
+  ghostText: {
+    flex: 1,
+    fontSize: FontSize.base,
+    lineHeight: 22,
+    fontStyle: 'italic',
+    opacity: 0.75,
+  },
+  tabBadge: {
     borderWidth: 1,
     borderRadius: BorderRadius.sm,
-    paddingVertical: 6,
-    paddingHorizontal: Spacing.sm,
-    marginTop: 4,
-    marginBottom: Spacing.sm,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginTop: 2,
   },
-  row: {
+  tabBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  thinkingRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 3,
+    paddingVertical: 4,
+    paddingHorizontal: 2,
   },
-  loadingText: {
-    fontSize: FontSize.xs,
-    marginLeft: 4,
-    fontStyle: 'italic',
-  },
-  suggestion: {
-    flex: 1,
+  thinkingDot: {
     fontSize: FontSize.sm,
-    fontStyle: 'italic',
-  },
-  acceptBtn: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: BorderRadius.sm,
-    marginLeft: 6,
-  },
-  acceptText: {
-    fontSize: FontSize.xs,
     fontWeight: '700',
-  },
-  dismiss: {
-    marginLeft: 6,
-  },
-  dismissText: {
-    fontSize: FontSize.xs,
+    marginHorizontal: 1,
   },
 });

@@ -9,10 +9,81 @@ import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import { IconArrowLeft, IconSearch, IconX } from './Icons';
 import AvatarCircle from './AvatarCircle';
-import Svg, { Path, Rect } from 'react-native-svg';
+import Svg, { Path, Rect, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
 
 const ACCENT = '#7C3AED';
 const isWeb = Platform.OS === 'web';
+
+// SVG category icons (no emoji per UI rule)
+function IconNews({ size = 22, color = '#fff' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M4 6h13a2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V6z" />
+      <Path d="M19 8h2v9a2 2 0 01-2 2" />
+      <Path d="M8 10h6M8 14h6M8 18h4" />
+    </Svg>
+  );
+}
+function IconMusic({ size = 22, color = '#fff' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M9 18V5l12-2v13" />
+      <Path d="M9 18a3 3 0 11-3-3 3 3 0 013 3zm12-2a3 3 0 11-3-3 3 3 0 013 3z" />
+    </Svg>
+  );
+}
+function IconSports({ size = 22, color = '#fff' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M12 22a10 10 0 100-20 10 10 0 000 20z" />
+      <Path d="M12 2l3 6 6 1-4 5 1 6-6-3-6 3 1-6-4-5 6-1 3-6z" />
+    </Svg>
+  );
+}
+function IconScience({ size = 22, color = '#fff' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M9 2v6L4 18a2 2 0 002 3h12a2 2 0 002-3l-5-10V2" />
+      <Path d="M9 2h6" />
+      <Path d="M7 14h10" />
+    </Svg>
+  );
+}
+function IconComedy({ size = 22, color = '#fff' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M12 22a10 10 0 100-20 10 10 0 000 20z" />
+      <Path d="M8 14s1.5 2 4 2 4-2 4-2" />
+      <Path d="M9 9h.01M15 9h.01" />
+    </Svg>
+  );
+}
+function IconBusiness({ size = 22, color = '#fff' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M2 7h20v13a2 2 0 01-2 2H4a2 2 0 01-2-2V7z" />
+      <Path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2" />
+    </Svg>
+  );
+}
+
+// Categories grid — six common topics with brand-coloured tiles
+const CATEGORY_GRID = [
+  { key: 'news',     label: 'Notícias', Icon: IconNews,     tint: '#EF4444' },
+  { key: 'music',    label: 'Música',   Icon: IconMusic,    tint: '#F59E0B' },
+  { key: 'sports',   label: 'Esporte',  Icon: IconSports,   tint: '#10B981' },
+  { key: 'science',  label: 'Ciência',  Icon: IconScience,  tint: '#3B82F6' },
+  { key: 'comedy',   label: 'Comédia',  Icon: IconComedy,   tint: '#EC4899' },
+  { key: 'business', label: 'Negócios', Icon: IconBusiness, tint: ACCENT    },
+];
+
+function IconFlame({ size = 14, color = '#F97316' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill={color} stroke={color} strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M13.5 2c.5 4 4.5 5 4.5 10a6 6 0 11-12 0c0-3 2-4 2-7 1.5 1 2.5 2 3.5-3z" />
+    </Svg>
+  );
+}
 
 function IconMegaphone({ size = 24, color = '#666' }) {
   return (
@@ -188,7 +259,59 @@ export default function ChannelDiscoverModal({ visible, onClose, onJoined }) {
             data={channels}
             keyExtractor={(item) => String(item.id)}
             renderItem={renderChannel}
-            contentContainerStyle={channels.length === 0 ? { flexGrow: 1 } : { paddingBottom: 20 }}
+            contentContainerStyle={channels.length === 0 ? { flexGrow: 1 } : { paddingBottom: 24 }}
+            ListHeaderComponent={
+              !searchText ? (
+                <View>
+                  {/* Trending section */}
+                  <View style={sty.sectionHeaderRow}>
+                    <IconFlame size={15} color="#F97316" />
+                    <Text style={[sty.sectionTitle, { color: colors.text }]}>
+                      {t('channel.trending') || 'Em alta'}
+                    </Text>
+                  </View>
+
+                  {/* Categories grid (2 rows × 3 columns) */}
+                  <View style={sty.sectionHeaderRow}>
+                    <Text style={[sty.sectionTitle, { color: colors.text }]}>
+                      {t('channel.categories') || 'Categorias'}
+                    </Text>
+                  </View>
+                  <View style={sty.categoryGrid}>
+                    {CATEGORY_GRID.map((c) => {
+                      const Icon = c.Icon;
+                      return (
+                        <TouchableOpacity
+                          key={c.key}
+                          activeOpacity={0.85}
+                          onPress={() => { setSearchText(c.label); loadChannels(c.label); }}
+                          style={[sty.categoryTile, {
+                            backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#f8f8fb',
+                            borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)',
+                          }]}
+                        >
+                          <View style={[sty.categoryIconWrap, { backgroundColor: c.tint }]}>
+                            <Icon size={20} color="#fff" />
+                          </View>
+                          <Text style={[sty.categoryLabel, { color: colors.text }]} numberOfLines={1}>
+                            {c.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  {/* Channel list section header */}
+                  {channels.length > 0 ? (
+                    <View style={sty.sectionHeaderRow}>
+                      <Text style={[sty.sectionTitle, { color: colors.text }]}>
+                        {t('channel.popular') || 'Canais populares'}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+              ) : null
+            }
             ListEmptyComponent={
               <View style={sty.empty}>
                 <IconMegaphone size={48} color={isDark ? '#555' : '#ccc'} />
@@ -275,4 +398,48 @@ const sty = StyleSheet.create({
   },
   emptyTitle: { fontSize: 18, fontWeight: '700', marginTop: 8 },
   emptyDesc: { fontSize: 14, textAlign: 'center', lineHeight: 20 },
+
+  // Trending + Categories sections
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 16,
+    paddingTop: 18,
+    paddingBottom: 10,
+  },
+  sectionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: -0.1,
+  },
+  categoryGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: 12,
+    gap: 10,
+    marginBottom: 6,
+  },
+  categoryTile: {
+    width: '31.5%',
+    aspectRatio: 1.05,
+    borderRadius: 14,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+    gap: 8,
+  },
+  categoryIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  categoryLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.1,
+  },
 });
