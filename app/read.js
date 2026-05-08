@@ -242,10 +242,13 @@ export default function ReadScreen() {
     </View>
   ) : null;
 
-  // Floating action bar (mobile only) with press animations
+  // Floating action bar (mobile only) with press animations.
+  // Wave 3 consolidação 2026-05-08: Reply ganhou destaque pill roxo
+  // (Telegram-style hierarquia primary action), outros ações ficam icons
+  // neutros — antes os 4 tinham mesmo peso visual e poluía.
   const actionBar = Platform.OS !== 'web' && email ? (
     <View style={[s.actionBar, Shadow.lg, { backgroundColor: colors.surface, paddingBottom: insets.bottom + 8, borderTopColor: colors.borderLight }]}>
-      <ActionBarButton icon={IconReply} label={t('reader.reply')} color={colors.primary} onPress={() => handleReply(email)} accessibilityLabel={t('reader.reply')} />
+      <ActionBarButton icon={IconReply} label={t('reader.reply')} color={colors.primary} onPress={() => handleReply(email)} accessibilityLabel={t('reader.reply')} primary />
       <ActionBarButton icon={IconForward} label={t('reader.forward')} color={colors.textSecondary} onPress={handleForward} accessibilityLabel={t('reader.forward')} />
       <ActionBarButton icon={IconArchive} label={t('reader.archive')} color={colors.textSecondary} onPress={handleArchive} accessibilityLabel={t('reader.archive')} />
       <ActionBarButton icon={IconTrash} label={t('reader.delete')} color={colors.error} onPress={handleDelete} accessibilityLabel={t('reader.delete')} />
@@ -323,10 +326,18 @@ export default function ReadScreen() {
   );
 }
 
-// Action bar button with press scale animation
-function ActionBarButton({ icon: Icon, label, color, onPress, accessibilityLabel }) {
+// Action bar button with press scale animation.
+// `primary` mode renders a filled pill (Telegram-style primary CTA) — only
+// the Reply uses it so the bottom bar hierarquy reads "tap aqui pra responder
+// + 3 atalhos secundários" at a glance instead of "4 botões iguais".
+function ActionBarButton({ icon: Icon, label, color, onPress, accessibilityLabel, primary }) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
-  const nd = Platform.OS !== 'web';
+
+  const innerStyle = primary
+    ? { backgroundColor: color, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 22, flexDirection: 'row', alignItems: 'center', gap: 8 }
+    : { alignItems: 'center' };
+  const iconColor = primary ? '#fff' : color;
+  const textColor = primary ? '#fff' : color;
 
   return (
     <TouchableOpacity
@@ -352,9 +363,9 @@ function ActionBarButton({ icon: Icon, label, color, onPress, accessibilityLabel
       }}
       activeOpacity={1}
     >
-      <Animated.View style={{ transform: [{ scale: scaleAnim }], alignItems: 'center' }}>
-        <Icon size={22} color={color} />
-        <Text style={[s.actionBarLabel, { color }]}>{label}</Text>
+      <Animated.View style={[{ transform: [{ scale: scaleAnim }] }, innerStyle]}>
+        <Icon size={primary ? 18 : 22} color={iconColor} />
+        <Text style={[s.actionBarLabel, { color: textColor, fontWeight: primary ? '700' : '500', marginTop: primary ? 0 : 4 }]}>{label}</Text>
       </Animated.View>
     </TouchableOpacity>
   );
