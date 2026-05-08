@@ -5555,4 +5555,8 @@ export default {
   'parental.pendingRequests': 'requests from your kids',
   'parental.screenTimeToday': 'Screen time',
   'parental.share': 'Share',
+  // Quick-action labels (child card icon row) — short forms
+  'parental.messages': 'Messages',
+  'parental.location': 'Location',
+  'parental.bonus15': '+15min',
 };

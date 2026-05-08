@@ -182,10 +182,23 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
       accessibilityLabel={accessLabel}
       accessibilityRole="image"
     >
+      {/* Initials are always rendered so they remain visible if the avatar
+          URL returns 404, an empty/transparent placeholder, or hasn't loaded
+          yet. A real avatar image (when it loads successfully) is absolutely
+          positioned on top and fully covers them. Fixes the "solid colored
+          blob with no initials" rendering for users without a profile photo
+          (parental child cards, fresh signups, etc). */}
+      <Text
+        style={[styles.initials, { fontSize: size * 0.38, position: 'absolute' }]}
+        allowFontScaling={false}
+        accessibilityElementsHidden
+      >
+        {initials}
+      </Text>
       {showImage ? (
         <ImageComponent
           source={{ uri: avatarUrl }}
-          style={{ width: size, height: size, borderRadius: size / 2 }}
+          style={{ width: size, height: size, borderRadius: size / 2, position: 'absolute' }}
           onError={() => setImgError(true)}
           accessibilityLabel={accessLabel}
           {...(ExpoImage ? {
@@ -202,15 +215,7 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
             ...(Platform.OS === 'web' ? { loading: 'lazy' } : {}),
           })}
         />
-      ) : (
-        <Text
-          style={[styles.initials, { fontSize: size * 0.38 }]}
-          allowFontScaling={false}
-          accessibilityElementsHidden
-        >
-          {initials}
-        </Text>
-      )}
+      ) : null}
     </View>
   );
 

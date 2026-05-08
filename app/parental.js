@@ -71,10 +71,14 @@ const suggestUsername = (name) => {
 };
 
 // Age-based preset restrictions
+// Defaults to the youngest-tier preset when `age` is null/undefined/NaN so
+// callers that forget to guard (e.g. accidental render before validation)
+// don't crash with `Cannot read property 'screenTime' of undefined`.
 const getAgePresets = (age) => {
-  if (age <= 7) return { screenTime: 60, bedtimeStart: '19:30', bedtimeEnd: '07:00', safeSearch: true, contactApproval: true, canSendEmail: false, canDeleteMessages: false };
-  if (age <= 9) return { screenTime: 90, bedtimeStart: '20:00', bedtimeEnd: '07:00', safeSearch: true, contactApproval: true, canSendEmail: true, canDeleteMessages: false };
-  if (age <= 11) return { screenTime: 120, bedtimeStart: '21:00', bedtimeEnd: '06:30', safeSearch: true, contactApproval: false, canSendEmail: true, canDeleteMessages: true };
+  const a = Number(age);
+  if (!Number.isFinite(a) || a <= 7) return { screenTime: 60, bedtimeStart: '19:30', bedtimeEnd: '07:00', safeSearch: true, contactApproval: true, canSendEmail: false, canDeleteMessages: false };
+  if (a <= 9) return { screenTime: 90, bedtimeStart: '20:00', bedtimeEnd: '07:00', safeSearch: true, contactApproval: true, canSendEmail: true, canDeleteMessages: false };
+  if (a <= 11) return { screenTime: 120, bedtimeStart: '21:00', bedtimeEnd: '06:30', safeSearch: true, contactApproval: false, canSendEmail: true, canDeleteMessages: true };
   return { screenTime: 180, bedtimeStart: '22:00', bedtimeEnd: '06:00', safeSearch: false, contactApproval: false, canSendEmail: true, canDeleteMessages: true };
 };
 
@@ -1454,6 +1458,13 @@ export default function ParentalScreen() {
     { key: 'lock', Icon: IconLock, color: '#ef4444', labelKey: 'parental.lockNow', fallback: 'Pausar' },
     { key: 'bonus', Icon: IconStar, color: '#f59e0b', labelKey: 'parental.bonus15', fallback: '+15min' },
   ];
+  // tWithFallback — when the i18n key isn't found, t() returns the key string
+  // itself (which is truthy), so the `||` fallback never fires. Detect that
+  // case and prefer the fallback. Used for the quick-action labels below.
+  const tWithFallback = (key, fallback) => {
+    const v = t(key);
+    return (v === key || v == null) ? fallback : v;
+  };
 
   const handleChildAction = (key, child) => {
     haptics.tap('light');
@@ -1612,7 +1623,7 @@ export default function ParentalScreen() {
                   style={[s.childQuickAction, i > 0 && { borderLeftColor: isDark ? '#2d3748' : '#f1f5f9', borderLeftWidth: 1 }]}
                   onPress={() => handleChildAction(a.key, item)}
                   activeOpacity={0.7}
-                  accessibilityLabel={t(a.labelKey) || a.fallback}
+                  accessibilityLabel={tWithFallback(a.labelKey, a.fallback)}
                   accessibilityRole="button"
                 >
                   <View style={{ position: 'relative' }}>
@@ -1624,7 +1635,7 @@ export default function ParentalScreen() {
                     )}
                   </View>
                   <Text style={[s.childActionText, { color: a.color, fontSize: 11 }]} numberOfLines={1}>
-                    {t(a.labelKey) || a.fallback}
+                    {tWithFallback(a.labelKey, a.fallback)}
                   </Text>
                 </TouchableOpacity>
               );
