@@ -337,6 +337,26 @@ export function getCallHistoryCached() {
   return _readCallHistoryCache() || [];
 }
 
+// Flip every cached missed-call row to `read: true`. Tab badge derives its
+// count from the cache, so without this the number reappears the moment the
+// user navigates away from the Calls tab — the React state was zeroed but
+// the cache still said "unread", and the next recompute brought it back.
+export function markMissedCallsRead() {
+  try {
+    const cur = _readCallHistoryCache();
+    if (!Array.isArray(cur) || cur.length === 0) return;
+    let touched = false;
+    const next = cur.map(c => {
+      if (c?.type === 'missed' && !(c?.read === true || c?.read === 1)) {
+        touched = true;
+        return { ...c, read: true };
+      }
+      return c;
+    });
+    if (touched) _writeCallHistoryCache(next);
+  } catch {}
+}
+
 export async function addCallToHistory(callData) {
   // Build the row first so we can write it to cache even if the server fails.
   const row = {

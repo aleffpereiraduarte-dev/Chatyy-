@@ -316,9 +316,18 @@ function ChatHub() {
 
   // Clear the badge as soon as the user lands on the Calls tab — they're
   // looking at the list, so the surfaced "you have missed calls" hint has
-  // done its job.
+  // done its job. We also flip the cached rows to `read:true` so the next
+  // recompute (fired when activeTab changes) doesn't bring the badge back —
+  // bug 2026-05-08: badge "13" reappeared every time user left and re-entered
+  // the calls tab because the React state reset alone didn't touch the cache.
   React.useEffect(() => {
-    if (activeTab === 'calls' && missedCallBadge > 0) setMissedCallBadge(0);
+    if (activeTab === 'calls') {
+      try {
+        const { markMissedCallsRead } = require('../components/ChatCallsTab');
+        markMissedCallsRead?.();
+      } catch {}
+      if (missedCallBadge > 0) setMissedCallBadge(0);
+    }
   }, [activeTab, missedCallBadge]);
 
   // ── Tab badges polling (chats unread + status unseen + feed unread) ──
@@ -376,7 +385,14 @@ function ChatHub() {
               }
             } catch {}
             const fresh = list.reduce((acc, p) => {
-              const ts = Date.parse(p?.created_at || p?.timestamp || 0) || 0;
+              // created_at can be ISO string (Date.parse → ms), timestamp may
+              // be ms or s (numeric). Handle both: if numeric < 1e12 assume
+              // seconds and scale up. Without this, NaN was producing fresh=0
+              // OR fresh=length (depending on lastSeen) and the badge flapped.
+              const raw = p?.created_at ?? p?.timestamp;
+              let ts = 0;
+              if (typeof raw === 'string') ts = Date.parse(raw) || 0;
+              else if (typeof raw === 'number') ts = raw < 1e12 ? raw * 1000 : raw;
               return ts > lastSeen ? acc + 1 : acc;
             }, 0);
             if (!cancelled) setFeedBadge(fresh);
@@ -390,10 +406,15 @@ function ChatHub() {
   }, [activeTab, user?.email]);
 
   // Reset feed badge on landing on feed tab — store the most recent post ts
-  // we've shown so subsequent polls only count posts newer than that.
+  // we've shown so subsequent polls only count posts newer than that. We
+  // ALWAYS bump the cursor when on feed (not gated on `feedBadge > 0`),
+  // otherwise the first time the user opens Reels with a 0 badge we don't
+  // persist anything, and the next 60s poll counts every post as fresh —
+  // making the badge "reaparecer" with the same number after the user
+  // already saw the content. Bug 2026-05-08.
   React.useEffect(() => {
-    if (activeTab === 'feed' && feedBadge > 0) {
-      setFeedBadge(0);
+    if (activeTab === 'feed') {
+      if (feedBadge > 0) setFeedBadge(0);
       try {
         const ts = String(Date.now());
         if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
