@@ -873,6 +873,21 @@ function SettingsScreenInner() {
         {/* Security — Biometric Lock (native only) */}
         {Platform.OS !== 'web' && biometricAvailable && (
           <View ref={registerSectionRef('security')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+            {/* Família — Apple Family Sharing-style hub */}
+            <TouchableOpacity
+              style={[s.settingRow, { borderBottomColor: colors.borderLight, marginBottom: Spacing.sm, backgroundColor: isDark ? '#1a1530' : '#faf5ff', borderRadius: 14, padding: 14 }]}
+              onPress={() => router.push('/family')}
+            >
+              <View style={s.settingInfo}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <IconShield size={20} color="#7C3AED" />
+                  <Text style={[s.settingLabel, { color: colors.text, fontWeight: '700' }]}>Família</Text>
+                </View>
+                <Text style={[s.settingDesc, { color: colors.textTertiary }]}>Compartilhe plano, álbum, calendário e mais com a família</Text>
+              </View>
+              <IconChevronRight size={18} color={colors.textSecondary} />
+            </TouchableOpacity>
+
             {/* Parental Controls */}
             <TouchableOpacity
               style={[s.settingRow, { borderBottomColor: colors.borderLight, marginBottom: Spacing.lg, backgroundColor: isDark ? '#1a2e1a' : '#f0fdf4', borderRadius: 14, padding: 14 }]}

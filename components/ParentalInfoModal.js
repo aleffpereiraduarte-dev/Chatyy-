@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -71,6 +71,16 @@ export default function ParentalInfoModal({ visible, onClose, onStartCreate }) {
   const { t } = useLanguage();
   const [currentPage, setCurrentPage] = useState(0);
   const scrollRef = useRef(null);
+
+  // Web: close on Escape so keyboard users have an exit. (No-op on native.)
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !visible) return;
+    const onKey = (ev) => { if (ev.key === 'Escape' && onClose) onClose(); };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('keydown', onKey);
+      return () => window.removeEventListener('keydown', onKey);
+    }
+  }, [visible, onClose]);
 
   if (!visible) return null;
 

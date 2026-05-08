@@ -313,6 +313,11 @@ export default function ChildRestrictionGuard({ children }) {
         }
       } catch {}
     }
+    // Locked switch (parent locked all child screens)
+    if (r.locked === true || r.locked === 1 || r.locked === '1') {
+      setBlocked('locked');
+      return;
+    }
     setBlocked(null);
   }, []);
 
@@ -430,6 +435,40 @@ export default function ChildRestrictionGuard({ children }) {
               <Text style={sty.askParentText}>{t('kids.restriction.askParentSent')}</Text>
             ) : (
               <>
+                <Text style={sty.askParentText}>{t('kids.restriction.askParent')}</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </Animated.View>
+      </Animated.View>
+    );
+  }
+
+  // Locked by parent — friendly mascot + ask CTA
+  if (blocked === 'locked') {
+    return (
+      <Animated.View style={[sty.bedtime, { opacity: fadeAnim, backgroundColor: '#1e1b4b' }]}>
+        <Animated.View style={{ alignItems: 'center', zIndex: 1, transform: [{ scale: bounceAnim }] }}>
+          <View style={{ width: 110, height: 110, borderRadius: 55, backgroundColor: 'rgba(167,139,250,0.18)', alignItems: 'center', justifyContent: 'center', marginBottom: 18 }}>
+            <Text style={{ fontSize: 64 }}>{'🔒'}</Text>
+          </View>
+          <Text style={[sty.bedTitle, { color: '#fff' }]}>
+            {t('kids.restriction.locked') || 'App pausado pelos pais'}
+          </Text>
+          <Text style={[sty.bedSub, { color: '#c4b5fd' }]}>
+            {t('kids.restriction.lockedDesc') || 'Volta mais tarde — peça pro seu responsável liberar.'}
+          </Text>
+          <TouchableOpacity
+            style={[sty.askParentBtn, askParentSent && { backgroundColor: '#22c55e' }, { marginTop: 28 }]}
+            onPress={handleAskParent}
+            disabled={askParentSent}
+            activeOpacity={0.8}
+          >
+            {askParentSent ? (
+              <Text style={sty.askParentText}>{t('kids.restriction.askParentSent')}</Text>
+            ) : (
+              <>
+                <IconBell size={18} color="#fff" />
                 <Text style={sty.askParentText}>{t('kids.restriction.askParent')}</Text>
               </>
             )}

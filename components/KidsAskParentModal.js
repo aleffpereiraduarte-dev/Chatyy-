@@ -22,6 +22,30 @@ function IconX({ size = 22, color = '#fff' }) {
   );
 }
 
+function IconClock({ size = 16, color = '#fff' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 5v5l3 2" />
+    </Svg>
+  );
+}
+
+function IconCheck({ size = 16, color = '#10b981' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M20 6L9 17l-5-5" />
+    </Svg>
+  );
+}
+
+function IconBack({ size = 18, color = '#A78BFA' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M19 12H5M12 19l-7-7 7-7" />
+    </Svg>
+  );
+}
+
 const REQUEST_TYPES = [
   { key: 'extra_time',  emoji: '⏰', color: '#f97316', name: 'Mais tempo no app',       desc: 'Peça mais minutos pro seu pai ou mãe' },
   { key: 'new_contact', emoji: '👥', color: '#10b981', name: 'Aprovar novo contato',    desc: 'Adicionar um amigo novo' },
@@ -38,6 +62,10 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
   const [appName, setAppName] = useState('');
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  // History drawer state
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyItems, setHistoryItems] = useState([]);
   const fade = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -45,10 +73,26 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
       Animated.timing(fade, { toValue: 1, duration: 200, useNativeDriver: true }).start();
       setType(null); setMessage(''); setSent(false);
       setExtraMinutes(30); setContactEmail(''); setAppName('');
+      setHistoryOpen(false);
     } else {
       fade.setValue(0);
     }
   }, [visible]);
+
+  const loadHistory = async () => {
+    setHistoryOpen(true);
+    setHistoryLoading(true);
+    try {
+      // Backend: kids_my_requests already exists in services/api.js
+      const r = await api.kidsMyRequests?.();
+      const items = r?.data?.requests || r?.requests || [];
+      setHistoryItems(Array.isArray(items) ? items : []);
+    } catch {
+      setHistoryItems([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
 
   const handleSend = async () => {
     if (!type || sending) return;
@@ -105,7 +149,121 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
               <Text style={{ marginTop: 8, fontSize: 14, color: isDark ? '#6ee7b7' : '#047857', textAlign: 'center' }}>
                 {t?.('kids.askParent.waiting') || 'Agora é só esperar a resposta do seu pai ou mãe.'}
               </Text>
+              <TouchableOpacity
+                onPress={onClose}
+                activeOpacity={0.85}
+                style={{
+                  marginTop: 24, paddingVertical: 12, paddingHorizontal: 32,
+                  borderRadius: 14, backgroundColor: '#10b981',
+                }}
+                accessibilityRole="button"
+              >
+                <Text style={{ color: '#fff', fontSize: 15, fontWeight: '800' }}>
+                  {t?.('common.back') || 'Voltar'}
+                </Text>
+              </TouchableOpacity>
             </View>
+          ) : historyOpen ? (
+          <View>
+            {/* History sub-header */}
+            <View style={{
+              flexDirection: 'row', alignItems: 'center', gap: 10,
+              paddingHorizontal: 16, paddingVertical: 12,
+              borderBottomWidth: 1, borderBottomColor: isDark ? '#2d1b4e' : '#f3e8ff',
+            }}>
+              <TouchableOpacity onPress={() => setHistoryOpen(false)} accessibilityRole="button" accessibilityLabel="Voltar">
+                <IconBack size={20} color={isDark ? '#A78BFA' : '#7C3AED'} />
+              </TouchableOpacity>
+              <Text style={{ fontSize: 15, fontWeight: '800', color: isDark ? '#e9d5ff' : '#1e1b4b' }}>
+                {t?.('kids.askParent.history') || 'Pedidos anteriores'}
+              </Text>
+            </View>
+
+            <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
+              {historyLoading ? (
+                <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+                  <ActivityIndicator color="#A78BFA" />
+                </View>
+              ) : historyItems.length === 0 ? (
+                <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+                  <Text style={{ fontSize: 40, marginBottom: 8 }}>📭</Text>
+                  <Text style={{ fontSize: 14, color: isDark ? '#9ca3af' : '#6b7280', textAlign: 'center' }}>
+                    {t?.('kids.askParent.empty') || 'Você ainda não fez nenhum pedido.'}
+                  </Text>
+                </View>
+              ) : (
+                historyItems.map((item, idx) => {
+                  // Map decision/status to label + color
+                  const status = (item.status || item.decision || 'pending').toLowerCase();
+                  const isApproved = status === 'approved' || status === 'granted';
+                  const isDenied = status === 'denied' || status === 'rejected';
+                  const statusColor = isApproved ? '#10b981' : isDenied ? '#ef4444' : '#f59e0b';
+                  const statusLabel = isApproved
+                    ? (t?.('kids.askParent.approved') || 'Aprovado')
+                    : isDenied
+                      ? (t?.('kids.askParent.denied') || 'Negado')
+                      : (t?.('kids.askParent.pending') || 'Pendente');
+                  const matchType = REQUEST_TYPES.find(rt =>
+                    rt.key === item.type || rt.key === item.reason
+                  );
+                  const ts = item.created_at || item.requested_at || item.ts;
+                  let timeStr = '';
+                  if (ts) {
+                    try {
+                      const d = new Date(typeof ts === 'number' && ts < 1e12 ? ts * 1000 : ts);
+                      if (!isNaN(d.getTime())) timeStr = d.toLocaleString();
+                    } catch {}
+                  }
+                  return (
+                    <View
+                      key={item.id || idx}
+                      style={{
+                        flexDirection: 'row', alignItems: 'flex-start', gap: 12,
+                        padding: 14, marginBottom: 10, borderRadius: 16,
+                        borderWidth: 1,
+                        borderColor: isDark ? '#2d1b4e' : '#e5e7eb',
+                        backgroundColor: isDark ? '#1a0f30' : '#fafafa',
+                      }}
+                    >
+                      <View style={{
+                        width: 38, height: 38, borderRadius: 12,
+                        backgroundColor: (matchType?.color || '#8b5cf6') + '25',
+                        alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        <Text style={{ fontSize: 20 }}>{matchType?.emoji || '💬'}</Text>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 14, fontWeight: '800', color: isDark ? '#e9d5ff' : '#111' }}>
+                          {matchType?.name || item.reason || item.type || '—'}
+                        </Text>
+                        {!!item.note && (
+                          <Text style={{ fontSize: 13, color: isDark ? '#c4b5fd' : '#475569', marginTop: 4 }} numberOfLines={2}>
+                            {item.note}
+                          </Text>
+                        )}
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                          <View style={{
+                            paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8,
+                            backgroundColor: statusColor + '22', flexDirection: 'row', alignItems: 'center', gap: 4,
+                          }}>
+                            {isApproved && <IconCheck size={11} color={statusColor} />}
+                            <Text style={{ fontSize: 11, fontWeight: '700', color: statusColor }}>
+                              {statusLabel}
+                            </Text>
+                          </View>
+                          {!!timeStr && (
+                            <Text style={{ fontSize: 11, color: isDark ? '#7c6ba6' : '#9ca3af' }}>
+                              {timeStr}
+                            </Text>
+                          )}
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+            </ScrollView>
+          </View>
           ) : (
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 28 }}>
             {/* Type picker */}
@@ -210,12 +368,17 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
               </View>
             )}
 
-            {/* Optional message */}
+            {/* Optional message + character counter */}
             {type && (
               <View style={{ paddingHorizontal: 16, paddingTop: 14 }}>
-                <Text style={[styles.sectionLabel, { color: isDark ? '#c4b5fd' : '#6b7280' }]}>
-                  {t?.('kids.askParent.why') || 'Quer explicar? (opcional)'}
-                </Text>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                  <Text style={[styles.sectionLabel, { color: isDark ? '#c4b5fd' : '#6b7280', marginBottom: 0 }]}>
+                    {t?.('kids.askParent.why') || 'Quer explicar? (opcional)'}
+                  </Text>
+                  <Text style={{ fontSize: 11, color: isDark ? '#7c6ba6' : '#a78bfa', fontWeight: '600' }}>
+                    {message.length}/500
+                  </Text>
+                </View>
                 <TextInput
                   value={message} onChangeText={setMessage}
                   placeholder={t?.('kids.askParent.messageHint') || 'Escreve aqui…'}
@@ -229,6 +392,25 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
                 />
               </View>
             )}
+
+            {/* Ver pedidos anteriores — links para histórico */}
+            <View style={{ paddingHorizontal: 16, paddingTop: 18 }}>
+              <TouchableOpacity
+                onPress={loadHistory}
+                activeOpacity={0.7}
+                style={{
+                  flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                  gap: 8, paddingVertical: 10,
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={t?.('kids.askParent.history') || 'Ver pedidos anteriores'}
+              >
+                <IconClock size={14} color={isDark ? '#A78BFA' : '#7C3AED'} />
+                <Text style={{ fontSize: 13, fontWeight: '700', color: isDark ? '#A78BFA' : '#7C3AED' }}>
+                  {t?.('kids.askParent.history') || 'Ver pedidos anteriores'}
+                </Text>
+              </TouchableOpacity>
+            </View>
 
             {/* Send button */}
             {type && (

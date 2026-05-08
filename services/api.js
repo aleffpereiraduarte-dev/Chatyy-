@@ -5170,6 +5170,38 @@ export async function parentalUpdateLocation(lat, lng, accuracy, battery) { retu
 export async function parentalGetLocation(childEmail) { return apiCall('parental_get_location', { child_email: childEmail }); }
 export async function parentalGeofences(childEmail) { return apiCall('parental_geofences', { child_email: childEmail }); }
 
+// New monitor tabs: today/week/contacts/activity/summary.
+// These hit endpoints that may not exist on every backend version yet —
+// callers must tolerate `success: false` and fall back to the existing
+// `parentalScreenTime`/`parentalActivitySummary` data already on the
+// screen. Never throw, never block the rest of the loaders.
+export async function parentalChildToday(childEmail) {
+  try { return await apiCall('parental_child_today', { child_email: childEmail }); }
+  catch { return { success: false }; }
+}
+export async function parentalChildWeek(childEmail) {
+  try { return await apiCall('parental_child_week', { child_email: childEmail }); }
+  catch { return { success: false }; }
+}
+export async function parentalChildContacts(childEmail) {
+  try { return await apiCall('parental_child_contacts', { child_email: childEmail }); }
+  catch { return { success: false }; }
+}
+export async function parentalChildActivity(childEmail, limit = 80) {
+  try { return await apiCall('parental_child_activity', { child_email: childEmail, limit }); }
+  catch { return { success: false }; }
+}
+export async function parentalSummary(childEmail) {
+  try { return await apiCall('parental_summary', { child_email: childEmail }); }
+  catch { return { success: false }; }
+}
+export async function parentalApproveContact(childEmail, contactEmail) {
+  return apiCall('parental_approve_contact', { child_email: childEmail, contact_email: contactEmail }, 'POST');
+}
+export async function parentalBlockContact(childEmail, contactEmail) {
+  return apiCall('parental_reject_contact', { child_email: childEmail, contact_email: contactEmail }, 'POST');
+}
+
 // Kids — Ask Parent (child sends request; parent approves/denies).
 // Maps frontend "type" labels onto backend parental_unlock_request reasons
 // so a single endpoint covers all surfaces (chat/feed/calls/email).
@@ -5198,9 +5230,139 @@ export async function parentalResolveRequest(id, decision) {
   return apiCall('parental_resolve_request', { id, decision }, 'POST');
 }
 
+// Convenience wrappers used by /parental dashboard quick-actions.
+// These all hit existing endpoints (`parental_update_restrictions` /
+// `parental_set_time_limits`) — no new backend handler needed.
+export async function parentalLockChild(childEmail) {
+  return apiCall('parental_update_restrictions', { child_email: childEmail, locked: true, locked_at: Date.now() }, 'POST');
+}
+export async function parentalUnlockChild(childEmail) {
+  return apiCall('parental_update_restrictions', { child_email: childEmail, locked: false }, 'POST');
+}
+export async function parentalGrantExtraTime(childEmail, minutes = 15) {
+  return apiCall('parental_set_time_limits', { child_email: childEmail, bonus_minutes: minutes, granted_at: Date.now() }, 'POST');
+}
+
 // Kids — Achievements + Daily quest
 export async function kidsAchievements() { return apiCall('kids_achievements'); }
 export async function kidsDailyQuest() { return apiCall('kids_daily_quest'); }
+
+// ─── Parental review surface ───
+// Mark a child's chat message as inappropriate for review on the parental
+// dashboard. TODO: backend handler `parental_flag_message` not yet
+// implemented — wire when ready (chat.php should expose it; stores
+// flagged_at + flagged_by on chat_messages or in parental_flags table).
+export async function parentalFlagMessage(childEmail, messageId, flagged = true) {
+  return apiCall('parental_flag_message', {
+    child_email: childEmail,
+    message_id: messageId,
+    flagged: flagged ? 1 : 0,
+  }, 'POST');
+}
+
+// Aggregate history for unlock requests so kid can see status (Aprovado /
+// Negado / Pendente). `kidsMyRequests` already exists above; alias for
+// the parent-side perspective.
+export async function parentalUnlockHistory(childEmail) {
+  // TODO: backend handler `parental_unlock_history` may not exist yet —
+  //       on prod the parental dashboard already calls
+  //       `parental_pending_requests`; this wrapper covers the kid-side
+  //       lookup if/when needed.
+  return apiCall('parental_unlock_history', childEmail ? { child_email: childEmail } : {});
+}
+
+// ─── Family Sharing (Apple-style hub) ───
+// TODO: backend endpoints below are NOT yet implemented. Wrappers return
+// the apiCall promise so screens render gracefully (`success: false`)
+// until PHP handlers ship. Drop the TODO comments when each backend
+// lands.
+
+// Returns family unit metadata: { id, name, avatar_url, members[] }.
+// Member shape: { email, name, role: 'parent'|'child'|'spouse', age?, avatar_url, online?, location? }
+export async function familyInfo() {
+  // TODO: backend handler `family_info` pending.
+  return apiCall('family_info');
+}
+
+// Invite a new member by email or phone with a role.
+// role: 'parent' | 'child' | 'spouse'
+export async function familyInvite(target, role = 'child') {
+  // TODO: backend handler `family_invite` pending.
+  return apiCall('family_invite', { target, role }, 'POST');
+}
+
+// Link a spouse account (also a parent — full perms over children).
+export async function familyAddSpouse(spouseEmail) {
+  // TODO: backend handler `family_add_spouse` pending.
+  return apiCall('family_add_spouse', { spouse_email: spouseEmail }, 'POST');
+}
+
+// Update family metadata (name, photo).
+export async function familyUpdate(data) {
+  // TODO: backend handler `family_update` pending.
+  return apiCall('family_update', data || {}, 'POST');
+}
+
+// Remove a family member (only the family owner can do this).
+export async function familyRemoveMember(email) {
+  // TODO: backend handler `family_remove_member` pending.
+  return apiCall('family_remove_member', { email }, 'POST');
+}
+
+// Shared photo album — list and append. Stored in R2 under
+// /family/<family_id>/album/* (same pattern as feed-files).
+export async function familySharedAlbum() {
+  // TODO: backend handler `family_shared_album` pending.
+  return apiCall('family_shared_album');
+}
+
+export async function familySharedAlbumAdd(fileUri, caption = '') {
+  // TODO: backend handler `family_shared_album_add` pending.
+  const formData = new FormData();
+  formData.append('caption', caption);
+  formData.append('file', { uri: fileUri, name: 'photo.jpg', type: 'image/jpeg' });
+  const headers = getAuthHeaders();
+  if (headers && headers['Content-Type']) delete headers['Content-Type']; // let runtime add boundary
+  const res = await fetch(API_URL + '?action=family_shared_album_add', {
+    method: 'POST', headers, body: formData, credentials: 'include',
+  });
+  return res.json().catch(() => ({ success: false }));
+}
+
+// Shared family calendar — pulls events tagged with family_id.
+export async function familySharedCalendar() {
+  // TODO: backend handler `family_shared_calendar` pending.
+  return apiCall('family_shared_calendar');
+}
+
+// Shared shopping list — list + add + check.
+export async function familyShoppingList() {
+  // TODO: backend handler `family_shopping_list` pending.
+  return apiCall('family_shopping_list');
+}
+
+export async function familyShoppingListAdd(item) {
+  // TODO: backend handler `family_shopping_list_add` pending.
+  return apiCall('family_shopping_list_add', { item }, 'POST');
+}
+
+export async function familyShoppingListToggle(id, checked) {
+  // TODO: backend handler `family_shopping_list_toggle` pending.
+  return apiCall('family_shopping_list_toggle', { id, checked: checked ? 1 : 0 }, 'POST');
+}
+
+// Find My Family — returns last known location for every member. Should
+// reuse the parental_update_location / chat_user_locations storage.
+export async function familyLocationAll() {
+  // TODO: backend handler `family_location_all` pending.
+  return apiCall('family_location_all');
+}
+
+// Plan share — reads which plan is active and who else benefits.
+export async function familyPlanShare() {
+  // TODO: backend handler `family_plan_share` pending.
+  return apiCall('family_plan_share');
+}
 
 // SOS Emergency System
 export async function parentalSOS(type, message, latitude, longitude, accuracy, battery) {

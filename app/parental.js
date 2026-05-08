@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform, FlatList, Alert, ActivityIndicator, TextInput, ScrollView, Image, Animated, Easing, KeyboardAvoidingView, Modal, Vibration, Dimensions } from 'react-native';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, Platform, FlatList, Alert, ActivityIndicator, TextInput, ScrollView, Image, Animated, Easing, KeyboardAvoidingView, Modal, Vibration, Dimensions, RefreshControl, Linking, Share } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
@@ -10,7 +10,10 @@ import { getCached, setCache } from '../services/cache';
 import * as ImagePicker from 'expo-image-picker';
 import SmartDateInput from '../components/SmartDateInput';
 import BrandFab from '../components/BrandFab';
+import EmptyStateCard from '../components/EmptyStateCard';
+import AvatarCircle from '../components/AvatarCircle';
 import useIsMounted from '../hooks/useIsMounted';
+import * as haptics from '../services/haptics';
 
 const ACCENT = '#7C3AED';
 const STEPS = ['info', 'document', 'verifying', 'credentials'];
@@ -75,6 +78,28 @@ const getAgePresets = (age) => {
   return { screenTime: 180, bedtimeStart: '22:00', bedtimeEnd: '06:00', safeSearch: false, contactApproval: false, canSendEmail: true, canDeleteMessages: true };
 };
 
+// Pulsing online dot — Instagram/WhatsApp-style. Each card mounts its own
+// instance so animations are independent and clean up on unmount.
+function OnlineDot({ dark }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(scale, { toValue: 1.6, duration: 900, useNativeDriver: true }),
+        Animated.timing(scale, { toValue: 1, duration: 900, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [scale]);
+  return (
+    <View style={{ position: 'absolute', bottom: 2, right: 2, width: 14, height: 14, borderRadius: 7, alignItems: 'center', justifyContent: 'center' }}>
+      <Animated.View style={{ position: 'absolute', width: 14, height: 14, borderRadius: 7, backgroundColor: '#22c55e', opacity: 0.35, transform: [{ scale }] }} />
+      <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#22c55e', borderWidth: 2, borderColor: dark ? '#1a2332' : '#fff' }} />
+    </View>
+  );
+}
+
 export default function ParentalScreen() {
   const router = useRouter();
   const { colors, isDark } = useTheme();
@@ -82,6 +107,18 @@ export default function ParentalScreen() {
   const { t } = useLanguage();
   const [children, setChildren] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Per-child enrichments (screen-time, restrictions for bedtime).
+  // Keyed by child_email. Loaded lazily when children list arrives.
+  const [childMeta, setChildMeta] = useState({}); // { [email]: { screen_time_used, screen_time_limit, bedtime_start, bedtime_end, locked } }
+
+  // Pending unlock requests (red-dot banner at top)
+  const [pendingRequests, setPendingRequests] = useState([]);
+
+  // Heartbeat — drives bedtime countdown + relative-time refresh.
+  // Tick once per minute is enough for HH:MM display.
+  const [now, setNow] = useState(() => Date.now());
 
   // AI Summary modal state
   const [summaryModal, setSummaryModal] = useState(false);
@@ -110,6 +147,7 @@ export default function ParentalScreen() {
   const [showConfetti, setShowConfetti] = useState(false);
   const [quickSetup, setQuickSetup] = useState({ bedtime: false, contacts: false, screenTime: false, safeSearch: false, filterAdult: false, filterViolence: false, filterProfanity: false });
   const [suggestedUser, setSuggestedUser] = useState('');
+  const [mascotFrame, setMascotFrame] = useState(0);
 
   // Animations
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -145,11 +183,18 @@ export default function ParentalScreen() {
       easing: Easing.out(Easing.cubic),
       useNativeDriver: false,
     }).start();
-  }, [step]);
+  }, [step, fadeAnim, slideAnim, progressAnim]);
 
-  // Mascot bob animation (step 0)
+  // Mascot bob animation (step 0). Cycles MASCOT_FRAMES_ICONS via state so
+  // the icon actually swaps in sync with the bob — previously the ref never
+  // advanced *and* React wouldn't have re-rendered if it had.
   useEffect(() => {
     if (step === 0 && showWizard) {
+      const frameTick = setInterval(() => {
+        if (!isMountedRef.current) return;
+        mascotFrameRef.current = (mascotFrameRef.current + 1) % MASCOT_FRAMES_ICONS.length;
+        setMascotFrame(mascotFrameRef.current);
+      }, 1600);
       const loop = Animated.loop(
         Animated.sequence([
           Animated.timing(mascotAnim, { toValue: -8, duration: 800, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
@@ -157,9 +202,9 @@ export default function ParentalScreen() {
         ])
       );
       loop.start();
-      return () => loop.stop();
+      return () => { loop.stop(); clearInterval(frameTick); };
     }
-  }, [step, showWizard]);
+  }, [step, showWizard, mascotAnim, isMountedRef]);
 
   // Shield pulse animation (step 1)
   useEffect(() => {
@@ -173,11 +218,11 @@ export default function ParentalScreen() {
       loop.start();
       return () => loop.stop();
     }
-  }, [step, showWizard]);
+  }, [step, showWizard, pulseAnim]);
 
   // Verification stage progression (step 2)
   useEffect(() => {
-    if (step === 2) {
+    if (step === 2 && showWizard) {
       setVerifyStage(0);
       setSafetyFactIdx(0);
       const stageInterval = setInterval(() => {
@@ -190,7 +235,7 @@ export default function ParentalScreen() {
       }, 4000);
       return () => { clearInterval(stageInterval); clearInterval(factInterval); };
     }
-  }, [step]);
+  }, [step, showWizard, isMountedRef]);
 
   // Confetti explosion (step 3)
   useEffect(() => {
@@ -259,13 +304,77 @@ export default function ParentalScreen() {
     // Refresh from API in background (don't block UI)
     api.parentalListChildren().then(r => {
       if (r.success && isMountedRef.current) {
-        setChildren(r.data?.children || []);
-        setCache('parental_children', r.data?.children || [], 2592000000).catch(() => {});
+        const list = r.data?.children || [];
+        setChildren(list);
+        setCache('parental_children', list, 2592000000).catch(() => {});
       }
     }).catch(() => {}).finally(() => { if (isMountedRef.current) setLoading(false); });
-  }, []);
+  }, [isMountedRef]);
 
-  useEffect(() => { loadChildren(); }, [loadChildren]);
+  // Pending unlock requests — drives the red-dot banner at top of dashboard.
+  const loadPendingRequests = useCallback(async () => {
+    try {
+      const r = await api.parentalPendingRequests('pending');
+      if (r?.success && isMountedRef.current) {
+        setPendingRequests(Array.isArray(r.data?.requests) ? r.data.requests : (Array.isArray(r.data) ? r.data : []));
+      }
+    } catch {}
+  }, [isMountedRef]);
+
+  // Per-child meta (screen time + bedtime + lock state). Fired in parallel
+  // for every active child so quick-action mini-bars + bedtime card render
+  // immediately. Best-effort: any failure leaves that child's meta unset.
+  const loadChildMeta = useCallback(async (list) => {
+    if (!Array.isArray(list) || list.length === 0) return;
+    const active = list.filter(c => c.status === 'active');
+    await Promise.all(active.map(async (c) => {
+      try {
+        const [stRes, restRes] = await Promise.all([
+          api.parentalScreenTime(c.child_email).catch(() => null),
+          api.parentalGetRestrictions(c.child_email).catch(() => null),
+        ]);
+        if (!isMountedRef.current) return;
+        const meta = {
+          screen_time_used: stRes?.data?.minutes_today ?? stRes?.data?.used_minutes ?? null,
+          screen_time_limit: stRes?.data?.daily_limit ?? restRes?.data?.screen_time_limit ?? null,
+          bedtime_start: restRes?.data?.bedtime_start || null,
+          bedtime_end: restRes?.data?.bedtime_end || null,
+          locked: !!(restRes?.data?.locked),
+          messages_today: stRes?.data?.messages_today ?? null,
+          last_location: restRes?.data?.last_location || null,
+        };
+        setChildMeta(prev => ({ ...prev, [c.child_email]: meta }));
+      } catch {}
+    }));
+  }, [isMountedRef]);
+
+  // Pull-to-refresh: refresh list + pending + meta in parallel.
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    haptics.tap('light');
+    try {
+      const r = await api.parentalListChildren();
+      if (r?.success && isMountedRef.current) {
+        const list = r.data?.children || [];
+        setChildren(list);
+        setCache('parental_children', list, 2592000000).catch(() => {});
+        await Promise.all([loadPendingRequests(), loadChildMeta(list)]);
+      }
+    } catch {}
+    finally { if (isMountedRef.current) setRefreshing(false); }
+  }, [isMountedRef, loadPendingRequests, loadChildMeta]);
+
+  useEffect(() => { loadChildren(); loadPendingRequests(); }, [loadChildren, loadPendingRequests]);
+
+  // Refresh meta whenever children list changes.
+  useEffect(() => { loadChildMeta(children); }, [children, loadChildMeta]);
+
+  // 60s heartbeat — only run when dashboard is visible (not wizard).
+  useEffect(() => {
+    if (showWizard) return;
+    const id = setInterval(() => { if (isMountedRef.current) setNow(Date.now()); }, 60000);
+    return () => clearInterval(id);
+  }, [showWizard, isMountedRef]);
 
   const relationships = [
     { key: 'mae', label: t('parental.relMom'), emoji: <IconUser size={24} color="#EC4899" />, color: '#EC4899' },
@@ -402,16 +511,165 @@ export default function ParentalScreen() {
   const formatLastActive = (dateStr) => {
     if (!dateStr) return '';
     const d = new Date(dateStr);
-    const now = new Date();
-    const diffMs = now - d;
+    // Use the heartbeat `now` so the relative time refreshes every minute
+    // without forcing the whole list to re-render the underlying card.
+    const diffMs = now - d.getTime();
     const diffMin = Math.floor(diffMs / 60000);
-    if (diffMin < 1) return t('time.now') || 'now';
+    if (diffMin < 1) return t('time.now') || 'agora';
     if (diffMin < 60) return `${diffMin}m`;
     const diffH = Math.floor(diffMin / 60);
     if (diffH < 24) return `${diffH}h`;
     const diffD = Math.floor(diffH / 24);
     return `${diffD}d`;
   };
+
+  // "Online agora" / "Vista 5 min atrás" subtitle — Instagram-grade.
+  // Considers a child online if last_active was within the last 3 minutes.
+  const presenceLine = (item) => {
+    if (!item.last_active) return '';
+    const last = new Date(item.last_active).getTime();
+    const diffMin = Math.floor((now - last) / 60000);
+    if (diffMin < 3) return t('parental.onlineNow') || 'Online agora';
+    if (diffMin < 60) return `${t('parental.lastSeen') || 'Vista'} ${diffMin} min ${t('parental.ago') || 'atrás'}`;
+    const diffH = Math.floor(diffMin / 60);
+    if (diffH < 24) return `${t('parental.lastSeen') || 'Vista'} ${diffH}h ${t('parental.ago') || 'atrás'}`;
+    const diffD = Math.floor(diffH / 24);
+    return `${t('parental.lastSeen') || 'Vista'} ${diffD}d ${t('parental.ago') || 'atrás'}`;
+  };
+
+  const isOnline = (item) => {
+    if (!item?.last_active) return false;
+    const last = new Date(item.last_active).getTime();
+    return (now - last) < 3 * 60000;
+  };
+
+  // Stable per-child gradient (for the avatar halo). Hash the email so
+  // the same child always gets the same colors across sessions.
+  const childGradient = (email) => {
+    const palettes = [
+      ['#7C3AED', '#EC4899'], // purple → pink
+      ['#3B82F6', '#06B6D4'], // blue → cyan
+      ['#10B981', '#84CC16'], // green → lime
+      ['#F59E0B', '#EF4444'], // amber → red
+      ['#8B5CF6', '#3B82F6'], // violet → blue
+    ];
+    let h = 0;
+    for (let i = 0; i < (email || '').length; i++) h = (h * 31 + email.charCodeAt(i)) | 0;
+    return palettes[Math.abs(h) % palettes.length];
+  };
+
+  // Bedtime helpers. Backend stores HH:MM strings. Returns whether the kid
+  // is currently inside the bedtime window + the end time as Date.
+  const parseHHMM = (s) => {
+    if (!s) return null;
+    const m = String(s).match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return null;
+    return { h: parseInt(m[1]), m: parseInt(m[2]) };
+  };
+
+  const bedtimeStatus = (meta) => {
+    if (!meta) return { active: false };
+    const start = parseHHMM(meta.bedtime_start);
+    const end = parseHHMM(meta.bedtime_end);
+    if (!start || !end) return { active: false };
+    const d = new Date(now);
+    const cur = d.getHours() * 60 + d.getMinutes();
+    const startMin = start.h * 60 + start.m;
+    const endMin = end.h * 60 + end.m;
+    let active = false;
+    // Window can wrap midnight (e.g. 22:00 → 06:00).
+    if (startMin <= endMin) active = cur >= startMin && cur < endMin;
+    else active = cur >= startMin || cur < endMin;
+    if (!active) return { active: false };
+    // Compute end as a Date so we can format HH:MM in user's locale.
+    const endDate = new Date(d);
+    endDate.setSeconds(0, 0);
+    if (endMin > cur) endDate.setHours(end.h, end.m, 0, 0);
+    else { endDate.setDate(endDate.getDate() + 1); endDate.setHours(end.h, end.m, 0, 0); }
+    const minsLeft = Math.max(0, Math.floor((endDate.getTime() - now) / 60000));
+    return { active: true, endDate, minsLeft, endLabel: meta.bedtime_end };
+  };
+
+  // Open a child's last known location in maps.
+  const openChildLocation = useCallback(async (child) => {
+    haptics.tap('light');
+    try {
+      const r = await api.parentalGetLocation(child.child_email);
+      const loc = r?.data?.location || r?.data;
+      const lat = loc?.latitude ?? loc?.lat;
+      const lng = loc?.longitude ?? loc?.lng;
+      if (lat == null || lng == null) {
+        Alert.alert(t('parental.locationUnavailable') || 'Localização indisponível', t('parental.locationUnavailableDesc') || 'Ainda não recebemos a localização desta criança.');
+        return;
+      }
+      const url = Platform.select({
+        ios: `https://maps.apple.com/?ll=${lat},${lng}&q=${encodeURIComponent(child.child_name)}`,
+        android: `geo:${lat},${lng}?q=${lat},${lng}(${encodeURIComponent(child.child_name)})`,
+        default: `https://www.google.com/maps?q=${lat},${lng}`,
+      });
+      Linking.openURL(url).catch(() => {
+        Linking.openURL(`https://www.google.com/maps?q=${lat},${lng}`).catch(() => {});
+      });
+    } catch {
+      Alert.alert(t('parental.error'), t('parental.connectionError'));
+    }
+  }, [t]);
+
+  // Lock the child's account NOW. Optimistic UI — flip childMeta locked
+  // immediately, revert on failure.
+  const lockChildNow = useCallback((child) => {
+    Alert.alert(
+      t('parental.lockNowTitle') || 'Pausar app agora?',
+      `${t('parental.lockNowDesc') || 'A criança vai ver a tela de bloqueio até você liberar.'} (${child.child_name})`,
+      [
+        { text: t('parental.cancel') || 'Cancelar', style: 'cancel' },
+        {
+          text: t('parental.lockNow') || 'Pausar',
+          style: 'destructive',
+          onPress: async () => {
+            haptics.warning();
+            const prev = childMeta[child.child_email];
+            setChildMeta(p => ({ ...p, [child.child_email]: { ...(p[child.child_email] || {}), locked: true } }));
+            try {
+              const r = await api.parentalLockChild(child.child_email);
+              if (!r?.success) throw new Error('lock failed');
+            } catch {
+              if (isMountedRef.current) {
+                setChildMeta(p => ({ ...p, [child.child_email]: prev || {} }));
+                Alert.alert(t('parental.error'), t('parental.connectionError'));
+              }
+            }
+          },
+        },
+      ]
+    );
+  }, [t, childMeta, isMountedRef]);
+
+  // Grant +15 min bonus screen-time. Works even when no daily limit set.
+  const grantBonusTime = useCallback(async (child) => {
+    haptics.success();
+    try {
+      const r = await api.parentalGrantExtraTime(child.child_email, 15);
+      if (r?.success) {
+        Alert.alert(
+          t('parental.bonusGranted') || 'Tempo concedido!',
+          (t('parental.bonusGrantedDesc') || '+15 minutos liberados para').concat(' ', child.child_name)
+        );
+        // Optimistic: bump the limit on screen so progress bar reflects it.
+        setChildMeta(p => ({
+          ...p,
+          [child.child_email]: {
+            ...(p[child.child_email] || {}),
+            screen_time_limit: (p[child.child_email]?.screen_time_limit || 0) + 15,
+          },
+        }));
+      } else {
+        Alert.alert(t('parental.error'), r?.message || t('parental.connectionError'));
+      }
+    } catch {
+      Alert.alert(t('parental.error'), t('parental.connectionError'));
+    }
+  }, [t]);
 
   // ─── Confetti Overlay ───
   const CONFETTI_COLORS = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FED766', '#7C3AED', '#F472B6', '#34D399', '#FB923C'];
@@ -495,7 +753,7 @@ export default function ParentalScreen() {
         <View style={s.mascotCircle}>
           {(() => {
             const icons = [IconShield, IconUser, IconStar, IconHeart, IconSparkles, IconSmile];
-            const Ico = icons[mascotFrameRef.current % icons.length];
+            const Ico = icons[mascotFrame % icons.length];
             return <Ico size={44} color="#7C3AED" />;
           })()}
         </View>
@@ -1129,16 +1387,55 @@ export default function ParentalScreen() {
   };
 
   // ─── Child Card Renderer ───
-  const renderChild = ({ item }) => {
+  // Quick-action row config — 5 actions per WhatsApp/Snapchat parent app pattern.
+  const CHILD_QUICK_ACTIONS = [
+    { key: 'messages', Icon: IconMessageSquare, color: '#22c55e', labelKey: 'parental.messages', fallback: 'Mensagens' },
+    { key: 'screenTime', Icon: IconClock, color: '#3b82f6', labelKey: 'parental.screenTime', fallback: 'Tempo' },
+    { key: 'location', Icon: IconHome, color: '#06b6d4', labelKey: 'parental.location', fallback: 'Local' },
+    { key: 'lock', Icon: IconLock, color: '#ef4444', labelKey: 'parental.lockNow', fallback: 'Pausar' },
+    { key: 'bonus', Icon: IconStar, color: '#f59e0b', labelKey: 'parental.bonus15', fallback: '+15min' },
+  ];
+
+  const handleChildAction = (key, child) => {
+    haptics.tap('light');
+    if (key === 'messages' || key === 'screenTime') {
+      router.push(`/parental-monitor?child_email=${encodeURIComponent(child.child_email)}&child_name=${encodeURIComponent(child.child_name)}`);
+    } else if (key === 'location') {
+      openChildLocation(child);
+    } else if (key === 'lock') {
+      lockChildNow(child);
+    } else if (key === 'bonus') {
+      grantBonusTime(child);
+    }
+  };
+
+  const renderChild = ({ item, index }) => {
     const st = statusConfig[item.status] || statusConfig.pending_verification;
     const isGraduated = item.status === 'graduated';
     const isActive = item.status === 'active';
+    const meta = childMeta[item.child_email] || {};
+    const online = isActive && isOnline(item);
+    const bedtime = isActive ? bedtimeStatus(meta) : { active: false };
+    const grad = childGradient(item.child_email);
+    const stUsed = Number(meta.screen_time_used || 0);
+    const stLimit = Number(meta.screen_time_limit || 0);
+    const stPct = stLimit > 0 ? Math.min(100, Math.round((stUsed / stLimit) * 100)) : 0;
+    const stColor = stPct >= 90 ? '#ef4444' : stPct >= 70 ? '#f59e0b' : '#22c55e';
 
     return (
-      <View style={[s.childCard, { backgroundColor: isDark ? '#1a2332' : '#fff', borderColor: isDark ? '#2d3748' : '#e8ecf0' }]}>
+      <Animated.View
+        style={[s.childCard, {
+          backgroundColor: isDark ? '#1a2332' : '#fff',
+          borderColor: isDark ? '#2d3748' : '#e8ecf0',
+          // Subtle staggered fade-in based on list index.
+          opacity: fadeAnim,
+        }]}
+      >
         <TouchableOpacity
           style={s.childCardMain}
+          onLongPress={() => { if (isActive) { haptics.tap('medium'); openAiSummary(item); } }}
           onPress={() => {
+            haptics.tap('light');
             if (isActive) router.push(`/parental-monitor?child_email=${encodeURIComponent(item.child_email)}&child_name=${encodeURIComponent(item.child_name)}`);
             else if (item.status === 'pending_verification') {
               setNewChild({ account_id: item.id, child_email: item.child_email, child_name: item.child_name });
@@ -1146,35 +1443,88 @@ export default function ParentalScreen() {
               setStep(1);
             }
           }}
-          activeOpacity={0.7}
+          activeOpacity={0.85}
         >
-          <View style={[s.childAvatar, { backgroundColor: st.color + '18' }]}>
-            {st.icon}
-          </View>
-          <View style={{ flex: 1 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Text style={[s.childName, { color: colors.text }]}>{item.child_name}</Text>
-              {item.last_active && (
-                <Text style={[s.lastActive, { color: colors.textSecondary }]}>
-                  {t('parental.lastActive')} {formatLastActive(item.last_active)}
-                </Text>
-              )}
-            </View>
-            <Text style={[s.childEmail, { color: colors.textSecondary }]}>{item.child_email}</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 6 }}>
-              <View style={[s.statusPill, { backgroundColor: st.color + '15' }]}>
-                <Text style={[s.statusText, { color: st.color }]}>{st.label}</Text>
+          {/* Avatar with gradient halo + online pulse */}
+          <View style={{ position: 'relative', alignItems: 'center', justifyContent: 'center' }}>
+            <View
+              style={[s.childAvatarHalo, {
+                ...(Platform.OS === 'web'
+                  ? { background: `linear-gradient(135deg, ${grad[0]} 0%, ${grad[1]} 100%)` }
+                  : { backgroundColor: grad[0] }),
+              }]}
+            />
+            <AvatarCircle
+              email={item.child_email}
+              name={item.child_name}
+              size={52}
+              style={{ borderWidth: 3, borderColor: isDark ? '#1a2332' : '#fff' }}
+            />
+            {online && <OnlineDot dark={isDark} />}
+            {meta.locked && (
+              <View style={s.lockBadge}>
+                <IconLock size={10} color="#fff" />
               </View>
+            )}
+          </View>
+
+          <View style={{ flex: 1, marginLeft: 14 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={[s.childName, { color: colors.text }]} numberOfLines={1}>{item.child_name}</Text>
+            </View>
+            <Text style={[s.childEmail, { color: colors.textSecondary }]} numberOfLines={1}>{item.child_email}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+              {online ? (
+                <Text style={[s.lastActive, { color: '#22c55e', fontWeight: '700' }]} numberOfLines={1}>
+                  {presenceLine(item)}
+                </Text>
+              ) : item.last_active ? (
+                <Text style={[s.lastActive, { color: colors.textSecondary }]} numberOfLines={1}>{presenceLine(item)}</Text>
+              ) : (
+                <View style={[s.statusPill, { backgroundColor: st.color + '15' }]}>
+                  <Text style={[s.statusText, { color: st.color }]}>{st.label}</Text>
+                </View>
+              )}
               {item.unread_alerts > 0 && (
                 <View style={[s.alertPill, { backgroundColor: '#ef444418' }]}>
                   <IconAlertCircle size={11} color="#ef4444" />
-                  <Text style={s.alertPillText}>{item.unread_alerts} {t('parental.unreadAlerts')}</Text>
+                  <Text style={s.alertPillText}>{item.unread_alerts}</Text>
                 </View>
               )}
             </View>
           </View>
           <IconChevronRight size={18} color={colors.textSecondary} />
         </TouchableOpacity>
+
+        {/* Bedtime active banner — countdown updates via `now` heartbeat */}
+        {isActive && bedtime.active && (
+          <View style={[s.bedtimeBanner, { backgroundColor: isDark ? '#1e1b3a' : '#ede9fe', borderTopColor: isDark ? '#2d3748' : '#ddd6fe' }]}>
+            <IconMoon size={16} color="#7C3AED" />
+            <Text style={[s.bedtimeText, { color: isDark ? '#c4b5fd' : '#5b21b6' }]} numberOfLines={1}>
+              {t('parental.bedtimeActive') || 'Em modo noturno até'} {bedtime.endLabel}
+              {bedtime.minsLeft > 0 ? ` · ${bedtime.minsLeft} min` : ''}
+            </Text>
+          </View>
+        )}
+
+        {/* Screen-time mini-progress */}
+        {isActive && stLimit > 0 && (
+          <View style={[s.screenTimeRow, { borderTopColor: isDark ? '#2d3748' : '#f1f5f9' }]}>
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 }}>
+                <Text style={[s.screenTimeLabel, { color: colors.textSecondary }]}>
+                  {t('parental.screenTimeToday') || 'Tempo de tela'}
+                </Text>
+                <Text style={[s.screenTimeLabel, { color: stColor, fontWeight: '700' }]}>
+                  {stUsed}/{stLimit} min
+                </Text>
+              </View>
+              <View style={[s.screenTimeBar, { backgroundColor: isDark ? '#0f172a' : '#f1f5f9' }]}>
+                <View style={[s.screenTimeFill, { width: `${stPct}%`, backgroundColor: stColor }]} />
+              </View>
+            </View>
+          </View>
+        )}
 
         {isGraduated && (
           <View style={[s.graduatedBanner, { backgroundColor: '#8b5cf610', borderTopColor: isDark ? '#2d3748' : '#e8ecf0' }]}>
@@ -1183,23 +1533,37 @@ export default function ParentalScreen() {
           </View>
         )}
 
+        {/* Quick-action icon row (5 actions) */}
         {isActive && (
           <View style={[s.childActions, { borderTopColor: isDark ? '#2d3748' : '#f1f5f9' }]}>
-            <TouchableOpacity style={s.childActionBtn} onPress={() => openAiSummary(item)}>
-              <IconBarChart size={14} color="#8b5cf6" />
-              <Text style={[s.childActionText, { color: '#8b5cf6' }]}>{t('parental.aiSummary')}</Text>
-            </TouchableOpacity>
-            <View style={[s.childActionDivider, { backgroundColor: isDark ? '#2d3748' : '#f1f5f9' }]} />
-            <TouchableOpacity
-              style={s.childActionBtn}
-              onPress={() => router.push(`/parental-monitor?child_email=${encodeURIComponent(item.child_email)}&child_name=${encodeURIComponent(item.child_name)}`)}
-            >
-              <IconClock size={14} color={ACCENT} />
-              <Text style={[s.childActionText, { color: ACCENT }]}>{t('parental.screenTime')}</Text>
-            </TouchableOpacity>
+            {CHILD_QUICK_ACTIONS.map((a, i) => {
+              const showBadge = a.key === 'messages' && meta.messages_today > 0;
+              return (
+                <TouchableOpacity
+                  key={a.key}
+                  style={[s.childQuickAction, i > 0 && { borderLeftColor: isDark ? '#2d3748' : '#f1f5f9', borderLeftWidth: 1 }]}
+                  onPress={() => handleChildAction(a.key, item)}
+                  activeOpacity={0.7}
+                  accessibilityLabel={t(a.labelKey) || a.fallback}
+                  accessibilityRole="button"
+                >
+                  <View style={{ position: 'relative' }}>
+                    <a.Icon size={18} color={a.color} />
+                    {showBadge && (
+                      <View style={s.miniBadge}>
+                        <Text style={s.miniBadgeText}>{meta.messages_today > 99 ? '99+' : meta.messages_today}</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={[s.childActionText, { color: a.color, fontSize: 11 }]} numberOfLines={1}>
+                    {t(a.labelKey) || a.fallback}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
         )}
-      </View>
+      </Animated.View>
     );
   };
 
@@ -1280,16 +1644,85 @@ export default function ParentalScreen() {
   }
 
   // ─── AI Summary Modal ───
+  // Compose a shareable plain-text summary so parents can forward it to a
+  // co-parent / pediatrician / school via the OS share sheet.
+  const buildShareText = () => {
+    if (!summaryData || !summaryChild) return '';
+    const lines = [`${t('parental.aiSummary')} — ${summaryChild.child_name}`];
+    if (summaryData.summary) lines.push('', summaryData.summary);
+    if (summaryData.risk_level) lines.push('', `${riskLabel(summaryData.risk_level)}${summaryData.risk_reason ? ': ' + summaryData.risk_reason : ''}`);
+    if (summaryData.highlights?.length) {
+      lines.push('', (t('parental.highlights') || 'Destaques') + ':');
+      summaryData.highlights.forEach(h => lines.push('• ' + h));
+    }
+    if (summaryData.flagged_items?.length) {
+      lines.push('', (t('parental.flaggedContent') || 'Pontos de atenção') + ':');
+      summaryData.flagged_items.forEach(f => lines.push('• ' + f));
+    }
+    if (summaryData.recommendations?.length) {
+      lines.push('', (t('parental.recommendations') || 'Recomendações') + ':');
+      summaryData.recommendations.forEach(r => lines.push('• ' + r));
+    }
+    return lines.join('\n');
+  };
+
+  const shareSummary = async () => {
+    try {
+      haptics.tap('light');
+      const message = buildShareText();
+      if (!message) return;
+      if (Platform.OS === 'web') {
+        if (typeof navigator !== 'undefined' && navigator.share) {
+          await navigator.share({ title: `${t('parental.aiSummary')} — ${summaryChild?.child_name || ''}`, text: message });
+        } else if (typeof navigator !== 'undefined' && navigator.clipboard) {
+          await navigator.clipboard.writeText(message);
+          Alert.alert('', t('parental.copiedToClipboard') || 'Resumo copiado.');
+        }
+      } else {
+        await Share.share({ message });
+      }
+    } catch {}
+  };
+
+  // Tiny inline markdown renderer — supports **bold** within a line. Keeps
+  // newlines as paragraph breaks. Avoids pulling in a heavy markdown lib.
+  const renderInlineMarkdown = (text, baseStyle) => {
+    if (!text) return null;
+    const lines = String(text).split('\n');
+    return lines.map((ln, lineIdx) => {
+      const parts = ln.split(/(\*\*[^*]+\*\*)/g).filter(Boolean);
+      return (
+        <Text key={lineIdx} style={baseStyle}>
+          {parts.map((p, i) => {
+            if (p.startsWith('**') && p.endsWith('**')) {
+              return <Text key={i} style={{ fontWeight: '800' }}>{p.slice(2, -2)}</Text>;
+            }
+            return p;
+          })}
+          {lineIdx < lines.length - 1 ? '\n' : ''}
+        </Text>
+      );
+    });
+  };
+
   const renderSummaryModal = () => (
     <Modal visible={summaryModal} transparent animationType="fade" onRequestClose={() => setSummaryModal(false)}>
       <View style={s.modalOverlay}>
         <View style={[s.modalContent, { backgroundColor: isDark ? '#1a2332' : '#fff' }]}>
           <View style={s.modalHeader}>
-            <View style={{ flex: 1 }}>
-              <Text style={[s.modalTitle, { color: colors.text }]}>{t('parental.aiSummary')}</Text>
-              {summaryChild && <Text style={[s.modalSub, { color: colors.textSecondary }]}>{summaryChild.child_name}</Text>}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+              {summaryChild && <AvatarCircle email={summaryChild.child_email} name={summaryChild.child_name} size={36} />}
+              <View style={{ flex: 1 }}>
+                <Text style={[s.modalTitle, { color: colors.text }]}>{t('parental.aiSummary')}</Text>
+                {summaryChild && <Text style={[s.modalSub, { color: colors.textSecondary }]} numberOfLines={1}>{summaryChild.child_name}</Text>}
+              </View>
             </View>
-            <TouchableOpacity onPress={() => setSummaryModal(false)} style={s.modalClose}>
+            {!summaryLoading && summaryData && !summaryData.error && (
+              <TouchableOpacity onPress={shareSummary} style={[s.modalClose, { marginRight: 4 }]} accessibilityLabel={t('parental.share') || 'Compartilhar'} accessibilityRole="button">
+                <IconCopy size={18} color={ACCENT} />
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity onPress={() => setSummaryModal(false)} style={s.modalClose} accessibilityLabel="Close" accessibilityRole="button">
               <IconX size={20} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
@@ -1319,8 +1752,26 @@ export default function ParentalScreen() {
 
                 {summaryData.summary && (
                   <View style={[s.summarySection, { borderColor: isDark ? '#334155' : '#e2e8f0' }]}>
-                    <Text style={[s.summarySectionTitle, { color: colors.textSecondary }]}>{t('parental.summary')}</Text>
-                    <Text style={[s.summarySectionBody, { color: colors.text }]}>{summaryData.summary}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                      <IconSparkles size={14} color={ACCENT} />
+                      <Text style={[s.summarySectionTitle, { color: colors.textSecondary, marginBottom: 0 }]}>{t('parental.summary')}</Text>
+                    </View>
+                    {renderInlineMarkdown(summaryData.summary, [s.summarySectionBody, { color: colors.text }])}
+                  </View>
+                )}
+
+                {summaryData.highlights?.length > 0 && (
+                  <View style={[s.summarySection, { borderColor: '#22c55e30' }]}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                      <IconStar size={14} color="#22c55e" />
+                      <Text style={[s.summarySectionTitle, { color: '#22c55e', marginBottom: 0 }]}>{t('parental.highlights') || 'Destaques'}</Text>
+                    </View>
+                    {summaryData.highlights.map((h, i) => (
+                      <View key={i} style={s.flaggedItem}>
+                        <Text style={{ color: '#22c55e' }}>•</Text>
+                        <Text style={[s.flaggedText, { color: colors.text }]}>{h}</Text>
+                      </View>
+                    ))}
                   </View>
                 )}
 
@@ -1387,13 +1838,54 @@ export default function ParentalScreen() {
   ];
 
   const handleQuickAction = (action, child) => {
+    haptics.tap('light');
     if (action === 'screenTime') {
       router.push(`/parental-monitor?child_email=${encodeURIComponent(child.child_email)}&child_name=${encodeURIComponent(child.child_name)}`);
     } else if (action === 'summary') {
       openAiSummary(child);
     } else if (action === 'lock') {
-      api.parentalUpdateRestrictions(child.child_email, { locked: true }).catch(() => {});
+      lockChildNow(child);
+    } else if (action === 'message') {
+      router.push(`/parental-monitor?child_email=${encodeURIComponent(child.child_email)}&child_name=${encodeURIComponent(child.child_name)}`);
     }
+  };
+
+  // Pending requests banner — shows red dot + count when any child has
+  // a pending parental_unlock_request waiting for the parent's decision.
+  const pendingCount = pendingRequests.length;
+  const pendingChildNames = useMemo(() => {
+    const names = new Set();
+    pendingRequests.forEach(r => { if (r?.child_name) names.add(r.child_name); });
+    return Array.from(names);
+  }, [pendingRequests]);
+
+  const renderPendingBanner = () => {
+    if (pendingCount === 0) return null;
+    const names = pendingChildNames.slice(0, 2).join(', ') + (pendingChildNames.length > 2 ? '…' : '');
+    return (
+      <TouchableOpacity
+        style={[s.pendingBanner, { backgroundColor: isDark ? '#3b1115' : '#fef2f2', borderColor: '#ef444460' }]}
+        onPress={() => { haptics.tap('light'); router.push('/parental-monitor?tab=requests'); }}
+        activeOpacity={0.85}
+        accessibilityLabel={`${pendingCount} pedidos pendentes`}
+        accessibilityRole="button"
+      >
+        <View style={s.pendingDotWrap}>
+          <View style={s.pendingDot} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={[s.pendingTitle, { color: '#ef4444' }]} numberOfLines={1}>
+            {pendingCount} {pendingCount === 1
+              ? (t('parental.pendingRequest') || 'pedido do(a) seu(sua) filho(a)')
+              : (t('parental.pendingRequests') || 'pedidos do(s) seu(s) filho(s)')}
+          </Text>
+          {names ? (
+            <Text style={[s.pendingSub, { color: isDark ? '#fca5a5' : '#991b1b' }]} numberOfLines={1}>{names}</Text>
+          ) : null}
+        </View>
+        <IconChevronRight size={18} color="#ef4444" />
+      </TouchableOpacity>
+    );
   };
 
   // ─── Dashboard (Main Screen) ───
@@ -1419,32 +1911,64 @@ export default function ParentalScreen() {
         </View>
       </View>
 
-      {/* Hero (empty state) */}
+      {/* Empty state — Lottie-style illustration + CTA via EmptyStateCard primitive */}
       {children.length === 0 && !loading && (
-        <View style={s.hero}>
-          <IconShield size={72} color={ACCENT} />
-          <Text style={[s.heroTitle, { color: colors.text }]}>{t('parental.parentalControl')}</Text>
-          <Text style={[s.heroDesc, { color: colors.textSecondary }]}>
-            {t('parental.heroDesc')}
-          </Text>
-          <TouchableOpacity style={[s.heroBtn, { backgroundColor: ACCENT }]} onPress={() => setShowWizard(true)} accessibilityLabel="Add child" accessibilityRole="button">
-            <IconPlus size={20} color="#fff" />
-            <Text style={s.heroBtnText}>{t('parental.addChild')}</Text>
-          </TouchableOpacity>
-        </View>
+        <ScrollView
+          contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', paddingBottom: 40 }}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} colors={[ACCENT]} />
+          }
+        >
+          {renderPendingBanner()}
+          <EmptyStateCard
+            illustration={
+              <View style={s.heroIllustration}>
+                <View style={[s.heroBlob, { backgroundColor: ACCENT + '18' }]} />
+                <View style={[s.heroBlob, s.heroBlob2, { backgroundColor: '#10B98118' }]} />
+                <View style={[s.heroBlob, s.heroBlob3, { backgroundColor: '#EC489918' }]} />
+                <View style={s.heroIconCenter}>
+                  <IconShield size={56} color={ACCENT} />
+                </View>
+              </View>
+            }
+            title={t('parental.heroTitle') || t('parental.parentalControl')}
+            subtitle={t('parental.heroDesc')}
+            ctaLabel={t('parental.addFirstChild') || t('parental.addChild')}
+            onPress={() => { haptics.tap('medium'); setShowWizard(true); }}
+            tone="primary"
+          />
+        </ScrollView>
       )}
 
       {/* Children List with quick actions */}
       {(children.length > 0 || loading) && (
-        loading ? <ActivityIndicator size="large" color={ACCENT} style={{ marginTop: 60 }} /> : (
+        loading && children.length === 0 ? (
+          <View style={{ padding: 16, gap: 14 }}>
+            {[0, 1].map(i => (
+              <View key={i} style={[s.skeletonCard, { backgroundColor: isDark ? '#1a2332' : '#f1f5f9', borderColor: isDark ? '#2d3748' : '#e8ecf0' }]}>
+                <View style={[s.skeletonAvatar, { backgroundColor: isDark ? '#2d3748' : '#e2e8f0' }]} />
+                <View style={{ flex: 1, gap: 8 }}>
+                  <View style={[s.skeletonLine, { backgroundColor: isDark ? '#2d3748' : '#e2e8f0', width: '60%' }]} />
+                  <View style={[s.skeletonLine, { backgroundColor: isDark ? '#2d3748' : '#e2e8f0', width: '85%', height: 10 }]} />
+                  <View style={[s.skeletonLine, { backgroundColor: isDark ? '#2d3748' : '#e2e8f0', width: '40%', height: 10 }]} />
+                </View>
+              </View>
+            ))}
+          </View>
+        ) : (
           <FlatList
             data={children}
             keyExtractor={item => String(item.id)}
             renderItem={renderChild}
-            contentContainerStyle={{ padding: 16, paddingBottom: 100 }}
+            contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
+            keyboardShouldPersistTaps="handled"
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} colors={[ACCENT]} />
+            }
             ListHeaderComponent={
               children.length > 0 ? (
                 <View style={{ marginBottom: 16 }}>
+                  {renderPendingBanner()}
                   <Text style={[s.quickActionsTitle, { color: colors.textSecondary }]}>
                     {(t('parental.quickActions')).toUpperCase()}
                   </Text>
@@ -1747,4 +2271,44 @@ const s = StyleSheet.create({
 
   // FAB
   fab: { position: 'absolute', bottom: 28, right: 28, width: 60, height: 60, borderRadius: 22, alignItems: 'center', justifyContent: 'center', elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 8, ...(Platform.OS === 'web' ? { boxShadow: '0 6px 24px rgba(124,58,237,0.4)' } : {}) },
+
+  // Pending requests banner (top of dashboard)
+  pendingBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 18, borderWidth: 1.5, marginBottom: 14 },
+  pendingDotWrap: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
+  pendingDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#ef4444' },
+  pendingTitle: { fontSize: 14, fontWeight: '800' },
+  pendingSub: { fontSize: 12, marginTop: 2 },
+
+  // Child avatar halo (gradient ring under AvatarCircle)
+  childAvatarHalo: { position: 'absolute', width: 60, height: 60, borderRadius: 30 },
+
+  // Lock badge over avatar when child account is paused
+  lockBadge: { position: 'absolute', top: -2, right: -2, width: 18, height: 18, borderRadius: 9, backgroundColor: '#ef4444', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#fff' },
+
+  // Bedtime banner (in-window child)
+  bedtimeBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: 1 },
+  bedtimeText: { flex: 1, fontSize: 12, fontWeight: '700' },
+
+  // Screen-time mini-bar
+  screenTimeRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: 1, gap: 12 },
+  screenTimeLabel: { fontSize: 11, fontWeight: '600' },
+  screenTimeBar: { height: 6, borderRadius: 3, overflow: 'hidden' },
+  screenTimeFill: { height: 6, borderRadius: 3 },
+
+  // Per-child quick-action row (5 icons)
+  childQuickAction: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 4, paddingVertical: 10 },
+  miniBadge: { position: 'absolute', top: -6, right: -10, minWidth: 16, height: 14, borderRadius: 8, backgroundColor: '#ef4444', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
+  miniBadgeText: { color: '#fff', fontSize: 9, fontWeight: '800' },
+
+  // Hero illustration (empty state)
+  heroIllustration: { width: 180, height: 180, alignItems: 'center', justifyContent: 'center', position: 'relative' },
+  heroBlob: { position: 'absolute', width: 110, height: 110, borderRadius: 55 },
+  heroBlob2: { top: 8, left: 14, width: 80, height: 80, borderRadius: 40 },
+  heroBlob3: { bottom: 10, right: 16, width: 70, height: 70, borderRadius: 35 },
+  heroIconCenter: { width: 96, height: 96, borderRadius: 48, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', elevation: 4, shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 12 },
+
+  // Skeleton loader (initial load, no cache)
+  skeletonCard: { flexDirection: 'row', alignItems: 'center', padding: 18, gap: 14, borderRadius: 22, borderWidth: 1.5 },
+  skeletonAvatar: { width: 52, height: 52, borderRadius: 26 },
+  skeletonLine: { height: 14, borderRadius: 7 },
 });
