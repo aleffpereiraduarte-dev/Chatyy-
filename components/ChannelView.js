@@ -12,7 +12,7 @@ import {
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
-import { IconArrowLeft, IconPlus, IconMegaphone, IconShield, IconUsers, IconSend } from './Icons';
+import { IconArrowLeft, IconPlus, IconShield, IconUsers, IconSend } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import Svg, { Path, Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
 import * as api from '../services/api';

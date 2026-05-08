@@ -4,7 +4,7 @@ import {
   ActivityIndicator, Platform, Dimensions, TextInput, Modal, ScrollView, Alert,
 } from 'react-native';
 import AvatarCircle from './AvatarCircle';
-import { IconSearch, IconPlus, IconArrowLeft, IconMegaphone, IconUsersSmall } from './Icons';
+import { IconSearch, IconPlus, IconArrowLeft } from './Icons';
 import Svg, { Path, Circle as SvgCircle, Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
 import * as api from '../services/api';
 
