@@ -17,12 +17,8 @@ import AvatarCircle from './AvatarCircle';
 import EmptyStateCard from './EmptyStateCard';
 import {
   IconSearch, IconX, IconMail, IconMessageSquare, IconImage,
-  IconUser, IconChevronRight, IconClock, IconFileText, IconFilm,
+  IconUser, IconChevronRight, IconClock, IconFileText, IconFilm, IconFile,
 } from './Icons';
-
-// Alias — Icons.js exports IconFileText (no plain IconFile), but locally we
-// want a generic "file" symbol for the Files section.
-const IconFile = IconFileText;
 
 // Spotlight-style brand accent — used everywhere the focus needs to pop.
 const BRAND = '#7C3AED';

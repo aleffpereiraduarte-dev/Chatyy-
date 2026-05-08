@@ -844,3 +844,32 @@ export function IconHelp({ size, color, style }) {
 export function IconLogOut({ size, color, style }) {
   return <I size={size} color={color} style={style}><Path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><Polyline points="16 17 21 12 16 7"/><Line x1="21" y1="12" x2="9" y2="12"/></I>;
 }
+
+// ───── Wave 10 polish aliases ─────────
+export function IconFile({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><Polyline points="14 2 14 8 20 8"/></I>;
+}
+export function IconAlbum({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Rect x="3" y="3" width="18" height="18" rx="2"/><Polyline points="11 3 11 11 14 8 17 11 17 3"/></I>;
+}
+export function IconCloudUpload({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M16 16l-4-4-4 4"/><Path d="M12 12v9"/><Path d="M20 16.58A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 3 15.25"/></I>;
+}
+export function IconCloudOff({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M2 2l20 20"/><Path d="M5.78 5.78A8 8 0 0 0 8 21h11a4 4 0 0 0 .9-7.89"/></I>;
+}
+export function IconCloudCheck({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M20 16.58A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 3 15.25"/><Polyline points="9 13 11 15 15 11"/></I>;
+}
+export function IconVolume({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><Path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><Path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></I>;
+}
+export function IconMegaphone({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M3 11l18-7v16L3 13z"/><Path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></I>;
+}
+export function IconUsersSmall({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><Circle cx="9" cy="7" r="4"/><Path d="M22 21v-2a4 4 0 0 0-3-3.87"/><Path d="M16 3.13a4 4 0 0 1 0 7.75"/></I>;
+}
+export function IconHashtag({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Line x1="4" y1="9" x2="20" y2="9"/><Line x1="4" y1="15" x2="20" y2="15"/><Line x1="10" y1="3" x2="8" y2="21"/><Line x1="16" y1="3" x2="14" y2="21"/></I>;
+}

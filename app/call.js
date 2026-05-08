@@ -20,7 +20,7 @@ import { useLanguage } from '../context/LanguageContext';
 import AvatarCircle from '../components/AvatarCircle';
 import {
   IconMic, IconMicOff, IconVideo, IconVideoOff, IconPhoneOff,
-  IconVolume2, IconArrowLeft, IconChevronDown, IconCameraFlip, IconScreenShare,
+  IconVolume2, IconVolume, IconArrowLeft, IconChevronDown, IconCameraFlip, IconScreenShare,
   IconPause, IconPlay, IconMoreHorizontal, IconPhone, IconRecord,
   IconZap, IconUserPlus, IconX, IconSearch,
 } from '../components/Icons';
