@@ -615,6 +615,16 @@ export function IconThumbsUp({ size, color, style }) {
   );
 }
 
+// Mirror of IconThumbsUp — used by the One AI "Bad response" affordance
+// in the message context sheet (ChatGPT parity).
+export function IconThumbsDown({ size, color, style }) {
+  return (
+    <I size={size} color={color} style={style}>
+      <Path d="M17 2h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3m-7 2v3a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7L2.34 12.7a2 2 0 0 0 2 2.3H10z"/>
+    </I>
+  );
+}
+
 export function IconHeart({ size, color = '#ef4444', style }) {
   return (
     <I size={size} color={color} fill={color} strokeWidth={0} style={style}>

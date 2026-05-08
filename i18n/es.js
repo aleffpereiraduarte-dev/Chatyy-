@@ -4057,6 +4057,28 @@ export default {
   'one.suggestExpenses': 'Gestionar gastos',
   'one.suggestReminder': 'Recordarme algo',
 
+  // ChatGPT-style redesign
+  'one.emptyHint': '¿Cómo puedo ayudarte hoy?',
+  'one.regenerate': 'Regenerar',
+  'one.badResponse': 'Respuesta mala',
+  'one.badResponseThanks': 'Gracias — feedback registrado.',
+  'one.pickModel': 'Elige un modelo',
+  'one.modelSubFast': 'Rápido para el día a día',
+  'one.modelSubPro': 'Más inteligente',
+  'one.modelSubReason': 'Razonamiento profundo',
+  'one.promptTranslate': 'Traducir',
+  'one.promptTranslateSub': 'una frase o párrafo',
+  'one.promptTranslateMsg': 'Traduce esto al español: ',
+  'one.promptSummarize': 'Resumir',
+  'one.promptSummarizeSub': 'un artículo o conversación',
+  'one.promptSummarizeMsg': 'Resume mis correos no leídos de hoy.',
+  'one.promptCode': 'Código',
+  'one.promptCodeSub': 'ayúdame a programar',
+  'one.promptCodeMsg': 'Escribe una función en Python que ',
+  'one.promptBrainstorm': 'Brainstorm',
+  'one.promptBrainstormSub': 'ideas conmigo',
+  'one.promptBrainstormMsg': 'Hazme un brainstorm de 5 ideas para ',
+
   // Quick Actions Bar
     'one.workflowSaved': '✨ Workflow guardado',
   'one.workflowHint': 'Ahora aparece como chip morado arriba. Pulsación larga para eliminar.',

@@ -14,7 +14,8 @@ import {
   IconMessageSquare, IconClock, IconPlus, IconSparkles,
   IconX, IconBell, IconMenu, IconMic, IconMicOff, IconVolume2, IconVolumeX,
   IconPhone, IconStop, IconFolder, IconUsers, IconCamera, IconEdit,
-  IconChevronUp, IconTrash, IconCopy, IconRepeat,
+  IconChevronUp, IconChevronDown, IconTrash, IconCopy, IconRepeat,
+  IconThumbsDown,
 } from '../components/Icons';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -1268,161 +1269,275 @@ function ToolTypingIndicator({ toolName, isDark, t }) {
   );
 }
 
-function MessageRow({ item, colors, isDark, onSpeak, speakingId, t, onCopy, onRegenerate, isLastAI }) {
+// ChatGPT-style streaming dots inline with the last AI paragraph.
+// Three small dots that fade in/out one after the other.
+function InlineStreamingDots({ isDark }) {
+  const d1 = useRef(new Animated.Value(0.3)).current;
+  const d2 = useRef(new Animated.Value(0.3)).current;
+  const d3 = useRef(new Animated.Value(0.3)).current;
+  useEffect(() => {
+    const anim = (v, delay) => Animated.loop(Animated.sequence([
+      Animated.delay(delay),
+      Animated.timing(v, { toValue: 1, duration: 380, useNativeDriver: false }),
+      Animated.timing(v, { toValue: 0.3, duration: 380, useNativeDriver: false }),
+    ]));
+    const a1 = anim(d1, 0); const a2 = anim(d2, 160); const a3 = anim(d3, 320);
+    a1.start(); a2.start(); a3.start();
+    return () => { a1.stop(); a2.stop(); a3.stop(); };
+  }, []);
+  const c = isDark ? '#9ca3af' : '#6b7280';
+  const dot = { width: 5, height: 5, borderRadius: 2.5, backgroundColor: c, marginHorizontal: 2 };
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
+      <Animated.View style={[dot, { opacity: d1 }]} />
+      <Animated.View style={[dot, { opacity: d2 }]} />
+      <Animated.View style={[dot, { opacity: d3 }]} />
+    </View>
+  );
+}
+
+function MessageRow({ item, colors, isDark, onSpeak, speakingId, t, onCopy, onRegenerate, isLastAI, onLongPressAI }) {
   const isUser = item.role === 'user';
   const isSpeaking = speakingId === item.id;
-  const [justCopied, setJustCopied] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
+    Animated.timing(fadeAnim, { toValue: 1, duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
   }, []);
 
   const isStreaming = !!item._streaming;
   const isToolPending = !!item._toolPending;
   const toolActions = item.actions || [];
-  const timeStr = useMemo(() => {
-    const d = item.timestamp ? new Date(item.timestamp) : new Date();
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }, [item.timestamp]);
 
+  // ── User: subtle gray pill, right-aligned, no avatar (ChatGPT 2026 style)
   if (isUser) {
     return (
-      <Animated.View style={[st.userBubbleRow, { opacity: fadeAnim }]}>
-        <View style={[st.userBubble, {
-          backgroundColor: isDark ? USER_BUBBLE_DARK : USER_BUBBLE,
+      <Animated.View style={[st.userRow, { opacity: fadeAnim }]}>
+        <View style={[st.userPill, {
+          backgroundColor: isDark ? '#2A2A2A' : '#F1F1F4',
         }]}>
           {item.imageUri && (
-            <Image source={{ uri: item.imageUri }} style={{ width: 200, height: 200, borderRadius: 12, marginBottom: 6 }} resizeMode="cover" />
+            <Image source={{ uri: item.imageUri }} style={{ width: 220, height: 220, borderRadius: 14, marginBottom: 8 }} resizeMode="cover" />
           )}
-          <Text style={[st.userBubbleText, { color: isDark ? '#e5e5e5' : '#303030' }]} selectable>{item.content}</Text>
-          <Text style={[st.bubbleTime, { color: isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.38)' }]}>{timeStr}</Text>
-          <View style={[st.userBubbleTail, { borderLeftColor: isDark ? USER_BUBBLE_DARK : USER_BUBBLE }]} />
+          <Text style={[st.userText, { color: isDark ? '#ECECEC' : '#0D0D0D' }]} selectable>{item.content}</Text>
         </View>
       </Animated.View>
     );
   }
 
-  // AI message: WhatsApp received style - avatar on left, light bubble
+  // ── AI: no bubble, plain left-aligned text. Small "One" chip+avatar header
+  // sits above the first paragraph. Long-press opens the context sheet.
   return (
-    <Animated.View style={[st.aiBubbleRow, { opacity: fadeAnim }]}>
-      <View style={st.aiBubbleAvatarWrap}>
-        <View style={st.aiBubbleAvatar}>
-          <Text style={st.aiBubbleAvatarText}>O</Text>
+    <Animated.View style={[st.aiRow, { opacity: fadeAnim }]}>
+      {/* Header chip — small gray pill with avatar + "One" label */}
+      <TouchableOpacity
+        activeOpacity={0.85}
+        delayLongPress={320}
+        onLongPress={() => { if (item.content && !isStreaming) onLongPressAI?.(item); }}
+        style={st.aiHeaderRow}
+      >
+        <View style={st.aiHeaderAvatar}>
+          <IconSparkles size={11} color="#fff" />
         </View>
-      </View>
-      <View style={[st.aiBubble, { backgroundColor: isDark ? '#1f2c34' : '#fff' }]}>
-        {/* Tool usage chips */}
-        {toolActions.length > 0 && (
-          <View style={st.toolChipsRow}>
-            {toolActions.slice(0, 3).map((action, i) => {
-              const type = action.type || action.tool || action.name || '';
-              const iconMap = {
-                'read_emails': IconMail, 'search_emails': IconMail,
-                'read_calendar': IconCalendar, 'create_calendar_event': IconCalendar,
-                'send_email': IconSend, 'send_chat': IconMessageSquare,
-                'read_chat': IconMessageSquare, 'search_contacts': IconUsers,
-                'read_files': IconFolder,
-              };
-              const ToolIcon = iconMap[type] || IconZap;
-              return (
-                <View key={i} style={[st.toolChip, {
-                  backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
-                  borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
-                }]}>
-                  <ToolIcon size={11} color={isDark ? '#aaa' : '#666'} />
-                  <Text style={[st.toolChipText, { color: isDark ? '#aaa' : '#666' }]}>
-                    {getToolLabel(action, t)}
-                  </Text>
-                </View>
-              );
-            })}
-          </View>
-        )}
-        {/* Tool typing indicator (shown while tool is running, before text arrives) */}
+        <Text style={[st.aiHeaderLabel, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>One</Text>
+      </TouchableOpacity>
+
+      {/* Tool usage chips (kept — useful signal that the AI is touching email, calendar, etc.) */}
+      {toolActions.length > 0 && (
+        <View style={st.toolChipsRow}>
+          {toolActions.slice(0, 3).map((action, i) => {
+            const type = action.type || action.tool || action.name || '';
+            const iconMap = {
+              'read_emails': IconMail, 'search_emails': IconMail,
+              'read_calendar': IconCalendar, 'create_calendar_event': IconCalendar,
+              'send_email': IconSend, 'send_chat': IconMessageSquare,
+              'read_chat': IconMessageSquare, 'search_contacts': IconUsers,
+              'read_files': IconFolder,
+            };
+            const ToolIcon = iconMap[type] || IconZap;
+            return (
+              <View key={i} style={[st.toolChip, {
+                backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+                borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
+              }]}>
+                <ToolIcon size={11} color={isDark ? '#aaa' : '#666'} />
+                <Text style={[st.toolChipText, { color: isDark ? '#aaa' : '#666' }]}>
+                  {getToolLabel(action, t)}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+      )}
+
+      {/* Body — plain text, NO bubble background. Long-press opens context sheet. */}
+      <TouchableOpacity
+        activeOpacity={1}
+        delayLongPress={320}
+        onLongPress={() => { if (item.content && !isStreaming) onLongPressAI?.(item); }}
+      >
         {isToolPending && !item.content ? (
           <ToolTypingIndicator toolName={item._toolName} isDark={isDark} t={t} />
         ) : (
-          <View style={st.mdContent}>
-            {parseMarkdown(item.content, isDark ? '#d1d5db' : '#303030', isDark)}
-            {/* Streaming cursor shown while text is arriving */}
-            {isStreaming && !isToolPending && <StreamingCursor isDark={isDark} />}
+          <View style={st.aiBody}>
+            {parseMarkdown(item.content, isDark ? '#ECECEC' : '#0D0D0D', isDark)}
+            {/* Streaming dots (•••) inline at end during generation. */}
+            {isStreaming && !isToolPending && <InlineStreamingDots isDark={isDark} />}
           </View>
         )}
-        {/* Tool typing overlay while tool runs but some text already arrived */}
         {isToolPending && !!item.content && (
           <ToolTypingIndicator toolName={item._toolName} isDark={isDark} t={t} />
         )}
+      </TouchableOpacity>
 
-        {/* Time + speak/copy/regenerate buttons */}
-        <View style={st.bubbleFooter}>
-          {item.content && !isStreaming && (
+      {/* WhatsApp opt-in button (kept — feature still surfaces from AI replies) */}
+      {item.content && (item.content.includes('wa.me') || (item.content.includes('WhatsApp') && (item.content.includes('conecte') || item.content.includes('conectar') || item.content.includes('opt') || item.content.includes('connect')))) && (
+        <TouchableOpacity
+          style={[st.waOptInBtn, { backgroundColor: ACCENT, marginTop: 10 }]}
+          onPress={() => {
+            const url = 'https://wa.me/12093093434?text=Oi!%20Quero%20receber%20lembretes%20do%20Chatyy.';
+            if (Platform.OS === 'web') {
+              window.open(url, '_blank');
+            } else {
+              Linking.openURL(url).catch(() => {});
+            }
+          }}
+        >
+          <Text style={st.waOptInBtnText}>{t('one.whatsappConnectBtn')}</Text>
+        </TouchableOpacity>
+      )}
+
+      {/* Inline action row — copy / read aloud / regenerate (only on most recent AI message) */}
+      {item.content && !isStreaming && (
+        <View style={st.aiActionsRow}>
+          {onCopy && (
             <TouchableOpacity
-              onPress={() => onSpeak?.(item)}
-              hitSlop={8}
-              style={st.speakBtn}
-              accessibilityLabel={isSpeaking ? 'Stop reading' : 'Read aloud'}
-            >
-              {isSpeaking ? (
-                <IconVolumeX size={14} color={ACCENT_DARK} />
-              ) : (
-                <IconVolume2 size={14} color={isDark ? '#6b7b8a' : '#9ba5ab'} />
-              )}
-            </TouchableOpacity>
-          )}
-          {/* Copy AI message — gap fix: previously no way to grab the AI's
-              answer except long-press text selection (broken on web). */}
-          {item.content && !isStreaming && onCopy && (
-            <TouchableOpacity
-              onPress={async () => {
-                const ok = await onCopy(item);
-                if (ok) {
-                  setJustCopied(true);
-                  setTimeout(() => setJustCopied(false), 1600);
-                }
-              }}
-              hitSlop={8}
-              style={st.speakBtn}
+              onPress={() => onCopy(item)}
+              hitSlop={6}
+              style={st.aiActionBtn}
               accessibilityLabel={t?.('common.copy') || 'Copy'}
             >
-              <IconCopy size={14} color={justCopied ? ACCENT_DARK : (isDark ? '#6b7b8a' : '#9ba5ab')} />
+              <IconCopy size={14} color={isDark ? '#9CA3AF' : '#6B7280'} />
             </TouchableOpacity>
           )}
-          {/* Regenerate — only on the most recent AI reply. Re-runs the last
-              user message so the user can ask the model to try again. */}
-          {item.content && !isStreaming && isLastAI && onRegenerate && (
+          <TouchableOpacity
+            onPress={() => onSpeak?.(item)}
+            hitSlop={6}
+            style={st.aiActionBtn}
+            accessibilityLabel={isSpeaking ? 'Stop reading' : 'Read aloud'}
+          >
+            {isSpeaking ? (
+              <IconVolumeX size={14} color={ACCENT_DARK} />
+            ) : (
+              <IconVolume2 size={14} color={isDark ? '#9CA3AF' : '#6B7280'} />
+            )}
+          </TouchableOpacity>
+          {isLastAI && onRegenerate && (
             <TouchableOpacity
               onPress={() => onRegenerate(item)}
-              hitSlop={8}
-              style={st.speakBtn}
+              hitSlop={6}
+              style={st.aiActionBtn}
               accessibilityLabel={t?.('one.regenerate') || 'Regenerate'}
             >
-              <IconRepeat size={14} color={isDark ? '#6b7b8a' : '#9ba5ab'} />
+              <IconRepeat size={14} color={isDark ? '#9CA3AF' : '#6B7280'} />
             </TouchableOpacity>
           )}
-          {!isStreaming && (
-            <Text style={[st.bubbleTime, { color: isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.38)' }]}>{timeStr}</Text>
-          )}
         </View>
-
-        {/* WhatsApp opt-in button */}
-        {item.content && (item.content.includes('wa.me') || (item.content.includes('WhatsApp') && (item.content.includes('conecte') || item.content.includes('conectar') || item.content.includes('opt') || item.content.includes('connect')))) && (
-          <TouchableOpacity
-            style={[st.waOptInBtn, { backgroundColor: ACCENT, marginTop: 10 }]}
-            onPress={() => {
-              const url = 'https://wa.me/12093093434?text=Oi!%20Quero%20receber%20lembretes%20do%20Chatyy.';
-              if (Platform.OS === 'web') {
-                window.open(url, '_blank');
-              } else {
-                Linking.openURL(url).catch(() => {});
-              }
-            }}
-          >
-            <Text style={st.waOptInBtnText}>{t('one.whatsappConnectBtn')}</Text>
-          </TouchableOpacity>
-        )}
-        <View style={[st.aiBubbleTail, { borderRightColor: isDark ? '#1f2c34' : '#fff' }]} />
-      </View>
+      )}
     </Animated.View>
+  );
+}
+
+// ─── Model picker pill (top center) + bottom sheet ───
+const MODEL_OPTIONS = [
+  { id: 'gpt-5.5', label: 'GPT-5.5', sub: 'one.modelSubFast' },
+  { id: 'gpt-5.5-pro', label: 'GPT-5.5 Pro', sub: 'one.modelSubPro' },
+  { id: 'claude-opus-4.7', label: 'Claude Opus 4.7', sub: 'one.modelSubReason' },
+];
+
+function ModelPickerPill({ isDark, onPress, modelLabel }) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.7}
+      style={[st.modelPill, {
+        backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+      }]}
+      accessibilityLabel="Pick model"
+    >
+      <Text style={[st.modelPillText, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>
+        {`One · ${modelLabel}`}
+      </Text>
+      <IconChevronDown size={13} color={isDark ? '#9CA3AF' : '#6B7280'} />
+    </TouchableOpacity>
+  );
+}
+
+function ModelPickerSheet({ visible, onClose, isDark, t, currentModelId, onPick }) {
+  if (!visible) return null;
+  return (
+    <Modal transparent visible animationType="fade" onRequestClose={onClose}>
+      <TouchableOpacity activeOpacity={1} style={st.sheetDim} onPress={onClose}>
+        <TouchableOpacity activeOpacity={1} style={[st.sheet, { backgroundColor: isDark ? '#1F1F22' : '#fff' }]}>
+          <View style={st.sheetGrabber} />
+          <Text style={[st.sheetTitle, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}>
+            {t('one.pickModel') || 'Choose model'}
+          </Text>
+          {MODEL_OPTIONS.map((m) => {
+            const active = m.id === currentModelId;
+            return (
+              <TouchableOpacity
+                key={m.id}
+                onPress={() => { onPick(m); onClose(); }}
+                activeOpacity={0.7}
+                style={[st.sheetItem, active && { backgroundColor: isDark ? 'rgba(124,58,237,0.15)' : 'rgba(124,58,237,0.08)' }]}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={[st.sheetItemTitle, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}>{m.label}</Text>
+                  <Text style={[st.sheetItemSub, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>
+                    {t(m.sub) || ''}
+                  </Text>
+                </View>
+                {active ? <Text style={{ color: ACCENT_DARK, fontSize: 18 }}>✓</Text> : null}
+              </TouchableOpacity>
+            );
+          })}
+        </TouchableOpacity>
+      </TouchableOpacity>
+    </Modal>
+  );
+}
+
+// Long-press sheet for AI message: Copy / Regenerate / Bad response.
+function MessageContextSheet({ visible, onClose, isDark, t, onCopy, onRegenerate, onBadResponse, canRegenerate }) {
+  if (!visible) return null;
+  return (
+    <Modal transparent visible animationType="fade" onRequestClose={onClose}>
+      <TouchableOpacity activeOpacity={1} style={st.sheetDim} onPress={onClose}>
+        <TouchableOpacity activeOpacity={1} style={[st.sheet, { backgroundColor: isDark ? '#1F1F22' : '#fff' }]}>
+          <View style={st.sheetGrabber} />
+          <TouchableOpacity onPress={() => { onCopy?.(); onClose(); }} activeOpacity={0.7} style={st.sheetItem}>
+            <IconCopy size={18} color={isDark ? '#ECECEC' : '#0D0D0D'} />
+            <Text style={[st.sheetItemTitle, { color: isDark ? '#ECECEC' : '#0D0D0D', marginLeft: 12 }]}>
+              {t('common.copy') || 'Copy'}
+            </Text>
+          </TouchableOpacity>
+          {canRegenerate && (
+            <TouchableOpacity onPress={() => { onRegenerate?.(); onClose(); }} activeOpacity={0.7} style={st.sheetItem}>
+              <IconRepeat size={18} color={isDark ? '#ECECEC' : '#0D0D0D'} />
+              <Text style={[st.sheetItemTitle, { color: isDark ? '#ECECEC' : '#0D0D0D', marginLeft: 12 }]}>
+                {t('one.regenerate') || 'Regenerate'}
+              </Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity onPress={() => { onBadResponse?.(); onClose(); }} activeOpacity={0.7} style={st.sheetItem}>
+            <IconThumbsDown size={18} color="#ef4444" />
+            <Text style={[st.sheetItemTitle, { color: '#ef4444', marginLeft: 12 }]}>
+              {t('one.badResponse') || 'Bad response'}
+            </Text>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </TouchableOpacity>
+    </Modal>
   );
 }
 
@@ -1512,6 +1627,11 @@ export default function OneScreen() {
   const [loading, setLoading] = useState(false);
   const [conversationId, setConversationId] = useState(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  // ChatGPT-style model picker pill at top center.
+  const [selectedModel, setSelectedModel] = useState(MODEL_OPTIONS[0]);
+  const [modelSheetOpen, setModelSheetOpen] = useState(false);
+  // Long-press AI message context sheet (Copy / Regenerate / Bad response).
+  const [ctxSheetItem, setCtxSheetItem] = useState(null);
   const [conversations, setConversations] = useState([]);
   const [isListening, setIsListening] = useState(false);
   const [speakingId, setSpeakingId] = useState(null);
@@ -2748,6 +2868,11 @@ export default function OneScreen() {
     return null;
   }, [messages]);
 
+  const onLongPressAI = useCallback((item) => {
+    haptic('light');
+    setCtxSheetItem(item);
+  }, []);
+
   const renderMessage = useCallback(({ item }) => (
     <MessageRow
       item={item} colors={colors} isDark={isDark}
@@ -2755,12 +2880,18 @@ export default function OneScreen() {
       onCopy={copyMessage}
       onRegenerate={regenerateLast}
       isLastAI={item.id === lastAIId}
+      onLongPressAI={onLongPressAI}
     />
-  ), [colors, isDark, speakMessage, speakingId, t, copyMessage, regenerateLast, lastAIId]);
+  ), [colors, isDark, speakMessage, speakingId, t, copyMessage, regenerateLast, lastAIId, onLongPressAI]);
 
-  // ─── Empty state - WhatsApp chat style ───
+  // ─── Empty state — clean 2x2 prompt grid (Translate / Summarize / Code / Brainstorm)
   const renderEmpty = () => {
-    const sugCards = getSuggestions(t);
+    const sugCards = [
+      { key: 'translate', label: t('one.promptTranslate') || 'Translate', sub: t('one.promptTranslateSub') || 'a phrase or paragraph', msg: t('one.promptTranslateMsg') || 'Translate this to English: ' },
+      { key: 'summarize', label: t('one.promptSummarize') || 'Summarize', sub: t('one.promptSummarizeSub') || 'an article or thread', msg: t('one.promptSummarizeMsg') || 'Summarize my unread emails today.' },
+      { key: 'code', label: t('one.promptCode') || 'Code', sub: t('one.promptCodeSub') || 'help me build something', msg: t('one.promptCodeMsg') || 'Write a Python function that ' },
+      { key: 'brainstorm', label: t('one.promptBrainstorm') || 'Brainstorm', sub: t('one.promptBrainstormSub') || 'ideas with me', msg: t('one.promptBrainstormMsg') || 'Brainstorm 5 ideas for ' },
+    ];
 
     return (
       <ScrollView
@@ -2770,114 +2901,89 @@ export default function OneScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={st.emptyCenter}>
-          {/* Large ONE avatar */}
-          <View style={st.emptyLogoCircle}>
-            <IconSparkles size={36} color="#fff" />
+          {/* Subtle brand mark */}
+          <View style={[st.emptyLogoCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.12)' }]}>
+            <IconSparkles size={26} color={ACCENT_DARK} />
           </View>
-
-          {/* Greeting */}
-          <Text style={[st.emptyGreeting, {
-            color: isDark ? '#e1e3e6' : '#111b21',
-          }]}>
-            {'Oi! Sou a ONE'}
+          <Text style={[st.emptyGreeting, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}>
+            {firstName ? `${getGreeting(t)}, ${firstName}` : (t('one.greeting') || 'Hi, I\'m One')}
           </Text>
-          <Text style={[st.emptySubtitle, {
-            color: isDark ? '#8696a0' : '#667781',
-          }]}>
-            {t('one.howCanIHelp')}
+          <Text style={[st.emptySubtitle, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>
+            {t('one.emptyHint') || 'How can I help today?'}
           </Text>
         </View>
 
-        {/* Suggestion chips */}
+        {/* 2×2 prompt grid */}
         <View style={st.sugArea}>
           <View style={[st.sugGrid, isWide && { maxWidth: CONTENT_MAX }]}>
-            {sugCards.map((item, i) => {
-              const Icon = item.icon;
-              return (
-                <TouchableOpacity
-                  key={i}
-                  style={[st.sugCard, {
-                    backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#fff',
-                    borderColor: isDark ? 'rgba(255,255,255,0.1)' : '#e9edef',
-                    ...(Platform.OS === 'web' ? {
-                      cursor: 'pointer',
-                      transition: 'all 0.15s ease',
-                    } : {}),
-                  }]}
-                  onPress={() => sendMessage(item.text)}
-                  activeOpacity={0.7}
-                >
-                  <View style={[st.sugCardIcon, { backgroundColor: isDark ? 'rgba(124,58,237,0.15)' : 'rgba(124,58,237,0.1)' }]}>
-                    <Icon size={16} color={ACCENT_DARK} />
-                  </View>
-                  <Text style={[st.sugCardText, { color: isDark ? '#d1d7db' : '#3b4a54' }]} numberOfLines={2}>{item.text}</Text>
-                </TouchableOpacity>
-              );
-            })}
+            {sugCards.map((item) => (
+              <TouchableOpacity
+                key={item.key}
+                style={[st.sugCard, {
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff',
+                  borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+                  ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'transform 0.15s ease, background-color 0.15s ease' } : {}),
+                }]}
+                onPress={() => {
+                  if (item.msg.endsWith(' ') || item.msg.endsWith(': ')) {
+                    setInputText(item.msg);
+                  } else {
+                    sendMessage(item.msg);
+                  }
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={[st.sugCardLabel, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}>{item.label}</Text>
+                <Text style={[st.sugCardSub, { color: isDark ? '#9CA3AF' : '#6B7280' }]} numberOfLines={2}>{item.sub}</Text>
+              </TouchableOpacity>
+            ))}
           </View>
         </View>
       </ScrollView>
     );
   };
 
+  // ChatGPT-style canvas: white in light mode, near-black in dark.
+  const canvasBg = isDark ? '#1A1A1A' : '#FFFFFF';
+
   return (
     <KeyboardAvoidingView
-      style={[st.container, {
-        backgroundColor: isDark ? '#0b141a' : '#efeae2',
-      }]}
+      style={[st.container, { backgroundColor: canvasBg }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
     >
-      {/* Header - WhatsApp chat style */}
-      <View style={[st.header, {
-        paddingTop: insets.top,
-        backgroundColor: isDark ? '#1f2c34' : ACCENT_HEADER,
-      }]}>
-        <TouchableOpacity onPress={() => router.back()} hitSlop={12} style={st.headerBtn}>
-          <IconArrowLeft size={22} color="#fff" />
+      {/* Clean header — no gradient, just title + side actions on a flat canvas. */}
+      <View style={[st.headerClean, { paddingTop: insets.top + 4, backgroundColor: canvasBg }]}>
+        <TouchableOpacity onPress={() => router.back()} hitSlop={12} style={st.headerCleanBtn}>
+          <IconArrowLeft size={22} color={isDark ? '#ECECEC' : '#0D0D0D'} />
         </TouchableOpacity>
 
-        {/* ONE avatar in header */}
-        <TouchableOpacity
-          onPress={() => { loadConversations(false); setHistoryOpen(true); }}
-          style={st.headerProfile}
-          activeOpacity={0.7}
-        >
-          <View style={st.headerAvatar}>
-            <IconSparkles size={18} color="#fff" />
-          </View>
-          <View style={st.headerInfo}>
-            <Text style={st.headerName}>ONE</Text>
-            <Text style={st.headerStatus}>online</Text>
-          </View>
-        </TouchableOpacity>
+        <View style={st.headerCleanCenter}>
+          <Text style={[st.headerCleanTitle, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}>One</Text>
+          <ModelPickerPill
+            isDark={isDark}
+            onPress={() => setModelSheetOpen(true)}
+            modelLabel={selectedModel.label}
+          />
+        </View>
 
-        <View style={{ flex: 1 }} />
-
-        {/* Voice call button removido do header — agora vive próximo ao
-            input (estilo ChatGPT). User pediu: "tirar dai e colocar embaixo". */}
-
-        {/* New chat */}
-        <TouchableOpacity
-          onPress={newChat}
-          hitSlop={8}
-          style={st.headerBtn}
-        >
-          <IconEdit size={20} color="#fff" />
-        </TouchableOpacity>
-
-        {/* History menu */}
-        <TouchableOpacity
-          onPress={() => { loadConversations(false); setHistoryOpen(true); }}
-          hitSlop={8}
-          style={st.headerBtn}
-        >
-          <IconMenu size={20} color="#fff" />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row' }}>
+          <TouchableOpacity onPress={newChat} hitSlop={8} style={st.headerCleanBtn} accessibilityLabel={t('one.newChat') || 'New chat'}>
+            <IconEdit size={20} color={isDark ? '#ECECEC' : '#0D0D0D'} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => { loadConversations(false); setHistoryOpen(true); }}
+            hitSlop={8}
+            style={st.headerCleanBtn}
+            accessibilityLabel={t('one.history') || 'History'}
+          >
+            <IconMenu size={20} color={isDark ? '#ECECEC' : '#0D0D0D'} />
+          </TouchableOpacity>
+        </View>
       </View>
 
-      {/* Chat wallpaper background */}
-      <View style={[st.chatArea, { backgroundColor: isDark ? '#0b141a' : '#efeae2' }]}>
+      {/* Canvas (no wallpaper background — flat surface like ChatGPT) */}
+      <View style={[st.chatArea, { backgroundColor: canvasBg }]}>
         {initialLoading && !hasMessages ? (
           <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
             <ActivityIndicator size="large" color={ACCENT} />
@@ -2891,87 +2997,91 @@ export default function OneScreen() {
             onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
             showsVerticalScrollIndicator={false}
             style={{ flex: 1 }}
-            contentContainerStyle={{ paddingTop: 8, paddingBottom: 8, paddingHorizontal: 6 }}
+            contentContainerStyle={{ paddingTop: 8, paddingBottom: 16, paddingHorizontal: 12 }}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="interactive"
             automaticallyAdjustKeyboardInsets={true}
-            ListFooterComponent={loading ? <ThinkingIndicator colors={colors} isDark={isDark} t={t} toolStatus={null} /> : null}
+            ListFooterComponent={loading && !messages.some(m => m._streaming) ? (
+              <View style={{ paddingHorizontal: 4, marginTop: 8 }}>
+                <View style={st.aiHeaderRow}>
+                  <View style={st.aiHeaderAvatar}><IconSparkles size={11} color="#fff" /></View>
+                  <Text style={[st.aiHeaderLabel, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>One</Text>
+                </View>
+                <InlineStreamingDots isDark={isDark} />
+              </View>
+            ) : null}
           />
         ) : (
-          // Always show greeting + suggestion chips when no messages exist.
-          // Previously was gated on `!inputFocused` which made the entire
-          // chat area go blank the moment the user tapped the input on web —
-          // user starts typing and sees nothing (caught QA 2026-05-07).
-          // KeyboardAvoidingView already handles native keyboard overlap.
           renderEmpty()
         )}
       </View>
 
-      {/* Quick Actions Bar (shown when chat has messages) */}
-      {hasMessages && !loading && (
-        <QuickActionsBar onSend={sendMessage} colors={colors} isDark={isDark} t={t} />
-      )}
-
-      {/* Input - WhatsApp style */}
-      <View style={[st.inputArea, {
+      {/* Input — rounded 24pt pill, multi-line, plus + mic left, send right (purple #7C3AED filled circle) */}
+      <View style={[st.inputAreaClean, {
         paddingBottom: Math.max(insets.bottom, 8),
-        backgroundColor: isDark ? '#0b141a' : '#efeae2',
+        backgroundColor: canvasBg,
       }]}>
-        <View style={[st.inputWrapper, isWide && { maxWidth: 680, alignSelf: 'center', width: '100%' }]}>
-          {/* Attached image preview above input */}
+        <View style={[st.inputWrapperClean, isWide && { maxWidth: 720, alignSelf: 'center', width: '100%' }]}>
           {attachedImage && (
-            <View style={[st.attachPreview, { backgroundColor: isDark ? '#1f2c34' : '#fff' }]}>
-              <Image source={{ uri: attachedImage.uri }} style={{ width: 60, height: 60, borderRadius: 8 }} />
-              <TouchableOpacity
-                onPress={() => setAttachedImage(null)}
-                style={st.attachRemove}
-              >
+            <View style={[st.attachPreview, { backgroundColor: isDark ? '#2A2A2A' : '#F1F1F4' }]}>
+              <Image source={{ uri: attachedImage.uri }} style={{ width: 56, height: 56, borderRadius: 8 }} />
+              <TouchableOpacity onPress={() => setAttachedImage(null)} style={st.attachRemove}>
                 <IconX size={14} color="#fff" />
               </TouchableOpacity>
             </View>
           )}
-          <View style={st.inputRow}>
-            {/* Main input bar */}
-            <View style={[st.inputBox, {
-              backgroundColor: isDark ? '#1f2c34' : '#fff',
-            }]}>
-              {/* Camera/attach icon */}
+
+          <View style={[st.inputBoxClean, {
+            backgroundColor: isDark ? '#2A2A2A' : '#F4F4F5',
+            borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+          }]}>
+            {/* Left: plus (attach) + mic */}
+            <View style={st.inputLeftIcons}>
               <TouchableOpacity
-                style={st.inputIcon}
+                style={st.inputIconBtn}
                 onPress={pickImage}
                 activeOpacity={0.7}
                 accessibilityLabel={t('one.attachPhoto')}
               >
-                <IconCamera size={22} color={isDark ? '#8696a0' : '#54656f'} />
+                <IconPlus size={20} color={isDark ? '#9CA3AF' : '#6B7280'} />
               </TouchableOpacity>
-
-              <TextInput
-                style={[st.input, { color: isDark ? '#e1e3e6' : '#3b4a54' }]}
-                placeholder={isListening ? t('one.voiceListening') : t('one.placeholder')}
-                placeholderTextColor={isDark ? '#8696a0' : '#667781'}
-                value={inputText}
-                onChangeText={setInputText}
-                onSubmitEditing={() => sendMessage()}
-                onKeyPress={(e) => {
-                  if (Platform.OS === 'web' && e.nativeEvent.key === 'Enter' && !e.nativeEvent.shiftKey) {
-                    e.preventDefault();
-                    sendMessage();
-                  }
-                }}
-                onFocus={() => setInputFocused(true)}
-                onBlur={() => setInputFocused(false)}
-                returnKeyType="send"
-                multiline
-                maxLength={2000}
-                editable={!loading}
-              />
+              <TouchableOpacity
+                style={st.inputIconBtn}
+                onPress={toggleListening}
+                activeOpacity={0.7}
+                accessibilityLabel={isListening ? t('one.speakStop') : 'Microphone'}
+              >
+                {isListening ? (
+                  <IconMicOff size={20} color="#ef4444" />
+                ) : (
+                  <IconMic size={20} color={isDark ? '#9CA3AF' : '#6B7280'} />
+                )}
+              </TouchableOpacity>
             </View>
 
-            {/* Right: mic or send button */}
+            <TextInput
+              style={[st.inputClean, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}
+              placeholder={isListening ? (t('one.voiceListening') || 'Listening…') : (t('one.placeholder') || 'Message One…')}
+              placeholderTextColor={isDark ? '#6B7280' : '#9CA3AF'}
+              value={inputText}
+              onChangeText={setInputText}
+              onSubmitEditing={() => sendMessage()}
+              onKeyPress={(e) => {
+                if (Platform.OS === 'web' && e.nativeEvent.key === 'Enter' && !e.nativeEvent.shiftKey) {
+                  e.preventDefault();
+                  sendMessage();
+                }
+              }}
+              onFocus={() => setInputFocused(true)}
+              onBlur={() => setInputFocused(false)}
+              returnKeyType="send"
+              multiline
+              maxLength={2000}
+              editable={!loading}
+            />
+
+            {/* Right: send (filled purple) / stop (when generating) / voice (when empty) */}
             {loading ? (
-              // Was a plain View → user couldn't cancel a hung request and
-              // perceived it as a lockup. Tap aborts the in-flight request
-              // and stops any active voice listener.
               <TouchableOpacity
                 onPress={() => {
                   try { aiAbortRef.current?.abort?.(); } catch {}
@@ -2982,56 +3092,28 @@ export default function OneScreen() {
                   setVoiceState('listening');
                 }}
                 activeOpacity={0.7}
-                accessibilityLabel={t?.('common.cancel') || 'Cancelar'}
+                accessibilityLabel={t?.('common.cancel') || 'Cancel'}
               >
-                <View style={[st.sendCircle, { backgroundColor: '#667781' }]}>
-                  <IconStop size={16} color="#fff" />
+                <View style={[st.sendBtnClean, { backgroundColor: isDark ? '#3F3F46' : '#0D0D0D' }]}>
+                  <IconStop size={14} color="#fff" />
                 </View>
               </TouchableOpacity>
             ) : (inputText.trim() || attachedImage) ? (
-              <TouchableOpacity
-                onPress={() => sendMessage()}
-                activeOpacity={0.7}
-              >
-                <View style={[st.sendCircle, { backgroundColor: ACCENT_DARK }]}>
-                  <IconSend size={18} color="#fff" />
+              <TouchableOpacity onPress={() => sendMessage()} activeOpacity={0.7}>
+                <View style={[st.sendBtnClean, { backgroundColor: ACCENT }]}>
+                  <IconSend size={16} color="#fff" />
                 </View>
               </TouchableOpacity>
             ) : (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                {/* Voice conversation mode (estilo ChatGPT — modo voz cheio).
-                    Antes era um ícone de telefone no header; movi pra cá pra
-                    ficar acessível durante a conversa. */}
-                <TouchableOpacity
-                  onPress={enterVoiceMode}
-                  activeOpacity={0.7}
-                  accessibilityLabel={t('one.voiceConversation') || 'Conversa por voz'}
-                >
-                  <View style={[st.sendCircle, {
-                    backgroundColor: 'transparent',
-                    borderWidth: 1.5,
-                    borderColor: ACCENT_DARK,
-                  }]}>
-                    <IconPhone size={18} color={ACCENT_DARK} />
-                  </View>
-                </TouchableOpacity>
-                {/* Mic — ditado de UMA mensagem (Whisper STT) */}
-                <TouchableOpacity
-                  onPress={toggleListening}
-                  activeOpacity={0.7}
-                  accessibilityLabel={isListening ? t('one.speakStop') : 'Microphone'}
-                >
-                  <View style={[st.sendCircle, {
-                    backgroundColor: isListening ? '#ef4444' : ACCENT_DARK,
-                  }]}>
-                    {isListening ? (
-                      <IconMicOff size={18} color="#fff" />
-                    ) : (
-                      <IconMic size={20} color="#fff" />
-                    )}
-                  </View>
-                </TouchableOpacity>
-              </View>
+              <TouchableOpacity
+                onPress={enterVoiceMode}
+                activeOpacity={0.7}
+                accessibilityLabel={t('one.voiceConversation') || 'Voice conversation'}
+              >
+                <View style={[st.sendBtnClean, { backgroundColor: ACCENT }]}>
+                  <IconPhone size={16} color="#fff" />
+                </View>
+              </TouchableOpacity>
             )}
           </View>
         </View>
@@ -3048,6 +3130,39 @@ export default function OneScreen() {
           onStop={exitVoiceMode}
         />
       )}
+
+      {/* Model picker sheet (top-center pill opens this) */}
+      <ModelPickerSheet
+        visible={modelSheetOpen}
+        onClose={() => setModelSheetOpen(false)}
+        isDark={isDark}
+        t={t}
+        currentModelId={selectedModel.id}
+        onPick={(m) => setSelectedModel(m)}
+      />
+
+      {/* Long-press AI message context sheet */}
+      <MessageContextSheet
+        visible={!!ctxSheetItem}
+        onClose={() => setCtxSheetItem(null)}
+        isDark={isDark}
+        t={t}
+        canRegenerate={!!(ctxSheetItem && ctxSheetItem.id === lastAIId)}
+        onCopy={() => ctxSheetItem && copyMessage(ctxSheetItem)}
+        onRegenerate={() => ctxSheetItem && regenerateLast(ctxSheetItem)}
+        onBadResponse={() => {
+          // Lightweight feedback hook — wire to telemetry later. For now, just confirm visually.
+          haptic('light');
+          try {
+            const { Alert } = require('react-native');
+            if (Platform.OS === 'web') {
+              window.alert(t('one.badResponseThanks') || 'Thanks — feedback noted.');
+            } else {
+              Alert.alert(t('one.badResponseThanks') || 'Thanks — feedback noted.');
+            }
+          } catch {}
+        }}
+      />
 
       {/* History */}
       <HistorySidebar
@@ -3099,7 +3214,136 @@ export default function OneScreen() {
 const st = StyleSheet.create({
   container: { flex: 1 },
 
-  // Header - WhatsApp style
+  // ─── Clean ChatGPT-style header ───
+  headerClean: {
+    flexDirection: 'row', alignItems: 'flex-start',
+    paddingHorizontal: 8, paddingBottom: 8,
+  },
+  headerCleanBtn: {
+    width: 40, height: 40, alignItems: 'center', justifyContent: 'center',
+  },
+  headerCleanCenter: {
+    flex: 1, alignItems: 'center', justifyContent: 'flex-start',
+    paddingTop: 6,
+  },
+  headerCleanTitle: {
+    fontSize: 16, fontWeight: '600',
+    fontFamily: Platform.OS === 'ios' ? 'Inter' : undefined,
+    letterSpacing: -0.2,
+  },
+  modelPill: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 10, paddingVertical: 4,
+    borderRadius: 999, marginTop: 4,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  },
+  modelPillText: {
+    fontSize: 12, fontWeight: '500', letterSpacing: -0.1,
+  },
+
+  // ─── ChatGPT-style messages ───
+  // User: subtle gray pill, right-aligned, no avatar
+  userRow: {
+    width: '100%', alignItems: 'flex-end', marginVertical: 6,
+    ...(isWide ? { maxWidth: CONTENT_MAX, alignSelf: 'center' } : {}),
+  },
+  userPill: {
+    maxWidth: '85%',
+    paddingHorizontal: 14, paddingVertical: 10,
+    borderRadius: 18,
+  },
+  userText: {
+    fontSize: 15, lineHeight: 22, letterSpacing: -0.1,
+  },
+
+  // AI: no bubble, plain text, header chip above
+  aiRow: {
+    width: '100%', alignItems: 'flex-start', marginVertical: 10,
+    paddingHorizontal: 4,
+    ...(isWide ? { maxWidth: CONTENT_MAX, alignSelf: 'center' } : {}),
+  },
+  aiHeaderRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6,
+  },
+  aiHeaderAvatar: {
+    width: 18, height: 18, borderRadius: 9,
+    backgroundColor: ACCENT,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  aiHeaderLabel: {
+    fontSize: 12, fontWeight: '600', letterSpacing: -0.1,
+  },
+  aiBody: { gap: 2 },
+  aiActionsRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 16,
+    marginTop: 8,
+  },
+  aiActionBtn: { padding: 4 },
+
+  // ─── Clean input bar ───
+  inputAreaClean: {
+    paddingHorizontal: 10, paddingTop: 6,
+  },
+  inputWrapperClean: {},
+  inputBoxClean: {
+    flexDirection: 'row', alignItems: 'flex-end',
+    borderRadius: 24, borderWidth: StyleSheet.hairlineWidth,
+    paddingLeft: 4, paddingRight: 4, paddingVertical: 4,
+    minHeight: 48,
+  },
+  inputLeftIcons: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingBottom: 2,
+  },
+  inputIconBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: 'center', justifyContent: 'center',
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  },
+  inputClean: {
+    flex: 1, fontSize: 16, lineHeight: 22,
+    paddingVertical: Platform.OS === 'ios' ? 10 : 8,
+    paddingHorizontal: 6,
+    minHeight: 40, maxHeight: 140,
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+  },
+  sendBtnClean: {
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: 'center', justifyContent: 'center',
+    marginLeft: 4, marginBottom: 2,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'transform 140ms ease' } : {}),
+  },
+
+  // ─── Bottom sheets (model picker + context menu) ───
+  sheetDim: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    paddingTop: 8, paddingBottom: 28,
+    paddingHorizontal: 16,
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+  },
+  sheetGrabber: {
+    alignSelf: 'center', width: 36, height: 4, borderRadius: 2,
+    backgroundColor: 'rgba(128,128,128,0.4)',
+    marginBottom: 12,
+  },
+  sheetTitle: {
+    fontSize: 13, fontWeight: '600', letterSpacing: 0.2,
+    textTransform: 'uppercase',
+    marginBottom: 8, opacity: 0.7,
+  },
+  sheetItem: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 12, paddingVertical: 14,
+    borderRadius: 12, marginVertical: 1,
+  },
+  sheetItemTitle: { fontSize: 15, fontWeight: '500' },
+  sheetItemSub: { fontSize: 12, marginTop: 2 },
+
+  // Header - WhatsApp style (legacy — kept for HistorySidebar)
   header: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: 4, paddingBottom: 10, paddingTop: 10,
@@ -3255,49 +3499,36 @@ const st = StyleSheet.create({
   bulletNum: { fontSize: 14, lineHeight: 22, fontWeight: '600', minWidth: 18 },
   bulletText: { flex: 1, fontSize: 15, lineHeight: 22 },
 
-  // Empty state
-  emptyOuter: { flexGrow: 1, justifyContent: 'center', paddingVertical: 40 },
-  emptyCenter: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
+  // Empty state — minimal ChatGPT-style
+  emptyOuter: { flexGrow: 1, justifyContent: 'center', paddingVertical: 24 },
+  emptyCenter: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, marginBottom: 24 },
   emptyLogoCircle: {
-    width: 80, height: 80, borderRadius: 40,
-    backgroundColor: ACCENT,
+    width: 56, height: 56, borderRadius: 28,
     alignItems: 'center', justifyContent: 'center',
-    marginBottom: 20,
-    ...Platform.select({
-      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 12 },
-      android: { elevation: 6 },
-      web: { boxShadow: `0 4px 20px ${ACCENT}40` },
-    }),
+    marginBottom: 14,
   },
   emptyGreeting: {
-    fontSize: 24, fontWeight: '600', textAlign: 'center', marginBottom: 8,
+    fontSize: 22, fontWeight: '600', textAlign: 'center', marginBottom: 4,
+    letterSpacing: -0.3,
   },
   emptySubtitle: {
-    fontSize: 15, fontWeight: '400', textAlign: 'center', marginBottom: 32,
+    fontSize: 14, fontWeight: '400', textAlign: 'center', marginBottom: 8,
   },
 
-  // Suggestion cards
-  sugArea: { paddingHorizontal: 16, paddingBottom: 20 },
+  // Prompt suggestion grid (2×2)
+  sugArea: { paddingHorizontal: 16, paddingBottom: 12 },
   sugGrid: {
     flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'center',
     ...(isWide ? { alignSelf: 'center', width: '100%' } : {}),
   },
   sugCard: {
-    width: isWide ? '47%' : '46%',
+    width: isWide ? '47%' : '47%',
     paddingHorizontal: 14, paddingVertical: 14,
-    borderRadius: 14, borderWidth: 1,
-    flexDirection: 'row', alignItems: 'center', gap: 10,
-    ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
-      android: { elevation: 1 },
-      web: { boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
-    }),
+    borderRadius: 14, borderWidth: StyleSheet.hairlineWidth,
+    minHeight: 76,
   },
-  sugCardIcon: {
-    width: 32, height: 32, borderRadius: 16,
-    alignItems: 'center', justifyContent: 'center',
-  },
-  sugCardText: { fontSize: 13, fontWeight: '400', lineHeight: 18, flex: 1 },
+  sugCardLabel: { fontSize: 14, fontWeight: '600', letterSpacing: -0.1, marginBottom: 2 },
+  sugCardSub: { fontSize: 12, fontWeight: '400', lineHeight: 16 },
 
   // Quick Actions Bar
   quickActionsBar: {

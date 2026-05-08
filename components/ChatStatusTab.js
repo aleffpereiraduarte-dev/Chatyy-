@@ -17,6 +17,7 @@ import AvatarCircle from './AvatarCircle';
 import StatusCamera from './StatusCamera';
 import BrandFab from './BrandFab';
 import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconRotateCw, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin, IconLink, IconArrowRight, IconArchive } from './Icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as api from '../services/api';
 import * as Haptics from 'expo-haptics';
 import { cacheMedia } from '../services/mediaCache';
@@ -748,6 +749,13 @@ function StoryScroller({ statuses, myStatuses, currentEmail, currentName, onOpen
 // gets seeded by the hook's mirror useEffect.)
 
 export default function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus }) {
+  // Real safe-area insets — `StatusBar.currentHeight` (the const fallback used
+  // before) returned 0 on a few Pixel/Galaxy devices when the composer Modal
+  // mounted before the system bar measurement settled, leaving the back/Save/
+  // Music row UNDER the clock+wifi icons. useSafeAreaInsets reads the runtime
+  // insets the OS actually computed for this window, so it stays correct on
+  // every device including the punch-hole Pixels.
+  const insets = useSafeAreaInsets();
   const [contactStatuses, setContactStatuses] = useState([]);
   const [myStatuses, setMyStatuses] = useState([]);
   // Hook reports loading state; we keep a local copy for places that still
@@ -1204,8 +1212,22 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   // + fingerprint diff + video warm-cache. The local myStatuses/contactStatuses
   // state below mirrors the hook output so the existing optimistic mutation
   // sites (mark-viewed, delete, etc.) keep their setState calls intact.
-  const { mine: hookMine, others: hookOthers, loading: hookLoading, refetch: loadStatuses } =
-    useStatuses(currentEmail, { warmCacheVideos: true });
+  //
+  // Wave 4 finalize (2026-05-08): also pull `markViewed`/`removeStatus`/
+  // `removeGroup` so that mark-viewed, delete, archive and mute propagate
+  // into the hook's MMKV + 30d disk cache. Before this, those mutations
+  // only touched the local mirror state, which meant other surfaces using
+  // useStatuses (ChatListTab home strip, Profile stories row) would re-paint
+  // stale "unviewed" rings until the next 120s poll caught up.
+  const {
+    mine: hookMine,
+    others: hookOthers,
+    loading: hookLoading,
+    refetch: loadStatuses,
+    markViewed: hookMarkViewed,
+    removeStatus: hookRemoveStatus,
+    removeGroup: hookRemoveGroup,
+  } = useStatuses(currentEmail, { warmCacheVideos: true });
 
   // Mirror hook → local state. setState bails when the reference is unchanged
   // (the hook already fingerprint-diffs upstream) so this only fires on real
@@ -1410,17 +1432,17 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     const currentItem = viewerStatuses[viewerIndex];
     if (currentItem && !currentItem.viewed) {
       api.statusView(currentItem.id).catch(() => {});
+      // Local viewer snapshot still needs the immediate flip — `viewerStatuses`
+      // was captured at openViewer time and isn't bound to the hook output,
+      // so this keeps the in-modal "Vistos" badge truthy for this same item.
       setViewerStatuses(prev => prev.map((s, idx) => idx === viewerIndex ? { ...s, viewed: true } : s));
-      // ALSO propagate the viewed flag to the main contactStatuses array so
-      // that the status immediately moves to the "Visualizados" (viewed)
-      // section below the "Recentes" list, WhatsApp-style. Previously the
-      // flag was only updated in the viewer's local state, so closing the
-      // viewer left the status still in the "Recentes" section until the
-      // next 60s API refresh.
-      setContactStatuses(prev => prev.map(group => ({
-        ...group,
-        items: group.items.map(it => it.id === currentItem.id ? { ...it, viewed: true } : it),
-      })));
+      // Wave 4 finalize: route through the hook so MMKV + 30d disk cache +
+      // home strip + profile rings all see the viewed flag immediately. The
+      // mirror useEffect re-pushes hookOthers → setContactStatuses, so the
+      // "Recentes / Visualizados" partition reshuffles within one render —
+      // replaces the old manual setContactStatuses walk that left other
+      // surfaces (ChatListTab home, Profile) stale until the next 120s poll.
+      try { hookMarkViewed?.(currentItem.id); } catch {}
     }
 
     if (viewerIndex < viewerStatuses.length - 1) {
@@ -1429,7 +1451,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       // Move to next person's statuses instead of closing
       goToNextPerson();
     }
-  }, [viewerStatuses, viewerIndex, goToNextPerson]);
+  }, [viewerStatuses, viewerIndex, goToNextPerson, hookMarkViewed]);
 
   const goBackViewer = useCallback(() => {
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -1894,9 +1916,13 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   const deleteMyStatus = useCallback(async (statusId) => {
     try {
       await api.statusDelete(statusId);
-      setMyStatuses(prev => prev.filter(s => s.id !== statusId));
+      // Wave 4 finalize: hookRemoveStatus drops the row from mine + groups
+      // + others, invalidates the fingerprint, and (next refetch) re-persists
+      // MMKV/disk. The mirror useEffect feeds setMyStatuses on the next tick,
+      // so we don't need the local setMyStatuses call anymore.
+      try { hookRemoveStatus?.(statusId); } catch {}
     } catch {}
-  }, []);
+  }, [hookRemoveStatus]);
 
   // Archive own status. Backend `status_archive` doesn't exist yet — when
   // present, we call it (best-effort, fire-and-forget) so the server keeps
@@ -1909,18 +1935,24 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   //   them again unless we also filter in the normalize step.
   const archiveMyStatus = useCallback(async (statusId) => {
     if (!statusId) return;
+    // Keep the local archivedStatusIds Set so the mirror useEffect can
+    // continue filtering hookMine on every refetch (the backend doesn't
+    // know about archive yet — we re-apply on each tick).
     setArchivedStatusIds(prev => {
       const next = new Set(prev);
       next.add(statusId);
       return next;
     });
-    setMyStatuses(prev => prev.filter(s => s.id !== statusId));
+    // Wave 4 finalize: also tell the hook so the disk/MMKV cache drops
+    // the row immediately. Without this, ChatListTab home strip would
+    // still paint the archived status on its next mount until refetch.
+    try { hookRemoveStatus?.(statusId); } catch {}
     try {
       if (typeof api.statusArchive === 'function') {
         await api.statusArchive(statusId);
       }
     } catch {}
-  }, []);
+  }, [hookRemoveStatus]);
 
   // ─── Labels ───
   const hasMyStatus = myStatuses.length > 0;
@@ -2443,9 +2475,13 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                   setPreviewGroup(null);
                   try { await api.statusMute(targetEmail); } catch {}
                   try { Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Success); } catch {}
-                  setContactStatuses(prev => prev.filter(g =>
-                    String(g.ownerEmail || '').toLowerCase() !== String(targetEmail || '').toLowerCase()
-                  ));
+                  // Wave 4 finalize: route through the hook so the muted
+                  // owner drops out of MMKV/disk cache too — otherwise
+                  // ChatListTab home strip would still paint the row on
+                  // its next mount until the next 120s poll. The mirror
+                  // useEffect re-pushes hookOthers → setContactStatuses,
+                  // so the local list collapses on the next render.
+                  try { hookRemoveGroup?.(targetEmail); } catch {}
                   try { Alert.alert?.(t?.('status.muteSuccess') || 'Silenciado', `${t?.('status.mutedBody') || 'Status de'} ${targetName} ${t?.('status.mutedSuffix') || 'foi silenciado.'}`); } catch {}
                 }}
                 style={({ pressed }) => ({
@@ -3361,12 +3397,21 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
 
       {/* ─── Status Creator Modal ─── */}
       <Modal visible={creatorVisible} animationType="slide" transparent={false} onRequestClose={() => { if (musicPickerVisible) { setMusicPickerVisible(false); stopStatusAudio(); } else { setCreatorVisible(false); } }}>
+        {/* Force translucent system bar inside the composer so the camera/photo
+            renders behind clock+wifi+battery, while the header below pushes
+            down by `insets.top` to clear them. Fixes Android-only overlap
+            where the close (X) button sat under the system bar on Pixel/Galaxy
+            devices. iOS already had the 54pt baseline so this is a no-op there
+            (translucent on iOS just keeps the existing default). */}
+        <StatusBar translucent backgroundColor="transparent" barStyle="light-content" />
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           {/* ─── Music Picker (rendered INSIDE creator modal to avoid iOS stacking issues) ─── */}
           {musicPickerVisible ? (
             <View style={{ flex: 1, backgroundColor: isDark ? '#1a1a2e' : '#fff' }}>
-              {/* Header with back button */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 54 : ANDROID_TOP_INSET + 12, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: isDark ? 'rgba(255,255,255,0.1)' : '#e5e7eb' }}>
+              {/* Header with back button — same Android translucent fix as
+                  the parent composer header. Uses runtime insets.top instead
+                  of the stale ANDROID_TOP_INSET module-load constant. */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: Platform.OS === 'android' ? insets.top + 8 : (insets.top || 54), paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: isDark ? 'rgba(255,255,255,0.1)' : '#e5e7eb' }}>
                 <TouchableOpacity onPress={() => { setMusicPickerVisible(false); stopStatusAudio(); setMusicQuery(''); setMusicResults([]); }} style={{ padding: 4 }}>
                   <IconChevronLeft size={24} color={isDark ? '#fff' : '#111'} />
                 </TouchableOpacity>
@@ -3489,7 +3534,16 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
               <View style={styles.creatorPatternOverlay} pointerEvents="none" />
             )}
 
-            <View style={styles.creatorHeader}>
+            {/* Composer header — override the stylesheet's static paddingTop
+                with the runtime safe-area inset so the X / Save / Music row
+                always clears clock+wifi+battery on Android (Pixel/Galaxy
+                edge-to-edge windows where StatusBar.currentHeight reads 0
+                until measurement settles). +8 nudges it off the edge for
+                breathing room; iOS keeps its prior 54pt baseline. */}
+            <View style={[
+              styles.creatorHeader,
+              { paddingTop: Platform.OS === 'android' ? insets.top + 8 : (insets.top || 54) },
+            ]}>
               <TouchableOpacity onPress={() => { setCreatorVisible(false); setMusicPickerVisible(false); setPhotoFilter('normal'); setStickers([]); setShowStickerPicker(false); setTextOverlays([]); setShowAddTextInput(false); setDrawMode(false); setDrawPaths([]); resetHistory(); }} style={styles.creatorCloseBtn}>
                 <IconX size={26} color="#fff" />
               </TouchableOpacity>
