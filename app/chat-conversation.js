@@ -18194,30 +18194,9 @@ export default function ChatConversationScreen() {
               </TouchableOpacity>
             )}
 
-            {/* Per-next-send HD chip — beside paperclip, hidden on web.
-                Tapping toggles `hdMode` for the upcoming send only; resets
-                naturally because each photo picker run respects the current
-                value at kickoff. WhatsApp-style sticky chip. */}
-            {Platform.OS !== 'web' && !inputText.trim() && (
-              <TouchableOpacity
-                onPress={() => setHdMode(v => !v)}
-                style={{
-                  height: 26, paddingHorizontal: 8, marginHorizontal: 2,
-                  borderRadius: 13, alignItems: 'center', justifyContent: 'center',
-                  flexDirection: 'row', gap: 4,
-                  borderWidth: 1.2, borderColor: hdMode ? '#7C3AED' : (isDark ? '#3a4147' : '#d1d7db'),
-                  backgroundColor: hdMode ? '#7C3AED' : 'transparent',
-                }}
-                accessibilityLabel={t('chatConv.hdToggle') || 'Toggle HD'}
-                accessibilityRole="button"
-              >
-                <Text style={{ fontSize: 10, fontWeight: '800', color: hdMode ? '#fff' : (isDark ? '#8696a0' : '#8696a0'), letterSpacing: 0.4 }}>HD</Text>
-                <View style={{
-                  width: 8, height: 8, borderRadius: 4,
-                  backgroundColor: hdMode ? '#fff' : (isDark ? '#3a4147' : '#d1d7db'),
-                }} />
-              </TouchableOpacity>
-            )}
+            {/* HD chip removido (2026-05-08): user reportou desalinhado e feio.
+                hdMode default fica TRUE (HD on); pode ser togglado dentro do
+                MediaPreview header onde o botão "HD" já existe (linha ~3999). */}
 
             {/* Attachment paperclip - right side inside pill */}
             <TouchableOpacity
