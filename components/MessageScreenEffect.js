@@ -34,6 +34,7 @@ const rand = (min, max) => min + Math.random() * (max - min);
 
 const SCREEN_EFFECTS = new Set([
   'echo', 'spotlight', 'balloons', 'confetti', 'love', 'lasers', 'fireworks', 'celebration',
+  'shooting-star',
 ]);
 
 // ── Public component ────────────────────────────────────────────────
@@ -57,9 +58,10 @@ const MessageScreenEffect = React.forwardRef(function MessageScreenEffect(_props
               : effect === 'celebration' ? 4400
               : effect === 'confetti' ? 3800
               : effect === 'love' ? 4000
-              : effect === 'fireworks' ? 3600
+              : effect === 'fireworks' ? 4200
               : effect === 'lasers' ? 2400
-              : effect === 'echo' ? 2400
+              : effect === 'echo' ? 2800
+              : effect === 'shooting-star' ? 2600
               : 3400;
     setTimeout(() => setActive((cur) => (cur && cur.id === effect ? null : cur)), ttl);
   }, [flash]);
@@ -86,6 +88,7 @@ function RenderEffect({ effect }) {
     case 'lasers': return <Lasers />;
     case 'spotlight': return <Spotlight />;
     case 'echo': return <Echo />;
+    case 'shooting-star': return <ShootingStar />;
     default: return null;
   }
 }
@@ -93,14 +96,16 @@ function RenderEffect({ effect }) {
 // ── Balloons ────────────────────────────────────────────────────────
 function Balloons() {
   const COLORS = ['#EF4444', '#F59E0B', '#FACC15', '#10B981', '#3B82F6', '#A855F7', '#EC4899', '#06B6D4'];
+  // iMessage-grade upgrade 2026-05-07: 18 → 28 balloons, broader staggering
+  // so they fill the screen instead of clumping mid-anim.
   const balloons = useRef(
-    Array.from({ length: 18 }).map((_, i) => ({
-      x: rand(8, SCREEN_W - 56),
-      delay: i * 90 + rand(0, 200),
-      duration: rand(4200, 5200),
-      sway: rand(7, 16),
-      swayPeriod: rand(900, 1400),
-      size: rand(38, 60),
+    Array.from({ length: 28 }).map((_, i) => ({
+      x: rand(4, SCREEN_W - 60),
+      delay: i * 70 + rand(0, 250),
+      duration: rand(4000, 5400),
+      sway: rand(6, 18),
+      swayPeriod: rand(800, 1500),
+      size: rand(34, 64),
       color: COLORS[i % COLORS.length],
     }))
   ).current;
@@ -175,17 +180,20 @@ function Confetti({ golden = false }) {
     ? ['#FACC15', '#F59E0B', '#FCD34D', '#FFFFFF', '#EAB308']
     : ['#EF4444', '#F59E0B', '#FACC15', '#10B981', '#3B82F6', '#A855F7', '#EC4899', '#06B6D4'];
 
+  // iMessage-grade upgrade 2026-05-07: 110 → 180 particles, 4 shape variants
+  // (circle / rect / strip / triangle), broader size range for parallax.
   const pieces = useRef(
-    Array.from({ length: 110 }).map((_, i) => ({
+    Array.from({ length: 180 }).map((_, i) => ({
       fromX: rand(0, SCREEN_W),
-      drift: rand(-120, 120),
-      duration: rand(2200, 3600),
-      delay: rand(0, 800),
-      size: rand(6, 13),
-      ratio: rand(0.4, 1), // strip vs square
+      drift: rand(-160, 160),
+      duration: rand(2000, 3800),
+      delay: rand(0, 1000),
+      size: rand(5, 16),
+      ratio: rand(0.35, 1), // strip vs square
       color: COLORS[i % COLORS.length],
-      rotateSpeed: rand(2, 6),
-      shape: i % 5 === 0 ? 'circle' : 'rect',
+      rotateSpeed: rand(2, 8),
+      // 4 shapes — circle, square, strip (thin rect), triangle
+      shape: ['circle', 'rect', 'strip', 'triangle'][i % 4],
     }))
   ).current;
 
@@ -213,12 +221,31 @@ function ConfettiPiece({ fromX, drift, duration, delay, size, ratio, color, rota
   const op = t.interpolate({ inputRange: [0, 0.05, 0.9, 1], outputRange: [0, 1, 1, 0] });
   const rotate = r.interpolate({ inputRange: [0, 6], outputRange: ['0deg', '2160deg'] });
 
+  // Per-shape geometry: circle uses size×size + full radius;
+  // rect uses size×(size*ratio) + slight rounding (square-ish);
+  // strip uses size×(size*0.25) — long thin ribbons;
+  // triangle uses an SVG polygon for proper edges.
+  if (shape === 'triangle') {
+    return (
+      <Animated.View style={{
+        position: 'absolute',
+        opacity: op,
+        transform: [{ translateX: tx }, { translateY: ty }, { rotate }],
+      }}>
+        <Svg width={size + 2} height={size + 2} viewBox="0 0 10 10">
+          <Path d="M5 0 L10 9 L0 9 Z" fill={color} />
+        </Svg>
+      </Animated.View>
+    );
+  }
+
+  const isStrip = shape === 'strip';
   const style = {
     position: 'absolute',
     width: shape === 'circle' ? size : size,
-    height: shape === 'circle' ? size : size * ratio,
+    height: shape === 'circle' ? size : isStrip ? size * 0.25 : size * ratio,
     backgroundColor: color,
-    borderRadius: shape === 'circle' ? size / 2 : 1.5,
+    borderRadius: shape === 'circle' ? size / 2 : isStrip ? 1 : 1.5,
     opacity: op,
     transform: [{ translateX: tx }, { translateY: ty }, { rotate }],
   };
@@ -380,15 +407,23 @@ function LaserBeam({ color, y, angle, delay, dir }) {
 }
 
 // ── Fireworks ───────────────────────────────────────────────────────
+// iMessage-grade upgrade 2026-05-07: 7 → 12 bursts, denser sparks (16-22 → 22-34),
+// staggered across more screen + a couple of secondary smaller pops late.
 function Fireworks() {
   const bursts = useRef([
-    { x: SCREEN_W * 0.25, y: SCREEN_H * 0.25, color: '#F59E0B', delay: 0,    sparks: 18 },
-    { x: SCREEN_W * 0.7,  y: SCREEN_H * 0.2,  color: '#EF4444', delay: 280,  sparks: 16 },
-    { x: SCREEN_W * 0.5,  y: SCREEN_H * 0.4,  color: '#3B82F6', delay: 560,  sparks: 20 },
-    { x: SCREEN_W * 0.18, y: SCREEN_H * 0.5,  color: '#10B981', delay: 840,  sparks: 16 },
-    { x: SCREEN_W * 0.8,  y: SCREEN_H * 0.42, color: '#A855F7', delay: 1120, sparks: 18 },
-    { x: SCREEN_W * 0.4,  y: SCREEN_H * 0.18, color: '#EC4899', delay: 1400, sparks: 22 },
-    { x: SCREEN_W * 0.6,  y: SCREEN_H * 0.6,  color: '#FACC15', delay: 1680, sparks: 18 },
+    { x: SCREEN_W * 0.25, y: SCREEN_H * 0.25, color: '#F59E0B', delay: 0,    sparks: 28 },
+    { x: SCREEN_W * 0.70, y: SCREEN_H * 0.20, color: '#EF4444', delay: 220,  sparks: 26 },
+    { x: SCREEN_W * 0.50, y: SCREEN_H * 0.40, color: '#3B82F6', delay: 460,  sparks: 32 },
+    { x: SCREEN_W * 0.18, y: SCREEN_H * 0.50, color: '#10B981', delay: 700,  sparks: 24 },
+    { x: SCREEN_W * 0.80, y: SCREEN_H * 0.42, color: '#A855F7', delay: 940,  sparks: 28 },
+    { x: SCREEN_W * 0.40, y: SCREEN_H * 0.18, color: '#EC4899', delay: 1180, sparks: 34 },
+    { x: SCREEN_W * 0.60, y: SCREEN_H * 0.60, color: '#FACC15', delay: 1420, sparks: 28 },
+    { x: SCREEN_W * 0.30, y: SCREEN_H * 0.62, color: '#06B6D4', delay: 1660, sparks: 24 },
+    { x: SCREEN_W * 0.85, y: SCREEN_H * 0.55, color: '#FB7185', delay: 1900, sparks: 26 },
+    // Late secondary pops — smaller bursts for trailing crackle
+    { x: SCREEN_W * 0.15, y: SCREEN_H * 0.32, color: '#FFFFFF', delay: 2200, sparks: 14 },
+    { x: SCREEN_W * 0.55, y: SCREEN_H * 0.30, color: '#FFFFFF', delay: 2400, sparks: 14 },
+    { x: SCREEN_W * 0.78, y: SCREEN_H * 0.68, color: '#FFFFFF', delay: 2600, sparks: 14 },
   ]).current;
 
   return (
@@ -536,14 +571,28 @@ function DustMote({ x, y, delay, size }) {
 }
 
 // ── Echo ────────────────────────────────────────────────────────────
+// iMessage-grade upgrade 2026-05-07: 5 → 14 bubble copies, varied sizes,
+// drift in 3 directions (up + 2 angled), parallax fade, color cycling
+// across the brand purple gradient. Each copy has its own delay/duration
+// so the ripple feels organic instead of uniform.
 function Echo() {
-  // Five copies of a generic outgoing-bubble shape ripple out from the
-  // chat center. Each copy enters slightly later, scales up and fades.
-  const COPIES = 5;
+  const COPIES = 14;
+  const PURPLES = ['#7C3AED', '#8B5CF6', '#A78BFA', '#9333EA', '#6D28D9'];
   const copies = useRef(
     Array.from({ length: COPIES }).map((_, i) => ({
       v: new Animated.Value(0),
-      delay: i * 160,
+      delay: i * 110 + rand(0, 80),
+      duration: rand(1300, 1700),
+      // 3 angles: -30°, 0°, +30° (in radians) — staggered so screen fills
+      angle: ((i % 3) - 1) * (Math.PI / 6),
+      // Distance the bubble travels from the start point
+      distance: rand(140, 220),
+      // Bubble width varies for parallax
+      width: rand(110, 200),
+      color: PURPLES[i % PURPLES.length],
+      // Start offset from center so they don't all collapse on origin
+      offsetX: rand(-30, 30),
+      offsetY: rand(-20, 20),
     }))
   ).current;
 
@@ -551,7 +600,7 @@ function Echo() {
     Animated.parallel(copies.map((c) =>
       Animated.sequence([
         Animated.delay(c.delay),
-        Animated.timing(c.v, { toValue: 1, duration: 1400, useNativeDriver: true, easing: Easing.out(Easing.cubic) }),
+        Animated.timing(c.v, { toValue: 1, duration: c.duration, useNativeDriver: true, easing: Easing.out(Easing.cubic) }),
       ])
     )).start();
   }, [copies]);
@@ -559,21 +608,152 @@ function Echo() {
   return (
     <View style={StyleSheet.absoluteFillObject}>
       {copies.map((c, i) => {
-        const scale = c.v.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1.8] });
-        const ty = c.v.interpolate({ inputRange: [0, 1], outputRange: [0, -120] });
-        const op = c.v.interpolate({ inputRange: [0, 0.15, 1], outputRange: [0, 0.7, 0] });
+        const scale = c.v.interpolate({ inputRange: [0, 1], outputRange: [0.5, 1.7] });
+        // Travel along the angle: dx = cos(angle) * dist, dy = sin(angle) * dist - vertical bias
+        const tx = c.v.interpolate({
+          inputRange: [0, 1],
+          outputRange: [c.offsetX, c.offsetX + Math.sin(c.angle) * c.distance],
+        });
+        const ty = c.v.interpolate({
+          inputRange: [0, 1],
+          outputRange: [c.offsetY, c.offsetY - c.distance * 0.85],
+        });
+        const op = c.v.interpolate({ inputRange: [0, 0.12, 0.85, 1], outputRange: [0, 0.78, 0.45, 0] });
         return (
           <Animated.View
             key={i}
             style={{
               position: 'absolute',
-              left: SCREEN_W / 2 - 80,
+              left: SCREEN_W / 2 - c.width / 2,
               top: SCREEN_H / 2,
-              width: 160, height: 44,
-              borderRadius: 22,
-              backgroundColor: '#7C3AED',
+              width: c.width, height: 42,
+              borderRadius: 21,
+              backgroundColor: c.color,
               opacity: op,
-              transform: [{ scale }, { translateY: ty }],
+              transform: [{ translateX: tx }, { translateY: ty }, { scale }],
+              ...(Platform.OS === 'web' ? { boxShadow: `0 4px 16px ${c.color}55` } : {}),
+            }}
+          />
+        );
+      })}
+    </View>
+  );
+}
+
+// ── Shooting Star (NEW 2026-05-07) ──────────────────────────────────
+// Single large star with glowing trail crosses the screen diagonally,
+// followed by a sparkle burst at the impact point. Echoes iMessage's
+// "shooting star" sub-effect that lands once and feels weighty.
+function TrailDot({ delay, size, startX, endX, startY, endY }) {
+  const trT = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.sequence([
+      Animated.delay(delay),
+      Animated.timing(trT, { toValue: 1, duration: 1100, useNativeDriver: true, easing: Easing.bezier(0.4, 0, 0.6, 1) }),
+    ]).start();
+  }, [trT, delay]);
+  const trX = trT.interpolate({ inputRange: [0, 1], outputRange: [startX, endX] });
+  const trY = trT.interpolate({ inputRange: [0, 1], outputRange: [startY, endY] });
+  const trOp = trT.interpolate({ inputRange: [0, 0.1, 0.7, 1], outputRange: [0, 0.7, 0.3, 0] });
+  return (
+    <Animated.View
+      style={{
+        position: 'absolute',
+        width: size, height: size, borderRadius: size / 2,
+        backgroundColor: '#FFF8DC',
+        opacity: trOp,
+        transform: [{ translateX: trX }, { translateY: trY }],
+        ...(Platform.OS === 'web' ? { boxShadow: '0 0 12px #FFD700' } : {}),
+      }}
+    />
+  );
+}
+
+function ShootingStar() {
+  const t = useRef(new Animated.Value(0)).current;
+  const burst = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.sequence([
+      Animated.timing(t, { toValue: 1, duration: 1100, useNativeDriver: true, easing: Easing.bezier(0.4, 0, 0.6, 1) }),
+      Animated.timing(burst, { toValue: 1, duration: 800, useNativeDriver: true, easing: Easing.out(Easing.cubic) }),
+    ]).start();
+  }, [t, burst]);
+
+  // Travel from upper-left to lower-right
+  const startX = -80;
+  const endX = SCREEN_W + 40;
+  const startY = SCREEN_H * 0.18;
+  const endY = SCREEN_H * 0.62;
+
+  const tx = t.interpolate({ inputRange: [0, 1], outputRange: [startX, endX] });
+  const ty = t.interpolate({ inputRange: [0, 1], outputRange: [startY, endY] });
+  const op = t.interpolate({ inputRange: [0, 0.05, 0.85, 1], outputRange: [0, 1, 1, 0.2] });
+  const scale = t.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0.6, 1.2, 0.8] });
+
+  // Trail particles
+  const trail = useRef(
+    Array.from({ length: 14 }).map((_, i) => ({
+      delay: i * 45,
+      size: 4 + i * 0.3,
+    }))
+  ).current;
+
+  // Burst sparks at landing point
+  const sparks = useRef(
+    Array.from({ length: 18 }).map((_, i) => ({
+      angle: (Math.PI * 2 * i) / 18,
+      dist: rand(40, 80),
+    }))
+  ).current;
+
+  return (
+    <View style={StyleSheet.absoluteFillObject}>
+      {/* Trail dots — extracted to TrailDot component to keep hooks stable */}
+      {trail.map((tr, i) => (
+        <TrailDot key={i} {...tr} startX={startX} endX={endX} startY={startY} endY={endY} />
+      ))}
+      {/* Main star */}
+      <Animated.View
+        style={{
+          position: 'absolute',
+          opacity: op,
+          transform: [{ translateX: tx }, { translateY: ty }, { scale }],
+        }}
+      >
+        <Svg width={50} height={50} viewBox="0 0 24 24">
+          <Defs>
+            <RadialGradient id="star-glow" cx="50%" cy="50%" r="50%">
+              <Stop offset="0" stopColor="#FFD700" stopOpacity="0.9" />
+              <Stop offset="1" stopColor="#FFD700" stopOpacity="0" />
+            </RadialGradient>
+          </Defs>
+          <Circle cx={12} cy={12} r={11} fill="url(#star-glow)" />
+          <Path
+            d="M12 2l2.6 7h7.4l-6 4.5 2.3 7L12 16l-6.3 4.5 2.3-7-6-4.5h7.4z"
+            fill="#FFD700"
+            stroke="#FFA500"
+            strokeWidth="0.5"
+          />
+        </Svg>
+      </Animated.View>
+      {/* Burst sparks at endpoint */}
+      {sparks.map((s, i) => {
+        const dx = burst.interpolate({ inputRange: [0, 1], outputRange: [0, Math.cos(s.angle) * s.dist] });
+        const dy = burst.interpolate({ inputRange: [0, 1], outputRange: [0, Math.sin(s.angle) * s.dist] });
+        const sop = burst.interpolate({ inputRange: [0, 0.1, 0.85, 1], outputRange: [0, 0.95, 0.5, 0] });
+        return (
+          <Animated.View
+            key={`s-${i}`}
+            style={{
+              position: 'absolute',
+              left: endX - 25,
+              top: endY,
+              width: 4, height: 4, borderRadius: 2,
+              backgroundColor: '#FFD700',
+              opacity: sop,
+              transform: [{ translateX: dx }, { translateY: dy }],
+              ...(Platform.OS === 'web' ? { boxShadow: '0 0 8px #FFD700' } : {}),
             }}
           />
         );

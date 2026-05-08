@@ -26,14 +26,15 @@ const BUBBLE_EFFECTS = [
 ];
 
 const SCREEN_EFFECTS = [
-  { id: 'echo',         labelKey: 'effects.echo',         label: 'Echo',         color: '#7C3AED' },
-  { id: 'spotlight',    labelKey: 'effects.spotlight',    label: 'Spotlight',    color: '#F59E0B' },
-  { id: 'balloons',     labelKey: 'effects.balloons',     label: 'Balloons',     color: '#EF4444' },
-  { id: 'confetti',     labelKey: 'effects.confetti',     label: 'Confetti',     color: '#10B981' },
-  { id: 'love',         labelKey: 'effects.love',         label: 'Love',         color: '#EC4899' },
-  { id: 'lasers',       labelKey: 'effects.lasers',       label: 'Lasers',       color: '#06B6D4' },
-  { id: 'fireworks',    labelKey: 'effects.fireworks',    label: 'Fireworks',    color: '#F97316' },
-  { id: 'celebration',  labelKey: 'effects.celebration',  label: 'Celebration',  color: '#FACC15' },
+  { id: 'echo',          labelKey: 'effects.echo',         label: 'Echo',          color: '#7C3AED' },
+  { id: 'spotlight',     labelKey: 'effects.spotlight',    label: 'Spotlight',     color: '#F59E0B' },
+  { id: 'balloons',      labelKey: 'effects.balloons',     label: 'Balloons',      color: '#EF4444' },
+  { id: 'confetti',      labelKey: 'effects.confetti',     label: 'Confetti',      color: '#10B981' },
+  { id: 'love',          labelKey: 'effects.love',         label: 'Love',          color: '#EC4899' },
+  { id: 'lasers',        labelKey: 'effects.lasers',       label: 'Lasers',        color: '#06B6D4' },
+  { id: 'fireworks',     labelKey: 'effects.fireworks',    label: 'Fireworks',     color: '#F97316' },
+  { id: 'shooting-star', labelKey: 'effects.shootingStar', label: 'Shooting Star', color: '#FFD700' },
+  { id: 'celebration',   labelKey: 'effects.celebration',  label: 'Celebration',   color: '#FACC15' },
 ];
 
 function BubblePreview({ effect, color }) {
