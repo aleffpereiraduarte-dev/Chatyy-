@@ -26,7 +26,7 @@ import {
   IconUserPlus, IconShare, IconAlertTriangle, IconArrowLeft, IconMessageSquare,
   IconCopy, IconCheckCircle, IconMail, IconSparkles, IconFilter, IconEdit,
   IconForward, IconFileText, IconUsers,
-  IconClock, IconImage, IconStar, IconMapPin,
+  IconClock, IconImage, IconStar, IconMapPin, IconSearch,
 } from './Icons';
 import * as api from '../services/api';
 import { useTheme, ACCENT_PRESETS } from '../context/ThemeContext';
