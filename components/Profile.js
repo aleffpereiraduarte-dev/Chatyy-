@@ -44,6 +44,19 @@ import {
 const IconEdit3 = IconEdit;
 const IconTrash2 = IconTrash;
 
+// Gradient halo + empty illustration. Loaded lazily so a missing peer dep
+// can't crash the screen — fall back to plain View borders when unavailable.
+let _Svg = null, _SvgDefs = null, _SvgLinearGradient = null, _SvgStop = null, _SvgCircle = null, _SvgPath = null;
+try {
+  const _svg = require('react-native-svg');
+  _Svg = _svg.Svg || _svg.default;
+  _SvgDefs = _svg.Defs;
+  _SvgLinearGradient = _svg.LinearGradient;
+  _SvgStop = _svg.Stop;
+  _SvgCircle = _svg.Circle;
+  _SvgPath = _svg.Path;
+} catch (e) {}
+
 const WEB = Platform.OS === 'web';
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
@@ -78,10 +91,25 @@ let _ExpoImage = null;
 try { _ExpoImage = require('expo-image').Image; } catch {}
 
 // ─── Small helpers ────────────────────────────────────────────────────
+// Stat counter formatter — Instagram parity:
+//   < 1k       → bare number  (e.g. 842)
+//   1k–9.99k   → comma-grouped (e.g. 1,234)        ← keeps full fidelity for
+//                                                    most "discover-tier" users
+//   ≥ 10k      → compact suffix (e.g. 12.3k, 1.5M) ← avoids 5+ digit blow-out
+// Uses Intl when present, hand-rolled regex fallback so the screen renders on
+// older RN runtimes that ship without full ICU.
 function formatCount(n) {
   n = Number(n) || 0;
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace('.0', '') + 'M';
-  if (n >= 1_000)     return (n / 1_000).toFixed(1).replace('.0', '') + 'k';
+  if (n >= 10_000)    return (n / 1_000).toFixed(1).replace('.0', '') + 'k';
+  if (n >= 1_000) {
+    try {
+      if (typeof Intl !== 'undefined' && typeof Intl.NumberFormat === 'function') {
+        return new Intl.NumberFormat().format(n);
+      }
+    } catch {}
+    return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  }
   return String(n);
 }
 
@@ -111,64 +139,101 @@ function relativeLastSeen(ts, t) {
 }
 
 // ─── Action button (phone/video/mail/msg/follow) ─────────────────────
-// Instagram-style flat button: 50% width, rounded corners, bold label. Primary
-// variant is solid purple (for "Follow"), secondary is filled surface color.
+// Instagram-style pill button: 50% width, fully rounded corners, bold label.
+//   - Primary  → solid purple fill, no border, soft elevation shadow.
+//   - Secondary → transparent fill with 1px brand-tinted border (outlined pill).
+// Press feels tactile via a spring scale (native driver). The shadow is
+// kept subtle (purple alpha, low offset) so it doesn't clash with dark mode.
 function FlatButton({ label, onPress, isPrimary, colors, isDark }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const onPressIn = useCallback(() => {
+    Animated.spring(scale, { toValue: 0.96, useNativeDriver: true, speed: 30, bounciness: 4 }).start();
+  }, [scale]);
+  const onPressOut = useCallback(() => {
+    Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 22, bounciness: 8 }).start();
+  }, [scale]);
+  // Outline color: brand tint on light mode, lighter brand on dark. Falls
+  // back to colors.border when the brand isn't appropriate (e.g. very dim
+  // surfaces) — but we generally want the secondary to hint at brand.
+  const outlineColor = isDark ? 'rgba(167,139,250,0.55)' : 'rgba(124,58,237,0.30)';
   return (
-    <TouchableOpacity
-      onPress={onPress}
-      activeOpacity={0.75}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      style={{
-        flex: 1,
-        paddingVertical: 9,
-        borderRadius: 10,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: isPrimary ? '#7C3AED' : (colors?.surface || (isDark ? '#222' : '#efefef')),
-        borderWidth: isPrimary ? 0 : StyleSheet.hairlineWidth,
-        borderColor: colors?.border || 'transparent',
-      }}
-    >
-      <Text style={{
-        fontSize: 14,
-        fontWeight: '600',
-        color: isPrimary ? '#fff' : colors?.text,
-      }} numberOfLines={1}>
-        {label}
-      </Text>
-    </TouchableOpacity>
+    <Animated.View style={{
+      flex: 1,
+      transform: [{ scale }],
+      // Soft purple glow only for the primary CTA — Instagram-grade lift.
+      ...(isPrimary && Platform.OS !== 'web' ? {
+        shadowColor: '#5B21B6',
+        shadowOpacity: isDark ? 0.45 : 0.30,
+        shadowRadius: 10,
+        shadowOffset: { width: 0, height: 4 },
+        elevation: 4,
+      } : {}),
+    }}>
+      <TouchableOpacity
+        onPress={onPress}
+        onPressIn={onPressIn}
+        onPressOut={onPressOut}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        style={{
+          paddingVertical: 11,
+          paddingHorizontal: 14,
+          borderRadius: 999, // pill
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: isPrimary ? '#7C3AED' : 'transparent',
+          borderWidth: isPrimary ? 0 : 1,
+          borderColor: isPrimary ? 'transparent' : outlineColor,
+        }}
+      >
+        <Text style={{
+          fontSize: 14,
+          fontWeight: '700',
+          letterSpacing: 0.1,
+          color: isPrimary ? '#fff' : (colors?.text || (isDark ? '#fff' : '#111')),
+        }} numberOfLines={1}>
+          {label}
+        </Text>
+      </TouchableOpacity>
+    </Animated.View>
   );
 }
 
 // Secondary chip with icon + label — used for supplementary actions (call,
-// video, email) that sit below the primary Follow/Message row.
+// video, email) that sit below the primary Follow/Message row. Pill-shape
+// matches the FlatButton above so the action stack reads as one family.
 function ChipButton({ icon: Icon, label, onPress, colors, isDark }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const outlineColor = isDark ? 'rgba(167,139,250,0.40)' : 'rgba(124,58,237,0.22)';
   return (
-    <TouchableOpacity
-      onPress={onPress}
-      activeOpacity={0.7}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      style={{
-        flex: 1,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 6,
-        paddingVertical: 8,
-        borderRadius: 9,
-        backgroundColor: colors?.surface || (isDark ? '#1f1f1f' : '#f4f4f4'),
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: colors?.border || 'transparent',
-      }}
-    >
-      {Icon && <Icon size={15} color={colors?.text} />}
-      <Text style={{ fontSize: 13, fontWeight: '500', color: colors?.text }} numberOfLines={1}>
-        {label}
-      </Text>
-    </TouchableOpacity>
+    <Animated.View style={{ flex: 1, transform: [{ scale }] }}>
+      <TouchableOpacity
+        onPress={onPress}
+        onPressIn={() => Animated.spring(scale, { toValue: 0.96, useNativeDriver: true, speed: 30, bounciness: 4 }).start()}
+        onPressOut={() => Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 22, bounciness: 8 }).start()}
+        activeOpacity={0.85}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 6,
+          paddingVertical: 9,
+          paddingHorizontal: 12,
+          borderRadius: 999, // pill
+          backgroundColor: 'transparent',
+          borderWidth: 1,
+          borderColor: outlineColor,
+        }}
+      >
+        {Icon && <Icon size={15} color={colors?.text || (isDark ? '#fff' : '#111')} />}
+        <Text style={{ fontSize: 13, fontWeight: '600', color: colors?.text || (isDark ? '#fff' : '#111') }} numberOfLines={1}>
+          {label}
+        </Text>
+      </TouchableOpacity>
+    </Animated.View>
   );
 }
 
@@ -200,23 +265,174 @@ function Stat({ value, label, onPress, colors }) {
   // Slightly chunkier number with a tabular-nums variant so 1K vs 999
   // don't shift width when count tips over. Label uppercased + tighter
   // letter-spacing for a more "stats card" feel (Instagram parity).
+  //
+  // Press affordance: spring-down to 0.94 on touch-in, spring back on release.
+  // Native driver so it stays buttery on lower-end Androids. Also bumps the
+  // hit-target via hitSlop so the 36-tall column never falls below the iOS
+  // 44pt accessibility floor.
+  const scale = useRef(new Animated.Value(1)).current;
+  const onPressIn = useCallback(() => {
+    if (!onPress) return;
+    Animated.spring(scale, { toValue: 0.94, useNativeDriver: true, speed: 28, bounciness: 6 }).start();
+  }, [onPress, scale]);
+  const onPressOut = useCallback(() => {
+    if (!onPress) return;
+    Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 22, bounciness: 10 }).start();
+  }, [onPress, scale]);
   return (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.7} disabled={!onPress}
-      style={{ flex: 1, alignItems: 'center', paddingVertical: 2 }}
+    <TouchableOpacity
+      onPress={onPress}
+      onPressIn={onPressIn}
+      onPressOut={onPressOut}
+      activeOpacity={0.85}
+      disabled={!onPress}
+      hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+      accessibilityRole={onPress ? 'button' : undefined}
+      accessibilityLabel={onPress ? `${label}: ${formatCount(value)}` : undefined}
+      style={{ flex: 1, alignItems: 'center', paddingVertical: 6 }}
     >
-      <Text style={{
-        fontSize: 22, fontWeight: '800', color: colors?.text, letterSpacing: -0.5,
-        fontVariant: ['tabular-nums'],
-      }}>
-        {formatCount(value)}
-      </Text>
-      <Text style={{
-        fontSize: 12, color: colors?.textSecondary, marginTop: 4,
-        letterSpacing: 0.1, fontWeight: '500',
-      }}>
-        {label}
-      </Text>
+      <Animated.View style={{ alignItems: 'center', transform: [{ scale }] }}>
+        <Text style={{
+          fontSize: 22, fontWeight: '800', color: colors?.text, letterSpacing: -0.5,
+          fontVariant: ['tabular-nums'],
+        }}>
+          {formatCount(value)}
+        </Text>
+        <Text style={{
+          fontSize: 12, color: colors?.textSecondary, marginTop: 4,
+          letterSpacing: 0.1, fontWeight: '500',
+        }}>
+          {label}
+        </Text>
+      </Animated.View>
     </TouchableOpacity>
+  );
+}
+
+// ─── Empty-state illustration ─────────────────────────────────────────
+// Subtle 3-tile-mosaic SVG that lives where the posts grid would be.
+// Reads as "no photos here yet" without leaning on a literal camera icon.
+// Renders at very low opacity so it sinks into the background — the title
+// and CTA stay the focal point.
+function EmptyGridIllustration({ isDark, size = 120 }) {
+  if (!_Svg || !_SvgPath) {
+    // Fallback: stack of 3 dim squares laid out the same way.
+    const tile = (size - 14) / 2;
+    const tone = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)';
+    return (
+      <View style={{ width: size, height: size, opacity: 0.85 }}>
+        <View style={{ flexDirection: 'row', gap: 6 }}>
+          <View style={{ width: tile, height: tile, borderRadius: 10, backgroundColor: tone }} />
+          <View style={{ width: tile, height: tile, borderRadius: 10, backgroundColor: tone, opacity: 0.7 }} />
+        </View>
+        <View style={{ flexDirection: 'row', marginTop: 6 }}>
+          <View style={{ width: tile, height: tile, borderRadius: 10, backgroundColor: tone, opacity: 0.55 }} />
+        </View>
+      </View>
+    );
+  }
+  const tone = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)';
+  const accent = isDark ? 'rgba(167,139,250,0.30)' : 'rgba(124,58,237,0.20)';
+  return (
+    <_Svg width={size} height={size} viewBox="0 0 120 120">
+      {/* Two mosaic tiles + one accent tile in brand purple */}
+      <_SvgPath d="M14 14 H56 V56 H14 Z" fill={tone} />
+      <_SvgPath d="M64 14 H106 V56 H64 Z" fill={tone} opacity={0.7} />
+      <_SvgPath d="M14 64 H56 V106 H14 Z" fill={accent} />
+      {/* Small "plus" hint inside accent tile */}
+      <_SvgPath
+        d="M35 78 V92 M28 85 H42"
+        stroke={isDark ? '#C084FC' : '#7C3AED'}
+        strokeWidth="2.4"
+        strokeLinecap="round"
+      />
+      <_SvgPath d="M64 64 H106 V106 H64 Z" fill={tone} opacity={0.45} />
+    </_Svg>
+  );
+}
+
+// ─── Animated tab bar (Posts / Reels / Mídia / …) ────────────────────
+// Instagram-style sticky tabs with a sliding underline. The underline
+// translates between tab slots in 200ms (cubic-out) and lives on the GPU
+// thanks to `useNativeDriver`. Color of icon/text crossfades at the same
+// time so the active state never feels janky.
+function AnimatedTabBar({ tabs, activeKey, onChange, colors }) {
+  const [barW, setBarW] = useState(0);
+  const tabCount = Math.max(1, tabs.length);
+  const slotW = barW / tabCount;
+  const activeIdx = Math.max(0, tabs.findIndex(tb => tb.k === activeKey));
+  const indicatorX = useRef(new Animated.Value(activeIdx * slotW)).current;
+  useEffect(() => {
+    if (!barW) return;
+    Animated.timing(indicatorX, {
+      toValue: activeIdx * slotW,
+      duration: 200,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [activeIdx, slotW, barW, indicatorX]);
+  const accent = colors?.text || '#0f172a';
+  const muted = colors?.textTertiary || '#9ca3af';
+  return (
+    <View
+      onLayout={e => setBarW(e.nativeEvent.layout.width)}
+      style={{
+        flexDirection: 'row',
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderColor: colors?.border,
+        backgroundColor: colors?.background,
+        position: 'relative',
+      }}
+    >
+      {tabs.map(tb => {
+        const active = activeKey === tb.k;
+        const Icon = tb.icon;
+        return (
+          <TouchableOpacity
+            key={tb.k}
+            onPress={() => onChange(tb.k)}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: active }}
+            accessibilityLabel={tb.label}
+            activeOpacity={0.75}
+            style={{ flex: 1, paddingVertical: 12, alignItems: 'center' }}
+          >
+            {Icon ? (
+              <Icon size={22} color={active ? accent : muted} />
+            ) : (
+              <Text style={{ fontSize: 13, color: active ? accent : muted, fontWeight: active ? '700' : '500' }}>
+                {tb.label}
+              </Text>
+            )}
+          </TouchableOpacity>
+        );
+      })}
+      {/* Sliding underline. We render only when we know the bar width so
+          there's no first-frame jump from x=0. */}
+      {barW > 0 && (
+        <Animated.View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            bottom: 0,
+            left: 0,
+            width: slotW,
+            height: 2,
+            transform: [{ translateX: indicatorX }],
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <View style={{
+            width: Math.max(28, slotW * 0.45),
+            height: 2,
+            borderRadius: 2,
+            backgroundColor: accent,
+          }} />
+        </Animated.View>
+      )}
+    </View>
   );
 }
 
@@ -771,15 +987,70 @@ export default function Profile({
             // Wrapped in a fixed footprint so the layout stays stable when
             // hasStories toggles. The shared StoryRingAvatar sizes itself
             // exactly to its `size` (no ring) or size+padding (with ring).
-            const inner = (
+            //
+            // When there are no stories we still want an Instagram-grade
+            // gradient halo on the header avatar (purple → fuchsia → pink).
+            // Painted via SVG when `react-native-svg` is installed; falls
+            // back to a 3px solid-purple ring otherwise so we never lose the
+            // visual identity in degraded environments.
+            const AVATAR_SIZE = 86;
+            const HALO_PAD = 5; // 3px stroke + 2px inner gap
+            const HALO_SIZE = AVATAR_SIZE + HALO_PAD * 2;
+            const haloRadius = (HALO_SIZE / 2) - 1.5; // 3 / 2
+            const renderHalo = () => {
+              if (_Svg && _SvgDefs && _SvgLinearGradient && _SvgStop && _SvgCircle) {
+                return (
+                  <_Svg width={HALO_SIZE} height={HALO_SIZE} style={{ position: 'absolute', top: 0, left: 0 }}>
+                    <_SvgDefs>
+                      <_SvgLinearGradient id="profileAvatarHalo" x1="0" y1="0" x2="1" y2="1">
+                        <_SvgStop offset="0" stopColor="#5B21B6" />
+                        <_SvgStop offset="0.55" stopColor="#7C3AED" />
+                        <_SvgStop offset="1" stopColor="#EC4899" />
+                      </_SvgLinearGradient>
+                    </_SvgDefs>
+                    <_SvgCircle
+                      cx={HALO_SIZE / 2}
+                      cy={HALO_SIZE / 2}
+                      r={haloRadius}
+                      stroke="url(#profileAvatarHalo)"
+                      strokeWidth={3}
+                      fill="none"
+                    />
+                  </_Svg>
+                );
+              }
+              return (
+                <View style={{
+                  position: 'absolute', top: 0, left: 0,
+                  width: HALO_SIZE, height: HALO_SIZE, borderRadius: HALO_SIZE / 2,
+                  borderWidth: 3, borderColor: '#7C3AED',
+                }} />
+              );
+            };
+            const inner = hasStories ? (
               <StoryRingAvatar
                 name={identity.name}
                 email={identity.email}
-                size={86}
-                ringStyle={hasStories ? 'solid' : 'none'}
+                size={AVATAR_SIZE}
+                ringStyle="solid"
                 isDark={isDark}
                 colors={colors}
               />
+            ) : (
+              <View style={{
+                width: HALO_SIZE, height: HALO_SIZE,
+                alignItems: 'center', justifyContent: 'center',
+              }}>
+                {renderHalo()}
+                <StoryRingAvatar
+                  name={identity.name}
+                  email={identity.email}
+                  size={AVATAR_SIZE}
+                  ringStyle="none"
+                  isDark={isDark}
+                  colors={colors}
+                />
+              </View>
             );
             // No stories → tapping the avatar should still feel responsive:
             //   - Self viewing own profile → open picker to publish a new story
@@ -852,9 +1123,12 @@ export default function Profile({
           </View>
         </View>
 
-        {/* Row 3 — name + bio + link + presence */}
-        <View style={{ gap: 2 }}>
-          <Text style={{ fontSize: 15, fontWeight: '700', color: colors?.text }} numberOfLines={1}>
+        {/* Row 3 — name + bio + link + presence.
+            Bio uses lineHeight 1.5 + textSecondary to match Instagram's
+            comfortable read rhythm; clamped to ~520 to keep paragraphs from
+            stretching to tablet widths where the eye loses the line break. */}
+        <View style={{ gap: 3 }}>
+          <Text style={{ fontSize: 15, fontWeight: '700', color: colors?.text, letterSpacing: -0.1 }} numberOfLines={1}>
             {identity.name}
           </Text>
           {!!presenceText && (
@@ -863,12 +1137,18 @@ export default function Profile({
             </Text>
           )}
           {!!identity.bio && (
-            <Text style={{ fontSize: 14, color: colors?.text, lineHeight: 19, marginTop: 2 }}>
+            <Text style={{
+              fontSize: 14,
+              color: colors?.textSecondary || (isDark ? 'rgba(255,255,255,0.72)' : 'rgba(0,0,0,0.65)'),
+              lineHeight: 21, // ~1.5 of 14
+              marginTop: 4,
+              maxWidth: 520,
+            }}>
               {identity.bio}
             </Text>
           )}
           {!!identity.website && (
-            <Text style={{ fontSize: 13, color: '#7C3AED', fontWeight: '500', marginTop: 2 }} numberOfLines={1}>
+            <Text style={{ fontSize: 13, color: '#7C3AED', fontWeight: '600', marginTop: 4 }} numberOfLines={1}>
               {identity.website}
             </Text>
           )}
@@ -1043,7 +1323,7 @@ export default function Profile({
         if (combined.length === 0) {
           return (
             <EmptyStateCard
-              Icon={IconGrid}
+              illustration={<EmptyGridIllustration isDark={isDark} />}
               title={actions.is_self
                 ? _ti('profile.empty.postsSelfTitle', 'Sem publicações ainda')
                 : _ti('profile.empty.postsOtherTitle', 'Nenhuma publicação')}
@@ -1073,7 +1353,7 @@ export default function Profile({
         if (!reels.length) {
           return (
             <EmptyStateCard
-              Icon={IconFilm}
+              illustration={<EmptyGridIllustration isDark={isDark} />}
               title={actions.is_self
                 ? _ti('profile.empty.reelsSelfTitle', 'Nenhum Reel ainda')
                 : _ti('profile.empty.reelsOtherTitle', 'Nenhum Reel')}
@@ -1151,36 +1431,15 @@ export default function Profile({
     return (
       <>
         {/* Sticky tabs — Instagram-style icons. Active = solid theme-text
-            color icon + 1px bottom underline; inactive = muted gray icon
-            with no underline. Falls back to text + count for contextual
+            color icon + animated bottom underline that slides between tabs
+            (200ms cubic-out). Falls back to text + count for contextual
             sections without a recognized icon (chat / email). */}
-        <View style={{
-          flexDirection: 'row', borderTopWidth: StyleSheet.hairlineWidth,
-          borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors?.border,
-          backgroundColor: colors?.background,
-        }}>
-          {tabs.map(tb => {
-            const active = activeTab === tb.k;
-            const Icon = tb.icon;
-            const accent = colors?.text || '#0f172a';
-            const muted = colors?.textTertiary || '#9ca3af';
-            return (
-              <TouchableOpacity key={tb.k} onPress={() => setActiveTab(tb.k)}
-                accessibilityRole="tab"
-                accessibilityLabel={tb.label}
-                style={{ flex: 1, paddingVertical: 12, alignItems: 'center', borderBottomWidth: active ? 1.5 : 0, borderBottomColor: accent }}
-              >
-                {Icon ? (
-                  <Icon size={22} color={active ? accent : muted} />
-                ) : (
-                  <Text style={{ fontSize: 13, color: active ? accent : muted, fontWeight: active ? '700' : '500' }}>
-                    {tb.label}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+        <AnimatedTabBar
+          tabs={tabs}
+          activeKey={activeTab}
+          onChange={setActiveTab}
+          colors={colors}
+        />
 
         {renderTabContent()}
       </>

@@ -600,7 +600,15 @@ export default function SignupPhone() {
         <TouchableOpacity onPress={goBack} style={styles.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityLabel={t('common.back') || 'Voltar'}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[styles.brand, { color: colors.text }]}>Chatyy</Text>
+        <Text style={[styles.brand, {
+          color: colors.primary,
+          ...(Platform.OS === 'web' ? {
+            backgroundImage: 'linear-gradient(135deg, #5B21B6 0%, #7C3AED 60%, #A78BFA 100%)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text',
+          } : {}),
+        }]}>Chatyy</Text>
         <View style={{ width: 32 }} />
       </View>
 
@@ -768,9 +776,12 @@ export default function SignupPhone() {
                         activeOpacity={0.6}
                         style={{
                           flexDirection: 'row', alignItems: 'center',
-                          paddingVertical: 14,
-                          borderBottomWidth: StyleSheet.hairlineWidth,
-                          borderBottomColor: _hairline,
+                          paddingVertical: 12, paddingHorizontal: 14,
+                          borderRadius: 12,
+                          backgroundColor: 'rgba(124,58,237,0.08)',
+                          borderWidth: 1,
+                          borderColor: 'rgba(124,58,237,0.22)',
+                          marginBottom: 4,
                         }}
                       >
                         {/* Country flag emoji — WhatsApp/Telegram pattern. Renders
@@ -862,12 +873,14 @@ export default function SignupPhone() {
                         <Animated.View
                           key={i}
                           style={{
-                            width: 42, height: 50, borderRadius: 8,
-                            borderWidth: 1.5,
+                            width: 42, height: 50, borderRadius: 10,
+                            borderWidth: _focused ? 2 : 1.5,
                             borderColor: _otpBorder,
                             backgroundColor: _otpBg,
                             alignItems: 'center', justifyContent: 'center',
                             transform: [{ scale: otpBoxScales[i] }],
+                            ...(_focused && Platform.OS === 'web' ? { boxShadow: `0 0 0 4px ${colors.primary}22` } : {}),
+                            ...(_focused && Platform.OS === 'ios' ? { shadowColor: colors.primary, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.35, shadowRadius: 6 } : {}),
                           }}
                         >
                           <Text style={{ fontSize: 22, fontWeight: '700', color: colors.text }}>
@@ -1547,8 +1560,16 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   cta: {
-    height: 52, borderRadius: 10,
+    height: 52, borderRadius: 12,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    ...Platform.select({
+      web: {
+        boxShadow: '0 10px 26px rgba(124,58,237,0.35), 0 2px 6px rgba(124,58,237,0.20)',
+        transition: 'transform 140ms ease, box-shadow 140ms ease',
+      },
+      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 14 },
+      android: { elevation: 6 },
+    }),
   },
-  ctaText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  ctaText: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
 });

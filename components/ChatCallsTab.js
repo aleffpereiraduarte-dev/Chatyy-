@@ -642,8 +642,8 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, onPress, 
       onPress={() => onPress(item)}
       activeOpacity={0.6}
     >
-      {/* Left: Avatar or flag */}
-      <View style={s.historyLeft}>
+      {/* Left: Avatar or flag (red ring for missed, transparent otherwise) */}
+      <View style={[s.historyLeft, isMissed && s.historyLeftMissed]}>
         {isChatyy && (item.contactName || item.contactEmail) ? (
           <AvatarCircle
             name={item.contactName || item.contactEmail || '?'}
@@ -669,12 +669,13 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, onPress, 
           </Text>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
+          {/* Semantic colors: missed=red, incoming=green, outgoing=gray. */}
           {isMissed ? (
             <ArrowIncoming size={12} color={RED} />
           ) : item.type === 'outgoing' ? (
             <ArrowOutgoing size={12} color={isDark ? '#8e8e93' : '#6c6c70'} />
           ) : (
-            <ArrowIncoming size={12} color={isDark ? '#8e8e93' : '#6c6c70'} />
+            <ArrowIncoming size={12} color={GREEN} />
           )}
           <Text style={[s.historyType, { color: subColor }]}>
             {isChatyy ? (t?.('calls.chatyyCall') || 'Chatyy') : (item.to_number ? formatPhoneDisplay(item.to_number) : label)}
@@ -3242,6 +3243,18 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
             <Text style={[s.emptySubtitle, { color: subColor }]}>
               {t?.('calls.noCallsSubtitle') || 'Seu historico de ligacoes aparecera aqui'}
             </Text>
+            {/* CTA — primes the user to make a call instead of staring at nothing. */}
+            <TouchableOpacity
+              style={s.emptyCtaBtn}
+              onPress={() => setDialerVisible(true)}
+              activeOpacity={0.85}
+              accessibilityLabel={t?.('calls.dialer') || 'Teclado'}
+              accessibilityRole="button"
+            >
+              <Text style={s.emptyCtaText}>
+                {t?.('calls.openDialer') || 'Abrir teclado'}
+              </Text>
+            </TouchableOpacity>
           </View>
         ) : (
           groupedCalls.map((group, gIdx) => (
@@ -3428,6 +3441,14 @@ const s = StyleSheet.create({
   },
   historyLeft: {
     marginRight: 12,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    borderRadius: 26,
+    padding: 1,
+  },
+  // Subtle red ring for missed calls — premium "attention pull" without shouting.
+  historyLeftMissed: {
+    borderColor: RED,
   },
   historyAvatar: {
     width: 44,
@@ -3457,8 +3478,11 @@ const s = StyleSheet.create({
     gap: 12,
   },
   historyTime: {
-    fontSize: 13,
-    fontWeight: '400',
+    fontSize: 10.5,
+    fontWeight: '500',
+    letterSpacing: 0.3,
+    opacity: 0.55,
+    fontVariant: ['tabular-nums'],
   },
   infoBtn: {
     padding: 4,
@@ -3494,6 +3518,29 @@ const s = StyleSheet.create({
     lineHeight: 21,
     fontWeight: '500',
     maxWidth: 300,
+  },
+  // Brand purple gradient CTA — opens dialer to make first call.
+  emptyCtaBtn: {
+    marginTop: 22,
+    paddingVertical: 12,
+    paddingHorizontal: 28,
+    borderRadius: 999,
+    backgroundColor: '#7C3AED',
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 6px 18px rgba(124,58,237,0.35)',
+      backgroundImage: 'linear-gradient(135deg, #5B21B6 0%, #7C3AED 100%)',
+    } : Platform.OS === 'ios' ? {
+      shadowColor: '#7C3AED',
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.32,
+      shadowRadius: 14,
+    } : { elevation: 5 }),
+  },
+  emptyCtaText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
 
   // FAB

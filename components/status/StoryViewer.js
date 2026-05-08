@@ -727,7 +727,16 @@ export default function StoryViewer({
           flex: 1, height: 3, backgroundColor: 'rgba(255,255,255,0.28)',
           borderRadius: 2, overflow: 'hidden',
         }}>
-          {i < safeIdx && <View style={{ width: '100%', height: '100%', backgroundColor: '#fff' }} />}
+          {i < safeIdx && (
+            // Completed segment — purple→pink gradient matches the active fill
+            // so finished + in-progress segments read as one consistent brand
+            // surface (vs the prior solid white that looked disconnected).
+            <View style={{ width: '100%', height: '100%', flexDirection: 'row' }}>
+              <View style={{ flex: 1, backgroundColor: '#7C3AED' }} />
+              <View style={{ flex: 1, backgroundColor: '#A855F7' }} />
+              <View style={{ flex: 1, backgroundColor: '#EC4899' }} />
+            </View>
+          )}
           {i === safeIdx && (
             <Animated.View
               accessibilityLabel={`${t?.('status.progress') || 'Story'} ${safeIdx + 1} ${t?.('common.of') || 'de'} ${stories.length}`}
@@ -736,16 +745,16 @@ export default function StoryViewer({
                 height: '100%',
                 width: progressRef.current.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
                 backgroundColor: 'transparent',
+                flexDirection: 'row',
+                shadowColor: '#EC4899', shadowOpacity: 0.7, shadowRadius: 4, shadowOffset: { width: 0, height: 0 },
               }}
             >
-              {/* Inner gradient overlay — simulates the iOS-style "gleam" via a
-                  brighter trailing edge. Two stacked Views are cheaper than Svg
-                  gradient for a tiny 3px bar. */}
-              <View style={{
-                flex: 1,
-                backgroundColor: 'rgba(255,255,255,0.95)',
-                shadowColor: '#fff', shadowOpacity: 0.6, shadowRadius: 4, shadowOffset: { width: 0, height: 0 },
-              }} />
+              {/* Brand gradient (purple → pink) — three stacked color steps
+                  approximate a linear-gradient cheaply. Pink trailing edge
+                  carries a soft glow via shadowColor on the parent. */}
+              <View style={{ flex: 1, backgroundColor: '#7C3AED' }} />
+              <View style={{ flex: 1, backgroundColor: '#A855F7' }} />
+              <View style={{ flex: 1, backgroundColor: '#EC4899' }} />
             </Animated.View>
           )}
         </View>
@@ -797,7 +806,19 @@ export default function StoryViewer({
           opacity: uiOpacity,
         }}>
           {ownerEmail ? (
-            <AvatarCircle name={ownerName} email={ownerEmail} size={36} />
+            // White ring + soft glow around the owner avatar — gives the
+            // header a more "premium" feel and visually separates the avatar
+            // from busy story backgrounds. shadowColor white + radius 8 reads
+            // as a halo on iOS; elevation handles Android equivalent.
+            <View style={{
+              width: 40, height: 40, borderRadius: 20,
+              borderWidth: 2, borderColor: '#fff',
+              alignItems: 'center', justifyContent: 'center',
+              shadowColor: '#fff', shadowOpacity: 0.5, shadowRadius: 8, shadowOffset: { width: 0, height: 0 },
+              elevation: 6,
+            }}>
+              <AvatarCircle name={ownerName} email={ownerEmail} size={36} />
+            </View>
           ) : null}
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }} numberOfLines={1}>
@@ -844,8 +865,20 @@ export default function StoryViewer({
               ) : null}
             </>
           )}
-          <TouchableOpacity onPress={onClose} style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }} accessibilityLabel="Close">
-            <IconX size={18} color="#fff" />
+          <TouchableOpacity
+            onPress={onClose}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={{
+              width: 38, height: 38, borderRadius: 19,
+              backgroundColor: 'rgba(0,0,0,0.55)',
+              alignItems: 'center', justifyContent: 'center',
+              borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+              shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
+              elevation: 4,
+            }}
+            accessibilityLabel="Close"
+          >
+            <IconX size={20} color="#fff" />
           </TouchableOpacity>
         </Animated.View>
 
@@ -910,6 +943,23 @@ export default function StoryViewer({
           </Animated.View>
         ) : null}
 
+        {/* Bottom dark fade — three stacked translucent bars approximate a
+            linear-gradient (cheap, no extra dep) so the caption + bottom bar
+            stay legible over bright/busy media. Sits behind chrome (zIndex 3)
+            and pointerEvents:none so it doesn't intercept taps. Only shown
+            when there's caption + media (text statuses already have a solid
+            background). */}
+        {caption && (isImage || isVideo) ? (
+          <View
+            pointerEvents="none"
+            style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 220, zIndex: 3 }}
+          >
+            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.0)' }} />
+            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.18)' }} />
+            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.42)' }} />
+          </View>
+        ) : null}
+
         {/* Caption overlay — glass surface for image/video stories */}
         {caption ? (
           <Animated.View style={{
@@ -922,7 +972,14 @@ export default function StoryViewer({
             zIndex: 6,
             opacity: uiOpacity,
           }}>
-            <Text style={{ color: '#fff', fontSize: 15, lineHeight: 20, textAlign: 'center' }}>
+            <Text style={{
+              color: '#fff', fontSize: 15, lineHeight: 20, textAlign: 'center',
+              // Subtle shadow under caption text adds extra legibility on top
+              // of the gradient — same trick Instagram uses for stickers.
+              textShadowColor: 'rgba(0,0,0,0.5)',
+              textShadowOffset: { width: 0, height: 1 },
+              textShadowRadius: 3,
+            }}>
               {caption}
             </Text>
           </Animated.View>
@@ -1152,7 +1209,12 @@ export default function StoryViewer({
             )
           ) : (
             <View style={{ gap: 10 }}>
-              {/* Quick reactions */}
+              {/* Quick reactions — scale-pop animation + medium haptic on tap.
+                  Pulse ramps 1 → 1.6 → 1 via emojiPulse state; pairs with the
+                  flying-emoji ReactPop overlay rendered above the bottom bar.
+                  Haptic mirrors WhatsApp react UX: a short medium-strength
+                  thump that confirms the touch landed even before the visual
+                  catches up. */}
               <View style={{ flexDirection: 'row', justifyContent: 'space-around' }}>
                 {['❤️','🔥','😂','😮','😢','👏','👍'].map(emoji => {
                   const pulsing = emojiPulse === emoji;
@@ -1160,14 +1222,23 @@ export default function StoryViewer({
                     <TouchableOpacity
                       key={emoji}
                       onPress={() => {
+                        _haptic('medium');
                         setEmojiPulse(emoji);
-                        setTimeout(() => setEmojiPulse(null), 220);
+                        setTimeout(() => setEmojiPulse(null), 260);
                         setReactPop(emoji);
                         setTimeout(() => setReactPop(null), 900);
                         try { onReact?.(cur, emoji); } catch {}
                       }}
                       hitSlop={8}
-                      style={{ paddingHorizontal: 6, transform: [{ scale: pulsing ? 1.35 : 1 }] }}
+                      style={{
+                        paddingHorizontal: 6,
+                        transform: [{ scale: pulsing ? 1.6 : 1 }],
+                        // Soft glow only while pulsing — adds visual oomph
+                        // without bloating the resting state.
+                        ...(pulsing ? {
+                          shadowColor: '#EC4899', shadowOpacity: 0.6, shadowRadius: 10, shadowOffset: { width: 0, height: 0 },
+                        } : null),
+                      }}
                     >
                       <Text style={{ fontSize: 26 }}>{emoji}</Text>
                     </TouchableOpacity>
@@ -1191,18 +1262,18 @@ export default function StoryViewer({
               ) : (
                 <View style={{
                   flexDirection: 'row', alignItems: 'center', gap: 8,
-                  backgroundColor: 'rgba(255,255,255,0.12)',
+                  backgroundColor: 'rgba(255,255,255,0.15)',
                   borderRadius: 24, paddingLeft: 14, paddingRight: 6,
-                  borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)',
+                  borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)',
                 }}>
-                  <IconMessageSquare size={16} color="rgba(255,255,255,0.55)" />
+                  <IconMessageSquare size={16} color="rgba(255,255,255,0.7)" />
                   <TextInput
                     value={replyText}
                     onChangeText={setReplyText}
                     onFocus={() => { setPaused(true); setReplyFocused(true); }}
                     onBlur={() => { setReplyFocused(false); setPaused(false); }}
                     placeholder={(t?.('status.replyPlaceholder') || 'Responder para') + ' ' + (ownerName || '...')}
-                    placeholderTextColor="rgba(255,255,255,0.55)"
+                    placeholderTextColor="rgba(255,255,255,0.7)"
                     style={{ flex: 1, color: '#fff', fontSize: 14, paddingVertical: 10, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}
                     editable={!replying}
                     returnKeyType="send"

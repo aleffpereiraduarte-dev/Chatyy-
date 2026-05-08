@@ -318,6 +318,42 @@ function parseICSEvents(icsContent) {
 }
 
 // ============================================================
+// Day cell with subtle scale spring when selected
+// ============================================================
+function DayCellInner({ isSelected, isToday, isOtherMonth, day, colors }) {
+  const scale = useRef(new Animated.Value(isSelected ? 1.08 : 1)).current;
+  useEffect(() => {
+    Animated.spring(scale, {
+      toValue: isSelected ? 1.08 : 1,
+      friction: 6,
+      tension: 180,
+      useNativeDriver: true,
+    }).start();
+  }, [isSelected, scale]);
+  return (
+    <Animated.View style={[
+      styles.dayCellInner,
+      { transform: [{ scale }] },
+      // Today: 2px ring purple (no fill)
+      isToday && { borderWidth: 2, borderColor: colors.primary, backgroundColor: 'transparent' },
+      // Selected (and not today): solid fill so selection still reads strong
+      isSelected && !isToday && { backgroundColor: colors.primary,
+        ...(Platform.OS === 'web' ? { background: `linear-gradient(135deg, ${colors.primary}, #8b5cf6)`, boxShadow: `0 2px 8px ${colors.primary}40` } : {}),
+      },
+    ]}>
+      <Text style={[
+        styles.dayCellText,
+        { color: isOtherMonth ? colors.textTertiary : colors.text },
+        isToday && { color: colors.primary, fontWeight: '800' },
+        isSelected && !isToday && { color: '#fff', fontWeight: '800' },
+      ]}>
+        {day}
+      </Text>
+    </Animated.View>
+  );
+}
+
+// ============================================================
 // Calendar Grid Component
 // ============================================================
 function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate, onPrevMonth, onNextMonth, onQuickAdd, t }) {
@@ -443,22 +479,13 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
                 activeOpacity={0.7}
               >
                 <View style={styles.cellTopRow}>
-                  <View style={[
-                    styles.dayCellInner,
-                    isToday && { backgroundColor: colors.primary,
-                      ...(Platform.OS === 'web' ? { background: `linear-gradient(135deg, ${colors.primary}, #8b5cf6)`, boxShadow: `0 2px 8px ${colors.primary}40` } : {}),
-                    },
-                    isSelected && !isToday && { borderWidth: 2, borderColor: colors.primary },
-                  ]}>
-                    <Text style={[
-                      styles.dayCellText,
-                      { color: isToday ? '#fff' : isOtherMonth ? colors.textTertiary : colors.text },
-                      isSelected && !isToday && { color: colors.primary, fontWeight: '800' },
-                      isToday && { fontWeight: '700' },
-                    ]}>
-                      {cell.day}
-                    </Text>
-                  </View>
+                  <DayCellInner
+                    isSelected={!!isSelected}
+                    isToday={isToday}
+                    isOtherMonth={isOtherMonth}
+                    day={cell.day}
+                    colors={colors}
+                  />
                   {!isOtherMonth && onQuickAdd && (
                     <TouchableOpacity
                       onPress={(e) => { e.stopPropagation && e.stopPropagation(); onQuickAdd(cell.date); }}
@@ -473,11 +500,13 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
                     (title + time + location) without leaving the grid view. */}
                 {cellEvents.length > 0 && (
                   <View style={styles.cellEventPreviews}>
-                    {cellEvents.slice(0, 2).map((evt, ei) => (
+                    {cellEvents.slice(0, 2).map((evt, ei) => {
+                      const accent = evt.color || evt.calendar_color || colors.primary;
+                      return (
                       <TouchableOpacity
                         key={ei}
                         activeOpacity={0.7}
-                        style={[styles.cellEventPreview, { backgroundColor: (evt.color || evt.calendar_color || colors.primary) + '22' }]}
+                        style={[styles.cellEventPreview, { backgroundColor: accent + '14', borderLeftWidth: 3, borderLeftColor: accent }]}
                         onPress={() => onSelectDate(cell.date)}
                         onLongPress={() => {
                           const time = evt.all_day
@@ -488,12 +517,12 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
                         }}
                         delayLongPress={300}
                       >
-                        <View style={[styles.cellEventDot, { backgroundColor: evt.color || evt.calendar_color || colors.primary }]} />
                         <Text style={[styles.cellEventText, { color: isOtherMonth ? colors.textTertiary : colors.text }]} numberOfLines={1}>
                           {evt.title || ''}
                         </Text>
                       </TouchableOpacity>
-                    ))}
+                      );
+                    })}
                     {cellEvents.length > 2 && (
                       <Text style={[styles.cellEventMore, { color: colors.textTertiary }]}>+{cellEvents.length - 2}</Text>
                     )}
@@ -2060,41 +2089,46 @@ function CalendarScreenInner() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      {/* Header */}
-      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+      {/* Header — unified Chatyy purple gradient (matches Inbox/Chat) */}
+      <View style={[
+        styles.header,
+        Platform.OS === 'web'
+          ? { background: isDark ? 'linear-gradient(180deg, #1a0a2e 0%, #0a0a0a 100%)' : 'linear-gradient(180deg, #5B21B6 0%, #7C3AED 100%)' }
+          : { backgroundColor: isDark ? '#0d0a14' : '#6D28D9' },
+      ]}>
         <TouchableOpacity onPress={() => { if (Platform.OS === "web" && window.parent !== window) { try { window.parent.postMessage({ type: "close-side-panel", route: "/calendar" }, "*"); } catch {} } else { router.back(); } }} style={styles.headerBtn}>
-          <IconArrowLeft size={22} color={colors.text} />
+          <IconArrowLeft size={22} color="#fff" />
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>{t('calendar.title')}</Text>
+        <Text style={[styles.headerTitle, { color: '#fff' }]}>{t('calendar.title')}</Text>
         <View style={styles.headerRight}>
           {/* View Toggle */}
-          <View style={[styles.viewToggle, { borderColor: colors.border }]}>
+          <View style={[styles.viewToggle, { borderColor: 'rgba(255,255,255,0.35)' }]}>
             <TouchableOpacity
               onPress={() => setCalendarView('month')}
-              style={[styles.viewToggleBtn, calendarView === 'month' && { backgroundColor: colors.primary }]}
+              style={[styles.viewToggleBtn, calendarView === 'month' && { backgroundColor: 'rgba(255,255,255,0.22)' }]}
             >
-              <Text style={[styles.viewToggleBtnText, { color: calendarView === 'month' ? '#fff' : colors.textSecondary }]}>
+              <Text style={[styles.viewToggleBtnText, { color: '#fff', opacity: calendarView === 'month' ? 1 : 0.75 }]}>
                 {t('calendar.monthView')}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => setCalendarView('week')}
-              style={[styles.viewToggleBtn, calendarView === 'week' && { backgroundColor: colors.primary }]}
+              style={[styles.viewToggleBtn, calendarView === 'week' && { backgroundColor: 'rgba(255,255,255,0.22)' }]}
             >
-              <Text style={[styles.viewToggleBtnText, { color: calendarView === 'week' ? '#fff' : colors.textSecondary }]}>
+              <Text style={[styles.viewToggleBtnText, { color: '#fff', opacity: calendarView === 'week' ? 1 : 0.75 }]}>
                 {t('calendar.weekView')}
               </Text>
             </TouchableOpacity>
           </View>
-          <TouchableOpacity onPress={handleToday} style={[styles.todayBtn, { borderColor: colors.border }]}>
-            <Text style={[styles.todayBtnText, { color: colors.primary }]}>{t('calendar.today')}</Text>
+          <TouchableOpacity onPress={handleToday} style={[styles.todayBtn, { borderColor: 'rgba(255,255,255,0.35)' }]}>
+            <Text style={[styles.todayBtnText, { color: '#fff' }]}>{t('calendar.today')}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => persistShowTz(!showTz)}
-            style={[styles.todayBtn, { borderColor: colors.border, backgroundColor: showTz ? (colors.primary + '22') : 'transparent' }]}
+            style={[styles.todayBtn, { borderColor: 'rgba(255,255,255,0.35)', backgroundColor: showTz ? 'rgba(255,255,255,0.22)' : 'transparent' }]}
             accessibilityLabel={t('calendar.showTz')}
           >
-            <Text style={[styles.todayBtnText, { color: showTz ? colors.primary : colors.textSecondary }]}>
+            <Text style={[styles.todayBtnText, { color: '#fff', opacity: showTz ? 1 : 0.75 }]}>
               {t('calendar.timezones')}
             </Text>
           </TouchableOpacity>
@@ -2106,14 +2140,14 @@ function CalendarScreenInner() {
               accessibilityLabel={t('calendar.syncNow')}
             >
               {syncingDevice ? (
-                <ActivityIndicator size="small" color={colors.primary} />
+                <ActivityIndicator size="small" color="#fff" />
               ) : (
-                <IconRefresh size={20} color={colors.primary} />
+                <IconRefresh size={20} color="#fff" />
               )}
             </TouchableOpacity>
           )}
-          <TouchableOpacity onPress={() => setShowAddModal(true)} style={styles.headerBtn}>
-            <IconPlus size={22} color={colors.primary} />
+          <TouchableOpacity onPress={() => setShowAddModal(true)} style={[styles.headerBtn, styles.headerFab]}>
+            <IconPlus size={22} color="#fff" />
           </TouchableOpacity>
         </View>
       </View>
@@ -2294,6 +2328,27 @@ const styles = StyleSheet.create({
     }),
   },
   headerBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 12 },
+  // Mini-FAB inside header — same brand-accented style as the floating FABs
+  // in Inbox/Chat (purple gradient orb + soft glow), so the "novo evento"
+  // affordance carries the same weight here.
+  headerFab: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    ...Platform.select({
+      web: {
+        boxShadow: '0 4px 14px rgba(0,0,0,0.18), 0 0 0 1px rgba(255,255,255,0.18)',
+        background: 'linear-gradient(135deg, rgba(255,255,255,0.28) 0%, rgba(255,255,255,0.14) 100%)',
+        transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+      },
+      default: {
+        elevation: 4,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.18,
+        shadowRadius: 8,
+      },
+    }),
+  },
   headerTitle: { fontSize: FontSize.xl, fontWeight: '800', letterSpacing: -0.3 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   todayBtn: {
@@ -2319,7 +2374,7 @@ const styles = StyleSheet.create({
   monthTitle: { fontSize: FontSize.lg + 2, fontWeight: '800', letterSpacing: -0.3 },
   dayHeaders: { flexDirection: 'row' },
   dayHeaderCell: { flex: 1, alignItems: 'center', paddingVertical: 6 },
-  dayHeaderText: { fontSize: FontSize.xs, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, opacity: 0.5 },
+  dayHeaderText: { fontSize: FontSize.xs, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
   calendarRow: { flexDirection: 'row' },
   calendarCell: {
     flex: 1, alignItems: 'stretch', paddingVertical: 3, paddingHorizontal: 2, minHeight: 72,

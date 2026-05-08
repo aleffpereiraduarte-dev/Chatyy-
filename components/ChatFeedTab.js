@@ -200,19 +200,19 @@ function StoriesStrip({ user, colors, isDark, t, router }) {
       borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
       backgroundColor: isDark ? colors.background : '#f6f8fa',
     }}>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, gap: 14 }}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, gap: 16 }}>
         {/* Your status — always first */}
-        <TouchableOpacity onPress={open} activeOpacity={0.7} style={{ alignItems: 'center', width: 68 }}>
+        <TouchableOpacity onPress={open} activeOpacity={0.75} style={{ alignItems: 'center', width: 72 }}>
           <StoryRingAvatar
             name={myDisplay}
             email={user?.email}
-            size={54}
+            size={58}
             ringStyle={myEntry ? 'solid' : 'none'}
             badge="plus"
             isDark={isDark}
             colors={colors}
           />
-          <Text style={{ fontSize: 11, color: colors.text, marginTop: 5, fontWeight: '500' }} numberOfLines={1}>
+          <Text style={{ fontSize: 11.5, color: colors.text, marginTop: 6, fontWeight: '600', letterSpacing: -0.1 }} numberOfLines={1}>
             {myEntry ? myDisplay : (t?.('status.yourStory') || 'Seu status')}
           </Text>
         </TouchableOpacity>
@@ -220,17 +220,17 @@ function StoriesStrip({ user, colors, isDark, t, router }) {
         {others.map((g) => {
           const allViewed = (g.items || []).every(it => it.viewed);
           return (
-            <TouchableOpacity key={`fs-${g.email}`} onPress={open} activeOpacity={0.7} style={{ alignItems: 'center', width: 68 }}>
+            <TouchableOpacity key={`fs-${g.email}`} onPress={open} activeOpacity={0.75} style={{ alignItems: 'center', width: 72 }}>
               <StoryRingAvatar
                 name={g.name || g.email}
                 email={g.email}
-                size={54}
+                size={58}
                 ringStyle="solid"
                 allViewed={allViewed}
                 isDark={isDark}
                 colors={colors}
               />
-              <Text style={{ fontSize: 11, color: colors.text, marginTop: 5, fontWeight: '500' }} numberOfLines={1}>
+              <Text style={{ fontSize: 11.5, color: colors.text, marginTop: 6, fontWeight: '600', letterSpacing: -0.1 }} numberOfLines={1}>
                 {g.name || g.email?.split('@')[0]}
               </Text>
             </TouchableOpacity>
@@ -931,8 +931,9 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={handleRefresh}
-            tintColor={colors?.primary || ACCENT}
-            colors={[colors?.primary || ACCENT]}
+            tintColor="#7C3AED"
+            colors={['#7C3AED', '#5B21B6']}
+            progressBackgroundColor={isDark ? '#1f1b2e' : '#fff'}
           />
         }
         ListHeaderComponent={() => <>{renderSearchBar()}{renderTabBar()}<StoriesStrip user={user} colors={colors} isDark={isDark} t={t} router={router} />{renderLiveHeader()}</>}
@@ -1011,18 +1012,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 40,
+    paddingVertical: 60,
   },
   emptyText: {
-    fontSize: 17,
-    fontWeight: '600',
+    fontSize: 18,
+    fontWeight: '700',
     textAlign: 'center',
-    marginTop: 20,
+    marginTop: 22,
+    letterSpacing: -0.2,
   },
   emptySubtext: {
     fontSize: 13,
     marginTop: 8,
     textAlign: 'center',
-    lineHeight: 18,
+    lineHeight: 19,
+    maxWidth: 280,
   },
   // FAB
   fab: {
@@ -1107,7 +1111,10 @@ const styles = StyleSheet.create({
   liveSectionTitle: {
     fontSize: 15,
     fontWeight: '700',
+    letterSpacing: -0.1,
   },
+  // Live host name text
+  // (sharper grade for premium feel)
   liveScroll: {
     paddingHorizontal: 12,
     gap: 10,
@@ -1128,6 +1135,16 @@ const styles = StyleSheet.create({
     borderColor: '#dc2626',
     borderRadius: 28,
     padding: 2,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#dc2626',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.45,
+        shadowRadius: 6,
+      },
+      android: { elevation: 3 },
+      web: { boxShadow: '0 0 10px rgba(220,38,38,0.35)' },
+    }),
   },
   liveBadgeSmall: {
     position: 'absolute',
@@ -1161,9 +1178,9 @@ const styles = StyleSheet.create({
   },
   tabItem: {
     flex: 1,
-    paddingVertical: 10,
+    paddingVertical: 12,
     alignItems: 'center',
-    borderBottomWidth: 3,
+    borderBottomWidth: 2.5,
     borderBottomColor: 'transparent',
   },
   tabItemActive: {
@@ -1172,9 +1189,11 @@ const styles = StyleSheet.create({
   tabItemText: {
     fontSize: 14,
     fontWeight: '500',
+    letterSpacing: 0.1,
   },
   tabItemTextActive: {
-    fontWeight: '600',
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   // Footer
   footerLoader: {
@@ -1190,10 +1209,12 @@ const styles = StyleSheet.create({
   searchInputWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 12,
+    borderRadius: 14,
     paddingHorizontal: 12,
-    height: 40,
+    height: 42,
     gap: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(124,58,237,0.10)',
   },
   searchInput: {
     flex: 1,

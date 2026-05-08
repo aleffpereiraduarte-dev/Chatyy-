@@ -318,16 +318,20 @@ export default function NotificationToast({ notification, onDismiss }) {
         style={{
           maxWidth,
           width: '94%',
-          backgroundColor: isDark ? 'rgba(30, 41, 55, 0.98)' : 'rgba(255, 255, 255, 0.98)',
+          // Glass: stronger transparency + heavier blur on web. Native still uses
+          // mostly-opaque rgba since RN doesn't support backdropFilter.
+          backgroundColor: Platform.OS === 'web'
+            ? (isDark ? 'rgba(24, 28, 42, 0.72)' : 'rgba(255, 255, 255, 0.72)')
+            : (isDark ? 'rgba(30, 41, 55, 0.98)' : 'rgba(255, 255, 255, 0.98)'),
           borderRadius: 20,
           overflow: 'hidden',
           ...Shadow.xl,
           ...(Platform.OS === 'web' ? {
-            backdropFilter: 'blur(24px)',
-            WebkitBackdropFilter: 'blur(24px)',
+            backdropFilter: 'blur(32px) saturate(180%)',
+            WebkitBackdropFilter: 'blur(32px) saturate(180%)',
             boxShadow: isDark
-              ? '0 12px 40px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.2)'
-              : '0 12px 40px rgba(0,0,0,0.14), 0 2px 8px rgba(0,0,0,0.06)',
+              ? '0 12px 40px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.06)'
+              : '0 12px 40px rgba(0,0,0,0.14), 0 2px 8px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.6)',
             cursor: 'pointer',
           } : {}),
           ...(Platform.OS === 'ios' ? {
@@ -370,6 +374,9 @@ export default function NotificationToast({ notification, onDismiss }) {
               backgroundColor: avatarColor,
               alignItems: 'center',
               justifyContent: 'center',
+              // Subtle purple ring — brand-aware, soft.
+              borderWidth: 2,
+              borderColor: isDark ? 'rgba(167,139,250,0.55)' : 'rgba(124,58,237,0.35)',
             }}>
               <Text style={{
                 color: '#fff',
@@ -461,6 +468,8 @@ export default function NotificationToast({ notification, onDismiss }) {
                 fontSize: 13.5,
                 color: colors.textSecondary,
                 lineHeight: 19,
+                letterSpacing: -0.1,
+                fontWeight: '500',
               }}
             >
               {body}
@@ -540,18 +549,25 @@ export default function NotificationToast({ notification, onDismiss }) {
         )}
 
         {/* Progress bar — bumped opacity (0.7→0.9) so the time-remaining cue
-            actually reads as a countdown, not a faint smear. */}
+            actually reads as a countdown, not a faint smear.
+            Web: brand-gradient (lavender → purple) for that signature Chatyy
+            sheen. Native: solid accent (LinearGradient on web only avoids an
+            extra dep here). High-urgency overrides to error red. */}
         <Animated.View
           style={{
             height: 3,
             borderBottomLeftRadius: 20,
             borderBottomRightRadius: 0,
             backgroundColor: data.urgency === 'high' ? colors.error : accentColor,
-            opacity: 0.9,
+            opacity: 0.95,
             width: progressAnim.interpolate({
               inputRange: [0, 1],
               outputRange: ['0%', '100%'],
             }),
+            ...(Platform.OS === 'web' && data.urgency !== 'high' ? {
+              backgroundImage: 'linear-gradient(90deg, #A78BFA 0%, #7C3AED 100%)',
+              backgroundColor: 'transparent',
+            } : {}),
           }}
         />
       </TouchableOpacity>

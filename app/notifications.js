@@ -231,9 +231,56 @@ function NotificationsScreenInner() {
 
   const hasUnread = notifications.some(n => !n.read);
 
-  const renderItem = useCallback(({ item }) => (
-    <NotifRow item={item} colors={colors} isDark={isDark} onPress={handleTap} t={t} />
-  ), [colors, isDark, handleTap, t]);
+  // Pill grouping by type — when on the "all" tab, intercalate a soft pill
+  // header before each contiguous block of the same type. Telegram-style: keeps
+  // the eye anchored as it scrolls past 50+ items.
+  const TYPE_PILL_LABELS = {
+    email:   t('notifications.tabAll')      ? (t('toast.typeEmail')   || 'Email')    : 'Email',
+    chat:    t('toast.typeChat')   || 'Chat',
+    mention: t('notifications.tabMentions') || 'Menções',
+    like:    t('notifications.tabLikes')    || 'Curtidas',
+    comment: 'Comentários',
+    follow:  t('notifications.tabFollowers')|| 'Seguidores',
+    live:    'Live',
+  };
+  const TYPE_PILL_TINTS = {
+    email:   { bg: 'rgba(124,58,237,0.10)', fg: '#7C3AED' },
+    chat:    { bg: 'rgba(124,58,237,0.10)', fg: '#7C3AED' },
+    mention: { bg: 'rgba(14,165,233,0.10)',  fg: '#0ea5e9' },
+    like:    { bg: 'rgba(239,68,68,0.10)',   fg: '#ef4444' },
+    comment: { bg: 'rgba(245,158,11,0.10)',  fg: '#f59e0b' },
+    follow:  { bg: 'rgba(16,185,129,0.10)',  fg: '#10b981' },
+    live:    { bg: 'rgba(236,72,153,0.10)',  fg: '#ec4899' },
+  };
+
+  const groupedData = (() => {
+    if (activeTab !== 'all' || notifications.length === 0) return notifications;
+    const out = [];
+    let lastType = null;
+    for (const n of notifications) {
+      if (n.type !== lastType) {
+        out.push({ __pill: true, type: n.type, id: `pill-${n.type}-${out.length}` });
+        lastType = n.type;
+      }
+      out.push(n);
+    }
+    return out;
+  })();
+
+  const renderItem = useCallback(({ item }) => {
+    if (item.__pill) {
+      const tint = TYPE_PILL_TINTS[item.type] || { bg: 'rgba(107,114,128,0.10)', fg: '#6b7280' };
+      const label = TYPE_PILL_LABELS[item.type] || item.type;
+      return (
+        <View style={styles.pillHeaderWrap}>
+          <View style={[styles.pillHeader, { backgroundColor: tint.bg }]}>
+            <Text style={[styles.pillHeaderText, { color: tint.fg }]}>{label}</Text>
+          </View>
+        </View>
+      );
+    }
+    return <NotifRow item={item} colors={colors} isDark={isDark} onPress={handleTap} t={t} />;
+  }, [colors, isDark, handleTap, t]);
 
   const keyExtractor = useCallback((item) => String(item.id || item.latest_at || Math.random()), []);
 
@@ -298,7 +345,7 @@ function NotificationsScreenInner() {
 
       {/* List */}
       <FlatList
-        data={notifications}
+        data={groupedData}
         renderItem={renderItem}
         keyExtractor={keyExtractor}
         refreshControl={
@@ -315,8 +362,10 @@ function NotificationsScreenInner() {
           ) : null
         }
         contentContainerStyle={notifications.length === 0 ? styles.listEmpty : styles.listContent}
-        ItemSeparatorComponent={() => (
-          <View style={[styles.separator, { backgroundColor: colors.borderLight || colors.border }]} />
+        ItemSeparatorComponent={({ leadingItem }) => (
+          // No separator under a pill (and no separator above one either via flat list quirks).
+          leadingItem?.__pill ? null
+            : <View style={[styles.separator, { backgroundColor: colors.borderLight || colors.border }]} />
         )}
         removeClippedSubviews={Platform.OS !== 'web'}
         windowSize={10}
@@ -384,6 +433,25 @@ const styles = StyleSheet.create({
   rowTime:  { fontSize: FontSize.xs, marginTop: 4 },
   unreadDot: { width: 9, height: 9, borderRadius: 5, flexShrink: 0 },
   separator: { height: StyleSheet.hairlineWidth, marginLeft: 70 },
+
+  // Type-group pill header
+  pillHeaderWrap: {
+    paddingHorizontal: Spacing.md,
+    paddingTop: 12,
+    paddingBottom: 4,
+  },
+  pillHeader: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  pillHeaderText: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
 
   // List
   listContent: { paddingBottom: 40 },

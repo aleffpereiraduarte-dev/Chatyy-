@@ -36,17 +36,25 @@ const ACCENT = '#7C3AED';
 // ─── Shared building blocks ──────────────────────────────────────────
 function Row({ icon: Icon, label, value, onPress, colors, destructive, right }) {
   return (
-    <TouchableOpacity
+    <Pressable
       onPress={onPress}
-      activeOpacity={0.6}
-      style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 13, gap: 14 }}
+      style={({ pressed }) => ({
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 16,
+        paddingVertical: 13,
+        gap: 14,
+        backgroundColor: pressed ? 'rgba(124,58,237,0.06)' : 'transparent',
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: (colors?.borderLight || '#f1f5f9') + '60',
+      })}
     >
       <View style={{
         width: 34, height: 34, borderRadius: 9,
         backgroundColor: destructive ? '#ef444422' : (colors?.surface || '#f3f4f6'),
         alignItems: 'center', justifyContent: 'center',
       }}>
-        {Icon && <Icon size={18} color={destructive ? '#ef4444' : (colors?.text || '#111')} />}
+        {Icon && <Icon size={18} color={destructive ? '#ef4444' : (colors?.textSecondary || '#64748b')} />}
       </View>
       <View style={{ flex: 1 }}>
         <Text style={{ fontSize: 15, fontWeight: '500', color: destructive ? '#ef4444' : (colors?.text || '#111') }}>
@@ -59,18 +67,18 @@ function Row({ icon: Icon, label, value, onPress, colors, destructive, right }) 
         )}
       </View>
       {right || <IconChevronRight size={16} color={colors?.textTertiary || '#bbb'} />}
-    </TouchableOpacity>
+    </Pressable>
   );
 }
 
 function Section({ title, children, colors }) {
   return (
-    <View style={{ marginTop: 18 }}>
+    <View style={{ marginTop: 24 }}>
       {title && (
         <Text style={{
-          fontSize: 11, fontWeight: '700', textTransform: 'uppercase',
-          color: colors?.textSecondary, paddingHorizontal: 20, marginBottom: 6,
-          letterSpacing: 0.6,
+          fontSize: 11.5, fontWeight: '700', textTransform: 'uppercase',
+          color: colors?.textTertiary, paddingHorizontal: 20, marginBottom: 8,
+          letterSpacing: 0.5,
         }}>
           {title}
         </Text>
@@ -84,13 +92,18 @@ function Section({ title, children, colors }) {
 
 function ToggleRow({ icon: Icon, label, value, onChange, colors, description }) {
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 13, gap: 14 }}>
+    <View style={{
+      flexDirection: 'row', alignItems: 'center',
+      paddingHorizontal: 16, paddingVertical: 13, gap: 14,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: (colors?.borderLight || '#f1f5f9') + '60',
+    }}>
       <View style={{
         width: 34, height: 34, borderRadius: 9,
         backgroundColor: colors?.surface || '#f3f4f6',
         alignItems: 'center', justifyContent: 'center',
       }}>
-        {Icon && <Icon size={18} color={colors?.text || '#111'} />}
+        {Icon && <Icon size={18} color={colors?.textSecondary || '#64748b'} />}
       </View>
       <View style={{ flex: 1 }}>
         <Text style={{ fontSize: 15, fontWeight: '500', color: colors?.text }}>{label}</Text>
@@ -101,8 +114,9 @@ function ToggleRow({ icon: Icon, label, value, onChange, colors, description }) 
       <Switch
         value={!!value}
         onValueChange={onChange}
-        trackColor={{ false: '#ccc', true: ACCENT }}
+        trackColor={{ false: '#ccc', true: colors?.primary || ACCENT }}
         thumbColor="#fff"
+        ios_backgroundColor="#ccc"
       />
     </View>
   );

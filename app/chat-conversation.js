@@ -22552,31 +22552,46 @@ const styles = StyleSheet.create({
     borderRadius: 20, borderWidth: 1, marginBottom: Spacing.sm,
   },
   emptyMessages: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 100 },
+  // Why: reply preview chip is now a proper "glass" pill — bumped radius
+  // (22→24) so the corners read as iOS pill shape, lifted shadow opacity
+  // (.08→.12) + radius (8→14) so it floats above the input pill instead of
+  // sitting flush. Web stack got a subtle purple tint via boxShadow so the
+  // chip telegraphs "this is reply context" without reading as a separator.
   replyBar: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: Spacing.md + 4, paddingVertical: 12,
-    borderTopWidth: 0, borderRadius: 22, marginHorizontal: 10, marginBottom: 6,
+    borderTopWidth: 0, borderRadius: 24, marginHorizontal: 10, marginBottom: 6,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 8 },
-      android: { elevation: 3 },
-      web: { backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' },
+      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.12, shadowRadius: 14 },
+      android: { elevation: 4 },
+      web: { backdropFilter: 'blur(28px) saturate(180%)', WebkitBackdropFilter: 'blur(28px) saturate(180%)', boxShadow: '0 4px 18px rgba(124,58,237,0.10), 0 1px 3px rgba(0,0,0,0.04)' },
     }),
   },
-  replyBarLine: { width: 4, height: '100%', borderRadius: 2.5, marginRight: Spacing.md },
+  // Why: 4→3px wider-feel via borderRadius (2.5→1.5) for a sharper accent
+  // bar — colored left bar per sender becomes more deliberate. Min height
+  // 32 keeps it from collapsing on single-line previews.
+  replyBarLine: { width: 3, minHeight: 32, height: '100%', borderRadius: 1.5, marginRight: Spacing.md },
   replyBarContent: { flex: 1 },
-  replyBarLabel: { fontSize: 12, fontWeight: '800', letterSpacing: -0.1 },
+  replyBarLabel: { fontSize: 12.5, fontWeight: '800', letterSpacing: -0.1 },
   replyBarText: { fontSize: 13, marginTop: 3, lineHeight: 18, opacity: 0.85 },
-  replyBarClose: { padding: 10, borderRadius: 20 },
+  // Why: tap area 40pt (Apple HIG min); padding 10→11 to reach 40pt with the
+  // 18-pt close icon comfortably centered.
+  replyBarClose: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 20 },
   uploadBar: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     paddingHorizontal: Spacing.md, paddingVertical: 8,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   uploadText: { fontSize: FontSize.sm },
+  // Why: composer container — paddingTop bumped to 10 so the pill breathes
+  // above the (sometimes) reply chip without bunching, gap 4→6 keeps the
+  // pill and send button visually paired but not sticky-touching. paddingBottom
+  // stays 8 (insets handled inline) so the floating bar still sits on the
+  // safe-area edge.
   inputBar: {
     flexDirection: 'row', alignItems: 'flex-end',
-    paddingHorizontal: 8, paddingTop: 8, paddingBottom: 8,
-    gap: 4,
+    paddingHorizontal: 8, paddingTop: 10, paddingBottom: 8,
+    gap: 6,
     borderTopWidth: 0,
     ...Platform.select({
       ios: {},
@@ -22584,16 +22599,22 @@ const styles = StyleSheet.create({
       web: { maxWidth: 960, alignSelf: 'center', width: '100%' },
     }),
   },
+  // Why: send button gets a real "premium lift" — shadowRadius 10→16,
+  // shadowOpacity .35→.45 so the purple halo bleeds further (matches
+  // iMessage send glow). 46×46 → 48×48 to align with the 48-min mic/voice
+  // button next to it (uniform composer rhythm) and cross 44pt HIG comfortably.
+  // Web boxShadow doubled in spread + warm 2nd layer so the gradient orb
+  // reads like a floating glass dome on white surfaces.
   sendBtn: {
-    width: 46, height: 46, borderRadius: 23,
+    width: 48, height: 48, borderRadius: 24,
     alignItems: 'center', justifyContent: 'center',
     alignSelf: 'flex-end', marginBottom: 2,
     ...Platform.select({
-      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.35, shadowRadius: 10 },
-      android: { elevation: 6 },
+      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.45, shadowRadius: 16 },
+      android: { elevation: 8 },
       web: {
         background: 'linear-gradient(145deg, #8B5CF6 0%, #7C3AED 50%, #6D28D9 100%)',
-        boxShadow: '0 4px 16px rgba(124,58,237,0.4), 0 1px 4px rgba(124,58,237,0.2)',
+        boxShadow: '0 6px 20px rgba(124,58,237,0.45), 0 2px 6px rgba(124,58,237,0.25), inset 0 1px 0 rgba(255,255,255,0.18)',
         transition: 'transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.2s ease',
         cursor: 'pointer',
       },

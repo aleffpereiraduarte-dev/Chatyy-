@@ -25,6 +25,7 @@ import {
 import FileViewer from '../components/FileViewer';
 import { ListSkeleton } from '../components/SkeletonLoader';
 import EmptyStateCard from '../components/EmptyStateCard';
+import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Path, Circle as SvgCircle, Rect as SvgRect } from 'react-native-svg';
 
 const TABS = ['all', 'recent', 'starred', 'trash'];
 
@@ -413,7 +414,11 @@ function BreadcrumbBar({ breadcrumb, colors, onNavigate, t, isDark }) {
         const isActive = idx === breadcrumb.length - 1;
         return (
           <React.Fragment key={crumb.id}>
-            <IconChevronRight size={13} color={colors.textTertiary} />
+            {/* Separator chevron — textTertiary tone, opacity so it reads as
+                divider not action; size 12 keeps rhythm tight between pills. */}
+            <View style={{ opacity: 0.6, paddingHorizontal: 1 }}>
+              <IconChevronRight size={12} color={colors.textTertiary} />
+            </View>
             <BreadcrumbCrumb
               isActive={isActive}
               isDark={isDark}
@@ -526,16 +531,20 @@ function StorageBar({ storageInfo, colors, t, isDark }) {
         </View>
       </View>
 
-      {/* Gradient progress bar */}
+      {/* Gradient progress bar — brand purple A78BFA→7C3AED when usage is
+          comfortable, fall back to threshold color (yellow/orange/red) once
+          we hit the warning bands so the bar still communicates pressure. */}
       <View style={[styles.storageTrack, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
         <View style={{ flexDirection: 'row', height: '100%' }}>
           {drivePct > 0 && (
-            <Animated.View style={[styles.storageFillDrive, { width: driveWidth, backgroundColor: fillColor }]}>
+            <Animated.View style={[styles.storageFillDrive, { width: driveWidth, backgroundColor: percent < 80 ? '#7C3AED' : fillColor }]}>
               <View style={[
                 styles.storageFillGradient,
                 isWeb
-                  ? { background: `linear-gradient(90deg, ${fillColor}, ${fillColor}cc)` }
-                  : { backgroundColor: fillColor },
+                  ? { background: percent < 80
+                      ? 'linear-gradient(90deg, #A78BFA 0%, #7C3AED 100%)'
+                      : `linear-gradient(90deg, ${fillColor}, ${fillColor}cc)` }
+                  : { backgroundColor: percent < 80 ? '#7C3AED' : fillColor },
               ]} />
             </Animated.View>
           )}
@@ -600,6 +609,50 @@ export default function FilesScreenWrapper() {
 }
 
 // ---- Polished Empty State for Files ----
+// Brand-purple folder + upload arrow illustration. Used by FilesEmptyState
+// instead of the generic Icon so the empty state reads as a designed moment,
+// not a glyph stamp.
+function FilesEmptyIllustration({ tone = '#7C3AED' }) {
+  return (
+    <Svg width={140} height={120} viewBox="0 0 140 120" fill="none">
+      <Defs>
+        <SvgLinearGradient id="folderGrad" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor="#A78BFA" stopOpacity="0.95" />
+          <Stop offset="1" stopColor="#7C3AED" stopOpacity="1" />
+        </SvgLinearGradient>
+        <SvgLinearGradient id="folderTab" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor="#C4B5FD" stopOpacity="1" />
+          <Stop offset="1" stopColor="#8B5CF6" stopOpacity="1" />
+        </SvgLinearGradient>
+      </Defs>
+      {/* Soft halo */}
+      <SvgCircle cx="70" cy="62" r="50" fill="#7C3AED" fillOpacity="0.08" />
+      {/* Folder tab */}
+      <Path
+        d="M28 38 H58 L66 46 H112 V52 H28 Z"
+        fill="url(#folderTab)"
+      />
+      {/* Folder body */}
+      <SvgRect x="24" y="46" width="92" height="56" rx="8" fill="url(#folderGrad)" />
+      {/* Inner sheet */}
+      <SvgRect x="36" y="58" width="68" height="36" rx="5" fill="#fff" fillOpacity="0.92" />
+      {/* Upload arrow */}
+      <Path
+        d="M70 88 V70 M70 70 L62 78 M70 70 L78 78"
+        stroke={tone}
+        strokeWidth="3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
+      {/* Sparkle dots */}
+      <SvgCircle cx="116" cy="40" r="3" fill="#A78BFA" />
+      <SvgCircle cx="22" cy="74" r="2" fill="#C4B5FD" />
+      <SvgCircle cx="124" cy="86" r="2.5" fill="#7C3AED" fillOpacity="0.7" />
+    </Svg>
+  );
+}
+
 function FilesEmptyState({ tab, isDark, colors, t, onUpload }) {
   const emptyMap = {
     all: { title: t('files.emptyAll'), sub: t('files.emptyAllDesc') },
@@ -608,10 +661,14 @@ function FilesEmptyState({ tab, isDark, colors, t, onUpload }) {
     trash: { title: t('files.emptyTrash'), sub: t('files.emptyTrashDesc') },
   };
   const empty = emptyMap[tab] || emptyMap.all;
+  // Trash gets the icon glyph (different mood); other tabs get the brand
+  // purple folder illustration so the upload affordance feels invitational.
+  const useIllustration = tab !== 'trash';
 
   return (
     <EmptyStateCard
-      Icon={tab === 'trash' ? IconTrash : IconUpload}
+      Icon={tab === 'trash' ? IconTrash : undefined}
+      illustration={useIllustration ? <FilesEmptyIllustration tone="#7C3AED" /> : undefined}
       title={empty.title}
       subtitle={empty.sub}
       ctaLabel={tab !== 'trash' ? t('files.upload') : undefined}
@@ -937,6 +994,8 @@ function FilesScreenInner() {
   const [uploadingFile, setUploadingFile] = useState('');
   const [uploadProgress, setUploadProgress] = useState(0); // 0..100, 0 = indeterminate
   const uploadShimmerAnim = useRef(new Animated.Value(0)).current;
+  // Spring scale for the brand-purple Upload FAB (press feedback).
+  const uploadFabScale = useRef(new Animated.Value(1)).current;
   const [storageInfo, setStorageInfo] = useState(null);
   const [searchMode, setSearchMode] = useState(false);
   const [searchText, setSearchText] = useState('');
@@ -2262,16 +2321,19 @@ function FilesScreenInner() {
           </View>
         </View>
       )}
-      {/* Header - Frosted Glass */}
+      {/* Header — Chatyy purple gradient (matches inbox.js + chat.js).
+          Wave 3 brand harmonization: era frosted glass branco, agora compartilha
+          o gradient roxo das outras superfícies top-level. */}
       <View style={[
         styles.header,
         {
-          backgroundColor: glassHeaderBg(isDark),
-          borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-        },
-        isWeb && {
-          backdropFilter: 'blur(24px) saturate(200%)',
-          WebkitBackdropFilter: 'blur(24px) saturate(200%)',
+          ...(isWeb
+            ? { background: isDark
+                ? 'linear-gradient(180deg, #1a0a2e 0%, #0a0a0a 100%)'
+                : 'linear-gradient(180deg, #5B21B6 0%, #7C3AED 100%)' }
+            : { backgroundColor: isDark ? '#0d0a14' : '#6D28D9' }),
+          borderBottomColor: 'transparent',
+          borderBottomWidth: 0,
         },
       ]}>
         <TouchableOpacity
@@ -2287,32 +2349,32 @@ function FilesScreenInner() {
           }}
           style={styles.headerBtn}
         >
-          <IconArrowLeft size={22} color={colors.text} />
+          <IconArrowLeft size={22} color="#fff" />
         </TouchableOpacity>
         {searchMode ? (
           <View style={[
             styles.searchInputWrap,
             {
-              backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)',
-              borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
+              backgroundColor: 'rgba(255,255,255,0.18)',
+              borderColor: 'rgba(255,255,255,0.25)',
             },
           ]}>
-            <IconSearch size={16} color={colors.textTertiary} />
+            <IconSearch size={16} color="rgba(255,255,255,0.85)" />
             <TextInput
-              style={[styles.searchInput, { color: colors.text }]}
+              style={[styles.searchInput, { color: '#fff' }]}
               placeholder={t('files.searchPlaceholder')}
-              placeholderTextColor={colors.textTertiary}
+              placeholderTextColor="rgba(255,255,255,0.65)"
               value={searchText}
               onChangeText={onSearchChange}
               autoFocus
             />
           </View>
         ) : (
-          <Text style={[styles.headerTitle, { color: colors.text }]}>{headerTitle}</Text>
+          <Text style={[styles.headerTitle, { color: '#fff' }]}>{headerTitle}</Text>
         )}
         {searchMode ? (
           <TouchableOpacity onPress={() => toggleSearchMode(false)} style={styles.headerBtn}>
-            <IconX size={20} color={colors.text} />
+            <IconX size={20} color="#fff" />
           </TouchableOpacity>
         ) : (
           <>
@@ -2322,25 +2384,25 @@ function FilesScreenInner() {
                   onPress={() => setViewMode(v => v === 'list' ? 'grid' : 'list')}
                   style={[
                     styles.viewToggleBtn,
-                    { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' },
+                    { backgroundColor: 'rgba(255,255,255,0.16)' },
                   ]}
                 >
                   {viewMode === 'list' ? (
                     <View style={styles.gridIcon}>
                       <View style={styles.gridIconRow}>
-                        <View style={[styles.gridIconDot, { backgroundColor: colors.text }]} />
-                        <View style={[styles.gridIconDot, { backgroundColor: colors.text }]} />
+                        <View style={[styles.gridIconDot, { backgroundColor: '#fff' }]} />
+                        <View style={[styles.gridIconDot, { backgroundColor: '#fff' }]} />
                       </View>
                       <View style={styles.gridIconRow}>
-                        <View style={[styles.gridIconDot, { backgroundColor: colors.text }]} />
-                        <View style={[styles.gridIconDot, { backgroundColor: colors.text }]} />
+                        <View style={[styles.gridIconDot, { backgroundColor: '#fff' }]} />
+                        <View style={[styles.gridIconDot, { backgroundColor: '#fff' }]} />
                       </View>
                     </View>
                   ) : (
                     <View style={styles.listIcon}>
-                      <View style={[styles.listIconLine, { backgroundColor: colors.text }]} />
-                      <View style={[styles.listIconLine, { backgroundColor: colors.text }]} />
-                      <View style={[styles.listIconLine, { backgroundColor: colors.text }]} />
+                      <View style={[styles.listIconLine, { backgroundColor: '#fff' }]} />
+                      <View style={[styles.listIconLine, { backgroundColor: '#fff' }]} />
+                      <View style={[styles.listIconLine, { backgroundColor: '#fff' }]} />
                     </View>
                   )}
                 </TouchableOpacity>
@@ -2348,17 +2410,17 @@ function FilesScreenInner() {
                   onPress={() => setShowSortMenu(v => !v)}
                   style={[
                     styles.viewToggleBtn,
-                    { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', marginLeft: 4 },
+                    { backgroundColor: 'rgba(255,255,255,0.16)', marginLeft: 4 },
                   ]}
                 >
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: colors.text }}>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#fff' }}>
                     {sortBy === 'name' ? 'A-Z' : sortBy === 'date' ? (t('files.sortDate') || 'Date') : sortBy === 'size' ? (t('files.sortSize') || 'Size') : (t('files.sortType') || 'Type')}
                   </Text>
                 </TouchableOpacity>
               </>
             )}
             <TouchableOpacity onPress={() => toggleSearchMode(true)} style={styles.headerBtn}>
-              <IconSearch size={20} color={colors.text} />
+              <IconSearch size={20} color="#fff" />
             </TouchableOpacity>
           </>
         )}
@@ -2702,20 +2764,36 @@ function FilesScreenInner() {
             <Text style={[styles.fabText, { color: colors.primary }]}>{t('files.scanDocument')}</Text>
           </TouchableOpacity>
         )}
-        <TouchableOpacity
-          style={[styles.fab, styles.fabPrimary, { backgroundColor: colors.primary }, Shadow.float]}
-          onPress={handleUpload}
-          disabled={uploading}
-        >
-          {uploading ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <>
-              <IconUpload size={20} color="#fff" />
-              <Text style={[styles.fabText, { color: '#fff' }]}>{t('files.upload')}</Text>
-            </>
-          )}
-        </TouchableOpacity>
+        <Animated.View style={{ flex: 1, transform: [{ scale: uploadFabScale }] }}>
+          <TouchableOpacity
+            style={[
+              styles.fab,
+              styles.fabPrimary,
+              // Brand purple gradient on web; native uses solid #7C3AED tone
+              // (LinearGradient não importado — keeps tree clean).
+              isWeb
+                ? { background: 'linear-gradient(135deg, #5B21B6 0%, #7C3AED 50%, #A78BFA 100%)' }
+                : { backgroundColor: '#7C3AED' },
+              Shadow.float,
+              // Brand-tinted shadow so the FAB feels like a branded action.
+              { shadowColor: '#7C3AED', shadowOpacity: 0.35, shadowRadius: 12 },
+            ]}
+            onPress={handleUpload}
+            onPressIn={() => Animated.spring(uploadFabScale, { toValue: 0.94, useNativeDriver: true, friction: 6, tension: 180 }).start()}
+            onPressOut={() => Animated.spring(uploadFabScale, { toValue: 1, useNativeDriver: true, friction: 5, tension: 220 }).start()}
+            disabled={uploading}
+            activeOpacity={0.9}
+          >
+            {uploading ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <>
+                <IconUpload size={20} color="#fff" />
+                <Text style={[styles.fabText, { color: '#fff' }]}>{t('files.upload')}</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </Animated.View>
       </View>}
 
       {/* ============ ACTION MENU MODAL ============ */}
@@ -3595,7 +3673,13 @@ const styles = StyleSheet.create({
   gridItem: {
     flex: 1, margin: 4, borderRadius: 20, borderWidth: 1,
     padding: 15, alignItems: 'center', minHeight: 148,
-    ...Shadow.md,
+    // Bumped from Shadow.md (opacity 0.05 / radius 4) to deeper drop so cards
+    // pop off the canvas — matches Drive/Photos tile depth.
+    shadowColor: '#0f172a',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.10,
+    shadowRadius: 6,
+    elevation: 3,
     position: 'relative',
     ...(Platform.OS === 'web' ? { transition: 'transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease', cursor: 'pointer' } : {}),
   },

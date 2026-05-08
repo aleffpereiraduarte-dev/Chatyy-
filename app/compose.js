@@ -885,18 +885,49 @@ export default function ComposeScreen() {
     } else if (draftStatus === 'error') {
       label = t('compose.errorConnection') || 'Erro';
     }
-    const tickColor = draftStatus === 'saved' ? colors.success : colors.textTertiary;
+    // Pill styling — header sits on purple gradient now, raw text disappears.
+    // Saved → soft-green pill (calm reassurance), saving → translucent-white,
+    // error → soft-red pill. All readable on the gradient.
+    const isSaved = draftStatus === 'saved';
+    const isError = draftStatus === 'error';
+    const pillBg = isSaved
+      ? 'rgba(34, 197, 94, 0.22)'
+      : isError
+        ? 'rgba(239, 68, 68, 0.22)'
+        : 'rgba(255, 255, 255, 0.18)';
+    const pillBorder = isSaved
+      ? 'rgba(134, 239, 172, 0.55)'
+      : isError
+        ? 'rgba(252, 165, 165, 0.55)'
+        : 'rgba(255, 255, 255, 0.28)';
+    const tickColor = isSaved ? '#86efac' : '#fff';
+    const labelColor = isSaved ? '#dcfce7' : isError ? '#fecaca' : 'rgba(255,255,255,0.92)';
     return (
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginRight: 6 }} accessibilityRole="text" accessibilityLabel={label}>
-        {draftStatus === 'saved' && <IconCheckCircle size={12} color={tickColor} />}
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 4,
+          marginRight: 6,
+          paddingHorizontal: 10,
+          paddingVertical: 4,
+          borderRadius: 12,
+          backgroundColor: pillBg,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: pillBorder,
+        }}
+        accessibilityRole="text"
+        accessibilityLabel={label}
+      >
+        {isSaved && <IconCheckCircle size={12} color={tickColor} />}
         <Text
           numberOfLines={1}
           style={{
             fontSize: 11,
-            color: draftStatus === 'error' ? colors.error : colors.textTertiary,
+            color: labelColor,
             fontStyle: draftStatus === 'saving' ? 'italic' : 'normal',
-            fontWeight: '500',
-            letterSpacing: 0.1,
+            fontWeight: '600',
+            letterSpacing: 0.2,
             maxWidth: 180,
           }}
         >
@@ -1031,6 +1062,8 @@ export default function ComposeScreen() {
             </Text>
           </View>
         )}
+        {/* Visual divider — separates AI cluster from action toggles */}
+        <View style={[s.toolDivider, { backgroundColor: colors.borderLight }]} />
         {showMeet && (
           <TouchableOpacity
             onPress={async () => {
@@ -1063,6 +1096,8 @@ export default function ComposeScreen() {
             {trackOpens ? '✓ ' : ''}{t('compose.trackOpens') || 'Confirmar leitura'}
           </Text>
         </TouchableOpacity>
+        {/* Visual divider — toggles cluster (read receipts + confidential) */}
+        <View style={[s.toolDivider, { backgroundColor: colors.borderLight }]} />
         {/* Confidential mode toggle */}
         <TouchableOpacity
           onPress={() => setConfidentialModal(true)}
@@ -1192,16 +1227,16 @@ export default function ComposeScreen() {
     return (
       <KeyboardAvoidingView style={[s.flex, { backgroundColor: colors.background }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={[s.container, { paddingTop: insets.top }]}>
-          {/* Header */}
-          <View style={[s.header, { backgroundColor: colors.surface, borderBottomColor: colors.borderLight }]}>
+          {/* Header — purple gradient, white iconography */}
+          <View style={[s.header, Platform.OS !== 'web' && { backgroundColor: '#7C3AED' }]}>
             <TouchableOpacity onPress={handleClose} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-              <IconArrowLeft size={20} color={colors.textSecondary} />
+              <IconArrowLeft size={20} color="#fff" />
             </TouchableOpacity>
             <View style={s.headerTitleCol}>
-              <Text style={[s.headerTitle, { color: colors.text }]} numberOfLines={1}>
+              <Text style={[s.headerTitle, { color: '#fff' }]} numberOfLines={1}>
                 {isReplyAll ? t('compose.replyAll') : t('compose.reply')}
               </Text>
-              <Text style={[s.headerSubject, { color: colors.textSecondary }]} numberOfLines={1}>
+              <Text style={[s.headerSubject, { color: 'rgba(255,255,255,0.8)' }]} numberOfLines={1}>
                 {origSubject}
               </Text>
             </View>
@@ -1364,21 +1399,21 @@ export default function ComposeScreen() {
   return (
     <KeyboardAvoidingView style={[s.flex, { backgroundColor: colors.background }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={[s.container, { paddingTop: insets.top }]}>
-        {/* ── Modern Header ── */}
-        <View style={[s.header, { backgroundColor: colors.surface, borderBottomColor: colors.borderLight }]}>
+        {/* ── Modern Header — purple gradient, white iconography ── */}
+        <View style={[s.header, { flex: undefined, marginLeft: 0 }, Platform.OS !== 'web' && { backgroundColor: '#7C3AED' }]}>
           <TouchableOpacity onPress={handleClose} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-            <IconX size={20} color={colors.textSecondary} />
+            <IconX size={20} color="#fff" />
           </TouchableOpacity>
-          <Text style={[s.headerTitle, { color: colors.text }]} numberOfLines={1}>
+          <Text style={[s.headerTitle, { color: '#fff', flex: 1, marginLeft: Spacing.sm }]} numberOfLines={1}>
             {isForward ? t('compose.forward') : t('compose.title')}
           </Text>
           <View style={s.headerRight}>
             {renderDraftStatusIndicator()}
-            <TouchableOpacity onPress={() => setShowSchedule(true)} style={[s.headerActionBtn, { backgroundColor: colors.surfaceVariant }]} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <IconClock size={16} color={colors.textSecondary} />
+            <TouchableOpacity onPress={() => setShowSchedule(true)} style={[s.headerActionBtn, { backgroundColor: 'rgba(255,255,255,0.18)' }]} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <IconClock size={16} color="#fff" />
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => setShowTemplates(true)} style={[s.headerActionBtn, { backgroundColor: colors.surfaceVariant }]} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <IconFileText size={16} color={colors.textSecondary} />
+            <TouchableOpacity onPress={() => setShowTemplates(true)} style={[s.headerActionBtn, { backgroundColor: 'rgba(255,255,255,0.18)' }]} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <IconFileText size={16} color="#fff" />
             </TouchableOpacity>
             {renderSendButton()}
           </View>
@@ -1396,15 +1431,15 @@ export default function ComposeScreen() {
                 <View style={{ flex: 1 }}>
                   <TouchableOpacity
                     onPress={() => setShowAliasMenu(v => !v)}
-                    style={[s.fromPill, { backgroundColor: colors.surfaceVariant }]}
+                    style={[s.fromPill, { backgroundColor: colors.primary + '18', borderColor: colors.primary + '40' }]}
                     accessibilityRole="button"
                     accessibilityLabel={t('compose.fromAlias') || 'From'}
                   >
                     <View style={[s.fromDot, { backgroundColor: colors.primary }]} />
-                    <Text style={[s.fromText, { color: colors.text }]} numberOfLines={1}>
+                    <Text style={[s.fromText, { color: colors.primary }]} numberOfLines={1}>
                       {fromAlias || user?.email}
                     </Text>
-                    <Text style={{ color: colors.textTertiary, marginLeft: 6, fontSize: 11 }}>{showAliasMenu ? '▴' : '▾'}</Text>
+                    <Text style={{ color: colors.primary, marginLeft: 6, fontSize: 11, opacity: 0.7 }}>{showAliasMenu ? '▴' : '▾'}</Text>
                   </TouchableOpacity>
                   {showAliasMenu && (
                     <View style={{ marginTop: 6, backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1, borderRadius: 8, overflow: 'hidden' }}>
@@ -1424,9 +1459,9 @@ export default function ComposeScreen() {
                   )}
                 </View>
               ) : (
-                <View style={[s.fromPill, { backgroundColor: colors.surfaceVariant }]}>
+                <View style={[s.fromPill, { backgroundColor: colors.primary + '18', borderColor: colors.primary + '40' }]}>
                   <View style={[s.fromDot, { backgroundColor: colors.primary }]} />
-                  <Text style={[s.fromText, { color: colors.text }]} numberOfLines={1}>{fromAlias || user?.email}</Text>
+                  <Text style={[s.fromText, { color: colors.primary }]} numberOfLines={1}>{fromAlias || user?.email}</Text>
                 </View>
               )}
             </View>
@@ -1635,16 +1670,26 @@ const s = StyleSheet.create({
   container: { flex: 1 },
 
   // ── Header ──
+  // Brand: purple gradient (#5B21B6 → #7C3AED) — moment-of-intent screen
+  // deserves a confident, on-brand hero. Web uses CSS linear-gradient; native
+  // falls back to solid colors.primary applied inline (see header JSX) plus a
+  // subtle elevation so the bar floats above scroll content.
   header: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: Spacing.md, height: 56,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: 0,
     ...Platform.select({
       web: {
-        backdropFilter: 'blur(20px)',
-        WebkitBackdropFilter: 'blur(20px)',
+        background: 'linear-gradient(135deg, #5B21B6 0%, #7C3AED 100%)',
+        boxShadow: '0 2px 12px rgba(91, 33, 182, 0.25)',
       },
-      default: {},
+      default: {
+        elevation: 4,
+        shadowColor: '#5B21B6',
+        shadowOpacity: 0.25,
+        shadowRadius: 10,
+        shadowOffset: { width: 0, height: 2 },
+      },
     }),
   },
   backBtn: {
@@ -1671,9 +1716,17 @@ const s = StyleSheet.create({
       web: {
         cursor: 'pointer',
         transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-        boxShadow: '0 2px 8px rgba(124, 58, 237, 0.3)',
+        // Beefier shadow lift — send is the primary CTA, should feel
+        // weighty/premium when sitting on the purple header gradient.
+        boxShadow: '0 6px 16px rgba(124, 58, 237, 0.45), 0 2px 4px rgba(91, 33, 182, 0.3)',
       },
-      default: { elevation: 3 },
+      default: {
+        elevation: 6,
+        shadowColor: '#7C3AED',
+        shadowOpacity: 0.25,
+        shadowRadius: 12,
+        shadowOffset: { width: 0, height: 4 },
+      },
     }),
   },
   sendBtnLarge: {
@@ -1799,16 +1852,29 @@ const s = StyleSheet.create({
   },
   fieldValue: { flex: 1, fontSize: 14, fontWeight: '400' },
 
-  // From pill
+  // From pill — primary-tinted recipient chip (consistency with chips on
+  // Cc/Bcc rows and ContactAutocomplete). Uses primary at ~9% bg + ~25%
+  // border applied inline so it tracks theme & dark-mode.
   fromPill: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20,
     maxWidth: '80%',
+    borderWidth: 1,
   },
   fromDot: {
     width: 8, height: 8, borderRadius: 4, marginRight: 8,
   },
-  fromText: { fontSize: 13, fontWeight: '500' },
+  fromText: { fontSize: 13, fontWeight: '600', letterSpacing: -0.1 },
+
+  // Toolbar — visual divider between AI/improve group and toggles group.
+  // Acts as a soft vertical rule so the toolbar reads as two clusters
+  // instead of a wall of pills.
+  toolDivider: {
+    width: StyleSheet.hairlineWidth,
+    height: 22,
+    marginHorizontal: 6,
+    alignSelf: 'center',
+  },
 
   // Subject — Large and prominent
   subjectRow: {

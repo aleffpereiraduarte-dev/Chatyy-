@@ -1294,13 +1294,15 @@ export default function LoginScreen() {
                   /mockups/login-unified.html). */}
               <View style={[s.card, isDesktop ? {
                 backgroundColor: isDark ? '#303134' : '#ffffff',
+                borderWidth: 1,
+                borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(124,58,237,0.08)',
                 ...(Platform.OS === 'web' ? {
-                  boxShadow: '0 1px 3px 0 rgba(60,64,67,0.15), 0 4px 8px 3px rgba(60,64,67,0.10)',
+                  boxShadow: '0 4px 16px rgba(124,58,237,0.08), 0 12px 40px rgba(60,64,67,0.10)',
                 } : {
-                  shadowColor: '#3c4043',
-                  shadowOffset: { width: 0, height: 2 },
-                  shadowOpacity: 0.15,
-                  shadowRadius: 6,
+                  shadowColor: '#7C3AED',
+                  shadowOffset: { width: 0, height: 6 },
+                  shadowOpacity: 0.08,
+                  shadowRadius: 18,
                   elevation: 4,
                 }),
               } : {
@@ -1410,13 +1412,17 @@ export default function LoginScreen() {
                       alignItems: 'center',
                     }}>
                       <Text style={{
-                        fontSize: 36, fontWeight: '800',
+                        fontSize: 38, fontWeight: '900',
                         color: colors.primary, marginTop: 14,
-                        letterSpacing: -0.8,
+                        letterSpacing: -1.1,
                         ...(Platform.OS === 'web' ? {
-                          textShadow: '0 2px 12px rgba(124,58,237,0.25)',
+                          backgroundImage: 'linear-gradient(135deg, #5B21B6 0%, #7C3AED 60%, #A78BFA 100%)',
+                          WebkitBackgroundClip: 'text',
+                          WebkitTextFillColor: 'transparent',
+                          backgroundClip: 'text',
+                          textShadow: '0 4px 18px rgba(124,58,237,0.32)',
                         } : Platform.select({
-                          ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.18, shadowRadius: 6 },
+                          ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.28, shadowRadius: 10 },
                           android: {},
                         })),
                       }}>
@@ -1747,12 +1753,14 @@ export default function LoginScreen() {
                                   <Animated.View
                                     key={i}
                                     style={{
-                                      width: 42, height: 50, borderRadius: 8,
-                                      borderWidth: 1.5,
+                                      width: 42, height: 50, borderRadius: 10,
+                                      borderWidth: _focused ? 2 : 1.5,
                                       borderColor: _otpBorder,
                                       backgroundColor: _otpBg,
                                       alignItems: 'center', justifyContent: 'center',
                                       transform: [{ scale: phoneOtpCellAnims[i] }],
+                                      ...(_focused && Platform.OS === 'web' ? { boxShadow: `0 0 0 4px ${colors.primary}22` } : {}),
+                                      ...(_focused && Platform.OS === 'ios' ? { shadowColor: colors.primary, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.35, shadowRadius: 6 } : {}),
                                     }}
                                   >
                                     <Text style={{ fontSize: 22, fontWeight: '700', color: colors.text }}>
@@ -2763,13 +2771,21 @@ const s = StyleSheet.create({
     ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
 
-  /* IG-style primary CTA — full width, 44pt, 8pt radius, no shadow,
-     semibold 14pt label. */
+  /* IG-style primary CTA — full width, 46pt, 10pt radius, branded purple
+     shadow for premium presence. semibold 14pt label. */
   igPrimaryBtn: {
-    width: '100%', height: 44, borderRadius: 8,
+    width: '100%', height: 46, borderRadius: 10,
     alignItems: 'center', justifyContent: 'center',
     marginTop: 8,
-    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
+    ...Platform.select({
+      web: {
+        cursor: 'pointer',
+        boxShadow: '0 8px 22px rgba(124,58,237,0.35), 0 2px 6px rgba(124,58,237,0.20)',
+        transition: 'transform 140ms ease, box-shadow 140ms ease',
+      },
+      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.35, shadowRadius: 14 },
+      android: { elevation: 6 },
+    }),
   },
   igPrimaryBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
   /* Ghost text-link below the primary CTA. */
