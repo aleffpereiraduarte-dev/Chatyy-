@@ -15787,10 +15787,12 @@ export default function ChatConversationScreen() {
                 // than hard-swap. Uses keyed CheckStatus component so React
                 // unmounts the old status and mounts the new one with a
                 // short fade-in. Matches iMessage's subtle color transition.
-                // In groups, tapping or long-pressing the tick opens the
-                // per-recipient read receipts sheet (Read / Delivered /
-                // Pending). In direct chats it stays decorative.
-                if (conversationType === 'group' && typeof msg.id === 'number' && !msg._failed && !msg._queued) {
+                // Tap/long-press the tick to open the per-recipient read
+                // receipts sheet (Read / Delivered / Pending). Works in
+                // BOTH groups (one row per member) and direct chats (single
+                // peer w/ exact read+delivered timestamps) — backend already
+                // returns the receipts[] array for either shape.
+                if (typeof msg.id === 'number' && !msg._failed && !msg._queued) {
                   return (
                     <TouchableOpacity
                       onPress={() => handleMessageInfo(msg)}
@@ -17649,42 +17651,51 @@ export default function ChatConversationScreen() {
                 {editingMsg ? t('chat.editing') : t('chat.replyingTo', { name: replyTo?.sender_name || t('chat.message') })}
               </Text>
               <Text style={[styles.replyBarText, { color: colors.textSecondary }]} numberOfLines={1}>
-                {editingMsg ? editingMsg.content
+                {(() => {
+                  // WhatsApp-grade compose preview: cap at 60 chars + "…" so
+                  // long replies never overflow the bar's single line. Applied
+                  // to ALL paths (quoteText, content, status_reply text) for
+                  // consistency. Type-tag previews ("📷 Foto", "📞 Chamada")
+                  // are short by design and don't need trimming.
+                  const _trim = (s) => {
+                    const str = String(s || '');
+                    return str.length > 60 ? (str.slice(0, 60) + '…') : str;
+                  };
+                  if (editingMsg) return _trim(editingMsg.content);
                   // Partial-text quote takes priority over the type-based
                   // preview so the user sees exactly what snippet they're
                   // replying to.
-                  : replyTo?.quoteText      ? ('“' + replyTo.quoteText + '”')
-                  : replyTo?.type === 'image'   ? ('📷 ' + (t('chat.photo') || 'Foto'))
-                  : replyTo?.type === 'video'   ? ('🎥 ' + (t('chat.video') || 'Vídeo'))
-                  : replyTo?.type === 'audio'   ? ('🎤 ' + (t('chat.audio') || 'Áudio'))
-                  : replyTo?.type === 'file'    ? ('📄 ' + (replyTo?.file_name || t('chat.file') || 'Arquivo'))
-                  : replyTo?.type === 'gif'       ? '🎞️ GIF'
-                  : replyTo?.type === 'sticker'   ? ('💟 ' + (t('chat.sticker') || 'Figurinha'))
-                  : replyTo?.type === 'location'  ? ('📍 ' + (t('chatConv.location') || 'Localização'))
-                  : replyTo?.type === 'contact'   ? ('👤 ' + (t('chatConv.contact') || 'Contato'))
-                  : replyTo?.type === 'poll'      ? ('📊 ' + (t('chat.poll') || 'Enquete'))
-                  : replyTo?.type === 'call_card' ? ('📞 ' + (t('chat.call') || 'Chamada'))
+                  if (replyTo?.quoteText) return '“' + _trim(replyTo.quoteText) + '”';
+                  if (replyTo?.type === 'image')   return '📷 ' + (t('chat.photo') || 'Foto');
+                  if (replyTo?.type === 'video')   return '🎥 ' + (t('chat.video') || 'Vídeo');
+                  if (replyTo?.type === 'audio')   return '🎤 ' + (t('chat.audio') || 'Áudio');
+                  if (replyTo?.type === 'file')    return '📄 ' + _trim(replyTo?.file_name || t('chat.file') || 'Arquivo');
+                  if (replyTo?.type === 'gif')     return '🎞️ GIF';
+                  if (replyTo?.type === 'sticker') return '💟 ' + (t('chat.sticker') || 'Figurinha');
+                  if (replyTo?.type === 'location') return '📍 ' + (t('chatConv.location') || 'Localização');
+                  if (replyTo?.type === 'contact')  return '👤 ' + (t('chatConv.contact') || 'Contato');
+                  if (replyTo?.type === 'poll')     return '📊 ' + (t('chat.poll') || 'Enquete');
+                  if (replyTo?.type === 'call_card') return '📞 ' + (t('chat.call') || 'Chamada');
                   // status_reply payload is { reply_text, status:{ type, ... } }.
                   // Show the human-readable reply text + a type-tag so the
                   // compose preview doesn't dump the raw JSON.
-                  : replyTo?.type === 'status_reply' ? (() => {
-                      const sr = replyTo?.status_reply || (() => { try { return JSON.parse(replyTo?.content || '{}'); } catch { return {}; }})();
-                      const txt = (sr?.reply_text || '').trim();
-                      const stType = sr?.status?.type;
-                      const tag = stType === 'image' ? (t('status.typePhoto') || 'Foto')
-                                : stType === 'video' ? (t('status.typeVideo') || 'Vídeo')
-                                : (t('status.statusLabel') || 'Status');
-                      return txt ? (txt + ' · ' + tag) : tag;
-                    })()
-                  : (() => {
-                      const c = String(replyTo?.content || '').trim();
-                      if (!c) return '';
-                      if (/^https?:\/\//i.test(c)) {
-                        if (replyTo?.file_url || /\.(gif|webp)(\?|$)/i.test(c)) return '🎞️ GIF';
-                        return '🔗 ' + (t('chat.link') || 'Link');
-                      }
-                      return c;
-                    })()}
+                  if (replyTo?.type === 'status_reply') {
+                    const sr = replyTo?.status_reply || (() => { try { return JSON.parse(replyTo?.content || '{}'); } catch { return {}; }})();
+                    const txt = (sr?.reply_text || '').trim();
+                    const stType = sr?.status?.type;
+                    const tag = stType === 'image' ? (t('status.typePhoto') || 'Foto')
+                              : stType === 'video' ? (t('status.typeVideo') || 'Vídeo')
+                              : (t('status.statusLabel') || 'Status');
+                    return txt ? (_trim(txt) + ' · ' + tag) : tag;
+                  }
+                  const c = String(replyTo?.content || '').trim();
+                  if (!c) return '';
+                  if (/^https?:\/\//i.test(c)) {
+                    if (replyTo?.file_url || /\.(gif|webp)(\?|$)/i.test(c)) return '🎞️ GIF';
+                    return '🔗 ' + (t('chat.link') || 'Link');
+                  }
+                  return _trim(c);
+                })()}
               </Text>
             </View>
             {!editingMsg && (replyTo?.type === 'image' || replyTo?.type === 'video') && replyTo?.file_url && (

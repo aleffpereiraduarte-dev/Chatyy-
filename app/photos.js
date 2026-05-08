@@ -43,6 +43,18 @@ try { photoBackup = require('../services/photoBackup'); } catch {}
 let autoBackupMod = null;
 try { autoBackupMod = require('../services/autoBackup'); } catch {}
 
+// Gesture handlers for pinch-zoom + horizontal swipe in the viewer.
+// Safe-required so the screen still renders if the library is missing.
+let PinchGestureHandler = null;
+let PanGestureHandler = null;
+let GHState = null;
+try {
+  const GH = require('react-native-gesture-handler');
+  PinchGestureHandler = GH.PinchGestureHandler;
+  PanGestureHandler = GH.PanGestureHandler;
+  GHState = GH.State;
+} catch {}
+
 // Background task is now registered in services/autoBackup.js (TaskManager.defineTask at module level)
 
 // ============================================================
@@ -1780,6 +1792,18 @@ export default function PhotosScreen() {
   const viewerScaleAnim = useRef(new Animated.Value(0.85)).current;
   const viewerBgOpacity = useRef(new Animated.Value(0)).current;
 
+  // Pinch-zoom + swipe-between-photos state for the viewer.
+  // - baseScale: committed zoom (1, 2, or pinch-end value), animated for spring
+  // - pinchScale: live gesture multiplier (resets to 1 between gestures)
+  // - displayScale = baseScale * pinchScale (used in transform)
+  // - panX: horizontal translation while pan-gesturing between photos at zoom=1
+  // - lastTapRef: timestamp of last tap (double-tap detection)
+  const baseScale = useRef(new Animated.Value(1)).current;
+  const pinchScale = useRef(new Animated.Value(1)).current;
+  const lastBaseScaleRef = useRef(1);
+  const panX = useRef(new Animated.Value(0)).current;
+  const lastTapRef = useRef(0);
+
   const openViewer = useCallback((index) => {
     setViewerIndex(index);
     setViewerStarred(!!filteredPhotos[index]?.starred);
@@ -1835,8 +1859,86 @@ export default function PhotosScreen() {
       setViewerIndex(next);
       setViewerStarred(!!filteredPhotos[next]?.starred);
       setViewerResolvedUri(null); // reset so getFullUrl resolves new photo
+      // Reset zoom + pan when switching photos
+      baseScale.setValue(1);
+      pinchScale.setValue(1);
+      lastBaseScaleRef.current = 1;
+      panX.setValue(0);
     }
-  }, [viewerIndex, filteredPhotos]);
+  }, [viewerIndex, filteredPhotos, baseScale, pinchScale, panX]);
+
+  // Reset zoom whenever the viewer opens or photo changes (defensive — also
+  // covered by navigateViewer, but openViewer skips that path).
+  useEffect(() => {
+    if (!viewerVisible) return;
+    baseScale.setValue(1);
+    pinchScale.setValue(1);
+    lastBaseScaleRef.current = 1;
+    panX.setValue(0);
+  }, [viewerVisible, viewerIndex, baseScale, pinchScale, panX]);
+
+  // Pinch handler: pinchScale tracks the live gesture (1 = no zoom),
+  // displayed scale is baseScale * pinchScale; on release we commit
+  // base * gesture into baseScale (clamped 1..4) and reset pinchScale.
+  const onPinchEvent = Animated.event(
+    [{ nativeEvent: { scale: pinchScale } }],
+    { useNativeDriver: false }
+  );
+  const onPinchStateChange = useCallback((e) => {
+    if (!GHState) return;
+    if (e.nativeEvent.oldState === GHState.ACTIVE) {
+      const committed = Math.max(1, Math.min(4, lastBaseScaleRef.current * (e.nativeEvent.scale || 1)));
+      lastBaseScaleRef.current = committed;
+      pinchScale.setValue(1);
+      Animated.spring(baseScale, {
+        toValue: committed,
+        friction: 7,
+        tension: 50,
+        useNativeDriver: false,
+      }).start();
+    }
+  }, [baseScale, pinchScale]);
+
+  // Pan handler: only consume horizontal swipes when NOT zoomed (so panning
+  // a zoomed photo doesn't accidentally page). When released past threshold,
+  // navigate next/prev.
+  const onPanEvent = Animated.event(
+    [{ nativeEvent: { translationX: panX } }],
+    { useNativeDriver: false }
+  );
+  const onPanStateChange = useCallback((e) => {
+    if (!GHState) return;
+    if (e.nativeEvent.oldState === GHState.ACTIVE) {
+      const tx = e.nativeEvent.translationX || 0;
+      const vx = e.nativeEvent.velocityX || 0;
+      const zoomed = lastBaseScaleRef.current > 1.05;
+      const SWIPE_THRESHOLD = 80;
+      if (!zoomed && (Math.abs(tx) > SWIPE_THRESHOLD || Math.abs(vx) > 600)) {
+        if (tx < 0) navigateViewer(1);
+        else navigateViewer(-1);
+      }
+      // Always snap pan back to 0
+      Animated.spring(panX, { toValue: 0, friction: 8, tension: 60, useNativeDriver: false }).start();
+    }
+  }, [panX, navigateViewer]);
+
+  // Double-tap to toggle 2x zoom (or reset)
+  const onImageTap = useCallback(() => {
+    const now = Date.now();
+    if (now - lastTapRef.current < 280) {
+      const target = lastBaseScaleRef.current > 1.05 ? 1 : 2;
+      lastBaseScaleRef.current = target;
+      Animated.spring(baseScale, {
+        toValue: target,
+        friction: 6,
+        tension: 50,
+        useNativeDriver: false,
+      }).start();
+      lastTapRef.current = 0;
+    } else {
+      lastTapRef.current = now;
+    }
+  }, [baseScale]);
 
   const deleteViewerPhoto = useCallback(async () => {
     if (!viewerPhoto) return;
@@ -3319,7 +3421,7 @@ export default function PhotosScreen() {
             </TouchableOpacity>
           </Animated.View>
 
-          {/* Image with scale animation */}
+          {/* Image with scale animation + pinch-zoom + swipe-between-photos */}
           <Animated.View style={[s.viewerImageContainer, { transform: [{ scale: viewerScaleAnim }] }]}>
             <TouchableOpacity
               onPress={() => navigateViewer(-1)}
@@ -3329,11 +3431,50 @@ export default function PhotosScreen() {
               {viewerIndex > 0 && <IconChevronLeft size={32} color="rgba(255,255,255,0.7)" />}
             </TouchableOpacity>
 
-            <ExpoImage
-              source={{ uri: viewerResolvedUri || getFullUrl(viewerPhoto) }}
-              style={s.viewerImage}
-              contentFit="contain"
-            />
+            {(() => {
+              // displayScale = baseScale * pinchScale (committed * live gesture)
+              const displayScale = Animated.multiply(baseScale, pinchScale);
+              const imageNode = (
+                <Pressable onPress={onImageTap} style={s.viewerImage}>
+                  <Animated.View style={{
+                    flex: 1,
+                    transform: [
+                      { translateX: panX },
+                      { scale: displayScale },
+                    ],
+                  }}>
+                    <ExpoImage
+                      source={{ uri: viewerResolvedUri || getFullUrl(viewerPhoto) }}
+                      style={{ flex: 1, width: '100%', height: '100%' }}
+                      contentFit="contain"
+                    />
+                  </Animated.View>
+                </Pressable>
+              );
+              // Wrap with PinchGestureHandler + PanGestureHandler when available.
+              if (PinchGestureHandler && PanGestureHandler) {
+                return (
+                  <PanGestureHandler
+                    onGestureEvent={onPanEvent}
+                    onHandlerStateChange={onPanStateChange}
+                    activeOffsetX={[-10, 10]}
+                    failOffsetY={[-30, 30]}
+                  >
+                    <Animated.View style={s.viewerImage}>
+                      <PinchGestureHandler
+                        onGestureEvent={onPinchEvent}
+                        onHandlerStateChange={onPinchStateChange}
+                      >
+                        <Animated.View style={{ flex: 1 }}>
+                          {imageNode}
+                        </Animated.View>
+                      </PinchGestureHandler>
+                    </Animated.View>
+                  </PanGestureHandler>
+                );
+              }
+              return imageNode;
+            })()}
 
             <TouchableOpacity
               onPress={() => navigateViewer(1)}

@@ -268,6 +268,16 @@ function ChatHub() {
   // fetch — keeps the dot live without spinning a network call on every
   // render. Cleared when the user opens the Calls tab.
   const [missedCallBadge, setMissedCallBadge] = useState(0);
+  // Bottom-nav badges for the other tabs — chats unread (sum of unread_count
+  // across conversations), status unseen (statusList groups not yet viewed by
+  // this user), feed unread (feed_list rows newer than the last seen ts).
+  // All three poll on the same 60s cadence + reset when the user lands on
+  // the corresponding tab. Status feed lives off statusList groups whose
+  // items[].viewed_by_me is false; feed unread comes off the latest cursor
+  // we've seen versus what api.feedList() returns.
+  const [chatsBadge, setChatsBadge] = useState(0);
+  const [statusBadge, setStatusBadge] = useState(0);
+  const [feedBadge, setFeedBadge] = useState(0);
 
   const closeAppsDrawer = useCallback(() => setShowAppsDrawer(false), []);
 
@@ -310,6 +320,103 @@ function ChatHub() {
   React.useEffect(() => {
     if (activeTab === 'calls' && missedCallBadge > 0) setMissedCallBadge(0);
   }, [activeTab, missedCallBadge]);
+
+  // ── Tab badges polling (chats unread + status unseen + feed unread) ──
+  // Single 60s loop covers all three so we never fan out three timers.
+  // Each branch tolerates failure independently — a 502 on feed_list won't
+  // wipe the chats badge. Polling pauses when the tab is foreground-active
+  // because the underlying screen is doing its own real-time refresh.
+  React.useEffect(() => {
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const api = require('../services/api');
+        // Chats: sum unread across conversations from chat_list.
+        if (activeTab !== 'chats') {
+          try {
+            const r = await api.chatUnreadCount?.().catch(() => null);
+            if (!cancelled) {
+              const n = Number(r?.data?.unread_count || 0);
+              setChatsBadge(n);
+            }
+          } catch {}
+        }
+        // Status: count groups (other users) with at least one unseen item.
+        if (activeTab !== 'status') {
+          try {
+            const r = await api.statusList?.().catch(() => null);
+            if (!cancelled) {
+              const groups = r?.data?.statuses || r?.data?.groups || r?.data || [];
+              const me = (user?.email || '').toLowerCase();
+              const list = Array.isArray(groups) ? groups : [];
+              const unseen = list.reduce((acc, g) => {
+                const owner = (g?.email || g?.user_email || '').toLowerCase();
+                if (owner && owner === me) return acc; // ignore my own
+                const items = g?.items || g?.statuses || [];
+                const hasUnseen = items.some(it => !(it?.viewed_by_me || it?.seen || it?.viewed));
+                return hasUnseen ? acc + 1 : acc;
+              }, 0);
+              setStatusBadge(unseen);
+            }
+          } catch {}
+        }
+        // Feed: count posts newer than the last-seen cursor we persist locally.
+        if (activeTab !== 'feed') {
+          try {
+            const r = await (api.feedList ? api.feedList(1, 20) : Promise.resolve(null)).catch(() => null);
+            const posts = r?.data?.posts || r?.data || [];
+            const list = Array.isArray(posts) ? posts : [];
+            let lastSeen = 0;
+            try {
+              if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+                lastSeen = Number(localStorage.getItem('feed_last_seen_ts') || 0);
+              } else {
+                const { mmkv } = require('../services/mmkv');
+                lastSeen = Number(mmkv?.getString('feed_last_seen_ts') || 0);
+              }
+            } catch {}
+            const fresh = list.reduce((acc, p) => {
+              const ts = Date.parse(p?.created_at || p?.timestamp || 0) || 0;
+              return ts > lastSeen ? acc + 1 : acc;
+            }, 0);
+            if (!cancelled) setFeedBadge(fresh);
+          } catch {}
+        }
+      } catch {}
+    };
+    refresh();
+    const id = setInterval(refresh, 60000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [activeTab, user?.email]);
+
+  // Reset feed badge on landing on feed tab — store the most recent post ts
+  // we've shown so subsequent polls only count posts newer than that.
+  React.useEffect(() => {
+    if (activeTab === 'feed' && feedBadge > 0) {
+      setFeedBadge(0);
+      try {
+        const ts = String(Date.now());
+        if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+          localStorage.setItem('feed_last_seen_ts', ts);
+        } else {
+          const { mmkv } = require('../services/mmkv');
+          mmkv?.set('feed_last_seen_ts', ts);
+        }
+      } catch {}
+    }
+  }, [activeTab, feedBadge]);
+
+  // Reset status badge when user opens status tab.
+  React.useEffect(() => {
+    if (activeTab === 'status' && statusBadge > 0) setStatusBadge(0);
+  }, [activeTab, statusBadge]);
+
+  // Reset chats badge when user lands on chats — ChatListTab marks rows read
+  // as the user opens conversations, so we just clear the surface state here
+  // and let the next 60s tick pick up any still-unread rows.
+  React.useEffect(() => {
+    if (activeTab === 'chats' && chatsBadge > 0) setChatsBadge(0);
+  }, [activeTab, chatsBadge]);
 
   // Refresh badge counts on drawer open. Pulls a single quick endpoint
   // that returns { email_unread, notifications_unread, calls_missed }
@@ -550,17 +657,28 @@ function ChatHub() {
 
           {/* Tab items */}
           <View style={styles.desktopTabList}>
-            {TAB_KEYS.map((key) => (
-              <DesktopTabItem
-                key={key}
-                tabKey={key}
-                icon={key === 'feed' ? IconFeedTab : key === 'status' ? IconStatusTab : key === 'calls' ? IconCallsTab : key === 'chats' ? IconChatsTab : IconConfigTab}
-                label={key === 'chats' ? 'Chats' : key === 'feed' ? 'Feed' : key === 'status' ? 'Status' : key === 'calls' ? (t('chat.tabCalls') || 'Ligacoes') : (t('chat.tabConfig') || 'Config')}
-                active={activeTab === key}
-                onPress={() => handleTabPress(key)}
-                isDark={isDark}
-              />
-            ))}
+            {TAB_KEYS.map((key) => {
+              // Per-tab badge: chats unread, status unseen groups, feed new
+              // posts, calls missed. Each one is cleared by a parallel effect
+              // when that tab becomes active so the dot stays meaningful.
+              const tabBadge = key === 'chats' ? chatsBadge
+                : key === 'status' ? statusBadge
+                : key === 'feed' ? feedBadge
+                : key === 'calls' ? missedCallBadge
+                : 0;
+              return (
+                <DesktopTabItem
+                  key={key}
+                  tabKey={key}
+                  icon={key === 'feed' ? IconFeedTab : key === 'status' ? IconStatusTab : key === 'calls' ? IconCallsTab : key === 'chats' ? IconChatsTab : IconConfigTab}
+                  label={key === 'chats' ? 'Chats' : key === 'feed' ? 'Feed' : key === 'status' ? 'Status' : key === 'calls' ? (t('chat.tabCalls') || 'Ligacoes') : (t('chat.tabConfig') || 'Config')}
+                  active={activeTab === key}
+                  onPress={() => handleTabPress(key)}
+                  isDark={isDark}
+                  badge={tabBadge}
+                />
+              );
+            })}
           </View>
 
           {/* Back button at bottom (hidden for kids) */}
@@ -845,6 +963,7 @@ function ChatHub() {
               active={false}
               onPress={() => handleTabPress('reels')}
               isDark={isDark}
+              badge={feedBadge}
             />
             <TabBarItem
               icon={(active) => <IconChatsTab size={22} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
@@ -852,7 +971,7 @@ function ChatHub() {
               active={activeTab === 'chats'}
               onPress={() => handleTabPress('chats')}
               isDark={isDark}
-              badge={0}
+              badge={chatsBadge}
             />
             <TabBarItem
               icon={(active) => <IconCallsTab size={22} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
@@ -1200,7 +1319,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
 });
 
 // ── Desktop sidebar tab item with hover ──
-function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark }) {
+function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark, badge }) {
   const [hovered, setHovered] = useState(false);
   const color = active ? '#7C3AED' : 'rgba(255,255,255,0.6)';
   const isWeb = Platform.OS === 'web';
@@ -1223,7 +1342,10 @@ function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark
         ...(active && isWeb ? { boxShadow: isDark ? `inset 0 0 20px rgba(124,58,237,0.05)` : `inset 0 0 20px rgba(124,58,237,0.04)` } : {}),
       }]}
     >
-      <IconComp size={22} color={color} active={active} />
+      <View style={{ position: 'relative' }}>
+        <IconComp size={22} color={color} active={active} />
+        {badge > 0 && <PulseBadge badge={badge} isDark={isDark} />}
+      </View>
       <Text style={[styles.desktopTabLabel, {
         color,
         fontWeight: active ? '700' : '500',

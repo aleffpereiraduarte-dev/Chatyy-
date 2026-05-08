@@ -96,6 +96,11 @@ export default function CallScreen() {
   const [speakerOn, setSpeakerOn] = useState(isVideoParam === '1' || isVideoParam === 'true' ? true : false);
   const [callDuration, setCallDuration] = useState(0);
   const [peerConnected, setPeerConnected] = useState(false);
+  // peerRinging: caller-only intermediate state. Flips true when we receive
+  // the first signaling frame back from the callee (call_answer or first
+  // call_ice), which proves their device received our offer and is "ringing".
+  // Cleared once peerConnected flips true.
+  const [peerRinging, setPeerRinging] = useState(false);
   const [ended, setEnded] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
   const [facingFront, setFacingFront] = useState(true);
@@ -125,6 +130,11 @@ export default function CallScreen() {
   const [remoteAudioMuted, setRemoteAudioMuted] = useState(false);
   // Pending video upgrade request from peer ({ from } when set, null otherwise)
   const [pendingVideoRequest, setPendingVideoRequest] = useState(null);
+  // Non-blocking toast for the *outgoing* video upgrade request: shows a
+  // small overlay with countdown + cancel button instead of a blocking Alert.
+  // null when idle; { secondsLeft } when waiting for peer to accept.
+  const [videoUpgradeToast, setVideoUpgradeToast] = useState(null);
+  const videoUpgradeCountdownRef = useRef(null);
   const [noiseCancellation, setNoiseCancellation] = useState(true);
 
   // Group call state
@@ -163,6 +173,19 @@ export default function CallScreen() {
   const netInfoUnsubRef = useRef(null);
   const lastNetTypeRef = useRef(null);
   const turnExpiresAtRef = useRef(0); // timestamp when TURN creds expire
+
+  // Subtle reconnect micro-banner: shown when peerConnected && reconnecting
+  // (e.g. ICE restart while media still flowing). Fades in/out over 300ms so
+  // it doesn't flash the user with the loud orange overlay used pre-connect.
+  const reconnectMicroFade = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const visible = reconnecting && peerConnected && !ended;
+    Animated.timing(reconnectMicroFade, {
+      toValue: visible ? 1 : 0,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
+  }, [reconnecting, peerConnected, ended, reconnectMicroFade]);
 
   // Draggable PiP
   const pipPosition = useRef(new Animated.ValueXY({ x: SCREEN_W - 126, y: 80 })).current;
@@ -894,6 +917,10 @@ export default function CallScreen() {
     const pc = pcRef.current;
     if (!pc || !data?.sdp) return;
 
+    // Caller proof-of-life: peer device processed our offer enough to send
+    // an answer back. Flip to "ringing" UI until ICE actually connects.
+    try { setPeerRinging(true); } catch {}
+
     try {
       await pc.setRemoteDescription(new (rtcRef.current.SessionDescription || RTCSessionDescription)({
         type: data.sdp_type || data.type || 'answer',
@@ -1044,6 +1071,21 @@ export default function CallScreen() {
       timestamp: Date.now(),
       duration: callDurationRef.current,
     }).catch(() => {});
+
+    // Auto-update the in-thread call_card so every chat shows the final
+    // duration as soon as the call ends. WhatsApp/Telegram parity: the
+    // bubble flips from "Calling…" / "Ringing" to "Call · 3m 12s" on both
+    // sides without anyone re-opening the chat. Only fires when the peer
+    // actually connected for >3s — anything shorter is treated as a
+    // not-really-a-call (call_notify already wrote the missed/cancelled
+    // status, and overwriting here would clobber it).
+    try {
+      const dur = Number(callDurationRef.current) || 0;
+      if (dur > 3) {
+        const apiMod = require('../services/api');
+        apiMod.callStatus?.(callId, 'completed', dur).catch(() => {});
+      }
+    } catch {}
 
     // Upload call recording if active
     if (isRecording || recordedChunksRef.current.length > 0) {
@@ -1347,7 +1389,13 @@ export default function CallScreen() {
           if (data?.call_id === callId) handleAnswer(data);
         });
         const unsubIce = mailWs.on('call_ice', (data) => {
-          if (data?.call_id === callId) handleIceCandidate(data);
+          if (data?.call_id === callId) {
+            // First ICE from peer also confirms their device picked up our
+            // offer — flip ringing state. Idempotent; statusText gives
+            // priority to peerConnected so this never "downgrades" UI.
+            try { if (mounted) setPeerRinging(true); } catch {}
+            handleIceCandidate(data);
+          }
         });
         const unsubOffer = mailWs.on('call_offer', (data) => {
           if (data?.call_id === callId) {
@@ -2116,6 +2164,8 @@ export default function CallScreen() {
       if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
       if (iceTimeoutRef.current) clearTimeout(iceTimeoutRef.current);
       if (turnRefreshRef.current) clearInterval(turnRefreshRef.current);
+      if (videoUpgradeTimeoutRef.current) { clearTimeout(videoUpgradeTimeoutRef.current); videoUpgradeTimeoutRef.current = null; }
+      if (videoUpgradeCountdownRef.current) { clearInterval(videoUpgradeCountdownRef.current); videoUpgradeCountdownRef.current = null; }
 
       // If minimized, don't destroy WebRTC resources — they're saved globally
       if (minimizedRef.current) {
@@ -2510,15 +2560,33 @@ export default function CallScreen() {
           videoUpgradeTimeoutRef.current = setTimeout(() => {
             videoUpgradeRequestedRef.current = false;
             videoUpgradeTimeoutRef.current = null;
+            setVideoUpgradeToast(null);
+            if (videoUpgradeCountdownRef.current) {
+              clearInterval(videoUpgradeCountdownRef.current);
+              videoUpgradeCountdownRef.current = null;
+            }
           }, 30000);
         } catch {}
-        // Visual hint locally that we're waiting (could be an alert or toast).
+        // Non-blocking toast with regressive counter (replaces Alert.alert
+        // which froze the UI). User can cancel via the inline button, and
+        // the toast auto-dismisses on accept/decline/timeout.
         try {
-          const { Alert } = require('react-native');
-          Alert.alert(
-            t('call.videoRequestSentTitle') || 'Pedido enviado',
-            t('call.videoRequestSentBody') || 'Esperando o outro lado aceitar o vídeo…'
-          );
+          if (videoUpgradeCountdownRef.current) clearInterval(videoUpgradeCountdownRef.current);
+          setVideoUpgradeToast({ secondsLeft: 30 });
+          videoUpgradeCountdownRef.current = setInterval(() => {
+            setVideoUpgradeToast(prev => {
+              if (!prev) return null;
+              const next = prev.secondsLeft - 1;
+              if (next <= 0) {
+                if (videoUpgradeCountdownRef.current) {
+                  clearInterval(videoUpgradeCountdownRef.current);
+                  videoUpgradeCountdownRef.current = null;
+                }
+                return null;
+              }
+              return { secondsLeft: next };
+            });
+          }, 1000);
         } catch {}
         // Don't activate camera yet. Listener for action='accepted' will
         // re-trigger handleToggleVideo (with the flag now set) and the
@@ -3214,10 +3282,25 @@ export default function CallScreen() {
               videoUpgradeTimeoutRef.current = null;
             }
           } catch {}
+          // Dismiss outgoing toast (peer rejected/cancelled).
+          try {
+            setVideoUpgradeToast(null);
+            if (videoUpgradeCountdownRef.current) {
+              clearInterval(videoUpgradeCountdownRef.current);
+              videoUpgradeCountdownRef.current = null;
+            }
+          } catch {}
         } else if (data.action === 'accepted') {
           // Peer accepted our request. The flag is already set; calling
           // handleToggleVideo now skips the request branch and runs the
           // real camera-enable + renegotiation path.
+          try {
+            setVideoUpgradeToast(null);
+            if (videoUpgradeCountdownRef.current) {
+              clearInterval(videoUpgradeCountdownRef.current);
+              videoUpgradeCountdownRef.current = null;
+            }
+          } catch {}
           try { handleToggleVideo(); } catch {}
         }
       });
@@ -3356,12 +3439,17 @@ export default function CallScreen() {
     }
   }, []);
 
-  // Status text
-  let statusText = t('call.ringing') || 'Chamando...';
+  // Status text — three intermediate states for the caller before connection:
+  //   connecting (no peer signal yet) → "Conectando..."
+  //   ringing (peer device received offer, sent answer/ICE) → "Tocando..."
+  //   connected → call duration
+  // Caller-only: callee skips straight to peerConnected once they accept.
+  let statusText = t('call.connecting') || 'Conectando...';
+  if (peerRinging && !peerConnected) statusText = t('call.ringing') || 'Tocando...';
   if (connectionFailed) statusText = t('call.connectionFailed') || 'Não foi possível conectar. Tente novamente.';
   else if (errorMsg) statusText = errorMsg;
   else if (ended) statusText = t('call.ended') || 'Chamada encerrada';
-  else if (reconnecting) statusText = t('call.reconnecting') || 'Reconectando...';
+  else if (reconnecting && !peerConnected) statusText = t('call.reconnecting') || 'Reconectando...';
   else if (onHold) statusText = (t('call.onHold') || 'Em espera') + ' · ' + formatDuration(callDuration);
   else if (screenSharing) statusText = t('call.screenSharing') || 'Compartilhando tela';
   else if (peerScreenSharing) statusText = formatDuration(callDuration);
@@ -3473,18 +3561,77 @@ export default function CallScreen() {
 
           {/* Reconnecting overlay — shown during ICE restart (network flap,
               wifi↔cellular handoff). WhatsApp parity: user sees clear status
-              instead of frozen screen until ICE renegotiation completes. */}
-          {reconnecting && !ended && (
+              instead of frozen screen until ICE renegotiation completes.
+              Pre-connect we show the loud orange banner; post-connect (media
+              still flowing through ICE restart) we show the subtle one below. */}
+          {reconnecting && !ended && !peerConnected && (
             <View style={[styles.weakBanner, { backgroundColor: 'rgba(245,158,11,0.95)' }]}>
               <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
               <Text style={styles.weakBannerText}>{t('call.reconnecting') || 'Reconectando…'}</Text>
             </View>
           )}
 
+          {/* Subtle reconnect micro-banner — peerConnected but ICE is
+              renegotiating. Lower-key tinted background so it doesn't yell
+              when media is still flowing. Fades in/out via reconnectMicroFade. */}
+          {!ended && (
+            <Animated.View
+              pointerEvents="none"
+              style={[styles.weakBanner, {
+                backgroundColor: 'rgba(255,165,0,0.15)',
+                opacity: reconnectMicroFade,
+              }]}
+            >
+              <Text style={[styles.weakBannerText, { color: 'rgba(255,255,255,0.85)', fontSize: 12 }]}>
+                {t('call.reconnecting') || 'Reconectando…'}
+              </Text>
+            </Animated.View>
+          )}
+
           {/* Weak connection warning banner */}
           {showWeakBanner && peerConnected && !ended && !reconnecting && (
             <View style={styles.weakBanner}>
               <Text style={styles.weakBannerText}>{t('call.poorConnection') || 'Conexao fraca'}</Text>
+            </View>
+          )}
+
+          {/* Outgoing video upgrade request toast — non-blocking. Shows
+              regressive countdown + cancel button. Auto-dismisses on
+              accept / decline / timeout (handled in WS listener). */}
+          {videoUpgradeToast && !ended && (
+            <View style={[styles.weakBanner, { backgroundColor: 'rgba(31,41,55,0.92)', flexDirection: 'row', justifyContent: 'space-between' }]}>
+              <Text style={[styles.weakBannerText, { flex: 1 }]} numberOfLines={1}>
+                {(t('call.videoRequestSentBody') || 'Aguardando aceitação...') + ' ' + videoUpgradeToast.secondsLeft + 's'}
+              </Text>
+              <TouchableOpacity
+                onPress={() => {
+                  // Tell peer we're abandoning the request so their incoming
+                  // prompt clears too; then reset our local state.
+                  try {
+                    sendSignaling('call_video_request', {
+                      call_id: callId,
+                      target_email: contactEmail,
+                      action: 'cancel',
+                    });
+                  } catch {}
+                  videoUpgradeRequestedRef.current = false;
+                  if (videoUpgradeTimeoutRef.current) {
+                    clearTimeout(videoUpgradeTimeoutRef.current);
+                    videoUpgradeTimeoutRef.current = null;
+                  }
+                  if (videoUpgradeCountdownRef.current) {
+                    clearInterval(videoUpgradeCountdownRef.current);
+                    videoUpgradeCountdownRef.current = null;
+                  }
+                  setVideoUpgradeToast(null);
+                }}
+                style={{ marginLeft: 12, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.18)' }}
+                accessibilityLabel={t('call.cancel') || 'Cancelar'}
+              >
+                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>
+                  {t('call.cancel') || 'Cancelar'}
+                </Text>
+              </TouchableOpacity>
             </View>
           )}
 

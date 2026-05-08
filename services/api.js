@@ -2095,6 +2095,22 @@ export async function callNotify(conversationId, callId, video) {
   return apiCall('call_notify', { conversation_id: conversationId, room_id: callId, call_id: callId, video }, 'POST');
 }
 
+// Update the call_card bubble + chat_call_history row when a call ends.
+// Backend (chat.php call_status) flips the in-thread call_card to completed/
+// missed/declined and writes the final duration. The client only needs to
+// fire this once on hangup — the WS broadcast pushes the updated bubble to
+// every member so everybody sees "Call · 3m 12s" even if the call screen
+// was on a different device.
+//   status   — 'completed' | 'missed' | 'declined' | 'cancelled'
+//   duration — seconds (0 for missed/declined/cancelled)
+export async function callStatus(callId, status, duration = 0) {
+  return apiCall('call_status', {
+    call_id: callId,
+    status,
+    duration: Math.max(0, Math.round(duration || 0)),
+  }, 'POST');
+}
+
 // ─── Voicemail ────────────────────────────────────────────────────────
 // Caller leaves a voice message after a missed/declined call. Audio is
 // uploaded directly to R2 (Google-Photos-style) — backend issues a
@@ -3902,7 +3918,8 @@ export async function getPresignedUpload(filename, mimeType = 'image/jpeg', pare
 }
 
 // Upload file directly to R2 via presigned URL (Cloud/Drive)
-export async function fileUploadDirect(file, folderId = null) {
+// onProgress: optional (pct: 0..100) => void — fires during R2 PUT
+export async function fileUploadDirect(file, folderId = null, onProgress = null) {
   const filename = file.name || 'file';
   const mimeType = file.mimeType || file.type || 'application/octet-stream';
   const size = file.size || file.fileSize || 0;
@@ -3923,12 +3940,42 @@ export async function fileUploadDirect(file, folderId = null) {
     if (file._raw) body = file._raw;
     else if (file.uri) body = await fetch(file.uri).then(r => r.blob());
     else body = file;
-    const putRes = await fetch(init.data.upload_url, {
-      method: 'PUT',
-      headers: { 'Content-Type': mimeType },
-      body,
-    });
-    if (!putRes.ok) throw new Error(`R2 PUT failed: ${putRes.status}`);
+
+    // Use XHR when an onProgress callback is provided AND XHR is available
+    // (web + native). xhr.upload.onprogress gives real byte-level progress;
+    // fetch() has no native progress on uploads.
+    const useXhr = typeof onProgress === 'function' && typeof XMLHttpRequest !== 'undefined';
+    if (useXhr) {
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', init.data.upload_url, true);
+        xhr.setRequestHeader('Content-Type', mimeType);
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            try { onProgress(Math.min(100, Math.max(0, Math.round((e.loaded / e.total) * 100)))); } catch {}
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try { onProgress(100); } catch {}
+            resolve();
+          } else {
+            reject(new Error(`R2 PUT failed: ${xhr.status}`));
+          }
+        };
+        xhr.onerror = () => reject(new Error('R2 PUT network error'));
+        xhr.onabort = () => reject(new Error('R2 PUT aborted'));
+        xhr.send(body);
+      });
+    } else {
+      const putRes = await fetch(init.data.upload_url, {
+        method: 'PUT',
+        headers: { 'Content-Type': mimeType },
+        body,
+      });
+      if (!putRes.ok) throw new Error(`R2 PUT failed: ${putRes.status}`);
+      if (typeof onProgress === 'function') { try { onProgress(100); } catch {} }
+    }
 
     // 3. Confirm upload
     if (init.data.file_id) {

@@ -1062,6 +1062,59 @@ function FilesScreenInner() {
     exitMultiSelect();
   }, [selectedIds, showToast, exitMultiSelect, t]);
 
+  // ---- BULK MOVE / SHARE / DOWNLOAD ----
+  // Move: re-uses existing moveModal. Picks the FIRST selected id as the
+  // anchor; the modal's handleMove relocates it. For multi, we open the
+  // modal once and apply target to every id sequentially.
+  const handleBulkMove = useCallback(() => {
+    if (selectedIds.size === 0) return;
+    const ids = Array.from(selectedIds);
+    setMoveModal({ file_id: ids[0], folders: allFolders, bulkIds: ids });
+  }, [selectedIds, allFolders]);
+
+  const handleBulkShare = useCallback(() => {
+    if (selectedIds.size === 0) return;
+    const ids = Array.from(selectedIds);
+    // Open share modal for the first item; user shares one at a time.
+    setShareModal({ file_id: ids[0], shared: [], bulkIds: ids });
+  }, [selectedIds]);
+
+  // Use a ref so we can reference handleDownload BEFORE its useCallback runs
+  // (handleDownload is declared later in the component — without the ref we'd
+  // hit a TDZ-style undefined at first render's useCallback creation).
+  const handleDownloadRef = useRef(null);
+  const handleBulkDownload = useCallback(async () => {
+    if (selectedIds.size === 0) return;
+    const ids = Array.from(selectedIds);
+    const all = [...allFiles, ...allTrash];
+    let started = 0;
+    ids.forEach((id) => {
+      const file = all.find(f => f.id == id);
+      if (file && handleDownloadRef.current) {
+        // Stagger to avoid the browser blocking a flurry of downloads
+        setTimeout(() => { try { handleDownloadRef.current(id, file); } catch {} }, started * 250);
+        started += 1;
+      }
+    });
+    if (started === 0) {
+      showToast(t('files.downloadFailed') || 'Download falhou');
+    } else {
+      showToast(t('files.downloadStarted') || `${started} downloads iniciados`);
+    }
+    exitMultiSelect();
+  }, [selectedIds, allFiles, allTrash, exitMultiSelect, showToast, t]);
+
+  // Slide-in animation for bulk toolbar
+  const bulkToolbarAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(bulkToolbarAnim, {
+      toValue: multiSelect ? 1 : 0,
+      duration: 200,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [multiSelect, bulkToolbarAnim]);
+
   // ---- LOAD ALL DATA ONCE ----
   // Load folder content (fast - only current folder, not ALL 18K files)
   const folderCache = useRef({});
@@ -1433,10 +1486,14 @@ function FilesScreenInner() {
       setUploading(true);
 
       const fileData = isWeb && asset.file
-        ? { _raw: asset.file, name: asset.name, type: asset.mimeType }
-        : { uri: asset.uri, name: asset.name, mimeType: asset.mimeType };
+        ? { _raw: asset.file, name: asset.name, type: asset.mimeType, size: asset.size }
+        : { uri: asset.uri, name: asset.name, mimeType: asset.mimeType, size: asset.size };
 
-      const r = await api.fileUploadDirect(fileData, tab === 'all' ? currentFolderId : null);
+      const r = await api.fileUploadDirect(
+        fileData,
+        tab === 'all' ? currentFolderId : null,
+        (pct) => setUploadProgress(pct),
+      );
       if (r.success) {
         showToast(t('files.fileUploaded'));
         loadAllFiles(false);
@@ -1497,7 +1554,11 @@ function FilesScreenInner() {
       const scanName = `Scan_${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}.jpg`;
 
       const fileData = { uri: finalUri, name: scanName, mimeType: 'image/jpeg' };
-      const r = await api.fileUploadDirect(fileData, tab === 'all' ? currentFolderId : null);
+      const r = await api.fileUploadDirect(
+        fileData,
+        tab === 'all' ? currentFolderId : null,
+        (pct) => setUploadProgress(pct),
+      );
       if (r.success) {
         showToast(t('files.scanSaved'));
         loadAllFiles(false);
@@ -1647,6 +1708,9 @@ function FilesScreenInner() {
     setActionMenu(null);
   }, []);
 
+  // Expose latest handleDownload to bulk handler (forward-ref pattern)
+  useEffect(() => { handleDownloadRef.current = handleDownload; }, [handleDownload]);
+
   const handleFileOpen = useCallback((file, index) => {
     const mime = (file.mime_type || '').toLowerCase();
     const name = (file.name || file.original_name || '').toLowerCase();
@@ -1712,6 +1776,32 @@ function FilesScreenInner() {
   const handleMove = useCallback(async (targetFolderId) => {
     if (!moveModal) return;
     try {
+      // Bulk move: apply target to every selected id, surface partial failures.
+      if (Array.isArray(moveModal.bulkIds) && moveModal.bulkIds.length > 1) {
+        const ids = moveModal.bulkIds;
+        const succeeded = new Set();
+        let failed = 0;
+        await Promise.all(ids.map(async (id) => {
+          try {
+            const r = await api.fileMove(id, targetFolderId);
+            if (r?.success === false) { failed += 1; return; }
+            succeeded.add(id);
+          } catch { failed += 1; }
+        }));
+        if (succeeded.size === 0) {
+          safeAlert(t('common.error'), t('files.moveFailed'));
+        } else if (failed > 0) {
+          showToast((t('files.bulkPartial') || '{ok} itens movidos, {fail} falharam.')
+            .replace('{ok}', succeeded.size).replace('{fail}', failed));
+        } else {
+          showToast(t('files.fileMoved'));
+        }
+        setAllFiles(prev => prev.filter(f => !succeeded.has(f.id)));
+        setAllFolders(prev => prev.filter(f => !succeeded.has(f.id)));
+        setMoveModal(null);
+        exitMultiSelect();
+        return;
+      }
       const r = await api.fileMove(moveModal.file_id, targetFolderId);
       if (r.success) {
         showToast(t('files.fileMoved'));
@@ -1724,7 +1814,7 @@ function FilesScreenInner() {
         safeAlert(t('common.error'), mapApiError(r, t, 'files'));
       }
     } catch {}
-  }, [moveModal, showToast]);
+  }, [moveModal, showToast, exitMultiSelect, t]);
 
   const openMoveModal = useCallback((fileId) => {
     setActionMenu(null);
@@ -2085,29 +2175,50 @@ function FilesScreenInner() {
         </>
       )}
 
-      {/* Multi-select toolbar */}
+      {/* Multi-select toolbar — sticky, slide-in from top */}
       {multiSelect && (
-        <View style={[
+        <Animated.View style={[
           styles.multiSelectBar,
           {
-            backgroundColor: isDark ? colors.primary + '18' : colors.primaryLight,
+            backgroundColor: colors.surface,
             borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : colors.border,
+            transform: [{
+              translateY: bulkToolbarAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [-56, 0],
+              }),
+            }],
+            opacity: bulkToolbarAnim,
+            shadowColor: '#000',
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: isDark ? 0.4 : 0.12,
+            shadowRadius: 8,
+            elevation: 4,
           },
         ]}>
-          <TouchableOpacity onPress={exitMultiSelect} style={styles.headerBtn}>
+          <TouchableOpacity onPress={exitMultiSelect} style={styles.headerBtn} accessibilityLabel={t('common.cancel')}>
             <IconX size={20} color={colors.primary} />
           </TouchableOpacity>
           <Text style={[styles.multiSelectCount, { color: colors.primary }]}>
             {t('files.selectedCount', { count: selectedIds.size })}
           </Text>
           <View style={{ flex: 1 }} />
-          <TouchableOpacity onPress={handleBulkStar} style={[styles.multiSelectAction, { backgroundColor: isDark ? 'rgba(245,158,11,0.12)' : '#fffbeb' }]}>
+          <TouchableOpacity onPress={handleBulkStar} style={[styles.multiSelectAction, { backgroundColor: isDark ? 'rgba(245,158,11,0.12)' : '#fffbeb' }]} accessibilityLabel={t('files.starred')}>
             <IconStar size={18} color="#f59e0b" />
           </TouchableOpacity>
-          <TouchableOpacity onPress={handleBulkDelete} style={[styles.multiSelectAction, { backgroundColor: isDark ? 'rgba(220,38,38,0.12)' : '#fef2f2' }]}>
+          <TouchableOpacity onPress={handleBulkDownload} style={[styles.multiSelectAction, { backgroundColor: isDark ? 'rgba(99,102,241,0.16)' : '#eef2ff' }]} accessibilityLabel={t('files.download')}>
+            <IconDownload size={18} color={colors.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleBulkShare} style={[styles.multiSelectAction, { backgroundColor: isDark ? 'rgba(34,197,94,0.16)' : '#f0fdf4' }]} accessibilityLabel={t('files.share')}>
+            <IconUpload size={18} color="#16a34a" />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleBulkMove} style={[styles.multiSelectAction, { backgroundColor: isDark ? 'rgba(124,58,237,0.16)' : '#f5f3ff' }]} accessibilityLabel={t('files.moveTo')}>
+            <IconFolder size={18} color="#7C3AED" />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleBulkDelete} style={[styles.multiSelectAction, { backgroundColor: isDark ? 'rgba(220,38,38,0.12)' : '#fef2f2' }]} accessibilityLabel={t('files.delete')}>
             <IconTrash size={18} color={colors.error} />
           </TouchableOpacity>
-        </View>
+        </Animated.View>
       )}
 
       {/* Mode Toggle: Files / Photos */}

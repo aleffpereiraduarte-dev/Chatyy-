@@ -1730,7 +1730,20 @@ export default function ProfileSettingsSheet({
   }, []);
 
   const handleEditProfile = useCallback(() => closeAndRun(() => onEditProfile?.()), [closeAndRun, onEditProfile]);
-  const handleLogout = useCallback(() => closeAndRun(() => onLogout?.()), [closeAndRun, onLogout]);
+  // Logout confirmation — destructive, cleans local cache. We surface the
+  // consequence ("backups e mensagens locais serão removidos") so users
+  // don't tap by accident expecting "soft" logout. Runs the actual
+  // logout via closeAndRun so the sheet animates away cleanly first.
+  const handleLogout = useCallback(() => {
+    Alert.alert(
+      t?.('settings.logoutConfirmTitle') || 'Sair da conta?',
+      t?.('settings.logoutConfirmMessage') || 'Você precisará fazer login novamente. Backups e mensagens locais serão removidos.',
+      [
+        { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+        { text: t?.('settings.logout') || 'Sair', style: 'destructive', onPress: () => closeAndRun(() => onLogout?.()) },
+      ]
+    );
+  }, [closeAndRun, onLogout, t]);
 
   const title = (t?.(SCREEN_TITLES[currentScreen]) || SCREEN_TITLE_FALLBACK[currentScreen]);
 

@@ -9,6 +9,7 @@ import React, { useEffect, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, Modal, Pressable,
   ScrollView, ActivityIndicator, Platform, StyleSheet, KeyboardAvoidingView,
+  Alert,
 } from 'react-native';
 import * as api from '../services/api';
 import AvatarCircle from './AvatarCircle';
@@ -150,6 +151,30 @@ export default function ProfileEditSheet({
     }
   };
 
+  // True when any field changed vs the initial snapshot. Used both for the
+  // Save button affordance and for the "discard changes?" confirmation
+  // when the user tries to close the sheet (swipe-down / X / backdrop).
+  const isDirty = () =>
+    (name || '') !== (initial?.name || '') ||
+    (username || '').toLowerCase() !== (initial?.username || '').toLowerCase() ||
+    (bio || '') !== (initial?.bio || '') ||
+    (website || '') !== (initial?.website || '');
+
+  // Intercepts close attempts. If form has unsaved edits, prompt the user
+  // before dismissing — same pattern iOS Settings / Instagram use.
+  const requestClose = () => {
+    if (saving) return; // never abort a save in flight
+    if (!isDirty()) { onClose?.(); return; }
+    Alert.alert(
+      t?.('profile.discardTitle') || 'Descartar alterações?',
+      t?.('profile.discardMessage') || 'Suas mudanças serão perdidas.',
+      [
+        { text: t?.('profile.keepEditing') || 'Continuar editando', style: 'cancel' },
+        { text: t?.('common.discard') || 'Descartar', style: 'destructive', onPress: () => onClose?.() },
+      ]
+    );
+  };
+
   const handleSave = async () => {
     // Bloqueia save se o @username mudou e o check disse que não tá disponível.
     const cleanedUsername = username.trim().replace(/^@+/, '').toLowerCase();
@@ -180,8 +205,8 @@ export default function ProfileEditSheet({
   };
 
   return (
-    <Modal visible={!!visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={onClose}>
+    <Modal visible={!!visible} transparent animationType="slide" onRequestClose={requestClose}>
+      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={requestClose}>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           style={{ flex: 1, justifyContent: 'flex-end' }}
@@ -204,23 +229,19 @@ export default function ProfileEditSheet({
                 and a filled pill (dirty form — clearly the primary action).
                 Same iOS Settings.app pattern. */}
             {(() => {
-              const isDirty =
-                (name || '') !== (initial?.name || '') ||
-                (username || '').toLowerCase() !== (initial?.username || '').toLowerCase() ||
-                (bio || '') !== (initial?.bio || '') ||
-                (website || '') !== (initial?.website || '');
+              const dirty = isDirty();
               return (
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16 }}>
-                  <TouchableOpacity onPress={onClose} disabled={saving}>
+                  <TouchableOpacity onPress={requestClose} disabled={saving}>
                     <Text style={{ fontSize: 15, color: colors?.textSecondary }}>{t?.('common.cancel') || 'Cancelar'}</Text>
                   </TouchableOpacity>
                   <Text style={{ fontSize: 16, fontWeight: '700', color: colors?.text }}>
                     {t?.('profile.edit') || 'Editar perfil'}
                   </Text>
-                  <TouchableOpacity onPress={handleSave} disabled={saving || !isDirty} activeOpacity={0.75}>
+                  <TouchableOpacity onPress={handleSave} disabled={saving || !dirty} activeOpacity={0.75}>
                     {saving ? (
                       <ActivityIndicator size="small" color="#7C3AED" />
-                    ) : isDirty ? (
+                    ) : dirty ? (
                       <View style={{
                         paddingHorizontal: 14, paddingVertical: 7, borderRadius: 16,
                         backgroundColor: '#7C3AED',

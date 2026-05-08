@@ -495,6 +495,42 @@ const ConversationRow = React.memo(function ConversationRow({
   const propsRef = useRef({ onDelete, onArchive, onMute, onPin, onMarkUnread, onEmail });
   propsRef.current = { onDelete, onArchive, onMute, onPin, onMarkUnread, onEmail };
 
+  // ── Mute icon fade (true→false transition fades out 200ms instead of popping) ──
+  // muteVisible keeps the icon mounted during the fade-out animation so layout
+  // doesn't snap shut before the opacity finishes. Unmounted when fully hidden
+  // so the row's flex gap doesn't keep an empty 14px slot for unmuted chats.
+  const muteOpacity = useRef(new Animated.Value(isMuted ? 1 : 0)).current;
+  const prevMutedRef = useRef(isMuted);
+  const [muteVisible, setMuteVisible] = useState(isMuted);
+  useEffect(() => {
+    if (prevMutedRef.current !== isMuted) {
+      if (isMuted) {
+        setMuteVisible(true);
+        Animated.timing(muteOpacity, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+      } else {
+        Animated.timing(muteOpacity, { toValue: 0, duration: 200, useNativeDriver: true })
+          .start(({ finished }) => { if (finished) setMuteVisible(false); });
+      }
+      prevMutedRef.current = isMuted;
+    }
+  }, [isMuted]);
+
+  // ── Mention badge pop (when unread_mentions count increases) ──
+  const mentionScale = useRef(new Animated.Value(1)).current;
+  const prevMentionsRef = useRef(conversation.unread_mentions || 0);
+  useEffect(() => {
+    const cur = conversation.unread_mentions || 0;
+    const prev = prevMentionsRef.current;
+    if (cur > prev) {
+      mentionScale.setValue(0.8);
+      Animated.sequence([
+        Animated.spring(mentionScale, { toValue: 1.2, tension: 220, friction: 6, useNativeDriver: true }),
+        Animated.spring(mentionScale, { toValue: 1, tension: 180, friction: 8, useNativeDriver: true }),
+      ]).start();
+    }
+    prevMentionsRef.current = cur;
+  }, [conversation.unread_mentions]);
+
   // Swipe is mobile-only. On web/desktop the gesture was janky (mouse drag
   // competed with scroll + selection) — user reported "movimentação muito
   // ruim". Web uses long-press / right-click to open the actions menu
@@ -810,8 +846,15 @@ const ConversationRow = React.memo(function ConversationRow({
                 </View>
               )}
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                {isMuted && (
-                  <IconBellOff size={14} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.3)'} />
+                {/* Mute icon stays mounted during the fade-out (muteVisible
+                    flips false only after the 200ms timing finishes), so the
+                    true→false transition fades instead of popping. Unmounted
+                    when fully hidden so unmuted rows don't carry a phantom
+                    14px slot in the flex gap. */}
+                {muteVisible && (
+                  <Animated.View style={{ opacity: muteOpacity }} pointerEvents="none">
+                    <IconBellOff size={14} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.3)'} />
+                  </Animated.View>
                 )}
                 {conversation.has_mention && unread && (
                   <View style={[s.unreadBadge, s.unreadBadgeShadow, { backgroundColor: '#FF6B9D', minWidth: 24 }]}>
@@ -822,11 +865,12 @@ const ConversationRow = React.memo(function ConversationRow({
                     even when the chat is muted so you never miss being called
                     out. Paired with the unread count. Uses a warmer pink tone
                     (#FF6B9D) + heavier weight so it reads instantly different
-                    from the green unread-count pill. */}
+                    from the green unread-count pill. Spring-pop scale when the
+                    count increases so a fresh @mention catches the eye. */}
                 {conversation.unread_mentions > 0 && (
-                  <View style={[s.unreadBadge, s.unreadBadgeShadow, { backgroundColor: '#FF6B9D', marginRight: 4, minWidth: 22 }]}>
+                  <Animated.View style={[s.unreadBadge, s.unreadBadgeShadow, { backgroundColor: '#FF6B9D', marginRight: 4, minWidth: 22, transform: [{ scale: mentionScale }] }]}>
                     <Text style={[s.unreadText, { fontSize: 13, fontWeight: '900' }]}>@</Text>
-                  </View>
+                  </Animated.View>
                 )}
                 {unread && (
                   <View style={[
@@ -914,6 +958,8 @@ const ConversationRow = React.memo(function ConversationRow({
   if ((prevConv.last_message?.read_at || '') !== (nextConv.last_message?.read_at || '')) return false;
   if ((prevConv.pinned || false) !== (nextConv.pinned || false)) return false;
   if ((prevConv.muted || false) !== (nextConv.muted || false)) return false;
+  // Re-render when @mention count changes so the spring-pop scale fires.
+  if ((prevConv.unread_mentions || 0) !== (nextConv.unread_mentions || 0)) return false;
   if ((prevConv.last_message_at) !== (nextConv.last_message_at)) return false;
   if ((prevConv.display_name || prevConv.name) !== (nextConv.display_name || nextConv.name)) return false;
 
@@ -4507,7 +4553,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
               progressBackgroundColor={isDark ? '#1F2C33' : '#fff'}
             />
           }
-          extraData={{ typingUsers, selectionMode, lockedIds, unlockedIds, isDark, colors }}
+          extraData={{ typingUsers, selectionMode, lockedIds, unlockedIds, isDark, colors, presenceVersion }}
         />
       )}
 

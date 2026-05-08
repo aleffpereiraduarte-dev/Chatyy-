@@ -18,7 +18,7 @@
 // from call.js's call_missed / call_declined WS handler.
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Animated, Easing, Platform, StatusBar,
+  View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Animated, Easing, Platform, StatusBar, Vibration,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
@@ -67,6 +67,9 @@ export default function VoicemailRecorder() {
   const recordingBlobRef = useRef(null); // raw Blob (web only)
   const recordingMimeRef = useRef('audio/m4a');
   const timerRef = useRef(null);
+  // Pulse vibration during the final 10s. Held in a ref so we can clear it
+  // independently of the main 1Hz duration timer (e.g. on stop / unmount).
+  const vibrateIntervalRef = useRef(null);
   const previewPlayerRef = useRef(null);
   const mountedRef = useRef(true);
   // Ref-based "send in flight" guard. `phase` is closed over in the
@@ -221,6 +224,8 @@ export default function VoicemailRecorder() {
   }, [countdownAnim]);
 
   function cleanupRecorder() {
+    if (vibrateIntervalRef.current) { clearInterval(vibrateIntervalRef.current); vibrateIntervalRef.current = null; }
+    try { Vibration.cancel(); } catch {}
     try {
       const r = recRef.current;
       if (Platform.OS === 'web') {
@@ -336,6 +341,15 @@ export default function VoicemailRecorder() {
           stopRecording();
           return MAX_DURATION_SEC;
         }
+        // Final 10s warning: kick off a 1Hz pulse vibration so the user
+        // physically feels the cap approaching even if they're not staring
+        // at the timer. No-ops on web (Vibration is a no-op there).
+        if (next > MAX_DURATION_SEC - 10 && !vibrateIntervalRef.current) {
+          try { Vibration.vibrate(50); } catch {}
+          vibrateIntervalRef.current = setInterval(() => {
+            try { Vibration.vibrate(50); } catch {}
+          }, 1000);
+        }
         return next;
       });
     }, 1000);
@@ -343,6 +357,8 @@ export default function VoicemailRecorder() {
 
   const stopRecording = useCallback(async () => {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (vibrateIntervalRef.current) { clearInterval(vibrateIntervalRef.current); vibrateIntervalRef.current = null; }
+    try { Vibration.cancel(); } catch {}
     try {
       const r = recRef.current;
       if (!r) {
@@ -561,7 +577,7 @@ export default function VoicemailRecorder() {
 
         {phase === 'recording' && (
           <>
-            <Text style={styles.timer}>{fmt(duration)} / {fmt(MAX_DURATION_SEC)}</Text>
+            <Text style={[styles.timer, duration > MAX_DURATION_SEC - 10 && { color: '#ef4444', fontWeight: '600' }]}>{fmt(duration)} / {fmt(MAX_DURATION_SEC)}</Text>
             {/* Live waveform — purely visual; recorder itself runs unaffected. */}
             <View style={styles.waveRow}>
               {waveBars.map((bar, i) => (

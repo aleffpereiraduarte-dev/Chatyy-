@@ -118,6 +118,19 @@ function SettingsScreenInner() {
   const [oneNotifLevel, setOneNotifLevel] = useState('push'); // 'email', 'push', 'urgent' — for One AI
   const [pushNotifLevel, setPushNotifLevel] = useState('all'); // 'all', 'urgent', 'silent' — global push delivery
   const [avatarKey, setAvatarKey] = useState(Date.now());
+  // Live search across settings rows. Filters out sections whose section
+  // title and row labels don't match the typed query (case-insensitive).
+  // Empty query = no filtering. Provides a fast jump-to-config without
+  // making the user remember which sub-section a toggle lives in.
+  const [searchQuery, setSearchQuery] = useState('');
+  const _q = (searchQuery || '').trim().toLowerCase();
+  const sectionMatches = (...labels) => {
+    if (!_q) return true;
+    for (const l of labels) {
+      if (l && String(l).toLowerCase().includes(_q)) return true;
+    }
+    return false;
+  };
   // Referral system
   const [referralCode, setReferralCode] = useState('');
   const [referralCount, setReferralCount] = useState(0);
@@ -361,7 +374,44 @@ function SettingsScreenInner() {
         <SettingsSkeleton sections={4} rows={3} />
       ) : (
       <ScrollView ref={scrollRef} contentContainerStyle={s.scroll}>
+        {/* Search bar — filtra sections em tempo real por título/label.
+            Empty query mostra tudo; clear (✕) reseta. Sticky-ish topo da
+            scroll, não é absolute pra não brigar com keyboard. */}
+        <View style={{
+          flexDirection: 'row', alignItems: 'center',
+          backgroundColor: colors.surface,
+          borderColor: colors.borderLight, borderWidth: 1,
+          borderRadius: 14, paddingHorizontal: 12, paddingVertical: 4,
+          marginBottom: Spacing.lg,
+        }}>
+          <TextInput
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder={t('settings.searchPlaceholder') || 'Buscar configuração...'}
+            placeholderTextColor={colors.textTertiary}
+            style={{
+              flex: 1, color: colors.text, fontSize: FontSize.base,
+              paddingVertical: 8, paddingHorizontal: 4,
+              ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+            }}
+            autoCorrect={false}
+            autoCapitalize="none"
+            accessibilityLabel={t('settings.searchPlaceholder') || 'Buscar configuração'}
+          />
+          {!!searchQuery && (
+            <TouchableOpacity
+              onPress={() => setSearchQuery('')}
+              style={{ padding: 6, borderRadius: 12 }}
+              accessibilityLabel={t('common.clear') || 'Limpar'}
+              accessibilityRole="button"
+            >
+              <Text style={{ color: colors.textTertiary, fontSize: 16, fontWeight: '700' }}>{'✕'}</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
         {/* Profile Photo */}
+        {sectionMatches(t('settings.profile') || 'profile', user?.email) && (
         <View style={[s.section, s.profileSection, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <AvatarCircle key={avatarKey} email={user?.email} name={user?.email} size={80} />
           <Text style={[s.profileEmail, { color: colors.text }]}>{user?.email}</Text>
@@ -369,8 +419,10 @@ function SettingsScreenInner() {
             <Text style={[s.changePhotoBtnText, { color: colors.primary }]}>{t('settings.changePhoto')}</Text>
           </TouchableOpacity>
         </View>
+        )}
 
         {/* Appearance */}
+        {sectionMatches(t('settings.appearance'), t('settings.darkMode'), t('settings.density')) && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.appearance')}</Text>
 
@@ -423,8 +475,10 @@ function SettingsScreenInner() {
             </View>
           </View>
         </View>
+        )}
 
         {/* Undo Send */}
+        {sectionMatches(t('settings.undoSend'), t('settings.undoSendDesc')) && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.undoSend')}</Text>
           <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
@@ -451,8 +505,10 @@ function SettingsScreenInner() {
             ))}
           </View>
         </View>
+        )}
 
         {/* Email */}
+        {sectionMatches(t('settings.email'), t('settings.perPage'), t('settings.notifications'), t('settings.notifSound'), t('settings.notifVibration')) && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.email')}</Text>
 
@@ -535,8 +591,10 @@ function SettingsScreenInner() {
             </>
           )}
         </View>
+        )}
 
         {/* Morning Briefing */}
+        {sectionMatches(t('settings.morningBriefing') || 'Bom dia diário', t('settings.morningEnabled') || 'Resumo matinal') && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.morningBriefing') || 'Bom dia diário'}</Text>
           <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
@@ -554,8 +612,10 @@ function SettingsScreenInner() {
             />
           </View>
         </View>
+        )}
 
         {/* Signatures */}
+        {sectionMatches(t('settings.signatures'), t('settings.signatureDesc')) && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.signatures')}</Text>
           <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
@@ -624,8 +684,10 @@ function SettingsScreenInner() {
             <Text style={{ color: colors.primary, fontSize: FontSize.sm, fontWeight: '600' }}>+ {t('settings.addSignature')}</Text>
           </TouchableOpacity>
         </View>
+        )}
 
         {/* Language */}
+        {sectionMatches(t('settings.language'), t('settings.languageLabel')) && (
         <View ref={registerSectionRef('language')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <View style={s.sectionTitleRow}>
             <IconGlobe size={18} color={colors.primary} style={{ marginRight: 8 }} />
@@ -660,8 +722,10 @@ function SettingsScreenInner() {
             </View>
           </View>
         </View>
+        )}
 
         {/* Auto-reply */}
+        {sectionMatches(t('settings.autoReply'), t('settings.autoReplyEnable'), t('settings.autoReplyDesc')) && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.autoReply')}</Text>
           <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
@@ -694,8 +758,10 @@ function SettingsScreenInner() {
             />
           )}
         </View>
+        )}
 
         {/* Filters & Rules */}
+        {sectionMatches(t('settings.filters'), t('settings.manageFilters')) && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.filters')}</Text>
           <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
@@ -717,8 +783,10 @@ function SettingsScreenInner() {
             <IconChevronRight size={20} color={colors.textTertiary} />
           </TouchableOpacity>
         </View>
+        )}
 
         {/* AI Features */}
+        {sectionMatches(t('settings.ai'), t('settings.aiSmartReply'), t('settings.aiDrafts'), t('settings.aiSummary'), t('settings.aiEnhance'), t('settings.smartCompose')) && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <View style={s.sectionTitleRow}>
             <IconSparkles size={18} color={colors.primary} style={{ marginRight: 8 }} />
@@ -765,8 +833,10 @@ function SettingsScreenInner() {
             </TouchableOpacity>
           </View>
         </View>
+        )}
 
         {/* One AI Assistant */}
+        {sectionMatches(t('settings.oneAssistant'), t('settings.oneEnabled'), t('settings.oneNotifPrefs'), 'one ai', 'assistant') && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <View style={s.sectionTitleRow}>
             <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#6366f1', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
@@ -832,9 +902,10 @@ function SettingsScreenInner() {
             </>
           )}
         </View>
+        )}
 
         {/* Desktop Notifications */}
-        {Platform.OS === 'web' && (
+        {Platform.OS === 'web' && sectionMatches(t('settings.desktopNotifs'), t('settings.desktopNotifsDesc'), 'desktop', 'browser') && (
           <View ref={registerSectionRef('notifications')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
             <View style={s.sectionTitleRow}>
               <IconBell size={18} color={colors.primary} style={{ marginRight: 8 }} />
@@ -871,7 +942,7 @@ function SettingsScreenInner() {
         )}
 
         {/* Security — Biometric Lock (native only) */}
-        {Platform.OS !== 'web' && biometricAvailable && (
+        {Platform.OS !== 'web' && biometricAvailable && sectionMatches(t('settings.security'), 'biometric', 'face id', 'parental', 'família', 'family', 'segurança') && (
           <View ref={registerSectionRef('security')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
             {/* Família — Apple Family Sharing-style hub */}
             <TouchableOpacity
@@ -1021,6 +1092,7 @@ function SettingsScreenInner() {
         )}
 
         {/* Forwarding */}
+        {sectionMatches(t('settings.forwarding'), t('settings.forwardingEnable'), t('settings.forwardingDesc')) && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <View style={s.sectionTitleRow}>
             <IconForward size={18} color={colors.primary} style={{ marginRight: 8 }} />
@@ -1055,8 +1127,10 @@ function SettingsScreenInner() {
             />
           )}
         </View>
+        )}
 
         {/* Reading */}
+        {sectionMatches(t('settings.reading'), t('settings.fontSize'), t('settings.readReceipts'), t('settings.referrals') || 'referral') && (
         <View ref={registerSectionRef('reading')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.reading')}</Text>
 
@@ -1104,8 +1178,10 @@ function SettingsScreenInner() {
             />
           </View>
         </View>
+        )}
 
         {/* Legal — Privacy & Terms */}
+        {sectionMatches(t('settings.legal'), t('settings.privacyPolicy'), t('settings.termsOfService')) && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <View style={s.sectionTitleRow}>
             <IconFileText size={18} color={colors.primary} style={{ marginRight: 8 }} />
@@ -1130,11 +1206,13 @@ function SettingsScreenInner() {
             <IconChevronRight size={20} color={colors.textTertiary} />
           </TouchableOpacity>
         </View>
+        )}
 
         {/* Notifications — push delivery level. Surfaces oneNotifLevel state
             (was set in code but no UI exposed it — GAP 11). Three radio rows:
             all / urgent / silent. Persisted via setStorage (mirrors One
             Assistant section pattern). */}
+        {sectionMatches(t('settings.notificationsTitle'), t('settings.notifAll'), t('settings.notifUrgent'), t('settings.notifSilent')) && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <View style={s.sectionTitleRow}>
             <IconBell size={18} color={colors.primary} style={{ marginRight: 8 }} />
@@ -1172,11 +1250,13 @@ function SettingsScreenInner() {
             );
           })}
         </View>
+        )}
 
         {/* Convidar amigos — hero card. Reescrita: header gigante com
             título + descrição + GB ganhos, código grande tappable, botão
             Compartilhar largo, contador no rodapé. Saiu de "uma row apertada"
             pra um card que parece feature de growth. */}
+        {sectionMatches(t('referral.inviteFriends') || 'Convidar amigos', t('referral.subtitle') || 'GB grátis', 'invite', 'amigos', 'referral') && (
         <View style={{
           marginBottom: Spacing.lg,
           borderRadius: 18,
@@ -1286,8 +1366,10 @@ function SettingsScreenInner() {
             )}
           </View>
         </View>
+        )}
 
         {/* Danger Zone */}
+        {sectionMatches(t('settings.dangerZone'), t('settings.emptyTrash'), t('settings.deleteAccount')) && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.error }]}>{t('settings.dangerZone')}</Text>
           <TouchableOpacity
@@ -1481,6 +1563,7 @@ function SettingsScreenInner() {
             );
           })()}
         </View>
+        )}
       </ScrollView>
       )}
 

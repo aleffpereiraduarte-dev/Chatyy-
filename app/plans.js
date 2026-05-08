@@ -1920,6 +1920,26 @@ export default function PlansScreen() {
                 }}>
                   R${(PRICING.one[billingPeriod] / 100).toFixed(2).replace('.', ',')}
                 </Text>
+                {/* Percent-discount badge — visible inline com o preço pra
+                    surfaca o saving "ECONOMIZE X%" mesmo no mobile (antes
+                    só aparecia no hover desktop). Renderiza só se o desconto
+                    for >= 10%, threshold pra evitar badge ruidoso quando
+                    a diferença é trivial. */}
+                {billingPeriod === 'annual' && (() => {
+                  const pct = Math.round((1 - PRICING.one.annual / PRICING.one.monthly) * 100);
+                  if (pct < 10) return null;
+                  return (
+                    <View style={{
+                      backgroundColor: '#22c55e',
+                      borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3,
+                      ...(Platform.OS === 'web' ? { boxShadow: '0 2px 6px rgba(34,197,94,0.35)' } : { shadowColor: '#22c55e', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 2 }),
+                    }}>
+                      <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 0.3 }}>
+                        {(t('plans.savePercent', { pct }) || `ECONOMIZE ${pct}%`)}
+                      </Text>
+                    </View>
+                  );
+                })()}
               </View>
               <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: '500', marginTop: -2 }}>
                 {t('plans.perMonth')}
@@ -2103,6 +2123,24 @@ export default function PlansScreen() {
                 }}>
                   R${(PRICING.family[billingPeriod] / 100).toFixed(2).replace('.', ',')}
                 </Text>
+                {/* Mesmo badge de percentual do Plus — pra Pro o desconto
+                    em geral é maior (~22%), super-relevante mostrar inline
+                    no card do mobile pra incentivar o switch annual. */}
+                {billingPeriod === 'annual' && (() => {
+                  const pct = Math.round((1 - PRICING.family.annual / PRICING.family.monthly) * 100);
+                  if (pct < 10) return null;
+                  return (
+                    <View style={{
+                      backgroundColor: '#22c55e',
+                      borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3,
+                      ...(Platform.OS === 'web' ? { boxShadow: '0 2px 6px rgba(34,197,94,0.35)' } : { shadowColor: '#22c55e', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 2 }),
+                    }}>
+                      <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 0.3 }}>
+                        {(t('plans.savePercent', { pct }) || `ECONOMIZE ${pct}%`)}
+                      </Text>
+                    </View>
+                  );
+                })()}
               </View>
               <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: '500', marginTop: -2 }}>
                 {t('plans.perMonth')}
