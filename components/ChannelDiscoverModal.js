@@ -7,7 +7,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
-import { IconArrowLeft, IconSearch, IconX, IconFlame } from './Icons';
+import { IconArrowLeft, IconSearch, IconX } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import Svg, { Path, Rect, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
 
