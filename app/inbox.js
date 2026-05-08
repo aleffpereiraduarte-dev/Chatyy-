@@ -1098,41 +1098,46 @@ export default function InboxScreen() {
         </View>
       )}
 
-      {/* Header — glassmorphism */}
+      {/* Header — unified Chatyy purple gradient (matches /chat header).
+          Wave 3 consolidation 2026-05-08: era branco glassmorphism, ficava
+          parecendo "outro app" depois do chat roxo. Agora todas as superfícies
+          top-level (Conversas/Email/Reels/Ligações) compartilham o mesmo brand. */}
       <Animated.View style={[
         s.header,
-        { backgroundColor: Platform.OS === 'web' ? colors.headerBg : colors.headerBgSolid,
-          borderBottomColor: colors.headerBorder,
+        { ...(Platform.OS === 'web'
+            ? { background: isDark ? 'linear-gradient(180deg, #1a0a2e 0%, #0a0a0a 100%)' : 'linear-gradient(180deg, #5B21B6 0%, #7C3AED 100%)' }
+            : { backgroundColor: isDark ? '#0d0a14' : '#6D28D9' }),
+          borderBottomColor: 'transparent',
+          borderBottomWidth: 0,
           opacity: headerAnim,
           transform: [{ translateY: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [-40, 0] }) }],
         },
-        Platform.OS === 'web' && s.headerGlass,
       ]}>
         {!isDesktop && (
           <TouchableOpacity onPress={() => { setShowSidebar(!showSidebar); if (!showSidebar) setShowMenu(false); }} style={s.menuBtn} accessibilityLabel={showSidebar ? 'Close menu' : 'Open menu'} accessibilityRole="button">
             {showSidebar ? (
-              <IconX size={22} color={colors.textSecondary} />
+              <IconX size={22} color="#fff" />
             ) : (
-              <IconMenu size={22} color={colors.textSecondary} />
+              <IconMenu size={22} color="#fff" />
             )}
           </TouchableOpacity>
         )}
 
-        {/* Logo / Greeting */}
+        {/* Logo / Greeting — texto branco no header roxo */}
         <View style={s.logoWrap}>
           <View style={{ position: 'relative' }}>
-            <IconMail size={24} color={colors.primary} style={{ marginRight: 6 }} />
-            <View style={[s.wsDot, { borderColor: colors.headerBgSolid || colors.background, backgroundColor: wsStatus === 'authenticated' ? colors.connectionGood : wsStatus === 'connected' ? colors.connectionWarn : colors.connectionBad }]} />
+            <IconMail size={24} color="#fff" style={{ marginRight: 6 }} />
+            <View style={[s.wsDot, { borderColor: '#6D28D9', backgroundColor: wsStatus === 'authenticated' ? colors.connectionGood : wsStatus === 'connected' ? colors.connectionWarn : colors.connectionBad }]} />
           </View>
           {isDesktop ? (
-            <Text style={[s.logoText, { color: colors.primary }]}>Chatyy</Text>
+            <Text style={[s.logoText, { color: '#fff' }]}>Chatyy</Text>
           ) : (
             <View>
-              <Text style={[s.greetingText, { color: colors.text }]}>
+              <Text style={[s.greetingText, { color: '#fff' }]}>
                 {getGreeting()}{user?.name ? `, ${user.name.split(' ')[0]}` : ''}
               </Text>
               {unreadCount > 0 && (
-                <Text style={[s.unreadHint, { color: colors.textTertiary }]}>
+                <Text style={[s.unreadHint, { color: 'rgba(255,255,255,0.7)' }]}>
                   {unreadCount > 1 ? t('inbox.unreadPlural', { count: unreadCount }) : t('inbox.unread', { count: unreadCount })}
                 </Text>
               )}
@@ -1150,9 +1155,9 @@ export default function InboxScreen() {
               accessibilityRole="button"
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              <IconCheck size={18} color={colors.primary} />
+              <IconCheck size={18} color="#fff" />
               {isDesktop && (
-                <Text style={{ fontSize: 12, color: colors.primary, fontWeight: '500' }} numberOfLines={1}>
+                <Text style={{ fontSize: 12, color: '#fff', fontWeight: '500' }} numberOfLines={1}>
                   {t('contextMenu.markRead') || 'Marcar como lido'}
                 </Text>
               )}
@@ -1165,7 +1170,7 @@ export default function InboxScreen() {
             accessibilityRole="button"
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <IconFilter size={20} color={inboxLayout !== 'default' ? colors.primary : colors.textSecondary} />
+            <IconFilter size={20} color={inboxLayout !== 'default' ? '#fff' : 'rgba(255,255,255,0.7)'} />
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => { setShowNotifHub(true); setShowMenu(false); }}
@@ -1174,7 +1179,7 @@ export default function InboxScreen() {
             accessibilityRole="button"
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <IconBell size={22} color={colors.textSecondary} />
+            <IconBell size={22} color="rgba(255,255,255,0.85)" />
           </TouchableOpacity>
           <TouchableOpacity onPress={() => { setShowMenu(!showMenu); if (!showMenu) setShowSidebar(false); }} style={s.avatarBtn}>
             <AvatarCircle name={user?.name || user?.email || '?'} email={user?.email} size={32} />

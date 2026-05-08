@@ -18,7 +18,7 @@ export default function ReadScreen() {
   const [thread, setThread] = useState(null);
   const [loading, setLoading] = useState(true);
   const { refresh, markAsRead } = useMail();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -191,10 +191,10 @@ export default function ReadScreen() {
     return (
       <View style={[s.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}>
         {Platform.OS !== 'web' && (
-          <View style={[s.navBar, { backgroundColor: colors.surface, borderBottomColor: colors.borderLight }]}>
+          <View style={[s.navBar, { backgroundColor: isDark ? '#0d0a14' : '#6D28D9', borderBottomColor: 'transparent', borderBottomWidth: 0 }]}>
             <TouchableOpacity onPress={() => router.back()} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 16, right: 12 }}>
-              <IconChevronLeft size={22} color={colors.primary} />
-              <Text style={[s.backText, { color: colors.primary }]}>{t('reader.back')}</Text>
+              <IconChevronLeft size={22} color="#fff" />
+              <Text style={[s.backText, { color: '#fff' }]}>{t('reader.back')}</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -203,12 +203,18 @@ export default function ReadScreen() {
     );
   }
 
-  // Back nav bar (mobile) with prev/next navigation
+  // Back nav bar (mobile) — gradient roxo igual ao /chat e /inbox.
+  // Wave 3 consolidação 2026-05-08: header não muda mais a paleta visual
+  // entre Conversas/Inbox/Read — todas usam o mesmo brand purple gradient.
   const navBar = Platform.OS !== 'web' ? (
-    <View style={[s.navBar, { backgroundColor: colors.surface, borderBottomColor: colors.borderLight }]}>
+    <View style={[s.navBar, {
+      backgroundColor: isDark ? '#0d0a14' : '#6D28D9',
+      borderBottomColor: 'transparent',
+      borderBottomWidth: 0,
+    }]}>
       <TouchableOpacity onPress={() => router.back()} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 16, right: 12 }} accessibilityLabel={t('reader.back')} accessibilityRole="button">
-        <IconChevronLeft size={22} color={colors.primary} />
-        <Text style={[s.backText, { color: colors.primary }]}>{t('reader.back')}</Text>
+        <IconChevronLeft size={22} color="#fff" />
+        <Text style={[s.backText, { color: '#fff' }]}>{t('reader.back')}</Text>
       </TouchableOpacity>
       <View style={{ flex: 1 }} />
       <View style={s.navArrows}>
@@ -220,7 +226,7 @@ export default function ReadScreen() {
           accessibilityLabel={t('reader.prevEmail')}
           accessibilityRole="button"
         >
-          <IconChevronLeft size={20} color={colors.textSecondary} />
+          <IconChevronLeft size={20} color="rgba(255,255,255,0.85)" />
         </TouchableOpacity>
         <TouchableOpacity
           onPress={() => navigateToEmail(nextUid)}
@@ -230,7 +236,7 @@ export default function ReadScreen() {
           accessibilityLabel={t('reader.nextEmail')}
           accessibilityRole="button"
         >
-          <IconChevronRight size={20} color={colors.textSecondary} />
+          <IconChevronRight size={20} color="rgba(255,255,255,0.85)" />
         </TouchableOpacity>
       </View>
     </View>
