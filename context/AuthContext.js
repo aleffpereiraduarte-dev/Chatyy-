@@ -629,28 +629,44 @@ export function AuthProvider({ children }) {
     } catch {}
 
     // 1. Clear user state (instant visual feedback)
+    const _outgoingEmail = (user?.email || api.getActiveAccountEmail?.() || '').toLowerCase();
     setUser(null);
     setCacheUser(null);
     // 2. Redirect to login IMMEDIATELY
     try { router.replace('/login'); } catch {}
     // 3. Clear token (prevents auto-relogin on next open) — must happen
     //    AFTER the push-token revoke above so the API call had auth.
-    api.clearAuthToken();
+    //    AWAIT the async variant on native so SecureStore.deleteItemAsync
+    //    completes before the user can kill the app from the app switcher.
+    //    The previous fire-and-forget clearAuthToken() left a window where
+    //    a fast app-kill skipped the keychain delete, and next cold-start's
+    //    line 422 IIFE re-hydrated `authToken` from the stale entry —
+    //    checkAuth() then succeeded and the user was auto-logged-back-in
+    //    (reported 2026-05-07).
+    try { await api.clearAuthTokenAsync(); } catch { try { api.clearAuthToken(); } catch {} }
     // 3b. Clear the offline user cache so the next app-open's
     //     hydrateOffline() doesn't resurrect a logged-out session.
     //     Without this, users who got kicked for a 401 would still see
     //     themselves as "logged in" on next cold start.
-    try { AsyncStorage.removeItem('chatyy_offline_user').catch(() => {}); } catch {}
-    // 3b.1. Clear the active-account marker too. hydrateOffline() has a
-    //       last-resort fallback that reads getActiveAccountEmail() and
-    //       picks accts[0] when no offline cache exists. Without clearing
-    //       active, the user gets auto-logged-in on next cold start even
-    //       though they explicitly logged out (reported 2026-05-07: "saiu
-    //       da conta, fechou o app, abriu, voltou pra conta").
-    //       The stored accounts list is preserved so multi-account /
-    //       Face ID still work — only the *currently active* marker
-    //       is cleared so the fallback can't resurrect this session.
-    try { api.setActiveAccountEmail?.(''); } catch {}
+    try { await AsyncStorage.removeItem('chatyy_offline_user'); } catch {}
+    // 3b.1. Clear the active-account marker too — also awaited on native
+    //       (same race-window fix as the bearer above). hydrateOffline()
+    //       has a last-resort fallback that reads getActiveAccountEmail()
+    //       and picks accts[0] when no offline cache exists. Without
+    //       clearing active, the user gets auto-logged-in on next cold
+    //       start even though they explicitly logged out (reported
+    //       2026-05-07: "saiu da conta, fechou o app, abriu, voltou pra
+    //       conta"). The stored accounts list is preserved so
+    //       multi-account / Face ID still work — only the *currently
+    //       active* marker is cleared so the fallback can't resurrect
+    //       this session.
+    try { await api.setActiveAccountEmailAsync?.(''); } catch { try { api.setActiveAccountEmail?.(''); } catch {} }
+    // 3b.2. Wipe the bearer token from the multi-account row for THIS
+    //       user — accounts list keeps email+name so the next sign-in
+    //       can pre-fill the picker, but the token field is zeroed so
+    //       even a pathological switchAccount-without-OTP path can't
+    //       reuse a logged-out session's bearer.
+    try { if (_outgoingEmail) await api.clearStoredAccountTokenAsync?.(_outgoingEmail); } catch {}
     // 3a. KEEP bio_email + bio_token across logout so "Entrar com Face ID"
     //     ainda aparece na próxima vez que o user abrir o login — WhatsApp
     //     pattern. O Face ID local já protege contra outra pessoa entrar

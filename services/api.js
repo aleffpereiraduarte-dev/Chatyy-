@@ -890,6 +890,72 @@ export function clearAuthToken() {
   try { if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(_SWR_PERSIST_KEY); } catch {}
 }
 
+// Awaitable variant: doLogout MUST await this on native so SecureStore
+// finishes deleting `mail_token` before the user kills the app. Without
+// the await, the delete is fire-and-forget and a fast app-kill leaves
+// the token in keychain — next cold-start re-hydrates authToken on line
+// 422 IIFE, checkAuth() succeeds with the still-valid bearer, and the
+// user is auto-logged-in even though they explicitly logged out
+// (reported 2026-05-07: "fecho o all e abre denovo ele ja loga
+// automaticamente").
+export async function clearAuthTokenAsync() {
+  authToken = '';
+  sessionCookie = '';
+  csrfToken = '';
+  savedCredentials = null;
+  try { await storeToken(null); } catch {}
+  try { _swrCache.clear(); } catch {}
+  try { if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(_SWR_PERSIST_KEY); } catch {}
+}
+
+// Awaitable variant of setActiveAccountEmail — same race-window fix as
+// clearAuthTokenAsync above. doLogout awaits this so SecureStore finishes
+// deleting the active marker before the user kills the app, otherwise the
+// stale marker is read on next cold-start and hydrateOffline last-resort
+// resurrects the session.
+export async function setActiveAccountEmailAsync(email) {
+  _cachedActiveAccount = email || '';
+  try {
+    if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+      if (email) localStorage.setItem('mail_active_account', email);
+      else localStorage.removeItem('mail_active_account');
+      return;
+    }
+    const SecureStore = require('expo-secure-store');
+    if (email) await SecureStore.setItemAsync('mail_active_account', email);
+    else await SecureStore.deleteItemAsync('mail_active_account');
+  } catch {}
+}
+
+// Wipe the bearer token from a stored account row WITHOUT removing the
+// account itself — keeps the email + name in the multi-account list so
+// the user can quickly log back in (Face ID / handle suggestion / etc.)
+// but kills the auto-relogin path. Awaits the SecureStore write on native.
+export async function clearStoredAccountTokenAsync(email) {
+  try {
+    const lower = String(email || '').toLowerCase();
+    if (!lower) return;
+    const accounts = getStoredAccounts();
+    let changed = false;
+    const next = accounts.map(a => {
+      if (String(a.email || '').toLowerCase() === lower && a.token) {
+        changed = true;
+        return { ...a, token: '' };
+      }
+      return a;
+    });
+    if (!changed) return;
+    _cachedAccounts = next;
+    const json = JSON.stringify(next);
+    if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+      localStorage.setItem('mail_accounts', json);
+      return;
+    }
+    const SecureStore = require('expo-secure-store');
+    await SecureStore.setItemAsync('mail_accounts', json);
+  } catch {}
+}
+
 export async function logout() {
   // Call the server-side logout first, but ALWAYS clear local state even
   // if the network call fails — otherwise a flaky logout leaves stale

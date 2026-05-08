@@ -48,15 +48,13 @@ export default function SignupPhone() {
   const { loginWithToken } = useAuth();
 
   // 5 steps: welcome → phone → otp → name → handle → done.
-  // welcome is the Telegram-style 5-slide carousel (SignupIntro component) —
-  // brand → all-in-one → privacy → AI → multi-device. Honest copy, no fake
-  // "fastest app" promises, brand-purple SVG illustrations.
-  // ALWAYS show welcome on first entry — even if phone was forwarded from
-  // login (the param stays cached so the phone step finds it pre-filled
-  // when the user reaches it). Skipping welcome when phone is forwarded
-  // hid the new tour from users who hit "Criar conta com este número" —
-  // exactly the flow we want them to see.
-  const _initialStep = 'welcome';
+  // welcome is the Telegram-style 5-slide carousel (SignupIntro component).
+  // Skip it when the user came here AFTER typing a phone on /login (params
+  // .fromLogin === '1' OR params.phone present) — they already dismissed
+  // the same SignupIntro on /login (chatyy_intro_seen flag), and showing
+  // it again right after they hit "Continuar" on the phone step felt like
+  // the carousel "abriu sozinho" (reported 2026-05-07).
+  const _initialStep = (params?.fromLogin === '1' || params?.phone) ? 'phone' : 'welcome';
   const [step, setStep] = useState(_initialStep);
   // Safe-area insets to keep the header off the status bar / notch on
   // Android (Pixel center punch-hole, Samsung notch, etc) and the
