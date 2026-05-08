@@ -663,9 +663,8 @@ function ChatHub() {
               // when that tab becomes active so the dot stays meaningful.
               const tabBadge = key === 'chats' ? chatsBadge
                 : key === 'status' ? statusBadge
-                : key === 'feed' ? feedBadge
-                : key === 'calls' ? missedCallBadge
                 : 0;
+              const tabDot = key === 'calls' && missedCallBadge > 0;
               return (
                 <DesktopTabItem
                   key={key}
@@ -676,6 +675,7 @@ function ChatHub() {
                   onPress={() => handleTabPress(key)}
                   isDark={isDark}
                   badge={tabBadge}
+                  dot={tabDot}
                 />
               );
             })}
@@ -963,7 +963,6 @@ function ChatHub() {
               active={false}
               onPress={() => handleTabPress('reels')}
               isDark={isDark}
-              badge={feedBadge}
             />
             <TabBarItem
               icon={(active) => <IconChatsTab size={22} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
@@ -979,7 +978,7 @@ function ChatHub() {
               active={activeTab === 'calls'}
               onPress={() => handleTabPress('calls')}
               isDark={isDark}
-              badge={missedCallBadge}
+              dot={missedCallBadge > 0}
             />
             <TabBarItem
               icon={(active) => <IconAppsTab size={22} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
@@ -1319,7 +1318,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
 });
 
 // ── Desktop sidebar tab item with hover ──
-function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark, badge }) {
+function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark, badge, dot }) {
   const [hovered, setHovered] = useState(false);
   const color = active ? '#7C3AED' : 'rgba(255,255,255,0.6)';
   const isWeb = Platform.OS === 'web';
@@ -1345,6 +1344,14 @@ function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark
       <View style={{ position: 'relative' }}>
         <IconComp size={22} color={color} active={active} />
         {badge > 0 && <PulseBadge badge={badge} isDark={isDark} />}
+        {!badge && dot && (
+          <View style={{
+            position: 'absolute', top: -2, right: -2,
+            width: 8, height: 8, borderRadius: 4,
+            backgroundColor: '#ef4444',
+            borderWidth: 1.5, borderColor: '#0f1115',
+          }} />
+        )}
       </View>
       <Text style={[styles.desktopTabLabel, {
         color,
@@ -1385,7 +1392,7 @@ function PulseBadge({ badge, isDark }) {
 }
 
 // ── Mobile tab bar item with dot indicator ──
-function TabBarItem({ icon, label, active, onPress, isDark, badge }) {
+function TabBarItem({ icon, label, active, onPress, isDark, badge, dot }) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const bounceAnim = useRef(new Animated.Value(0)).current;
   // Active glow ring fades in when the tab activates — soft halo around
@@ -1432,6 +1439,14 @@ function TabBarItem({ icon, label, active, onPress, isDark, badge }) {
       }]}>
         {icon(active)}
         {badge > 0 && <PulseBadge badge={badge} isDark={isDark} />}
+        {!badge && dot && (
+          <View style={{
+            position: 'absolute', top: 2, right: 2,
+            width: 8, height: 8, borderRadius: 4,
+            backgroundColor: '#ef4444',
+            borderWidth: 1.5, borderColor: isDark ? '#0f1115' : '#ffffff',
+          }} />
+        )}
       </Animated.View>
       <Text style={[styles.tabLabel, {
         color: active ? ACCENT : (isDark ? '#6b7280' : '#9ca3af'),

@@ -1720,22 +1720,6 @@ export default function LoginScreen() {
                             </TouchableOpacity>
                           )}
 
-                          {/* Telegram-style "Criar conta sem telefone" link.
-                              Routes to /signup-username — username + password
-                              flow that skips SIM/OTP entirely. On web first
-                              visit it sits below the phone input as a low-key
-                              alternative; on mobile it's a secondary link
-                              under the email-fallback. */}
-                          <TouchableOpacity
-                            onPress={() => { safeHaptic(() => Haptics.selectionAsync()); router.push('/signup-username'); }}
-                            activeOpacity={0.6}
-                            style={{ alignSelf: 'center', paddingVertical: 12, marginTop: 2 }}
-                            accessibilityRole="button"
-                          >
-                            <Text style={{ fontSize: 13, color: colors.primary, fontWeight: '600' }}>
-                              {t('login.createWithoutPhone') || 'Criar conta sem telefone'}
-                            </Text>
-                          </TouchableOpacity>
                         </>
                       ) : (
                         <>
