@@ -1035,6 +1035,7 @@ function ChatHub() {
         colors={colors}
         isDark={isDark}
         t={t}
+        userEmail={user?.email}
         onOpenFeed={openFeedFromApps}
         onOpenStatus={openStatusFromApps}
         onOpenChannels={openChannelsFromApps}
@@ -1152,7 +1153,7 @@ function AppTile({ item, badge, onPress, colors, isDark }) {
   );
 }
 
-const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, router, colors, isDark, t, onOpenFeed, onOpenStatus, onOpenChannels, onOpenCommunities, badges }) {
+const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, router, colors, isDark, t, userEmail, onOpenFeed, onOpenStatus, onOpenChannels, onOpenCommunities, badges }) {
   const [q, setQ] = useState('');
   // MRU drawer bar — reflects the last 4 apps the user opened. Refreshes
   // whenever the drawer opens (cheap, list is at most 8 entries).
@@ -1200,13 +1201,13 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
     {
       title: t('apps.account') || 'Conta',
       items: [
-        { key: 'profile',       label: t('sidebar.profile') || 'Perfil',         ic: I(IconUser, '#64748b'),     route: '/profile' },
-        { key: 'settings',      label: t('sidebar.settings') || 'Configurações', ic: I(IconSettings, '#475569'), route: '/settings' },
+        { key: 'profile',       label: t('sidebar.profile') || 'Perfil',         ic: I(IconUser, '#64748b'),     action: () => { onClose(); if (userEmail) try { router.push(`/u/${encodeURIComponent(userEmail)}`); } catch (e) { console.warn('[chat] router.push failed:', e); } } },
+        { key: 'settings',      label: t('sidebar.settings') || 'Configurações', ic: I(IconSettings, '#475569'), action: () => { onClose(); if (userEmail) try { router.push(`/u/${encodeURIComponent(userEmail)}?openSettings=1`); } catch (e) { console.warn('[chat] router.push failed:', e); } } },
         { key: 'notifications', label: t('sidebar.notifications') || 'Alertas',  ic: I(IconBell, '#f97316'),     route: '/notifications' },
         { key: 'backup',        label: t('sidebar.backup') || 'Backup',          ic: I(IconShield, '#0ea5e9'),   route: '/backup' },
       ],
     },
-  ]), [t, onOpenFeed, onOpenStatus, onOpenChannels, onOpenCommunities, onClose, router]);
+  ]), [t, onOpenFeed, onOpenStatus, onOpenChannels, onOpenCommunities, onClose, router, userEmail]);
 
   const qLower = q.trim().toLowerCase();
   const filteredSections = useMemo(() => (

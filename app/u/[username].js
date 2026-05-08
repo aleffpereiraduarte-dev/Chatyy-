@@ -14,7 +14,7 @@ import Profile from '../../components/Profile';
 import { IconArrowLeft } from '../../components/Icons';
 
 export default function UserProfileScreen() {
-  const { username, openStatus } = useLocalSearchParams();
+  const { username, openStatus, openSettings } = useLocalSearchParams();
   const router = useRouter();
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
@@ -69,6 +69,7 @@ export default function UserProfileScreen() {
         email={identifier.includes('@') ? identifier : undefined}
         username={!identifier.includes('@') ? identifier : undefined}
         autoOpenStory={openStatus === '1' || openStatus === 'true'}
+        autoOpenSettings={openSettings === '1' || openSettings === 'true'}
         colors={colors}
         isDark={isDark}
         t={t}

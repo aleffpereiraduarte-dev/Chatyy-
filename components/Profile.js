@@ -382,6 +382,7 @@ export default function Profile({
   onLogout,                // self-only: signs current session out
   headerLeadingSpace = 0,  // px reserved on the left of row 1 so an absolute-positioned back button doesn't cover @username
   autoOpenStory = false,   // when true and stories exist, auto-open the story viewer (chat status_reply tap path)
+  autoOpenSettings = false, // when true and is_self, auto-open the settings bottom sheet (Apps drawer "Configurações" entry)
   colors, isDark, t, router,
 }) {
   // Current session's user — needed so the embedded FeedComments sheet
@@ -419,6 +420,18 @@ export default function Profile({
   const [editOpen, setEditOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Auto-open settings sheet when arriving via deeplink (?openSettings=1).
+  // Apps drawer "Configurações" tile uses this path so it converges on the
+  // same single-source-of-truth sheet that the gear icon opens — instead of
+  // pushing /settings (legacy email-focused screen). Fired once on data load.
+  const _autoSettingsFiredRef = useRef(false);
+  useEffect(() => {
+    if (!autoOpenSettings) return;
+    if (_autoSettingsFiredRef.current) return;
+    if (!data?.is_self) return;
+    _autoSettingsFiredRef.current = true;
+    setSettingsOpen(true);
+  }, [autoOpenSettings, data?.is_self]);
   const [followersTab, setFollowersTab] = useState(null); // null | 'followers' | 'following'
   // Per-user contact nickname (WhatsApp-style rename). Loaded from the
   // chat_nickname_list endpoint on mount; overrides display name locally.
