@@ -805,96 +805,99 @@ export default function SignupPhone() {
 
             {step === 'otp' && (
               <>
-                {/* OTP 6-digit boxes — bigger (48×56), soft fill, radius 12,
-                    fixed borderWidth so there's no layout-jump on fill (we
-                    animate background + border color instead). First box gets
-                    iOS oneTimeCode + Android sms-otp so the system can drop
-                    the SMS straight in. Mirrors login.js L1190-1217.
+                {/* OTP 6-digit display — single hidden TextInput overlays the
+                    6 visual boxes. Six maxLength=1 inputs silently broke
+                    Android sms-otp autofill: the Gboard chip pastes the FULL
+                    6-digit code into the focused input, but maxLength=1 drops
+                    5 of them on the floor. iOS oneTimeCode also only ever
+                    fills the first focused input — so the same single-input
+                    pattern fixes both platforms. Mirrors login.js L1700-1762
+                    and matches Telegram/WhatsApp. The `Pressable` wraps so
+                    tapping any visual box focuses the hidden input.
                     Wrapped in Animated.View so the row can shake on error. */}
-                <Animated.View style={{
-                  flexDirection: 'row', justifyContent: 'center',
-                  gap: 8, marginBottom: 20,
-                  transform: [{ translateX: otpShake }],
-                }}>
-                  {Array.from({ length: 6 }).map((_, i) => {
-                    const _digit = code[i] || '';
-                    const _filled = !!_digit;
-                    const _otpBg = isDark ? (_filled ? `${colors.primary}26` : '#1f2229') : (_filled ? `${colors.primary}10` : '#f3f4f6');
-                    const _otpBorder = _filled ? colors.primary : (isDark ? '#2a2d31' : '#e5e7eb');
-                    // Pulse the box when a digit transitions empty → filled
-                    // (after the state has been set on the parent).
-                    const _popBox = (idx) => {
-                      try {
-                        const sv = otpBoxScales[idx];
-                        if (!sv) return;
-                        Animated.sequence([
-                          Animated.timing(sv, { toValue: 1.08, duration: 60, useNativeDriver: true }),
-                          Animated.timing(sv, { toValue: 1,    duration: 60, useNativeDriver: true }),
-                        ]).start();
-                      } catch {}
-                    };
-                    return (
-                      <Animated.View
-                        key={i}
-                        style={{ transform: [{ scale: otpBoxScales[i] }] }}
-                      >
-                        <TextInput
-                          ref={ref => { otpRefs.current[i] = ref; }}
-                          style={[{
+                <Pressable
+                  onPress={() => otpRefs.current?.[0]?.focus?.()}
+                  style={{ marginBottom: 20, alignSelf: 'center' }}
+                  accessibilityLabel={t('signupPhone.titleOtp') || 'Código de 6 dígitos'}
+                >
+                  <Animated.View style={{
+                    flexDirection: 'row', justifyContent: 'center',
+                    gap: 8,
+                    transform: [{ translateX: otpShake }],
+                  }}>
+                    {Array.from({ length: 6 }).map((_, i) => {
+                      const _digit = code[i] || '';
+                      const _filled = !!_digit;
+                      const _focused = (code.length === i) || (code.length === 6 && i === 5);
+                      const _otpBg = isDark ? (_filled ? `${colors.primary}26` : '#1f2229') : (_filled ? `${colors.primary}10` : '#f3f4f6');
+                      const _otpBorder = _focused ? colors.primary : (_filled ? colors.primary : (isDark ? '#2a2d31' : '#e5e7eb'));
+                      return (
+                        <Animated.View
+                          key={i}
+                          style={{
                             width: 42, height: 50, borderRadius: 8,
                             borderWidth: 1.5,
                             borderColor: _otpBorder,
                             backgroundColor: _otpBg,
-                            textAlign: 'center', fontSize: 22, fontWeight: '700',
-                            color: colors.text,
-                          }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
-                          value={_digit}
-                          onChangeText={(v) => {
-                            const clean = v.replace(/\D/g, '');
-                            if (clean.length > 1) {
-                              // Paste/iOS-autofill: when 6 digits land in any
-                              // box (typical for tapping the iOS oneTimeCode
-                              // suggestion), fill from index 0 — otherwise
-                              // tapping autofill on a non-first box leaves the
-                              // earlier boxes empty. Shorter pastes still go
-                              // from the focused index (Telegram pattern).
-                              const startsAt = clean.length >= 6 ? 0 : i;
-                              const before = code.slice(0, startsAt);
-                              const next = (before + clean).slice(0, 6);
-                              setCode(next);
-                              const focusIdx = Math.min(next.length, 5);
-                              setTimeout(() => otpRefs.current[focusIdx]?.focus(), 0);
-                              // Pulse every box that gained a new digit.
-                              for (let j = before.length; j < next.length; j++) _popBox(j);
-                            } else {
-                              const arr = code.split('');
-                              const wasEmpty = !arr[i];
-                              arr[i] = clean;
-                              const next = arr.join('').slice(0, 6);
-                              setCode(next);
-                              if (clean && wasEmpty) _popBox(i);
-                              if (clean && i < 5) setTimeout(() => otpRefs.current[i + 1]?.focus(), 0);
-                            }
+                            alignItems: 'center', justifyContent: 'center',
+                            transform: [{ scale: otpBoxScales[i] }],
                           }}
-                          onKeyPress={({ nativeEvent }) => {
-                            if (nativeEvent.key === 'Backspace' && !code[i] && i > 0) {
-                              otpRefs.current[i - 1]?.focus();
-                              const arr = code.split('');
-                              arr[i - 1] = '';
-                              setCode(arr.join(''));
-                            }
-                          }}
-                          keyboardType="number-pad"
-                          maxLength={1}
-                          selectTextOnFocus
-                          textContentType={i === 0 ? 'oneTimeCode' : 'none'}
-                          autoComplete={i === 0 ? 'sms-otp' : 'off'}
-                          autoFocus={i === 0}
-                        />
-                      </Animated.View>
-                    );
-                  })}
-                </Animated.View>
+                        >
+                          <Text style={{ fontSize: 22, fontWeight: '700', color: colors.text }}>
+                            {_digit}
+                          </Text>
+                        </Animated.View>
+                      );
+                    })}
+                  </Animated.View>
+                  <TextInput
+                    ref={ref => { otpRefs.current[0] = ref; }}
+                    style={{
+                      position: 'absolute',
+                      top: 0, left: 0, right: 0, bottom: 0,
+                      // opacity:0 silently breaks Gboard's sms-otp chip on
+                      // some Android builds — the chip only surfaces when
+                      // the focused field is "visible" to the autofill
+                      // service. Use color:transparent + caretHidden so
+                      // the input is invisible visually but Android still
+                      // treats it as a normal autofillable field.
+                      color: 'transparent',
+                      backgroundColor: 'transparent',
+                      fontSize: 22,
+                      textAlign: 'center',
+                      ...(Platform.OS === 'web' ? { outlineStyle: 'none', caretColor: 'transparent' } : {}),
+                    }}
+                    value={code}
+                    onChangeText={(raw) => {
+                      const digits = (raw || '').replace(/\D/g, '').slice(0, 6);
+                      const prevLen = code.length;
+                      setCode(digits);
+                      // Pulse each newly-filled box. Single-shot per digit.
+                      try {
+                        for (let j = prevLen; j < digits.length; j++) {
+                          const sv = otpBoxScales[j];
+                          if (!sv) continue;
+                          Animated.sequence([
+                            Animated.timing(sv, { toValue: 1.08, duration: 60, useNativeDriver: true }),
+                            Animated.timing(sv, { toValue: 1,    duration: 60, useNativeDriver: true }),
+                          ]).start();
+                        }
+                      } catch {}
+                      if (digits.length === 6) {
+                        // Auto-submit on full code (matches Telegram / iMessage).
+                        setTimeout(() => { try { checkOtp(); } catch {} }, 150);
+                      }
+                    }}
+                    keyboardType="number-pad"
+                    inputMode="numeric"
+                    maxLength={6}
+                    textContentType="oneTimeCode"
+                    autoComplete="sms-otp"
+                    autoFocus
+                    caretHidden
+                    importantForAutofill="yes"
+                  />
+                </Pressable>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
                   <Text style={{ fontSize: 12, color: colors.textTertiary }}>
                     {resendCountdown > 0

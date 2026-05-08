@@ -1741,8 +1741,15 @@ export default function LoginScreen() {
                               style={{
                                 position: 'absolute',
                                 top: 0, left: 0, right: 0, bottom: 0,
-                                opacity: 0,
+                                // opacity:0 silently broke Gboard's sms-otp
+                                // chip on some Android builds — the autofill
+                                // service skips fully-transparent fields. Use
+                                // color/background:transparent + caretHidden
+                                // so the input is invisible but Android still
+                                // treats it as a normal autofillable field
+                                // (reported 2026-05-08).
                                 color: 'transparent',
+                                backgroundColor: 'transparent',
                                 fontSize: 22,
                                 ...(Platform.OS === 'web' ? { outlineStyle: 'none', caretColor: 'transparent' } : {}),
                               }}
@@ -1751,12 +1758,12 @@ export default function LoginScreen() {
                               onFocus={() => setPhoneOtpFocused(true)}
                               onBlur={() => setPhoneOtpFocused(false)}
                               keyboardType="number-pad"
+                              inputMode="numeric"
                               maxLength={6}
                               textContentType="oneTimeCode"
                               autoComplete="sms-otp"
                               autoFocus
                               caretHidden
-                              selectTextOnFocus
                               importantForAutofill="yes"
                             />
                           </Pressable>
