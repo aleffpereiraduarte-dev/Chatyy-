@@ -32,6 +32,7 @@ export default {
   'effects.love': 'Love',
   'effects.lasers': 'Lasers',
   'effects.fireworks': 'Fireworks',
+  'effects.shootingStar': 'Shooting Star',
   'effects.celebration': 'Celebration',
 
   // Splash
