@@ -11,7 +11,12 @@ import { Platform, AppState } from 'react-native';
 // Direct WS connection (bypasses Cloudflare — no 100s idle timeout)
 const WS_URL = null; // Dynamic — resolved at connect time from best edge server
 
-const RECONNECT_BASE = 500;      // 500ms first retry (Telegram-style fast recovery)
+// 800ms first retry — WhatsApp-tier silent recovery. Was 500ms, but real-world
+// flaps (carrier handoff, brief AP loss) lasted 600-1500ms; the 500ms retry
+// always fired BEFORE the network re-stabilized, surfacing a noisy
+// "Reconectando…" flash. 800ms lets the OS settle first so the very first
+// connect attempt usually succeeds — invisible recovery.
+const RECONNECT_BASE = 800;
 const RECONNECT_MAX = 30000;     // Max 30s between retries
 // WhatsApp-tier liveness — was 25s/45s (Telegram production), but users
 // complained messages "arrived late" because a silently-dead socket took up

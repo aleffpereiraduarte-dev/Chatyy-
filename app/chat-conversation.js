@@ -8541,12 +8541,22 @@ export default function ChatConversationScreen() {
           // we won't get a stop_typing event from the dead socket and stale
           // "X is typing..." would linger until the next foreground reconnect.
           if (mountedRef.current) setTypingUsers(new Map());
-          // Only show banner if we HAD a connection before (not on initial load)
+          // Only show banner if we HAD a connection before (not on initial load).
+          // Grace bumped 3.5s → 5s to match WhatsApp pattern: brief flaps
+          // (carrier handoff, AP roam, server reload) now finish reconnecting
+          // before the banner ever paints, so the user sees zero visual noise
+          // for connection blips under 5 seconds. Double-check the live socket
+          // at fire time too — covers the race where authenticated event fires
+          // ~50ms before the timer callback runs (timer would otherwise still
+          // flip the banner on for one frame before the 'authenticated' handler
+          // clears it).
           if (!wsDisconnectTimerRef.current && mountedRef.current && hasEverConnectedRef.current) {
             wsDisconnectTimerRef.current = setTimeout(() => {
-              if (mountedRef.current && !wsConnectedRef.current) setWsConnected(false);
+              if (mountedRef.current && !wsConnectedRef.current && !mailWs.isConnected) {
+                setWsConnected(false);
+              }
               wsDisconnectTimerRef.current = null;
-            }, 3500); // 3.5s — fast enough that user sees feedback during real outages,
+            }, 5000);
           }
         }
       });
@@ -16629,11 +16639,14 @@ export default function ChatConversationScreen() {
           Now also shows on FIRST connect (hasEverConnectedRef false) so the
           user knows the chat is bootstrapping when they open a thread cold.
           Without this, the bar appeared blank for the first 1-2s of WS
-          handshake on cold-start — looked like the app was broken. */}
+          handshake on cold-start — looked like the app was broken.
+          Visual: muted gray (not alarming orange) — matches WhatsApp's subtle
+          informational treatment. The 5s grace timer means this only paints
+          for genuine outages, not for transient network blips. */}
       {!wsConnected && (
-        <View style={{ backgroundColor: '#FFA726', paddingVertical: 6, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-          <ActivityIndicator size={12} color="#fff" />
-          <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>
+        <View style={{ backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', paddingVertical: 6, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+          <ActivityIndicator size={12} color={isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.5)'} />
+          <Text style={{ color: isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.6)', fontSize: 12, fontWeight: '500' }}>
             {hasEverConnectedRef.current
               ? (t('chat.reconnecting') || 'Reconectando...')
               : (t('chat.connecting') || 'Conectando...')}

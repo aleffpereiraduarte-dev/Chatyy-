@@ -2496,14 +2496,18 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           setWsDownBanner(false);
         } else if (data?.status === 'disconnected') {
           wasConnected = false;
-          // Match chat-conversation pattern: 3.5s delay before showing
-          // banner so a brief flap (network change, app resume) doesn't
-          // flash the banner unnecessarily.
+          // 5s delay before painting the banner — WhatsApp pattern: brief
+          // flaps (carrier handoff, AP roam, server reload, AppState resume)
+          // resolve in <2s so the user sees zero noise. Was 3.5s, but real
+          // recoveries on weak cellular took 3-5s and leaked the banner for
+          // 1-2 frames before clearing. Also re-check mailWs.isConnected at
+          // fire time so the very last race window (auth lands ~50ms before
+          // the timer callback) doesn't paint a one-frame flash.
           if (!bannerTimer) {
             bannerTimer = setTimeout(() => {
-              if (!wasConnected) setWsDownBanner(true);
+              if (!wasConnected && !mailWs.isConnected) setWsDownBanner(true);
               bannerTimer = null;
-            }, 3500);
+            }, 5000);
           }
         }
       }));
@@ -4094,19 +4098,21 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           </TouchableOpacity>
         </Animated.View>
       )}
-      {/* WS down banner — only shown after 3.5s delay (set by the connection
-          listener) so brief reconnects don't flash. Lets the user know
-          messages aren't syncing live so they don't think the app is broken. */}
+      {/* WS down banner — only shown after 5s delay (set by the connection
+          listener) so any reconnect under 5s is completely invisible. Visual
+          tuned to WhatsApp pattern: subtle muted gray (not alarming yellow)
+          since this is informational, not an error — most reconnects succeed
+          in seconds and the user shouldn't feel the app is broken. */}
       {wsDownBanner && (
         <View style={{
           flexDirection: 'row', alignItems: 'center', gap: 8,
-          paddingHorizontal: 14, paddingVertical: 8,
-          backgroundColor: isDark ? '#3a2a14' : '#fff5e6',
+          paddingHorizontal: 14, paddingVertical: 6,
+          backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
         }}>
-          <ActivityIndicator size="small" color={isDark ? '#f59e0b' : '#d97706'} />
-          <Text style={{ flex: 1, fontSize: 13, color: isDark ? '#f59e0b' : '#92400e' }}>
+          <ActivityIndicator size="small" color={isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.45)'} />
+          <Text style={{ flex: 1, fontSize: 12, color: isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.55)', fontWeight: '500' }}>
             {t?.('chat.reconnecting') || 'Reconectando…'}
           </Text>
         </View>
