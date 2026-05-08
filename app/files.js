@@ -375,8 +375,14 @@ function StorageBar({ storageInfo, colors, t, isDark }) {
   const emailUsed = storageInfo.email_used || 0;
   const quota = storageInfo.quota || storageInfo.plan_quota || 15 * 1024 * 1024 * 1024;
 
-  const drivePct = quota > 0 ? Math.min((driveUsed / quota) * 100, 100) : 0;
-  const emailPct = quota > 0 ? Math.min((emailUsed / quota) * 100, 100 - drivePct) : 0;
+  // Clamp tiny non-zero usage to a visible minimum so the bar still shows
+  // a sliver when the user has only a few KB. Without this, 86 KB / 20 GB
+  // computes to ~0.0004% and renders as a pixel-less stripe (caught QA
+  // 2026-05-07: bar looked empty despite "86.4 KB" subtitle).
+  const _rawDrive = quota > 0 ? Math.min((driveUsed / quota) * 100, 100) : 0;
+  const _rawEmail = quota > 0 ? Math.min((emailUsed / quota) * 100, 100) : 0;
+  const drivePct = driveUsed > 0 && _rawDrive < 1 ? 1 : _rawDrive;
+  const emailPct = emailUsed > 0 && _rawEmail < 1 ? Math.min(1, 100 - drivePct) : Math.min(_rawEmail, 100 - drivePct);
 
   // Animated fill
   const fillAnim = useRef(new Animated.Value(0)).current;
