@@ -281,9 +281,12 @@ function ChatHub() {
 
   const closeAppsDrawer = useCallback(() => setShowAppsDrawer(false), []);
 
-  // Compute missed-call count from cached call history; fallback to API
-  // when the cache is empty. Runs on mount and whenever activeTab changes
-  // — opening the calls tab resets it (user has seen them).
+  // Compute missed-call count from cached call history.
+  // We gate by a persisted "calls last seen" timestamp — counting only missed
+  // calls that arrived AFTER the user last opened the Calls tab. This is
+  // resilient to cache refreshes from the backend that don't carry a read
+  // flag (was the bug: backend fetch wrote `read:false` back into cache, so
+  // the badge "13" reappeared every time activeTab changed).
   React.useEffect(() => {
     let cancelled = false;
     const compute = async () => {
@@ -291,40 +294,53 @@ function ChatHub() {
       try {
         const { getCallHistoryCached } = require('../components/ChatCallsTab');
         const cached = (typeof getCallHistoryCached === 'function') ? getCallHistoryCached() : [];
-        // A row is considered "unread missed" when type === 'missed' and
-        // either read === false or no read field at all (legacy rows).
+        let lastSeen = 0;
+        try {
+          if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+            lastSeen = Number(localStorage.getItem('calls_last_seen_ts') || 0);
+          } else {
+            const { getString } = require('../services/mmkv');
+            lastSeen = Number(getString?.('calls_last_seen_ts') || 0);
+          }
+        } catch {}
         count = (cached || []).reduce((acc, c) => {
           if (c?.type !== 'missed') return acc;
           if (c?.read === true || c?.read === 1) return acc;
+          // Normalize timestamp: server may return seconds or ms.
+          const raw = c?.timestamp ?? c?.created_at;
+          let ts = 0;
+          if (typeof raw === 'number') ts = raw < 1e12 ? raw * 1000 : raw;
+          else if (typeof raw === 'string') ts = Date.parse(raw) || 0;
+          if (lastSeen > 0 && ts > 0 && ts <= lastSeen) return acc;
           return acc + 1;
         }, 0);
       } catch {}
-      if (count === 0) {
-        try {
-          const api = require('../services/api');
-          if (api.callsMissedCount) {
-            const r = await api.callsMissedCount().catch(() => null);
-            count = Number(r?.data?.missed || r?.data?.count || 0);
-          }
-        } catch {}
-      }
       if (!cancelled) setMissedCallBadge(count);
     };
     compute();
     return () => { cancelled = true; };
   }, [activeTab]);
 
-  // Clear the badge as soon as the user lands on the Calls tab — they're
-  // looking at the list, so the surfaced "you have missed calls" hint has
-  // done its job. We also flip the cached rows to `read:true` so the next
-  // recompute (fired when activeTab changes) doesn't bring the badge back —
-  // bug 2026-05-08: badge "13" reappeared every time user left and re-entered
-  // the calls tab because the React state reset alone didn't touch the cache.
+  // Clear the badge as soon as the user lands on the Calls tab. We persist
+  // a `calls_last_seen_ts` cursor so the recompute effect (which re-reads
+  // call history from the backend cache) skips anything that arrived BEFORE
+  // this moment — bug 2026-05-08: backend fetch wrote `read:false` back into
+  // the local cache, so the badge "13" kept reappearing. Cache marking alone
+  // didn't survive a refresh; the timestamp cursor is durable.
   React.useEffect(() => {
     if (activeTab === 'calls') {
       try {
         const { markMissedCallsRead } = require('../components/ChatCallsTab');
         markMissedCallsRead?.();
+      } catch {}
+      try {
+        const ts = String(Date.now());
+        if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+          localStorage.setItem('calls_last_seen_ts', ts);
+        } else {
+          const { setString } = require('../services/mmkv');
+          setString?.('calls_last_seen_ts', ts);
+        }
       } catch {}
       if (missedCallBadge > 0) setMissedCallBadge(0);
     }
@@ -380,8 +396,8 @@ function ChatHub() {
               if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
                 lastSeen = Number(localStorage.getItem('feed_last_seen_ts') || 0);
               } else {
-                const { mmkv } = require('../services/mmkv');
-                lastSeen = Number(mmkv?.getString('feed_last_seen_ts') || 0);
+                const { getString } = require('../services/mmkv');
+                lastSeen = Number(getString?.('feed_last_seen_ts') || 0);
               }
             } catch {}
             const fresh = list.reduce((acc, p) => {
@@ -420,8 +436,8 @@ function ChatHub() {
         if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
           localStorage.setItem('feed_last_seen_ts', ts);
         } else {
-          const { mmkv } = require('../services/mmkv');
-          mmkv?.set('feed_last_seen_ts', ts);
+          const { setString } = require('../services/mmkv');
+          setString?.('feed_last_seen_ts', ts);
         }
       } catch {}
     }
