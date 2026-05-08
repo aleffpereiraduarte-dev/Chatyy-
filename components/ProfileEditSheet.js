@@ -78,6 +78,10 @@ export default function ProfileEditSheet({
   // server-side cache bust to propagate.
   const [avatarPreview, setAvatarPreview] = useState(null);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  // Pending avatar — picked but not yet confirmed. We show a preview modal
+  // with a circular crop overlay so the user can review the framing before
+  // we burn an upload (and the optimistic UI swap). null = no pending pick.
+  const [pendingAvatar, setPendingAvatar] = useState(null);
 
   // Hydrate from profile_get identity every time the sheet opens
   useEffect(() => {
@@ -132,12 +136,32 @@ export default function ProfileEditSheet({
         file = { uri: a.uri, name: 'avatar.jpg', type: 'image/jpeg' };
       }
       if (!file) return;
-      // Optimistic preview — show the new image right away
+      // Stage the picked file in `pendingAvatar` and pop a preview modal
+      // first — user reviews the framing inside a circular crop overlay
+      // (avatar shape) before we burn an upload. Without this step a
+      // mis-tap on the wrong photo immediately becomes the user's avatar
+      // (the previous flow uploaded straight from the picker).
       const localUri = Platform.OS === 'web' && file instanceof File
         ? URL.createObjectURL(file)
         : (file.uri || null);
-      if (localUri) setAvatarPreview(localUri);
-      setUploadingAvatar(true);
+      if (!localUri) return;
+      setPendingAvatar({ file, uri: localUri });
+    } catch (e) {
+      setErr(e?.message || t?.('common.networkError') || 'Erro de rede');
+    }
+  };
+
+  // Run the actual upload after the user confirms the preview. Mirrors
+  // the legacy handlePickAvatar tail: optimistic AvatarCircle swap, then
+  // POST. On failure we drop the preview and surface the error.
+  const confirmAvatarUpload = async () => {
+    if (!pendingAvatar || uploadingAvatar) return;
+    const { file, uri } = pendingAvatar;
+    setAvatarPreview(uri);
+    setPendingAvatar(null);
+    setUploadingAvatar(true);
+    setErr('');
+    try {
       const r = await api.uploadAvatar(file);
       if (!r?.success) {
         setAvatarPreview(null);
@@ -149,6 +173,14 @@ export default function ProfileEditSheet({
     } finally {
       setUploadingAvatar(false);
     }
+  };
+
+  const cancelPendingAvatar = () => {
+    // Web object URLs leak unless explicitly revoked.
+    if (Platform.OS === 'web' && pendingAvatar?.uri && pendingAvatar.uri.startsWith('blob:')) {
+      try { URL.revokeObjectURL(pendingAvatar.uri); } catch {}
+    }
+    setPendingAvatar(null);
   };
 
   // True when any field changed vs the initial snapshot. Used both for the
@@ -395,6 +427,85 @@ export default function ProfileEditSheet({
             </ScrollView>
           </Pressable>
         </KeyboardAvoidingView>
+
+        {/* Avatar preview modal — shown after the user picks an image and
+            BEFORE we upload. The big square frame with a circular crop
+            overlay shows exactly what the rest of the app will render
+            (AvatarCircle is a 1:1 cropped circle). User confirms or
+            cancels; only confirm fires the upload. */}
+        <Modal visible={!!pendingAvatar} transparent animationType="fade" onRequestClose={cancelPendingAvatar}>
+          <Pressable
+            style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', alignItems: 'center', justifyContent: 'center', padding: 24 }}
+            onPress={cancelPendingAvatar}
+          >
+            <Pressable
+              onPress={(e) => e.stopPropagation?.()}
+              style={{ width: '100%', maxWidth: 360, alignItems: 'center', gap: 20 }}
+            >
+              <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
+                {t?.('profile.previewTitle') || 'Confirmar foto'}
+              </Text>
+              {/* Square frame with circular crop overlay — the user sees
+                  exactly what AvatarCircle will render. */}
+              <View style={{ width: 280, height: 280, borderRadius: 12, overflow: 'hidden', backgroundColor: '#000', position: 'relative' }}>
+                {pendingAvatar?.uri ? (
+                  <ExpoImage
+                    source={{ uri: pendingAvatar.uri }}
+                    style={{ width: '100%', height: '100%' }}
+                    contentFit="cover"
+                  />
+                ) : null}
+                {/* Circular crop indicator — translucent ring shows the
+                    visible portion. Pure visual; the actual avatar is
+                    the full image (server crops to a square). */}
+                <View pointerEvents="none" style={{
+                  position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+                  alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <View style={{
+                    width: 260, height: 260, borderRadius: 130,
+                    borderWidth: 2, borderColor: 'rgba(255,255,255,0.85)',
+                    ...(Platform.OS === 'web' ? { boxShadow: '0 0 0 9999px rgba(0,0,0,0.35)' } : {}),
+                  }} />
+                </View>
+              </View>
+              <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 13, textAlign: 'center' }}>
+                {t?.('profile.previewHint') || 'A área dentro do círculo será exibida como sua foto.'}
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 12, width: '100%' }}>
+                <TouchableOpacity
+                  onPress={cancelPendingAvatar}
+                  style={{
+                    flex: 1, paddingVertical: 14, borderRadius: 14,
+                    backgroundColor: 'rgba(255,255,255,0.12)',
+                    alignItems: 'center', justifyContent: 'center',
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={t?.('common.cancel') || 'Cancelar'}
+                >
+                  <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>
+                    {t?.('common.cancel') || 'Cancelar'}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={confirmAvatarUpload}
+                  style={{
+                    flex: 1, paddingVertical: 14, borderRadius: 14,
+                    backgroundColor: '#7C3AED',
+                    alignItems: 'center', justifyContent: 'center',
+                    ...(Platform.OS === 'web' ? { boxShadow: '0 4px 14px rgba(124,58,237,0.45)' } : {}),
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={t?.('common.confirm') || 'Confirmar'}
+                >
+                  <Text style={{ color: '#fff', fontSize: 15, fontWeight: '800' }}>
+                    {t?.('common.confirm') || 'Confirmar'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
       </Pressable>
     </Modal>
   );

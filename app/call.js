@@ -1663,7 +1663,8 @@ export default function CallScreen() {
             localVid.autoplay = true;
             localVid.playsInline = true;
             localVid.muted = true;
-            localVid.style.cssText = 'position:fixed;bottom:180px;right:16px;width:110px;height:160px;object-fit:cover;z-index:30;border-radius:16px;border:2px solid rgba(255,255,255,0.25);cursor:grab;';
+            localVid.dataset.expanded = '0';
+            localVid.style.cssText = 'position:fixed;bottom:180px;right:16px;width:110px;height:160px;object-fit:cover;z-index:30;border-radius:16px;border:2px solid rgba(255,255,255,0.25);cursor:grab;transition:width 200ms ease, height 200ms ease;';
             document.body.appendChild(localVid);
             // Make draggable
             let dragging = false, startX = 0, startY = 0, origX = 0, origY = 0;
@@ -1682,6 +1683,34 @@ export default function CallScreen() {
               localVid.style.bottom = 'auto';
             });
             document.addEventListener('mouseup', () => { dragging = false; if (localVid) localVid.style.cursor = 'grab'; });
+            // Double-click to toggle a 2x maximized PiP — gives a quick "look
+            // at me" preview without leaving the call. The transition CSS
+            // above smooths the size change.
+            localVid.addEventListener('dblclick', () => {
+              const isExpanded = localVid.dataset.expanded === '1';
+              if (isExpanded) {
+                localVid.style.width = '110px'; localVid.style.height = '160px';
+                localVid.dataset.expanded = '0';
+              } else {
+                localVid.style.width = '220px'; localVid.style.height = '320px';
+                localVid.dataset.expanded = '1';
+              }
+            });
+            // First-mount affordance toast — auto-fade after ~2s. We don't
+            // route this through Toast/Alert because we want zero React state
+            // churn on the call screen; the DOM node lives & dies on its own.
+            try {
+              const toast = document.createElement('div');
+              toast.id = 'localCallVideoToast';
+              toast.textContent = 'Toque duplo para ampliar';
+              toast.style.cssText = 'position:fixed;bottom:140px;right:16px;padding:6px 12px;background:rgba(0,0,0,0.72);color:#fff;font-size:12px;border-radius:14px;z-index:31;pointer-events:none;opacity:0;transition:opacity 220ms ease;';
+              document.body.appendChild(toast);
+              requestAnimationFrame(() => { toast.style.opacity = '1'; });
+              setTimeout(() => {
+                toast.style.opacity = '0';
+                setTimeout(() => { try { toast.remove(); } catch {} }, 260);
+              }, 2000);
+            } catch {}
           }
           localVid.srcObject = stream;
         }
@@ -2641,7 +2670,8 @@ export default function CallScreen() {
             localVid.autoplay = true;
             localVid.playsInline = true;
             localVid.muted = true;
-            localVid.style.cssText = 'position:fixed;bottom:180px;right:16px;width:110px;height:160px;object-fit:cover;z-index:30;border-radius:16px;border:2px solid rgba(255,255,255,0.25);cursor:grab;';
+            localVid.dataset.expanded = '0';
+            localVid.style.cssText = 'position:fixed;bottom:180px;right:16px;width:110px;height:160px;object-fit:cover;z-index:30;border-radius:16px;border:2px solid rgba(255,255,255,0.25);cursor:grab;transition:width 200ms ease, height 200ms ease;';
             document.body.appendChild(localVid);
             // Make draggable
             let dragging = false, startX = 0, startY = 0, origX = 0, origY = 0;
@@ -2660,6 +2690,34 @@ export default function CallScreen() {
               localVid.style.bottom = 'auto';
             });
             document.addEventListener('mouseup', () => { dragging = false; if (localVid) localVid.style.cursor = 'grab'; });
+            // Double-click toggles 2x maximized PiP (matches behavior of the
+            // first-mount path so audio→video upgrade feels identical).
+            localVid.addEventListener('dblclick', () => {
+              const isExpanded = localVid.dataset.expanded === '1';
+              if (isExpanded) {
+                localVid.style.width = '110px'; localVid.style.height = '160px';
+                localVid.dataset.expanded = '0';
+              } else {
+                localVid.style.width = '220px'; localVid.style.height = '320px';
+                localVid.dataset.expanded = '1';
+              }
+            });
+            // Affordance toast: same pattern as the first-mount path. Skipped
+            // if we already showed it during the initial getUserMedia setup.
+            try {
+              if (!document.getElementById('localCallVideoToast')) {
+                const toast = document.createElement('div');
+                toast.id = 'localCallVideoToast';
+                toast.textContent = 'Toque duplo para ampliar';
+                toast.style.cssText = 'position:fixed;bottom:140px;right:16px;padding:6px 12px;background:rgba(0,0,0,0.72);color:#fff;font-size:12px;border-radius:14px;z-index:31;pointer-events:none;opacity:0;transition:opacity 220ms ease;';
+                document.body.appendChild(toast);
+                requestAnimationFrame(() => { toast.style.opacity = '1'; });
+                setTimeout(() => {
+                  toast.style.opacity = '0';
+                  setTimeout(() => { try { toast.remove(); } catch {} }, 260);
+                }, 2000);
+              }
+            } catch {}
           }
           localVid.srcObject = localStreamRef.current;
           localVid.style.display = 'block';

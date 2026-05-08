@@ -334,6 +334,32 @@ export default function InboxScreen() {
 
   const unreadCount = useMemo(() => emails.filter(e => !e.seen).length, [emails]);
 
+  // "Mark all as read" — bulk-mark every visible unread email in current folder.
+  // Confirms first to avoid accidental nuking of an unread queue. Reuses the
+  // existing api.bulkMarkRead endpoint (no per-uid loop).
+  const handleMarkAllRead = useCallback(() => {
+    const unreadUids = emails.filter(e => !e.seen).map(e => e.uid);
+    if (unreadUids.length === 0) return;
+    const doMark = async () => {
+      try {
+        const apiSvc = await import('../services/api');
+        await apiSvc.bulkMarkRead(unreadUids, currentFolder);
+        // Optimistic local update so the badge clears immediately.
+        refresh();
+      } catch (e) { console.warn('markAllRead failed', e); }
+    };
+    const title = t('contextMenu.markRead') || 'Marcar como lido';
+    const msg = `${unreadUids.length} ${unreadUids.length > 1 ? (t('inbox.unreadPlural', { count: unreadUids.length }) || 'mensagens') : (t('inbox.unread', { count: unreadUids.length }) || 'mensagem')}?`;
+    try {
+      Alert.alert(title, msg, [
+        { text: t('common.cancel'), style: 'cancel' },
+        { text: t('contextMenu.markRead') || 'Marcar', onPress: doMark },
+      ]);
+    } catch {
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.confirm(`${title}\n\n${msg}`)) doMark();
+    }
+  }, [emails, currentFolder, refresh, t]);
+
   // Auto-generate AI briefing once per day on first INBOX load with emails
   useEffect(() => {
     if (currentFolder !== 'INBOX' || emails.length === 0) return;
@@ -1116,6 +1142,22 @@ export default function InboxScreen() {
 
         {/* Right actions */}
         <View style={s.headerActions}>
+          {unreadCount > 0 && (
+            <TouchableOpacity
+              onPress={handleMarkAllRead}
+              style={{ padding: 8, marginRight: 2, flexDirection: 'row', alignItems: 'center', gap: 4 }}
+              accessibilityLabel={t('contextMenu.markRead') || 'Mark all read'}
+              accessibilityRole="button"
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <IconCheck size={18} color={colors.primary} />
+              {isDesktop && (
+                <Text style={{ fontSize: 12, color: colors.primary, fontWeight: '500' }} numberOfLines={1}>
+                  {t('contextMenu.markRead') || 'Marcar como lido'}
+                </Text>
+              )}
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             onPress={() => { setShowLayoutMenu(true); setShowMenu(false); }}
             style={{ padding: 8, marginRight: 2 }}

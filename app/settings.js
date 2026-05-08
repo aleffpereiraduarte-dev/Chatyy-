@@ -124,13 +124,32 @@ function SettingsScreenInner() {
   // making the user remember which sub-section a toggle lives in.
   const [searchQuery, setSearchQuery] = useState('');
   const _q = (searchQuery || '').trim().toLowerCase();
+  // Collect every label string we know about (gathered DURING render via
+  // sectionMatches calls below) so the next render can show a flat
+  // "results" strip at the top of the scroll. We use useRef to span
+  // renders — first render after a query change populates, second render
+  // displays the strip. The 1-frame lag is invisible because RN batches.
+  const _allLabelsRef = useRef([]);
   const sectionMatches = (...labels) => {
+    // Track every label string we've seen across renders so we can
+    // search the catalog up-front rather than waiting on render order.
+    for (const l of labels) {
+      if (l && !_allLabelsRef.current.includes(String(l))) {
+        _allLabelsRef.current.push(String(l));
+      }
+    }
     if (!_q) return true;
     for (const l of labels) {
       if (l && String(l).toLowerCase().includes(_q)) return true;
     }
     return false;
   };
+  // Derive the flat list of matched labels from the (cumulative) catalog
+  // and the current query. Re-evaluated every render — cheap, the catalog
+  // is ~30 strings.
+  const _matchedLabels = !_q ? [] : _allLabelsRef.current.filter(
+    l => String(l).toLowerCase().includes(_q)
+  );
   // Referral system
   const [referralCode, setReferralCode] = useState('');
   const [referralCount, setReferralCount] = useState(0);
@@ -409,6 +428,46 @@ function SettingsScreenInner() {
             </TouchableOpacity>
           )}
         </View>
+
+        {/* Flat matches strip — when user is searching, surface matched
+            section labels as pill chips in primary color. Sits above the
+            (already-filtered) section bodies so the user gets an overview
+            of where matches live without scrolling through every card.
+            Read-only summary; tapping a pill is a no-op (sections render
+            inline below) — keeps the impl edit-only without rewiring
+            scroll-to-section logic. The catalog of labels is gathered
+            cumulatively as sectionMatches is called, so the strip needs
+            one render to "warm up" — invisible because RN batches. */}
+        {!!_q && _matchedLabels.length > 0 && (
+          <View style={{
+            flexDirection: 'row', flexWrap: 'wrap', gap: 6,
+            marginBottom: Spacing.lg,
+            paddingHorizontal: 4,
+          }}>
+            <Text style={{ color: colors.textTertiary, fontSize: 12, fontWeight: '600', width: '100%', marginBottom: 4 }}>
+              {(t('settings.matchesFound') || 'Resultados') + ` (${_matchedLabels.length})`}
+            </Text>
+            {_matchedLabels.map((lbl, i) => (
+              <View key={`${lbl}-${i}`} style={{
+                backgroundColor: colors.primary + '14',
+                borderColor: colors.primary + '40', borderWidth: 1,
+                borderRadius: 14,
+                paddingHorizontal: 10, paddingVertical: 4,
+              }}>
+                <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '700' }} numberOfLines={1}>
+                  {String(lbl)}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
+        {!!_q && _matchedLabels.length === 0 && _allLabelsRef.current.length > 0 && (
+          <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+            <Text style={{ color: colors.textTertiary, fontSize: 13 }}>
+              {t('settings.noMatches') || 'Nenhum resultado'}
+            </Text>
+          </View>
+        )}
 
         {/* Profile Photo */}
         {sectionMatches(t('settings.profile') || 'profile', user?.email) && (

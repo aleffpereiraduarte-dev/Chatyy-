@@ -431,14 +431,15 @@ export default function ComposeModal({ params, onClose }) {
             </TouchableOpacity>
           )}
 
-          {/* Close */}
+          {/* Close — emphasized so users always see the discard exit. */}
           <TouchableOpacity
             onPress={(e) => { e.stopPropagation(); handleClose(); }}
-            style={cm.iconBtn}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            accessibilityLabel="Close compose window"
+            style={[cm.iconBtn, cm.closeBtn]}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityLabel={t('compose.discard') || 'Close compose window'}
+            accessibilityRole="button"
           >
-            <IconX size={16} color="#fff" />
+            <IconX size={18} color="#fff" />
           </TouchableOpacity>
         </View>
       </TouchableOpacity>
@@ -673,6 +674,16 @@ const cm = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  },
+  // Emphasized close button — slightly larger so the discard exit is the
+  // most prominent control on the header. Subtle red tint on web hover.
+  closeBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(239, 68, 68, 0.18)',
+    marginLeft: 4,
+    ...(Platform.OS === 'web' ? { transition: 'background-color 0.15s ease' } : {}),
   },
 
   // Body

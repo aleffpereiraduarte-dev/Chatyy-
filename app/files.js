@@ -85,6 +85,24 @@ function formatSize(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
+// Highlight a substring match within `text` for search results.
+// Returns either the original string (no match / no query) or an array
+// of [pre, <Text>match</Text>, post] suitable for rendering inside a
+// parent <Text> component.
+function highlightMatch(text, query, highlightColor) {
+  if (!text || !query) return text;
+  const i = String(text).toLowerCase().indexOf(String(query).toLowerCase());
+  if (i < 0) return text;
+  const len = query.length;
+  return [
+    text.slice(0, i),
+    <Text key="hl" style={{ fontWeight: '700', color: highlightColor }}>
+      {text.slice(i, i + len)}
+    </Text>,
+    text.slice(i + len),
+  ];
+}
+
 function getFileIcon(iconType, size, color) {
   switch (iconType) {
     case 'image': return <IconImage size={size} color={color} />;
@@ -139,7 +157,7 @@ function glassHeaderBg(isDark) {
 // ANIMATED COMPONENTS
 // ============================================================
 
-function FolderCard({ folder, colors, onPress, onLongPress, onContextMenu, t, isDark }) {
+function FolderCard({ folder, colors, onPress, onLongPress, onContextMenu, t, isDark, searchQuery }) {
   const folderColor = getFolderColor(folder.id);
   const folderBg = isDark ? folderColor + '18' : folderColor + '10';
   const hoverAnim = useRef(new Animated.Value(0)).current;
@@ -194,7 +212,7 @@ function FolderCard({ folder, colors, onPress, onLongPress, onContextMenu, t, is
         </View>
         <View style={styles.itemInfo}>
           <Text style={[styles.itemName, { color: colors.text }]} numberOfLines={1}>
-            {folder.name}
+            {highlightMatch(folder.name, searchQuery, colors.primary)}
           </Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
             <Text style={[styles.itemMeta, { color: colors.textTertiary, marginTop: 0 }]}>
@@ -215,7 +233,7 @@ function FolderCard({ folder, colors, onPress, onLongPress, onContextMenu, t, is
   );
 }
 
-function FileCard({ file, colors, onPress, onLongPress, onContextMenu, onStar, t, isSelected, onSelect, multiSelect, isDark }) {
+function FileCard({ file, colors, onPress, onLongPress, onContextMenu, onStar, t, isSelected, onSelect, multiSelect, isDark, searchQuery }) {
   const hasThumb = (file.icon_type === 'image' || file.icon_type === 'video') && file.id;
   const thumbUrl = hasThumb ? (file.thumbnail_url || file.cdn_url || api.fileDownloadUrl(file.id)) : null;
   const typeColors = getTypeColors(file.icon_type, isDark);
@@ -293,7 +311,7 @@ function FileCard({ file, colors, onPress, onLongPress, onContextMenu, onStar, t
         )}
         <View style={styles.itemInfo}>
           <Text style={[styles.itemName, { color: colors.text }]} numberOfLines={1}>
-            {file.original_name}
+            {highlightMatch(file.original_name, searchQuery, colors.primary)}
           </Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
             {/* Size pill */}
@@ -321,41 +339,71 @@ function FileCard({ file, colors, onPress, onLongPress, onContextMenu, onStar, t
   );
 }
 
+function BreadcrumbCrumb({ children, isActive, isDark, colors, onPress, withIcon }) {
+  const [hover, setHover] = useState(false);
+  // Active crumb keeps a constant filled background. Hover (web only)
+  // bumps the inactive crumbs to a subtle tint so users get a clear
+  // affordance that they're clickable.
+  const baseBg = isActive
+    ? (isDark ? colors.primary + '20' : colors.primary + '12')
+    : 'transparent';
+  const hoverBg = isWeb && hover
+    ? (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)')
+    : null;
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.6}
+      style={[
+        styles.breadcrumbPill,
+        { backgroundColor: hoverBg || baseBg },
+        isWeb && { cursor: 'pointer' },
+      ]}
+      {...(isWeb ? { onMouseEnter: () => setHover(true), onMouseLeave: () => setHover(false) } : {})}
+    >
+      {children}
+    </TouchableOpacity>
+  );
+}
+
 function BreadcrumbBar({ breadcrumb, colors, onNavigate, t, isDark }) {
   return (
     <View style={[styles.breadcrumb, { backgroundColor: isDark ? 'rgba(30,41,59,0.4)' : 'rgba(241,245,249,0.6)' }]}>
-      <TouchableOpacity
+      <BreadcrumbCrumb
+        isActive={breadcrumb.length === 0}
+        isDark={isDark}
+        colors={colors}
         onPress={() => onNavigate(null)}
-        style={[styles.breadcrumbPill, { backgroundColor: isDark ? 'rgba(96,165,250,0.12)' : '#F5F3FF' }]}
+        withIcon
       >
         <IconFolder size={13} color={colors.primary} />
         <Text style={[styles.breadcrumbPillText, { color: colors.primary }]}>{t('files.home')}</Text>
-      </TouchableOpacity>
-      {breadcrumb.map((crumb, idx) => (
-        <React.Fragment key={crumb.id}>
-          <IconChevronRight size={13} color={colors.textTertiary} />
-          <TouchableOpacity
-            onPress={() => onNavigate(crumb.id)}
-            style={[
-              styles.breadcrumbPill,
-              idx === breadcrumb.length - 1 && {
-                backgroundColor: isDark ? colors.primary + '20' : colors.primary + '12',
-              },
-            ]}
-          >
-            <Text
-              style={[
-                styles.breadcrumbPillText,
-                { color: idx === breadcrumb.length - 1 ? colors.primary : colors.textSecondary },
-                idx === breadcrumb.length - 1 && { fontWeight: '700' },
-              ]}
-              numberOfLines={1}
+      </BreadcrumbCrumb>
+      {breadcrumb.map((crumb, idx) => {
+        const isActive = idx === breadcrumb.length - 1;
+        return (
+          <React.Fragment key={crumb.id}>
+            <IconChevronRight size={13} color={colors.textTertiary} />
+            <BreadcrumbCrumb
+              isActive={isActive}
+              isDark={isDark}
+              colors={colors}
+              onPress={() => onNavigate(crumb.id)}
             >
-              {crumb.name}
-            </Text>
-          </TouchableOpacity>
-        </React.Fragment>
-      ))}
+              <Text
+                style={[
+                  styles.breadcrumbPillText,
+                  { color: isActive ? colors.primary : colors.textSecondary },
+                  isActive && { fontWeight: '700' },
+                ]}
+                numberOfLines={1}
+              >
+                {crumb.name}
+              </Text>
+            </BreadcrumbCrumb>
+          </React.Fragment>
+        );
+      })}
     </View>
   );
 }
@@ -366,6 +414,17 @@ function formatStorageBytes(bytes) {
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+// Threshold-based fill color so the storage bar visually communicates
+// pressure: green under 50%, amber 50-80%, orange 80-95%, red > 95%.
+// Used by both the files Drive bar and the photos backup bar.
+function getStorageFillColor(percent) {
+  const p = Number(percent) || 0;
+  if (p < 50) return '#22c55e';
+  if (p < 80) return '#f59e0b';
+  if (p < 95) return '#ef6c00';
+  return '#ef4444';
 }
 
 function StorageBar({ storageInfo, colors, t, isDark }) {
@@ -401,6 +460,9 @@ function StorageBar({ storageInfo, colors, t, isDark }) {
 
   const isHigh = percent > 80;
   const isMedium = percent > 60;
+  // Threshold color drives the drive fill + percentage badge so the bar
+  // reads as "green / yellow / orange / red" at a glance.
+  const fillColor = getStorageFillColor(percent);
 
   return (
     <View style={[
@@ -423,11 +485,11 @@ function StorageBar({ storageInfo, colors, t, isDark }) {
         </View>
         <View style={[
           styles.storagePercentBadge,
-          { backgroundColor: isHigh ? '#dc262615' : isMedium ? '#d9770615' : colors.primary + '12' },
+          { backgroundColor: fillColor + '15' },
         ]}>
           <Text style={[
             styles.storagePercentText,
-            { color: isHigh ? '#dc2626' : isMedium ? '#d97706' : colors.primary },
+            { color: fillColor },
           ]}>
             {Math.round(percent)}%
           </Text>
@@ -438,8 +500,13 @@ function StorageBar({ storageInfo, colors, t, isDark }) {
       <View style={[styles.storageTrack, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
         <View style={{ flexDirection: 'row', height: '100%' }}>
           {drivePct > 0 && (
-            <Animated.View style={[styles.storageFillDrive, { width: driveWidth }]}>
-              <View style={styles.storageFillGradient} />
+            <Animated.View style={[styles.storageFillDrive, { width: driveWidth, backgroundColor: fillColor }]}>
+              <View style={[
+                styles.storageFillGradient,
+                isWeb
+                  ? { background: `linear-gradient(90deg, ${fillColor}, ${fillColor}cc)` }
+                  : { backgroundColor: fillColor },
+              ]} />
             </Animated.View>
           )}
           {emailPct > 0 && (
@@ -864,6 +931,12 @@ function FilesScreenInner() {
   const [sortBy, setSortBy] = useState('name'); // 'name' | 'date' | 'size' | 'type'
   const [sortAsc, setSortAsc] = useState(true);
   const [showSortMenu, setShowSortMenu] = useState(false);
+
+  // Drag-over state for web drag-and-drop upload. Counts nested
+  // dragenter/dragleave events so the overlay doesn't flicker when the
+  // pointer crosses child elements (e.g. file rows within the container).
+  const [dragOver, setDragOver] = useState(false);
+  const dragDepthRef = useRef(0);
 
   // ---- PHOTOS MODE STATE ----
   const [mainMode, setMainMode] = useState('files'); // 'files' | 'photos'
@@ -1510,6 +1583,74 @@ function FilesScreenInner() {
     }
   }, [currentFolderId, tab, showToast, loadAllFiles, loadStorageInfo]);
 
+  // ---- DRAG-AND-DROP UPLOAD (web only) ----
+  // Uploads an array of native web File objects sequentially, reusing the
+  // same fileUploadDirect path as the picker.
+  const uploadRawFiles = useCallback(async (fileList) => {
+    if (!isWeb || !fileList || fileList.length === 0) return;
+    const files = Array.from(fileList);
+    const targetFolder = tab === 'all' ? currentFolderId : null;
+    let okCount = 0;
+    let failCount = 0;
+    for (const f of files) {
+      setUploadingFile(f.name || '');
+      setUploadProgress(0);
+      setUploading(true);
+      try {
+        const fileData = { _raw: f, name: f.name, type: f.type, size: f.size };
+        const r = await api.fileUploadDirect(
+          fileData,
+          targetFolder,
+          (pct) => setUploadProgress(pct),
+        );
+        if (r?.success) okCount += 1;
+        else failCount += 1;
+      } catch {
+        failCount += 1;
+      }
+    }
+    setUploading(false);
+    setUploadingFile('');
+    setUploadProgress(0);
+    if (okCount > 0) {
+      showToast(files.length === 1
+        ? t('files.fileUploaded')
+        : `${okCount}/${files.length}`);
+      loadAllFiles(false);
+      loadStorageInfo();
+    }
+    if (failCount > 0 && okCount === 0) {
+      safeAlert(t('files.uploadFailed'), '');
+    }
+  }, [currentFolderId, tab, showToast, loadAllFiles, loadStorageInfo, t]);
+
+  const handleDragOver = useCallback((e) => {
+    if (!isWeb) return;
+    e.preventDefault?.();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  }, []);
+  const handleDragEnter = useCallback((e) => {
+    if (!isWeb) return;
+    e.preventDefault?.();
+    dragDepthRef.current += 1;
+    if (!dragOver) setDragOver(true);
+  }, [dragOver]);
+  const handleDragLeave = useCallback((e) => {
+    if (!isWeb) return;
+    e.preventDefault?.();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setDragOver(false);
+  }, []);
+  const handleDrop = useCallback((e) => {
+    if (!isWeb) return;
+    e.preventDefault?.();
+    dragDepthRef.current = 0;
+    setDragOver(false);
+    const dt = e.dataTransfer;
+    const files = dt?.files;
+    if (files && files.length > 0) uploadRawFiles(files);
+  }, [uploadRawFiles]);
+
   // ---- SCAN DOCUMENT ----
   const handleScanDocument = useCallback(async () => {
     try {
@@ -1874,6 +2015,9 @@ function FilesScreenInner() {
   ], [displayFolders, displayFiles, sortFiles]);
 
   const renderItem = ({ item }) => {
+    // Pass active query so the cards can highlight matching substrings
+    // in file/folder names. Empty string when not searching.
+    const activeQuery = searchMode ? (searchText || '') : '';
     if (item._type === 'folder') {
       return (
         <FolderCard
@@ -1884,6 +2028,7 @@ function FilesScreenInner() {
           onContextMenu={isWeb ? (e) => { e?.preventDefault?.(); showActionMenu('folder', item); } : undefined}
           t={t}
           isDark={isDark}
+          searchQuery={activeQuery}
         />
       );
     }
@@ -1917,6 +2062,7 @@ function FilesScreenInner() {
         }}
         onStar={() => tab !== 'trash' && handleStar(item.id)}
         isDark={isDark}
+        searchQuery={activeQuery}
       />
     );
   };
@@ -1958,7 +2104,9 @@ function FilesScreenInner() {
           <View style={[styles.gridItemIcon, { backgroundColor: isDark ? folderColor + '18' : folderColor + '10' }]}>
             <IconFolder size={30} color={folderColor} />
           </View>
-          <Text style={[styles.gridItemName, { color: colors.text }]} numberOfLines={2}>{item.name}</Text>
+          <Text style={[styles.gridItemName, { color: colors.text }]} numberOfLines={2}>
+            {highlightMatch(item.name, searchMode ? searchText : '', colors.primary)}
+          </Text>
           <Text style={[styles.gridItemMeta, { color: colors.textTertiary }]}>{t('files.folder')}</Text>
         </TouchableOpacity>
       );
@@ -2025,7 +2173,9 @@ function FilesScreenInner() {
             )}
           </View>
         )}
-        <Text style={[styles.gridItemName, { color: colors.text }]} numberOfLines={2}>{item.original_name}</Text>
+        <Text style={[styles.gridItemName, { color: colors.text }]} numberOfLines={2}>
+          {highlightMatch(item.original_name, searchMode ? searchText : '', colors.primary)}
+        </Text>
         <View style={[styles.gridSizePill, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}>
           <Text style={[styles.gridSizePillText, { color: colors.textTertiary }]}>{item.size_formatted}</Text>
         </View>
@@ -2039,7 +2189,49 @@ function FilesScreenInner() {
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+    <View
+      style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}
+      {...(isWeb ? {
+        onDragOver: handleDragOver,
+        onDragEnter: handleDragEnter,
+        onDragLeave: handleDragLeave,
+        onDrop: handleDrop,
+      } : {})}
+    >
+      {/* Drag-and-drop overlay (web) */}
+      {isWeb && dragOver && (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: 'rgba(124,58,237,0.10)',
+            borderWidth: 2,
+            borderStyle: 'dashed',
+            borderColor: colors.primary,
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+          }}
+        >
+          <View style={{
+            paddingHorizontal: 24,
+            paddingVertical: 16,
+            backgroundColor: isDark ? 'rgba(15,23,42,0.92)' : 'rgba(255,255,255,0.95)',
+            borderRadius: BorderRadius.xl,
+            borderWidth: 1,
+            borderColor: colors.primary + '40',
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 10,
+          }}>
+            <IconUpload size={22} color={colors.primary} />
+            <Text style={{ color: colors.text, fontSize: 16, fontWeight: '700' }}>
+              {t('files.dropToUpload') || 'Solte para fazer upload'}
+            </Text>
+          </View>
+        </View>
+      )}
       {/* Header - Frosted Glass */}
       <View style={[
         styles.header,
@@ -3269,16 +3461,12 @@ const styles = StyleSheet.create({
   storagePercentText: { fontSize: FontSize.sm, fontWeight: '800' },
   storageTrack: { height: 8, borderRadius: 4, overflow: 'hidden' },
   storageFillDrive: {
+    // backgroundColor is supplied inline so it can vary with usage %
     height: '100%', borderRadius: 4,
-    backgroundColor: '#7C3AED',
   },
   storageFillGradient: {
+    // background is supplied inline so it can vary with usage %
     flex: 1, borderRadius: 4,
-    ...(isWeb ? {
-      background: 'linear-gradient(90deg, #7C3AED, #8b5cf6)',
-    } : {
-      backgroundColor: '#7C3AED',
-    }),
   },
   storageFillEmail: {
     height: '100%', borderRadius: 4,

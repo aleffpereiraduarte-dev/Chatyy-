@@ -2417,13 +2417,15 @@ export default function PhotosScreen() {
   // SECTION HEADER
   // ============================================================
   const renderSectionHeader = useCallback(({ section }) => (
-    <View style={[s.sectionHeader, { backgroundColor: colors.background }]}>
-      <Text style={[s.sectionTitle, { color: colors.text }]}>{section.title}</Text>
+    // Semi-transparent sticky header — looks crisp over the photo grid
+    // (the underlying tiles bleed through behind a soft tint).
+    <View style={[s.sectionHeader, { backgroundColor: isDark ? 'rgba(15,23,42,0.85)' : 'rgba(248,250,252,0.85)' }]}>
+      <Text style={[s.sectionTitle, { color: colors.text, fontSize: 14, fontWeight: '600' }]}>{section.title}</Text>
       <Text style={[s.sectionCount, { color: colors.textSecondary }]}>
         {t('photos.photoCount', { n: section.data[0]?.items?.length || section.data.length })}
       </Text>
     </View>
-  ), [colors, t]);
+  ), [colors, t, isDark]);
 
   // ============================================================
   // PHOTOS TAB
@@ -2930,21 +2932,29 @@ export default function PhotosScreen() {
         renderItem={() => (
           <View style={{ padding: Spacing.lg }}>
             {/* Backup progress banner */}
-            {backupStatus === 'backing_up' && (
-              <View style={[s.card, { backgroundColor: isDark ? '#172554' : '#F5F3FF', borderColor: colors.primary + '40', marginBottom: Spacing.md }]}>
-                <View style={{ padding: 16 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-                    <ActivityIndicator size="small" color={colors.primary} />
-                    <Text style={{ color: colors.text, fontWeight: '600', fontSize: 15 }}>
-                      {Math.min(backedUpTotal, deviceTotalCount || devicePhotos.length || backedUpTotal)} de {deviceTotalCount || devicePhotos.length} fotos salvas
-                    </Text>
-                  </View>
-                  <View style={[s.progressBar, { backgroundColor: colors.border }]}>
-                    <View style={[s.progressFill, { width: `${(deviceTotalCount || devicePhotos.length) > 0 ? Math.min((backedUpTotal / (deviceTotalCount || devicePhotos.length)) * 100, 100) : 0}%`, backgroundColor: colors.primary }]} />
+            {backupStatus === 'backing_up' && (() => {
+              const total = deviceTotalCount || devicePhotos.length || 0;
+              const cur = Math.min(backedUpTotal || 0, total || (backedUpTotal || 0));
+              const pct = total > 0 ? Math.min((cur / total) * 100, 100) : 0;
+              return (
+                <View style={[s.card, { backgroundColor: isDark ? '#172554' : '#F5F3FF', borderColor: colors.primary + '40', marginBottom: Spacing.md }]}>
+                  <View style={{ padding: 16 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                      <ActivityIndicator size="small" color={colors.primary} />
+                      <Text style={{ color: colors.text, fontWeight: '600', fontSize: 15, flex: 1 }}>
+                        {cur} de {total} fotos
+                      </Text>
+                      <Text style={{ color: colors.primary, fontWeight: '700', fontSize: 14 }}>
+                        {Math.round(pct)}%
+                      </Text>
+                    </View>
+                    <View style={[s.progressBar, { backgroundColor: colors.border }]}>
+                      <View style={[s.progressFill, { width: `${pct}%`, backgroundColor: colors.primary }]} />
+                    </View>
                   </View>
                 </View>
-              </View>
-            )}
+              );
+            })()}
             {backupStatus === 'complete' && pendingPhotos === 0 && (
               <View style={[s.card, { backgroundColor: isDark ? '#052e16' : '#f0fdf4', borderColor: '#22c55e40', marginBottom: Spacing.md }]}>
                 <View style={{ padding: 16, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
@@ -3021,18 +3031,26 @@ export default function PhotosScreen() {
                 const totalUsed = storageInfo.total_used || driveUsed + emailUsed;
                 const drivePct = quota > 0 ? Math.min((driveUsed / quota) * 100, 100) : 0;
                 const emailPct = quota > 0 ? Math.min((emailUsed / quota) * 100, 100 - drivePct) : 0;
+                // Threshold-based color so the bar visually surfaces
+                // pressure: green / amber / orange / red.
+                const usedPct = quota > 0 ? Math.min((totalUsed / quota) * 100, 100) : 0;
+                const driveColor = usedPct < 50
+                  ? '#22c55e'
+                  : usedPct < 80 ? '#f59e0b'
+                  : usedPct < 95 ? '#ef6c00'
+                  : '#ef4444';
                 return (
                   <View style={{ marginTop: Spacing.md }}>
                     <View style={[s.storageBar, { backgroundColor: colors.border }]}>
                       <View style={{ flexDirection: 'row', height: '100%' }}>
-                        {drivePct > 0 && <View style={[s.storageFill, { width: `${drivePct}%`, backgroundColor: colors.primary }]} />}
+                        {drivePct > 0 && <View style={[s.storageFill, { width: `${drivePct}%`, backgroundColor: driveColor }]} />}
                         {emailPct > 0 && <View style={[s.storageFill, { width: `${emailPct}%`, backgroundColor: '#f59e0b', borderTopLeftRadius: drivePct > 0 ? 0 : 3, borderBottomLeftRadius: drivePct > 0 ? 0 : 3 }]} />}
                       </View>
                     </View>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.primary }} />
+                          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: driveColor }} />
                           <Text style={[s.storageText, { color: colors.textSecondary }]}>Drive: {storageInfo.drive_formatted || formatBytes(driveUsed)}</Text>
                         </View>
                         {emailUsed > 0 && <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
@@ -3040,6 +3058,9 @@ export default function PhotosScreen() {
                           <Text style={[s.storageText, { color: colors.textSecondary }]}>Email: {storageInfo.email_formatted || formatBytes(emailUsed)}</Text>
                         </View>}
                       </View>
+                      <Text style={[s.storageText, { color: driveColor, fontWeight: '700' }]}>
+                        {Math.round(usedPct)}%
+                      </Text>
                     </View>
                     <Text style={[s.storageText, { color: colors.textSecondary, marginTop: 2 }]}>
                       {formatGB(totalUsed)} GB {t('photos.of')} {formatGB(quota)} GB

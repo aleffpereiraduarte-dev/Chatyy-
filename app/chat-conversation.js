@@ -3,7 +3,7 @@ import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, Image, InteractionManager,
   ActivityIndicator, TextInput, Platform, Keyboard, Dimensions,
   Alert, Modal, Pressable, Linking, Animated, Easing, ScrollView, PanResponder, Share, BackHandler,
-  KeyboardAvoidingView, AppState,
+  KeyboardAvoidingView, AppState, Vibration,
 } from 'react-native';
 // FlashList reverted to FlatList
 // Native UICollectionView chat view (iOS only) — WhatsApp-style instant render.
@@ -4228,6 +4228,12 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
   const waveIntervalRef = useRef(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulseLoopRef = useRef(null);
+  // Voice lock — when the user lifts the finger after sliding up the mic,
+  // recording stays "locked" so they can keep both hands free. Web has no
+  // haptics so we lean on the visual pop (scale 0.8→1.2→1 spring) to confirm
+  // the lock engaged. Native gets a 40ms Vibration tick alongside the spring.
+  const [voiceLocked, setVoiceLocked] = useState(false);
+  const lockScale = useRef(new Animated.Value(1)).current;
   // Voice pre-upload session state. While recording on web, we ship each
   // dataavailable chunk to the server in order so the file is mostly there
   // by the time the user releases. If anything in this pipeline fails
@@ -4263,6 +4269,22 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
       }
     };
   }, []);
+
+  // Voice lock feedback — when the user engages hands-free recording the lock
+  // icon pops (0.8 → 1.2 → 1) and native devices buzz briefly. Web has no
+  // haptics API so the spring is the only confirmation; that's why the visual
+  // is loud (overshoot to 1.2) instead of subtle.
+  useEffect(() => {
+    if (!voiceLocked) return;
+    lockScale.setValue(0.8);
+    Animated.sequence([
+      Animated.spring(lockScale, { toValue: 1.2, useNativeDriver: true, tension: 180, friction: 5 }),
+      Animated.spring(lockScale, { toValue: 1,   useNativeDriver: true, tension: 120, friction: 8 }),
+    ]).start();
+    if (Platform.OS !== 'web') {
+      try { Vibration.vibrate(40); } catch {}
+    }
+  }, [voiceLocked, lockScale]);
 
   // Serial drain — uploads chunks one-at-a-time in the order they arrived
   // so the server's strict in-order assemblage holds. If a chunk POST fails
@@ -4834,6 +4856,21 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
           </Text>
         </Animated.View>
       </View>
+
+      {/* Lock affordance — tapping engages hands-free recording. The pop
+          animation (0.8 → 1.2 → 1 spring) is the only confirmation on web
+          since browsers have no haptic API; native pairs the pop with a 40ms
+          Vibration tick. Tinted purple when locked so the eye lands on it. */}
+      <TouchableOpacity
+        onPress={() => setVoiceLocked(v => !v)}
+        style={{ width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginRight: 4 }}
+        accessibilityLabel={voiceLocked ? 'Destravar gravação' : 'Travar gravação'}
+        accessibilityRole="button"
+      >
+        <Animated.View style={{ transform: [{ scale: lockScale }] }}>
+          <IconLock size={18} color={voiceLocked ? '#7C3AED' : (colors.textTertiary || '#9ca3af')} />
+        </Animated.View>
+      </TouchableOpacity>
 
       {/* Right: STOP button (enters preview) — wrapped in a synced pulse halo
           so the entire control reads as one heartbeat: dot + waveform + stop. */}
@@ -5863,6 +5900,15 @@ export default function ChatConversationScreen() {
     const id = setInterval(() => setLongPressNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, [selectedMsg]);
+  // Long-press menu micro-confirm: the heavy haptic fired on long-press start
+  // (handleLongPress) is the "I felt the press"; this lighter selection click
+  // fires when the menu actually mounts so the user gets a second beat that
+  // says "the menu is here". Web has no haptics — silently no-op.
+  useEffect(() => {
+    if (!selectedMsg) return;
+    if (Platform.OS === 'web') return;
+    try { Haptics.selectionAsync(); } catch {}
+  }, [selectedMsg ? selectedMsg.id : null]);
   const [showReactions, setShowReactions] = useState(null);
   const [reactionDetail, setReactionDetail] = useState(null);
   const [showFullEmojiPicker, setShowFullEmojiPicker] = useState(false);
@@ -11118,6 +11164,10 @@ export default function ChatConversationScreen() {
   // Reaction bounce animation
   const [reactionBounceId, setReactionBounceId] = useState(null);
   const reactionBounceScale = useRef(new Animated.Value(1)).current;
+  // Companion opacity drives a fade-in on the chip when the reaction is
+  // freshly added — the chip mounts already at full size, but the eye still
+  // needs the brief "appearance" cue so the icon doesn't just snap in.
+  const reactionBounceOpacity = useRef(new Animated.Value(1)).current;
 
   const handleReact = async (msgId, emoji, stickerUrl) => {
     const isSticker = typeof stickerUrl === 'string' && stickerUrl.length > 0;
@@ -11145,10 +11195,17 @@ export default function ChatConversationScreen() {
     //   - settle to 1.0 over ~400ms with more damping (tension 60, friction 9)
     // Total ~750ms — still under a second, but the eye actually tracks it.
     setReactionBounceId(msgId);
-    reactionBounceScale.setValue(0.3);
-    Animated.sequence([
-      Animated.spring(reactionBounceScale, { toValue: 1.25, useNativeDriver: true, tension: 80, friction: 6 }),
-      Animated.spring(reactionBounceScale, { toValue: 1,    useNativeDriver: true, tension: 60, friction: 9 }),
+    reactionBounceScale.setValue(0);
+    reactionBounceOpacity.setValue(0);
+    // Pop sequence wired to the spec from the audit: 0 → 1.4 → 1 with friction 4
+    // tension 120 on the overshoot, then a softer settle. Opacity tweens 0→1
+    // in parallel with the first leg so the chip "appears" instead of snapping.
+    Animated.parallel([
+      Animated.sequence([
+        Animated.spring(reactionBounceScale, { toValue: 1.4, useNativeDriver: true, tension: 120, friction: 4 }),
+        Animated.spring(reactionBounceScale, { toValue: 1,   useNativeDriver: true, tension: 80,  friction: 8 }),
+      ]),
+      Animated.timing(reactionBounceOpacity, { toValue: 1, duration: 180, useNativeDriver: true }),
     ]).start(() => {
       setTimeout(() => setReactionBounceId(null), 400);
     });
@@ -15875,7 +15932,7 @@ export default function ChatConversationScreen() {
         })()}
 
         {Object.keys(reactionGroups).length > 0 && !isDeleted && (
-          <Animated.View style={[styles.reactionsRow, isOwn && styles.reactionsRowOwn, reactionBounceId === msg.id && { transform: [{ scale: reactionBounceScale }] }]}>
+          <Animated.View style={[styles.reactionsRow, isOwn && styles.reactionsRowOwn, reactionBounceId === msg.id && { transform: [{ scale: reactionBounceScale }], opacity: reactionBounceOpacity }]}>
             {/* Cap at 6 distinct emoji + a "+N" pill for the rest. With 50
                 reactions on a viral message we used to mount 50 chips per
                 bubble — kills scroll perf and overflows the bubble width.
@@ -17274,6 +17331,24 @@ export default function ChatConversationScreen() {
                   ? (t('chatConv.e2eEmpty') || 'Mensagens protegidas com criptografia de ponta a ponta. Ninguém fora desta conversa pode ler.')
                   : (t('chatConv.empty') || 'Envie uma mensagem para iniciar a conversa.')}
               </Text>
+              {/* Subtle "Início da conversa" hint with sparkles — small gray
+                  type centered, only on the real empty state (skeleton branch
+                  above doesn't render this). Reuses IconSparkles already
+                  imported. No new i18n key — Portuguese hardcoded matches the
+                  fallback strings above. */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 16, opacity: 0.6 }}>
+                <IconSparkles size={12} color={isDark ? 'rgba(233,237,239,0.55)' : 'rgba(17,27,33,0.55)'} />
+                <Text style={{
+                  marginLeft: 6,
+                  fontSize: 11.5,
+                  fontWeight: '600',
+                  letterSpacing: 0.4,
+                  textTransform: 'uppercase',
+                  color: isDark ? 'rgba(233,237,239,0.55)' : 'rgba(17,27,33,0.55)',
+                }}>
+                  Início da conversa
+                </Text>
+              </View>
             </View>
             )
           }

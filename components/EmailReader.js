@@ -284,6 +284,12 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
     return () => cleanups.forEach((fn) => fn());
   }, [email?.uid, email?.body_html, showQuoted, showTranslation]);
 
+  // Privacy: by default, remote <img> tags are blocked (replaced with a 1×1
+  // transparent pixel) so trackers can't fingerprint the user. The "Show
+  // images" button at the top of the body opts in for this email.
+  const [showImages, setShowImages] = useState(false);
+  const [hasRemoteImages, setHasRemoteImages] = useState(false);
+
   // Reset per-email state when switching emails
   useEffect(() => {
     setBlocked(false);
@@ -295,7 +301,51 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
     setTranslatedHtml('');
     setShowTranslation(false);
     setTranslating(false);
+    setShowImages(false);
+    setHasRemoteImages(false);
   }, [email?.uid]);
+
+  // Process HTML before render — applies image privacy gating + lazy-load.
+  // - Strips tracking pixels (1×1 imgs, common width/height attrs).
+  // - Adds loading="lazy" + decoding="async" to remaining imgs.
+  // - When showImages is false, replaces remote http(s) src with a 1px stub
+  //   (cid: inline images are kept since they're attached, not external).
+  // Keeps cid:/data:/relative URLs untouched. Detects presence of remote
+  // images so the "Show images" prompt only renders when relevant.
+  const processEmailHtml = useCallback((html) => {
+    if (!html || typeof html !== 'string') return html;
+    let foundRemote = false;
+    const processed = html.replace(/<img\b([^>]*)>/gi, (full, attrs) => {
+      // Detect tracking pixel: width=1 height=1 OR style with 1px both
+      const isTracker =
+        /\b(width|height)\s*=\s*["']?\s*1\s*["']?/i.test(attrs) &&
+        /\b(width|height)\s*=\s*["']?\s*1\s*["']?/i.test(attrs.replace(/\b(width|height)\s*=\s*["']?\s*1\s*["']?/i, ''));
+      if (isTracker) return ''; // drop the tracker entirely
+      const srcMatch = attrs.match(/\bsrc\s*=\s*["']([^"']+)["']/i);
+      const src = srcMatch ? srcMatch[1] : '';
+      const isRemote = /^https?:\/\//i.test(src);
+      const isInline = /^cid:/i.test(src) || /^data:/i.test(src);
+      if (isRemote) foundRemote = true;
+      let newAttrs = attrs;
+      // Add lazy-load + async decode if not already present
+      if (!/\bloading\s*=/i.test(newAttrs)) newAttrs += ' loading="lazy"';
+      if (!/\bdecoding\s*=/i.test(newAttrs)) newAttrs += ' decoding="async"';
+      // Privacy gate: when images are blocked, replace remote src with
+      // transparent 1px gif and stash original in data-src for restore.
+      if (isRemote && !showImages) {
+        newAttrs = newAttrs.replace(
+          /\bsrc\s*=\s*["'][^"']+["']/i,
+          'src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" data-blocked-src="' + src.replace(/"/g, '&quot;') + '"'
+        );
+      }
+      return `<img${newAttrs}>`;
+    });
+    // Update detection on next tick to avoid mid-render setState warnings.
+    if (foundRemote !== hasRemoteImages) {
+      setTimeout(() => setHasRemoteImages(foundRemote), 0);
+    }
+    return processed;
+  }, [showImages, hasRemoteImages]);
 
   // Smooth entry animation for email content
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -373,10 +423,29 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
   const renderBody = () => {
     if (email.body_html && Platform.OS === 'web') {
       const { main, quoted } = splitQuotedHtml(email.body_html);
-      const cleanMain = sanitizeHtml(main);
-      const cleanQuoted = sanitizeHtml(quoted);
+      const cleanMain = processEmailHtml(sanitizeHtml(main));
+      const cleanQuoted = processEmailHtml(sanitizeHtml(quoted));
       return (
         <View>
+          {hasRemoteImages && !showImages && (
+            <TouchableOpacity
+              onPress={() => setShowImages(true)}
+              style={{
+                flexDirection: 'row', alignItems: 'center', gap: 8,
+                paddingVertical: 8, paddingHorizontal: 12, marginBottom: 10,
+                backgroundColor: colors.surfaceVariant, borderRadius: 8,
+                borderWidth: StyleSheet.hairlineWidth, borderColor: colors.borderLight,
+                alignSelf: 'flex-start',
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={t('reader.showImages') || 'Show images'}
+            >
+              <IconImage size={14} color={colors.textSecondary} />
+              <Text style={{ fontSize: 13, color: colors.textSecondary, fontWeight: '500' }}>
+                {t('reader.showImages') || 'Mostrar imagens'}
+              </Text>
+            </TouchableOpacity>
+          )}
           <div
             ref={bodyRef}
             style={{
@@ -420,7 +489,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
       );
     }
     if (email.body_html && Platform.OS !== 'web') {
-      const safeBody = sanitizeHtml(email.body_html);
+      const safeBody = processEmailHtml(sanitizeHtml(email.body_html));
       // Native HTML view from expo-native-toolkit (iOS only).
       // Uses a pre-warmed WKWebView pool so the email body paints on the
       // very first frame instead of waiting ~200ms for WebView init.

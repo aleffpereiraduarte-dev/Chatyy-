@@ -385,6 +385,11 @@ export default function ComposeScreen() {
 
   // --- Draft auto-save ---
   const [draftSaved, setDraftSaved] = useState(false);
+  // Persistent header indicator state: 'idle' | 'saving' | 'saved' | 'error'
+  // Replaces the 2s toast — status now stays visible so the user always
+  // knows whether their work is committed.
+  const [draftStatus, setDraftStatus] = useState('idle');
+  const [lastSavedAt, setLastSavedAt] = useState(null); // Date
   const draftUidRef = useRef(null);
   const draftTimerRef = useRef(null);
   const draftSavedTimerRef = useRef(null);
@@ -553,6 +558,7 @@ export default function ComposeScreen() {
   const saveDraft = useCallback(async () => {
     if (!contentChangedRef.current) return;
     contentChangedRef.current = false;
+    setDraftStatus('saving');
     try {
       const r = await api.apiCall('draft_save', {
         subject, to: contactsToString(to), cc: contactsToString(cc),
@@ -562,9 +568,16 @@ export default function ComposeScreen() {
       if (!mountedRef.current) return;
       if (r.success && r.data?.draft_uid) draftUidRef.current = r.data.draft_uid;
       setDraftSaved(true);
+      setDraftStatus(r?.success ? 'saved' : 'error');
+      if (r?.success) setLastSavedAt(new Date());
+      // Keep the legacy `draftSaved` flag wired so the bottom toast still
+      // animates briefly, but the header indicator (driven by draftStatus
+      // / lastSavedAt) now persists across the rest of the session.
       if (draftSavedTimerRef.current) clearTimeout(draftSavedTimerRef.current);
       draftSavedTimerRef.current = setTimeout(() => setDraftSaved(false), 2000);
-    } catch {}
+    } catch {
+      if (mountedRef.current) setDraftStatus('error');
+    }
   }, [subject, to, cc, bcc, body, contactsToString]);
 
   useEffect(() => { toValueRef.current = to; }, [to]);
@@ -852,6 +865,45 @@ export default function ComposeScreen() {
         : parts[0].substring(0, 2).toUpperCase();
     }
     return email ? email.substring(0, 2).toUpperCase() : '?';
+  };
+
+  // ── Persistent draft status indicator ──
+  // Sits in the header so the user always sees whether the draft is
+  // committed. States: idle (nothing) / saving (italic grey) / saved (tick
+  // + timestamp) / error.
+  const renderDraftStatusIndicator = () => {
+    if (draftStatus === 'idle') return null;
+    let label = '';
+    if (draftStatus === 'saving') {
+      label = (t('compose.draftSaved') || 'Rascunho salvo') + '...';
+    } else if (draftStatus === 'saved' && lastSavedAt) {
+      const hh = String(lastSavedAt.getHours()).padStart(2, '0');
+      const mm = String(lastSavedAt.getMinutes()).padStart(2, '0');
+      label = `${t('compose.draftSaved') || 'Rascunho salvo'} ${hh}:${mm}`;
+    } else if (draftStatus === 'saved') {
+      label = t('compose.draftSaved') || 'Rascunho salvo';
+    } else if (draftStatus === 'error') {
+      label = t('compose.errorConnection') || 'Erro';
+    }
+    const tickColor = draftStatus === 'saved' ? colors.success : colors.textTertiary;
+    return (
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginRight: 6 }} accessibilityRole="text" accessibilityLabel={label}>
+        {draftStatus === 'saved' && <IconCheckCircle size={12} color={tickColor} />}
+        <Text
+          numberOfLines={1}
+          style={{
+            fontSize: 11,
+            color: draftStatus === 'error' ? colors.error : colors.textTertiary,
+            fontStyle: draftStatus === 'saving' ? 'italic' : 'normal',
+            fontWeight: '500',
+            letterSpacing: 0.1,
+            maxWidth: 180,
+          }}
+        >
+          {label}
+        </Text>
+      </View>
+    );
   };
 
   // ── Shared: Undo / Draft / Error bars ──
@@ -1154,6 +1206,7 @@ export default function ComposeScreen() {
               </Text>
             </View>
             <View style={s.headerRight}>
+              {renderDraftStatusIndicator()}
               {renderSendButton()}
             </View>
           </View>
@@ -1320,6 +1373,7 @@ export default function ComposeScreen() {
             {isForward ? t('compose.forward') : t('compose.title')}
           </Text>
           <View style={s.headerRight}>
+            {renderDraftStatusIndicator()}
             <TouchableOpacity onPress={() => setShowSchedule(true)} style={[s.headerActionBtn, { backgroundColor: colors.surfaceVariant }]} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
               <IconClock size={16} color={colors.textSecondary} />
             </TouchableOpacity>

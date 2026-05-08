@@ -94,6 +94,42 @@ function EmailRow({
   onDragStart, onDragEnter, currentFolder, onContextMenu, index,
   isMuted, searchQuery,
 }) {
+  // Thread badge expansion — fetch + animate sub-list of other emails in thread
+  const [threadExpanded, setThreadExpanded] = useState(false);
+  const [threadItems, setThreadItems] = useState(null); // null=not loaded, []=loaded
+  const [threadLoading, setThreadLoading] = useState(false);
+  const threadHeightAnim = useRef(new Animated.Value(0)).current;
+  const handleThreadBadgePress = useCallback(async (e) => {
+    e?.stopPropagation?.();
+    const willExpand = !threadExpanded;
+    setThreadExpanded(willExpand);
+    Animated.timing(threadHeightAnim, {
+      toValue: willExpand ? 1 : 0,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+    if (willExpand && threadItems === null && !threadLoading) {
+      setThreadLoading(true);
+      try {
+        const { getThread } = require('../services/api');
+        const r = await getThread(email.uid, currentFolder || 'INBOX');
+        if (r?.success) {
+          // getThread typically returns { messages: [...] } or array directly
+          const msgs = Array.isArray(r.data) ? r.data : (r.data?.messages || r.data?.thread || []);
+          // Drop the current email so we only show other thread members
+          const filtered = msgs.filter(m => String(m.uid) !== String(email.uid));
+          setThreadItems(filtered);
+        } else {
+          setThreadItems([]);
+        }
+      } catch {
+        setThreadItems([]);
+      } finally {
+        setThreadLoading(false);
+      }
+    }
+  }, [threadExpanded, threadItems, threadLoading, email?.uid, currentFolder, threadHeightAnim]);
   const { colors, densityConfig } = useTheme();
   const { t } = useLanguage();
   const dc = densityConfig || DENSITY_CONFIG.comfortable;
@@ -321,14 +357,23 @@ function EmailRow({
               style={[s.from, { color: colors.text }, isUnread && s.unreadText]}
               numberOfLines={1}
             >
-              {email.from_name || email.from}
+              {searchQuery
+                ? highlightText(email.from_name || email.from, searchQuery)
+                : (email.from_name || email.from)}
             </Text>
             {email.thread_count > 1 && (
-              <View style={[s.threadBadge, { backgroundColor: colors.surfaceVariant }]}>
-                <Text style={[s.threadBadgeText, { color: colors.textSecondary }]}>
+              <TouchableOpacity
+                onPress={handleThreadBadgePress}
+                activeOpacity={0.6}
+                hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+                style={[s.threadBadge, { backgroundColor: threadExpanded ? colors.primary + '22' : colors.surfaceVariant }]}
+                accessibilityRole="button"
+                accessibilityLabel={`${email.thread_count} mensagens na conversa`}
+              >
+                <Text style={[s.threadBadgeText, { color: threadExpanded ? colors.primary : colors.textSecondary }]}>
                   {email.thread_count}
                 </Text>
-              </View>
+              </TouchableOpacity>
             )}
             {isMuted && (
               <View style={s.mutedIcon}>
@@ -394,6 +439,58 @@ function EmailRow({
               {t('snooze.snoozed')}
             </Text>
           </View>
+        )}
+
+        {/* Thread badge expand — inline sub-list of other thread members */}
+        {threadExpanded && (
+          <Animated.View
+            style={{
+              overflow: 'hidden',
+              maxHeight: threadHeightAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0, Math.max(40, (threadItems?.length || 1) * 44 + 8)],
+              }),
+              opacity: threadHeightAnim,
+              marginTop: 6,
+              borderLeftWidth: 2,
+              borderLeftColor: colors.primary + '55',
+              paddingLeft: 8,
+            }}
+          >
+            {threadLoading && !threadItems && (
+              <Text style={{ fontSize: 12, color: colors.textTertiary, paddingVertical: 6 }}>
+                {t('common.loading') || 'Carregando...'}
+              </Text>
+            )}
+            {Array.isArray(threadItems) && threadItems.length === 0 && !threadLoading && (
+              <Text style={{ fontSize: 12, color: colors.textTertiary, paddingVertical: 6 }}>
+                {t('reader.noOtherMessages') || '—'}
+              </Text>
+            )}
+            {Array.isArray(threadItems) && threadItems.map((m, i) => (
+              <TouchableOpacity
+                key={String(m.uid) + i}
+                onPress={(e) => { e?.stopPropagation?.(); onPress?.({ ...m, uid: m.uid }); }}
+                activeOpacity={0.6}
+                style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, gap: 8 }}
+                accessibilityRole="button"
+              >
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text numberOfLines={1} style={{ fontSize: 12.5, fontWeight: m.seen === false ? '700' : '500', color: colors.text }}>
+                    {m.from_name || m.from || '—'}
+                  </Text>
+                  {!!m.preview && (
+                    <Text numberOfLines={1} style={{ fontSize: 12, color: colors.textTertiary, marginTop: 1 }}>
+                      {m.preview}
+                    </Text>
+                  )}
+                </View>
+                <Text style={{ fontSize: 11, color: colors.textTertiary, flexShrink: 0 }}>
+                  {formatRelativeDate(m.date, t)}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </Animated.View>
         )}
       </View>
 

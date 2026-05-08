@@ -875,10 +875,22 @@ export default function PlansScreen() {
     }
 
     if (!productId) {
-      safeAlert(
-        t('iap.comingSoonTitle') || 'Em breve',
-        t('iap.comingSoonBody') || 'Assinaturas in-app estão em aprovação. Assine pelo site em chatyy.com.br/plans.'
-      );
+      // IAP path missing → don't dead-end the user with "Em breve". Surface
+      // a real CTA pointing at the web checkout (which uses their existing
+      // Chatyy credentials). Falls back to safeAlert if Alert.alert isn't
+      // available (web SSR / prerender edge).
+      const planSlug = plan === 'family' ? 'pro' : (plan === 'one' ? 'plus' : plan);
+      const webUrl = 'https://chatyy.com.br/plans?plan=' + encodeURIComponent(planSlug);
+      const title = t('iap.unavailableTitleShort') || 'Assinaturas in-app indisponíveis no momento';
+      const body = t('iap.fallbackBody') || 'Você pode usar suas credenciais Chatyy normais.';
+      if (typeof Alert !== 'undefined' && Alert.alert) {
+        Alert.alert(title, body, [
+          { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+          { text: t('iap.subscribeOnWeb') || 'Assinar pelo site', onPress: () => { try { Linking.openURL(webUrl); } catch {} } },
+        ]);
+      } else {
+        safeAlert(title, body);
+      }
       return;
     }
 
@@ -1890,6 +1902,32 @@ export default function PlansScreen() {
               </Text>
             </View>
 
+            {/* Annual savings badge — absolute top-right corner (under
+                the Mais Popular pill). Uses theme success color tinted
+                background (success + '20') so it harmonizes with light
+                and dark mode. Renders only when annual toggle is ON.
+                Distinct from the inline pct pill next to the price —
+                this one's the at-a-glance "discount" affordance the
+                user sees while scanning the cards. */}
+            {billingPeriod === 'annual' && (() => {
+              const pct = Math.round((1 - PRICING.one.annual / PRICING.one.monthly) * 100);
+              if (pct < 5) return null;
+              return (
+                <View style={{
+                  position: 'absolute',
+                  top: 44, right: 14,
+                  backgroundColor: colors.success + '20',
+                  borderRadius: 12,
+                  paddingHorizontal: 8, paddingVertical: 3,
+                  zIndex: 5,
+                }}>
+                  <Text style={{ color: colors.success, fontSize: 11, fontWeight: '800', letterSpacing: 0.3 }}>
+                    {(t('plans.savePercent', { pct }) || `ECONOMIZE ${pct}%`)}
+                  </Text>
+                </View>
+              );
+            })()}
+
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
               <View style={{
                 width: 36, height: 36, borderRadius: 11,
@@ -2076,6 +2114,29 @@ export default function PlansScreen() {
                 {t('plans.bestValue') || 'MELHOR CUSTO'}
               </Text>
             </View>
+
+            {/* Annual savings badge — same pattern as the Plus card. Pro's
+                annual discount is usually ~22%, even more compelling, so
+                surfacing it absolute top-right makes the toggle's value
+                impossible to miss. */}
+            {billingPeriod === 'annual' && (() => {
+              const pct = Math.round((1 - PRICING.family.annual / PRICING.family.monthly) * 100);
+              if (pct < 5) return null;
+              return (
+                <View style={{
+                  position: 'absolute',
+                  top: 44, right: 14,
+                  backgroundColor: colors.success + '20',
+                  borderRadius: 12,
+                  paddingHorizontal: 8, paddingVertical: 3,
+                  zIndex: 5,
+                }}>
+                  <Text style={{ color: colors.success, fontSize: 11, fontWeight: '800', letterSpacing: 0.3 }}>
+                    {(t('plans.savePercent', { pct }) || `ECONOMIZE ${pct}%`)}
+                  </Text>
+                </View>
+              );
+            })()}
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <View style={{
