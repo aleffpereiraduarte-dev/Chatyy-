@@ -2715,6 +2715,17 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     let displayName = conv.display_name || conv.name || '';
     displayName = emailToDisplayName(displayName);
     const unreadParam = (conv.unread_count > 0) ? `&unread=${conv.unread_count}` : '';
+    // Saved Messages — self-chat conversation gets routed to the dedicated
+    // /saved-messages screen (Telegram-parity: tabs, search-within, header
+    // reminders, "Cabeçalho" insert). The conv itself is the same backend
+    // row — saved-messages screen redirects into chat-conversation with
+    // saved=1 so all the rendering stays shared.
+    const peerLc = String(otherEmail || '').toLowerCase();
+    const isSelf = conv.type === 'saved' || (conv.type === 'direct' && peerLc && peerLc === meLc);
+    if (isSelf) {
+      router.push('/saved-messages');
+      return;
+    }
     router.push(`/chat-conversation?id=${conv.id}&name=${encodeURIComponent(displayName)}&type=${conv.type}${emailParam}${unreadParam}`);
   }, [user?.email, router]);
 

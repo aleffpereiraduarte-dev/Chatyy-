@@ -9,6 +9,31 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import { IconArrowLeft, IconPlus, IconTrash, IconRefresh, IconCopy } from '../components/Icons';
+import EmptyStateCard from '../components/EmptyStateCard';
+import { ListSkeleton } from '../components/SkeletonLoader';
+
+// Tiny SVG-free bot illustration: stacked rounded squares mimicking the
+// Bots tile in the app drawer. Uses purely View+gradient for parity with
+// the rest of the app's "no SVG illustration libs" rule.
+function BotsEmptyIllustration({ tint }) {
+  return (
+    <View style={{ width: 96, height: 96, alignItems: 'center', justifyContent: 'center' }}>
+      <View style={{
+        width: 64, height: 64, borderRadius: 16, backgroundColor: tint + '22',
+        alignItems: 'center', justifyContent: 'center',
+        borderWidth: 2, borderColor: tint + '44',
+      }}>
+        <View style={{ flexDirection: 'row', gap: 6, marginBottom: 6 }}>
+          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: tint }} />
+          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: tint }} />
+        </View>
+        <View style={{ width: 22, height: 4, borderRadius: 2, backgroundColor: tint }} />
+      </View>
+      {/* Antenna nub */}
+      <View style={{ position: 'absolute', top: 8, width: 4, height: 8, borderRadius: 2, backgroundColor: tint }} />
+    </View>
+  );
+}
 
 const safeAlert = (title, msg) => Platform.OS === 'web'
   ? window.alert(`${title}\n${msg || ''}`)
@@ -21,6 +46,7 @@ export default function BotsScreen() {
 
   const [bots, setBots] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [newUsername, setNewUsername] = useState('');
@@ -31,10 +57,17 @@ export default function BotsScreen() {
 
   const load = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const r = await api.botList();
-      if (r?.success) setBots(r.data?.bots || []);
-    } catch {}
+      if (r?.success) {
+        setBots(r.data?.bots || []);
+      } else {
+        setLoadError(r?.message || (t?.('common.errorLoading') || 'Não foi possível carregar.'));
+      }
+    } catch (e) {
+      setLoadError(String(e?.message || e) || (t?.('common.errorLoading') || 'Não foi possível carregar.'));
+    }
     setLoading(false);
   };
   useEffect(() => { load(); }, []);
@@ -119,22 +152,34 @@ export default function BotsScreen() {
         </TouchableOpacity>
       </View>
 
+      {/* Loading skeleton (first paint only — pull-to-refresh keeps the list). */}
+      {loading && bots.length === 0 ? (
+        <ListSkeleton count={4} showIcon={true} />
+      ) : loadError && bots.length === 0 ? (
+        <EmptyStateCard
+          illustration={<BotsEmptyIllustration tint="#dc2626" />}
+          title={t?.('common.error') || 'Erro'}
+          subtitle={loadError}
+          ctaLabel={t?.('common.retry') || 'Tentar de novo'}
+          onPress={load}
+          tone="warning"
+        />
+      ) : (
       <FlatList
         data={bots}
         keyExtractor={(b) => String(b.id)}
         refreshing={loading}
         onRefresh={load}
-        contentContainerStyle={{ padding: 12 }}
+        contentContainerStyle={{ padding: 12, flexGrow: 1 }}
         ListEmptyComponent={
           !loading ? (
-            <View style={{ padding: 24, alignItems: 'center' }}>
-              <Text style={{ color: colors.textSecondary, textAlign: 'center', marginBottom: 10 }}>
-                {t?.('bots.empty') || 'Nenhum bot ainda. Crie um bot para automatizar mensagens.'}
-              </Text>
-              <TouchableOpacity onPress={() => setCreateOpen(true)} style={{ backgroundColor: colors.primary, paddingVertical: 10, paddingHorizontal: 20, borderRadius: 10 }}>
-                <Text style={{ color: '#fff', fontWeight: '700' }}>{t?.('bots.create') || 'Criar bot'}</Text>
-              </TouchableOpacity>
-            </View>
+            <EmptyStateCard
+              illustration={<BotsEmptyIllustration tint="#7C3AED" />}
+              title={t?.('bots.emptyTitle') || 'Nenhum bot ainda'}
+              subtitle={t?.('bots.empty') || 'Crie um bot para automatizar mensagens, executar slash-commands e integrar serviços.'}
+              ctaLabel={t?.('bots.create') || 'Criar bot'}
+              onPress={() => setCreateOpen(true)}
+            />
           ) : null
         }
         renderItem={({ item }) => (
@@ -165,6 +210,7 @@ export default function BotsScreen() {
           </View>
         )}
       />
+      )}
 
       {/* Create modal */}
       <Modal visible={createOpen} transparent animationType="slide" onRequestClose={() => setCreateOpen(false)}>

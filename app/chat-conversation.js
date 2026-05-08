@@ -2390,6 +2390,138 @@ const audioStyles = StyleSheet.create({
 });
 
 // ============================================================
+// VOICEMAIL BUBBLE — recipient view of a voicemail left after a missed
+// call. Lazy-loads the actual audio URL via voicemail_get on first tap
+// (so the R2 presigned link is only minted when the user actually plays
+// it), reuses AudioPlayer for the waveform + scrubbing UI, and auto
+// marks the voicemail as listened on play start.
+// ============================================================
+function VoicemailBubble({ voicemail, messageId, isOwn, colors, t, ownTextColor, styles, transcription: transcriptionProp }) {
+  const [audioUrl, setAudioUrl] = useState(null);
+  const [transcription, setTranscription] = useState(transcriptionProp || voicemail.transcription || null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [listened, setListened] = useState(!!voicemail.listened);
+  const markedListenedRef = useRef(false);
+
+  // Sync incoming WS update if the parent re-renders with a fresh
+  // transcription (voicemail_transcribed event lands later).
+  useEffect(() => {
+    if (transcriptionProp && transcriptionProp !== transcription) setTranscription(transcriptionProp);
+  }, [transcriptionProp]);
+
+  const ensureLoaded = useCallback(async () => {
+    if (audioUrl || loading) return audioUrl;
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await api.voicemailGet(voicemail.voicemail_id);
+      if (r?.success && r?.data?.audio_url) {
+        setAudioUrl(r.data.audio_url);
+        if (r.data.transcription) setTranscription(r.data.transcription);
+        if (r.data.listened) setListened(true);
+        return r.data.audio_url;
+      }
+      throw new Error(r?.message || 'load_failed');
+    } catch (e) {
+      setError(t?.('voicemail.loadError') || 'Não foi possível carregar a mensagem.');
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  }, [audioUrl, loading, voicemail.voicemail_id, t]);
+
+  const onTapToLoad = useCallback(() => {
+    ensureLoaded().then((url) => {
+      // Auto-mark listened once on play start. Only fire if we are the
+      // recipient (server enforces too — voicemail_mark_listened
+      // requires the caller to be to_email). We can't know who we are
+      // from here easily, so we always attempt and let the server 403
+      // silently for the sender.
+      if (url && !markedListenedRef.current) {
+        markedListenedRef.current = true;
+        api.voicemailMarkListened(voicemail.voicemail_id).then(() => setListened(true)).catch(() => {});
+      }
+    });
+  }, [ensureLoaded, voicemail.voicemail_id]);
+
+  const duration = voicemail.duration || voicemail.duration_sec || 0;
+  const callerEmail = voicemail.from_email || '';
+
+  return (
+    <View style={{ minWidth: 240, maxWidth: 300, paddingVertical: 2 }}>
+      <View style={{
+        flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6,
+      }}>
+        <Text style={{ fontSize: 18 }}>🎤</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 13, fontWeight: '700', color: isOwn ? ownTextColor : colors.text }}>
+            {t?.('voicemail.title') || 'Mensagem de voz'}
+          </Text>
+          <Text style={{ fontSize: 11, color: isOwn ? 'rgba(255,255,255,0.7)' : (colors.textTertiary || '#9ca3af') }}>
+            {t?.('voicemail.afterMissedCall') || 'Após chamada perdida'} · {Math.floor(duration / 60)}:{(duration % 60).toString().padStart(2, '0')}
+          </Text>
+        </View>
+        {listened && !isOwn ? null : null}
+      </View>
+
+      {audioUrl ? (
+        <AudioPlayer
+          url={audioUrl}
+          duration={duration}
+          isOwn={isOwn}
+          colors={colors}
+          messageId={messageId || ('vm_' + voicemail.voicemail_id)}
+          waveform={null}
+        />
+      ) : (
+        <TouchableOpacity
+          onPress={onTapToLoad}
+          disabled={loading}
+          style={{
+            flexDirection: 'row', alignItems: 'center', gap: 10,
+            paddingHorizontal: 12, paddingVertical: 10,
+            backgroundColor: isOwn ? 'rgba(255,255,255,0.18)' : (colors.primary + '20'),
+            borderRadius: 18,
+          }}
+          accessibilityLabel={t?.('voicemail.tapToPlay') || 'Tocar mensagem de voz'}
+        >
+          <View style={{
+            width: 36, height: 36, borderRadius: 18,
+            backgroundColor: isOwn ? 'rgba(255,255,255,0.28)' : colors.primary,
+            alignItems: 'center', justifyContent: 'center',
+          }}>
+            {loading
+              ? <ActivityIndicator size="small" color={isOwn ? '#fff' : '#fff'} />
+              : <Text style={{ color: '#fff', fontSize: 16 }}>{'▶'}</Text>}
+          </View>
+          <Text style={{ fontSize: 13, color: isOwn ? '#fff' : colors.text, flex: 1 }}>
+            {loading ? (t?.('voicemail.loading') || 'Carregando…') : (t?.('voicemail.tapToPlay') || 'Tocar mensagem')}
+          </Text>
+        </TouchableOpacity>
+      )}
+
+      {error ? (
+        <Text style={{ fontSize: 12, color: '#EF4444', marginTop: 6 }}>{error}</Text>
+      ) : null}
+
+      {transcription ? (
+        <Text
+          style={{
+            fontSize: 12, fontStyle: 'italic',
+            color: isOwn ? 'rgba(255,255,255,0.85)' : (colors.textSecondary || colors.text),
+            marginTop: 8, lineHeight: 16,
+          }}
+          selectable
+        >
+          {(t?.('voicemail.transcriptionPrefix') || 'Transcrição:') + ' ' + transcription}
+        </Text>
+      ) : null}
+    </View>
+  );
+}
+
+// ============================================================
 // LOCATION MESSAGE COMPONENT (Embedded map, WhatsApp-style)
 // ============================================================
 
@@ -5205,8 +5337,21 @@ export default function ChatConversationScreen() {
   }, []);
 
   const conversationType = params.type || 'direct';
+  // Saved-mode flag — set when this screen is opened via /saved-messages.
+  // Surfaces an extra tabs strip (Tudo / Fotos / Vídeos / Documentos /
+  // Áudio / Links), a search-within bar, and the "Cabeçalho" +
+  // "Lembrar-me em" composer extras. Everything else (rendering, send,
+  // pin, etc.) is shared with the regular conversation experience.
+  const isSavedMode = String(params.saved || '') === '1' || conversationType === 'saved';
+  const [savedFilter, setSavedFilter] = useState('all');
+  const [savedSearch, setSavedSearch] = useState('');
+  const [savedSearchOpen, setSavedSearchOpen] = useState(false);
+  const [showSavedReminder, setShowSavedReminder] = useState(false);
   const [conversationAvatar, setConversationAvatar] = useState('');
   const [conversationName, setConversationName] = useState(() => {
+    if (String(params.saved || '') === '1' || (params.type || 'direct') === 'saved') {
+      return params.name ? decodeURIComponent(String(params.name)) : 'Mensagens Salvas';
+    }
     // Apply per-user nickname for direct chats so the header shows the
     // name the user actually uses for this contact (WhatsApp parity).
     try {
@@ -6066,6 +6211,13 @@ export default function ChatConversationScreen() {
   const [rolePermsDraft, setRolePermsDraft] = useState(null);
   const [mentionedEmails, setMentionedEmails] = useState([]);
   const [showMentionPopup, setShowMentionPopup] = useState(false);
+  // Bot slash-command popover. Becomes visible when:
+  //   - the conversation has at least one bot member (email ends with @bots.chatyy)
+  //   - and the input text starts with `/` followed by 0+ word chars (no space yet)
+  // The popover exposes each bot's `commands` JSON. Tapping a command rewrites
+  // the input to `/cmd ` so the user can finish with their args.
+  const [showBotPopup, setShowBotPopup] = useState(false);
+  const [botCommandFilter, setBotCommandFilter] = useState('');
   const [showStarredModal, setShowStarredModal] = useState(false);
   const [starredMessages, setStarredMessages] = useState([]);
   const [starredLoading, setStarredLoading] = useState(false);
@@ -7963,6 +8115,41 @@ export default function ChatConversationScreen() {
       });
       wsUnsubs.push(unsubRead);
 
+      // Voicemail transcript landed late (whisper >6s on slow network).
+      // Find the matching voicemail bubble and patch transcription so the
+      // italic line appears without a manual refetch.
+      const unsubVmTx = mailWs.on('voicemail_transcribed', (data) => {
+        if (!mountedRef.current) return;
+        const vmId = data?.voicemail_id;
+        const tx = data?.transcription;
+        if (!vmId || !tx) return;
+        if (String(data?.conversation_id) !== String(conversationId)) return;
+        setMessages(prev => prev.map(m => {
+          if (m.type !== 'voicemail') return m;
+          let parsed;
+          try { parsed = typeof m.content === 'string' ? JSON.parse(m.content) : m.content; } catch { parsed = null; }
+          if (parsed?.voicemail_id !== vmId) return m;
+          return { ...m, voicemail_transcription: tx };
+        }));
+      });
+      wsUnsubs.push(unsubVmTx);
+
+      // Recipient marked our voicemail as listened — flip the bubble ring
+      // (mirrors WhatsApp's blue "heard" indicator).
+      const unsubVmListened = mailWs.on('voicemail_listened', (data) => {
+        if (!mountedRef.current) return;
+        const vmId = data?.voicemail_id;
+        if (!vmId) return;
+        setMessages(prev => prev.map(m => {
+          if (m.type !== 'voicemail') return m;
+          let parsed;
+          try { parsed = typeof m.content === 'string' ? JSON.parse(m.content) : m.content; } catch { parsed = null; }
+          if (parsed?.voicemail_id !== vmId) return m;
+          return { ...m, voicemail_listened: true };
+        }));
+      });
+      wsUnsubs.push(unsubVmListened);
+
       // Listen for message delivery/read status updates via WS (instant tick updates).
       // Skip if reader_email missing — otherwise we'd create a phantom 'peer'
       // entry that competes with the real per-email entry from chat_read and
@@ -8828,6 +9015,8 @@ export default function ChatConversationScreen() {
     setReplyTo(null);
     setMentionedEmails([]);
     setShowMentionPopup(false);
+    setShowBotPopup(false);
+    setBotCommandFilter('');
     setSending(true);
     // Unlock send 150ms after tap — half the previous 300ms. Cooldown still
     // prevents the SAME tap firing twice (rare double-pointerdown on touch),
@@ -13731,6 +13920,31 @@ export default function ChatConversationScreen() {
           );
         }
 
+        case 'voicemail': {
+          // Voicemail bubble — caller left a voice message after a missed
+          // call. Content is JSON: { kind:'voicemail', voicemail_id, duration, from_email }.
+          // Bubble shows: 🎤 + caller avatar + "Mensagem de voz · 0:23" +
+          // play button + waveform. Tap → fetch audio_url + auto-mark
+          // listened. Italic transcription line below once available.
+          let vm;
+          try { vm = JSON.parse(msg.content); } catch { vm = null; }
+          if (!vm || !vm.voicemail_id) {
+            return <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text }]}>{t('voicemail.unavailable') || 'Mensagem de voz indisponível'}</Text>;
+          }
+          return (
+            <VoicemailBubble
+              voicemail={vm}
+              messageId={msg.id}
+              isOwn={isOwn}
+              colors={colors}
+              t={t}
+              ownTextColor={ownTextColor}
+              styles={styles}
+              transcription={msg.voicemail_transcription || vm.transcription || null}
+            />
+          );
+        }
+
         case 'status_reply': {
           // Instagram-style "replied to your story" card. Top slice shows the
           // story snapshot (thumb + snippet), bottom slice shows the actual
@@ -16475,9 +16689,111 @@ export default function ChatConversationScreen() {
           /* duplicate onPollVote/onMeetupRsvp/onLocationTap removed — first definitions above have correct optimistic update logic */
         />
       ) : (
+        <>
+        {isSavedMode && (
+          /* Saved Messages — tabs + in-chat search bar.
+             Tabs filter the list to media types; search filters by free
+             text. We keep these as a sticky strip above the FlatList so
+             the user can scan their personal notes the same way Telegram
+             surfaces a Chat→Media partition. */
+          <View style={{
+            paddingTop: 6, paddingBottom: 4, paddingHorizontal: Spacing.sm,
+            borderBottomWidth: StyleSheet.hairlineWidth,
+            borderBottomColor: colors.borderLight,
+            backgroundColor: colors.background,
+          }}>
+            {savedSearchOpen ? (
+              <View style={{
+                flexDirection: 'row', alignItems: 'center',
+                backgroundColor: colors.surfaceVariant,
+                borderRadius: BorderRadius.lg,
+                paddingHorizontal: 10, paddingVertical: 6,
+                marginBottom: 6,
+              }}>
+                <IconSearch size={16} color={colors.textSecondary} />
+                <TextInput
+                  value={savedSearch}
+                  onChangeText={setSavedSearch}
+                  placeholder={t('search.placeholder') || 'Buscar...'}
+                  placeholderTextColor={colors.textTertiary}
+                  style={{ flex: 1, marginLeft: 8, color: colors.text, paddingVertical: 4 }}
+                  autoFocus
+                />
+                {!!savedSearch && (
+                  <TouchableOpacity onPress={() => setSavedSearch('')} hitSlop={8}>
+                    <IconX size={16} color={colors.textSecondary} />
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity onPress={() => { setSavedSearchOpen(false); setSavedSearch(''); }} hitSlop={8} style={{ marginLeft: 8 }}>
+                  <Text style={{ color: colors.primary, fontWeight: '600' }}>Cancelar</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ alignItems: 'center', gap: 6, paddingRight: 8 }}>
+                <TouchableOpacity onPress={() => setSavedSearchOpen(true)} hitSlop={6}
+                  style={{
+                    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999,
+                    backgroundColor: colors.surfaceVariant, flexDirection: 'row', alignItems: 'center', gap: 4,
+                  }}>
+                  <IconSearch size={14} color={colors.textSecondary} />
+                </TouchableOpacity>
+                {[
+                  { k: 'all',   label: 'Tudo' },
+                  { k: 'photo', label: 'Fotos' },
+                  { k: 'video', label: 'Vídeos' },
+                  { k: 'doc',   label: 'Documentos' },
+                  { k: 'audio', label: 'Áudio' },
+                  { k: 'link',  label: 'Links' },
+                ].map(tab => {
+                  const sel = savedFilter === tab.k;
+                  return (
+                    <TouchableOpacity
+                      key={tab.k}
+                      onPress={() => setSavedFilter(tab.k)}
+                      style={{
+                        paddingHorizontal: 12, paddingVertical: 6, borderRadius: 999,
+                        backgroundColor: sel ? colors.primary : colors.surfaceVariant,
+                      }}>
+                      <Text style={{
+                        color: sel ? '#fff' : colors.text,
+                        fontSize: 13, fontWeight: '600',
+                      }}>{tab.label}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
+          </View>
+        )}
         <FlatList
           ref={flatListRef}
-          data={enrichedMessages}
+          data={(() => {
+            // Saved-mode filtering — keep separators/system rows so date
+            // headers don't disappear when the user picks "Fotos". Filter
+            // only the actual message rows by media type + free-text
+            // query. No-op when isSavedMode is false.
+            if (!isSavedMode) return enrichedMessages;
+            const q = String(savedSearch || '').trim().toLowerCase();
+            const f = savedFilter;
+            const matchType = (m) => {
+              if (!m || m._type === 'separator' || m._type === 'unread_separator' || m.type === 'system') return true;
+              if (f === 'all') return true;
+              if (f === 'photo') return m.type === 'image';
+              if (f === 'video') return m.type === 'video';
+              if (f === 'audio') return m.type === 'audio' || m.type === 'voice';
+              if (f === 'doc')   return m.type === 'file';
+              if (f === 'link')  return m.type === 'text' && /https?:\/\//i.test(String(m.content || ''));
+              return true;
+            };
+            const matchQuery = (m) => {
+              if (!q) return true;
+              if (!m || m._type === 'separator' || m._type === 'unread_separator') return true;
+              const hay = ((m.content || '') + ' ' + (m.file_name || '')).toLowerCase();
+              return hay.includes(q);
+            };
+            return enrichedMessages.filter(m => matchType(m) && matchQuery(m));
+          })()}
           inverted
           keyExtractor={msgKeyExtractor}
           renderItem={memoizedRenderItem}
@@ -16592,7 +16908,77 @@ export default function ChatConversationScreen() {
           // re-enabled clipping on native and brought back the inverted
           // FlatList row-jump bug we already fixed.
         />
+        </>
       )}
+
+      {/* Saved Messages "Lembrar-me em" picker — schedules the current
+          composer text via chatScheduleMessage so it lands back as a
+          message at the picked time. Backend cron-chat-scheduled.php
+          already drains the queue. Web uses a native datetime-local
+          input; native uses a quick chip menu (1h / tonight / tomorrow
+          / next week) so we don't have to hard-bundle a date picker. */}
+      <Modal visible={showSavedReminder} transparent animationType="fade" onRequestClose={() => setShowSavedReminder(false)}>
+        <Pressable
+          onPress={() => setShowSavedReminder(false)}
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 24 }}
+        >
+          <Pressable onPress={() => {}} style={{ backgroundColor: colors.background, borderRadius: 16, padding: 18 }}>
+            <Text style={{ color: colors.text, fontSize: 17, fontWeight: '700', marginBottom: 4 }}>Lembrar-me em</Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 14 }}>
+              Esta mensagem voltará no horário escolhido.
+            </Text>
+            {Platform.OS === 'web' ? (
+              <input
+                type="datetime-local"
+                min={(() => { const d = new Date(Date.now() + 60000); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}T${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; })()}
+                onChange={async (e) => {
+                  try {
+                    const v = e.target.value;
+                    if (!v) return;
+                    const dt = new Date(v);
+                    if (!dt.getTime() || dt.getTime() <= Date.now()) return;
+                    const text = (inputText || '').trim();
+                    if (!text) return;
+                    await api.chatScheduleMessage(conversationId, text, dt.toISOString());
+                    setInputText('');
+                    setShowSavedReminder(false);
+                  } catch {}
+                }}
+                style={{ padding: 10, fontSize: 15, borderRadius: 8, border: `1px solid ${colors.border}`, backgroundColor: colors.surface, color: colors.text, width: '100%' }}
+              />
+            ) : (
+              <>
+                {[
+                  { label: 'Em 1 hora',  ms: 60 * 60 * 1000 },
+                  { label: 'Hoje à noite', ms: null, fn: () => { const d = new Date(); d.setHours(20, 0, 0, 0); if (d.getTime() < Date.now() + 30 * 60000) d.setDate(d.getDate() + 1); return d; } },
+                  { label: 'Amanhã 9h',  ms: null, fn: () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d; } },
+                  { label: 'Próxima semana', ms: 7 * 24 * 60 * 60 * 1000 },
+                ].map((opt, i) => (
+                  <TouchableOpacity
+                    key={i}
+                    onPress={async () => {
+                      try {
+                        const text = (inputText || '').trim();
+                        if (!text) { setShowSavedReminder(false); return; }
+                        const dt = opt.fn ? opt.fn() : new Date(Date.now() + opt.ms);
+                        await api.chatScheduleMessage(conversationId, text, dt.toISOString());
+                        setInputText('');
+                      } catch {}
+                      setShowSavedReminder(false);
+                    }}
+                    style={{ paddingVertical: 12, borderTopWidth: i === 0 ? 0 : StyleSheet.hairlineWidth, borderTopColor: colors.borderLight }}
+                  >
+                    <Text style={{ color: colors.text, fontSize: 15 }}>{opt.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </>
+            )}
+            <TouchableOpacity onPress={() => setShowSavedReminder(false)} style={{ marginTop: 12, alignSelf: 'flex-end' }}>
+              <Text style={{ color: colors.primary, fontWeight: '600' }}>Cancelar</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* Contact Picker (WhatsApp-style) */}
       <Modal visible={showContactPicker} animationType="slide" onRequestClose={() => setShowContactPicker(false)}>
@@ -17012,6 +17398,86 @@ export default function ChatConversationScreen() {
             t={t}
           />
         )}
+        {/* Bot slash-command popover. Surfaces the union of `commands`
+            arrays from every bot member of this conversation. Tapping a
+            row inserts `/cmd ` so the user can type their args, then
+            send normally — handleSend treats it as a regular text
+            message but also tags the payload with `bot_invoke=true` for
+            future server-side routing. */}
+        {showBotPopup && (() => {
+          const bots = (members || []).filter(m =>
+            typeof m?.email === 'string' && m.email.toLowerCase().endsWith('@bots.chatyy')
+          );
+          // Flatten { bot, command, description } rows. Each bot stores
+          // commands as a JSON array on its membership row (server-side)
+          // or via the `commands` field returned by chat_bot_info.
+          const rows = [];
+          for (const b of bots) {
+            const cmds = Array.isArray(b.commands) ? b.commands
+              : (typeof b.commands === 'string' ? (() => { try { return JSON.parse(b.commands) || []; } catch { return []; } })() : []);
+            for (const c of cmds) {
+              const cn = String(c?.name || c?.command || '').toLowerCase();
+              if (!cn) continue;
+              if (botCommandFilter && !cn.startsWith(botCommandFilter)) continue;
+              rows.push({ bot: b, command: cn, description: String(c?.description || '') });
+            }
+          }
+          if (rows.length === 0) return null;
+          return (
+            <View
+              style={{
+                position: 'absolute', bottom: '100%', left: 8, right: 8,
+                marginBottom: 6, maxHeight: 220,
+                backgroundColor: colors.surface,
+                borderRadius: 14,
+                borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+                shadowColor: '#000', shadowOffset: { width: 0, height: -2 },
+                shadowOpacity: 0.18, shadowRadius: 14, elevation: 8,
+                zIndex: 50,
+              }}
+            >
+              <ScrollView keyboardShouldPersistTaps="handled" style={{ maxHeight: 220 }}>
+                {rows.slice(0, 40).map((row, i) => (
+                  <TouchableOpacity
+                    key={`${row.bot.email}-${row.command}-${i}`}
+                    onPress={() => {
+                      // Rewrite the input to `/cmd ` so user can finish
+                      // typing args. Send goes through the normal path.
+                      setInputText('/' + row.command + ' ');
+                      setShowBotPopup(false);
+                      setBotCommandFilter('');
+                    }}
+                    style={{
+                      flexDirection: 'row', alignItems: 'center', gap: 10,
+                      paddingHorizontal: 14, paddingVertical: 10,
+                      borderBottomWidth: i < rows.length - 1 ? StyleSheet.hairlineWidth : 0,
+                      borderBottomColor: colors.border,
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={'/' + row.command}
+                  >
+                    <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#7C3AED22', alignItems: 'center', justifyContent: 'center' }}>
+                      <Text style={{ color: '#7C3AED', fontSize: 14, fontWeight: '800' }}>/</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: colors.text, fontSize: 14, fontWeight: '700' }} numberOfLines={1}>
+                        /{row.command}
+                        <Text style={{ color: colors.textSecondary, fontWeight: '500' }}>
+                          {'  @' + (row.bot.email || '').split('@')[0]}
+                        </Text>
+                      </Text>
+                      {!!row.description && (
+                        <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 1 }} numberOfLines={1}>
+                          {row.description}
+                        </Text>
+                      )}
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            </View>
+          );
+        })()}
         {/* Blocked banner */}
         {(iBlockedThem || theyBlockedMe) && conversationType === 'direct' ? (
           <View style={[styles.inputBar, {
@@ -17226,6 +17692,19 @@ export default function ChatConversationScreen() {
                   const next = isMentioning(text);
                   setShowMentionPopup(prev => prev === next ? prev : next);
                 }
+                // Bot slash-command detection. Show the popover the moment the
+                // user types `/` (or any /word with no whitespace yet) IF this
+                // conversation has at least one bot member. Hide as soon as a
+                // space follows the command or the slash is removed.
+                try {
+                  const slashMatch = /^\/(\w*)$/.exec(text);
+                  const hasBots = (membersRef.current || []).some(m =>
+                    typeof m?.email === 'string' && m.email.toLowerCase().endsWith('@bots.chatyy')
+                  );
+                  const shouldShow = !!(slashMatch && hasBots);
+                  setShowBotPopup(prev => prev === shouldShow ? prev : shouldShow);
+                  if (shouldShow) setBotCommandFilter((slashMatch[1] || '').toLowerCase());
+                } catch {}
                 // Typing indicator: fire IMMEDIATELY on first keystroke, then
                 // throttle subsequent events to 1 every 3s. Auto-stop 4s after
                 // last keystroke. Old code waited 500ms of silence which meant
@@ -17380,6 +17859,43 @@ export default function ChatConversationScreen() {
                 <IconPaperclip size={21} color={isDark ? '#8696a0' : '#8696a0'} />
               )}
             </TouchableOpacity>
+            {isSavedMode && (
+              <>
+                {/* Cabeçalho — quick-insert a section heading. Inserts a
+                    `## ` markdown prefix on a fresh line so the bubble
+                    renders as a bigger/bold heading once sent. The bubble
+                    renderer already handles ## via the existing markdown
+                    pipeline, so no new message type is needed. */}
+                <TouchableOpacity
+                  onPress={() => {
+                    const cur = inputText || '';
+                    const sep = cur && !cur.endsWith('\n') ? '\n' : '';
+                    setInputText(cur + sep + '## ');
+                  }}
+                  style={{ width: 36, height: 44, alignItems: 'center', justifyContent: 'center' }}
+                  accessibilityLabel="Cabeçalho"
+                  accessibilityRole="button"
+                >
+                  <Text style={{ color: isDark ? '#8696a0' : '#8696a0', fontWeight: '800', fontSize: 15 }}>H</Text>
+                </TouchableOpacity>
+                {/* Lembrar-me em — schedule the message via existing
+                    chatScheduleMessage so the user gets it back as a chat
+                    bubble at the picked time (Telegram self-reminder
+                    parity). Uses native datetime picker on iOS/Android
+                    and an HTML datetime-local input on web. */}
+                <TouchableOpacity
+                  onPress={() => {
+                    if (!inputText.trim()) return;
+                    setShowSavedReminder(true);
+                  }}
+                  style={{ width: 36, height: 44, alignItems: 'center', justifyContent: 'center' }}
+                  accessibilityLabel="Lembrar-me em"
+                  accessibilityRole="button"
+                >
+                  <IconClock size={20} color={isDark ? '#8696a0' : '#8696a0'} />
+                </TouchableOpacity>
+              </>
+            )}
           </View>
 
           {/* Send / Mic - OUTSIDE the pill, separate green circle */}

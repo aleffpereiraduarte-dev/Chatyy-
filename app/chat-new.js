@@ -1516,6 +1516,45 @@ export default function ChatNewScreen() {
                       when the server returns no tags yet. */}
                   {mode === 'direct' && !pickMode && renderTrendingTagsBlock()}
 
+                  {/* Comunidades — Telegram-style supergroups (announcement
+                      channel + sub-groups + admin tools). Sits ABOVE
+                      "Descobrir canais" so users discover the bigger feature
+                      first. Hidden in member-pick flows. */}
+                  {mode === 'direct' && !pickMode && (
+                    <TouchableOpacity
+                      onPress={() => router.push('/community/discover')}
+                      activeOpacity={0.7}
+                      style={{
+                        marginHorizontal: Spacing.md,
+                        marginTop: 8,
+                        marginBottom: 4,
+                        padding: 14,
+                        borderRadius: 12,
+                        backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7',
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 12,
+                      }}
+                    >
+                      <View style={{
+                        width: 40, height: 40, borderRadius: 20,
+                        backgroundColor: '#7C3AED',
+                        alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>C</Text>
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>
+                          {t('chat.communitiesTitle') || 'Comunidades'}
+                        </Text>
+                        <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
+                          {t('chat.communitiesSubtitle') || 'Grupos grandes com canal de avisos e sub-grupos'}
+                        </Text>
+                      </View>
+                      <Text style={{ color: colors.textSecondary, fontSize: 22, fontWeight: '300' }}>›</Text>
+                    </TouchableOpacity>
+                  )}
+
                   {/* Descobrir canais — Telegram-style public channel feed.
                       Only on the default "direct" mode (when picking who to
                       chat with). Hidden in group/channel-create flows where

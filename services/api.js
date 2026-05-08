@@ -2087,6 +2087,45 @@ export async function callNotify(conversationId, callId, video) {
   return apiCall('call_notify', { conversation_id: conversationId, room_id: callId, call_id: callId, video }, 'POST');
 }
 
+// ─── Voicemail ────────────────────────────────────────────────────────
+// Caller leaves a voice message after a missed/declined call. Audio is
+// uploaded directly to R2 (Google-Photos-style) — backend issues a
+// presigned PUT, client PUTs the blob, then voicemail_send commits the
+// row + posts a `kind:voicemail` chat message in the conversation.
+//
+// 60s max duration is enforced both client-side (UI cap) and server-side
+// (so a tampered client can't bypass).
+export async function voicemailInitUpload(conversationId, mimeType = 'audio/m4a') {
+  return apiCall('voicemail_init_upload', {
+    conversation_id: conversationId,
+    mime_type: mimeType,
+  }, 'POST');
+}
+
+export async function voicemailSend(toEmail, audioR2Key, durationSec, conversationId = null) {
+  return apiCall('voicemail_send', {
+    to_email: toEmail,
+    audio_r2_key: audioR2Key,
+    duration_sec: Math.max(1, Math.min(60, Math.round(durationSec || 0))),
+    conversation_id: conversationId || 0,
+  }, 'POST');
+}
+
+export async function voicemailGet(voicemailId) {
+  return apiCall('voicemail_get', { voicemail_id: voicemailId }, 'POST');
+}
+
+export async function voicemailMarkListened(voicemailId) {
+  return apiCall('voicemail_mark_listened', { voicemail_id: voicemailId }, 'POST');
+}
+
+// Manually trigger transcription. Normally voicemail_send fires it
+// inline so the recipient sees a transcript on first open — this is the
+// fallback when the inline call timed out (slow whisper response).
+export async function voicemailTranscribe(voicemailId) {
+  return apiCall('voicemail_transcribe', { voicemail_id: voicemailId }, 'POST');
+}
+
 export async function chatUpdateLiveLocation(messageId, latitude, longitude, address) {
   return apiCall('chat_update_live_location', { message_id: messageId, latitude, longitude, address }, 'POST');
 }
@@ -2777,6 +2816,27 @@ export async function chatGroupAdmin(conversationId, targetEmailOrFlags, action)
 
 export async function chatRemoveMember(conversationId, targetEmail) {
   return apiCall('chat_remove_member', { conversation_id: conversationId, target_email: targetEmail }, 'POST');
+}
+
+// Scheduled calls — pre-arrange a call. The cron-scheduled-calls.php
+// worker fires push reminders 15min and 1min before the slot. Joining is
+// gated to ±5min around scheduled_at.
+export async function callSchedule({ participants, title, scheduledAt, durationMin = 30 }) {
+  return apiCall('call_schedule', {
+    participants,
+    title,
+    scheduled_at: scheduledAt,
+    duration_min: durationMin,
+  }, 'POST');
+}
+export async function callScheduleList() {
+  return apiCall('call_schedule_list', {}, 'POST');
+}
+export async function callScheduleCancel(id) {
+  return apiCall('call_schedule_cancel', { id }, 'POST');
+}
+export async function callScheduleJoin(id) {
+  return apiCall('call_schedule_join', { id }, 'POST');
 }
 
 export async function chatGroupInfo(conversationId) {
@@ -4856,9 +4916,36 @@ export async function spotlightList(page = 1, limit = 10) {
 
 // Bots API
 export async function botCreate(name, username, webhookUrl = '', description = '') {
-  return apiCall('bot_create', { name, username, webhook_url: webhookUrl, description }, 'POST');
+  // Backend accepts `handle` (spec) or `username` (legacy) — send both for
+  // forward compat with the spec'd schema.
+  return apiCall('bot_create', {
+    name,
+    username,
+    handle: username,
+    webhook_url: webhookUrl,
+    description,
+  }, 'POST');
 }
 export async function botList() { return apiCall('bot_list', {}, 'POST'); }
+// Spec'd alias — `botListMine` mirrors the documented bot_list_mine action.
+export async function botListMine() { return apiCall('bot_list_mine', {}, 'POST'); }
+// Public bot search by handle/name. Returns up to 50 matches.
+export async function botSearch(query) { return apiCall('bot_search', { q: String(query || '') }, 'POST'); }
+// Update the slash-command list for an owned bot. `commands` is an array of
+// `{ name, description }` objects (description optional).
+export async function botSetCommands(botId, commands) {
+  return apiCall('bot_set_commands', { bot_id: botId, commands: Array.isArray(commands) ? commands : [] }, 'POST');
+}
+// Run a slash command on behalf of a bot in a conversation. Currently a
+// stub on the backend — drops a system message to confirm the flow works.
+export async function botInvokeCommand(botHandle, conversationId, command, args = '') {
+  return apiCall('bot_invoke_command', {
+    bot_handle: String(botHandle || '').replace(/^@/, ''),
+    conversation_id: Number(conversationId),
+    command: String(command || '').replace(/^\//, ''),
+    args: String(args || ''),
+  }, 'POST');
+}
 export async function botUpdate(botId, fields) { return apiCall('bot_update', { bot_id: botId, ...fields }, 'POST'); }
 export async function botDelete(botId) { return apiCall('bot_delete', { bot_id: botId }, 'POST'); }
 export async function botRegenerateToken(botId) { return apiCall('bot_regenerate_token', { bot_id: botId }, 'POST'); }
@@ -5667,18 +5754,30 @@ export async function adList() {
   return apiCall('ad_list');
 }
 
-// ─── Communities ───
-export async function communityCreate(name, description = '', icon = '') {
-  return apiCall('community_create', { name, description, icon }, 'POST');
+// ─── Communities (Telegram-style supergroups) ───
+// Backend (chat.php): community_* actions with handle/photo/cover/rules/welcome.
+export async function communityCreate(payload = {}) {
+  // Accept either positional legacy (name, description, icon) or full payload object.
+  const body = (typeof payload === 'string')
+    ? { name: payload, description: arguments[1] || '', photo_url: arguments[2] || '' }
+    : { ...payload };
+  return apiCall('community_create', body, 'POST');
 }
 export async function communityList() {
   return apiCall('community_list');
 }
-export async function communityInfo(communityId) {
-  return apiCall('community_info', { community_id: communityId });
+export async function communityInfo(idOrHandle) {
+  // Accept numeric id or string @handle — backend resolves both.
+  return apiCall('community_info', { community_id: idOrHandle, id_or_handle: idOrHandle });
 }
-export async function communityAddGroup(communityId, conversationId) {
-  return apiCall('community_add_group', { community_id: communityId, conversation_id: conversationId }, 'POST');
+export async function communityUpdate(communityId, fields = {}) {
+  return apiCall('community_update', { community_id: communityId, ...fields }, 'POST');
+}
+export async function communityAddGroup(communityId, opts = {}) {
+  // opts: { conversation_id?, name?, kind? }
+  // Back-compat: a numeric second arg means "link existing conversation".
+  const body = (typeof opts === 'number') ? { conversation_id: opts } : opts;
+  return apiCall('community_add_group', { community_id: communityId, ...body }, 'POST');
 }
 export async function communityRemoveGroup(communityId, conversationId) {
   return apiCall('community_remove_group', { community_id: communityId, conversation_id: conversationId }, 'POST');
@@ -5686,11 +5785,25 @@ export async function communityRemoveGroup(communityId, conversationId) {
 export async function communityMembers(communityId) {
   return apiCall('community_members', { community_id: communityId });
 }
-export async function communityAnnouncement(communityId, content) {
-  return apiCall('community_announcement', { community_id: communityId, content }, 'POST');
+export async function communityAnnounce(communityId, text, attachments = null) {
+  return apiCall('community_announce', { community_id: communityId, text, attachments }, 'POST');
 }
-export async function communityJoin(communityId) {
-  return apiCall('community_join', { community_id: communityId }, 'POST');
+// Back-compat with older call sites
+export async function communityAnnouncement(communityId, content) {
+  return apiCall('community_announce', { community_id: communityId, text: content }, 'POST');
+}
+export async function communityMemberRole(communityId, memberEmail, role) {
+  return apiCall('community_member_role', { community_id: communityId, member_email: memberEmail, role }, 'POST');
+}
+export async function communityKick(communityId, memberEmail) {
+  return apiCall('community_kick', { community_id: communityId, member_email: memberEmail }, 'POST');
+}
+export async function communityDiscover(opts = {}) {
+  // opts: { category?, q?, limit?, offset? }
+  return apiCall('community_discover', { ...opts });
+}
+export async function communityJoin(idOrHandle) {
+  return apiCall('community_join', { community_id: idOrHandle, id_or_handle: idOrHandle }, 'POST');
 }
 export async function communityLeave(communityId) {
   return apiCall('community_leave', { community_id: communityId }, 'POST');

@@ -1425,7 +1425,70 @@ export default function CallScreen() {
             setTimeout(() => { try { router.canGoBack() ? router.back() : router.replace('/chat'); } catch { try { router.replace('/chat'); } catch {} } }, 1500);
           }
         });
-        wsUnsubsRef.current = [unsubTurn, unsubAnswer, unsubIce, unsubOffer, unsubAccepted, unsubEnd];
+        // Voicemail surface: when the recipient never picks up (server fires
+        // `call_missed` after 30s of RINGING) or explicitly declines
+        // (`call_declined` with can_leave_voicemail=true), redirect the
+        // caller to the voicemail recorder. We only act on the caller side
+        // — the callee already saw the missed-call bubble in their chat.
+        const goToVoicemail = (reason, recipient, payload) => {
+          if (!isCaller) return;
+          if (callAcceptedRef.current) return; // call already connected; ignore late events
+          if (endedRef.current) return;
+          endedRef.current = true;
+          // Stop any caller-side ringing tone first.
+          try { const { stopRingtone } = require('../services/ringtone'); stopRingtone(); } catch {}
+          if (callerTimeoutRef.current) clearTimeout(callerTimeoutRef.current);
+          if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+          if (statsIntervalRef.current) { clearInterval(statsIntervalRef.current); statsIntervalRef.current = null; }
+          if (iceTimeoutRef.current) { clearTimeout(iceTimeoutRef.current); iceTimeoutRef.current = null; }
+          if (turnRefreshRef.current) { clearInterval(turnRefreshRef.current); turnRefreshRef.current = null; }
+          // Tear down media + PC quickly — no sense holding the mic open.
+          try { localStreamRef.current?.getTracks?.().forEach(t => { try { t.stop(); } catch {} }); } catch {}
+          localStreamRef.current = null;
+          try { pcRef.current?.close?.(); } catch {}
+          pcRef.current = null;
+          try { setCallActive(false); } catch {}
+          try { callKeepEnd(callId); } catch {}
+          // Log the missed/declined call to local history so it shows in
+          // the Calls tab even before the chat sync round-trips.
+          try {
+            addCallToHistory({
+              contactEmail: recipient || contactEmail,
+              contactName: callerName,
+              callId,
+              type: 'outgoing',
+              video: isVideoParam === '1' || isVideoParam === 'true',
+              timestamp: Date.now(),
+              duration: 0,
+              status: reason === 'declined' ? 'declined' : 'missed',
+            }).catch(() => {});
+          } catch {}
+          // Hand off to the voicemail recorder. We use replace so back-out
+          // of the recorder lands on /chat, not the dead call screen.
+          const qp = new URLSearchParams({
+            recipient: recipient || contactEmail || '',
+            name: callerName || '',
+            conversationId: String(payload?.conversation_id || conversationId || ''),
+            reason: reason || 'missed',
+          });
+          try { router.replace('/voicemail-recorder?' + qp.toString()); } catch {
+            try { router.replace('/chat'); } catch {}
+          }
+        };
+        const unsubMissed = mailWs.on('call_missed', (data) => {
+          if (!data || data.call_id !== callId) return;
+          if (data.can_leave_voicemail === false) return;
+          goToVoicemail('missed', data.recipient_email || contactEmail, data);
+        });
+        const unsubDeclined = mailWs.on('call_declined', (data) => {
+          if (!data || data.call_id !== callId) return;
+          // call_declined fires for the caller when the callee taps
+          // Decline. Only offer voicemail if the server signals it.
+          if (!data.can_leave_voicemail) return;
+          goToVoicemail('declined', data.recipient_email || data.email || contactEmail, data);
+        });
+
+        wsUnsubsRef.current = [unsubTurn, unsubAnswer, unsubIce, unsubOffer, unsubAccepted, unsubEnd, unsubMissed, unsubDeclined];
 
         // Set audio mode BEFORE getUserMedia so music pauses immediately when calling.
         // Prefer the native AVAudioSession module — it sets the right category

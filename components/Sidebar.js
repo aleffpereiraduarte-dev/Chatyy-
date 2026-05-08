@@ -7,7 +7,7 @@ import {
   IconInbox, IconSend, IconDraft, IconTrash, IconAlertTriangle,
   IconArchive, IconStarFilled, IconCompose, IconFolder, IconClock,
   IconFolderPlus, IconPlus, IconX, IconCheck,
-  IconFilm, IconMessageSquare, IconCalendar, IconGlobe, IconUser, IconZap, IconCamera, IconStar, IconStickyNote, IconBell, IconSearch,
+  IconFilm, IconMessageSquare, IconCalendar, IconGlobe, IconUser, IconZap, IconCamera, IconStar, IconStickyNote, IconBell, IconSearch, IconBookmark,
 } from './Icons';
 import { LABEL_COLORS, LABEL_NAMES } from './LabelPicker';
 import * as api from '../services/api';
@@ -444,6 +444,10 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
           { label: t('sidebar.contacts'),  icon: IconUser,       route: '/contacts' },
           { label: t('sidebar.documents'), icon: IconGlobe,      route: '/documentos', color: '#4285f4' },
           { label: t('sidebar.notes'),     icon: IconStickyNote, route: '/notes',      color: '#f59e0b' },
+          // Saved Messages — Telegram-style "chat with yourself" with
+          // dedicated screen (tabs, search, schedule reminders). Floppy-
+          // disk feel uses IconBookmark since the codebase already ships it.
+          { label: t('chat.savedMessages') || 'Mensagens Salvas', icon: IconBookmark, route: '/saved-messages', color: '#7C3AED' },
         ];
         const list = showMoreQuick ? [...primary, ...secondary] : primary;
         return (

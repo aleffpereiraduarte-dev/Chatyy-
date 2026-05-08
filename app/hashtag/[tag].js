@@ -7,8 +7,10 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../context/ThemeContext';
 import { useLanguage } from '../../context/LanguageContext';
-import { IconArrowLeft } from '../../components/Icons';
+import { IconArrowLeft, IconHash, IconAlertTriangle } from '../../components/Icons';
 import AvatarCircle from '../../components/AvatarCircle';
+import EmptyStateCard from '../../components/EmptyStateCard';
+import { ListSkeleton } from '../../components/SkeletonLoader';
 import * as api from '../../services/api';
 
 // Telegram-style hashtag results screen — public-channel scoped.
@@ -150,15 +152,24 @@ export default function ChatHashtagScreen() {
       </View>
 
       {loading && messages.length === 0 ? (
-        <View style={sty.center}>
-          <ActivityIndicator size="small" color={colors.primary} />
-        </View>
+        <ListSkeleton count={6} showIcon={true} />
+      ) : errorMsg && messages.length === 0 ? (
+        <EmptyStateCard
+          Icon={IconAlertTriangle}
+          title={t('common.error') || 'Erro'}
+          subtitle={errorMsg}
+          ctaLabel={t('common.retry') || 'Tentar de novo'}
+          onPress={load}
+          tone="warning"
+        />
       ) : messages.length === 0 ? (
-        <View style={sty.center}>
-          <Text style={[sty.empty, { color: colors.textSecondary }]}>
-            {errorMsg || (t('chat.hashtagNoResults') || `Nenhuma mensagem com #${tag} ainda.`)}
-          </Text>
-        </View>
+        <EmptyStateCard
+          Icon={IconHash}
+          title={'#' + tag}
+          subtitle={t('chat.hashtagNoResults') || `Nenhuma mensagem com #${tag} ainda. Volte mais tarde.`}
+          ctaLabel={t('common.retry') || 'Tentar de novo'}
+          onPress={load}
+        />
       ) : (
         <FlatList
           data={messages}

@@ -3,7 +3,8 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animate
 import Svg, { Path, Polyline, Circle as SvgCircle, Line, Rect } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
 import BrandFab from './BrandFab';
-import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus, IconTrash, IconSmartphone, IconCheck } from './Icons';
+import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus, IconTrash, IconSmartphone, IconCheck, IconCalendar } from './Icons';
+import ScheduleCallModal from './ScheduleCallModal';
 import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, voipCall, voipToken, voipSipCredentials, voipMinutesRemaining, voipUpdateDuration, searchContacts, voipVerifiedNumberRequest, voipVerifiedNumberConfirm, getProfile } from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import { useCall } from '../context/CallContext';
@@ -663,6 +664,15 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, onPress, 
           )}
           {durationStr ? (
             <Text style={[s.historyType, { color: subColor }]}>{durationStr}</Text>
+          ) : null}
+          {/* Voicemail indicator: tiny mic icon when the missed/declined
+              call has an attached voicemail. Tapping the row already opens
+              the conversation, where the bubble is visible. */}
+          {(item.has_voicemail || item.voicemail_id) ? (
+            <Text
+              style={{ fontSize: 12, color: RED, marginLeft: 4 }}
+              accessibilityLabel={t?.('voicemail.attached') || 'Mensagem de voz'}
+            >🎤</Text>
           ) : null}
         </View>
       </View>
@@ -2837,6 +2847,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
   const [loadingHistory, setLoadingHistory] = useState(!(Array.isArray(_preloadedCalls) && _preloadedCalls.length > 0));
   const lastCallsFpRef = useRef(_callsFingerprint(_preloadedCalls));
   const [dialerVisible, setDialerVisible] = useState(false);
+  const [scheduleVisible, setScheduleVisible] = useState(false);
   const [infoItem, setInfoItem] = useState(null);
   const [showCallerIdModal, setShowCallerIdModal] = useState(false);
   const [callerIdVerified, setCallerIdVerified] = useState(false);
@@ -3113,7 +3124,38 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     <View style={[s.container, { backgroundColor: bgColor }]}>
       {/* Header with tabs */}
       <View style={[s.header, { backgroundColor: isDark ? '#000000' : '#f2f2f7' }]}>
-        <View style={s.headerTop}>
+        <View style={[s.headerTop, { flexDirection: 'row', alignItems: 'center', gap: 8, justifyContent: 'flex-end' }]}>
+          <TouchableOpacity
+            onPress={() => setScheduleVisible(true)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={{
+              flexDirection: 'row', alignItems: 'center', gap: 5,
+              paddingHorizontal: 11, paddingVertical: 6, borderRadius: 14,
+              backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)',
+            }}
+            accessibilityLabel={t?.('calls.schedule') || 'Agendar'}
+          >
+            <IconCalendar size={13} color="#7C3AED" />
+            <Text style={{ color: '#7C3AED', fontSize: 13, fontWeight: '600' }}>
+              {t?.('calls.schedule') || 'Agendar'}
+            </Text>
+          </TouchableOpacity>
+          {router && (
+            <TouchableOpacity
+              onPress={() => router.push('/call-schedule')}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={{
+                flexDirection: 'row', alignItems: 'center', gap: 5,
+                paddingHorizontal: 11, paddingVertical: 6, borderRadius: 14,
+                backgroundColor: isDark ? 'rgba(124,58,237,0.10)' : 'rgba(124,58,237,0.06)',
+              }}
+              accessibilityLabel={t?.('calls.scheduled') || 'Agendadas'}
+            >
+              <Text style={{ color: '#7C3AED', fontSize: 13, fontWeight: '600' }}>
+                {t?.('calls.scheduled') || 'Agendadas'}
+              </Text>
+            </TouchableOpacity>
+          )}
           {filteredHistory.length > 0 && (
             <TouchableOpacity
               onPress={handleClearAll}
@@ -3235,6 +3277,18 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         onCallPlaced={refreshData}
         callerIdVerified={callerIdVerified}
         onVerified={() => setCallerIdVerified(true)}
+      />
+
+      {/* Schedule a call — opens the date+title+participants picker.
+          On success the participants get a system DM with a tap-to-add
+          entry and we send the user to the scheduled-list screen. */}
+      <ScheduleCallModal
+        visible={scheduleVisible}
+        onClose={() => setScheduleVisible(false)}
+        onScheduled={() => {
+          setScheduleVisible(false);
+          if (router) router.push('/call-schedule');
+        }}
       />
 
       {/* Call info modal */}
