@@ -2795,20 +2795,15 @@ window.updatePos=function(){};
 window.addEventListener('message', function(e){var d=e&&e.data; if(d&&d.type==='updatePos'){window.updatePos(d.lat,d.lng);}});
 </script></body></html>`;
 
-  // 2026-05-09 v2: usuário pediu Google Maps de volta. Em vez de JS API
-  // (que precisa billing habilitado e mostrava watermark "for development
-  // purposes only"), uso Maps Embed API — é free unlimited, só precisa
-  // do mesmo key com "Maps Embed API" ligado em GCP. Pra static views ou
-  // sem live, embed é o caminho. Pra live-tracking com pulse animado
-  // ainda preciso JS API → fallback Leaflet quando isLive=true.
-  const embedKey = _gKey;
-  const gembedHtml = embedKey ? `<!DOCTYPE html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/><style>html,body{margin:0;padding:0;width:100%;height:100%;background:#000}iframe{border:0;width:100%;height:100%;display:block}</style></head><body><iframe loading="lazy" allowfullscreen referrerpolicy="no-referrer-when-downgrade" src="https://www.google.com/maps/embed/v1/place?key=${embedKey}&q=${numLat},${numLng}&zoom=17"></iframe></body></html>` : null;
-  // Live tracking precisa JS API pra mover o pino em real-time; Embed
-  // não suporta updatePos. Usa JS API quando isLive E key disponível,
-  // senão cai pro Embed (estático bonito) ou Leaflet (fallback final).
+  // 2026-05-09 v3: A key Maps Embed API v1 retorna 403 (não habilitada
+  // em GCP). Trocado pro keyless legacy embed (`maps.google.com/maps?...&output=embed`)
+  // que não precisa key — Google ainda mantém suportado e retorna 200.
+  // Pra live-tracking com pulse animado, mantém JS API quando key disponível
+  // (mesmo limite de billing aplica), senão cai pro Leaflet.
+  const gKeylessEmbed = `<!DOCTYPE html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/><style>html,body{margin:0;padding:0;width:100%;height:100%;background:#000}iframe{border:0;width:100%;height:100%;display:block}</style></head><body><iframe loading="lazy" allowfullscreen referrerpolicy="no-referrer-when-downgrade" src="https://maps.google.com/maps?q=${numLat},${numLng}&z=17&output=embed"></iframe></body></html>`;
   const html = isStillLive
     ? (gmapsHtml || leafletHtml)
-    : (gembedHtml || gmapsHtml || leafletHtml);
+    : (gKeylessEmbed);
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
