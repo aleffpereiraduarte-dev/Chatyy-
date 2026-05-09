@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo, Suspense } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Animated, Dimensions, TextInput, Modal, Pressable } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Animated, Dimensions, TextInput, Modal, Pressable, KeyboardAvoidingView } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
@@ -1247,6 +1247,10 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={{ flex: 1 }}
+      >
       <TouchableOpacity
         activeOpacity={1}
         onPress={onClose}
@@ -1358,6 +1362,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
           </ScrollView>
         </TouchableOpacity>
       </TouchableOpacity>
+      </KeyboardAvoidingView>
     </Modal>
   );
 });
