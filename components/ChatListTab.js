@@ -3806,7 +3806,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                 </Text>
               ) : (
                 <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.4, color: isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)' }}>
-                  {(t?.('chat.pinned') || 'FIXADAS').toUpperCase()}
+                  {((() => { const v = t?.('chat.pinned'); return v && v !== 'chat.pinned' ? v : 'FIXADAS'; })()).toUpperCase()}
                 </Text>
               )}
             </View>
@@ -4031,7 +4031,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         {/* IconPin removido (bug print 3 — 2026-05-08): renderizava como
             blob/bullet esfumado antes de "FIXADAS". Caps já comunica. */}
         <Text style={[s.sectionLabelText, { color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)' }]}>
-          {t('chat.pinned') || 'FIXADAS'}
+          {(() => { const v = t('chat.pinned'); return v && v !== 'chat.pinned' ? v : 'FIXADAS'; })()}
         </Text>
       </View>
     );

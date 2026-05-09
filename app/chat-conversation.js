@@ -6100,6 +6100,11 @@ export default function ChatConversationScreen() {
         if (trimmed && (Date.now() - lastSentAtRef.current) < 3000) {
           return;
         }
+        // Never persist the AI loading placeholder as a draft. If the AI call
+        // is in flight when the user backgrounds the app, "Pensando..." would
+        // otherwise sync to other devices and resurface as a fake draft.
+        const aiThinking = (t?.('chatConv.aiThinking') || 'Pensando...').trim();
+        if (trimmed === aiThinking) return;
         if (trimmed !== draftSavedRef.current) {
           if (trimmed) {
             await AsyncStorage.setItem(userScopedKey(`chat_draft_${conversationId}`), trimmed);
