@@ -1075,14 +1075,13 @@ export default function Profile({
             )}
           </View>
           {actions.is_self ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <TouchableOpacity onPress={() => router?.push?.('/chat-new')} style={{ padding: 6 }} accessibilityLabel={t?.('profile.discover') || 'Descobrir pessoas'}>
-                <IconUserPlus size={24} color={colors?.text} />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => (onOpenSettings ? onOpenSettings() : setSettingsOpen(true))} style={{ padding: 6 }} accessibilityLabel={t?.('settings.title') || 'Configurações'}>
-                <IconMoreHorizontal size={24} color={colors?.text} />
-              </TouchableOpacity>
-            </View>
+            // Self profile: only kebab (settings/options). The discover-people
+            // (+) button used to live here too, but it was redundant — you can
+            // already open chat-new from the dedicated tab/FAB, and "follow
+            // yourself" reads as a bug to users. Removed 2026-05-08.
+            <TouchableOpacity onPress={() => (onOpenSettings ? onOpenSettings() : setSettingsOpen(true))} style={{ padding: 6 }} accessibilityLabel={t?.('settings.title') || 'Configurações'}>
+              <IconMoreHorizontal size={24} color={colors?.text} />
+            </TouchableOpacity>
           ) : (
             <TouchableOpacity onPress={() => setMenuOpen(true)} style={{ padding: 6 }} accessibilityLabel="More">
               <IconMoreHorizontal size={24} color={colors?.text} />
@@ -1317,10 +1316,11 @@ export default function Profile({
           </View>
         )}
         {actions.is_self && (
-          // Instagram-grade self action row: Editar perfil + Compartilhar
-          // perfil + a square "+" tile for "discover/add people". The +
-          // button is fixed-width (44) so the two text pills get the most
-          // breathing room — matches Instagram exactly.
+          // Self action row: Editar perfil + Compartilhar perfil. The square
+          // "+" discover-people tile that used to sit on the right was
+          // removed 2026-05-08 — it duplicated the top-right "+" (also
+          // removed) and read as "follow yourself" on a self profile. Users
+          // who want to find people use the dedicated chat-new entry point.
           <View style={{ flexDirection: 'row', gap: 8, alignItems: 'stretch' }}>
             <FlatButton
               label={t?.('profile.edit') || 'Editar perfil'}
@@ -1334,20 +1334,6 @@ export default function Profile({
               colors={colors}
               isDark={isDark}
             />
-            <TouchableOpacity
-              onPress={() => router?.push?.('/chat-new')}
-              activeOpacity={0.85}
-              accessibilityLabel={t?.('profile.discover') || 'Descobrir pessoas'}
-              style={{
-                width: 44, paddingVertical: 11,
-                borderRadius: 999,
-                alignItems: 'center', justifyContent: 'center',
-                borderWidth: 1,
-                borderColor: isDark ? 'rgba(167,139,250,0.55)' : 'rgba(124,58,237,0.30)',
-              }}
-            >
-              <IconUserPlus size={16} color={colors?.text || (isDark ? '#fff' : '#111')} />
-            </TouchableOpacity>
           </View>
         )}
       </View>

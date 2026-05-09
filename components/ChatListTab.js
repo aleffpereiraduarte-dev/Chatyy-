@@ -3792,11 +3792,11 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
               the horizontal pin scroll, so nothing overlaps a pin card.
               Long-press tambem continua funcionando. */}
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingRight: 14, marginBottom: 10 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
-              {/* size 11 era pequeno demais — SVG do pin colapsava num blob
-                  que o user via como bullet '●' (REGRA: nunca emoji em UI).
-                  size 14 mantém o head + needle distinguíveis. */}
-              <IconPin size={14} color={isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.4)'} />
+            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0 }}>
+              {/* IconPin removido (bug print 3 — 2026-05-08): mesmo em size 14
+                  o SVG continuava parecendo bullet/blob esfumado antes do
+                  texto "FIXADAS". WhatsApp/Telegram não usam ícone aqui;
+                  o caps + letterSpacing já comunica que é section header. */}
               {pinnedEditMode && !pinnedHintSeen ? (
                 <Text
                   numberOfLines={1}
@@ -4028,7 +4028,8 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     }
     return (
       <View style={[s.sectionLabel, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
-        <IconPin size={13} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)'} />
+        {/* IconPin removido (bug print 3 — 2026-05-08): renderizava como
+            blob/bullet esfumado antes de "FIXADAS". Caps já comunica. */}
         <Text style={[s.sectionLabelText, { color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)' }]}>
           {t('chat.pinned') || 'FIXADAS'}
         </Text>
@@ -4892,10 +4893,12 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
         initial = (getCachedMessagesSync(conv.id, 50) || []).slice(-40);
         setPreviewMsgs(initial);
       } catch { setPreviewMsgs([]); }
+      // Polish: responsive iOS-style spring (damping≈18, mass 0.7, stiffness 200)
+      // — overshoots subtly so the peek feels tactile instead of "linear pop".
       Animated.parallel([
-        Animated.spring(slideY, { toValue: 0, tension: 100, friction: 11, useNativeDriver: true }),
-        Animated.spring(scale, { toValue: 1, tension: 100, friction: 11, useNativeDriver: true }),
-        Animated.timing(backdrop, { toValue: 1, duration: 200, useNativeDriver: true }),
+        Animated.spring(slideY, { toValue: 0, stiffness: 200, damping: 18, mass: 0.7, useNativeDriver: true }),
+        Animated.spring(scale, { toValue: 1, stiffness: 220, damping: 19, mass: 0.7, useNativeDriver: true }),
+        Animated.timing(backdrop, { toValue: 1, duration: 220, useNativeDriver: true }),
       ]).start();
       // Then async-refresh from backend so the peek always shows the
       // *real* last messages (with timestamps + read state) even when
@@ -4939,6 +4942,18 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
       panY.setValue(0);
     });
   }, [panY, backdrop, SH]);
+
+  // Tap-outside dismiss — fade backdrop + the peek before unmount so the
+  // modal doesn't pop out. Mirrors iOS/Telegram action-sheet dismiss feel.
+  const handleBackdropTap = React.useCallback(() => {
+    Animated.parallel([
+      Animated.timing(backdrop, { toValue: 0, duration: 200, useNativeDriver: true }),
+      Animated.timing(slideY, { toValue: 30, duration: 200, useNativeDriver: true }),
+      Animated.timing(scale, { toValue: 0.96, duration: 200, useNativeDriver: true }),
+    ]).start(() => {
+      try { onCloseRef.current?.(); } catch {}
+    });
+  }, [backdrop, slideY, scale]);
   const _snapBackDrag = React.useCallback(() => {
     Animated.parallel([
       Animated.spring(panY, { toValue: 0, friction: 8, tension: 90, useNativeDriver: true }),
@@ -5001,41 +5016,42 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
   const danger = '#ef4444';
 
   // Inline SVG renderers for icons we don't already have. Kept tiny —
-  // only the strokes we need so they tree-shake cleanly.
+  // only the strokes we need so they tree-shake cleanly. `size` prop
+  // honored (default 22pt — matches WhatsApp action sheet icons).
   const Ic = {
     Bubble: (props) => (
-      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <Svg width={props.size || 22} height={props.size || 22} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
         <Path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
       </Svg>
     ),
     Pin: (props) => (
-      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <Svg width={props.size || 22} height={props.size || 22} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
         <Path d="M12 17v5" />
         <Path d="M9 11V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v7" />
         <Path d="M6 11h12l-1.5 6h-9L6 11z" />
       </Svg>
     ),
     Bell: (props) => (
-      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <Svg width={props.size || 22} height={props.size || 22} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
         <Path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
         <Path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
       </Svg>
     ),
     Lock: (props) => (
-      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <Svg width={props.size || 22} height={props.size || 22} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
         <Rect x={3} y={11} width={18} height={11} rx={2} />
         <Path d="M7 11V7a5 5 0 0 1 10 0v4" />
       </Svg>
     ),
     Archive: (props) => (
-      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <Svg width={props.size || 22} height={props.size || 22} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
         <Path d="M21 8v13H3V8" />
         <Path d="M1 3h22v5H1z" />
         <Path d="M10 12h4" />
       </Svg>
     ),
     List: (props) => (
-      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <Svg width={props.size || 22} height={props.size || 22} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
         <Path d="M8 6h13M8 12h13M8 18h13" />
         <SvgCircle cx={3.5} cy={6} r={1.5} fill={props.color} />
         <SvgCircle cx={3.5} cy={12} r={1.5} fill={props.color} />
@@ -5043,26 +5059,26 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
       </Svg>
     ),
     Users: (props) => (
-      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <Svg width={props.size || 22} height={props.size || 22} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
         <Path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
         <SvgCircle cx={9} cy={7} r={4} />
         <Path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
       </Svg>
     ),
     Ban: (props) => (
-      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <Svg width={props.size || 22} height={props.size || 22} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
         <SvgCircle cx={12} cy={12} r={10} />
         <Path d="M4.93 4.93l14.14 14.14" />
       </Svg>
     ),
     XCircle: (props) => (
-      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <Svg width={props.size || 22} height={props.size || 22} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
         <SvgCircle cx={12} cy={12} r={10} />
         <Path d="M15 9l-6 6M9 9l6 6" />
       </Svg>
     ),
     Trash: (props) => (
-      <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <Svg width={props.size || 22} height={props.size || 22} viewBox="0 0 24 24" fill="none" stroke={props.color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
         <Path d="M3 6h18" />
         <Path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
         <Path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
@@ -5104,10 +5120,12 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
   };
 
   return (
-    <Modal visible={!!conv} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
+    <Modal visible={!!conv} transparent animationType="none" onRequestClose={handleBackdropTap} statusBarTranslucent>
       <View style={StyleSheet.absoluteFillObject}>
-        <Animated.View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.55)', opacity: backdrop }]}>
-          <Pressable style={StyleSheet.absoluteFillObject} onPress={onClose} />
+        {/* Backdrop — slightly lighter (0.40) per Telegram spec; tap fades out
+            both backdrop and peek before unmount instead of hard popping. */}
+        <Animated.View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.40)', opacity: backdrop }]}>
+          <Pressable style={StyleSheet.absoluteFillObject} onPress={handleBackdropTap} />
         </Animated.View>
         <Animated.View
           {...dragResponder.panHandlers}
@@ -5131,15 +5149,19 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
             presencesRef={presencesRef}
           />
 
-          {/* ── Action menu ── */}
+          {/* ── Action menu ──
+              Polish: radius 14→16 (matches preview card 22 hierarchy),
+              hairline separators (RN's StyleSheet.hairlineWidth resolves to
+              0.5pt on @2x/@3x — exactly what the spec asks for),
+              16/600 labels, 22pt icons aligned right (already there). */}
           <View style={{
             backgroundColor: cardBg,
-            borderRadius: 14,
+            borderRadius: 16,
             marginTop: 10,
             overflow: 'hidden',
             ...Platform.select({
-              ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.25, shadowRadius: 18 },
-              android: { elevation: 12 },
+              ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.18, shadowRadius: 24 },
+              android: { elevation: 14 },
               default: {},
             }),
           }}>
@@ -5163,10 +5185,10 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
                   accessibilityRole="button"
                   accessibilityLabel={it.label}
                 >
-                  <Text style={{ flex: 1, fontSize: 16, color: it.color, fontWeight: '500' }}>
+                  <Text style={{ flex: 1, fontSize: 16, color: it.color, fontWeight: '600', letterSpacing: -0.1 }}>
                     {it.label}
                   </Text>
-                  {Ico ? <Ico color={it.color} /> : null}
+                  {Ico ? <Ico color={it.color} size={22} /> : null}
                 </TouchableOpacity>
               );
             })}
@@ -5234,32 +5256,39 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
   );
 
   // Reusable header JSX (used by lock-gated branch + normal branch).
+  // Polish: avatar 36→40, name 15/700→16/700, last seen 11→12 regular,
+  // 1px hairline divider beneath separates header from messages.
   const headerJSX = (
     <View style={{
-      flexDirection: 'row', alignItems: 'center', gap: 10,
-      paddingHorizontal: 14, paddingVertical: 12,
       backgroundColor: headerBg,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: 'rgba(255,255,255,0.10)',
     }}>
-      <PeekAvatar email={peerEmail} name={peerName} size={36} />
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <Text style={{ fontSize: 15, fontWeight: '700', color: '#fff', flexShrink: 1 }} numberOfLines={1}>
-            {peerName}
-          </Text>
-          {/* Fix 2 — online dot for direct chats only */}
-          {(!isGroup && isPeerOnline) ? (
-            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#22C55E' }} />
-          ) : null}
+      <View style={{
+        flexDirection: 'row', alignItems: 'center', gap: 12,
+        paddingHorizontal: 14, paddingVertical: 12,
+      }}>
+        <PeekAvatar email={peerEmail} name={peerName} size={40} />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <Text style={{ fontSize: 16, fontWeight: '700', color: '#fff', flexShrink: 1, letterSpacing: -0.15 }} numberOfLines={1}>
+              {peerName}
+            </Text>
+            {/* Fix 2 — online dot for direct chats only */}
+            {(!isGroup && isPeerOnline) ? (
+              <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#22C55E' }} />
+            ) : null}
+          </View>
+          {peerTyping ? (
+            <Text style={{ fontSize: 12, color: '#fff', fontStyle: 'italic', fontWeight: '600', marginTop: 1 }} numberOfLines={1}>
+              {t?.('chat.typing') || 'digitando...'}
+            </Text>
+          ) : (lastSeen ? (
+            <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.78)', fontWeight: '400', marginTop: 1 }} numberOfLines={1}>
+              {lastSeen}
+            </Text>
+          ) : null)}
         </View>
-        {peerTyping ? (
-          <Text style={{ fontSize: 11, color: '#fff', fontStyle: 'italic', fontWeight: '600' }} numberOfLines={1}>
-            {t?.('chat.typing') || 'digitando...'}
-          </Text>
-        ) : (lastSeen ? (
-          <Text style={{ fontSize: 11, color: 'rgba(255,255,255,0.85)' }} numberOfLines={1}>
-            {lastSeen}
-          </Text>
-        ) : null)}
       </View>
     </View>
   );
@@ -5274,10 +5303,10 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
         <View style={{
           height: 360,
           backgroundColor: cardBg,
-          borderRadius: 14,
+          borderRadius: 22,
           overflow: 'hidden',
           ...Platform.select({
-            ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 22 },
+            ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.18, shadowRadius: 24 },
             android: { elevation: 16 },
             default: {},
           }),
@@ -5408,10 +5437,12 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
       <View style={{
         height: peekHeight,
         backgroundColor: cardBg,
-        borderRadius: 14,
+        // Polish: 14→22pt radius, Telegram-soft shadow (opacity 0.18, radius 24,
+        // offset 0/12) instead of the previous heavier 0.3 / 8 / 22.
+        borderRadius: 22,
         overflow: 'hidden',
         ...Platform.select({
-          ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 22 },
+          ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.18, shadowRadius: 24 },
           android: { elevation: 16 },
           default: {},
         }),
@@ -5419,8 +5450,10 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
         {/* Header */}
         {headerJSX}
 
-        {/* Messages — scroll disabled (peek is static) */}
-        <View style={{ flex: 1, paddingHorizontal: 10, paddingVertical: 8, justifyContent: 'flex-end' }}>
+        {/* Messages — scroll disabled (peek is static).
+            Polish: consistent 12V/14H interior padding (was 8V/10H), keeps
+            content from kissing the rounded corners of the card. */}
+        <View style={{ flex: 1, paddingHorizontal: 14, paddingVertical: 12, justifyContent: 'flex-end' }}>
           {rows.length === 0 && loading ? (
             <View style={{ gap: 8, paddingBottom: 4 }}>
               <SkeletonBubble side="left" widthPct={60} />
@@ -5606,7 +5639,10 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
                       </Text>
                     </View>
                   ) : null}
-                  <Text style={{ fontSize: 14, color: txtCol, lineHeight: 19 }} numberOfLines={3}>
+                  {/* Polish: numberOfLines 3→2 to keep bubbles compact and
+                      let more rows fit vertically; the full text stays
+                      one tap away inside the conversation. */}
+                  <Text style={{ fontSize: 14, color: txtCol, lineHeight: 19 }} numberOfLines={2}>
                     {body || '—'}
                   </Text>
                   {(time || isOwn) ? (

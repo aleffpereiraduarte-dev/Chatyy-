@@ -261,35 +261,35 @@ function PlusUpsellCard({ colors, onPress, t }) {
       style={({ pressed }) => ({
         marginHorizontal: 16,
         marginTop: 10,
-        padding: 14,
-        borderRadius: 14,
-        backgroundColor: '#5B21B6',
-        opacity: pressed ? 0.92 : 1,
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        borderRadius: 12,
+        backgroundColor: 'rgba(124,58,237,0.06)',
+        opacity: pressed ? 0.7 : 1,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 12,
-        // Subtle inner stroke to suggest gradient depth in flat-RN.
+        gap: 10,
         borderWidth: 1,
-        borderColor: '#7C3AED',
+        borderColor: 'rgba(124,58,237,0.28)',
       })}
       accessibilityRole="button"
     >
       <View style={{
-        width: 40, height: 40, borderRadius: 12,
-        backgroundColor: 'rgba(255,255,255,0.18)',
+        width: 28, height: 28, borderRadius: 8,
+        backgroundColor: 'rgba(124,58,237,0.12)',
         alignItems: 'center', justifyContent: 'center',
       }}>
-        <IconSparkles size={22} color="#fff" />
+        <IconSparkles size={16} color="#7C3AED" />
       </View>
       <View style={{ flex: 1 }}>
-        <Text style={{ fontSize: 14, fontWeight: '700', color: '#fff' }} numberOfLines={1}>
+        <Text style={{ fontSize: 14, fontWeight: '600', color: colors?.text || '#111' }} numberOfLines={1}>
           {t?.('settings.plusTeaserTitle') || 'Plus está esperando você'}
         </Text>
-        <Text style={{ fontSize: 12, color: 'rgba(255,255,255,0.82)', marginTop: 2 }} numberOfLines={1}>
+        <Text style={{ fontSize: 12, color: colors?.textSecondary || '#64748b', marginTop: 1, opacity: 0.7 }} numberOfLines={1}>
           {t?.('settings.plusTeaserSubtitle') || 'Mais armazenamento, IA ilimitada e selo verificado'}
         </Text>
       </View>
-      <IconChevronRight size={18} color="rgba(255,255,255,0.85)" />
+      <IconChevronRight size={16} color={colors?.textSecondary || '#94a3b8'} />
     </Pressable>
   );
 }
