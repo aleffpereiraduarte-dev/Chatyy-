@@ -6295,6 +6295,14 @@ export default function ChatConversationScreen() {
   const [forwardSearch, setForwardSearch] = useState('');
   const [showGifPicker, setShowGifPicker] = useState(false);
   const [showStickerPicker, setShowStickerPicker] = useState(false);
+  // Sticker suggestion strip user-dismissal — resets when the input is
+  // cleared so the next message gets a fresh chance at suggestions.
+  const [stickerSuggestionsHidden, setStickerSuggestionsHidden] = useState(false);
+  useEffect(() => {
+    if (!inputText || !inputText.trim()) {
+      if (stickerSuggestionsHidden) setStickerSuggestionsHidden(false);
+    }
+  }, [inputText, stickerSuggestionsHidden]);
 
   // Telegram-style swipe-on-composer to toggle the GIF picker. Threshold
   // is 60px horizontal with strong horizontal-over-vertical bias so the
@@ -18293,29 +18301,45 @@ export default function ChatConversationScreen() {
           );
         })()}
 
-        {/* Sticker suggestions (WhatsApp-style: type "feliz" → see matching stickers) */}
+        {/* Sticker suggestions — compact strip, dismissable.
+            Shows up to 4 matches once the keyword is typed (min 4 chars,
+            see getStickerSuggestions for the gating rules). User can swipe
+            it away with the ✕ on the right; we remember the dismissal for
+            the current draft so re-typing the same word doesn't re-pop
+            the strip immediately. */}
         {(() => {
+          if (stickerSuggestionsHidden) return null;
           const { getStickerSuggestions } = require('../components/StickerPicker');
           const suggestions = getStickerSuggestions ? getStickerSuggestions(inputText) : [];
           if (suggestions.length === 0 || !inputText.trim()) return null;
           return (
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              style={{ maxHeight: 50, borderTopWidth: 1, borderTopColor: colors.border }}
-              contentContainerStyle={{ paddingHorizontal: 8, gap: 4, alignItems: 'center' }}
-            >
-              {suggestions.map((sticker, i) => (
-                <TouchableOpacity
-                  key={i}
-                  onPress={() => { setInputText(''); handleSendSticker(sticker); }}
-                  style={{ padding: 4, borderRadius: 8 }}
-                  activeOpacity={0.5}
-                >
-                  <Text style={{ fontSize: 32 }}>{sticker}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
+            <View style={{ flexDirection: 'row', alignItems: 'center', maxHeight: 36, paddingLeft: 6, paddingRight: 4, borderTopWidth: 1, borderTopColor: colors.border }}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={{ flex: 1 }}
+                contentContainerStyle={{ paddingVertical: 2, gap: 2, alignItems: 'center' }}
+              >
+                {suggestions.map((sticker, i) => (
+                  <TouchableOpacity
+                    key={i}
+                    onPress={() => { setInputText(''); handleSendSticker(sticker); }}
+                    style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}
+                    activeOpacity={0.5}
+                  >
+                    <Text style={{ fontSize: 22 }}>{sticker}</Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              <TouchableOpacity
+                onPress={() => setStickerSuggestionsHidden(true)}
+                hitSlop={8}
+                style={{ paddingHorizontal: 8, paddingVertical: 6 }}
+                accessibilityLabel={t('common.dismiss') || 'Dispensar'}
+              >
+                <Text style={{ fontSize: 14, color: colors.textTertiary, fontWeight: '600' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
           );
         })()}
 

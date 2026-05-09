@@ -5628,6 +5628,7 @@ export default {
   'profile.newHighlightHint': 'Dale un nombre al destacado (ej: Viajes, Playa).',
   'profile.newHighlightAndroidHint': 'Abre una historia tuya y toca "Agregar a destacado" en el menú para crear una colección.',
   'common.create': 'Crear',
+  'common.dismiss': 'Descartar',
   // Chat new screen (round 5 prints)
   'chat.communitiesTitle': 'Comunidades',
   'chat.communitiesSubtitle': 'Crea o descubre comunidades',

@@ -98,22 +98,33 @@ const ANIMATED_PACKS = [
   },
 ];
 
-// Export for sticker suggestions in chat input (type keyword → show suggestions)
+// Suggestions for chat input. Trade-off tuned to be helpful, not noisy:
+// 1) Min 4 chars on the last word (was 2 — "Com" matched "comida" and the
+//    food strip popped while typing "Como vai", which the user reported as
+//    intrusive).
+// 2) Match must be a real prefix relationship AND share at least 4 chars
+//    in common, so 2-char keywords ("ok", "yo") don't trigger from any
+//    longer word that happens to share a leading letter.
+// 3) Cap at 4 results — picker is meant as a quick hint, not a gallery.
+// 4) If the message already has 3+ words, suppress (user is mid-sentence,
+//    not picking a sticker keyword).
 export function getStickerSuggestions(text) {
-  if (!text || text.length < 2) return [];
+  if (!text) return [];
   const q = text.toLowerCase().trim();
-  // Only trigger on single-word input that looks like a keyword
-  if (q.includes(' ') && q.length > 20) return [];
+  if (q.length < 4) return [];
   const words = q.split(/\s+/);
+  if (words.length > 3) return [];
   const lastWord = words[words.length - 1];
-  if (lastWord.length < 2) return [];
+  if (lastWord.length < 4) return [];
   const results = new Set();
   for (const [keyword, emojis] of Object.entries(SEARCH_INDEX)) {
-    if (keyword.startsWith(lastWord) || lastWord.startsWith(keyword)) {
-      emojis.forEach(e => results.add(e));
-    }
+    if (keyword.length < 4) continue;
+    const overlap = Math.min(keyword.length, lastWord.length);
+    if (overlap < 4) continue;
+    if (keyword.slice(0, overlap) !== lastWord.slice(0, overlap)) continue;
+    emojis.forEach(e => results.add(e));
   }
-  return [...results].slice(0, 8);
+  return [...results].slice(0, 4);
 }
 
 const RECENT_KEY = '@chatyy_recent_stickers';

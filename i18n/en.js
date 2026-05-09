@@ -5627,6 +5627,7 @@ export default {
   'profile.newHighlightHint': 'Name your highlight (e.g. Travels, Beach).',
   'profile.newHighlightAndroidHint': 'Open one of your stories and tap "Add to highlight" in the menu to start a collection.',
   'common.create': 'Create',
+  'common.dismiss': 'Dismiss',
   // Chat new screen (round 5 prints)
   'chat.communitiesTitle': 'Communities',
   'chat.communitiesSubtitle': 'Create or discover communities',

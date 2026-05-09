@@ -5691,6 +5691,7 @@ export default {
   'profile.newHighlightHint': 'Dê um nome para o destaque (ex: Viagens, Praia).',
   'profile.newHighlightAndroidHint': 'Abra um status seu (Stories) e use "Adicionar a destaque" no menu pra criar uma coleção.',
   'common.create': 'Criar',
+  'common.dismiss': 'Dispensar',
   // Chat new screen (round 5 prints)
   'chat.communitiesTitle': 'Comunidades',
   'chat.communitiesSubtitle': 'Crie ou descubra comunidades',
