@@ -3027,6 +3027,10 @@ export default {
   'chatConv.remaining': 'restantes',
   'chatConv.liveSharingUntil': 'Compartiendo hasta',
   'chatConv.stopSharing': 'Detener',
+  'common.permission': 'Permiso requerido',
+  'profile.highlightNeedPhotos': 'Para crear un destacado, permite acceso a las fotos.',
+  'profile.highlightUploadFail': 'No pude subir las fotos. Intenta de nuevo.',
+  'profile.highlightDefaultName': 'Destacado',
   'chatConv.lessThanMin': 'menos de 1 min restante',
 
   // Meetup

@@ -1010,54 +1010,92 @@ export default function Profile({
             activeOpacity={0.8}
             style={{ alignItems: 'center', width: SIZE + 8 }}
             onPress={async () => {
-              // Tap "+ Novo" → ask for a highlight name → create empty
-              // highlight via backend (chat_status_highlights table). Adding
-              // statuses to it comes later from the StoryViewer "Adicionar a
-              // destaque" action — backend already accepts that mutation
-              // (status_highlight_add_status).
-              const submit = async (raw) => {
-                const name = String(raw || '').trim();
-                if (!name) return;
-                try {
-                  const r = await api.statusHighlightCreate(name, [], '');
-                  if (r?.success) {
-                    // Optimistic insert — backend returns id+created_at, no
-                    // full row, so we append a minimal entry. Cover stays
-                    // empty until the user adds a status to the highlight.
-                    const newH = { id: r.id || r.data?.id, title: name, cover_url: '', status_ids: [] };
-                    setData(prev => prev ? { ...prev, highlights: [...(prev.highlights || []), newH] } : prev);
-                  } else if (r?.message) {
-                    if (Platform.OS !== 'web') Alert.alert(t?.('common.error') || 'Erro', r.message);
-                  }
-                } catch (e) {
-                  if (Platform.OS !== 'web') Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Falhou');
-                }
-              };
-              if (Platform.OS === 'ios') {
-                try {
-                  Alert.prompt(
-                    t?.('profile.newHighlight') || 'Novo destaque',
-                    t?.('profile.newHighlightHint') || 'Dê um nome para o destaque (ex: Viagens, Praia).',
-                    [
-                      { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
-                      { text: t?.('common.create') || 'Criar', onPress: submit },
-                    ],
-                    'plain-text', ''
+              // Instagram-style highlight composer: pick photos → name → upload as
+              // statuses → bundle into highlight. Pre-2026-05-09 só criava um
+              // destaque vazio que o user achava bugado ("nada acontece").
+              try {
+                const ImagePicker = require('expo-image-picker');
+                // Permissão necessária pra abrir a galeria. Em web/iOS já dispara
+                // o prompt nativo; Android precisa do request explícito.
+                const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+                if (perm.status !== 'granted') {
+                  Alert.alert(
+                    t?.('common.permission') || 'Permissão necessária',
+                    t?.('profile.highlightNeedPhotos') || 'Pra criar um destaque, libere acesso às fotos.'
                   );
-                } catch {}
-              } else if (Platform.OS === 'web' && typeof window !== 'undefined' && window.prompt) {
-                const val = window.prompt(t?.('profile.newHighlightHint') || 'Nome do destaque:', '');
-                if (val !== null) submit(val);
-              } else {
-                // Android: bare-bones — show alert telling user to long-press
-                // an expired status to add it to a destaque (the StoryViewer
-                // is the authoring surface). Avoids needing a full TextInput
-                // modal in the profile component.
-                Alert.alert(
-                  t?.('profile.newHighlight') || 'Novo destaque',
-                  t?.('profile.newHighlightAndroidHint') ||
-                  'Abra um status seu (Stories) e use "Adicionar a destaque" no menu pra criar uma coleção.'
-                );
+                  return;
+                }
+                const pick = await ImagePicker.launchImageLibraryAsync({
+                  mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                  allowsMultipleSelection: true,
+                  selectionLimit: 10,
+                  quality: 0.85,
+                });
+                if (pick.canceled) return;
+                const assets = Array.isArray(pick.assets) ? pick.assets : [];
+                if (!assets.length) return;
+
+                // Coleta nome em prompt nativo (depois das fotos, igual Instagram)
+                const askName = () => new Promise((resolve) => {
+                  if (Platform.OS === 'ios') {
+                    try {
+                      Alert.prompt(
+                        t?.('profile.newHighlight') || 'Novo destaque',
+                        t?.('profile.newHighlightHint') || 'Dê um nome (ex: Viagens, Praia).',
+                        [
+                          { text: t?.('common.cancel') || 'Cancelar', style: 'cancel', onPress: () => resolve(null) },
+                          { text: t?.('common.create') || 'Criar', onPress: (n) => resolve(String(n || '').trim() || 'Destaque') },
+                        ],
+                        'plain-text', ''
+                      );
+                    } catch { resolve('Destaque'); }
+                  } else if (Platform.OS === 'web' && typeof window !== 'undefined' && window.prompt) {
+                    const v = window.prompt(t?.('profile.newHighlightHint') || 'Nome do destaque:', '');
+                    resolve(v === null ? null : (v.trim() || 'Destaque'));
+                  } else {
+                    // Android sem Alert.prompt — usa nome default. User pode
+                    // editar depois quando o backend de rename ficar pronto.
+                    resolve(t?.('profile.highlightDefaultName') || 'Destaque');
+                  }
+                });
+                const name = await askName();
+                if (!name) return;
+
+                // Upload + status_create por foto. Mostra busy via Alert
+                // simples (mais robusto que um modal full-screen aqui).
+                const statusIds = [];
+                let coverUrl = '';
+                for (let i = 0; i < assets.length; i++) {
+                  const a = assets[i];
+                  if (!a?.uri) continue;
+                  try {
+                    const fileLike = {
+                      uri: a.uri,
+                      name: a.fileName || `hl_${Date.now()}_${i}.jpg`,
+                      type: a.mimeType || 'image/jpeg',
+                    };
+                    const up = await api.statusUpload(fileLike);
+                    const url = up?.data?.url || up?.data?.cdn_url || up?.url || '';
+                    if (!url) continue;
+                    if (!coverUrl) coverUrl = url;
+                    const pub = await api.statusPublish(url, 'image', '#7C3AED');
+                    const sid = pub?.id || pub?.data?.id || pub?.status_id;
+                    if (sid) statusIds.push(sid);
+                  } catch (e) { /* skip foto problemática, continua o resto */ }
+                }
+                if (statusIds.length === 0) {
+                  Alert.alert(t?.('common.error') || 'Erro', t?.('profile.highlightUploadFail') || 'Não consegui enviar as fotos. Tente de novo.');
+                  return;
+                }
+                const r = await api.statusHighlightCreate(name, statusIds, coverUrl);
+                if (r?.success) {
+                  const newH = { id: r.id || r.data?.id, title: name, cover_url: coverUrl, status_ids: statusIds };
+                  setData(prev => prev ? { ...prev, highlights: [...(prev.highlights || []), newH] } : prev);
+                } else if (r?.message) {
+                  Alert.alert(t?.('common.error') || 'Erro', r.message);
+                }
+              } catch (e) {
+                Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Falhou');
               }
             }}
           >

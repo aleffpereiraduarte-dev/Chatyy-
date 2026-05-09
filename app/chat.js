@@ -1297,12 +1297,15 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
               autoCorrect={false}
             />
           </View>
-          {/* Scrollable content */}
+          {/* Scrollable content — keyboardShouldPersistTaps='handled' garante
+              que tap em app durante busca registra antes do keyboard fechar */}
           <ScrollView
             style={{ maxHeight: 500 }}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingBottom: 12 }}
             removeClippedSubviews={Platform.OS !== 'web'}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
           >
             {/* Recently opened \u2014 only when not searching, only when MRU
                 actually has entries. Mirrors iOS App Library "Recently
