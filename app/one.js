@@ -1690,14 +1690,16 @@ export default function OneScreen() {
       setConversations(convos);
       setCache('one_conversations', res, 7776000000).catch(() => {});
 
-      // Auto-restore only if the last conversation is < 1 hour old.
-      // Anything older opens a fresh screen so users don't land on a stale
-      // chat (e.g. yesterday's briefing) when they open One in the morning.
+      // Auto-restore if the last conversation is < 3 hours old (user
+      // requested 2026-05-09: "salva cache da conversa One por 3 horas da
+      // ultima mensagem"). Window is per-message: any reply within 3h
+      // resets the clock. Past 3h the screen opens fresh — avoids landing
+      // on yesterday's briefing when the user opens One in the morning.
       if (autoRestore && convos.length > 0 && !conversationId && messages.length === 0) {
         const last = convos[0]; // most recent
         const lastUpdated = new Date(last.updated_at || last.created_at);
         const hoursAgo = (Date.now() - lastUpdated.getTime()) / (1000 * 60 * 60);
-        if (hoursAgo >= 1) return; // older than 1h → start fresh
+        if (hoursAgo >= 3) return; // older than 3h → start fresh
         setConversationId(last.id);
         // Show cached messages instantly
         const cachedMsgs = await getCached('one_messages_' + last.id);
@@ -1727,10 +1729,11 @@ export default function OneScreen() {
   useEffect(() => {
     if (!initialLoaded) {
       setInitialLoaded(true);
-      // Auto-restore fully disabled — user feedback: even the 1-hour
-      // window was too eager. Every cold open lands on a fresh screen.
-      // The conversation list is still loaded so the sidebar works.
-      loadConversations(false);
+      // Auto-restore re-enabled with 3h window (2026-05-09 user request) —
+      // resume same conversation when returning to One within 3 hours of
+      // the last message; otherwise open fresh. Cached messages render
+      // instantly via getCached() before the network refresh lands.
+      loadConversations(true);
     }
   }, [initialLoaded]);
 
