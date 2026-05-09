@@ -5659,4 +5659,17 @@ export default {
   'parental.messages': 'Mensagens',
   'parental.location': 'Local',
   'parental.bonus15': '+15min',
+  // Settings sheet (round 5 prints)
+  'settings.search': 'Buscar nas configurações',
+  'settings.yourActivity': 'Sua atividade',
+  'settings.timeOnApp': 'Tempo no app',
+  'settings.linkedDevices': 'Aparelhos conectados',
+  'settings.plusTeaserTitle': 'Experimente Chatyy Plus',
+  'settings.plusTeaserSubtitle': 'Recursos avançados sem limites',
+  // Profile highlights (round 5 prints)
+  'profile.newHighlight': 'Novo',
+  // Chat new screen (round 5 prints)
+  'chat.communitiesTitle': 'Comunidades',
+  'chat.communitiesSubtitle': 'Crie ou descubra comunidades',
+  'chat.broadcastListHint': 'Envie pra muitos contatos de uma vez',
 };
