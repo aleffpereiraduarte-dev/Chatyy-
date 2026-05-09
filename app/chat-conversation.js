@@ -13840,13 +13840,57 @@ export default function ChatConversationScreen() {
                       {audioTx}
                     </Text>
                   )}
+                  {/* Chip-style toggle: visualmente destacado (fundo + ícone)
+                      em vez de texto cinza 11px que o user reclamou que não
+                      destaca. Long-press oferece "Ocultar pra todos os áudios". */}
                   <TouchableOpacity
                     onPress={() => toggleTxCollapsed(msg.id)}
-                    hitSlop={6}
+                    onLongPress={() => {
+                      Alert.alert(
+                        t('chatConv.transcriptOptions') || 'Transcrições',
+                        t('chatConv.transcriptOptionsBody') || 'Quer ocultar transcrições em todos os áudios desta conversa?',
+                        [
+                          { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+                          {
+                            text: t('chatConv.hideAllTranscripts') || 'Ocultar todas',
+                            onPress: () => {
+                              const set = txHiddenSetRef.current;
+                              setMessages(prev => {
+                                prev.forEach(m => {
+                                  if ((m.transcript || m.transcription)) set.add(String(m.id));
+                                });
+                                try {
+                                  const AS = require('@react-native-async-storage/async-storage').default;
+                                  AS.setItem(TX_HIDDEN_KEY, JSON.stringify([...set])).catch(() => {});
+                                } catch {}
+                                return prev.map(m => (m.transcript || m.transcription) ? { ...m, _txHidden: true } : m);
+                              });
+                            }
+                          },
+                        ]
+                      );
+                    }}
+                    delayLongPress={400}
+                    hitSlop={8}
                     accessibilityRole="button"
-                    style={{ marginTop: msg._txHidden ? 0 : 4, alignSelf: 'flex-start' }}
+                    style={{
+                      marginTop: msg._txHidden ? 2 : 6,
+                      alignSelf: 'flex-start',
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      paddingHorizontal: 10,
+                      paddingVertical: 5,
+                      borderRadius: 12,
+                      backgroundColor: isOwn ? 'rgba(255,255,255,0.18)' : (colors.primary + '14'),
+                    }}
                   >
-                    <Text style={{ fontSize: 11, fontWeight: '600', color: isOwn ? ownMetaColor : colors.primary, opacity: 0.9 }}>
+                    <Svg width={12} height={12} viewBox="0 0 24 24" style={{ marginRight: 5 }}>
+                      {msg._txHidden
+                        ? <Path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z M12 9a3 3 0 100 6 3 3 0 000-6z" stroke={isOwn ? '#fff' : colors.primary} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                        : <Path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24 M1 1l22 22" stroke={isOwn ? '#fff' : colors.primary} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                      }
+                    </Svg>
+                    <Text style={{ fontSize: 12, fontWeight: '600', color: isOwn ? '#fff' : colors.primary }}>
                       {msg._txHidden
                         ? (t('chatConv.showTranscript') || 'Mostrar transcrição')
                         : (t('chatConv.hideTranscript') || 'Ocultar transcrição')}
