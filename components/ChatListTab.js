@@ -3179,6 +3179,26 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   const [pinnedSize, setPinnedSize] = useState('m');           // 's' | 'm' | 'l' default
   const [pinnedSizes, setPinnedSizes] = useState({});          // { [convId]: 's'|'m'|'l' }
   const [pinnedEditMode, setPinnedEditMode] = useState(false);
+  // Persist a flag so the "Toque pra mudar tamanho" hint only shows the
+  // FIRST time the user enters edit mode. After tapping "Pronto" once,
+  // we stop rendering the hint pill (was overlapping pin cards).
+  const [pinnedHintSeen, setPinnedHintSeen] = useState(true);
+  useEffect(() => {
+    (async () => {
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const v = await AsyncStorage.getItem(userScopedKey('chatyy:pinned_resize_hint_seen_v1'));
+        setPinnedHintSeen(v === '1');
+      } catch { setPinnedHintSeen(false); }
+    })();
+  }, [userScopedKey]);
+  const markPinnedHintSeen = useCallback(() => {
+    setPinnedHintSeen(true);
+    try {
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      AsyncStorage.setItem(userScopedKey('chatyy:pinned_resize_hint_seen_v1'), '1').catch(() => {});
+    } catch {}
+  }, [userScopedKey]);
   const [pinDraggingId, setPinDraggingId] = useState(null);
   const pinDragTxRef = useRef(new Map());                      // id → Animated.Value(translateX)
   const pinWiggleAnim = useRef(new Animated.Value(0)).current; // shared wiggle driver
@@ -3767,20 +3787,33 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
         }}>
-          {/* Header strip — discoverable Reorganizar button. Long-press tambem
-              continua funcionando, mas user reportou que nao acha como mexer
-              em ordem/tamanho. Botao explicito resolve o "ainda nao deixa". */}
-          {!pinnedEditMode ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingRight: 14, marginBottom: 10 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <IconPin size={11} color={isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.4)'} />
+          {/* Header strip — discoverable Reorganizar button OR (in edit mode)
+              the dismiss/Pronto control. Both states render the strip ABOVE
+              the horizontal pin scroll, so nothing overlaps a pin card.
+              Long-press tambem continua funcionando. */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingRight: 14, marginBottom: 10 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
+              {/* size 11 era pequeno demais — SVG do pin colapsava num blob
+                  que o user via como bullet '●' (REGRA: nunca emoji em UI).
+                  size 14 mantém o head + needle distinguíveis. */}
+              <IconPin size={14} color={isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.4)'} />
+              {pinnedEditMode && !pinnedHintSeen ? (
+                <Text
+                  numberOfLines={1}
+                  style={{ fontSize: 11, fontWeight: '600', color: isDark ? 'rgba(255,255,255,0.7)' : '#7C3AED', flexShrink: 1 }}
+                >
+                  {t?.('chat.tapToResize') || 'Toque pra mudar tamanho'}
+                </Text>
+              ) : (
                 <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.4, color: isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)' }}>
                   {(t?.('chat.pinned') || 'FIXADAS').toUpperCase()}
                 </Text>
-              </View>
-              {/* Pressable + bigger hit area + explicit cursor pra web — RNW
-                  TouchableOpacity hitSlop unreliable em headless e em alguns
-                  browsers. User reportou "Editar nao funciona no navegador". */}
+              )}
+            </View>
+            {/* Pressable + bigger hit area + explicit cursor pra web — RNW
+                TouchableOpacity hitSlop unreliable em headless e em alguns
+                browsers. User reportou "Editar nao funciona no navegador". */}
+            {!pinnedEditMode ? (
               <Pressable
                 onPress={() => {
                   try { require('react-native').Vibration.vibrate(8); } catch {}
@@ -3802,8 +3835,29 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                   {t?.('chat.editPinned') || 'Editar'}
                 </Text>
               </Pressable>
-            </View>
-          ) : null}
+            ) : (
+              <TouchableOpacity
+                onPress={() => {
+                  try { require('react-native').Vibration.vibrate(8); } catch {}
+                  markPinnedHintSeen();
+                  setPinnedEditMode(false);
+                }}
+                activeOpacity={0.75}
+                style={{
+                  paddingHorizontal: 14, height: 32, borderRadius: 16,
+                  flexDirection: 'row', alignItems: 'center', gap: 6,
+                  backgroundColor: '#7C3AED',
+                  ...(Platform.OS === 'web' ? { cursor: 'pointer', userSelect: 'none' } : {}),
+                }}
+                accessibilityLabel={t?.('common.done') || 'Concluir'}
+              >
+                <IconCheck size={14} color="#fff" />
+                <Text style={{ fontSize: 12, fontWeight: '700', color: '#fff' }}>
+                  {t?.('common.done') || 'Concluir'}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -3964,42 +4018,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                 </Animated.View>
               );
             })}
-            {/* Edit-mode controls: hint de "toque pra mudar tamanho" + Concluir.
-                Removido o segmented [S][M][L] global — agora cada pin tem seu
-                proprio tamanho via tap no avatar (cicla S→M→L→S). User pediu
-                "individual para cada um poder ser um tamanho". */}
-            {pinnedEditMode ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginLeft: 4 }}>
-                <View style={{
-                  paddingHorizontal: 12, height: 34, borderRadius: 17,
-                  alignItems: 'center', justifyContent: 'center',
-                  backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(124,58,237,0.08)',
-                  borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(124,58,237,0.18)',
-                }}>
-                  <Text style={{ fontSize: 11, fontWeight: '600', color: isDark ? 'rgba(255,255,255,0.7)' : '#7C3AED' }}>
-                    {t?.('chat.tapToResize') || 'Toque pra mudar tamanho'}
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  onPress={() => {
-                    try { require('react-native').Vibration.vibrate(8); } catch {}
-                    setPinnedEditMode(false);
-                  }}
-                  activeOpacity={0.75}
-                  style={{
-                    paddingHorizontal: 14, height: 34, borderRadius: 17,
-                    flexDirection: 'row', alignItems: 'center', gap: 6,
-                    backgroundColor: '#7C3AED',
-                  }}
-                  accessibilityLabel={t('common.done') || 'Concluir'}
-                >
-                  <IconCheck size={14} color="#fff" />
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#fff' }}>
-                    {t('common.done') || 'Concluir'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            ) : null}
+            {/* Inline hint + Concluir moved to header strip ABOVE the
+                horizontal scroll — see the View at the start of this
+                section. The previous inline pill overlapped pin cards
+                (Lucas Catine bug print 2026-05-08). */}
           </ScrollView>
         </View>
       );

@@ -761,7 +761,12 @@ export default function Profile({
   const posts = data?.posts || [];
   const reels = data?.reels || [];
   const sharedMedia = data?.shared_media || [];
-  const commonChats = data?.common_chats || [];
+  // Backend returns BOTH direct + group conversations where me+target are members.
+  // The "Grupos em comum" section is specifically for groups — a direct DM with
+  // the same person you're viewing is meaningless to list (its display "name"
+  // falls back to the target's email, which leaked as e.g. "sara.costa@chatyy.com.br"
+  // showing up under GROUPS IN COMMON). Filter to type==='group' only.
+  const commonChats = (data?.common_chats || []).filter(c => c?.type === 'group');
   const emailPreview = data?.email_preview || [];
   const stories = data?.stories || [];
 

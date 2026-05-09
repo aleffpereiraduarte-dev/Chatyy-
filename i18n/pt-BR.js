@@ -4597,6 +4597,11 @@ export default {
   'post.galleryPermission': 'Permita acesso as suas fotos para selecionar mídia',
   'post.loadingGallery': 'Carregando galeria...',
   'post.allowPhotos': 'Permitir Fotos',
+  'post.edit': 'Editar',
+  'post.whoCanSee': 'Quem pode ver',
+  'post.alsoShareIn': 'Compartilhar também em',
+  'post.status': 'Status',
+  'post.stories': 'Stories',
 
   // Priority Inbox
   'priority.nudge': 'Você ainda não respondeu',

@@ -4515,6 +4515,11 @@ export default {
   'post.galleryPermission': 'Permite acceso a tus fotos para seleccionar medios',
   'post.loadingGallery': 'Cargando galería...',
   'post.allowPhotos': 'Permitir Fotos',
+  'post.edit': 'Editar',
+  'post.whoCanSee': 'Quién puede ver',
+  'post.alsoShareIn': 'Compartir también en',
+  'post.status': 'Estado',
+  'post.stories': 'Historias',
 
   'priority.nudge': 'Aún no has respondido',
   'priority.dismiss': 'Descartar',
