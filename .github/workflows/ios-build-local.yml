@@ -275,6 +275,70 @@ jobs:
             --non-interactive
           rm -f ./asc_key.p8
 
+      - name: Auto-attach new build to TestFlight beta groups
+        # Apple's "internal" groups can't be attached via API (422), but external
+        # groups CAN — and external is what serves the public TestFlight link plus
+        # any user with the build invite. Without this step the binary uploads,
+        # validates, but stays orphaned (no group → no tester sees it). Confirmed
+        # via ASC API on build 466 (2026-05-08): VALID + IN_BETA_TESTING but
+        # individualTesters=0 and betaGroups=[] until manually attached.
+        if: ${{ success() && (github.event_name == 'push' || inputs.submit == 'true') }}
+        env:
+          ASC_KEY_B64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+          ASC_KEY_ID: 'QSYM3KX73P'
+          ASC_ISSUER_ID: '494360d0-0420-4f1f-a1db-6be19eeb2d89'
+          ASC_APP_ID: '6759975575'
+          # Comma-separated betaGroup IDs to auto-attach (external + any future ones)
+          ASC_BETA_GROUPS: '9345fde9-8543-4426-a30d-a42e9b41e37f'
+          BUILD_VERSION: ${{ steps.bump.outputs.build }}
+        run: |
+          set -e
+          echo "$ASC_KEY_B64" | base64 -d > ./asc_key.p8
+          # Wait up to 8min for Apple to finish processing (state goes PROCESSING → VALID).
+          # Without this, the attach POST will 422 with "Build is not yet processed."
+          python3 - <<'PY'
+          import jwt, time, json, urllib.request, urllib.error, os, sys
+          KID, ISS, APP, GROUPS_RAW = os.environ['ASC_KEY_ID'], os.environ['ASC_ISSUER_ID'], os.environ['ASC_APP_ID'], os.environ['ASC_BETA_GROUPS']
+          VER = os.environ['BUILD_VERSION']
+          PRIV = open('asc_key.p8').read()
+          def jwt_token():
+              now = int(time.time())
+              return jwt.encode({"iss":ISS,"iat":now,"exp":now+1200,"aud":"appstoreconnect-v1"}, PRIV, algorithm="ES256", headers={"kid":KID,"typ":"JWT"})
+          H = {"Authorization": f"Bearer {jwt_token()}"}
+          # Poll for build to reach VALID state
+          deadline = time.time() + 8*60
+          build_id = None
+          while time.time() < deadline:
+              try:
+                  r = urllib.request.urlopen(urllib.request.Request(f"https://api.appstoreconnect.apple.com/v1/builds?filter[app]={APP}&filter[version]={VER}&limit=1", headers=H))
+                  data = json.loads(r.read())
+                  if data.get('data'):
+                      attrs = data['data'][0]['attributes']
+                      state = attrs.get('processingState')
+                      print(f"build {VER} state={state}")
+                      if state == 'VALID':
+                          build_id = data['data'][0]['id']; break
+                      if state == 'INVALID':
+                          print("::error::Build VALIDATION FAILED on Apple side"); sys.exit(1)
+              except urllib.error.HTTPError as e:
+                  print(f"poll err {e.code}")
+              time.sleep(20)
+          if not build_id:
+              print("::warning::build did not reach VALID in 8min — skipping attach"); sys.exit(0)
+          # Attach to each external group
+          headers_post = {**H, "Content-Type": "application/json"}
+          group_ids = [g.strip() for g in GROUPS_RAW.split(',') if g.strip()]
+          body = {"data": [{"id": gid, "type": "betaGroups"} for gid in group_ids]}
+          url = f"https://api.appstoreconnect.apple.com/v1/builds/{build_id}/relationships/betaGroups"
+          req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers_post, method="POST")
+          try:
+              urllib.request.urlopen(req)
+              print(f"✓ Attached build {VER} ({build_id}) to {len(group_ids)} beta group(s)")
+          except urllib.error.HTTPError as e:
+              print(f"::warning::attach failed {e.code}: {e.read().decode()[:300]}")
+          PY
+          rm -f ./asc_key.p8
+
       - name: Upload .ipa as artifact
         # Always upload so we have a recoverable copy even after submission.
         uses: actions/upload-artifact@v4
