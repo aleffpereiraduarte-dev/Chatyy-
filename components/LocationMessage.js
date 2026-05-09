@@ -80,11 +80,11 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
   const lat = hasCoords ? Number(location.latitude) : null;
   const lng = hasCoords ? Number(location.longitude) : null;
 
-  // Preferred: Google Maps Static API (matches in-app maps which use Google).
-  // Spec: ~280x160 @ zoom 15, purple marker matching brand.
-  const gmapsUrl = (hasCoords && GMAPS_KEY)
-    ? `https://maps.googleapis.com/maps/api/staticmap?center=${lat},${lng}&zoom=15&size=280x160&scale=2&markers=color:0x7C3AED%7C${lat},${lng}&key=${GMAPS_KEY}`
-    : null;
+  // Google Static Maps requires Cloud Billing enabled (returned 403 on prod).
+  // Disabled for now — OSM tile mosaic (web) + single OSM tile (native) work
+  // without any key/billing and look clean for chat-bubble previews. To
+  // re-enable: enable billing in Google Cloud project, then flip this guard.
+  const gmapsUrl = null;
 
   // Fallback: single OSM tile at zoom 15 (no key required).
   const tileUrl = hasCoords ? (() => {
