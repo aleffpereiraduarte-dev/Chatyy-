@@ -380,26 +380,9 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
         { icon: IconSparkles, label: t?.('settings.aiFeatures') || 'Recursos com IA',      tint: ICON_PURPLE, onPress: () => push('ai') },
       ],
     },
-    {
-      key: 'creators',
-      // Instagram has "For creators / For business" right above Help.
-      // We don't have separate flows yet so both rows route to /plans.
-      title: t?.('settings.creatorsTitle') || 'Para criadores e empresas',
-      rows: [
-        {
-          icon: IconStar,
-          label: t?.('settings.plansSubscriptions') || 'Planos e assinaturas',
-          tint: ICON_PURPLE,
-          onPress: () => closeAndRun(() => router?.push?.('/plans')),
-        },
-        {
-          icon: IconUsers,
-          label: t?.('settings.forBusiness') || 'Ferramentas para empresas',
-          tint: ICON_GREEN,
-          onPress: () => closeAndRun(() => router?.push?.('/plans')),
-        },
-      ],
-    },
+    // "Para criadores e empresas" section removed 2026-05-09 by founder request.
+    // Both rows routed to /plans, which now lives behind a contextual upsell
+    // (UpsellHelper) at gated features instead of a permanent settings entry.
     {
       key: 'community',
       title: t?.('settings.community') || 'Comunidade',
