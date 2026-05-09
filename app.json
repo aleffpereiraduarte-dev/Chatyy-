@@ -13,7 +13,7 @@
     "userInterfaceStyle": "automatic",
     "scheme": "onemundomail",
     "owner": "aleffduarte",
-    "runtimeVersion": "2.4.4",
+    "runtimeVersion": "2.4.5",
     "updates": {
       "enabled": true,
       "fallbackToCacheTimeout": 5000,
