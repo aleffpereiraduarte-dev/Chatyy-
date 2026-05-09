@@ -2794,7 +2794,13 @@ window.updatePos=function(){};
 window.addEventListener('message', function(e){var d=e&&e.data; if(d&&d.type==='updatePos'){window.updatePos(d.lat,d.lng);}});
 </script></body></html>`;
 
-  const html = gmapsHtml || leafletHtml;
+  // 2026-05-09: force Leaflet/OpenStreetMap. Google Maps JS API requires
+  // a valid (billing-enabled) key — without it the WebView loaded the
+  // "For development purposes only" watermark + a "This page can't load
+  // Google Maps correctly" alert (user reported via screenshot). Leaflet
+  // is free, works without keys, and the live-pin pulse animation already
+  // has a Leaflet variant in the HTML below. No UX loss.
+  const html = leafletHtml;
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
