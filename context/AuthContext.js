@@ -797,16 +797,19 @@ export function AuthProvider({ children }) {
     //       even a pathological switchAccount-without-OTP path can't
     //       reuse a logged-out session's bearer.
     try { if (_outgoingEmail) await api.clearStoredAccountTokenAsync?.(_outgoingEmail); } catch {}
-    // 3a. KEEP bio_email + bio_token across logout so "Entrar com Face ID"
-    //     ainda aparece na próxima vez que o user abrir o login — WhatsApp
-    //     pattern. O Face ID local já protege contra outra pessoa entrar
-    //     (precisa validar a face/digital do dono do device). Só limpamos o
-    //     legacy bio_password. O fluxo explícito de "Esquecer este dispositivo"
-    //     fica nas Configurações (a ser adicionado no futuro).
+    // 3a. SECURITY: explicit logout clears `bio_token` so the next cold
+    //     start does NOT silently auto-login via Face ID using a stale
+    //     bearer (user reported 2026-05-09: "sai da conta, fechei a página
+    //     e voltou logado"). We keep `bio_email` so the login screen still
+    //     pre-fills the email field (nice UX), but the secret token is
+    //     gone — Face ID prompts the user, then needs a password since
+    //     bio_token is missing. Telegram/WhatsApp pattern: explicit
+    //     logout = full credential nuke; biometric is opt-in on next login.
     try {
       if (Platform.OS !== 'web') {
         const SecureStore = require('expo-secure-store');
         SecureStore.deleteItemAsync('bio_password').catch(() => {}); // legacy cleanup
+        SecureStore.deleteItemAsync('bio_token').catch(() => {});    // SECURITY: kill auto-relogin
       }
     } catch {}
     // 4. Tear down background services so the NEXT account doesn't inherit

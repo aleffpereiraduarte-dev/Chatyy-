@@ -1209,7 +1209,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
       title: t('apps.account') || 'Conta',
       items: [
         { key: 'profile',       label: t('sidebar.profile') || 'Perfil',         ic: I(IconUser, '#64748b'),     action: () => { onClose(); if (userEmail) try { router.push(`/u/${encodeURIComponent(userEmail)}`); } catch (e) { console.warn('[chat] router.push failed:', e); } } },
-        { key: 'settings',      label: t('sidebar.settings') || 'Configurações', ic: I(IconSettings, '#475569'), action: () => { onClose(); if (userEmail) try { router.push(`/u/${encodeURIComponent(userEmail)}?openSettings=1`); } catch (e) { console.warn('[chat] router.push failed:', e); } } },
+        { key: 'settings',      label: t('sidebar.settings') || 'Configurações', ic: I(IconSettings, '#475569'), action: () => { onClose(); try { router.push('/settings'); } catch (e) { console.warn('[chat] router.push failed:', e); } } },
         { key: 'notifications', label: t('sidebar.notifications') || 'Alertas',  ic: I(IconBell, '#f97316'),     route: '/notifications' },
         { key: 'backup',        label: t('sidebar.backup') || 'Backup',          ic: I(IconShield, '#0ea5e9'),   route: '/backup' },
       ],

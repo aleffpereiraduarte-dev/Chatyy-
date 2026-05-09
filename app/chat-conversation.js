@@ -13898,8 +13898,13 @@ export default function ChatConversationScreen() {
           // 24h. Gives us a real Google Maps image (faster + lighter than an
           // iframe) without exposing the key client-side.
           const hasCoords = (lat != null && lng != null);
+          // Switched 2026-05-09 from /api/maps/static.php (Google Static Maps,
+          // requires GOOGLE_MAPS_KEY in env — was returning 502 in prod) to
+          // /api/static_map.php (CartoCDN tile compositor, no key required,
+          // cached 7d on disk + Cloudflare edge). Fixes the persistent gray
+          // map bubble users were seeing.
           const mapStaticUrl = hasCoords
-            ? `https://chatyy.com.br/api/maps/static.php?lat=${lat}&lng=${lng}&w=${Math.round(CARD_W)}&h=${MAP_H}&zoom=15&scale=2`
+            ? `https://chatyy.com.br/api/static_map.php?lat=${lat}&lng=${lng}&z=15&w=${Math.round(CARD_W * 2)}&h=${MAP_H * 2}`
             : null;
 
           return (

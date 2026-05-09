@@ -442,7 +442,7 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
       // child → sticky index = 0. We always render search wrapped in
       // a coloured-background container so the rows scrolling under
       // it don't bleed through.
-      stickyHeaderIndices={query ? [0] : [2]}
+      stickyHeaderIndices={query ? [0] : [0, 1]}
     >
       {/* Hero + plus card hide while searching to keep results focused. */}
       {!query && <HeroCard colors={colors} userEmail={userEmail} onPress={onEditProfile} t={t} />}
