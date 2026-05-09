@@ -294,6 +294,14 @@ jobs:
         run: |
           set -e
           echo "$ASC_KEY_B64" | base64 -d > ./asc_key.p8
+          # Ensure PyJWT + cryptography are installed for ES256 signing (self-hosted
+          # Mac 207 runner doesn't have them by default). --break-system-packages is
+          # required on macOS Python 3.11+ which marks the system env as externally
+          # managed by PEP 668.
+          python3 -m pip install --quiet --break-system-packages --user pyjwt cryptography 2>/dev/null \
+            || python3 -m pip install --quiet --user pyjwt cryptography 2>/dev/null \
+            || pip3 install --quiet --user pyjwt cryptography
+          export PYTHONPATH="$(python3 -c 'import site; print(site.getusersitepackages())'):$PYTHONPATH"
           # Wait up to 8min for Apple to finish processing (state goes PROCESSING → VALID).
           # Without this, the attach POST will 422 with "Build is not yet processed."
           python3 - <<'PY'
