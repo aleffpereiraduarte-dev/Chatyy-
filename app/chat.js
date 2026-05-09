@@ -828,7 +828,7 @@ function ChatHub() {
           loaded. If banner shows up, OTA applied. Remove next round. */}
       <View style={{ backgroundColor: '#10b981', paddingVertical: 6, paddingHorizontal: 12, alignItems: 'center' }}>
         <Text style={{ color: '#fff', fontWeight: '800', fontSize: 12, letterSpacing: 0.5 }}>
-          ✅ OTA ATIVO 2026-05-09 13:55 — proxy clean
+          ✅ OTA ATIVO 2026-05-09 14:30 TESTE MINIMO
         </Text>
       </View>
       {/* WhatsApp-style header — no back arrow on mobile (Chatyy IS home) */}
