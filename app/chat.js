@@ -824,6 +824,13 @@ function ChatHub() {
       backgroundColor: isDark ? '#000000' : '#ffffff',
       paddingTop: insets.top,
     }]}>
+      {/* TEMP OTA marker — bright banner so the user can SEE if the new bundle
+          loaded. If banner shows up, OTA applied. Remove next round. */}
+      <View style={{ backgroundColor: '#10b981', paddingVertical: 6, paddingHorizontal: 12, alignItems: 'center' }}>
+        <Text style={{ color: '#fff', fontWeight: '800', fontSize: 12, letterSpacing: 0.5 }}>
+          ✅ OTA ATIVO 2026-05-09 13:35 — mapa proxy
+        </Text>
+      </View>
       {/* WhatsApp-style header — no back arrow on mobile (Chatyy IS home) */}
       <View style={[styles.header, {
         ...glassHeader,
