@@ -45,13 +45,32 @@ async function _maybeOfferCloudRestore() {
   try {
     const already = await AsyncStorage.getItem('chatyy_restored_once');
     if (already) return;
-    // chatBackupExists is optional — if missing, fall back to chatBackupList
-    // and skip the prompt only when we get a confident "no backups" signal.
-    let hasBackup = null; // null = unknown
+
+    // Bail-out 1: device already has chat data locally (chat.db / SQLite cache
+    // populated, or any conversation in MMKV). Means the user already has a
+    // working install — offering "Restore from cloud" would overwrite their
+    // current data with a stale/older backup. Confirmed root-cause of the
+    // "encontrei um backup nas nuvens com bug ao logar" report (2026-05-08):
+    // user logged in on existing install and got the prompt from a stale
+    // server-side backup row that doesn't match their current state.
+    try {
+      const hasLocalData = await AsyncStorage.getItem('chatyy_conv_state_v1');
+      if (hasLocalData) {
+        await AsyncStorage.setItem('chatyy_restored_once', '1');
+        return;
+      }
+    } catch {}
+
+    // Probe server for an actual backup. Defaults to "no" — only the explicit
+    // confirmed "yes" branch fires the modal. Previous logic showed the
+    // prompt on network errors (hasBackup === null), which is dangerous
+    // because hitting "Restaurar" with no backup payload could wipe local
+    // data via chatBackupRestore(null).
+    let hasBackup = false;
     try {
       if (typeof api.chatBackupExists === 'function') {
         const r = await api.chatBackupExists();
-        if (r?.success && typeof r?.data?.exists === 'boolean') hasBackup = r.data.exists;
+        if (r?.success && r?.data?.exists === true) hasBackup = true;
       } else if (typeof api.chatBackupList === 'function') {
         const r = await api.chatBackupList();
         if (r?.success) {
@@ -59,13 +78,18 @@ async function _maybeOfferCloudRestore() {
           hasBackup = Array.isArray(list) && list.length > 0;
         }
       }
-    } catch {}
-    // Confident "no backup" → set flag, never ask again. Unknown (network
-    // hiccup) → still show the prompt; the user can pick Começar do zero.
-    if (hasBackup === false) {
-      try { await AsyncStorage.setItem('chatyy_restored_once', '1'); } catch {}
-      return;
+    } catch {
+      // Network / API error → assume no backup, don't pester the user. Set
+      // the flag so a transient outage on every cold start doesn't repeat
+      // this probe on every subsequent launch.
     }
+
+    // Always set the once-per-device flag so this only runs at most once,
+    // regardless of the backup-existence outcome (prevents re-prompting if
+    // the API returns inconsistent results across installs).
+    try { await AsyncStorage.setItem('chatyy_restored_once', '1'); } catch {}
+
+    if (!hasBackup) return;
     _restorePromptState = { visible: true };
     _notifyRestorePromptChange();
   } catch {}
@@ -992,9 +1016,16 @@ function CloudRestorePrompt() {
         const dl = await api.chatBackupDownload?.();
         if (dl?.success) payload = dl.data ?? dl;
       } catch {}
-      if (payload) {
+      // Guard: only attempt restore when we actually got a payload AND it
+      // has the expected shape. Restoring `null` or an empty object via
+      // chatBackupRestore can wipe local state in the worst case.
+      const looksRestorable = payload && (Array.isArray(payload?.conversations)
+        || Array.isArray(payload?.messages) || typeof payload?.snapshot === 'string');
+      if (looksRestorable) {
         setProgressMsg('Restaurando…');
         try { await api.chatBackupRestore?.(payload); } catch {}
+      } else {
+        setProgressMsg('Backup vazio — abrindo Chatyy do zero');
       }
     } catch {}
     setBusy(false);
