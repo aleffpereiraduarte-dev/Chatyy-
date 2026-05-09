@@ -355,7 +355,7 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
       title: t?.('settings.yourActivity') || 'Sua atividade',
       rows: [
         { icon: IconClock,    label: t?.('settings.timeOnApp') || 'Tempo no app',                  tint: ICON_TEAL, onPress: () => push('about') },
-        { icon: IconUsers,    label: t?.('settings.linkedDevices') || 'Dispositivos conectados',  tint: ICON_TEAL, onPress: () => push('security') },
+        { icon: IconUsers,    label: t?.('settings.linkedDevices') || 'Aparelhos conectados',  tint: ICON_TEAL, onPress: () => push('devices') },
         { icon: IconDatabase, label: t?.('settings.exportData') || 'Baixar meus dados',           tint: ICON_TEAL, onPress: () => push('export') },
       ],
     },
@@ -564,6 +564,129 @@ function SecurityScreen({ colors, t, router, onClose }) {
           {t?.('settings.securityNote') || 'Suas conversas e emails são protegidos por criptografia em trânsito. Habilite o bloqueio biométrico para uma camada extra de segurança quando alguém pegar seu celular.'}
         </Text>
       </Section>
+    </ScrollView>
+  );
+}
+
+// ─── Screen: Aparelhos conectados ────────────────────────────────────
+// Renamed from "linked devices" → fetches active bearer-token sessions via
+// sessions_list and shows device, last seen, location, IP. Tap → revoke
+// individual session, or revoke-all at the bottom. Was previously routing
+// to SecurityScreen which didn't list devices at all.
+function DevicesScreen({ colors, t, onClose, onLogout }) {
+  const [sessions, setSessions] = useState(null); // null = loading, [] = empty
+  const [error, setError] = useState(null);
+  const [revokingHash, setRevokingHash] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      const api = require('../services/api');
+      const r = await api.getSessionsList();
+      if (r?.success) {
+        const items = Array.isArray(r.data?.sessions) ? r.data.sessions : (Array.isArray(r.sessions) ? r.sessions : []);
+        setSessions(items);
+        setError(null);
+      } else {
+        setError(r?.message || 'Falhou ao carregar sessões');
+        setSessions([]);
+      }
+    } catch (e) {
+      setError(e?.message || 'Erro de rede');
+      setSessions([]);
+    }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const revokeOne = async (hash) => {
+    setRevokingHash(hash);
+    try {
+      const api = require('../services/api');
+      await api.revokeSession(hash);
+      setSessions(prev => (prev || []).filter(s => (s.token_hash || s.hash) !== hash));
+    } catch {} finally { setRevokingHash(null); }
+  };
+
+  const revokeAllOther = async () => {
+    try {
+      const api = require('../services/api');
+      await api.revokeAllSessions();
+      setSessions(prev => (prev || []).filter(s => s.is_current));
+    } catch {}
+  };
+
+  const fmtAgo = (ts) => {
+    if (!ts) return '';
+    const sec = Math.max(1, Math.floor(Date.now() / 1000) - Number(ts));
+    if (sec < 60) return `agora`;
+    if (sec < 3600) return `${Math.floor(sec / 60)}m`;
+    if (sec < 86400) return `${Math.floor(sec / 3600)}h`;
+    return `${Math.floor(sec / 86400)}d`;
+  };
+
+  return (
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+      {sessions === null ? (
+        <View style={{ paddingVertical: 48, alignItems: 'center' }}>
+          <ActivityIndicator color={colors?.primary} />
+        </View>
+      ) : sessions.length === 0 ? (
+        <View style={{ paddingVertical: 48, alignItems: 'center', paddingHorizontal: 24 }}>
+          <IconUsers size={36} color={colors?.textTertiary} />
+          <Text style={{ marginTop: 12, fontSize: 14, color: colors?.textSecondary, textAlign: 'center' }}>
+            {error
+              ? (t?.('settings.devicesError') || 'Não consegui carregar os aparelhos. Tente puxar pra atualizar.')
+              : (t?.('settings.devicesEmpty') || 'Nenhum outro aparelho conectado.')}
+          </Text>
+        </View>
+      ) : (
+        <>
+          <Section title={t?.('settings.activeDevices') || 'Aparelhos ativos'} colors={colors}>
+            {sessions.map((s, i) => {
+              const hash = s.token_hash || s.hash || `idx-${i}`;
+              const label = s.device_label || s.user_agent || s.platform || 'Aparelho';
+              const meta = [s.ip, s.location].filter(Boolean).join(' · ');
+              const last = fmtAgo(s.last_seen_at || s.last_seen || s.created_at);
+              return (
+                <TouchableOpacity
+                  key={hash}
+                  activeOpacity={s.is_current ? 1 : 0.6}
+                  onPress={() => { if (!s.is_current) revokeOne(hash); }}
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14 }}
+                >
+                  <View style={{ width: 32, alignItems: 'center', marginRight: 12 }}>
+                    <IconUsers size={20} color={colors?.primary} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 15, fontWeight: '600', color: colors?.text }} numberOfLines={1}>
+                      {label}{s.is_current ? '  ·  ' + (t?.('settings.currentDevice') || 'este aparelho') : ''}
+                    </Text>
+                    {!!meta && (
+                      <Text style={{ fontSize: 12, color: colors?.textTertiary, marginTop: 2 }} numberOfLines={1}>{meta}</Text>
+                    )}
+                    {!!last && (
+                      <Text style={{ fontSize: 11, color: colors?.textTertiary, marginTop: 2 }}>{last}</Text>
+                    )}
+                  </View>
+                  {!s.is_current && (
+                    revokingHash === hash
+                      ? <ActivityIndicator size="small" color={colors?.textTertiary} />
+                      : <Text style={{ fontSize: 13, color: '#ef4444', fontWeight: '600' }}>{t?.('common.remove') || 'Remover'}</Text>
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </Section>
+          {sessions.filter(s => !s.is_current).length > 0 && (
+            <Section colors={colors}>
+              <TouchableOpacity onPress={revokeAllOther} style={{ paddingHorizontal: 20, paddingVertical: 16 }}>
+                <Text style={{ fontSize: 14, color: '#ef4444', fontWeight: '600' }}>
+                  {t?.('settings.signOutAllOther') || 'Sair de todos os outros aparelhos'}
+                </Text>
+              </TouchableOpacity>
+            </Section>
+          )}
+        </>
+      )}
     </ScrollView>
   );
 }
@@ -1976,6 +2099,7 @@ function ExportDataScreen({ colors, t }) {
 const SCREEN_TITLES = {
   main: 'settings.title',
   security: 'settings.security',
+  devices: 'settings.linkedDevices',
   privacy: 'settings.privacy',
   notifications: 'settings.notifications',
   language: 'settings.language',
@@ -1992,6 +2116,7 @@ const SCREEN_TITLES = {
 const SCREEN_TITLE_FALLBACK = {
   main: 'Configurações',
   security: 'Segurança e senha',
+  devices: 'Aparelhos conectados',
   privacy: 'Privacidade',
   notifications: 'Notificações',
   language: 'Idioma',
@@ -2074,6 +2199,7 @@ export default function ProfileSettingsSheet({
   const renderBody = () => {
     switch (currentScreen) {
       case 'security':      return <SecurityScreen colors={colors} t={t} router={router} onClose={onClose} />;
+      case 'devices':       return <DevicesScreen colors={colors} t={t} onClose={onClose} />;
       case 'privacy':       return <PrivacyScreen colors={colors} t={t} />;
       case 'notifications': return <NotificationsScreen colors={colors} t={t} />;
       case 'language':      return <LanguageScreen colors={colors} t={t} />;
