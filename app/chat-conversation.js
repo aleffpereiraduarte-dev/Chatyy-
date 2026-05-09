@@ -6315,9 +6315,40 @@ export default function ChatConversationScreen() {
   // Audio transcript collapse — toggled by mutating the message itself so
   // MemoizedMessageRow's per-field comparator picks it up (an external Set
   // state didn't trigger re-render because the memo didn't see it).
+  // Persistido em AsyncStorage por mensagem para sobreviver a reload/poll/WS
+  // (antes o user ocultava e voltava a aparecer ao reabrir a conversa).
+  const TX_HIDDEN_KEY = `tx_hidden_v1_${conversationId || ''}`;
+  const txHiddenSetRef = useRef(new Set());
+  // Hidrata o set ao abrir a conversa e aplica nos messages já carregadas.
+  useEffect(() => {
+    if (!conversationId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const AS = require('@react-native-async-storage/async-storage').default;
+        const raw = await AS.getItem(TX_HIDDEN_KEY);
+        const arr = raw ? JSON.parse(raw) : [];
+        if (cancelled) return;
+        const set = new Set(Array.isArray(arr) ? arr.map(String) : []);
+        txHiddenSetRef.current = set;
+        if (set.size > 0) {
+          setMessages(prev => prev.map(m => set.has(String(m.id)) ? { ...m, _txHidden: true } : m));
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [conversationId]);
   const toggleTxCollapsed = useCallback((id) => {
-    setMessages(prev => prev.map(m => m.id === id ? { ...m, _txHidden: !m._txHidden } : m));
-  }, []);
+    const sid = String(id);
+    const set = txHiddenSetRef.current;
+    const willHide = !set.has(sid);
+    if (willHide) set.add(sid); else set.delete(sid);
+    try {
+      const AS = require('@react-native-async-storage/async-storage').default;
+      AS.setItem(TX_HIDDEN_KEY, JSON.stringify([...set])).catch(() => {});
+    } catch {}
+    setMessages(prev => prev.map(m => m.id === id ? { ...m, _txHidden: willHide } : m));
+  }, [TX_HIDDEN_KEY]);
   useEffect(() => {
     if (!inputText || !inputText.trim()) {
       if (stickerSuggestionsHidden) setStickerSuggestionsHidden(false);
