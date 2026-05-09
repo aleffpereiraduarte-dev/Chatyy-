@@ -1691,7 +1691,7 @@ export async function getSessionsList() {
 }
 
 export async function revokeSession(tokenHash) {
-  return apiCall('revoke_session', { token_hash: tokenHash }, 'POST');
+  return apiCall('revoke_session', { session_id: tokenHash, token_hash: tokenHash }, 'POST');
 }
 
 export async function revokeAllSessions() {

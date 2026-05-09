@@ -566,7 +566,9 @@ function DevicesScreen({ colors, t, onClose, onLogout }) {
       const api = require('../services/api');
       const r = await api.getSessionsList();
       if (r?.success) {
-        const items = Array.isArray(r.data?.sessions) ? r.data.sessions : (Array.isArray(r.sessions) ? r.sessions : []);
+        const items = Array.isArray(r.data)
+          ? r.data
+          : (Array.isArray(r.data?.sessions) ? r.data.sessions : (Array.isArray(r.sessions) ? r.sessions : []));
         setSessions(items);
         setError(null);
       } else {
