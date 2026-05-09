@@ -5624,6 +5624,9 @@ export default {
   'settings.plusTeaserSubtitle': 'Advanced features without limits',
   // Profile highlights (round 5 prints)
   'profile.newHighlight': 'New',
+  'profile.newHighlightHint': 'Name your highlight (e.g. Travels, Beach).',
+  'profile.newHighlightAndroidHint': 'Open one of your stories and tap "Add to highlight" in the menu to start a collection.',
+  'common.create': 'Create',
   // Chat new screen (round 5 prints)
   'chat.communitiesTitle': 'Communities',
   'chat.communitiesSubtitle': 'Create or discover communities',

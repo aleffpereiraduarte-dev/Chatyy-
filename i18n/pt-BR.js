@@ -5688,6 +5688,9 @@ export default {
   'settings.plusTeaserSubtitle': 'Recursos avançados sem limites',
   // Profile highlights (round 5 prints)
   'profile.newHighlight': 'Novo',
+  'profile.newHighlightHint': 'Dê um nome para o destaque (ex: Viagens, Praia).',
+  'profile.newHighlightAndroidHint': 'Abra um status seu (Stories) e use "Adicionar a destaque" no menu pra criar uma coleção.',
+  'common.create': 'Criar',
   // Chat new screen (round 5 prints)
   'chat.communitiesTitle': 'Comunidades',
   'chat.communitiesSubtitle': 'Crie ou descubra comunidades',

@@ -1006,7 +1006,61 @@ export default function Profile({
         contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 6, gap: 16 }}
       >
         {isSelf && (
-          <TouchableOpacity activeOpacity={0.8} style={{ alignItems: 'center', width: SIZE + 8 }}>
+          <TouchableOpacity
+            activeOpacity={0.8}
+            style={{ alignItems: 'center', width: SIZE + 8 }}
+            onPress={async () => {
+              // Tap "+ Novo" → ask for a highlight name → create empty
+              // highlight via backend (chat_status_highlights table). Adding
+              // statuses to it comes later from the StoryViewer "Adicionar a
+              // destaque" action — backend already accepts that mutation
+              // (status_highlight_add_status).
+              const submit = async (raw) => {
+                const name = String(raw || '').trim();
+                if (!name) return;
+                try {
+                  const r = await api.statusHighlightCreate(name, [], '');
+                  if (r?.success) {
+                    // Optimistic insert — backend returns id+created_at, no
+                    // full row, so we append a minimal entry. Cover stays
+                    // empty until the user adds a status to the highlight.
+                    const newH = { id: r.id || r.data?.id, title: name, cover_url: '', status_ids: [] };
+                    setData(prev => prev ? { ...prev, highlights: [...(prev.highlights || []), newH] } : prev);
+                  } else if (r?.message) {
+                    if (Platform.OS !== 'web') Alert.alert(t?.('common.error') || 'Erro', r.message);
+                  }
+                } catch (e) {
+                  if (Platform.OS !== 'web') Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Falhou');
+                }
+              };
+              if (Platform.OS === 'ios') {
+                try {
+                  Alert.prompt(
+                    t?.('profile.newHighlight') || 'Novo destaque',
+                    t?.('profile.newHighlightHint') || 'Dê um nome para o destaque (ex: Viagens, Praia).',
+                    [
+                      { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+                      { text: t?.('common.create') || 'Criar', onPress: submit },
+                    ],
+                    'plain-text', ''
+                  );
+                } catch {}
+              } else if (Platform.OS === 'web' && typeof window !== 'undefined' && window.prompt) {
+                const val = window.prompt(t?.('profile.newHighlightHint') || 'Nome do destaque:', '');
+                if (val !== null) submit(val);
+              } else {
+                // Android: bare-bones — show alert telling user to long-press
+                // an expired status to add it to a destaque (the StoryViewer
+                // is the authoring surface). Avoids needing a full TextInput
+                // modal in the profile component.
+                Alert.alert(
+                  t?.('profile.newHighlight') || 'Novo destaque',
+                  t?.('profile.newHighlightAndroidHint') ||
+                  'Abra um status seu (Stories) e use "Adicionar a destaque" no menu pra criar uma coleção.'
+                );
+              }
+            }}
+          >
             <View style={{
               width: RING, height: RING, borderRadius: RING / 2,
               borderWidth: 1.5, borderColor: borderTone,
