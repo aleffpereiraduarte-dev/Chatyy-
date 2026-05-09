@@ -12639,6 +12639,13 @@ export default function ChatConversationScreen() {
           reply_to_id: msg.reply_to_id,
           _isLastInGroup: isLastGroup,
           _isFirstInGroup: true,
+          // Read receipts: o tick do álbum reflete o estado do último item.
+          // Whatsapp/Telegram parity — receipts são lineares, então última msg
+          // lida = álbum inteiro lido. Antes faltavam, daí o álbum nunca
+          // mostrava V V mesmo depois da pessoa ver.
+          read_at: last.read_at,
+          delivered_at: last.delivered_at,
+          status: last.status,
         };
         result.push(albumMsg);
         continue;
