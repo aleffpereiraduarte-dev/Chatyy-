@@ -2040,37 +2040,105 @@ function ExportDataScreen({ colors, t }) {
     try { Linking.openURL(u); } catch {}
   };
 
+  // What goes into the export — surfaced as a checklist so the user sees
+  // exactly what they'll get instead of trusting the abstract "JSON file".
+  const items = [
+    { icon: IconUser,      label: t?.('settings.exportItemProfile')  || 'Perfil e configurações' },
+    { icon: IconMessageSquare, label: t?.('settings.exportItemChats')    || 'Lista de conversas' },
+    { icon: IconMail,      label: t?.('settings.exportItemEmail')    || 'Pastas e mensagens de email' },
+    { icon: IconImage,     label: t?.('settings.exportItemPosts')    || 'Posts do feed e mídias' },
+    { icon: IconBell,      label: t?.('settings.exportItemNotifs')   || 'Histórico de notificações' },
+  ];
+
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
-      <View style={{ padding: 20 }}>
-        <Text style={{ fontSize: 14, color: colors?.text, lineHeight: 22, marginBottom: 16 }}>
-          {t?.('settings.exportDataConfirm')
-            || 'Vamos preparar um arquivo JSON com seu perfil, lista de conversas, pastas de email e posts do feed. O link de download estará disponível por 24h. Limite: 1 exportação a cada 24h.'}
+      {/* Hero — big icon + title + sub */}
+      <View style={{ alignItems: 'center', paddingTop: 24, paddingBottom: 18, paddingHorizontal: 24 }}>
+        <View style={{
+          width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center',
+          backgroundColor: ACCENT + '18', marginBottom: 14,
+        }}>
+          <IconDatabase size={32} color={ACCENT} />
+        </View>
+        <Text style={{ fontSize: 18, fontWeight: '700', color: colors?.text, marginBottom: 6, textAlign: 'center' }}>
+          {t?.('settings.exportHeroTitle') || 'Sua cópia, do seu jeito'}
         </Text>
-        {result?.url ? (
-          <View style={{ backgroundColor: colors?.surface, padding: 14, borderRadius: 10, marginBottom: 12 }}>
-            <Text style={{ fontSize: 12, color: colors?.textSecondary, marginBottom: 6 }}>
-              {t?.('settings.exportReady') || 'Pronto! Toque pra baixar:'}
-            </Text>
-            <TouchableOpacity onPress={() => openUrl(result.url)}>
-              <Text style={{ fontSize: 13, color: ACCENT, fontWeight: '600' }} numberOfLines={2}>{result.url}</Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
-        {!!error && <Text style={{ color: '#ef4444', fontSize: 13, marginBottom: 12 }}>{error}</Text>}
+        <Text style={{ fontSize: 13, color: colors?.textSecondary, textAlign: 'center', lineHeight: 19, maxWidth: 320 }}>
+          {t?.('settings.exportHeroSub') || 'Empacotamos tudo num arquivo JSON. Você baixa, guarda offline, importa onde quiser.'}
+        </Text>
+      </View>
+
+      {/* What's included — tile list */}
+      <View style={{ paddingHorizontal: 16, marginBottom: 14 }}>
+        <Text style={{ fontSize: 11, fontWeight: '600', color: colors?.textTertiary, marginLeft: 6, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+          {t?.('settings.exportIncludes') || 'O que entra'}
+        </Text>
+        <View style={{ backgroundColor: colors?.surface, borderRadius: 14, overflow: 'hidden' }}>
+          {items.map((it, i) => {
+            const Icon = it.icon;
+            return (
+              <View key={i} style={{
+                flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 13,
+                borderTopWidth: i === 0 ? 0 : StyleSheet.hairlineWidth, borderTopColor: colors?.border,
+              }}>
+                <View style={{ width: 28, alignItems: 'center', marginRight: 12 }}>
+                  <Icon size={18} color={ACCENT} />
+                </View>
+                <Text style={{ fontSize: 14, color: colors?.text, flex: 1 }}>{it.label}</Text>
+                <Text style={{ fontSize: 14, color: '#10B981', fontWeight: '600' }}>✓</Text>
+              </View>
+            );
+          })}
+        </View>
+      </View>
+
+      {/* Limits note */}
+      <View style={{ marginHorizontal: 16, marginBottom: 18, padding: 12, backgroundColor: colors?.surfaceVariant || (colors?.background === '#000' ? 'rgba(255,255,255,0.04)' : '#F4F4F6'), borderRadius: 10 }}>
+        <Text style={{ fontSize: 12, color: colors?.textSecondary, lineHeight: 17 }}>
+          {t?.('settings.exportLimitNote') || 'Link válido por 24h. Limite de 1 exportação a cada 24 horas.'}
+        </Text>
+      </View>
+
+      {/* Result card — only when ready */}
+      {result?.url ? (
+        <View style={{ marginHorizontal: 16, marginBottom: 14, padding: 14, borderRadius: 12, backgroundColor: '#10B98114', borderWidth: 1, borderColor: '#10B98140' }}>
+          <Text style={{ fontSize: 12, fontWeight: '600', color: '#059669', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            {t?.('settings.exportReady') || 'Pronto pra baixar'}
+          </Text>
+          <TouchableOpacity onPress={() => openUrl(result.url)} activeOpacity={0.7}>
+            <Text style={{ fontSize: 13, color: ACCENT, fontWeight: '600' }} numberOfLines={2}>{result.url}</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {!!error && (
+        <View style={{ marginHorizontal: 16, marginBottom: 12, padding: 12, borderRadius: 10, backgroundColor: '#fef2f2' }}>
+          <Text style={{ color: '#dc2626', fontSize: 13 }}>{error}</Text>
+        </View>
+      )}
+
+      {/* CTA */}
+      <View style={{ paddingHorizontal: 16 }}>
         <TouchableOpacity
           disabled={working}
           onPress={requestExport}
           style={{
-            backgroundColor: ACCENT, paddingVertical: 13, borderRadius: 12, alignItems: 'center',
+            backgroundColor: ACCENT, paddingVertical: 15, borderRadius: 14, alignItems: 'center',
             opacity: working ? 0.6 : 1,
+            ...Platform.select({
+              ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 10 },
+              android: { elevation: 3 },
+              web: { boxShadow: `0 6px 20px ${ACCENT}40` },
+            }),
           }}
           accessibilityRole="button"
         >
           {working
             ? <ActivityIndicator color="#fff" />
-            : <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>
-                {t?.('settings.exportData') || 'Baixar meus dados'}
+            : <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700', letterSpacing: 0.2 }}>
+                {result?.url
+                  ? (t?.('settings.exportRedo') || 'Gerar nova cópia')
+                  : (t?.('settings.exportData') || 'Baixar meus dados')}
               </Text>}
         </TouchableOpacity>
       </View>
