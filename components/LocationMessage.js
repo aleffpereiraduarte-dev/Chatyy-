@@ -92,7 +92,10 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
     const x = Math.floor((lng + 180) / 360 * Math.pow(2, zoom));
     const latRad = lat * Math.PI / 180;
     const y = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * Math.pow(2, zoom));
-    return `https://tile.openstreetmap.org/${zoom}/${x}/${y}.png`;
+    // CartoCDN basemap — public, fast (Fastly CDN), no User-Agent enforcement.
+    // RN's default UA gets blocked on tile.openstreetmap.org sometimes →
+    // gray empty tiles in chat bubble. CartoCDN doesn't have that issue.
+    return `https://basemaps.cartocdn.com/light_all/${zoom}/${x}/${y}.png`;
   })() : null;
 
   // Web: build a 3x3 OSM tile mosaic for a richer, larger map preview.
@@ -116,7 +119,7 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
         const ty = tileY + dy;
         if (tx < 0 || ty < 0) continue;
         tiles.push({
-          url: `https://tile.openstreetmap.org/${zoom}/${tx}/${ty}.png`,
+          url: `https://basemaps.cartocdn.com/light_all/${zoom}/${tx}/${ty}.png`,
           left: (dx + Math.floor(cols/2)) * tileSize,
           top: (dy + Math.floor(rows/2)) * tileSize,
         });

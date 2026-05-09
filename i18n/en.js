@@ -3752,6 +3752,7 @@ export default {
   // Photos
   'photos.title': 'Photos',
   'photos.text': 'Text',
+  'photos.next': 'Next',
   'photos.tab_photos': 'Photos',
   'photos.tab_albums': 'Albums',
   'photos.tab_backup': 'Backup',
