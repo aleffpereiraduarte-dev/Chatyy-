@@ -1950,6 +1950,7 @@ const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, render
     a.transcription === b.transcription &&
     a._transcribing === b._transcribing &&
     a._transcribeError === b._transcribeError &&
+    a._txHidden === b._txHidden &&
     // Poll mutable state — vote counts + my_votes + total decide which
     // option shows ✓ and how the progress fills. Skipping these meant tap
     // on a different option visually didn't move the check.
@@ -6304,16 +6305,11 @@ export default function ChatConversationScreen() {
   // Sticker suggestion strip user-dismissal — resets when the input is
   // cleared so the next message gets a fresh chance at suggestions.
   const [stickerSuggestionsHidden, setStickerSuggestionsHidden] = useState(false);
-  // Audio transcript collapse — per-message Set. User asked to hide the
-  // expanded transcript that follows an audio bubble; tap "Ocultar
-  // transcrição" to collapse, "Mostrar transcrição" to bring it back.
-  const [txCollapsed, setTxCollapsed] = useState(() => new Set());
+  // Audio transcript collapse — toggled by mutating the message itself so
+  // MemoizedMessageRow's per-field comparator picks it up (an external Set
+  // state didn't trigger re-render because the memo didn't see it).
   const toggleTxCollapsed = useCallback((id) => {
-    setTxCollapsed(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
+    setMessages(prev => prev.map(m => m.id === id ? { ...m, _txHidden: !m._txHidden } : m));
   }, []);
   useEffect(() => {
     if (!inputText || !inputText.trim()) {
@@ -13801,7 +13797,7 @@ export default function ChatConversationScreen() {
               />
               {audioTx ? (
                 <View style={{ marginTop: 6 }}>
-                  {!txCollapsed.has(msg.id) && (
+                  {!msg._txHidden && (
                     <Text style={{ fontSize: 13, color: isOwn ? ownTextColor : colors.text, lineHeight: 17, opacity: 0.92 }} selectable>
                       {audioTx}
                     </Text>
@@ -13810,10 +13806,10 @@ export default function ChatConversationScreen() {
                     onPress={() => toggleTxCollapsed(msg.id)}
                     hitSlop={6}
                     accessibilityRole="button"
-                    style={{ marginTop: txCollapsed.has(msg.id) ? 0 : 4, alignSelf: 'flex-start' }}
+                    style={{ marginTop: msg._txHidden ? 0 : 4, alignSelf: 'flex-start' }}
                   >
                     <Text style={{ fontSize: 11, fontWeight: '600', color: isOwn ? ownMetaColor : colors.primary, opacity: 0.9 }}>
-                      {txCollapsed.has(msg.id)
+                      {msg._txHidden
                         ? (t('chatConv.showTranscript') || 'Mostrar transcrição')
                         : (t('chatConv.hideTranscript') || 'Ocultar transcrição')}
                     </Text>
