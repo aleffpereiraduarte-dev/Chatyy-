@@ -2960,11 +2960,6 @@ export default function OneScreen() {
 
         <View style={st.headerCleanCenter}>
           <Text style={[st.headerCleanTitle, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}>One</Text>
-          <ModelPickerPill
-            isDark={isDark}
-            onPress={() => setModelSheetOpen(true)}
-            modelLabel={selectedModel.label}
-          />
         </View>
 
         <View style={{ flexDirection: 'row' }}>
