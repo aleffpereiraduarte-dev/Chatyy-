@@ -444,13 +444,9 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
     >
       {/* Hero + plus card hide while searching to keep results focused. */}
       {!query && <HeroCard colors={colors} userEmail={userEmail} onPress={onEditProfile} t={t} />}
-      {!query && (
-        <PlusUpsellCard
-          colors={colors}
-          t={t}
-          onPress={() => closeAndRun(() => router?.push?.('/plans'))}
-        />
-      )}
+      {/* Plus upsell removed from Configurações (2026-05-08): user prefers a
+          cleaner sheet. Upsell still surfaces contextually via UpsellHelper at
+          gated features (e.g., backup, custom themes, status views). */}
 
       <View style={{ backgroundColor: colors?.background || '#fff' }}>
         <SettingsSearchBar value={query} onChangeText={setQuery} colors={colors} t={t} />

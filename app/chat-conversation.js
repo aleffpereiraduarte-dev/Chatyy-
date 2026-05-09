@@ -389,6 +389,86 @@ function AnimatedCheckStatus({ status, color }) {
 }
 
 // ============================================================
+// MEDIA STATUS FOOTER — WhatsApp-style time + read receipts pill
+// ============================================================
+// Floats over media bubbles (image/video/gif) at bottom-right with a dark
+// semi-transparent background so it stays legible on any image. For
+// stickers (variant='sticker'), renders WITHOUT background as a small row
+// below the sticker since stickers are transparent and a dark pill clashes.
+//
+// Renders nothing when:
+//   - msg is missing
+//   - it's an incoming message AND there's no timestamp to show (rare)
+//   - upload still in flight (callers gate with !uploading themselves)
+//
+// Reuses the same _readStatus enum (1 = sent, 1.5 = delivered, 2 = read)
+// already wired through the rest of the bubble pipeline.
+function MediaStatusFooter({ msg, isOwn, variant }) {
+  if (!msg) return null;
+  const isSticker = variant === 'sticker';
+  const showChecks = isOwn && !msg._pending && !msg._failed;
+  const time = formatTime(msg.created_at);
+  if (!time && !showChecks) return null;
+
+  const Checks = () => {
+    if (!showChecks) return null;
+    if (msg._readStatus === 2) {
+      return (
+        <View style={{ flexDirection: 'row', marginLeft: 1, flexShrink: 0 }}>
+          <IconCheck size={12} strokeWidth={2.6} color="#C4B5FD" style={{ marginRight: -6 }} />
+          <IconCheck size={12} strokeWidth={2.6} color="#C4B5FD" />
+        </View>
+      );
+    }
+    if (msg._readStatus === 1.5) {
+      const c = isSticker ? 'rgba(120,120,120,0.85)' : 'rgba(255,255,255,0.85)';
+      return (
+        <View style={{ flexDirection: 'row', marginLeft: 1, flexShrink: 0 }}>
+          <IconCheck size={11} color={c} style={{ marginRight: -6 }} />
+          <IconCheck size={11} color={c} />
+        </View>
+      );
+    }
+    const c = isSticker ? 'rgba(120,120,120,0.75)' : 'rgba(255,255,255,0.75)';
+    return <IconCheck size={11} color={c} style={{ marginLeft: 1, flexShrink: 0 }} />;
+  };
+
+  if (isSticker) {
+    // Sticker: minimal row below the sticker (no dark pill — clashes with
+    // transparent sticker shadows). Subtle gray text, right-aligned for own
+    // messages so checks line up with WhatsApp/Telegram conventions.
+    return (
+      <View style={{
+        flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 4,
+        alignSelf: isOwn ? 'flex-end' : 'flex-start', paddingHorizontal: 2,
+      }}>
+        {!!msg.edited_at && (
+          <Text style={{ fontSize: 10, color: 'rgba(120,120,120,0.85)', fontStyle: 'italic' }}>edited</Text>
+        )}
+        <Text style={{ fontSize: 10.5, color: 'rgba(120,120,120,0.95)', fontWeight: '500' }}>{time}</Text>
+        <Checks />
+      </View>
+    );
+  }
+
+  // Default: floating dark pill over the bottom-right corner of the media.
+  return (
+    <View style={{
+      position: 'absolute', bottom: 6, right: 8,
+      flexDirection: 'row', alignItems: 'center', gap: 3,
+      backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 10,
+      paddingHorizontal: 7, paddingVertical: 2.5,
+    }}>
+      {!!msg.edited_at && (
+        <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.8)', fontStyle: 'italic' }}>edited</Text>
+      )}
+      <Text style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.95)', fontWeight: '500' }}>{time}</Text>
+      <Checks />
+    </View>
+  );
+}
+
+// ============================================================
 // UNREAD SEPARATOR with pulse glow on mount
 // ============================================================
 // The "NÃO LIDAS" divider is the visual anchor WhatsApp / Telegram both use
@@ -13442,23 +13522,32 @@ export default function ChatConversationScreen() {
                     </View>
                   );
                 })()}
-                {/* Time overlay pill on image (WhatsApp-style) */}
+                {/* Time + read receipts pill (WhatsApp-style overlay).
+                    Only when NO caption — when caption is present, the pill
+                    moves below the caption so it doesn't compete visually. */}
                 {!hasCaption && !imgUploading && (
-                  <View style={{ position: 'absolute', bottom: 6, right: 8, flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2.5 }}>
-                    {msg.edited_at && <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.8)', fontStyle: 'italic' }}>{t('chatConv.edited')}</Text>}
-                    <Text style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.95)', fontWeight: '500' }}>{formatTime(msg.created_at)}</Text>
-                    {isOwn && !msg._pending && !msg._failed && (
-                      msg._readStatus === 2
-                        ? <View style={{ flexDirection: 'row', marginLeft: 1, flexShrink: 0 }}><IconCheck size={12} strokeWidth={2.6} color="#C4B5FD" style={{ marginRight: -6 }} /><IconCheck size={12} strokeWidth={2.6} color="#C4B5FD" /></View>
-                        : msg._readStatus === 1.5
-                        ? <View style={{ flexDirection: 'row', marginLeft: 1, flexShrink: 0 }}><IconCheck size={11} color="rgba(255,255,255,0.8)" style={{ marginRight: -6 }} /><IconCheck size={11} color="rgba(255,255,255,0.8)" /></View>
-                        : <IconCheck size={11} color="rgba(255,255,255,0.7)" style={{ marginLeft: 1 }} />
-                    )}
-                  </View>
+                  <MediaStatusFooter msg={msg} isOwn={isOwn} />
                 )}
               </View>
               {hasCaption && (
-                <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight, marginTop: 6, paddingHorizontal: 13 }]}>{msg.content}</Text>
+                <View>
+                  <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight, marginTop: 6, paddingHorizontal: 13 }]}>{msg.content}</Text>
+                  {!imgUploading && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 3, paddingHorizontal: 13, paddingTop: 2, paddingBottom: 4 }}>
+                      {!!msg.edited_at && (
+                        <Text style={{ fontSize: 10, color: isOwn ? 'rgba(255,255,255,0.7)' : colors.textTertiary, fontStyle: 'italic' }}>{t('chatConv.edited')}</Text>
+                      )}
+                      <Text style={{ fontSize: 10.5, color: isOwn ? 'rgba(255,255,255,0.85)' : colors.textTertiary, fontWeight: '500' }}>{formatTime(msg.created_at)}</Text>
+                      {isOwn && !msg._pending && !msg._failed && (
+                        msg._readStatus === 2
+                          ? <View style={{ flexDirection: 'row', marginLeft: 1, flexShrink: 0 }}><IconCheck size={12} strokeWidth={2.6} color="#C4B5FD" style={{ marginRight: -6 }} /><IconCheck size={12} strokeWidth={2.6} color="#C4B5FD" /></View>
+                          : msg._readStatus === 1.5
+                          ? <View style={{ flexDirection: 'row', marginLeft: 1, flexShrink: 0 }}><IconCheck size={11} color={isOwn ? 'rgba(255,255,255,0.85)' : colors.textTertiary} style={{ marginRight: -6 }} /><IconCheck size={11} color={isOwn ? 'rgba(255,255,255,0.85)' : colors.textTertiary} /></View>
+                          : <IconCheck size={11} color={isOwn ? 'rgba(255,255,255,0.75)' : colors.textTertiary} style={{ marginLeft: 1 }} />
+                      )}
+                    </View>
+                  )}
+                </View>
               )}
             </TouchableOpacity>
           );
@@ -13601,18 +13690,9 @@ export default function ChatConversationScreen() {
                   <Text style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.95)', fontWeight: '500' }}>{vidDurationStr || vidSizeStr}</Text>
                 </View>
               )}
-              {/* Time overlay pill bottom-right */}
+              {/* Time + read receipts pill bottom-right (WhatsApp-style) */}
               {!vidUploading && (
-                <View style={{ position: 'absolute', bottom: 6, right: 8, flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2.5 }}>
-                  <Text style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.95)', fontWeight: '500' }}>{formatTime(msg.created_at)}</Text>
-                  {isOwn && !msg._pending && !msg._failed && (
-                    msg._readStatus === 2
-                      ? <View style={{ flexDirection: 'row', marginLeft: 1, flexShrink: 0 }}><IconCheck size={12} strokeWidth={2.6} color="#C4B5FD" style={{ marginRight: -6 }} /><IconCheck size={12} strokeWidth={2.6} color="#C4B5FD" /></View>
-                      : msg._readStatus === 1.5
-                      ? <View style={{ flexDirection: 'row', marginLeft: 1, flexShrink: 0 }}><IconCheck size={11} color="rgba(255,255,255,0.8)" style={{ marginRight: -6 }} /><IconCheck size={11} color="rgba(255,255,255,0.8)" /></View>
-                      : <IconCheck size={11} color="rgba(255,255,255,0.7)" style={{ marginLeft: 1, flexShrink: 0 }} />
-                  )}
-                </View>
+                <MediaStatusFooter msg={msg} isOwn={isOwn} />
               )}
               </View>
             </TouchableOpacity>
@@ -14171,19 +14251,28 @@ export default function ChatConversationScreen() {
         }
 
         case 'sticker':
-          // If content is a URL (image sticker), show as Image; otherwise it's an emoji
+          // If content is a URL (image sticker), show as Image; otherwise it's an emoji.
+          // Stickers are transparent so the dark pill clashes — the footer
+          // helper renders a small gray timestamp+checks row BELOW the sticker
+          // for own messages (WhatsApp/Telegram parity).
           if (msg.file_url || (msg.content && msg.content.startsWith('http'))) {
             return (
-              <ChatMedia
-                uri={msg.file_url || msg.content}
-                style={{ width: 120, height: 120 }}
-                contentFit="contain"
-                recyclingKey={`sticker-${msg.id}`}
-              />
+              <View>
+                <ChatMedia
+                  uri={msg.file_url || msg.content}
+                  style={{ width: 120, height: 120 }}
+                  contentFit="contain"
+                  recyclingKey={`sticker-${msg.id}`}
+                />
+                <MediaStatusFooter msg={msg} isOwn={isOwn} variant="sticker" />
+              </View>
             );
           }
           return (
-            <Text style={{ fontSize: 64, lineHeight: 72 }}>{msg.content}</Text>
+            <View>
+              <Text style={{ fontSize: 64, lineHeight: 72 }}>{msg.content}</Text>
+              <MediaStatusFooter msg={msg} isOwn={isOwn} variant="sticker" />
+            </View>
           );
 
         case 'lottie_sticker': {
@@ -14193,8 +14282,11 @@ export default function ChatConversationScreen() {
           const lottieUrl = resolveMediaUri(msg.file_url || msg.content);
           if (Platform.OS === 'web' || !lottieUrl) {
             return (
-              <View style={{ width: 96, height: 96, borderRadius: 16, backgroundColor: 'rgba(124,58,237,0.10)', alignItems: 'center', justifyContent: 'center' }}>
-                <IconFilm size={48} color="#7C3AED" />
+              <View>
+                <View style={{ width: 96, height: 96, borderRadius: 16, backgroundColor: 'rgba(124,58,237,0.10)', alignItems: 'center', justifyContent: 'center' }}>
+                  <IconFilm size={48} color="#7C3AED" />
+                </View>
+                <MediaStatusFooter msg={msg} isOwn={isOwn} variant="sticker" />
               </View>
             );
           }
@@ -14202,12 +14294,15 @@ export default function ChatConversationScreen() {
           try { const M = require('lottie-react-native'); LottieView = M.default || M; } catch {}
           if (!LottieView) return <Text style={{ fontSize: 64, lineHeight: 72 }}>🎞️</Text>;
           return (
-            <LottieView
-              source={{ uri: lottieUrl }}
-              style={{ width: 160, height: 160 }}
-              autoPlay
-              loop
-            />
+            <View>
+              <LottieView
+                source={{ uri: lottieUrl }}
+                style={{ width: 160, height: 160 }}
+                autoPlay
+                loop
+              />
+              <MediaStatusFooter msg={msg} isOwn={isOwn} variant="sticker" />
+            </View>
           );
         }
 
@@ -14245,13 +14340,18 @@ export default function ChatConversationScreen() {
           // our CDN get the JS sync index + native chat-cache treatment. External
           // GIFs (Giphy/Tenor) still hit memory-disk on re-opens so they don't
           // re-download every time the chat is scrolled.
+          // Wrapper provides the relative parent for the absolute-positioned
+          // status footer pill (timestamp + checks) at bottom-right corner.
           return (
-            <ChatMedia
-              uri={gifUrl}
-              style={{ width: 220, height: 180, borderRadius: 12 }}
-              contentFit="cover"
-              recyclingKey={`gif-${msg.id}`}
-            />
+            <View style={{ width: 220, height: 180, borderRadius: 12, overflow: 'hidden' }}>
+              <ChatMedia
+                uri={gifUrl}
+                style={{ width: 220, height: 180 }}
+                contentFit="cover"
+                recyclingKey={`gif-${msg.id}`}
+              />
+              <MediaStatusFooter msg={msg} isOwn={isOwn} />
+            </View>
           );
         }
 

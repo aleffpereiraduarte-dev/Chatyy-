@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconX, IconCheck, IconRefresh } from '../components/Icons';
 import Svg, { Rect, Line, Path, Circle, G } from 'react-native-svg';
 
@@ -212,6 +213,10 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
   const { width: screenW, height: screenH } = useWindowDimensions();
+  // Bug print z2 (2026-05-08): "Próximo" pill was being clipped by Dynamic
+  // Island / status bar. topBar height=56 starting at y=0 left no room for
+  // the system UI. Use the runtime safe-area inset so the bar pushes down.
+  const insets = useSafeAreaInsets();
 
   // State
   const [activeTab, setActiveTab] = useState('crop');
@@ -928,7 +933,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
         {/* Top bar — X on the left, "Próximo" pill on the right (primary
             purple). Reset is folded into a small icon pill in the middle so
             users still have the safety hatch without crowding the header. */}
-        <View style={s.topBar}>
+        <View style={[s.topBar, { paddingTop: insets.top + 6, height: 56 + insets.top }]}>
           <TouchableOpacity onPress={onClose} style={s.topIconBtn} accessibilityLabel={t('common.cancel')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
             <IconX size={26} color="#fff" />
           </TouchableOpacity>

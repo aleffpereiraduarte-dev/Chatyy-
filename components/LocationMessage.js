@@ -1,10 +1,30 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, Linking, StyleSheet, Share, Platform, Image } from 'react-native';
+import { View, Text, TouchableOpacity, Linking, StyleSheet, Share, Platform } from 'react-native';
 import { IconMapPin } from './Icons';
+
+// Use expo-image on native for built-in cache control + recyclingKey support.
+// RN's stock Image (NSURLCache) had a poisoned 403 entry from the old
+// tile.openstreetmap.org URL on installs that ran the previous build —
+// once cached, RN re-served the 403 forever, so even after the URL
+// changed to CartoCDN the user kept seeing a gray bg with just the pin.
+// expo-image fixes this with cachePolicy + recyclingKey we control.
+let ExpoImage = null;
+let RNImage = null;
+if (Platform.OS !== 'web') {
+  try { ExpoImage = require('expo-image').Image; } catch {}
+}
+if (!ExpoImage) {
+  RNImage = require('react-native').Image;
+}
 
 // Google Maps Static API key (from app.json extra). Falls back to OSM tile if absent.
 let GMAPS_KEY = '';
 try { GMAPS_KEY = require('expo-constants').default?.expoConfig?.extra?.GOOGLE_MAPS_KEY || ''; } catch {}
+
+// Cache-bust query string. Bump this when switching tile providers so any
+// previously-cached failed responses (e.g. 403 from tile.openstreetmap.org)
+// get evicted and re-fetched against the new URL.
+const TILE_CACHE_BUST = 'cartov2';
 
 /**
  * Location Message Component
@@ -23,12 +43,16 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
   };
 
   const [location, setLocation] = useState(null);
-  const [mapReady, setMapReady] = useState(false);
+  const [tileError, setTileError] = useState(false);
+  const [tileProvider, setTileProvider] = useState('carto'); // 'carto' | 'osm' | 'failed'
 
   useEffect(() => {
     try {
       const loc = typeof content === 'string' ? JSON.parse(content) : content;
       setLocation(loc);
+      // Reset tile state when location changes (new message in same component)
+      setTileError(false);
+      setTileProvider('carto');
     } catch (err) {
       console.warn('LocationMessage parse error:', err);
     }
@@ -82,24 +106,47 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
 
   // Google Static Maps requires Cloud Billing enabled (returned 403 on prod).
   // Disabled for now — OSM tile mosaic (web) + single OSM tile (native) work
-  // without any key/billing and look clean for chat-bubble previews. To
-  // re-enable: enable billing in Google Cloud project, then flip this guard.
+  // without any key/billing and look clean for chat-bubble previews.
   const gmapsUrl = null;
 
-  // Fallback: single OSM tile at zoom 15 (no key required).
+  // Tile coords formula (Web Mercator). Verified for São Paulo
+  // lat=-23.55, lng=-46.63 @ z15 → x≈12104, y≈18213 (correct).
+  // Negative coords are handled correctly because (lng + 180) keeps x ≥ 0
+  // and tan(latRad) for negative lat is also negative — the formula is
+  // symmetric across the equator.
+  const computeTile = (latitude, longitude, zoom) => {
+    const n = Math.pow(2, zoom);
+    const x = Math.floor(((longitude + 180) / 360) * n);
+    const latRad = (latitude * Math.PI) / 180;
+    const y = Math.floor(((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n);
+    return { x, y };
+  };
+
+  // Native single tile @ z15. Provider chain: carto → osm → solid-pin fallback.
   const tileUrl = hasCoords ? (() => {
     const zoom = 15;
-    const x = Math.floor((lng + 180) / 360 * Math.pow(2, zoom));
-    const latRad = lat * Math.PI / 180;
-    const y = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * Math.pow(2, zoom));
-    // CartoCDN basemap — public, fast (Fastly CDN), no User-Agent enforcement.
-    // RN's default UA gets blocked on tile.openstreetmap.org sometimes →
-    // gray empty tiles in chat bubble. CartoCDN doesn't have that issue.
-    return `https://basemaps.cartocdn.com/light_all/${zoom}/${x}/${y}.png`;
+    const { x, y } = computeTile(lat, lng, zoom);
+    const cb = `?v=${TILE_CACHE_BUST}-${zoom}-${x}-${y}`;
+    if (tileProvider === 'carto') {
+      return `https://basemaps.cartocdn.com/light_all/${zoom}/${x}/${y}.png${cb}`;
+    }
+    if (tileProvider === 'osm') {
+      return `https://tile.openstreetmap.org/${zoom}/${x}/${y}.png${cb}`;
+    }
+    return null;
   })() : null;
 
-  // Web: build a 3x3 OSM tile mosaic for a richer, larger map preview.
-  // Static composition (no iframe) → no flicker, no JS, no border issues.
+  const handleTileError = (err) => {
+    console.warn('LocationMessage tile failed:', tileUrl, err?.nativeEvent || err);
+    if (tileProvider === 'carto') {
+      setTileProvider('osm');
+    } else if (tileProvider === 'osm') {
+      setTileProvider('failed');
+      setTileError(true);
+    }
+  };
+
+  // Web: build a 3x2 OSM tile mosaic for a richer, larger map preview.
   const buildTileGrid = () => {
     if (!hasCoords) return null;
     const zoom = 16;
@@ -119,18 +166,50 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
         const ty = tileY + dy;
         if (tx < 0 || ty < 0) continue;
         tiles.push({
-          url: `https://basemaps.cartocdn.com/light_all/${zoom}/${tx}/${ty}.png`,
+          url: `https://basemaps.cartocdn.com/light_all/${zoom}/${tx}/${ty}.png?v=${TILE_CACHE_BUST}`,
           left: (dx + Math.floor(cols/2)) * tileSize,
           top: (dy + Math.floor(rows/2)) * tileSize,
         });
       }
     }
-    // Pin position relative to the grid (centered on coords)
     const pinLeft = Math.floor(cols/2) * tileSize + fracX * tileSize;
     const pinTop = Math.floor(rows/2) * tileSize + fracY * tileSize;
     return { tiles, pinLeft, pinTop, gridW: cols * tileSize, gridH: rows * tileSize };
   };
   const grid = (Platform.OS === 'web' && hasCoords) ? buildTileGrid() : null;
+
+  // Tile image renderer — picks expo-image (native) or RN Image (web/fallback).
+  // expo-image gets a recyclingKey so when the URL changes (provider fallback,
+  // cache-bust bump) it forces a fresh fetch instead of reusing a stale slot.
+  // Explicit width/height (not %) on the inner Image to avoid any layout race
+  // where the tile renders 0×0 before the parent measures.
+  const renderTileImage = (uri, style) => {
+    if (!uri) return null;
+    if (ExpoImage) {
+      return (
+        <ExpoImage
+          source={{ uri }}
+          style={style}
+          contentFit="cover"
+          cachePolicy="memory-disk"
+          recyclingKey={uri}
+          transition={150}
+          onError={handleTileError}
+        />
+      );
+    }
+    const Img = RNImage || require('react-native').Image;
+    return (
+      <Img
+        source={{ uri, cache: 'reload' }}
+        style={style}
+        resizeMode="cover"
+        onError={handleTileError}
+      />
+    );
+  };
+
+  const showSolidFallback = !hasCoords || tileError || tileProvider === 'failed';
 
   return (
     <TouchableOpacity
@@ -144,17 +223,14 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
       }]}
     >
       {/* Map Preview */}
-      <View style={[styles.mapContainer]}>
-        {/* Best path: Google Static Maps (single image, marker baked in) */}
-        {gmapsUrl ? (
-          <Image
-            source={{ uri: gmapsUrl }}
-            style={styles.mapTileImage}
-            resizeMode="cover"
-            onError={() => {}}
-          />
+      <View style={styles.mapContainer}>
+        {showSolidFallback ? (
+          /* Final fallback: solid bg + centered pin */
+          <View style={[styles.mapContainerInner, { backgroundColor: isOwn ? '#7C3AED' : safeColors.primary, justifyContent: 'center', alignItems: 'center' }]}>
+            <IconMapPin size={36} color="#fff" />
+          </View>
         ) : Platform.OS === 'web' && grid ? (
-          <View style={[styles.mapContainer, { overflow: 'hidden', backgroundColor: '#e5e7eb' }]}>
+          <View style={[styles.mapContainerInner, { overflow: 'hidden', backgroundColor: '#e5e7eb' }]}>
             {/* Centered tile grid */}
             <View style={{
               position: 'absolute',
@@ -164,12 +240,7 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
               marginTop: -grid.gridH / 2,
             }}>
               {grid.tiles.map((tile, i) => (
-                <Image
-                  key={i}
-                  source={{ uri: tile.url }}
-                  style={{ position: 'absolute', left: tile.left, top: tile.top, width: 256, height: 256 }}
-                  resizeMode="cover"
-                />
+                renderTileImage(tile.url, { position: 'absolute', left: tile.left, top: tile.top, width: 256, height: 256 })
               ))}
               {/* Pin centered on coordinates */}
               <View style={{
@@ -193,17 +264,15 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
               pointerEvents: 'none',
             }} />
           </View>
-        ) : hasCoords && tileUrl ? (
-          /* Native: usar tile OSM como imagem de fundo */
-          <View style={[styles.mapContainer, { overflow: 'hidden' }]}>
-            <Image
-              source={{ uri: tileUrl }}
-              style={styles.mapTileImage}
-              resizeMode="cover"
-              onError={() => {}}
-            />
+        ) : tileUrl ? (
+          /* Native: single CartoCDN/OSM tile as background. Inner View has NO
+             backgroundColor so the tile shows through — the cinza bg used to
+             cover the tile was the visual "gray map" symptom on the user's
+             screen. Solid bg only kicks in via showSolidFallback above. */
+          <View style={[styles.mapContainerInner, { overflow: 'hidden' }]}>
+            {renderTileImage(tileUrl, styles.mapTileImage)}
             {/* Pin no centro */}
-            <View style={styles.pinOverlay}>
+            <View style={styles.pinOverlay} pointerEvents="none">
               <View style={[styles.pinCircle, { backgroundColor: isOwn ? '#7C3AED' : safeColors.primary }]}>
                 <IconMapPin size={18} color="#fff" />
               </View>
@@ -211,8 +280,7 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
             </View>
           </View>
         ) : (
-          /* Fallback */
-          <View style={[styles.mapContainer, { backgroundColor: isOwn ? '#7C3AED' : safeColors.primary, justifyContent: 'center', alignItems: 'center' }]}>
+          <View style={[styles.mapContainerInner, { backgroundColor: isOwn ? '#7C3AED' : safeColors.primary, justifyContent: 'center', alignItems: 'center' }]}>
             <IconMapPin size={36} color="#fff" />
           </View>
         )}
@@ -230,10 +298,10 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
       <View style={styles.infoContainer}>
         <View style={{ flex: 1 }}>
           <Text style={[styles.addressText, { color: isOwn ? '#fff' : safeColors.text }]} numberOfLines={2}>
-            {String(location.address || (hasCoords ? `${lat.toFixed(5)}, ${lng.toFixed(5)}` : 'Localiza\u00E7\u00E3o'))}
+            {String(location.address || (hasCoords ? `${lat.toFixed(5)}, ${lng.toFixed(5)}` : 'Localização'))}
           </Text>
           <Text style={{ fontSize: 10, color: isOwn ? 'rgba(255,255,255,0.55)' : safeColors.textTertiary, marginTop: 2 }}>
-            {location.accuracy != null ? `\u00B1${Math.round(location.accuracy)}m \u00B7 ` : ''}{t?.('chatConv.tapToOpenMap') || 'Toque para abrir'}
+            {location.accuracy != null ? `±${Math.round(location.accuracy)}m · ` : ''}{t?.('chatConv.tapToOpenMap') || 'Toque para abrir'}
           </Text>
         </View>
 
@@ -261,13 +329,20 @@ const styles = StyleSheet.create({
     width: '100%',
     height: 160,
     position: 'relative',
+    // No backgroundColor here — tile image fills the space. If we set
+    // a gray bg, on slow networks (or if tile fetch races layout) the
+    // tile would mount on top, but if any layout glitch shrinks the
+    // Image to 0×0, gray would leak through. Keeping this transparent
+    // forces the issue to be visible (we'd see the parent bubble bg)
+    // instead of being hidden under "looks like gray map loading".
   },
-  mapOverlay: {
+  mapContainerInner: {
     position: 'absolute',
     top: 0, left: 0, right: 0, bottom: 0,
-    backgroundColor: 'transparent',
   },
   mapTileImage: {
+    position: 'absolute',
+    top: 0, left: 0,
     width: '100%',
     height: '100%',
   },
