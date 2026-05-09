@@ -2888,10 +2888,12 @@ export default function OneScreen() {
 
   // ─── Empty state — clean 2x2 prompt grid (Translate / Summarize / Code / Brainstorm)
   const renderEmpty = () => {
+    // 3-card grid (Codar removed — user asked to drop the dev-oriented prompt
+    // because the typical Chatyy user isn't here to write code; Translate /
+    // Summarize / Brainstorm cover 95% of real entry intents.
     const sugCards = [
       { key: 'translate', label: t('one.promptTranslate') || 'Translate', sub: t('one.promptTranslateSub') || 'a phrase or paragraph', msg: t('one.promptTranslateMsg') || 'Translate this to English: ' },
       { key: 'summarize', label: t('one.promptSummarize') || 'Summarize', sub: t('one.promptSummarizeSub') || 'an article or thread', msg: t('one.promptSummarizeMsg') || 'Summarize my unread emails today.' },
-      { key: 'code', label: t('one.promptCode') || 'Code', sub: t('one.promptCodeSub') || 'help me build something', msg: t('one.promptCodeMsg') || 'Write a Python function that ' },
       { key: 'brainstorm', label: t('one.promptBrainstorm') || 'Brainstorm', sub: t('one.promptBrainstormSub') || 'ideas with me', msg: t('one.promptBrainstormMsg') || 'Brainstorm 5 ideas for ' },
     ];
 
@@ -2922,8 +2924,12 @@ export default function OneScreen() {
               <TouchableOpacity
                 key={item.key}
                 style={[st.sugCard, {
-                  backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff',
-                  borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+                  // Light gray fill on the cards (was bg=#fff which read as a
+                  // floating border-only tile on white canvas — user reported
+                  // it as "fundinho cinza claro nos botoes"). Dark mode keeps
+                  // the existing translucent overlay.
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#F4F4F6',
+                  borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)',
                   ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'transform 0.15s ease, background-color 0.15s ease' } : {}),
                 }]}
                 onPress={() => {

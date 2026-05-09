@@ -3228,6 +3228,7 @@ export default {
   // ===== ONE AI ASSISTANT =====
   'one.title': 'One',
   'one.takePhoto': 'Tirar foto',
+  'one.chooseFromLibrary': 'Escolher da galeria',
   'one.pickFromLibrary': 'Galeria',
   'one.attachImage': 'Anexar imagem',
   'one.subtitle': 'Sua assistente pessoal de email',
