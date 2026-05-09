@@ -2,9 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, Linking, StyleSheet, Share, Platform, Image } from 'react-native';
 import { IconMapPin } from './Icons';
 
+// Google Maps Static API key (from app.json extra). Falls back to OSM tile if absent.
+let GMAPS_KEY = '';
+try { GMAPS_KEY = require('expo-constants').default?.expoConfig?.extra?.GOOGLE_MAPS_KEY || ''; } catch {}
+
 /**
  * Location Message Component
- * Renders real map preview (OpenStreetMap, free, no API key) + address + open/share buttons
+ * Renders real map preview (Google Static Maps if key, else OpenStreetMap fallback) + address.
  * Parses JSON content: { latitude, longitude, address, is_live, accuracy }
  */
 export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap, t }) {
@@ -76,13 +80,13 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
   const lat = hasCoords ? Number(location.latitude) : null;
   const lng = hasCoords ? Number(location.longitude) : null;
 
-  // OpenStreetMap static image — free, no API key
-  // Uses openstreetmap.org tile server with zoom level 15
-  const mapImageUrl = hasCoords
-    ? `https://staticmap.openstreetmap.de/staticmap.php?center=${lat},${lng}&zoom=15&size=300x140&markers=${lat},${lng},red-pushpin`
+  // Preferred: Google Maps Static API (matches in-app maps which use Google).
+  // Spec: ~280x160 @ zoom 15, purple marker matching brand.
+  const gmapsUrl = (hasCoords && GMAPS_KEY)
+    ? `https://maps.googleapis.com/maps/api/staticmap?center=${lat},${lng}&zoom=15&size=280x160&scale=2&markers=color:0x7C3AED%7C${lat},${lng}&key=${GMAPS_KEY}`
     : null;
 
-  // Fallback: use OSM tile directly as background image (single tile at zoom 15)
+  // Fallback: single OSM tile at zoom 15 (no key required).
   const tileUrl = hasCoords ? (() => {
     const zoom = 15;
     const x = Math.floor((lng + 180) / 360 * Math.pow(2, zoom));
@@ -137,10 +141,17 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
       }]}
     >
       {/* Map Preview */}
-      <View style={[styles.mapContainer, Platform.OS === 'web' && { height: 100 }]}>
-        {/* Web: static OSM tile mosaic with pin overlay */}
-        {Platform.OS === 'web' && grid ? (
-          <View style={[styles.mapContainer, { height: 100, overflow: 'hidden', backgroundColor: '#e5e7eb' }]}>
+      <View style={[styles.mapContainer]}>
+        {/* Best path: Google Static Maps (single image, marker baked in) */}
+        {gmapsUrl ? (
+          <Image
+            source={{ uri: gmapsUrl }}
+            style={styles.mapTileImage}
+            resizeMode="cover"
+            onError={() => {}}
+          />
+        ) : Platform.OS === 'web' && grid ? (
+          <View style={[styles.mapContainer, { overflow: 'hidden', backgroundColor: '#e5e7eb' }]}>
             {/* Centered tile grid */}
             <View style={{
               position: 'absolute',
@@ -237,14 +248,15 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
 
 const styles = StyleSheet.create({
   container: {
-    minWidth: 220,
+    minWidth: 240,
     maxWidth: 280,
-    borderRadius: 12,
+    borderRadius: 14,
     overflow: 'hidden',
+    marginBottom: 8,
   },
   mapContainer: {
     width: '100%',
-    height: 100,
+    height: 160,
     position: 'relative',
   },
   mapOverlay: {

@@ -7087,6 +7087,33 @@ export default function ChatConversationScreen() {
         } catch {}
         return msg;
       }
+      // Bug 2026-05-08: WS/TCP broadcast delivers chat_messages rows with
+      // type='poll' but WITHOUT the enriched msg.poll object (the chat.php
+      // history SELECT enriches it; broadcastChatMessage doesn't). Without
+      // msg.poll the renderer's `case 'poll'` fell back to <Text>{content}</Text>
+      // which dumped the raw `{"question":...,"options":[...]}` JSON in the
+      // bubble. Parse the content payload here so live-delivered polls get
+      // the same shape as server-enriched ones.
+      if (t === 'poll' && msg.content && typeof msg.content === 'string' && !msg.poll) {
+        try {
+          const parsed = JSON.parse(msg.content.trim());
+          if (parsed && parsed.question && Array.isArray(parsed.options)) {
+            return {
+              ...msg,
+              poll: {
+                ...parsed,
+                id: msg.id,
+                vote_counts: Array.isArray(parsed.votes) ? parsed.votes : [],
+                total_votes: Array.isArray(parsed.votes)
+                  ? parsed.votes.reduce((a, b) => a + (b || 0), 0)
+                  : 0,
+                my_votes: Array.isArray(parsed.my_votes) ? parsed.my_votes : [],
+              },
+            };
+          }
+        } catch {}
+        return msg;
+      }
       if (t !== 'text' && t !== 'system') return msg;
       // Empty text bubbles → show italic placeholder instead of just a timestamp
       if (!msg.content || (typeof msg.content === 'string' && msg.content.trim() === '')) {
@@ -14890,7 +14917,29 @@ export default function ChatConversationScreen() {
         }
 
         case 'poll': {
-          const poll = msg.poll;
+          // Last-ditch parse: if the message arrived with type='poll' but
+          // somehow msg.poll never got hydrated (older WS payloads, race
+          // between insert + cache restore, etc), parse content here so
+          // we never render the raw JSON in a bubble. This is the safety
+          // net beneath normalizeMessageTypes — which also handles this
+          // case at the message-shape level.
+          let poll = msg.poll;
+          if (!poll && typeof msg.content === 'string') {
+            try {
+              const parsed = JSON.parse(msg.content.trim());
+              if (parsed && parsed.question && Array.isArray(parsed.options)) {
+                poll = {
+                  ...parsed,
+                  id: msg.id,
+                  vote_counts: Array.isArray(parsed.votes) ? parsed.votes : [],
+                  total_votes: Array.isArray(parsed.votes)
+                    ? parsed.votes.reduce((a, b) => a + (b || 0), 0)
+                    : 0,
+                  my_votes: Array.isArray(parsed.my_votes) ? parsed.my_votes : [],
+                };
+              }
+            } catch {}
+          }
           if (!poll) return <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text }]}>{msg.content}</Text>;
           // Malformed/partial poll payloads used to crash the whole list
           // when `poll.options.map` was called on a non-array.

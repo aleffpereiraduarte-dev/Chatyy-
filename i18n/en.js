@@ -1356,6 +1356,8 @@ export default {
   'chat.deleteConversationConfirm': 'Are you sure you want to delete this conversation? This action cannot be undone.',
   'chat.deleteConversationError': 'Could not delete the conversation',
   'chat.gif': 'GIF',
+  'chat.gifTooLargeTitle': 'GIF too large',
+  'chat.gifTooLargeBody': 'Try a smaller GIF (under 8 MB)',
   'chat.searchGifs': 'Search GIFs...',
   'chat.trendingGifs': 'Trending',
   'chat.poweredByTenor': 'Powered by Tenor',
@@ -3749,6 +3751,7 @@ export default {
 
   // Photos
   'photos.title': 'Photos',
+  'photos.text': 'Text',
   'photos.tab_photos': 'Photos',
   'photos.tab_albums': 'Albums',
   'photos.tab_backup': 'Backup',
@@ -4204,6 +4207,9 @@ export default {
   'iap.restoreSuccess': 'Purchases restored successfully!',
   // Notes
   'notes.title': 'Notes',
+  'notes.savedAgo': 'Saved',
+  'notes.addEmoji': 'Add emoji',
+  'notes.addCover': 'Add cover',
   'notes.newNote': 'New note',
   'notes.editNote': 'Edit note',
   'notes.deleteNote': 'Delete note',

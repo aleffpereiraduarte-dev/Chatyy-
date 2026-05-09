@@ -1370,6 +1370,8 @@ export default {
   'chat.deleteConversationConfirm': 'Tem certeza que deseja excluir esta conversa? Esta ação não pode ser desfeita.',
   'chat.deleteConversationError': 'Não foi possível excluir a conversa',
   'chat.gif': 'GIF',
+  'chat.gifTooLargeTitle': 'GIF muito grande',
+  'chat.gifTooLargeBody': 'Tente um GIF menor (até 8 MB)',
   'chat.searchGifs': 'Buscar GIFs...',
   'chat.trendingGifs': 'Em alta',
   'chat.poweredByTenor': 'Powered by Tenor',
@@ -3811,6 +3813,7 @@ export default {
 
   // Photos
   'photos.title': 'Fotos',
+  'photos.text': 'Texto',
   'photos.tab_photos': 'Fotos',
   'photos.tab_albums': 'Albums',
   'photos.tab_backup': 'Backup',
@@ -4274,6 +4277,9 @@ export default {
   'iap.restoreSuccess': 'Compras restauradas com sucesso!',
   // Notes
   'notes.title': 'Notas',
+  'notes.savedAgo': 'Salvo',
+  'notes.addEmoji': 'Adicionar emoji',
+  'notes.addCover': 'Adicionar capa',
   'notes.newNote': 'Nova nota',
   'notes.editNote': 'Editar nota',
   'notes.deleteNote': 'Excluir nota',
