@@ -16,7 +16,7 @@ try { GMAPS_KEY = require('expo-constants').default?.expoConfig?.extra?.GOOGLE_M
 // Cache-bust query string. Bump this when switching tile providers so any
 // previously-cached failed responses (e.g. 403 from tile.openstreetmap.org)
 // get evicted and re-fetched against the new URL.
-const TILE_CACHE_BUST = 'cartov2';
+const TILE_CACHE_BUST = 'v20';
 
 /**
  * Location Message Component
@@ -188,8 +188,15 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
         source={{ uri, cache: 'reload' }}
         style={style}
         resizeMode="cover"
-        onError={handleTileError}
-        onLoad={() => { /* tile loaded ok — keep current provider */ }}
+        onError={(e) => {
+          // Surface the failure to console — visible in Xcode/Android logs.
+          // Many "gray map" reports trace back to silent network errors.
+          try { console.warn('[LocationMessage] tile failed:', uri, e?.nativeEvent?.error || e); } catch {}
+          handleTileError(e);
+        }}
+        onLoad={() => {
+          try { console.log('[LocationMessage] tile loaded:', uri); } catch {}
+        }}
       />
     );
   };
