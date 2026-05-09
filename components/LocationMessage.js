@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, Linking, StyleSheet, Share, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, Linking, StyleSheet, Share, Platform, Dimensions } from 'react-native';
 import { IconMapPin } from './Icons';
 
 // Always use stock RN Image — expo-image was caching a stale empty/failed
@@ -8,6 +8,13 @@ import { IconMapPin } from './Icons';
 // `cache: 'reload'` forces a fresh fetch every mount and works reliably
 // across iOS/Android/web with no native-module dependency.
 const RNImage = require('react-native').Image;
+
+// Bubble width — used so Image gets explicit pixel dimensions instead of
+// percentage. RN Image with width:'100%' on a parent that briefly measures
+// 0 during scroll/recycle can collapse to 0×0 and never re-fetch even
+// after the parent resolves real width. Pixel dimensions sidestep that.
+const BUBBLE_WIDTH = Math.min(Dimensions.get('window').width - 80, 280);
+const BUBBLE_HEIGHT = 160;
 
 // Google Maps Static API key (from app.json extra). Falls back to OSM tile if absent.
 let GMAPS_KEY = '';
@@ -49,6 +56,32 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
       console.warn('LocationMessage parse error:', err);
     }
   }, [content]);
+
+  // Pre-warm the image cache the moment we know the tile URL — guarantees
+  // the bytes are downloaded before <Image> mounts. Without this, the first
+  // render of a recycled list cell can show empty while the fetch is still
+  // in flight; with prefetch the Image hits an already-warm cache.
+  useEffect(() => {
+    if (!hasCoordsForPrefetch) return;
+    const url = computeTileUrlForPrefetch();
+    if (!url) return;
+    try { RNImage.prefetch(url).catch(() => {}); } catch {}
+  }, [location?.latitude, location?.longitude, tileProvider]);
+
+  function computeTileUrlForPrefetch() {
+    if (location?.latitude == null || location?.longitude == null) return null;
+    const z = 15;
+    const lat = Number(location.latitude);
+    const lng = Number(location.longitude);
+    const n = Math.pow(2, z);
+    const x = Math.floor(((lng + 180) / 360) * n);
+    const latRad = (lat * Math.PI) / 180;
+    const y = Math.floor(((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n);
+    const cb = `?v=${TILE_CACHE_BUST}-${z}-${x}-${y}`;
+    if (tileProvider === 'osm') return `https://tile.openstreetmap.org/${z}/${x}/${y}.png${cb}`;
+    return `https://basemaps.cartocdn.com/light_all/${z}/${x}/${y}.png${cb}`;
+  }
+  const hasCoordsForPrefetch = location?.latitude != null && location?.longitude != null;
 
   const handleOpenMap = () => {
     if (!location) return;
@@ -318,8 +351,8 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   mapContainer: {
-    width: '100%',
-    height: 160,
+    width: BUBBLE_WIDTH,
+    height: BUBBLE_HEIGHT,
     position: 'relative',
     // No backgroundColor here — tile image fills the space. If we set
     // a gray bg, on slow networks (or if tile fetch races layout) the
@@ -335,8 +368,10 @@ const styles = StyleSheet.create({
   mapTileImage: {
     position: 'absolute',
     top: 0, left: 0,
-    width: '100%',
-    height: '100%',
+    // Fixed pixel dimensions — `width: '100%'` collapses to 0 if the parent
+    // measures 0 mid-recycle on FlatList scroll, leaving the bubble gray.
+    width: BUBBLE_WIDTH,
+    height: BUBBLE_HEIGHT,
   },
   pinOverlay: {
     position: 'absolute',
