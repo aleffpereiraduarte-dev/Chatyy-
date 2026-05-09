@@ -43,6 +43,7 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
 
   const [location, setLocation] = useState(null);
   const [tileError, setTileError] = useState(false);
+  const [tileLoaded, setTileLoaded] = useState(false);
   const [tileProvider, setTileProvider] = useState('carto'); // 'carto' | 'osm' | 'failed'
 
   useEffect(() => {
@@ -51,11 +52,28 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
       setLocation(loc);
       // Reset tile state when location changes (new message in same component)
       setTileError(false);
+      setTileLoaded(false);
       setTileProvider('carto');
     } catch (err) {
       console.warn('LocationMessage parse error:', err);
     }
   }, [content]);
+
+  // Watchdog: some Android RN Image instances NEVER fire onLoad nor onError
+  // (silent network stall, SSL handshake hang, or image loader pool exhausted).
+  // After 6s without either callback we force fallback to OSM, then if still
+  // nothing after another 6s we show the solid pin. Without this the bubble
+  // stays gray forever — the visual symptom users keep reporting.
+  useEffect(() => {
+    if (!location || tileLoaded || tileError || tileProvider === 'failed') return;
+    const id = setTimeout(() => {
+      if (!tileLoaded && !tileError) {
+        if (tileProvider === 'carto') setTileProvider('osm');
+        else if (tileProvider === 'osm') { setTileProvider('failed'); setTileError(true); }
+      }
+    }, 6000);
+    return () => clearTimeout(id);
+  }, [location, tileLoaded, tileError, tileProvider]);
 
   // Pre-warm the image cache the moment we know the tile URL — guarantees
   // the bytes are downloaded before <Image> mounts. Without this, the first
@@ -228,6 +246,7 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
           handleTileError(e);
         }}
         onLoad={() => {
+          setTileLoaded(true);
           try { console.log('[LocationMessage] tile loaded:', uri); } catch {}
         }}
       />
