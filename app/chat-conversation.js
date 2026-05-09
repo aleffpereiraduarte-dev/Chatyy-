@@ -5100,9 +5100,11 @@ const recStyles = StyleSheet.create({
   },
   // Right column: lock + send
   sendBtn: {
-    width: 46, height: 46, borderRadius: 23,
+    width: 52, height: 52, borderRadius: 26,
     alignItems: 'center', justifyContent: 'center',
     backgroundColor: '#7C3AED',
+    alignSelf: 'flex-end',
+    marginTop: 12,
     shadowColor: '#7C3AED',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.35,

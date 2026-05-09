@@ -2,20 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, Linking, StyleSheet, Share, Platform } from 'react-native';
 import { IconMapPin } from './Icons';
 
-// Use expo-image on native for built-in cache control + recyclingKey support.
-// RN's stock Image (NSURLCache) had a poisoned 403 entry from the old
-// tile.openstreetmap.org URL on installs that ran the previous build —
-// once cached, RN re-served the 403 forever, so even after the URL
-// changed to CartoCDN the user kept seeing a gray bg with just the pin.
-// expo-image fixes this with cachePolicy + recyclingKey we control.
-let ExpoImage = null;
-let RNImage = null;
-if (Platform.OS !== 'web') {
-  try { ExpoImage = require('expo-image').Image; } catch {}
-}
-if (!ExpoImage) {
-  RNImage = require('react-native').Image;
-}
+// Always use stock RN Image — expo-image was caching a stale empty/failed
+// response and refusing to re-fetch even with cache-bust query params,
+// keeping the bubble gray on user devices. Stock Image with
+// `cache: 'reload'` forces a fresh fetch every mount and works reliably
+// across iOS/Android/web with no native-module dependency.
+const RNImage = require('react-native').Image;
 
 // Google Maps Static API key (from app.json extra). Falls back to OSM tile if absent.
 let GMAPS_KEY = '';
@@ -185,26 +177,19 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
   // where the tile renders 0×0 before the parent measures.
   const renderTileImage = (uri, style) => {
     if (!uri) return null;
-    if (ExpoImage) {
-      return (
-        <ExpoImage
-          source={{ uri }}
-          style={style}
-          contentFit="cover"
-          cachePolicy="memory-disk"
-          recyclingKey={uri}
-          transition={150}
-          onError={handleTileError}
-        />
-      );
-    }
-    const Img = RNImage || require('react-native').Image;
     return (
-      <Img
+      <RNImage
+        // `key` forces React to dismount + re-fetch when URL changes (e.g. when
+        // tileProvider falls back from carto → osm).
+        key={uri}
+        // `cache: 'reload'` bypasses NSURLCache entirely on iOS — fixes the
+        // poisoned-cache scenario where a stale 403/empty response from a
+        // previous build was being re-served forever for the same URL.
         source={{ uri, cache: 'reload' }}
         style={style}
         resizeMode="cover"
         onError={handleTileError}
+        onLoad={() => { /* tile loaded ok — keep current provider */ }}
       />
     );
   };
