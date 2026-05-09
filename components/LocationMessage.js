@@ -89,15 +89,18 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
   function computeTileUrlForPrefetch() {
     if (location?.latitude == null || location?.longitude == null) return null;
     const z = 15;
-    const lat = Number(location.latitude);
-    const lng = Number(location.longitude);
-    const n = Math.pow(2, z);
-    const x = Math.floor(((lng + 180) / 360) * n);
-    const latRad = (lat * Math.PI) / 180;
-    const y = Math.floor(((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n);
-    const cb = `?v=${TILE_CACHE_BUST}-${z}-${x}-${y}`;
-    if (tileProvider === 'osm') return `https://tile.openstreetmap.org/${z}/${x}/${y}.png${cb}`;
-    return `https://basemaps.cartocdn.com/light_all/${z}/${x}/${y}.png${cb}`;
+    const la = Number(location.latitude).toFixed(5);
+    const lo = Number(location.longitude).toFixed(5);
+    if (tileProvider === 'osm') {
+      const lat = Number(location.latitude);
+      const lng = Number(location.longitude);
+      const n = Math.pow(2, z);
+      const x = Math.floor(((lng + 180) / 360) * n);
+      const latRad = (lat * Math.PI) / 180;
+      const y = Math.floor(((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n);
+      return `https://tile.openstreetmap.org/${z}/${x}/${y}.png?v=${TILE_CACHE_BUST}`;
+    }
+    return `https://chatyy.com.br/api/static_map.php?lat=${la}&lng=${lo}&z=${z}&w=${BUBBLE_WIDTH * 2}&h=${BUBBLE_HEIGHT * 2}`;
   }
   const hasCoordsForPrefetch = location?.latitude != null && location?.longitude != null;
 
@@ -165,16 +168,27 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
     return { x, y };
   };
 
-  // Native single tile @ z15. Provider chain: carto → osm → solid-pin fallback.
+  // Native preview: hit our own backend proxy (api/static_map.php). It composes
+  // CartoCDN tiles server-side and returns ONE png with red pin overlay
+  // already drawn. Why a proxy: stock RN Image on Android silently fails on
+  // some CartoCDN tile responses (no onError, no onLoad — issues #18502/#19073),
+  // and even tho expo-image is more robust, the cleanest fix is just a single
+  // PNG over our own domain that we KNOW renders. The proxy caches 7d on disk
+  // + Cloudflare edge so it's effectively zero-cost after the first hit per
+  // (lat,lng) pair.
+  // Fallback chain: proxy → osm raw tile → solid pin (handled below).
   const tileUrl = hasCoords ? (() => {
     const zoom = 15;
-    const { x, y } = computeTile(lat, lng, zoom);
-    const cb = `?v=${TILE_CACHE_BUST}-${zoom}-${x}-${y}`;
     if (tileProvider === 'carto') {
-      return `https://basemaps.cartocdn.com/light_all/${zoom}/${x}/${y}.png${cb}`;
+      // Backend composes the tile + draws the pin. Round coords to 5 decimals
+      // (~1m precision) so the same pin shares cache between users.
+      const la = lat.toFixed(5);
+      const lo = lng.toFixed(5);
+      return `https://chatyy.com.br/api/static_map.php?lat=${la}&lng=${lo}&z=${zoom}&w=${BUBBLE_WIDTH * 2}&h=${BUBBLE_HEIGHT * 2}`;
     }
     if (tileProvider === 'osm') {
-      return `https://tile.openstreetmap.org/${zoom}/${x}/${y}.png${cb}`;
+      const { x, y } = computeTile(lat, lng, zoom);
+      return `https://tile.openstreetmap.org/${zoom}/${x}/${y}.png?v=${TILE_CACHE_BUST}`;
     }
     return null;
   })() : null;
@@ -315,13 +329,16 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
              screen. Solid bg only kicks in via showSolidFallback above. */
           <View style={[styles.mapContainerInner, { overflow: 'hidden' }]}>
             {renderTileImage(tileUrl, styles.mapTileImage)}
-            {/* Pin no centro */}
-            <View style={styles.pinOverlay} pointerEvents="none">
-              <View style={[styles.pinCircle, { backgroundColor: isOwn ? '#7C3AED' : safeColors.primary }]}>
-                <IconMapPin size={18} color="#fff" />
+            {/* Pin overlay only for OSM raw-tile fallback. The carto proxy
+                draws the pin server-side, so no JS overlay needed there. */}
+            {tileProvider === 'osm' && (
+              <View style={styles.pinOverlay} pointerEvents="none">
+                <View style={[styles.pinCircle, { backgroundColor: isOwn ? '#7C3AED' : safeColors.primary }]}>
+                  <IconMapPin size={18} color="#fff" />
+                </View>
+                <View style={[styles.pinTail, { borderTopColor: isOwn ? '#7C3AED' : safeColors.primary }]} />
               </View>
-              <View style={[styles.pinTail, { borderTopColor: isOwn ? '#7C3AED' : safeColors.primary }]} />
-            </View>
+            )}
           </View>
         ) : (
           <View style={[styles.mapContainerInner, { backgroundColor: isOwn ? '#7C3AED' : safeColors.primary, justifyContent: 'center', alignItems: 'center' }]}>
