@@ -1,18 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, Linking, StyleSheet, Share, Platform, Dimensions } from 'react-native';
+import { View, Text, TouchableOpacity, Linking, StyleSheet, Share, Platform, Dimensions, Image as RNImage } from 'react-native';
 import { IconMapPin } from './Icons';
-
-// Use expo-image (Glide on Android, SDWebImage on iOS) — far more reliable
-// than stock RN Image for remote URLs. Stock RN Image silently fails on
-// some Android tile responses (RN issues #18502/#19073) leaving the bubble
-// gray with no onError or onLoad firing. expo-image's native loaders handle
-// edge cases and proper cache invalidation via recyclingKey.
-let TileImage;
-try {
-  TileImage = require('expo-image').Image;
-} catch {
-  TileImage = require('react-native').Image;
-}
 
 // Bubble width — used so Image gets explicit pixel dimensions instead of
 // percentage. RN Image with width:'100%' on a parent that briefly measures
@@ -235,32 +223,10 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
   // where the tile renders 0×0 before the parent measures.
   const renderTileImage = (uri, style) => {
     if (!uri) return null;
-    const isExpoImage = TileImage && TileImage !== require('react-native').Image;
-    if (isExpoImage) {
-      return (
-        <TileImage
-          key={uri}
-          source={{ uri }}
-          style={style}
-          contentFit="cover"
-          cachePolicy="memory-disk"
-          recyclingKey={uri}
-          transition={150}
-          onError={(e) => {
-            try { console.warn('[LocationMessage] tile failed (expo-image):', uri, e?.error || e); } catch {}
-            handleTileError(e);
-          }}
-          onLoad={() => {
-            setTileLoaded(true);
-            try { console.log('[LocationMessage] tile loaded (expo-image):', uri); } catch {}
-          }}
-        />
-      );
-    }
     return (
-      <TileImage
+      <RNImage
         key={uri}
-        source={{ uri, cache: 'reload' }}
+        source={{ uri }}
         style={style}
         resizeMode="cover"
         onError={(e) => {
