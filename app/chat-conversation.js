@@ -9644,28 +9644,29 @@ export default function ChatConversationScreen() {
   // ============================================================
   const handleSendGif = async (gif) => {
     setShowGifPicker(false);
-    // WhatsApp parity: GIFs >2MB get blocked at the client. Tenor returns
-    // an itemsize.size we can sanity-check, otherwise HEAD the URL. A 30MB
-    // GIF turns into 30MB of mobile data + a janky thread; better to ask
-    // user to pick a smaller one.
+    // WhatsApp/Telegram parity: prefer Tenor's mediumgif URL (200-800KB) so
+    // receivers load <1s on cellular. We still bail on absurdly large GIFs
+    // (Telegram caps at 20MB, WhatsApp 16MB — 8MB is conservative). Tenor's
+    // itemsize.size is the full gif size; tinygif/mediumgif are much smaller.
+    const sendUrl = gif?.medium || gif?.tiny || gif?.url;
     try {
       const declared = Number(gif?.size || gif?.bytes || 0);
       let bytes = declared;
-      if (!bytes && gif?.url && typeof fetch === 'function') {
+      if (!bytes && sendUrl && typeof fetch === 'function') {
         try {
           const head = await Promise.race([
-            fetch(gif.url, { method: 'HEAD' }),
+            fetch(sendUrl, { method: 'HEAD' }),
             new Promise((_, rej) => setTimeout(() => rej(new Error('head_timeout')), 2500)),
           ]);
           if (head?.ok) bytes = Number(head.headers?.get?.('content-length') || 0);
         } catch {}
       }
-      if (bytes > 2 * 1024 * 1024) {
+      if (bytes > 8 * 1024 * 1024) {
         try {
           const { Alert } = require('react-native');
           Alert.alert(
             t?.('chat.gifTooLargeTitle') || 'GIF muito grande',
-            (t?.('chat.gifTooLargeBody') || 'Esse GIF tem mais de 2MB. Escolha um menor pra economizar dados.'),
+            (t?.('chat.gifTooLargeBody') || 'Esse GIF tem mais de 8MB. Escolha um menor pra economizar dados.'),
             [{ text: 'OK' }]
           );
         } catch {}
@@ -9676,7 +9677,7 @@ export default function ChatConversationScreen() {
     const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const optimisticMsg = {
       id: tempId, conversation_id: conversationId, sender_email: currentEmail,
-      content: gif.url, type: 'gif', created_at: new Date().toISOString(), _pending: true, _client_id: msgId,
+      content: sendUrl, type: 'gif', created_at: new Date().toISOString(), _pending: true, _client_id: msgId,
     };
     setMessages(prev => [...prev, optimisticMsg]);
 
@@ -9689,12 +9690,12 @@ export default function ChatConversationScreen() {
     } catch {}
 
     // ⭐ Save pending GIF BEFORE network attempt
-    const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: gif.url, type: 'gif', created_at: optimisticMsg.created_at, sender_email: currentEmail };
+    const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: sendUrl, type: 'gif', created_at: optimisticMsg.created_at, sender_email: currentEmail };
     await savePendingMessage(conversationId, pendingData).catch(() => {});
 
     requestAnimationFrame(() => { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); });
     try {
-      const r = await enqueueChatSend(() => api.chatSend(conversationId, gif.url, 'gif', null, null, null, tempId, msgId));
+      const r = await enqueueChatSend(() => api.chatSend(conversationId, sendUrl, 'gif', null, null, null, tempId, msgId));
       if (r.success && r.data?.id) {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...r.data, _pending: false } : m));
         removePendingMessage(conversationId, tempId).catch(() => {});
@@ -9703,7 +9704,7 @@ export default function ChatConversationScreen() {
         // Mirror text-send fallback: queue for retry instead of dropping.
         try {
           const { queueOfflineAction } = require('../services/offlineCache');
-          await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: gif.url, msgType: 'gif', reply_to_id: null, mentions: null, temp_id: tempId, client_message_id: msgId });
+          await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: sendUrl, msgType: 'gif', reply_to_id: null, mentions: null, temp_id: tempId, client_message_id: msgId });
           setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
         } catch {
           setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
@@ -9712,7 +9713,7 @@ export default function ChatConversationScreen() {
     } catch {
       try {
         const { queueOfflineAction } = require('../services/offlineCache');
-        await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: gif.url, msgType: 'gif', reply_to_id: null, mentions: null, temp_id: tempId, client_message_id: msgId });
+        await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: sendUrl, msgType: 'gif', reply_to_id: null, mentions: null, temp_id: tempId, client_message_id: msgId });
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
       } catch {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
