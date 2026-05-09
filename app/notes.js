@@ -4106,9 +4106,12 @@ const s = StyleSheet.create({
   slashLabel: { fontSize: 14, fontWeight: '600' },
   slashHint: { fontSize: 11, marginTop: 1 },
 
-  // Save pill
+  // Save pill — sits BELOW the editor header so it doesn't sit on top of
+  // the Visualizar / pin / share buttons on the same row. Header is
+  // paddingTop:54 + ~44 button row + paddingBottom:8 ≈ 106px on iOS, so we
+  // anchor the pill at 110 with breathing room.
   savePillWrap: {
-    position: 'absolute', top: Platform.OS === 'ios' ? 60 : Platform.OS === 'web' ? 22 : 18,
+    position: 'absolute', top: Platform.OS === 'ios' ? 110 : Platform.OS === 'web' ? 60 : 64,
     right: 16, zIndex: 30,
   },
   savePill: {
