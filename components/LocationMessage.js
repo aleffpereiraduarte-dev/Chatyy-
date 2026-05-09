@@ -168,29 +168,17 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
     return { x, y };
   };
 
-  // Native preview: hit our own backend proxy (api/static_map.php). It composes
-  // CartoCDN tiles server-side and returns ONE png with red pin overlay
-  // already drawn. Why a proxy: stock RN Image on Android silently fails on
-  // some CartoCDN tile responses (no onError, no onLoad — issues #18502/#19073),
-  // and even tho expo-image is more robust, the cleanest fix is just a single
-  // PNG over our own domain that we KNOW renders. The proxy caches 7d on disk
-  // + Cloudflare edge so it's effectively zero-cost after the first hit per
-  // (lat,lng) pair.
-  // Fallback chain: proxy → osm raw tile → solid pin (handled below).
+  // Always hit our own backend proxy (api/static_map.php). It composes
+  // CartoCDN tiles server-side and returns ONE png with red pin already drawn.
+  // Why: stock RN Image on Android silently fails on some external tile
+  // responses (no onError, no onLoad — RN issues #18502/#19073). Single PNG
+  // from our domain renders reliably. Proxy caches 7d on disk + Cloudflare
+  // edge so it's effectively zero-cost after the first hit per (lat,lng).
+  // No osm fallback chain — the proxy IS the reliable path.
   const tileUrl = hasCoords ? (() => {
-    const zoom = 15;
-    if (tileProvider === 'carto') {
-      // Backend composes the tile + draws the pin. Round coords to 5 decimals
-      // (~1m precision) so the same pin shares cache between users.
-      const la = lat.toFixed(5);
-      const lo = lng.toFixed(5);
-      return `https://chatyy.com.br/api/static_map.php?lat=${la}&lng=${lo}&z=${zoom}&w=${BUBBLE_WIDTH * 2}&h=${BUBBLE_HEIGHT * 2}`;
-    }
-    if (tileProvider === 'osm') {
-      const { x, y } = computeTile(lat, lng, zoom);
-      return `https://tile.openstreetmap.org/${zoom}/${x}/${y}.png?v=${TILE_CACHE_BUST}`;
-    }
-    return null;
+    const la = lat.toFixed(5);
+    const lo = lng.toFixed(5);
+    return `https://chatyy.com.br/api/static_map.php?lat=${la}&lng=${lo}&z=15&w=${BUBBLE_WIDTH * 2}&h=${BUBBLE_HEIGHT * 2}`;
   })() : null;
 
   const handleTileError = (err) => {
@@ -329,16 +317,7 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
              screen. Solid bg only kicks in via showSolidFallback above. */
           <View style={[styles.mapContainerInner, { overflow: 'hidden' }]}>
             {renderTileImage(tileUrl, styles.mapTileImage)}
-            {/* Pin overlay only for OSM raw-tile fallback. The carto proxy
-                draws the pin server-side, so no JS overlay needed there. */}
-            {tileProvider === 'osm' && (
-              <View style={styles.pinOverlay} pointerEvents="none">
-                <View style={[styles.pinCircle, { backgroundColor: isOwn ? '#7C3AED' : safeColors.primary }]}>
-                  <IconMapPin size={18} color="#fff" />
-                </View>
-                <View style={[styles.pinTail, { borderTopColor: isOwn ? '#7C3AED' : safeColors.primary }]} />
-              </View>
-            )}
+            {/* Proxy draws pin server-side — no JS overlay needed. */}
           </View>
         ) : (
           <View style={[styles.mapContainerInner, { backgroundColor: isOwn ? '#7C3AED' : safeColors.primary, justifyContent: 'center', alignItems: 'center' }]}>
