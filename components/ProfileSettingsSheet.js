@@ -27,6 +27,7 @@ import {
   IconCopy, IconCheckCircle, IconMail, IconSparkles, IconFilter, IconEdit,
   IconForward, IconFileText, IconUsers,
   IconClock, IconImage, IconStar, IconMapPin, IconSearch,
+  IconSmartphone, IconMonitor, IconShield,
 } from './Icons';
 import * as api from '../services/api';
 import { useTheme, ACCENT_PRESETS } from '../context/ThemeContext';
@@ -608,6 +609,25 @@ function DevicesScreen({ colors, t, onClose, onLogout }) {
     return `${Math.floor(sec / 86400)}d`;
   };
 
+  // Pick icon + tint baseado no device_label/user_agent. iPhone roxo,
+  // Android verde, Desktop azul, fallback cinza.
+  const deviceVisual = (s) => {
+    const label = (s.device_label || s.user_agent || '').toLowerCase();
+    if (label.includes('iphone') || label.includes('ipad') || label.includes('darwin') || label.includes('cfnetwork')) {
+      return { Icon: IconSmartphone, tint: '#7C3AED', bg: '#7C3AED18' };
+    }
+    if (label.includes('android')) {
+      return { Icon: IconSmartphone, tint: '#10b981', bg: '#10b98118' };
+    }
+    if (label.includes('mac') || label.includes('windows') || label.includes('linux') || label.includes('chrome') || label.includes('firefox') || label.includes('safari') || label.includes('edge')) {
+      return { Icon: IconMonitor, tint: '#0ea5e9', bg: '#0ea5e918' };
+    }
+    return { Icon: IconShield, tint: '#94a3b8', bg: '#94a3b818' };
+  };
+
+  const others = (sessions || []).filter(s => !s.is_current);
+  const current = (sessions || []).find(s => s.is_current);
+
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
       {sessions === null ? (
@@ -616,7 +636,7 @@ function DevicesScreen({ colors, t, onClose, onLogout }) {
         </View>
       ) : sessions.length === 0 ? (
         <View style={{ paddingVertical: 48, alignItems: 'center', paddingHorizontal: 24 }}>
-          <IconUsers size={36} color={colors?.textTertiary} />
+          <IconShield size={36} color={colors?.textTertiary} />
           <Text style={{ marginTop: 12, fontSize: 14, color: colors?.textSecondary, textAlign: 'center' }}>
             {error
               ? (t?.('settings.devicesError') || 'Não consegui carregar os aparelhos. Tente puxar pra atualizar.')
@@ -625,55 +645,133 @@ function DevicesScreen({ colors, t, onClose, onLogout }) {
         </View>
       ) : (
         <>
-          <Section title={t?.('settings.activeDevices') || 'Aparelhos ativos'} colors={colors}>
-            {sessions.map((s, i) => {
-              const hash = s.token_hash || s.hash || `idx-${i}`;
-              const label = s.device_label || s.user_agent || s.platform || 'Aparelho';
-              const meta = [s.ip, s.location].filter(Boolean).join(' · ');
-              const last = fmtAgo(s.last_seen_at || s.last_seen || s.created_at);
-              return (
-                <TouchableOpacity
-                  key={hash}
-                  activeOpacity={s.is_current ? 1 : 0.6}
-                  onPress={() => { if (!s.is_current) revokeOne(hash); }}
-                  style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14 }}
-                >
-                  <View style={{ width: 32, alignItems: 'center', marginRight: 12 }}>
-                    <IconUsers size={20} color={colors?.primary} />
+          {/* Hero: contagem total + brief */}
+          <View style={{ paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8 }}>
+            <Text style={{ fontSize: 22, fontWeight: '700', color: colors?.text }}>
+              {sessions.length} {sessions.length === 1 ? 'aparelho' : 'aparelhos'}
+            </Text>
+            <Text style={{ fontSize: 13, color: colors?.textSecondary, marginTop: 4 }}>
+              Sessões ativas com acesso à sua conta. Toque em um aparelho pra encerrar a sessão.
+            </Text>
+          </View>
+
+          {/* Current device card — destacado */}
+          {current && (() => {
+            const v = deviceVisual(current);
+            return (
+              <View style={{ marginHorizontal: 16, marginTop: 12, marginBottom: 16, padding: 16, borderRadius: 16, backgroundColor: colors?.primary + '12', borderWidth: 1, borderColor: colors?.primary + '30' }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: v.bg, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                    <v.Icon size={24} color={v.tint} />
                   </View>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 15, fontWeight: '600', color: colors?.text }} numberOfLines={1}>
-                      {label}{s.is_current ? '  ·  ' + (t?.('settings.currentDevice') || 'este aparelho') : ''}
-                    </Text>
-                    {!!meta && (
-                      <Text style={{ fontSize: 12, color: colors?.textTertiary, marginTop: 2 }} numberOfLines={1}>{meta}</Text>
-                    )}
-                    {!!last && (
-                      <Text style={{ fontSize: 11, color: colors?.textTertiary, marginTop: 2 }}>{last}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <Text style={{ fontSize: 15, fontWeight: '700', color: colors?.text }} numberOfLines={1}>
+                        {current.device_label || current.user_agent || 'Aparelho'}
+                      </Text>
+                      <View style={{ marginLeft: 8, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8, backgroundColor: '#10b981' }}>
+                        <Text style={{ fontSize: 10, fontWeight: '700', color: '#fff', letterSpacing: 0.4 }}>
+                          {(t?.('settings.currentDevice') || 'ESTE APARELHO').toUpperCase()}
+                        </Text>
+                      </View>
+                    </View>
+                    {!!current.ip && (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                        <IconMapPin size={11} color={colors?.textTertiary} />
+                        <Text style={{ fontSize: 12, color: colors?.textTertiary, marginLeft: 4 }} numberOfLines={1}>
+                          {current.ip}
+                        </Text>
+                      </View>
                     )}
                   </View>
-                  {!s.is_current && (
-                    revokingHash === hash
-                      ? <ActivityIndicator size="small" color={colors?.textTertiary} />
-                      : <Text style={{ fontSize: 13, color: '#ef4444', fontWeight: '600' }}>{t?.('common.remove') || 'Remover'}</Text>
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </Section>
-          {sessions.filter(s => !s.is_current).length > 0 && (
-            <Section colors={colors}>
-              <TouchableOpacity onPress={revokeAllOther} style={{ paddingHorizontal: 20, paddingVertical: 16 }}>
+                </View>
+              </View>
+            );
+          })()}
+
+          {/* Outros aparelhos */}
+          {others.length > 0 && (
+            <>
+              <View style={{ paddingHorizontal: 20, marginBottom: 4 }}>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: colors?.textTertiary, letterSpacing: 0.6 }}>
+                  {(t?.('settings.otherDevicesSection') || 'OUTROS APARELHOS').toUpperCase()}
+                </Text>
+              </View>
+              <View style={{ marginHorizontal: 16, borderRadius: 14, backgroundColor: colors?.surface || (isDarkColors(colors) ? '#1c1c1e' : '#fff'), overflow: 'hidden' }}>
+                {others.map((s, i) => {
+                  const hash = s.token_hash || s.hash || `idx-${i}`;
+                  const v = deviceVisual(s);
+                  const last = fmtAgo(s.last_seen_at || s.last_seen || s.created_at);
+                  return (
+                    <TouchableOpacity
+                      key={hash}
+                      activeOpacity={0.6}
+                      onPress={() => revokeOne(hash)}
+                      style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: i === others.length - 1 ? 0 : StyleSheet.hairlineWidth, borderBottomColor: colors?.border || 'rgba(0,0,0,0.06)' }}
+                    >
+                      <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: v.bg, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                        <v.Icon size={20} color={v.tint} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 14, fontWeight: '600', color: colors?.text }} numberOfLines={1}>
+                          {s.device_label || s.user_agent || 'Aparelho'}
+                        </Text>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 3 }}>
+                          {!!s.ip && (
+                            <>
+                              <IconMapPin size={10} color={colors?.textTertiary} />
+                              <Text style={{ fontSize: 11, color: colors?.textTertiary, marginLeft: 3, marginRight: 8 }} numberOfLines={1}>{s.ip}</Text>
+                            </>
+                          )}
+                          {!!last && (
+                            <>
+                              <IconClock size={10} color={colors?.textTertiary} />
+                              <Text style={{ fontSize: 11, color: colors?.textTertiary, marginLeft: 3 }}>{last}</Text>
+                            </>
+                          )}
+                        </View>
+                      </View>
+                      {revokingHash === hash
+                        ? <ActivityIndicator size="small" color={colors?.textTertiary} />
+                        : <View style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: '#ef444418' }}>
+                            <Text style={{ fontSize: 12, color: '#ef4444', fontWeight: '600' }}>
+                              {t?.('common.remove') || 'Sair'}
+                            </Text>
+                          </View>
+                      }
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <TouchableOpacity onPress={revokeAllOther} style={{ marginTop: 16, marginHorizontal: 16, paddingVertical: 14, borderRadius: 12, backgroundColor: '#ef444412', alignItems: 'center' }}>
                 <Text style={{ fontSize: 14, color: '#ef4444', fontWeight: '600' }}>
                   {t?.('settings.signOutAllOther') || 'Sair de todos os outros aparelhos'}
                 </Text>
               </TouchableOpacity>
-            </Section>
+            </>
           )}
+
+          {/* Footer info */}
+          <View style={{ paddingHorizontal: 20, paddingTop: 24, paddingBottom: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+              <IconShield size={14} color={colors?.textTertiary} style={{ marginTop: 2 }} />
+              <Text style={{ flex: 1, fontSize: 11, color: colors?.textTertiary, marginLeft: 8, lineHeight: 16 }}>
+                Não reconhece um aparelho? Encerre a sessão e troque sua senha. O endereço IP é onde a conexão se conectou da última vez.
+              </Text>
+            </View>
+          </View>
         </>
       )}
     </ScrollView>
   );
+}
+
+// Util — verifica se colors está no modo escuro pelo background
+function isDarkColors(colors) {
+  if (!colors) return false;
+  const bg = (colors.background || colors.bg || '').toString();
+  return bg.startsWith('#0') || bg.startsWith('#1') || bg.startsWith('#2');
 }
 
 // ─── Screen: Privacy ─────────────────────────────────────────────────
@@ -1335,12 +1433,20 @@ function AboutScreen({ colors, t }) {
 }
 
 // ─── Screen: Support ─────────────────────────────────────────────────
-function SupportScreen({ colors, t }) {
+function SupportScreen({ colors, t, router, onClose }) {
+  // Compose direto na tela do app — `mailto:` no iOS dispara o scheme próprio
+  // (onemundomail://) que cai em "Unmatched Route" do expo-router.
+  const openSupportCompose = () => {
+    onClose?.();
+    setTimeout(() => {
+      router?.push('/compose?to=suporte%40chatyy.com.br&subject=Chatyy%20-%20Ajuda');
+    }, 150);
+  };
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
       <Section title={t?.('support.contact') || 'Contato'} colors={colors}>
         <Row icon={IconMessageSquare} label={t?.('support.email') || 'Enviar email para suporte'}
-          onPress={() => Linking.openURL('mailto:suporte@chatyy.com.br?subject=Chatyy%20-%20Ajuda')}
+          onPress={openSupportCompose}
           colors={colors}
           value="suporte@chatyy.com.br"
         />
@@ -2261,7 +2367,7 @@ export default function ProfileSettingsSheet({
       case 'ai':            return <AIFeaturesScreen colors={colors} t={t} />;
       case 'invite':        return <InviteScreen colors={colors} t={t} />;
       case 'about':         return <AboutScreen colors={colors} t={t} />;
-      case 'support':       return <SupportScreen colors={colors} t={t} />;
+      case 'support':       return <SupportScreen colors={colors} t={t} router={router} onClose={onClose} />;
       case 'delete':        return <DeleteAccountScreen colors={colors} t={t} onClose={onClose} onLogout={handleLogout} />;
       case 'export':        return <ExportDataScreen colors={colors} t={t} />;
       case 'vacation':      return <VacationScreen colors={colors} t={t} />;

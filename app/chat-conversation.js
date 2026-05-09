@@ -2795,13 +2795,20 @@ window.updatePos=function(){};
 window.addEventListener('message', function(e){var d=e&&e.data; if(d&&d.type==='updatePos'){window.updatePos(d.lat,d.lng);}});
 </script></body></html>`;
 
-  // 2026-05-09: force Leaflet/OpenStreetMap. Google Maps JS API requires
-  // a valid (billing-enabled) key — without it the WebView loaded the
-  // "For development purposes only" watermark + a "This page can't load
-  // Google Maps correctly" alert (user reported via screenshot). Leaflet
-  // is free, works without keys, and the live-pin pulse animation already
-  // has a Leaflet variant in the HTML below. No UX loss.
-  const html = leafletHtml;
+  // 2026-05-09 v2: usuário pediu Google Maps de volta. Em vez de JS API
+  // (que precisa billing habilitado e mostrava watermark "for development
+  // purposes only"), uso Maps Embed API — é free unlimited, só precisa
+  // do mesmo key com "Maps Embed API" ligado em GCP. Pra static views ou
+  // sem live, embed é o caminho. Pra live-tracking com pulse animado
+  // ainda preciso JS API → fallback Leaflet quando isLive=true.
+  const embedKey = _gKey;
+  const gembedHtml = embedKey ? `<!DOCTYPE html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/><style>html,body{margin:0;padding:0;width:100%;height:100%;background:#000}iframe{border:0;width:100%;height:100%;display:block}</style></head><body><iframe loading="lazy" allowfullscreen referrerpolicy="no-referrer-when-downgrade" src="https://www.google.com/maps/embed/v1/place?key=${embedKey}&q=${numLat},${numLng}&zoom=17"></iframe></body></html>` : null;
+  // Live tracking precisa JS API pra mover o pino em real-time; Embed
+  // não suporta updatePos. Usa JS API quando isLive E key disponível,
+  // senão cai pro Embed (estático bonito) ou Leaflet (fallback final).
+  const html = isStillLive
+    ? (gmapsHtml || leafletHtml)
+    : (gembedHtml || gmapsHtml || leafletHtml);
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>

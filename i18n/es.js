@@ -3025,6 +3025,8 @@ export default {
   'chatConv.liveEndedBadge': 'FINALIZADA',
   'chatConv.sharingLive': 'Compartiendo',
   'chatConv.remaining': 'restantes',
+  'chatConv.liveSharingUntil': 'Compartiendo hasta',
+  'chatConv.stopSharing': 'Detener',
   'chatConv.lessThanMin': 'menos de 1 min restante',
 
   // Meetup
