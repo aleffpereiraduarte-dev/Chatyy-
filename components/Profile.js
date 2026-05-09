@@ -1539,7 +1539,7 @@ export default function Profile({
                 ? _ti('profile.empty.reelsSelfSub', 'Grave seu primeiro vídeo curto.')
                 : _ti('profile.empty.reelsOtherSub', 'Os Reels aparecem aqui quando publicados.')}
               ctaLabel={actions.is_self ? _ti('profile.empty.reelsCta', 'Gravar Reel') : undefined}
-              onPress={actions.is_self ? () => router?.push('/reels?compose=1') : undefined}
+              onPress={actions.is_self ? () => router?.push('/spotlight?createPost=1') : undefined}
             />
           );
         }

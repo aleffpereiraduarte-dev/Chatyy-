@@ -519,6 +519,11 @@ let isDark = ${isDark ? 'true' : 'false'};
 let openPanel = null;
 let pageHeight = 1200;
 let showThumbs = false;
+// Stylus mode: when a pen (Apple Pencil / S Pen) is detected we activate
+// palm rejection — touch events are ignored, only pen draws. Toggleable.
+let stylusOnly = false;
+let stylusDetected = false;
+let activePointerId = null;
 
 const COLORS = ['#333333', '#1a73e8', '#d32f2f', '#2e7d32', '#7b1fa2', '#f57c00', '#00838f', '#c2185b', '#455a64', '#e65100'];
 const WIDTHS = [
@@ -665,11 +670,32 @@ let rafId = null;
 
 function getCanvasPos(e) {
   const rect = drawCanvas.getBoundingClientRect();
+  // Apple Pencil + S Pen send pressure 0..1. Mouse/touch report 0.5.
+  // Boost low-pressure region so gentle strokes still register as visible
+  // ink (Apple's PencilKit-style curve).
+  let p = e.pressure;
+  if (p === undefined || p === 0) p = 0.5;
+  // Cubic ease so pressure feels natural — no harsh jumps near the edges.
+  const eased = 0.3 + 0.7 * (p * p * (3 - 2 * p));
   return {
     x: e.clientX - rect.left,
     y: e.clientY - rect.top,
-    pressure: e.pressure || 0.5,
+    pressure: eased,
+    tiltX: e.tiltX || 0,
+    tiltY: e.tiltY || 0,
+    pointerType: e.pointerType || 'mouse',
   };
+}
+
+// Palm rejection: when stylus mode is on (or auto-detected after first pen
+// touch), ignore non-pen pointers so the user's hand resting on the screen
+// doesn't draw stray strokes — same behavior as Notes/GoodNotes.
+function shouldAcceptPointer(e) {
+  if (e.pointerType === 'pen') return true;
+  if (stylusOnly) return false;
+  // Auto-engage stylus-only after first pen touch in this session
+  if (stylusDetected && e.pointerType === 'touch') return false;
+  return true;
 }
 
 function processPoints() {
@@ -709,8 +735,16 @@ function processPoints() {
 
 drawCanvas.addEventListener('pointerdown', (e) => {
   if (currentTool === 'text') return;
+  if (e.pointerType === 'pen') {
+    if (!stylusDetected) {
+      stylusDetected = true;
+      showStylusBadge();
+    }
+  }
+  if (!shouldAcceptPointer(e)) return;
   e.preventDefault();
   isDrawing = true;
+  activePointerId = e.pointerId;
   const pos = getCanvasPos(e);
   if (currentTool === 'eraser') { eraseAt(pos.x, pos.y); return; }
   currentStroke = { points: [pos], color: currentColor, width: currentWidth, tool: currentTool };
@@ -719,11 +753,23 @@ drawCanvas.addEventListener('pointerdown', (e) => {
 
 drawCanvas.addEventListener('pointermove', (e) => {
   if (!isDrawing) return;
+  if (activePointerId !== null && e.pointerId !== activePointerId) return;
   e.preventDefault();
   const pos = getCanvasPos(e);
   if (currentTool === 'eraser') { eraseAt(pos.x, pos.y); return; }
   if (currentStroke) {
-    pendingPoints.push(pos);
+    // Apple Pencil emits coalesced events at 240Hz — capture them all for
+    // smoother strokes than the 60Hz pointermove default.
+    if (typeof e.getCoalescedEvents === 'function') {
+      const events = e.getCoalescedEvents();
+      if (events.length > 1) {
+        for (const ce of events) pendingPoints.push(getCanvasPos(ce));
+      } else {
+        pendingPoints.push(pos);
+      }
+    } else {
+      pendingPoints.push(pos);
+    }
     if (!rafId) rafId = requestAnimationFrame(processPoints);
   }
 });
@@ -1043,6 +1089,22 @@ textLayer.addEventListener('input', () => {
 
 // ---- Communication with React Native ----
 let saveTimer = null;
+
+// One-shot toast when Apple Pencil / S Pen first touches the screen — lets
+// the user know palm rejection just kicked in.
+function showStylusBadge() {
+  let el = document.getElementById('stylus-badge');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'stylus-badge';
+    el.style.cssText = 'position:fixed;left:50%;top:14px;transform:translateX(-50%);background:rgba(0,0,0,0.78);color:#fff;padding:8px 14px;border-radius:16px;font-size:13px;font-weight:500;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.25);opacity:0;transition:opacity 0.2s';
+    el.textContent = '✏️ Caneta detectada · palma ignorada';
+    document.body.appendChild(el);
+  }
+  requestAnimationFrame(() => { el.style.opacity = '1'; });
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.style.opacity = '0'; }, 2400);
+}
 
 function notifyChange() {
   if (saveTimer) clearTimeout(saveTimer);
