@@ -2777,6 +2777,8 @@ export default {
   'chatConv.translate': 'Traducir',
   'chatConv.translated': 'Traducido',
   'chatConv.translating': 'Traduciendo...',
+  'chatConv.hideTranscript': 'Ocultar transcripción',
+  'chatConv.showTranscript': 'Mostrar transcripción',
   'chatConv.translateError': 'Error al traducir',
   'chatConv.hideTranslation': 'Ocultar traducción',
   'chatConv.group': 'Grupo',

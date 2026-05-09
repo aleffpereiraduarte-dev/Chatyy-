@@ -6304,6 +6304,17 @@ export default function ChatConversationScreen() {
   // Sticker suggestion strip user-dismissal — resets when the input is
   // cleared so the next message gets a fresh chance at suggestions.
   const [stickerSuggestionsHidden, setStickerSuggestionsHidden] = useState(false);
+  // Audio transcript collapse — per-message Set. User asked to hide the
+  // expanded transcript that follows an audio bubble; tap "Ocultar
+  // transcrição" to collapse, "Mostrar transcrição" to bring it back.
+  const [txCollapsed, setTxCollapsed] = useState(() => new Set());
+  const toggleTxCollapsed = useCallback((id) => {
+    setTxCollapsed(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
   useEffect(() => {
     if (!inputText || !inputText.trim()) {
       if (stickerSuggestionsHidden) setStickerSuggestionsHidden(false);
@@ -13789,9 +13800,25 @@ export default function ChatConversationScreen() {
                 waveform={msg.waveform}
               />
               {audioTx ? (
-                <Text style={{ fontSize: 13, color: isOwn ? ownTextColor : colors.text, marginTop: 6, lineHeight: 17, opacity: 0.92 }} selectable>
-                  {audioTx}
-                </Text>
+                <View style={{ marginTop: 6 }}>
+                  {!txCollapsed.has(msg.id) && (
+                    <Text style={{ fontSize: 13, color: isOwn ? ownTextColor : colors.text, lineHeight: 17, opacity: 0.92 }} selectable>
+                      {audioTx}
+                    </Text>
+                  )}
+                  <TouchableOpacity
+                    onPress={() => toggleTxCollapsed(msg.id)}
+                    hitSlop={6}
+                    accessibilityRole="button"
+                    style={{ marginTop: txCollapsed.has(msg.id) ? 0 : 4, alignSelf: 'flex-start' }}
+                  >
+                    <Text style={{ fontSize: 11, fontWeight: '600', color: isOwn ? ownMetaColor : colors.primary, opacity: 0.9 }}>
+                      {txCollapsed.has(msg.id)
+                        ? (t('chatConv.showTranscript') || 'Mostrar transcrição')
+                        : (t('chatConv.hideTranscript') || 'Ocultar transcrição')}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               ) : null}
               {/* Voice translate (Telegram parity): when the user runs
                   Translate on a voice/audio message, handleTranslate chains
