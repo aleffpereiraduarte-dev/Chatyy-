@@ -1341,8 +1341,10 @@ function MessageRow({ item, colors, isDark, onSpeak, speakingId, t, onCopy, onRe
         <Text style={[st.aiHeaderLabel, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>One</Text>
       </TouchableOpacity>
 
-      {/* Tool usage chips (kept — useful signal that the AI is touching email, calendar, etc.) */}
-      {toolActions.length > 0 && (
+      {/* Tool chips only while AI is mid-flight. After the response lands we hide
+          them — otherwise an unknown action type falls back to "Processando..."
+          and lingers under a finished reply, looking like the AI is still working. */}
+      {toolActions.length > 0 && (isStreaming || isToolPending) && (
         <View style={st.toolChipsRow}>
           {toolActions.slice(0, 3).map((action, i) => {
             const type = action.type || action.tool || action.name || '';
