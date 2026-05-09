@@ -87,12 +87,14 @@ function Row({ icon: Icon, label, value, onPress, colors, destructive, right, ic
 
 function Section({ title, children, colors }) {
   return (
-    <View style={{ marginTop: 24 }}>
+    <View style={{ marginTop: 24, marginBottom: 8, position: 'relative' }}>
       {title && (
         <Text style={{
           fontSize: 11.5, fontWeight: '700', textTransform: 'uppercase',
-          color: colors?.textTertiary, paddingHorizontal: 20, marginBottom: 8,
+          color: colors?.textTertiary, paddingHorizontal: 20,
+          marginTop: 4, marginBottom: 12,
           letterSpacing: 0.5,
+          position: 'relative',
         }}>
           {title}
         </Text>
@@ -1187,7 +1189,13 @@ function InviteScreen({ colors, t }) {
 
 // ─── Screen: About ───────────────────────────────────────────────────
 function AboutScreen({ colors, t }) {
-  const appVersion = '2.4.0';
+  // Pull version from app.json via expo-constants so we never drift from
+  // the canonical version source. Fallback to the last-known string only
+  // if Constants is unavailable (e.g. during a partial test environment).
+  let appVersion = '2.4.5';
+  try {
+    appVersion = require('expo-constants').default?.expoConfig?.version || appVersion;
+  } catch {}
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
       <View style={{ padding: 24, alignItems: 'center' }}>
@@ -1204,7 +1212,7 @@ function AboutScreen({ colors, t }) {
       </View>
 
       <Section title={t?.('about.legal') || 'Legal'} colors={colors}>
-        <Row label={t?.('plans.termsOfUse') || 'Termos de Uso (EULA)'} onPress={() => Linking.openURL('https://chatyy.com.br/terms')} colors={colors} />
+        <Row label={t?.('plans.termsOfUse') || 'Termos de Uso (EULA)'} onPress={() => Linking.openURL('https://chatyy.com.br/terms.html')} colors={colors} />
         <Row label={t?.('plans.privacyPolicy') || 'Política de Privacidade'} onPress={() => Linking.openURL('https://chatyy.com.br/privacy')} colors={colors} />
         <Row label={t?.('settings.support') || 'Suporte'} onPress={() => Linking.openURL('https://chatyy.com.br/support')} colors={colors} />
       </Section>

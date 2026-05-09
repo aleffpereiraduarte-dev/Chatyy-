@@ -959,7 +959,11 @@ export default function Profile({
         navigator.clipboard.writeText(url);
       } else {
         const { Share } = require('react-native');
-        Share?.share({ message: url, url });
+        // Pass only `url` (not both message+url) — iOS Share Extension splits
+        // into two NSItemProvider attachments (url + text), causing the
+        // recipient app to receive the same payload twice (compose body
+        // duplicado x2 reported on 2026-05-08).
+        Share?.share({ url });
       }
     } catch {}
   }, [identity]);

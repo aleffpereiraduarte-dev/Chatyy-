@@ -13524,8 +13524,10 @@ export default function ChatConversationScreen() {
                 })()}
                 {/* Time + read receipts pill (WhatsApp-style overlay).
                     Only when NO caption — when caption is present, the pill
-                    moves below the caption so it doesn't compete visually. */}
-                {!hasCaption && !imgUploading && (
+                    moves below the caption so it doesn't compete visually.
+                    Album: render only on the LAST image of the album (matches
+                    WhatsApp/Telegram — one footer per album, not per row). */}
+                {!hasCaption && !imgUploading && (!isAlbumMember || isAlbumLast) && (
                   <MediaStatusFooter msg={msg} isOwn={isOwn} />
                 )}
               </View>
@@ -13690,8 +13692,9 @@ export default function ChatConversationScreen() {
                   <Text style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.95)', fontWeight: '500' }}>{vidDurationStr || vidSizeStr}</Text>
                 </View>
               )}
-              {/* Time + read receipts pill bottom-right (WhatsApp-style) */}
-              {!vidUploading && (
+              {/* Time + read receipts pill bottom-right (WhatsApp-style).
+                  Album: only on last row (matches photo album behavior). */}
+              {!vidUploading && (!isAlbumMember || isAlbumLast) && (
                 <MediaStatusFooter msg={msg} isOwn={isOwn} />
               )}
               </View>

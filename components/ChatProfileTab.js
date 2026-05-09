@@ -2192,8 +2192,11 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             <TouchableOpacity
               onPress={() => {
                 try {
+                  // Use single `url` field — passing both message+url causes
+                  // iOS Share Extension to receive duplicate NSItemProviders
+                  // (text + url), making recipients see body x2.
                   Share.share({
-                    message: `${name || currentEmail}\nChatyy: chatyy.com.br/u/${currentEmail.split('@')[0]}`,
+                    url: `https://chatyy.com.br/u/${currentEmail.split('@')[0]}`,
                   });
                 } catch {}
               }}
