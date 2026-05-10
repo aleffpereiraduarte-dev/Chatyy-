@@ -9137,9 +9137,31 @@ export default function ChatConversationScreen() {
     if (wsConnected) return;
     if (!conversationId) return;
     const iv = setInterval(() => {
-      if (!mountedRef.current || wsConnectedRef.current) return;
+      if (!mountedRef.current) return;
+      // Watchdog: if the socket actually came back but the 'authenticated'
+      // event got lost (iOS suspend race, NetInfo no-fire), self-heal the
+      // UI here so the "Reconectando..." banner never lingers past the
+      // moment the connection is real again.
+      try {
+        const mailWs = require('../services/websocket').default;
+        if (mailWs?.isConnected) {
+          setWsConnected(true);
+          wsConnectedRef.current = true;
+          if (wsDisconnectTimerRef.current) {
+            clearTimeout(wsDisconnectTimerRef.current);
+            wsDisconnectTimerRef.current = null;
+          }
+          return;
+        }
+        // Net was up but socket dead — kick a reconnect attempt so we don't
+        // wait for the next NetInfo event (which on iOS often never fires).
+        if (mailWs?.ensureHealthy) {
+          mailWs.ensureHealthy(1000).catch(() => {});
+        }
+      } catch {}
+      if (wsConnectedRef.current) return;
       try { loadMessages(false); } catch {}
-    }, 6000);
+    }, 3000);
     return () => clearInterval(iv);
   }, [wsConnected, conversationId, loadMessages]);
 

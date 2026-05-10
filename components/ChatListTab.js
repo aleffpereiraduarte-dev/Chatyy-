@@ -2528,13 +2528,6 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           setWsDownBanner(false);
         } else if (data?.status === 'disconnected') {
           wasConnected = false;
-          // 5s delay before painting the banner — WhatsApp pattern: brief
-          // flaps (carrier handoff, AP roam, server reload, AppState resume)
-          // resolve in <2s so the user sees zero noise. Was 3.5s, but real
-          // recoveries on weak cellular took 3-5s and leaked the banner for
-          // 1-2 frames before clearing. Also re-check mailWs.isConnected at
-          // fire time so the very last race window (auth lands ~50ms before
-          // the timer callback) doesn't paint a one-frame flash.
           if (!bannerTimer) {
             bannerTimer = setTimeout(() => {
               if (!wasConnected && !mailWs.isConnected) setWsDownBanner(true);
@@ -2544,6 +2537,24 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         }
       }));
       unsubs.push(() => { if (bannerTimer) clearTimeout(bannerTimer); });
+
+      // Watchdog: poll the live socket while the banner is visible. Covers
+      // the iOS race where the 'authenticated' event gets dropped after the
+      // OS resumes the radio — without this, the banner sits forever even
+      // though chat is fully online. Also kicks ensureHealthy() so a dead
+      // socket reconnects without waiting for the next NetInfo flap.
+      const healWatchdog = setInterval(() => {
+        try {
+          if (mailWs?.isConnected) {
+            if (bannerTimer) { clearTimeout(bannerTimer); bannerTimer = null; }
+            wasConnected = true;
+            setWsDownBanner(false);
+          } else if (!wasConnected && mailWs?.ensureHealthy) {
+            mailWs.ensureHealthy(1000).catch(() => {});
+          }
+        } catch {}
+      }, 3000);
+      unsubs.push(() => clearInterval(healWatchdog));
 
       // Real-time reaction toast — peer reacted to MY status. Suppress on
       // own-device echoes (rare, but in case the WS server fans-out a self
