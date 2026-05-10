@@ -5494,6 +5494,11 @@ export default {
   'calls.timeFuture': 'Time must be in the future',
   'calls.titlePlaceholder': 'Weekly meeting',
   'calls.when': 'When',
+  'calls.repeat': 'Repeat',
+  'calls.repeatNone': "Don't repeat",
+  'calls.repeatDaily': 'Daily',
+  'calls.repeatWeekly': 'Weekly',
+  'calls.timezone': 'Timezone: {tz}',
 
   // change-phone.js
   'changePhone.title': 'Change number',

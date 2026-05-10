@@ -5558,6 +5558,11 @@ export default {
   'calls.timeFuture': 'Hora deve estar no futuro',
   'calls.titlePlaceholder': 'Reunião semanal',
   'calls.when': 'Quando',
+  'calls.repeat': 'Repetir',
+  'calls.repeatNone': 'Não repetir',
+  'calls.repeatDaily': 'Diariamente',
+  'calls.repeatWeekly': 'Semanalmente',
+  'calls.timezone': 'Fuso: {tz}',
 
   // change-phone.js
   'changePhone.title': 'Alterar número',

@@ -5495,6 +5495,11 @@ export default {
   'calls.timeFuture': 'La hora debe ser en el futuro',
   'calls.titlePlaceholder': 'Reunión semanal',
   'calls.when': 'Cuándo',
+  'calls.repeat': 'Repetir',
+  'calls.repeatNone': 'No repetir',
+  'calls.repeatDaily': 'Diariamente',
+  'calls.repeatWeekly': 'Semanalmente',
+  'calls.timezone': 'Zona: {tz}',
 
   // change-phone.js
   'changePhone.title': 'Cambiar número',
