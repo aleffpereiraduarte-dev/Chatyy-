@@ -4247,9 +4247,9 @@ const previewStyles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   header: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 12, paddingTop: Platform.OS === 'ios' ? 54 : 16, paddingBottom: 8,
+    paddingHorizontal: 10, paddingTop: Platform.OS === 'ios' ? 46 : 12, paddingBottom: 6,
   },
-  headerBtn: { padding: 8 },
+  headerBtn: { padding: 9 },
   mediaContainer: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   previewImage: { width: '100%', height: '100%' },
   videoPlaceholder: { alignItems: 'center', justifyContent: 'center' },
@@ -22769,11 +22769,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14, paddingVertical: 6,
     borderRadius: 14, overflow: 'hidden',
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: 'rgba(255,255,255,0.10)',
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 4 },
-      android: { elevation: 1 },
-      web: { boxShadow: '0 1px 4px rgba(0,0,0,0.05)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 8 },
+      android: { elevation: 3 },
+      web: {
+        boxShadow: '0 4px 14px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05)',
+        backdropFilter: 'blur(20px) saturate(180%)',
+        WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+      },
     }),
   },
   systemMsg: { alignItems: 'center', marginVertical: 8, paddingHorizontal: Spacing.lg },
@@ -22829,16 +22833,13 @@ const styles = StyleSheet.create({
   replyName: { fontSize: 13.5, fontWeight: '700', letterSpacing: -0.1, marginBottom: 2 },
   replyText: { fontSize: 13, lineHeight: 17, marginTop: 1, opacity: 0.85 },
   bubble: {
-    // Telegram-level polish: cantos ~16 (mais soft que 14), tail mais
-    // marcante (4 em vez de 6), padding mais compacto, sombra com profundidade
-    // — ant. opacity 0.06/radius 3 era invisível, agora dá um lift sutil.
-    borderRadius: 16, paddingHorizontal: 11,
+    borderRadius: 18, paddingHorizontal: 11,
     paddingTop: 6, paddingBottom: 5,
     minWidth: 82,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 6 },
-      android: { elevation: 2 },
-      web: { boxShadow: '0 2px 6px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04)' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.14, shadowRadius: 10 },
+      android: { elevation: 3 },
+      web: { boxShadow: '0 4px 12px rgba(0,0,0,0.10), 0 1px 3px rgba(0,0,0,0.06)' },
     }),
   },
   bubbleWithReply: { minWidth: 230 },
@@ -22932,13 +22933,18 @@ const styles = StyleSheet.create({
   // safe-area edge.
   inputBar: {
     flexDirection: 'row', alignItems: 'flex-end',
-    paddingHorizontal: 8, paddingTop: 10, paddingBottom: 8,
+    paddingHorizontal: 8, paddingTop: 12, paddingBottom: 10,
     gap: 6,
     borderTopWidth: 0,
     ...Platform.select({
-      ios: {},
-      android: {},
-      web: { maxWidth: 960, alignSelf: 'center', width: '100%' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.06, shadowRadius: 10 },
+      android: { elevation: 6 },
+      web: {
+        maxWidth: 960, alignSelf: 'center', width: '100%',
+        backdropFilter: 'blur(20px) saturate(180%)',
+        WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+        boxShadow: '0 -2px 12px rgba(0,0,0,0.04)',
+      },
     }),
   },
   // Why: send button gets a real "premium lift" — shadowRadius 10→16,
