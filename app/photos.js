@@ -326,6 +326,11 @@ export default function PhotosScreen() {
   // Favorites filter
   const [showFavorites, setShowFavorites] = useState(false);
   const [presetFilter, setPresetFilter] = useState(null);
+  // ML-backed result IDs for the active preset. When non-null, the grid
+  // filter prefers AI semantic matches (person/face/sun/beach/etc) over
+  // the date-only heuristic. null = use heuristic fallback only.
+  const [presetMLIds, setPresetMLIds] = useState(null);
+  const [presetLoading, setPresetLoading] = useState(false);
 
   // Trash
   const [trashItems, setTrashItems] = useState([]);
@@ -1057,30 +1062,39 @@ export default function PhotosScreen() {
     if (showFavorites) {
       photos = photos.filter(p => p.starred);
     }
-    // Preset memory filter (Verão 2025 / Esta semana / Pessoas)
+    // Preset memory filter — Google Photos-grade semantic search.
+    // Why: presets like "Pessoas" / "Verão" need real intent matching, not
+    // just date math. presetMLIds is populated by an AI search (photo_labels
+    // tags/objects/scene) when the user taps a card; we intersect the AI hits
+    // with the relevant date window for time-bound presets so "Verão 2026"
+    // means "summer photos taken this summer" — same UX Google ships.
     if (presetFilter) {
       const now = new Date();
+      const inSummer = (d) => {
+        const m = d.getMonth(); const y = d.getFullYear();
+        const summerYear = (now.getMonth() >= 11) ? now.getFullYear() + 1 : now.getFullYear();
+        return (m === 11 && y === summerYear - 1) || ((m === 0 || m === 1) && y === summerYear);
+      };
+      const mlSet = presetMLIds ? new Set(presetMLIds.map(p => String(p.id || p))) : null;
+
       photos = photos.filter(p => {
         try {
           const d = new Date(p.created_at || p.uploaded_at || p.modificationTime);
-          if (isNaN(d.getTime())) return false;
           if (presetFilter === 'thisweek') {
-            return (now.getTime() - d.getTime()) <= 7 * 24 * 60 * 60 * 1000;
+            return !isNaN(d.getTime()) && (now.getTime() - d.getTime()) <= 7 * 24 * 60 * 60 * 1000;
           }
           if (presetFilter === 'summer') {
-            // BR summer = Dec/Jan/Feb of the current "summer year".
-            const m = d.getMonth();
-            const y = d.getFullYear();
-            const summerYear = (now.getMonth() >= 11)
-              ? now.getFullYear() + 1
-              : now.getFullYear();
-            return (m === 11 && y === summerYear - 1) || ((m === 0 || m === 1) && y === summerYear);
+            // Prefer AI hits (beach/pool/sun/outdoor) but require the date to
+            // match this summer. Falls back to pure date if AI is empty.
+            const isThisSummer = !isNaN(d.getTime()) && inSummer(d);
+            if (mlSet && mlSet.size > 0) {
+              return isThisSummer && mlSet.has(String(p.id));
+            }
+            return isThisSummer;
           }
           if (presetFilter === 'people') {
-            // Best-effort "people" filter — keeps photos that look like
-            // portraits (3:4 / 9:16 aspect) or have a "person/face" ML tag.
-            // No on-device face detection yet; this surfaces the most
-            // likely candidates so the card isn't a dead-end.
+            // Pure ML hits; fall back to portrait/face heuristic if AI empty.
+            if (mlSet && mlSet.size > 0) return mlSet.has(String(p.id));
             try {
               if (p.photo_labels) {
                 const labels = typeof p.photo_labels === 'string' ? JSON.parse(p.photo_labels) : p.photo_labels;
@@ -1132,7 +1146,7 @@ export default function PhotosScreen() {
       return localMatches;
     }
     return photos;
-  }, [allPhotos, searchText, showFavorites, mlSearchResults, presetFilter]);
+  }, [allPhotos, searchText, showFavorites, mlSearchResults, presetFilter, presetMLIds]);
 
   const groupedPhotos = useMemo(() => groupPhotosByDate(filteredPhotos, t), [filteredPhotos, t]);
   // Stable id→index map so renderItem doesn't have to do an O(n) indexOf
@@ -2670,7 +2684,7 @@ export default function PhotosScreen() {
                   the user bail out without hunting for a back button. */}
               {presetFilter && (
                 <Pressable
-                  onPress={() => setPresetFilter(null)}
+                  onPress={() => { setPresetFilter(null); setPresetMLIds(null); }}
                   style={{
                     flexDirection: 'row', alignItems: 'center',
                     alignSelf: 'flex-start',
@@ -2681,6 +2695,9 @@ export default function PhotosScreen() {
                     gap: 6,
                   }}
                 >
+                  {presetLoading ? (
+                    <ActivityIndicator size="small" color="#7C3AED" />
+                  ) : null}
                   <Text style={{ fontSize: 13, fontWeight: '700', color: '#7C3AED' }}>
                     {presetFilter === 'summer' ? `Verão ${(new Date().getMonth() >= 11 ? new Date().getFullYear() + 1 : new Date().getFullYear())}` : presetFilter === 'thisweek' ? 'Esta semana' : 'Pessoas'}
                   </Text>
@@ -2757,11 +2774,30 @@ export default function PhotosScreen() {
                         <Pressable
                           key={`preset-${preset.key}`}
                           style={[s.memoryCardLg, { backgroundColor: preset.tint[0] }]}
-                          onPress={() => {
-                            // Apply the memory filter — grid re-renders showing
-                            // only the curated subset; user clears via the pill
-                            // at the top.
+                          onPress={async () => {
+                            // Google Photos-grade memory: AI semantic search
+                            // against photo_labels (tags/objects/scene) +
+                            // optional date window. Each preset has a tuned
+                            // query that scores faces/scenes the way Google's
+                            // "Pessoas" / "Verão" / "Esta semana" panels do.
                             setPresetFilter(preset.key);
+                            setPresetMLIds(null);
+                            const queries = {
+                              summer: 'beach pool sun outdoor vacation summer praia piscina sol verão férias',
+                              thisweek: '',
+                              people: 'person people face portrait selfie group friends pessoa pessoas rosto retrato selfie amigos',
+                            };
+                            const q = queries[preset.key] || '';
+                            if (!q) return; // thisweek is purely date-based
+                            setPresetLoading(true);
+                            try {
+                              const r = await api.photoSearchML(q, 1, 200);
+                              if (r?.success && Array.isArray(r.data?.files)) {
+                                setPresetMLIds(r.data.files);
+                              }
+                            } catch {} finally {
+                              setPresetLoading(false);
+                            }
                           }}
                         >
                           {coverUri ? (
