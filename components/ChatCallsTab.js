@@ -2383,6 +2383,11 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
     }
   }, [number, calling, isPaid, onCallPlaced, handleCallStateChange]);
 
+  // Ref pra handleCall — usado por handleHistoryPress pra discar direto
+  // (precisa de ref pq history press fica acima de handleCall declaration).
+  const handleCallRef = useRef(null);
+  useEffect(() => { handleCallRef.current = handleCall; }, [handleCall]);
+
   const country = detectCountry(number);
   const canCall = isPaid && number.trim().length >= 4 && !calling;
 
@@ -2985,7 +2990,17 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
 
   const handleHistoryPress = useCallback(async (item) => {
     if (item.to_number) {
+      // 2026-05-09: WhatsApp parity — tap em phone history disca direto
+      // (antes só abria o teclado vazio, user tinha que retiar o numero).
+      // Preenche o number state + abre o dialer com auto-dial flag.
+      const cleanNum = item.to_number.replace(/[^0-9+]/g, '');
+      const dialNum = cleanNum.startsWith('+') ? cleanNum.slice(1) : cleanNum;
+      setNumber(dialNum);
       setDialerVisible(true);
+      // Dispara handleCall após o state propagar no próximo tick.
+      setTimeout(() => {
+        try { handleCallRef.current?.(); } catch {}
+      }, 80);
       return;
     }
     if (!router) return;
@@ -3064,10 +3079,26 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
       const isPhone = c.phoneCall === 1 || c.phone_call === 1
                    || !!c.phoneCall || !!c.phone_call
                    || /^\+?\d{6,}$/.test(ce.replace(/[\s()-]/g, ''));
+      // Resolver nome via contatos do iPhone se o backend nao tem (ou tem
+      // só o número). 2026-05-09: user reclamou que "mãe" aparecia e sumia.
+      // Causa: backend retorna contact_name vazio em refresh subsequente,
+      // re-render mostrava só o número. Agora qualquer phone history busca
+      // match em phoneContactsList por digits e prefere o nome local.
+      let resolvedName = c.contactName || c.contact_name || '';
+      if (isPhone && ce) {
+        const digits = ce.replace(/\D/g, '');
+        const match = phoneContactsList.find(p => {
+          if (!p?.phone) return false;
+          const pd = p.phone.replace(/\D/g, '');
+          // last 8 digits = same subscriber line (ignora país/DDD prefix variants)
+          return pd && digits && pd.slice(-8) === digits.slice(-8);
+        });
+        if (match?.name) resolvedName = match.name;
+      }
       merged.push({
         id: `chat_${c.id}`,
         type: c.type || 'outgoing',
-        contactName: c.contactName || c.contact_name || '',
+        contactName: resolvedName,
         contactEmail: c.contactEmail || c.contact_email || '',
         to_number: isPhone ? (c.contactEmail || c.contact_email || '') : '',
         duration: c.duration || 0,
@@ -3078,7 +3109,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     }
     merged.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
     return merged;
-  }, [voipHistory, chatCalls]);
+  }, [voipHistory, chatCalls, phoneContactsList]);
 
   const filteredHistory = useMemo(() => {
     switch (activeTab) {
