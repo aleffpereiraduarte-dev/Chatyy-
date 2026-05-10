@@ -915,17 +915,28 @@ function ChatHub() {
         </View>}
       </Animated.View>
 
-      {/* Bottom tab bar — frosted glass on web */}
+      {/* Bottom tab bar — floating premium (rounded top + soft elevation) */}
       <View style={[styles.tabBar, {
         backgroundColor: isDark ? '#0a0a0a' : '#ffffff',
-        borderTopColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)',
+        borderTopColor: 'transparent',
         paddingBottom: insets.bottom || 10,
-        ...(isWeb ? {
+        borderTopLeftRadius: 22,
+        borderTopRightRadius: 22,
+        ...(Platform.OS === 'ios' ? {
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: -4 },
+          shadowOpacity: isDark ? 0.4 : 0.08,
+          shadowRadius: 14,
+        } : Platform.OS === 'android' ? {
+          elevation: 16,
+        } : {
           backdropFilter: 'blur(24px) saturate(200%)',
           WebkitBackdropFilter: 'blur(24px) saturate(200%)',
           backgroundColor: isDark ? 'rgba(10, 10, 10, 0.92)' : 'rgba(255, 255, 255, 0.92)',
-          boxShadow: isDark ? '0 -1px 0 rgba(255,255,255,0.04)' : '0 -1px 12px rgba(0,0,0,0.03)',
-        } : {}),
+          boxShadow: isDark
+            ? '0 -8px 24px rgba(0,0,0,0.5), 0 -1px 0 rgba(255,255,255,0.06)'
+            : '0 -8px 24px rgba(99,102,241,0.08), 0 -1px 0 rgba(0,0,0,0.04)',
+        }),
       }]}>
         {isKids ? (
           <>
@@ -1471,11 +1482,17 @@ function TabBarItem({ icon, label, active, onPress, isDark, badge, dot }) {
         transform: [{ scale: scaleAnim }, { translateY: bounceAnim }],
         backgroundColor: glowAnim.interpolate({
           inputRange: [0, 1],
-          outputRange: ['rgba(124,58,237,0)', isDark ? 'rgba(124,58,237,0.16)' : 'rgba(124,58,237,0.10)'],
+          outputRange: ['rgba(124,58,237,0)', isDark ? 'rgba(124,58,237,0.22)' : 'rgba(124,58,237,0.14)'],
         }),
+        ...(active && Platform.OS === 'ios' ? {
+          shadowColor: '#7C3AED',
+          shadowOffset: { width: 0, height: 0 },
+          shadowOpacity: isDark ? 0.55 : 0.35,
+          shadowRadius: 8,
+        } : {}),
         ...(isWeb ? {
           boxShadow: active
-            ? `0 0 16px ${isDark ? 'rgba(124,58,237,0.35)' : 'rgba(124,58,237,0.20)'}`
+            ? `0 0 20px ${isDark ? 'rgba(124,58,237,0.45)' : 'rgba(124,58,237,0.28)'}`
             : 'none',
           transition: 'box-shadow 0.22s ease',
         } : {}),
@@ -1505,15 +1522,23 @@ function TabBarItem({ icon, label, active, onPress, isDark, badge, dot }) {
 const styles = StyleSheet.create({
   container: { flex: 1 },
 
-  // Header (mobile) — 2026 premium
+  // Header (mobile) — 2026 premium (compact + soft drop shadow)
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: 14,
-    paddingBottom: 14,
-    minHeight: 58,
+    paddingTop: 10,
+    paddingBottom: 10,
+    minHeight: 52,
     zIndex: 10,
+    ...(Platform.OS === 'ios' ? {
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.18,
+      shadowRadius: 12,
+    } : Platform.OS === 'android' ? {
+      elevation: 8,
+    } : {}),
   },
   backBtn: {
     width: 36,
@@ -1592,8 +1617,7 @@ const styles = StyleSheet.create({
   // Tab bar (mobile bottom) — 2026 premium frosted glass
   tabBar: {
     flexDirection: 'row',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    paddingTop: 8,
+    paddingTop: 10,
     position: 'relative',
   },
   tabIndicator: {

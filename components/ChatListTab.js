@@ -244,18 +244,29 @@ function PulsingOnlineDot({ colors, isDark }) {
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulse, { toValue: 1, duration: 1400, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1, duration: 1600, useNativeDriver: true }),
         Animated.timing(pulse, { toValue: 0, duration: 0, useNativeDriver: true }),
       ])
     );
     loop.start();
     return () => loop.stop();
   }, []);
-  const haloScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 2.4] });
-  const haloOpacity = pulse.interpolate({ inputRange: [0, 0.4, 1], outputRange: [0.55, 0.25, 0] });
+  const haloScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 2.6] });
+  const haloOpacity = pulse.interpolate({ inputRange: [0, 0.4, 1], outputRange: [0.6, 0.28, 0] });
+  const innerScale = pulse.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1, 1.08, 1] });
   return (
-    <View style={[s.onlineDot, {
+    <Animated.View style={[s.onlineDot, {
       borderColor: isDark ? '#0B141A' : colors.background,
+      transform: [{ scale: innerScale }],
+      ...(Platform.OS === 'web'
+        ? { boxShadow: '0 0 8px rgba(34,197,94,0.7), 0 0 14px rgba(34,197,94,0.4)' }
+        : {
+            shadowColor: '#22c55e',
+            shadowOffset: { width: 0, height: 0 },
+            shadowOpacity: 0.85,
+            shadowRadius: 5,
+            elevation: 4,
+          }),
     }]}>
       <Animated.View
         pointerEvents="none"
@@ -268,7 +279,7 @@ function PulsingOnlineDot({ colors, isDark }) {
           transform: [{ scale: haloScale }],
         }}
       />
-    </View>
+    </Animated.View>
   );
 }
 
@@ -619,12 +630,6 @@ const ConversationRow = React.memo(function ConversationRow({
             s.row,
             {
               backgroundColor: isSelected ? (isDark ? 'rgba(124,58,237,0.12)' : 'rgba(124,58,237,0.08)') : rowBg,
-              // Telegram-style hairline divider — but rendered full-width.
-              // The Telegram pattern (line starts after avatar at 80pt) requires
-              // a separate child View; here we use a full-width hairline so we
-              // don't shift the avatar/content. Visually nearly indistinguishable.
-              borderBottomWidth: StyleSheet.hairlineWidth,
-              borderBottomColor: isDark ? '#313131' : '#EEEEEE',
               ...(isWeb ? { transition: 'background-color 0.2s ease' } : {}),
             },
           ]}
@@ -5770,8 +5775,8 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 18,
-    paddingVertical: 14,
-    minHeight: 76,
+    paddingVertical: 16,
+    minHeight: 82,
     ...(Platform.OS === 'web' ? {
       transition: 'background-color 0.15s ease, box-shadow 0.15s ease',
       cursor: 'pointer',
