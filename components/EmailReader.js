@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, ActivityIndicator, Image, Animated, Easing, LayoutAnimation, UIManager, TextInput, Modal as RNModal, FlatList } from 'react-native';
 import { getString as mmkvGetString, setString as mmkvSetString } from '../services/mmkv';
 // DOMPurify is web-only — lazy load to avoid crash on native
