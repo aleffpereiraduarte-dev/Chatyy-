@@ -2271,23 +2271,11 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
           ExpoAudioSession?.enableProximitySensor?.(true);
         } catch {}
 
-        // Try Twilio first (web supported, mobile fallback to Telnyx pending
-        // STAGE 2 native build). Falls back to Telnyx Verto on any failure.
+        // 2026-05-09: Twilio account suspended → todos clients vão direto pro
+        // Telnyx Verto SIP (sipCall.js funciona web + iOS + Android). Mantém
+        // useTwilio=false sempre. Removido o try-Twilio-first do web.
         let useTwilio = false;
-        let credRes = null;
-        try {
-          const { Platform: P } = require('react-native');
-          if (P.OS === 'web') {
-            const { voipTwilioToken } = require('../services/api');
-            const tw = await voipTwilioToken();
-            if (tw?.success && tw?.data?.token) {
-              credRes = tw; useTwilio = true;
-            }
-          }
-        } catch {}
-        if (!useTwilio) {
-          credRes = await voipSipCredentials();
-        }
+        let credRes = await voipSipCredentials();
         if (!credRes?.success) {
           setCallResult({ success: false, message: credRes?.message || (t?.('calls.credentialsFailed') || 'Failed to get credentials') });
           setActiveCall(null); ctxEndCall(); setCalling(false);
