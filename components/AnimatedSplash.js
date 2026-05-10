@@ -30,9 +30,14 @@ export default function AnimatedSplash({ onFinish }) {
   // Tagline
   const tagOpacity = useRef(new Animated.Value(0)).current;
 
-  // Progress line
-  const progressWidth = useRef(new Animated.Value(0)).current;
+  // Loading dots — 3 staggered pulses (replaces the old progress bar
+  // for a more "premium messenger" feel; keeps the same ~1s reveal budget).
+  const dot1 = useRef(new Animated.Value(0.3)).current;
+  const dot2 = useRef(new Animated.Value(0.3)).current;
+  const dot3 = useRef(new Animated.Value(0.3)).current;
   const progressOpacity = useRef(new Animated.Value(0)).current;
+  // Logo halo glow loop
+  const glowAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     const ND = false; // Keep all animations on JS thread to avoid native driver conflicts
@@ -56,14 +61,29 @@ export default function AnimatedSplash({ onFinish }) {
       ]).start();
     }, 150);
 
-    // Phase 3 (300ms): Tagline + progress (progress barra roda 700ms)
+    // Phase 3 (300ms): Tagline + dots loop
     setTimeout(() => {
       Animated.timing(tagOpacity, { toValue: 1, duration: 200, useNativeDriver: true }).start();
       Animated.timing(progressOpacity, { toValue: 1, duration: 150, useNativeDriver: true }).start();
-      // width não é animável pelo native driver — força JS driver senão o
-      // RN apenas emite warning e a barra de progresso não roda.
-      Animated.timing(progressWidth, { toValue: 1, duration: 700, useNativeDriver: false }).start();
+      const loop = (val, delay) => Animated.loop(
+        Animated.sequence([
+          Animated.delay(delay),
+          Animated.timing(val, { toValue: 1, duration: 350, useNativeDriver: true }),
+          Animated.timing(val, { toValue: 0.3, duration: 350, useNativeDriver: true }),
+        ])
+      );
+      loop(dot1, 0).start();
+      loop(dot2, 120).start();
+      loop(dot3, 240).start();
     }, 300);
+
+    // Logo glow — soft purple breathing halo loop, starts on mount.
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(glowAnim, { toValue: 1, duration: 1200, useNativeDriver: true }),
+        Animated.timing(glowAnim, { toValue: 0, duration: 1200, useNativeDriver: true }),
+      ])
+    ).start();
 
     // Fade out em 1100ms, fade dura 200ms. Total = 1300ms vs 2900ms antes.
     const timer = setTimeout(() => {
@@ -75,18 +95,23 @@ export default function AnimatedSplash({ onFinish }) {
     return () => clearTimeout(timer);
   }, []);
 
-  const progressW = progressWidth.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['0%', '100%'],
-  });
+  const haloScale = glowAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.18] });
+  const haloOpacity = glowAnim.interpolate({ inputRange: [0, 1], outputRange: [0.0, 0.32] });
 
   return (
     <Animated.View style={[s.container, { opacity: fadeOut }]} onLayout={onLayoutReady}>
-      {/* Logo */}
+      {/* Logo + soft purple halo */}
       <Animated.View style={[s.logoWrap, {
         opacity: logoOpacity,
         transform: [{ scale: logoScale }, { translateY: logoY }],
       }]}>
+        <Animated.View pointerEvents="none" style={{
+          position: 'absolute',
+          width: 120, height: 120, borderRadius: 60,
+          backgroundColor: '#7C3AED',
+          opacity: haloOpacity,
+          transform: [{ scale: haloScale }],
+        }} />
         <View style={s.logoBox}>
           <Svg width={44} height={44} viewBox="0 0 32 32" fill="none">
             <Rect x="2" y="6" width="28" height="20" rx="4" fill="#7C3AED" opacity="0.12" />
@@ -114,9 +139,11 @@ export default function AnimatedSplash({ onFinish }) {
         {t('splash.tagline')}
       </Animated.Text>
 
-      {/* Minimal progress line */}
-      <Animated.View style={[s.progressTrack, { opacity: progressOpacity }]}>
-        <Animated.View style={[s.progressFill, { width: progressW }]} />
+      {/* Loading dots — replaces the old progress bar */}
+      <Animated.View style={[s.dotsRow, { opacity: progressOpacity }]}>
+        <Animated.View style={[s.dot, { opacity: dot1 }]} />
+        <Animated.View style={[s.dot, { opacity: dot2 }]} />
+        <Animated.View style={[s.dot, { opacity: dot3 }]} />
       </Animated.View>
     </Animated.View>
   );
@@ -125,7 +152,7 @@ export default function AnimatedSplash({ onFinish }) {
 const s = StyleSheet.create({
   container: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#F7F7FA',
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 999,
@@ -178,18 +205,16 @@ const s = StyleSheet.create({
     letterSpacing: 0.2,
   },
 
-  // Progress
-  progressTrack: {
-    width: 48,
-    height: 2,
-    borderRadius: 1,
-    backgroundColor: '#e2e8f0',
+  // Loading dots
+  dotsRow: {
+    flexDirection: 'row',
     marginTop: 32,
-    overflow: 'hidden',
+    gap: 8,
   },
-  progressFill: {
-    height: '100%',
-    borderRadius: 1,
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
     backgroundColor: '#7C3AED',
   },
 });

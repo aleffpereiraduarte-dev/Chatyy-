@@ -803,14 +803,31 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
     );
   }, [loading, isDark, colors, t]);
 
-  // ── Tab toggle bar ──
+  // ── Tab toggle bar — sliding pill (premium messenger style) ──
+  const tabSlide = useRef(new Animated.Value(feedMode === 'reels' ? 1 : 0)).current;
+  useEffect(() => {
+    Animated.spring(tabSlide, {
+      toValue: feedMode === 'reels' ? 1 : 0,
+      tension: 240, friction: 22,
+      useNativeDriver: false,
+    }).start();
+  }, [feedMode]);
+  const pillLeft = tabSlide.interpolate({ inputRange: [0, 1], outputRange: ['1%', '51%'] });
+
   const renderTabBar = () => (
     <View style={[styles.tabBar, {
       backgroundColor: isDark ? colors.background : '#f6f8fa',
-      borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+      borderBottomColor: 'transparent',
     }]}>
+      <Animated.View pointerEvents="none" style={{
+        position: 'absolute',
+        top: 6, bottom: 6, left: pillLeft,
+        width: '48%',
+        backgroundColor: isDark ? 'rgba(124,58,237,0.20)' : 'rgba(124,58,237,0.10)',
+        borderRadius: 10,
+      }} />
       <TouchableOpacity
-        style={[styles.tabItem, feedMode === 'posts' && styles.tabItemActive]}
+        style={styles.tabItem}
         onPress={() => setFeedMode('posts')}
         activeOpacity={0.7}
         accessibilityLabel={t('feed.posts') || 'Posts'}
@@ -825,7 +842,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router }) {
         </Text>
       </TouchableOpacity>
       <TouchableOpacity
-        style={[styles.tabItem, feedMode === 'reels' && styles.tabItemActive]}
+        style={styles.tabItem}
         onPress={() => setFeedMode('reels')}
         activeOpacity={0.7}
         accessibilityLabel={t('feed.reels') || 'Reels'}
@@ -1174,18 +1191,17 @@ const styles = StyleSheet.create({
   // Tab bar
   tabBar: {
     flexDirection: 'row',
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    position: 'relative',
   },
   tabItem: {
     flex: 1,
-    paddingVertical: 12,
+    paddingVertical: 10,
     alignItems: 'center',
-    borderBottomWidth: 2.5,
-    borderBottomColor: 'transparent',
+    zIndex: 2,
   },
-  tabItemActive: {
-    borderBottomColor: '#7C3AED',
-  },
+  tabItemActive: {},
   tabItemText: {
     fontSize: 14,
     fontWeight: '500',

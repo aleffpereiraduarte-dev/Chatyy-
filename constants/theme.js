@@ -13,10 +13,10 @@ export const Colors = {
   onPrimaryContainer: '#5B21B6',
 
   // Background / Surface — warm slate
-  background: '#f8fafc',
+  background: '#F7F7FA',
   surface: '#ffffff',
   surfaceVariant: '#f1f5f9',
-  surfaceHover: '#f8fafc',
+  surfaceHover: '#F7F7FA',
 
   // Header
   headerBg: 'rgba(255, 255, 255, 0.95)',

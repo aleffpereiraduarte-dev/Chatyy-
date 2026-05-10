@@ -509,17 +509,46 @@ const SegmentTabs = memo(function SegmentTabs({ activeTab, onTabChange, isDark, 
   const activeBg = isDark ? '#3a3a3c' : '#ffffff';
   const containerBg = isDark ? '#1c1c1e' : '#e9e9ea';
 
+  // Sliding pill — animate translateX as a fraction (0/1/2) of tab width
+  // and use percentage-based positioning so we don't need onLayout.
+  const idx = Math.max(0, tabs.findIndex(tt => tt.key === activeTab));
+  const slide = useRef(new Animated.Value(idx)).current;
+  useEffect(() => {
+    Animated.spring(slide, {
+      toValue: idx,
+      tension: 240,
+      friction: 22,
+      useNativeDriver: false,
+    }).start();
+  }, [idx]);
+  const pillLeft = slide.interpolate({
+    inputRange: [0, 1, 2],
+    outputRange: ['0%', '33.333%', '66.666%'],
+  });
+
   return (
     <View style={[s.segmentContainer, { backgroundColor: containerBg }]}>
+      <Animated.View style={{
+        position: 'absolute',
+        top: 2, bottom: 2, left: pillLeft,
+        width: '33.333%',
+        backgroundColor: activeBg,
+        borderRadius: 7,
+        ...(Platform.OS === 'ios' ? {
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 1 },
+          shadowOpacity: isDark ? 0.4 : 0.08,
+          shadowRadius: 3,
+        } : Platform.OS === 'android' ? { elevation: 2 } : {
+          boxShadow: isDark ? '0 1px 4px rgba(0,0,0,0.4)' : '0 1px 3px rgba(0,0,0,0.08)',
+        }),
+      }} />
       {tabs.map((tab) => {
         const active = activeTab === tab.key;
         return (
           <TouchableOpacity
             key={tab.key}
-            style={[
-              s.segmentTab,
-              active && [s.segmentTabActive, { backgroundColor: activeBg }],
-            ]}
+            style={s.segmentTab}
             onPress={() => onTabChange(tab.key)}
             activeOpacity={0.7}
             accessibilityRole="tab"
