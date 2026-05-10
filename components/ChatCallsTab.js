@@ -2865,14 +2865,18 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
   const [infoItem, setInfoItem] = useState(null);
   const [showCallerIdModal, setShowCallerIdModal] = useState(false);
   const [callerIdVerified, setCallerIdVerified] = useState(false);
+  const [phoneContactsList, setPhoneContactsList] = useState([]);
 
-  // Load caller ID verification status on mount
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
         const r = await import('../services/api').then(m => m.getProfile?.());
         if (alive && r?.success && r.data?.telnyx_caller_id_verified) setCallerIdVerified(true);
+      } catch {}
+      try {
+        const pc = await loadPhoneContacts();
+        if (alive && Array.isArray(pc)) setPhoneContactsList(pc);
       } catch {}
     })();
     return () => { alive = false; };
