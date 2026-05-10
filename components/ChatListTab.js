@@ -272,58 +272,14 @@ function PulsingOnlineDot({ colors, isDark }) {
   );
 }
 
-// ── Group avatar stack (2-3 member photos) ──
+// ── Group avatar (WhatsApp-style: single circle, no stack) ──
+// 2026-05-09: user reclamou que o "+1" das fotos empilhadas parecia
+// notificação. WhatsApp usa só um círculo único (foto do grupo OU iniciais
+// do nome). Removido o stack + pill "+N" pra ficar limpo.
 function GroupAvatarStack({ conversation, size = 56, isDark }) {
-  // Prefer the group's uploaded photo (set by the admin via the group-info
-  // modal). Only falls back to stacked member avatars when no photo exists.
   const groupPhoto = conversation.avatar_url || conversation.avatar || '';
-  if (groupPhoto) {
-    return <AvatarCircle name={conversation.display_name || conversation.name || '?'} email={null} size={size} uri={groupPhoto} />;
-  }
-  const members = (conversation.members || []).slice(0, 3);
-  const smallSize = size * 0.58;
-  if (members.length < 2) {
-    return <AvatarCircle name={conversation.display_name || conversation.name || '?'} email={null} size={size} />;
-  }
-  return (
-    <View style={{ width: size, height: size, position: 'relative' }}>
-      {members.slice(0, 2).map((m, i) => {
-        const email = typeof m === 'string' ? m : m?.email;
-        const name = typeof m === 'object' ? (m?.name || m?.email || '?') : m;
-        return (
-          <View key={i} style={{
-            position: 'absolute',
-            left: i === 0 ? 0 : size - smallSize,
-            top: i === 0 ? 0 : size - smallSize,
-            width: smallSize, height: smallSize, borderRadius: smallSize / 2,
-            borderWidth: 2.5,
-            borderColor: isDark ? '#0d1117' : '#fff',
-            zIndex: 2 - i,
-            overflow: 'hidden',
-            ...(isWeb ? { boxShadow: '0 2px 6px rgba(0,0,0,0.15)' } : {}),
-          }}>
-            <AvatarCircle name={name} email={email} size={smallSize - 5} />
-          </View>
-        );
-      })}
-      {members.length > 2 && (
-        <View style={{
-          position: 'absolute', right: 0, top: (size - smallSize) / 2,
-          width: smallSize * 0.7, height: smallSize * 0.7, borderRadius: smallSize * 0.35,
-          alignItems: 'center', justifyContent: 'center',
-          borderWidth: 1.5, borderColor: isDark ? '#0d1117' : '#fff', zIndex: 3,
-          ...(isWeb ? {
-            background: isDark
-              ? 'linear-gradient(135deg, rgba(124,58,237,0.6) 0%, rgba(109,40,217,0.6) 100%)'
-              : 'linear-gradient(135deg, rgba(124,58,237,0.7) 0%, rgba(109,40,217,0.7) 100%)',
-            backdropFilter: 'blur(4px)',
-          } : { backgroundColor: 'rgba(0,0,0,0.5)' }),
-        }}>
-          <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800' }}>+{members.length - 2}</Text>
-        </View>
-      )}
-    </View>
-  );
+  const name = conversation.display_name || conversation.name || '?';
+  return <AvatarCircle name={name} email={null} size={size} uri={groupPhoto || undefined} />;
 }
 
 // ── ConversationRow with swipe ──
