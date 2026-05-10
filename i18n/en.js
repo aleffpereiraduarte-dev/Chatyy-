@@ -3711,6 +3711,7 @@ export default {
   'feed.posts': 'Posts',
   'feed.reels': 'Reels',
   'feed.allCaughtUp': 'You\'re all caught up 🎉',
+  'feed.pullToRefreshNew': 'Pull down to see new posts',
   'feed.noReels': 'No reels yet',
   'feed.noReelsHint': 'Video posts will appear here',
   'feed.originalAudio': 'Original audio',

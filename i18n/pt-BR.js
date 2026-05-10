@@ -3773,6 +3773,7 @@ export default {
   'feed.posts': 'Posts',
   'feed.reels': 'Reels',
   'feed.allCaughtUp': 'Você está em dia 🎉',
+  'feed.pullToRefreshNew': 'Puxe pra baixo pra ver novidades',
   'feed.noReels': 'Nenhum reel ainda',
   'feed.noReelsHint': 'Publique um vídeo para aparecer aqui',
   'feed.originalAudio': 'Audio original',
