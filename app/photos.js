@@ -325,6 +325,7 @@ export default function PhotosScreen() {
 
   // Favorites filter
   const [showFavorites, setShowFavorites] = useState(false);
+  const [presetFilter, setPresetFilter] = useState(null);
 
   // Trash
   const [trashItems, setTrashItems] = useState([]);
@@ -1056,6 +1057,45 @@ export default function PhotosScreen() {
     if (showFavorites) {
       photos = photos.filter(p => p.starred);
     }
+    // Preset memory filter (Verão 2025 / Esta semana / Pessoas)
+    if (presetFilter) {
+      const now = new Date();
+      photos = photos.filter(p => {
+        try {
+          const d = new Date(p.created_at || p.uploaded_at || p.modificationTime);
+          if (isNaN(d.getTime())) return false;
+          if (presetFilter === 'thisweek') {
+            return (now.getTime() - d.getTime()) <= 7 * 24 * 60 * 60 * 1000;
+          }
+          if (presetFilter === 'summer') {
+            // BR summer = Dec/Jan/Feb of the current "summer year".
+            const m = d.getMonth();
+            const y = d.getFullYear();
+            const summerYear = (now.getMonth() >= 11)
+              ? now.getFullYear() + 1
+              : now.getFullYear();
+            return (m === 11 && y === summerYear - 1) || ((m === 0 || m === 1) && y === summerYear);
+          }
+          if (presetFilter === 'people') {
+            // Best-effort "people" filter — keeps photos that look like
+            // portraits (3:4 / 9:16 aspect) or have a "person/face" ML tag.
+            // No on-device face detection yet; this surfaces the most
+            // likely candidates so the card isn't a dead-end.
+            try {
+              if (p.photo_labels) {
+                const labels = typeof p.photo_labels === 'string' ? JSON.parse(p.photo_labels) : p.photo_labels;
+                const tags = (labels?.tags || []).map(s => String(s).toLowerCase());
+                if (tags.some(t => /person|people|face|selfie|portrait/.test(t))) return true;
+              }
+            } catch {}
+            const w = p.width || p.image_width || 0;
+            const h = p.height || p.image_height || 0;
+            return h > w && h / Math.max(w, 1) >= 1.3;
+          }
+          return true;
+        } catch { return false; }
+      });
+    }
     // Search filter
     if (searchText.trim()) {
       const q = searchText.toLowerCase();
@@ -1092,7 +1132,7 @@ export default function PhotosScreen() {
       return localMatches;
     }
     return photos;
-  }, [allPhotos, searchText, showFavorites, mlSearchResults]);
+  }, [allPhotos, searchText, showFavorites, mlSearchResults, presetFilter]);
 
   const groupedPhotos = useMemo(() => groupPhotosByDate(filteredPhotos, t), [filteredPhotos, t]);
   // Stable id→index map so renderItem doesn't have to do an O(n) indexOf
@@ -2626,8 +2666,29 @@ export default function PhotosScreen() {
           ListHeaderComponent={
             <View>
               {renderBackupBanner()}
+              {/* Active memory filter pill — surfaces what's selected and lets
+                  the user bail out without hunting for a back button. */}
+              {presetFilter && (
+                <Pressable
+                  onPress={() => setPresetFilter(null)}
+                  style={{
+                    flexDirection: 'row', alignItems: 'center',
+                    alignSelf: 'flex-start',
+                    marginHorizontal: Spacing.lg, marginTop: 8, marginBottom: 4,
+                    paddingHorizontal: 12, paddingVertical: 6,
+                    borderRadius: 16,
+                    backgroundColor: isDark ? 'rgba(124,58,237,0.22)' : 'rgba(124,58,237,0.10)',
+                    gap: 6,
+                  }}
+                >
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#7C3AED' }}>
+                    {presetFilter === 'summer' ? `Verão ${(new Date().getMonth() >= 11 ? new Date().getFullYear() + 1 : new Date().getFullYear())}` : presetFilter === 'thisweek' ? 'Esta semana' : 'Pessoas'}
+                  </Text>
+                  <Text style={{ fontSize: 13, color: '#7C3AED', fontWeight: '700' }}>×</Text>
+                </Pressable>
+              )}
               {/* Memories — Google Photos-grade horizontal carousel (280×140 with gradient overlay) */}
-              {!searchText && !showFavorites && (memoriesData.length > 0 || filteredPhotos.length > 6) && (
+              {!searchText && !showFavorites && !presetFilter && (memoriesData.length > 0 || filteredPhotos.length > 6) && (
                 <View style={{ marginTop: 4, marginBottom: 4 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, marginBottom: 10 }}>
                     <Text style={[s.sectionTitle, { color: colors.text, fontSize: 17, letterSpacing: -0.3 }]}>
@@ -2686,7 +2747,7 @@ export default function PhotosScreen() {
                     })}
                     {/* Curated preset cards: "Verão 2025" / "Esta semana" / "Pessoas" */}
                     {[
-                      { key: 'summer', title: 'Verão 2025', sub: 'Os melhores momentos', tint: ['#7C3AED', '#EC4899'] },
+                      { key: 'summer', title: `Verão ${(new Date().getMonth() >= 11 ? new Date().getFullYear() + 1 : new Date().getFullYear())}`, sub: 'Os melhores momentos', tint: ['#7C3AED', '#EC4899'] },
                       { key: 'thisweek', title: 'Esta semana', sub: 'Novas memórias', tint: ['#0EA5E9', '#7C3AED'] },
                       { key: 'people', title: 'Pessoas', sub: 'Quem aparece mais', tint: ['#F59E0B', '#7C3AED'] },
                     ].map((preset, idx) => {
@@ -2697,8 +2758,10 @@ export default function PhotosScreen() {
                           key={`preset-${preset.key}`}
                           style={[s.memoryCardLg, { backgroundColor: preset.tint[0] }]}
                           onPress={() => {
-                            const idx0 = filteredPhotos.findIndex(p => p.id === cover?.id);
-                            if (idx0 >= 0) openViewer(idx0);
+                            // Apply the memory filter — grid re-renders showing
+                            // only the curated subset; user clears via the pill
+                            // at the top.
+                            setPresetFilter(preset.key);
                           }}
                         >
                           {coverUri ? (
