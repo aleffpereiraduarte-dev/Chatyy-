@@ -6424,6 +6424,13 @@ export default function ChatConversationScreen() {
   // key includes the timer value so any policy change re-surfaces the banner —
   // users shouldn't silently miss the new duration.
   const [vanishTimerBannerDismissed, setVanishTimerBannerDismissed] = useState(false);
+  // disappearingTimer is hoisted up here (was previously declared ~80 lines
+  // below) so the vanish-timer-banner useEffect's deps array `[…, disappearingTimer]`
+  // doesn't TDZ on first render. The web bundler emits the deps eval before
+  // the later `const` initializer runs → "Cannot access 'ss' before
+  // initialization" crash on chat open. Native runs were lenient; web wasn't.
+  const [disappearingTimer, setDisappearingTimer] = useState(0);
+  const [showDisappearingModal, setShowDisappearingModal] = useState(false);
 
   // Load dismissed state for E2E banner (per-conversation)
   useEffect(() => {
@@ -6518,9 +6525,8 @@ export default function ChatConversationScreen() {
     return () => { try { api.setOneScreenContext?.({}); } catch {}; };
   }, [conversationId, conversationType]);
 
-  // Disappearing messages
-  const [disappearingTimer, setDisappearingTimer] = useState(0);
-  const [showDisappearingModal, setShowDisappearingModal] = useState(false);
+  // Disappearing messages — declarations hoisted ~80 lines up to avoid TDZ
+  // in the vanish-timer-banner useEffect's deps array (web bundler crash).
 
   // Vanish mode
   const [vanishMode, setVanishMode] = useState(false);
