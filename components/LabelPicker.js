@@ -31,7 +31,7 @@ export function LabelChip({ label, small }) {
   const display = name.charAt(0).toUpperCase() + name.slice(1);
   return (
     <View style={[s.chip, small && s.chipSmall, { backgroundColor: style.bg, borderColor: style.border }]}>
-      <Text style={[s.chipText, small && s.chipTextSmall, { color: style.text }]}>
+      <Text numberOfLines={1} style={[s.chipText, small && s.chipTextSmall, { color: style.text }]}>
         {display}
       </Text>
     </View>
@@ -177,7 +177,8 @@ const s = StyleSheet.create({
   // Chip
   chip: {
     borderWidth: 1, borderRadius: 4,
-    paddingHorizontal: 6, paddingVertical: 1,
+    paddingHorizontal: 8, paddingVertical: 2,
+    flexShrink: 0,
   },
   chipSmall: { paddingHorizontal: 5, paddingVertical: 0 },
   chipText: { fontSize: FontSize.xs, fontWeight: '600' },
