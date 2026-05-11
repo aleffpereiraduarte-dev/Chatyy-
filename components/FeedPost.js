@@ -1192,7 +1192,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
         const iso = (ca.endsWith('Z') || ca.includes('+')) ? ca : ca + 'Z';
         const d = new Date(iso);
         if (isNaN(d.getTime())) return null;
-        const formatted = d.toLocaleDateString(undefined, { month: 'long', day: 'numeric' });
+        const formatted = d.toLocaleDateString(_appLang || undefined, { month: 'long', day: 'numeric' });
         return (
           <Text style={[styles.timestamp, { color: colors.textTertiary }]}>
             {formatted}

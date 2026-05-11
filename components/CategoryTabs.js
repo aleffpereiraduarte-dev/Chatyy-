@@ -6,14 +6,14 @@ import { IconInbox, IconUsers, IconTag, IconBell, IconMail, IconMailOpen, IconSt
 
 const CATEGORIES = [
   { key: 'all', i18nKey: 'category.all', icon: IconMail, color: '#A78BFA' },
-  { key: 'unread', i18nKey: 'category.unread', icon: IconMailOpen, color: '#ef4444' },
+  { key: 'unread', i18nKey: 'category.unread', icon: IconMailOpen, color: '#f43f5e' },
   // "Importantes" — driven by the AI importance classifier (level === 'high')
   // OR a flagged message. Sits second so users see prioritized work first.
   { key: 'important', i18nKey: 'inbox.tabImportant', icon: IconStarFilled, color: '#f59e0b' },
   { key: 'primary', i18nKey: 'category.primary', icon: IconInbox, color: '#7C3AED' },
   { key: 'social', i18nKey: 'category.social', icon: IconUsers, color: '#8b5cf6' },
   { key: 'promotions', i18nKey: 'category.promotions', icon: IconTag, color: '#10b981' },
-  { key: 'updates', i18nKey: 'category.updates', icon: IconBell, color: '#f59e0b' },
+  { key: 'updates', i18nKey: 'category.updates', icon: IconBell, color: '#3b82f6' },
 ];
 
 export default function CategoryTabs({ activeCategory = 'all', onCategoryChange, counts = {} }) {
