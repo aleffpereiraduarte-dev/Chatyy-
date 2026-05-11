@@ -144,10 +144,16 @@ function _formatReceiptDate(ts, t) {
   });
 }
 
+// Module-level locale cache so module-scoped helpers can format times in
+// the user's app language even though they can't call useLanguage(). The
+// top-level chat-conversation component refreshes this on every render via
+// _setAppLocale(language) below.
+let _appLocale;
+function _setAppLocale(lang) { _appLocale = lang || undefined; }
 function formatTime(dateStr) {
   const d = new Date(_normalizeIso(dateStr));
   if (isNaN(d.getTime())) return '';
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleTimeString(_appLocale || undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
 function formatDateSeparator(dateStr, t) {
@@ -5210,7 +5216,8 @@ function MessageEffectOverlay({ effect }) {
 export default function ChatConversationScreen() {
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  _setAppLocale(language);
   const confirm = useConfirm();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -8923,23 +8930,43 @@ export default function ChatConversationScreen() {
       tcpUnsubs.push(() => tcpClient.off('chat_read', onChatRead));
 
       // TCP reactions (event name changed: chat_reaction → chat_react)
+      // Aggregates into {emoji, count, users[]} matching the backend payload
+      // shape that the renderer expects. Storing flat {emoji, email} rows
+      // worked locally (the grouping code de-duped by email) but cross-device
+      // sync sent users.length=0 because incoming rows had no users field.
       const onChatReact = (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) !== String(conversationId)) return;
         const mid = data?.message_id ?? data?.id;
         if (!mid) return;
-        // O(n) index find but only 1 new object in the next array — prev.map
-        // was re-creating the whole array + invalidating FlatList cells of
-        // every sibling message. Telegram-parity: surgical single-row update.
+        const emoji = data.emoji;
+        const reactor = (data.email || '').toLowerCase();
+        if (!emoji || !reactor) return;
         setMessages(prev => {
           const idx = prev.findIndex(m => m.id === mid);
           if (idx < 0) return prev;
           const msg = prev[idx];
           const reactions = [...(msg.reactions || [])];
-          const rIdx = reactions.findIndex(r => r.emoji === data.emoji && r.email === data.email);
-          if (data.removed && rIdx !== -1) reactions.splice(rIdx, 1);
-          else if (!data.removed && rIdx === -1) reactions.push({ emoji: data.emoji, email: data.email });
-          else return prev; // no-op (duplicate event)
+          const gIdx = reactions.findIndex(r => (r.emoji || r.reaction) === emoji);
+          let group = gIdx === -1 ? null : { ...reactions[gIdx] };
+          if (group) {
+            const users = Array.isArray(group.users) ? [...group.users] : (typeof group.users === 'string' ? group.users.split(',') : []);
+            const userIdx = users.findIndex(u => (u || '').toLowerCase() === reactor);
+            if (data.removed) {
+              if (userIdx === -1) return prev;
+              users.splice(userIdx, 1);
+              if (!users.length) reactions.splice(gIdx, 1);
+              else reactions[gIdx] = { ...group, users, count: users.length };
+            } else {
+              if (userIdx !== -1) return prev;
+              users.push(data.email);
+              reactions[gIdx] = { ...group, users, count: users.length };
+            }
+          } else if (!data.removed) {
+            reactions.push({ emoji, count: 1, users: [data.email] });
+          } else {
+            return prev;
+          }
           const next = prev.slice();
           next[idx] = { ...msg, reactions };
           return next;
@@ -13409,6 +13436,12 @@ export default function ChatConversationScreen() {
         }
         reactionGroups[emoji] = prev;
       });
+      // Strip emojis whose user list is empty after merge — server may include
+      // {emoji, count: 0, users: []} rows for reactions that were just removed
+      // (or stale cache), which would otherwise render a chip showing "0".
+      for (const k of Object.keys(reactionGroups)) {
+        if (!reactionGroups[k].length) delete reactionGroups[k];
+      }
     }
 
     // Pre-computed deleted label (reused so view-once can still return it
@@ -17015,7 +17048,7 @@ export default function ChatConversationScreen() {
               ref={searchInputRef}
               value={searchQuery}
               onChangeText={(q) => handleSearchMessages(q, searchFilters)}
-              placeholder={t('chat.searchPlaceholder') || 'Search...'}
+              placeholder={t('chatConv.searchPlaceholder') || t('chat.searchPlaceholder') || 'Search messages...'}
               placeholderTextColor={colors.textTertiary}
               style={{ flex: 1, fontSize: 14, color: colors.text, paddingVertical: 6, paddingHorizontal: 10, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', borderRadius: 18 }}
               autoFocus

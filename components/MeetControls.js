@@ -52,22 +52,16 @@ export default function MeetControls({
           {videoMuted ? <IconVideoOff size={22} color={Colors.meetText} /> : <IconVideo size={22} color={Colors.meetText} />}
         </TouchableOpacity>
 
-        {/* Screen Share */}
-        <TouchableOpacity
-          style={[s.btn, screenSharing && s.btnScreenActive, screenShareDisabled && { opacity: 0.4 }]}
-          onPress={screenShareDisabled ? () => {} : (screenSharing ? onStopScreenShare : onScreenShare)}
-          accessibilityLabel={screenShareDisabled ? screenShareDisabledLabel : undefined}
-          accessibilityHint={screenShareDisabled ? screenShareDisabledLabel : undefined}
-          accessibilityState={{ disabled: !!screenShareDisabled }}
-          activeOpacity={screenShareDisabled ? 1 : 0.7}
-        >
-          <IconMonitor size={22} color={screenSharing ? '#fff' : Colors.meetText} />
-          {screenShareDisabled && screenShareDisabledLabel ? (
-            <Text style={{ color: Colors.meetText, fontSize: 9, marginTop: 2, textAlign: 'center', maxWidth: 64, opacity: 0.7 }} numberOfLines={2}>
-              {screenShareDisabledLabel}
-            </Text>
-          ) : null}
-        </TouchableOpacity>
+        {/* Screen Share — hidden on native where it's unsupported */}
+        {!screenShareDisabled && (
+          <TouchableOpacity
+            style={[s.btn, screenSharing && s.btnScreenActive]}
+            onPress={() => (screenSharing ? onStopScreenShare : onScreenShare)?.()}
+            activeOpacity={0.7}
+          >
+            <IconMonitor size={22} color={screenSharing ? '#fff' : Colors.meetText} />
+          </TouchableOpacity>
+        )}
 
         {/* Add People (WhatsApp-style) */}
         <TouchableOpacity style={s.btn} onPress={onAddPeople} activeOpacity={0.7}>

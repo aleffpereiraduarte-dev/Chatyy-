@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing, Shadow, AnimTiming } from '../constants/theme';
@@ -696,6 +697,7 @@ export default function NotesScreen() {
   const router = useRouter();
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
+  const insets = useSafeAreaInsets();
 
   const [notes, setNotes] = useState([]);
   const [notebooks, setNotebooks] = useState([]);
@@ -1633,6 +1635,7 @@ export default function NotesScreen() {
     <View style={[s.container, { backgroundColor: colors.background }]}>
       {/* ---- Header (Frosted Glass) ---- */}
       <View style={[s.header, {
+        paddingTop: (Platform.OS === 'web' ? 16 : (insets.top || 0) + 8),
         backgroundColor: isDark ? 'rgba(18,18,30,0.88)' : 'rgba(255,255,255,0.88)',
         borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
         ...(Platform.OS === 'web' ? {

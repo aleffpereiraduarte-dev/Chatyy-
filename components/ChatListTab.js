@@ -42,6 +42,7 @@ import useStatuses from '../hooks/useStatuses';
 // already loves on home, just one source of truth now.
 import StoryRingAvatar from './status/StoryRingAvatar';
 import StoryViewer from './status/StoryViewer';
+import { useLanguage } from '../context/LanguageContext';
 
 let NativeSwipeable = null;
 if (Platform.OS !== 'web') {
@@ -90,7 +91,7 @@ function normalizeISO(s) {
   if (!/Z$/.test(t) && !/[+-]\d{2}:?\d{2}$/.test(t)) t = t + 'Z';
   return t;
 }
-function formatChatTime(dateStr, t) {
+function formatChatTime(dateStr, t, locale) {
   if (!dateStr) return '';
   const now = new Date();
   const date = new Date(normalizeISO(dateStr));
@@ -98,12 +99,13 @@ function formatChatTime(dateStr, t) {
   const diffMs = now - date;
   const diffMin = Math.floor(diffMs / 60000);
   const diffDays = Math.floor(diffMs / 86400000);
+  const loc = locale || undefined;
   if (diffMin < 1) return t?.('time.now') || 'agora';
   if (diffMin < 60) return `${diffMin}m`;
-  if (diffDays === 0) return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (diffDays === 0) return date.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit' });
   if (diffDays === 1) return t?.('time.yesterday') || 'Ontem';
-  if (diffDays < 7) return date.toLocaleDateString([], { weekday: 'short' });
-  return date.toLocaleDateString([], { day: '2-digit', month: '2-digit', year: '2-digit' });
+  if (diffDays < 7) return date.toLocaleDateString(loc, { weekday: 'short' });
+  return date.toLocaleDateString(loc, { day: '2-digit', month: '2-digit', year: '2-digit' });
 }
 
 // Pin icon
@@ -311,7 +313,7 @@ function formatActivityStatus(isOnline, lastSeen, t) {
 
 const ConversationRow = React.memo(function ConversationRow({
   conversation, colors, onPress, onPressIn, onDelete, onArchive, onMute, onPin, onMarkUnread, onEmail,
-  currentEmail, t, isOnline: isOnlineProp, isDark, isLocked, typingUsers,
+  currentEmail, t, language, isOnline: isOnlineProp, isDark, isLocked, typingUsers,
   selectionMode, isSelected, onLongPress, onToggleSelect, draftText, draftEditedAt, noteText, lastSeen,
 }) {
   const isGroup = conversation.type === 'group';
@@ -749,7 +751,7 @@ const ConversationRow = React.memo(function ConversationRow({
                 } : {
                   color: isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)',
                 }]}>
-                  {lastMsg ? formatChatTime(lastMsg.created_at, t) : ''}
+                  {lastMsg ? formatChatTime(lastMsg.created_at, t, language) : ''}
                 </Text>
               </View>
             </View>
@@ -1862,6 +1864,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
 
 export default function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setActiveTab }) {
   const confirm = useConfirm();
+  const { language } = useLanguage();
   // Try MMKV preload first; fall back to the native SQLite cache (iOS).
   // Both reads are synchronous so the very first render already has data,
   // eliminating the empty-list flash that was happening before.
@@ -4085,6 +4088,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         colors={colors}
         isDark={isDark}
         t={t}
+        language={language}
         onPress={() => handleConversationPress(item)}
         onPressIn={() => { try { prefetchConversation(item.id); } catch {} }}
         onDelete={handleDeleteConversation}

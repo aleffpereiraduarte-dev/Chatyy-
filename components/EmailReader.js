@@ -1433,8 +1433,8 @@ const s = StyleSheet.create({
   // Labels
   labelsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginLeft: 56, marginTop: Spacing.sm, alignItems: 'center' },
   addLabelBtn: {
-    width: 32, height: 32, borderRadius: 16,
-    justifyContent: 'center', alignItems: 'center',
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 10, height: 28, borderRadius: 14,
   },
   // AI
   aiBtn: {

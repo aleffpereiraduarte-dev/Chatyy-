@@ -388,6 +388,7 @@ export default {
   'config.wallpaperPreview': 'Preview',
 
   // Settings
+  'settings.searchPlaceholder': 'Search settings...',
   'settings.title': 'Settings',
   'settings.account': 'Account',
   'settings.editProfile': 'Edit profile',

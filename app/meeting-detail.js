@@ -263,7 +263,13 @@ export default function MeetingDetailScreen() {
               <IconUser size={15} color={colors.primary} />
             </View>
             <Text style={[styles.infoText, { color: colors.text }]}>
-              {meeting.host_name || t('meetingDetail.unknown')} <Text style={[styles.roleLabel, { color: colors.textTertiary }]}>{t('meetingDetail.organizer')}</Text>
+              {(() => {
+                const hp = (participants || []).find(p => p.role === 'host');
+                return meeting.host_name
+                  || (hp && (hp.display_name || hp.email))
+                  || meeting.host_email
+                  || t('meetingDetail.unknown');
+              })()} <Text style={[styles.roleLabel, { color: colors.textTertiary }]}>{t('meetingDetail.organizer')}</Text>
             </Text>
           </View>
 

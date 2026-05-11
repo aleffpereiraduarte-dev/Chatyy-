@@ -38,7 +38,7 @@ if (Platform.OS !== 'web') {
   try { WebView = require('react-native-webview').default; } catch {}
 }
 
-const MEET_BASE = Platform.OS === 'web' ? 'https://chatyy.com.br/meet/room.html' : 'https://mail.onemundo.com.br/meet/room.html';
+const MEET_BASE = 'https://chatyy.com.br/meet/room.html';
 
 export default function MeetScreen() {
   const { id: roomId, video } = useLocalSearchParams();

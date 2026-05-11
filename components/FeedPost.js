@@ -24,6 +24,7 @@ import {
   IconMapPin, IconPlay, IconPause, IconPin,
 } from './Icons';
 import * as api from '../services/api';
+import { useLanguage } from '../context/LanguageContext';
 
 const ACCENT = '#7C3AED';
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -80,7 +81,7 @@ function getFilterCss(filterName) {
   return FILTER_CSS[filterName] || undefined;
 }
 
-function timeAgo(dateStr, t) {
+function timeAgo(dateStr, t, locale) {
   if (!dateStr) return '';
   const str = dateStr.endsWith('Z') || dateStr.includes('+') ? dateStr : dateStr + 'Z';
   const then = new Date(str).getTime();
@@ -98,7 +99,9 @@ function timeAgo(dateStr, t) {
   const days = Math.floor(hrs / 24);
   if (days < 7) return `${days}d`;
   if (days < 30) return `${Math.floor(days / 7)}w`;
-  return new Date(str).toLocaleDateString();
+  // Pass the app's selected language so pt-BR users see DD/MM/YYYY even on
+  // devices whose system locale is en-US (e.g. test emulators).
+  return new Date(str).toLocaleDateString(locale || undefined);
 }
 
 function resolveMediaUrl(url) {
@@ -489,7 +492,8 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
   // Memoize the relative time string so it doesn't recompute on every parent
   // re-render (e.g. when feed receives a WS update). Stable for the lifetime
   // of the post unless the post id or locale changes.
-  const _relTime = useMemo(() => timeAgo(post.created_at, t), [post.created_at, t]);
+  const { language: _appLang } = useLanguage();
+  const _relTime = useMemo(() => timeAgo(post.created_at, t, _appLang), [post.created_at, t, _appLang]);
 
   const mediaUrls = parseMediaUrls(post.media_urls);
   const isOwner = user?.email === post.author_email;

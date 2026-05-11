@@ -8,6 +8,7 @@ import ScheduleCallModal from './ScheduleCallModal';
 import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, voipCall, voipToken, voipSipCredentials, voipMinutesRemaining, voipUpdateDuration, searchContacts, voipVerifiedNumberRequest, voipVerifiedNumberConfirm, getProfile } from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import { useCall } from '../context/CallContext';
+import { useLanguage } from '../context/LanguageContext';
 // SIP call — dynamic import to prevent crash if native WebRTC module fails
 let _sip = null;
 try { _sip = require('../services/sipCall'); } catch {}
@@ -405,18 +406,26 @@ export async function removeCallFromHistory(callId) {
 }
 
 // --- Formatting ---
-function formatCallTime(timestamp, t) {
+function formatCallTime(timestamp, t, locale) {
   const date = new Date(timestamp);
   const now = new Date();
-  const diffMs = now - date;
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const loc = locale || undefined;
+  const timeStr = date.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit' });
 
-  if (diffDays === 0) {
+  // Use calendar boundaries (toDateString) so row label matches section header.
+  // Elapsed-time bucketing would say "Hoje" for a yesterday-23h call viewed at 00:30.
+  const todayStr = now.toDateString();
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = yesterday.toDateString();
+  const dateStr = date.toDateString();
+  const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+
+  if (dateStr === todayStr) {
     const todayLabel = t?.('calls.today') || 'Hoje';
     return `${todayLabel} ${timeStr}`;
   }
-  if (diffDays === 1) {
+  if (dateStr === yesterdayStr) {
     const yesterdayLabel = t?.('calls.yesterday') || 'Ontem';
     return `${yesterdayLabel} ${timeStr}`;
   }
@@ -428,9 +437,9 @@ function formatCallTime(timestamp, t) {
     if (Array.isArray(days) && days.length === 7) {
       return `${days[date.getDay()]} ${timeStr}`;
     }
-    return date.toLocaleDateString(undefined, { weekday: 'short' }) + ` ${timeStr}`;
+    return date.toLocaleDateString(loc, { weekday: 'short' }) + ` ${timeStr}`;
   }
-  return date.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' }) + ` ${timeStr}`;
+  return date.toLocaleDateString(loc, { day: '2-digit', month: '2-digit' }) + ` ${timeStr}`;
 }
 
 function formatDuration(seconds) {
@@ -652,7 +661,7 @@ function SilenceToggle({ isDark }) {
   );
 }
 
-const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, onPress, onInfoPress, onCallBack }) {
+const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language, onPress, onInfoPress, onCallBack }) {
   const isMissed = item.type === 'missed';
   const nameColor = isMissed ? RED : (isDark ? '#ffffff' : '#000000');
   const subColor = isDark ? '#8e8e93' : '#8e8e93';
@@ -730,7 +739,7 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, onPress, 
       {/* Right: Time + callback + info */}
       <View style={s.historyRight}>
         <Text style={[s.historyTime, { color: subColor }]}>
-          {formatCallTime(item.timestamp || item.created_at, t)}
+          {formatCallTime(item.timestamp || item.created_at, t, language)}
         </Text>
         <TouchableOpacity
           style={{ padding: 4 }}
@@ -2880,6 +2889,7 @@ function _callsFingerprint(arr) {
 }
 
 function ChatCallsTab({ colors, isDark, t, user, router }) {
+  const { language } = useLanguage();
   const [activeTab, setActiveTab] = useState('recent');
   const [minutesInfo, setMinutesInfo] = useState(null);
   const [loadingMinutes, setLoadingMinutes] = useState(true);
@@ -3326,6 +3336,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
                       item={item}
                       isDark={isDark}
                       t={t}
+                      language={language}
                       onPress={handleHistoryPress}
                       onInfoPress={setInfoItem}
                       onCallBack={handleHistoryPress}

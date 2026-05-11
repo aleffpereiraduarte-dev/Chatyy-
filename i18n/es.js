@@ -388,6 +388,7 @@ export default {
   'config.wallpaperPreview': 'Vista previa',
 
   // Settings
+  'settings.searchPlaceholder': 'Buscar configuración...',
   'settings.title': 'Configuración',
   'settings.account': 'Cuenta',
   'settings.editProfile': 'Editar perfil',
@@ -4266,8 +4267,8 @@ export default {
   'notes.archived': 'Archivadas',
   'notes.allNotes': 'Todas las notas',
   'notes.notebooks': 'Cuadernos',
-  'notes.emptyTitle': 'Sin notas aun',
-  'notes.emptyDesc': 'Crea tu primera nota tocando el boton +',
+  'notes.emptyTitle': 'Sin notas aún',
+  'notes.emptyDesc': 'Crea tu primera nota tocando el botón +',
   'notes.searchPlaceholder': 'Buscar notas...',
   'notes.colorPicker': 'Color de nota',
   'notes.notebook': 'Cuaderno',

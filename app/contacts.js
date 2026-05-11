@@ -220,8 +220,8 @@ const MyContactRow = React.memo(({ c, colors, onEdit, onDelete, onToggleFav, onO
     >
       <AvatarCircle name={c.name || c.email} email={c.email} size={40} style={{ marginRight: Spacing.md }} />
       <View style={s.contactInfo}>
-        <Text style={[s.contactName, { color: colors.text }]}>{c.name || c.email}</Text>
-        <Text style={[s.contactEmail, { color: colors.textSecondary }]}>{c.email}</Text>
+        <Text style={[s.contactName, { color: colors.text }]}>{c.name || (c.email || '').toLowerCase()}</Text>
+        <Text style={[s.contactEmail, { color: colors.textSecondary }]}>{(c.email || '').toLowerCase()}</Text>
         {!!c.phone && <Text style={[s.contactPhone, { color: colors.textTertiary }]}>{c.phone}</Text>}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
           {!!c.group && (
@@ -822,9 +822,12 @@ function ContactsScreenInner() {
         _lastContactedFormatted: c.last_contacted ? `${t('contacts.lastContacted')}: ${formatLastContacted(c.last_contacted, t)}` : '',
       });
     }
+    const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
     return Object.keys(grouped).sort().map(letter => ({
       title: letter,
-      data: grouped[letter],
+      data: grouped[letter].sort((a, b) =>
+        collator.compare((a.name || a.email || ''), (b.name || b.email || ''))
+      ),
     }));
   }, [filteredItems, activeTab, t]);
 

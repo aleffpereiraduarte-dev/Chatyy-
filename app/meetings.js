@@ -65,6 +65,7 @@ function relativeTime(dateStr, t) {
 function formatDateTime(dateStr, locale) {
   if (!dateStr) return '';
   const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '';
   return d.toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
@@ -74,7 +75,9 @@ function formatDateTime(dateStr, locale) {
 function isStale(meeting) {
   if (!meeting || meeting.status !== 'active') return false;
   const startMs = new Date(meeting.started_at || meeting.scheduled_at || meeting.created_at || 0).getTime();
-  if (!startMs) return false;
+  // Treat NaN (unparseable date) as stale too — these are ghost rows that
+  // would otherwise render as "AO VIVO" forever on the Upcoming tab.
+  if (!Number.isFinite(startMs) || !startMs) return true;
   return (Date.now() - startMs) > 4 * 60 * 60 * 1000;
 }
 function canJoin(meeting) {
