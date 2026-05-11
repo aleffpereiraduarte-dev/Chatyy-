@@ -27,7 +27,9 @@ function toLocalDateTimeInput(d) {
 
 export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
   const { colors, isDark } = useTheme();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  const localeTag = language === 'en' ? 'en-US' : language;
+  const localeOpts = { dateStyle: 'short', timeStyle: 'short', hour12: language === 'en' };
   const [title, setTitle] = useState('');
   const [duration, setDuration] = useState(30);
   // default 30 min from now to avoid past-time validation roundtrip
@@ -343,7 +345,7 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
                 >
                   <IconCalendar size={16} color={colors.textSecondary} />
                   <Text style={{ color: colors.text, marginLeft: 8 }}>
-                    {scheduledDate.toLocaleString()}
+                    {scheduledDate.toLocaleString(localeTag, localeOpts)}
                   </Text>
                 </TouchableOpacity>
                 {showAndroidPicker && (
@@ -357,7 +359,7 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
                 )}
               </>
             ) : (
-              <Text style={{ color: colors.text }}>{scheduledDate.toLocaleString()}</Text>
+              <Text style={{ color: colors.text }}>{scheduledDate.toLocaleString(localeTag, localeOpts)}</Text>
             )}
             </Animated.View>
 
@@ -374,7 +376,7 @@ export default function ScheduleCallModal({ visible, onClose, onScheduled }) {
               }}>
                 <Text style={{ fontSize: 12, color: '#b45309', fontWeight: '600' }}>
                   {(t('calls.conflictWarning') || '⚠ Você já tem outra chamada perto de {time}')
-                    .replace('{time}', new Date(conflictCall.scheduled_at || conflictCall.scheduledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))}
+                    .replace('{time}', new Date(conflictCall.scheduled_at || conflictCall.scheduledAt).toLocaleTimeString(localeTag, { hour: '2-digit', minute: '2-digit', hour12: language === 'en' }))}
                 </Text>
               </View>
             )}

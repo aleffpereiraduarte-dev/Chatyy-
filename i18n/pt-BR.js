@@ -998,6 +998,7 @@ export default {
   'call.filters': 'Filtros',
   'call.groupCall': 'Chamada em grupo',
   'call.groupCallLeave': 'Sair da chamada',
+  'calls.openDialer': 'Abrir teclado',
   'calls.outgoing': 'Efetuada',
   'calls.incoming': 'Recebida',
   'calls.missed': 'Perdida',

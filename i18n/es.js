@@ -997,6 +997,7 @@ export default {
   'call.filters': 'Filtros',
   'call.groupCall': 'Llamada grupal',
   'call.groupCallLeave': 'Salir de la llamada',
+  'calls.openDialer': 'Abrir teclado',
   'calls.outgoing': 'Realizada',
   'calls.incoming': 'Recibida',
   'calls.missed': 'Perdida',
