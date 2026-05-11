@@ -390,6 +390,9 @@ const ConversationRow = React.memo(function ConversationRow({
     }
 
     let content = typeof lastMsg.content === 'string' ? lastMsg.content : (lastMsg.content ? JSON.stringify(lastMsg.content) : '');
+    // Caption captured separately so media-type labels can surface real text
+    // ("📷 sunset at the beach" instead of "📷 Foto").
+    let caption = typeof lastMsg.caption === 'string' && lastMsg.caption.trim() ? lastMsg.caption.trim() : '';
     // Strip backslash-escaped punctuation (e.g. "Olá\!" → "Olá!")
     content = content.replace(/\\([!?.,:;'"()\[\]#@&*~`<>|])/g, '$1');
     // Strip markdown markers in chat list preview — render plain text only.
@@ -429,20 +432,23 @@ const ConversationRow = React.memo(function ConversationRow({
         else if (typeof parsed.text === 'string') content = parsed.text;
         else if (typeof parsed.body === 'string') content = parsed.body;
         else if (typeof parsed.caption === 'string') content = parsed.caption;
+        if (!caption && typeof parsed.caption === 'string' && parsed.caption.trim()) {
+          caption = parsed.caption.trim();
+        }
       } catch {}
     }
     if (lastMsg.type === 'call_card' && !/Chamada/.test(content)) {
       content = '\uD83D\uDCDE ' + (t('chat.voiceCall') || 'Chamada');
     }
-    if (lastMsg.type === 'image') content = '\uD83D\uDCF7 ' + (t('chat.photo') || 'Foto');
-    else if (lastMsg.type === 'gif') content = '\uD83C\uDFAC GIF';
-    else if (lastMsg.type === 'sticker') content = '\uD83D\uDCAB ' + (t('chat.sticker') || 'Sticker');
-    else if (lastMsg.type === 'video' && !content.startsWith('\uD83C\uDFA5')) content = '\uD83C\uDFA5 ' + (t('chat.video') || 'Video');
-    else if (lastMsg.type === 'audio' && !content.startsWith('\uD83D\uDCDE')) content = '\uD83C\uDFB5 ' + (t('chat.audio') || 'Audio');
-    else if (lastMsg.type === 'file') content = '\uD83D\uDCCE ' + (lastMsg.file_name || t('chat.file') || 'Arquivo');
-    else if (lastMsg.type === 'poll') content = '\uD83D\uDCCA ' + (t('chat.poll') || 'Enquete');
-    else if (lastMsg.type === 'playlist') content = '\uD83C\uDFB5 ' + (t('chatConv.playlist') || 'Playlist');
-    else if (lastMsg.type === 'meetup') content = '\uD83D\uDCC5 ' + (t('chatConv.meetup') || 'Encontro');
+    if (lastMsg.type === 'image') content = '\uD83D\uDCF7 ' + (caption || t('chat.photo') || 'Foto');
+    else if (lastMsg.type === 'gif') content = '\uD83C\uDFAC ' + (caption || 'GIF');
+    else if (lastMsg.type === 'sticker') content = '\uD83D\uDCAB ' + (caption || t('chat.sticker') || 'Sticker');
+    else if (lastMsg.type === 'video' && !content.startsWith('\uD83C\uDFA5')) content = '\uD83C\uDFA5 ' + (caption || t('chat.video') || 'Video');
+    else if (lastMsg.type === 'audio' && !content.startsWith('\uD83D\uDCDE')) content = '\uD83C\uDFB5 ' + (caption || t('chat.audio') || 'Audio');
+    else if (lastMsg.type === 'file') content = '\uD83D\uDCCE ' + (lastMsg.file_name || caption || t('chat.file') || 'Arquivo');
+    else if (lastMsg.type === 'poll') content = '\uD83D\uDCCA ' + (caption || t('chat.poll') || 'Enquete');
+    else if (lastMsg.type === 'playlist') content = '\uD83C\uDFB5 ' + (caption || t('chatConv.playlist') || 'Playlist');
+    else if (lastMsg.type === 'meetup') content = '\uD83D\uDCC5 ' + (caption || t('chatConv.meetup') || 'Encontro');
     // Fallback: if content is a raw tenor/giphy URL (legacy gif sent as text), show "GIF"
     else if (typeof content === 'string' && /^https?:\/\/(media[0-9]*\.)?(tenor|giphy)\.com\//i.test(content.trim())) {
       content = '\uD83C\uDFAC GIF';
