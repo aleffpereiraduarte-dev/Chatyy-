@@ -3573,7 +3573,7 @@ export default function CallScreen() {
   const isVideoCall = isVideoParam === '1' || isVideoParam === 'true';
 
   return (
-    <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
+    <View style={styles.container}>
       <StatusBar barStyle="light-content" />
 
       {/* Remote video (full screen) — native */}
@@ -4441,7 +4441,7 @@ export default function CallScreen() {
           </Pressable>
         </Pressable>
       </Modal>
-    </Animated.View>
+    </View>
   );
 }
 
