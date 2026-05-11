@@ -423,7 +423,12 @@ const ConversationRow = React.memo(function ConversationRow({
         }
         else if (parsed.type === 'location') content = '\uD83D\uDCCD ' + (t('chat.location') || 'Localização');
         else if (parsed.type === 'contact') content = '\uD83D\uDC64 ' + (t('chat.contact') || 'Contato');
-        else content = '\uD83D\uDCCE ' + (t('chat.attachment') || 'Anexo');
+        else if (parsed.file_url || parsed.attachment_url || parsed.media_url || (parsed.url && parsed.mime_type)) {
+          content = '\uD83D\uDCCE ' + (t('chat.attachment') || 'Anexo');
+        }
+        else if (typeof parsed.text === 'string') content = parsed.text;
+        else if (typeof parsed.body === 'string') content = parsed.body;
+        else if (typeof parsed.caption === 'string') content = parsed.caption;
       } catch {}
     }
     if (lastMsg.type === 'call_card' && !/Chamada/.test(content)) {

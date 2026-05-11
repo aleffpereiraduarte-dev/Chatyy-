@@ -4371,7 +4371,7 @@ export default {
   'notes.snapGrid': 'Grade',
   'notes.doubleTapCreate': 'Toque duas vezes para criar uma nota',
   'notes.openNotebook': 'Abrir caderno',
-  'notes.quickNote': 'Nota rapida',
+  'notes.quickNote': 'Nota rápida',
   'notes.recent': 'Recentes',
   'notes.contentPlaceholder': 'Comece a escrever...',
   'notes.addTag': 'Tag',

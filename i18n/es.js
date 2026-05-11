@@ -4302,7 +4302,7 @@ export default {
   'notes.snapGrid': 'Cuadricula',
   'notes.doubleTapCreate': 'Toca dos veces para crear una nota',
   'notes.openNotebook': 'Abrir cuaderno',
-  'notes.quickNote': 'Nota rapida',
+  'notes.quickNote': 'Nota rápida',
   'notes.recent': 'Recientes',
   'notes.contentPlaceholder': 'Empieza a escribir...',
   'notes.addTag': 'Tag',
