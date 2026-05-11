@@ -75,7 +75,8 @@ function formatDate(dateStr, t) {
   if (diffMin < 60) return t ? t('files.timeMinAgo', { n: diffMin }) : `${diffMin}m`;
   if (diffHr < 24) return t ? t('files.timeHrAgo', { n: diffHr }) : `${diffHr}h`;
   if (diffDays < 7) return t ? t('files.timeDaysAgo', { n: diffDays }) : `${diffDays}d`;
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
+  const loc = (t && t('_locale')) || undefined;
+  return d.toLocaleDateString(loc, { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
 }
 
 function formatSize(bytes) {

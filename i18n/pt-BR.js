@@ -924,6 +924,7 @@ export default {
   'chatConv.adminOnlySend': 'Só admins podem enviar',
   'chatConv.adminOnlyOn': 'Ativado — membros comuns não enviam mensagens',
   'chatConv.adminOnlyOff': 'Desativado — todos podem enviar',
+  'chatConv.moreOptions': 'Mais opções',
   'chatConv.messageInfo': 'Informações',
   'chatConv.readBy': 'Lido por',
   'chatConv.deliveredTo': 'Entregue a',

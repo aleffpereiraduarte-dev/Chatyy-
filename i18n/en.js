@@ -923,6 +923,7 @@ export default {
   'chatConv.adminOnlySend': 'Only admins can send',
   'chatConv.adminOnlyOn': 'On — regular members cannot send messages',
   'chatConv.adminOnlyOff': 'Off — everyone can send',
+  'chatConv.moreOptions': 'More options',
   'chatConv.messageInfo': 'Message Info',
   'chatConv.readBy': 'Read by',
   'chatConv.deliveredTo': 'Delivered to',
