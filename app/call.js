@@ -229,7 +229,7 @@ export default function CallScreen() {
   const callerTimeoutRef = useRef(null);
   const disconnectTimeoutRef = useRef(null);
   const callDurationRef = useRef(0);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const fadeAnim = useRef(new Animated.Value(1)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const controlsFadeAnim = useRef(new Animated.Value(1)).current;
   const endedRef = useRef(false);
@@ -2258,9 +2258,10 @@ export default function CallScreen() {
     };
   }, []); // Run once on mount
 
-  // Fade in + calling tone (caller only)
+  // Calling tone (caller only). Fade is gone — initial value is 1 to avoid
+  // a regression where useNativeDriver:false on opacity stalled on a busy JS
+  // thread, leaving the screen transparent over the previous white view.
   useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: false }).start();
     if (isCaller) {
       const { startCallingTone, stopRingtone } = require('../services/ringtone');
       startCallingTone();
