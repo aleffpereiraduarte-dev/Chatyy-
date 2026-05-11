@@ -72,7 +72,7 @@ import { getGlobalCall as _getGC, setGlobalCall as _setGC, clearGlobalCall as _c
 export const getGlobalCall = _getGC;
 export const clearGlobalCall = _clearGC;
 
-export default function CallScreen() {
+function CallScreenInner() {
   // Initialize call modules on first render (breaks circular dependency)
   useEffect(() => {
     initCallModules();
@@ -5250,3 +5250,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 });
+
+// Local ErrorBoundary safety net — if a render path inside CallScreen throws
+// (e.g. native module unavailable on a stale build), show a readable fallback
+// instead of a fully blank screen.
+import ErrorBoundary from '../components/ErrorBoundary';
+export default function CallScreen(props) {
+  return (
+    <ErrorBoundary>
+      <CallScreenInner {...props} />
+    </ErrorBoundary>
+  );
+}
