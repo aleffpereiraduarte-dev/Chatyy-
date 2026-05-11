@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: [self-hosted, macOS, ios-build]
+    runs-on: macos-latest
     timeout-minutes: 90
     env:
       KEYCHAIN_NAME: chatyy-build.keychain-db
