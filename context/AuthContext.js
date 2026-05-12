@@ -183,6 +183,35 @@ async function clearAllPerAccountCaches() {
   try { await clearAllCache(); } catch {}
   try { const fn = await getLazyClearChatCache(); await fn(); } catch {}
 
+  // 1b. Local SQLite mirror (conversations/messages/contacts/feed_posts/
+  // calendar/drive/docs/notes/notifications/meeting_rooms/user_profiles/
+  // offline_queue). clearChatCache() touches the *chat* cache layer
+  // (chatCache.js → KV + IDB on web) but does NOT clear localDb.js's
+  // SQLite tables on native — that was leaking the previous user's
+  // conversation list + messages on the next login until the network
+  // catch-up overwrote them (race-y, especially on cellular cold start).
+  try {
+    const { clearLocalDb } = require('../services/localDb');
+    if (typeof clearLocalDb === 'function') await clearLocalDb();
+  } catch {}
+
+  // 1c. Drop MMKV chat keys that the cache module writes WITHOUT user
+  // scoping (chat_conversations + chat_msgs_*, omc_profile, omc_call_history,
+  // omc_list_*). clearAllCache() only nukes @chatyy_cache_*; these raw
+  // keys live alongside it and previously survived account switches.
+  try {
+    const { getAllKeys: mmkvGetAllKeys, remove: mmkvRemove } = require('../services/mmkv');
+    const allKeys = (typeof mmkvGetAllKeys === 'function') ? mmkvGetAllKeys() : [];
+    const drop = allKeys.filter(k =>
+      k.startsWith('chat_') ||
+      k.startsWith('omc_') ||
+      k.startsWith('feed_') ||
+      k.startsWith('media_') ||
+      k.startsWith('e2e_')
+    );
+    drop.forEach(k => { try { mmkvRemove(k); } catch {} });
+  } catch {}
+
   // 2. AsyncStorage sweep — anything that smells user-scoped
   try {
     const allKeys = await AsyncStorage.getAllKeys();
@@ -193,13 +222,16 @@ async function clearAllPerAccountCaches() {
     const isKept = (k) => KEEP_PREFIXES.some(p => k.startsWith(p));
     const toRemove = allKeys.filter(k => {
       if (isKept(k)) return false;
+      // u:*              → userScopedKey output (pinned order/size, conv list mirror)
+      //                    sweeping ALL u:* is fine: each login rebuilds its own.
       // chat_*           → chat_draft_*, chat_notif_sound_*, chatLockKey
-      // chatyy:*         → chatyy:effect_seen:*
+      // chatyy:*         → chatyy:effect_seen:*, chatyy:pinned_*
       // chatyy_*         → chatyy_premium, chatyy_convs_v1, chatyy_offline_user
       // e2e_*            → e2e_banner_dismissed_*
       // mail_* (non-kept)→ mail_token, mail_active_account, etc.
-      // media_*, feed_*, presence_*, typing_*, outbox_*  → various
+      // media_*, feed_*, presence_*, typing_*, outbox_* → various
       return (
+        k.startsWith('u:') ||
         k.startsWith('chat_') ||
         k.startsWith('chatyy:') ||
         k.startsWith('chatyy_') ||
@@ -223,13 +255,33 @@ async function clearAllPerAccountCaches() {
         const k = localStorage.key(i);
         if (!k) continue;
         if (
-          k.startsWith('chat_') || k.startsWith('chatyy_') || k.startsWith('e2e_') ||
-          k.startsWith('media_') || k.startsWith('feed_') || k.startsWith('outbox_')
+          k.startsWith('u:') ||
+          k.startsWith('chat_') || k.startsWith('chatyy_') || k.startsWith('chatyy:') ||
+          k.startsWith('e2e_') || k.startsWith('media_') || k.startsWith('feed_') ||
+          k.startsWith('outbox_')
         ) {
           remove.push(k);
         }
       }
       remove.forEach(k => { try { localStorage.removeItem(k); } catch {} });
+    }
+  } catch {}
+
+  // 4. Web sessionStorage — SWR persistence in api.js (line ~890) sticks
+  // API responses here under _SWR_PERSIST_KEY. clearAuthToken() drops it
+  // on logout but a direct login-as-another-user path (no logout between)
+  // would re-use the previous user's SWR rehydration on next mount.
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      const remove = [];
+      for (let i = 0; i < sessionStorage.length; i++) {
+        const k = sessionStorage.key(i);
+        if (!k) continue;
+        if (k.startsWith('chatyy_') || k.startsWith('chat_') || k === '_chatyy_swr_v1') {
+          remove.push(k);
+        }
+      }
+      remove.forEach(k => { try { sessionStorage.removeItem(k); } catch {} });
     }
   } catch {}
 }
@@ -566,13 +618,34 @@ export function AuthProvider({ children }) {
   }, []);
 
   const login = useCallback(async (email, password) => {
+    // Capture prev active email BEFORE api.login() — that call upserts the
+    // new account and flips active, so by the time we'd read it after, it
+    // already equals the new email and we'd miss the account-switch case.
+    const prevEmail = (api.getActiveAccountEmail?.() || '').toLowerCase();
     const r = await api.login(email, password);
     if (r.success && !r.data?.requires_verification) {
       // Re-arm the auto-logout guard so a future token expiry on THIS
       // session routes to /login again (flag is once-per-process).
       try { api.resetAuthFailureSignal?.(); } catch {}
-      await clearAllCache();
-      const clearChatCache = await getLazyClearChatCache(); await clearChatCache();
+      // Nuke ALL per-account caches whenever the logged-in identity could
+      // be different from whatever is cached on the device. Previously this
+      // only called clearAllCache() (MMKV) + clearChatCache() (chat KV + IDB
+      // + chat SQLite), leaving AsyncStorage (drafts, pinned order, e2e
+      // banners, offline user blob, mail_*), web localStorage (chatyy_convs_v1),
+      // and the local mirror localDb SQLite (conversations/messages/contacts/
+      // feed_posts) populated with the previous user's data — when a different
+      // account signed in next they saw the old conversations, pinned chats,
+      // and offline-cached profile (reported 2026-05-11: "logei com suporte@
+      // boraum.com.br e MINHAS conversas estavam la, fixados ficou").
+      const newEmail = (r.data?.email || email || '').toLowerCase();
+      const isAccountSwitch = !!prevEmail && prevEmail !== newEmail;
+      const shouldNuke = isAccountSwitch || !prevEmail;
+      if (shouldNuke) {
+        await clearAllPerAccountCaches();
+      } else {
+        await clearAllCache();
+        const clearChatCache = await getLazyClearChatCache(); await clearChatCache();
+      }
       setCacheUser(r.data?.email || email);
       setUser(r.data);
       loadAccounts();
@@ -622,6 +695,14 @@ export function AuthProvider({ children }) {
   }, [loadAccounts, registerPushAfterAuth, prefetchAvatar, prefetchProfile]);
 
   const completeLoginAfterChallenge = useCallback(async (data) => {
+    // Same isolation logic as login(): capture prev active email BEFORE we
+    // mutate it via setAuthTokenDirect/upsert side-effects, then nuke EVERY
+    // per-account cache when the verified identity differs from whatever
+    // the device was carrying. Without this, the "verify on new device"
+    // path landed the new user on top of the previous user's chat list /
+    // pinned order / offline cached user blob (same root cause as the
+    // direct-login leak that prompted this fix).
+    const prevEmail = (api.getActiveAccountEmail?.() || '').toLowerCase();
     if (data?.token) {
       api.setAuthTokenDirect(data.token);
     }
@@ -632,8 +713,15 @@ export function AuthProvider({ children }) {
     // expires later, the redirect-to-login fires again. Without this, a
     // second expiry in the same session silently swallows 401s.
     try { api.resetAuthFailureSignal?.(); } catch {}
-    await clearAllCache();
-    const _clearChat = await getLazyClearChatCache(); await _clearChat();
+    const newEmail = (data?.email || '').toLowerCase();
+    const isAccountSwitch = !!prevEmail && prevEmail !== newEmail;
+    const shouldNuke = isAccountSwitch || !prevEmail;
+    if (shouldNuke) {
+      await clearAllPerAccountCaches();
+    } else {
+      await clearAllCache();
+      const _clearChat = await getLazyClearChatCache(); await _clearChat();
+    }
     setCacheUser(data?.email);
     setUser(data);
     loadAccounts();
