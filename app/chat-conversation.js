@@ -4151,7 +4151,11 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
           )}
         </View>
 
-        {/* Bottom bar */}
+        {/* Bottom bar — WhatsApp-style: caption + viewOnce + SEND all inline.
+            Previously the send button was on its own row below the caption,
+            but `previewStyles.sendBtn` was never defined in the stylesheet,
+            so it rendered with no width/bg and looked "no lugar errado"
+            (reported 2026-05-12). Inlining matches WhatsApp/Telegram. */}
         <View style={previewStyles.bottomBar}>
           <View style={previewStyles.captionRow}>
             <TextInput
@@ -4161,12 +4165,26 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
               value={caption}
               onChangeText={setCaption}
               maxLength={300}
+              multiline
             />
             <TouchableOpacity
               onPress={() => setViewOnce(v => !v)}
               style={[previewStyles.viewOnceBtn, viewOnce && previewStyles.viewOnceBtnActive]}
             >
               <Text style={[previewStyles.viewOnceBtnText, viewOnce && { color: '#fff' }]}>1</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={previewStyles.sendBtn}
+              onPress={handleSendPress}
+              accessibilityLabel={t('chatConv.send') || 'Enviar'}
+              accessibilityRole="button"
+            >
+              <IconSend size={22} color="#fff" />
+              {files.length > 1 && (
+                <View style={previewStyles.sendBadge}>
+                  <Text style={previewStyles.sendBadgeText}>{files.length}</Text>
+                </View>
+              )}
             </TouchableOpacity>
           </View>
           {viewOnce && (
@@ -4230,22 +4248,6 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
             </ScrollView>
           )}
 
-          <TouchableOpacity
-            style={previewStyles.sendBtn}
-            onPress={handleSendPress}
-          >
-            <IconSend size={22} color="#fff" />
-            {files.length > 1 && (
-              <View style={{
-                position: 'absolute', top: -4, right: -4,
-                minWidth: 22, height: 22, borderRadius: 11,
-                paddingHorizontal: 5, backgroundColor: '#fff',
-                alignItems: 'center', justifyContent: 'center',
-              }}>
-                <Text style={{ color: '#7C3AED', fontSize: 11, fontWeight: '800' }}>{files.length}</Text>
-              </View>
-            )}
-          </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
     </Modal>
@@ -4267,6 +4269,7 @@ const previewStyles = StyleSheet.create({
   captionInput: {
     flex: 1, color: '#fff', fontSize: 16, backgroundColor: 'rgba(255,255,255,0.12)',
     borderRadius: 24, paddingHorizontal: 16, paddingVertical: 10,
+    maxHeight: 120,
     ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
   },
   viewOnceBtn: {
@@ -4276,6 +4279,22 @@ const previewStyles = StyleSheet.create({
   viewOnceBtnActive: { backgroundColor: '#7C3AED', borderColor: '#7C3AED' },
   viewOnceBtnText: { fontSize: 16, fontWeight: '800', color: 'rgba(255,255,255,0.5)' },
   viewOnceHint: { color: '#7C3AED', fontSize: 12, textAlign: 'center', marginTop: 6, fontWeight: '500' },
+  sendBtn: {
+    width: 48, height: 48, borderRadius: 24,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#7C3AED',
+    shadowColor: '#7C3AED',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.35, shadowRadius: 6,
+    elevation: 4,
+  },
+  sendBadge: {
+    position: 'absolute', top: -4, right: -4,
+    minWidth: 22, height: 22, borderRadius: 11,
+    paddingHorizontal: 5, backgroundColor: '#fff',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  sendBadgeText: { color: '#7C3AED', fontSize: 11, fontWeight: '800' },
 });
 
 // ============================================================
