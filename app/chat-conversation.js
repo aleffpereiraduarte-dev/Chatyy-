@@ -2814,7 +2814,7 @@ window.addEventListener('message', function(e){var d=e&&e.data; if(d&&d.type==='
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: '#000' }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: Platform.OS === 'ios' ? 50 : 10, paddingHorizontal: 12, paddingBottom: 10, backgroundColor: isStillLive ? '#16a34a' : '#6D28D9' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: Platform.OS === 'ios' ? 50 : ((require('react-native').StatusBar.currentHeight || 24) + 10), paddingHorizontal: 12, paddingBottom: 10, backgroundColor: isStillLive ? '#16a34a' : '#6D28D9' }}>
           <TouchableOpacity onPress={onClose} style={{ padding: 8 }} accessibilityLabel={t('common.close') || 'Fechar'} accessibilityRole="button">
             <IconArrowLeft size={22} color="#fff" />
           </TouchableOpacity>

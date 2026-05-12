@@ -1,5 +1,7 @@
 package expo.modules.callkit
 
+import android.app.ActivityManager
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.util.Log
@@ -46,9 +48,14 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
             // If the app is foreground, JS Modal (IncomingCallListener) handles
             // the call UI via the WS `call_invite` event. Showing the native
             // IncomingCallActivity on top results in BOTH screens stacking and
-            // confusing the user (incidente 2026-05-12). Skip the native ring
-            // service entirely and let JS drive.
-            if (ExpoCallKitModule.isAppForeground) {
+            // confusing the user (incidente 2026-05-12).
+            //
+            // Use ActivityManager to ask the OS — relying only on
+            // ExpoCallKitModule.isAppForeground had a race: FCM arrives BEFORE
+            // OnActivityEntersForeground fires on cold open, so the flag was
+            // still false. Combine both signals + a real ActivityManager
+            // check so we catch ALL foreground cases.
+            if (ExpoCallKitModule.isAppForeground || isProcessForeground()) {
                 Log.d(TAG, "App is foreground — skipping native ring service, JS will handle")
                 return
             }
@@ -156,6 +163,32 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
                 Log.e(TAG, "FirebaseMessagingDelegate class not found", e)
                 cachedDelegate = null
             }
+        }
+    }
+
+    /**
+     * Ask the OS whether our process is currently foreground. Used as a
+     * race-proof complement to ExpoCallKitModule.isAppForeground (the flag
+     * is set by Activity lifecycle, which fires AFTER FCM delivery on cold
+     * opens — leaving a tiny window where the flag is still false even
+     * though the user has the app open).
+     */
+    private fun isProcessForeground(): Boolean {
+        return try {
+            val am = applicationContext.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+                ?: return false
+            val procs = am.runningAppProcesses ?: return false
+            val myPkg = applicationContext.packageName
+            for (p in procs) {
+                if (p.processName == myPkg
+                    && p.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND) {
+                    return true
+                }
+            }
+            false
+        } catch (e: Exception) {
+            Log.w(TAG, "isProcessForeground check failed", e)
+            false
         }
     }
 
