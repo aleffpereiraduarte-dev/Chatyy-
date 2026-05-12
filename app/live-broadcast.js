@@ -102,6 +102,10 @@ export default function LiveBroadcastScreen() {
   const localStreamRef = useRef(null);
   const wsRef = useRef(null);
   const peersRef = useRef(new Map());
+  // Buffer of viewer-join messages that arrived before the broadcaster's
+  // camera/mic stream was ready. Drained by a useEffect once
+  // localStreamRef.current resolves.
+  const pendingViewersRef = useRef(new Map());
   const sessionIdRef = useRef(null);
   const viewerCountTimerRef = useRef(null);
   const durationTimerRef = useRef(null);
@@ -193,6 +197,21 @@ export default function LiveBroadcastScreen() {
       } else {
         if (stream?.toURL) setLocalStreamUrl(stream.toURL());
       }
+      // Drain any viewers that joined before the camera was ready.
+      // Replay each buffered join through the normal handler now that
+      // localStreamRef.current is populated. Without this drain, viewers
+      // who hit the live in the first 200-400ms after the host opened
+      // the broadcast screen sat on "Conectando..." forever. Using
+      // handleViewerJoinedRef to dodge the TDZ — handleViewerJoined is
+      // declared further down in the component.
+      if (pendingViewersRef.current.size > 0) {
+        const pending = Array.from(pendingViewersRef.current.values());
+        pendingViewersRef.current.clear();
+        console.log('[Live] draining ' + pending.length + ' pending viewer(s)');
+        for (const msg of pending) {
+          try { handleViewerJoinedRef.current?.(msg); } catch (e) { console.warn('[Live] drain err', e); }
+        }
+      }
       return true;
     } catch (err) {
       console.warn('[Live] Camera error:', err);
@@ -200,6 +219,11 @@ export default function LiveBroadcastScreen() {
       return false;
     }
   }, [t]);
+
+  // Latest-handler ref so ensureCameraStream above can call into
+  // handleViewerJoined (declared further down) without creating a
+  // forward-reference TDZ crash on first render.
+  const handleViewerJoinedRef = useRef(null);
 
   // Connect to signaling WebSocket
   const connectSignaling = useCallback(() => {
@@ -323,10 +347,22 @@ export default function LiveBroadcastScreen() {
     });
   }, []);
 
-  // Handle viewer joining
-  const handleViewerJoined = useCallback(async (msg) => {
+  // Handle viewer joining. If the local camera/mic stream isn't ready
+  // yet (broadcaster just opened the screen, getUserMedia still in
+  // flight) we used to silently drop the join — the viewer waited 15s
+  // and saw "Stream indisponível". Now we BUFFER pending viewer ids in
+  // pendingViewersRef and ensureCameraStream drains them once
+  // localStreamRef.current resolves. Result: viewers who hit "Connect"
+  // a fraction of a second after the broadcaster goes live still get
+  // their offer.
+  const _handleViewerJoined = useCallback(async (msg) => {
     const viewerId = msg.viewer_id;
-    if (!viewerId || !localStreamRef.current) return;
+    if (!viewerId) return;
+    if (!localStreamRef.current) {
+      pendingViewersRef.current.set(viewerId, msg);
+      console.log('[Live] viewer ' + viewerId + ' joined before stream ready — buffering');
+      return;
+    }
 
     if (!RTC_PeerConnection) {
       console.warn('[Live] RTCPeerConnection not available');
@@ -384,6 +420,15 @@ export default function LiveBroadcastScreen() {
       type: 'system',
     }]);
   }, [t]);
+  // Public-name alias kept stable so the rest of the file (and the WS
+  // onmessage switch) can call handleViewerJoined as before.
+  const handleViewerJoined = _handleViewerJoined;
+  // Wire the latest copy into the forward-ref so ensureCameraStream,
+  // declared above this point in source order, can drain buffered
+  // viewers without hitting a TDZ.
+  useEffect(() => {
+    handleViewerJoinedRef.current = handleViewerJoined;
+  }, [handleViewerJoined]);
 
   const handleViewerAnswer = useCallback(async (msg) => {
     const viewerId = msg.viewer_id;

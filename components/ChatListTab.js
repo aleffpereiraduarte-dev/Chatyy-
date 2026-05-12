@@ -2805,9 +2805,14 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         }
       }
       if (dmEmails.length > 0 && mailWs.isConnected) {
-        mailWs.queryPresence(dmEmails);
-        // Also subscribe to real-time presence changes
+        // Bug 2026-05-12: subscribe-then-query, not the other way
+        // around. The previous order left a window where the server
+        // had no record we were watching these emails, so any
+        // online/offline change in those few milliseconds reached us
+        // through the 15s poll only. Now any state change from t=0
+        // pushes to us instantly.
         mailWs.watchPresence(dmEmails);
+        mailWs.queryPresence(dmEmails);
       }
     };
 
@@ -2853,9 +2858,13 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       }
     });
 
-    // Query immediately + every 15 seconds
+    // Query immediately + then every 45s as a backstop. Real-time
+    // updates already flow via the `presence` WS event (handler above)
+    // — the periodic poll is just to catch missed broadcasts after WS
+    // reconnects or transient hiccups. WhatsApp uses ~60s; we go
+    // slightly tighter at 45s to feel snappier without burning battery.
     queryDmPresences();
-    intervalId = setInterval(queryDmPresences, 15000);
+    intervalId = setInterval(queryDmPresences, 45000);
 
     return () => {
       unsubResult?.();
