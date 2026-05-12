@@ -3876,6 +3876,9 @@ export default {
   'live.liveDuration': 'Duração',
   'live.spectators': 'Espectadores',
   'live.likes': 'Curtidas',
+  'live.viewersList': 'Espectadores',
+  'live.viewersListEmpty': 'Ninguém entrou ainda',
+  'live.joined': 'entrou',
   'profile.noFollowers': 'Ninguém segue ainda',
 
   // Photos

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, Animated,
-  Dimensions, ActivityIndicator, Share, Modal, Pressable,
+  Dimensions, ActivityIndicator, Share, Modal, Pressable, ScrollView,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -53,6 +53,8 @@ export default function LiveViewerScreen() {
 
   const [connected, setConnected] = useState(false);
   const [viewerCount, setViewerCount] = useState(0);
+  const [viewers, setViewers] = useState([]); // [{email, name, joinedAt}]
+  const [showViewersList, setShowViewersList] = useState(false);
   const [chatMessages, setChatMessages] = useState([]);
   const [liveEnded, setLiveEnded] = useState(false);
   const [hearts, setHearts] = useState([]);
@@ -238,6 +240,43 @@ export default function LiveViewerScreen() {
         case 'live_chat':
           handleChatMsg(msg);
           break;
+        case 'live_viewer_count':
+          // Authoritative count from server — always trust this over local
+          // counter (server tracks channel subs which is the source of truth).
+          if (typeof msg.count === 'number') setViewerCount(msg.count);
+          break;
+        case 'live_viewer_joined':
+          // Add to local viewer list (for the tap-to-see-who-joined sheet)
+          if (msg.viewer_email && msg.viewer_email !== user?.email) {
+            setViewers(prev => {
+              const exists = prev.some(v => v.email === msg.viewer_email);
+              if (exists) return prev;
+              return [{
+                email: msg.viewer_email,
+                name: msg.viewer_name || msg.viewer_email.split('@')[0],
+                joinedAt: Date.now(),
+              }, ...prev].slice(0, 100); // cap at 100 most-recent
+            });
+            // Also surface as a chat message so the user sees "X entrou"
+            // inline with the live chat stream (Instagram parity).
+            setChatMessages(prev => [
+              ...prev.slice(-49),
+              {
+                id: 'sys_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+                isSystem: true,
+                email: msg.viewer_email,
+                name: msg.viewer_name || msg.viewer_email.split('@')[0],
+                text: (t?.('live.joined') || 'entrou'),
+                ts: Date.now(),
+              },
+            ]);
+          }
+          break;
+        case 'live_viewer_left':
+          if (msg.viewer_email) {
+            setViewers(prev => prev.filter(v => v.email !== msg.viewer_email));
+          }
+          break;
         case 'live_reaction':
           // Prefer emoji (from gift picker). Heart button also sends
           // emoji:'❤️' which we treat as the default heart animation
@@ -281,6 +320,14 @@ export default function LiveViewerScreen() {
 
     return () => {
       alive = false;
+      // Send explicit live_leave BEFORE closing so the server can broadcast
+      // updated viewer_count to remaining viewers + the broadcaster — without
+      // this the count only drops on the next reconnect cycle.
+      try {
+        if (ws && ws.readyState === WebSocket.OPEN && paramSessionId) {
+          ws.send(JSON.stringify({ type: 'live_leave', session_id: paramSessionId }));
+        }
+      } catch {}
       try { ws?.close(); } catch {}
       if (pcRef.current) {
         pcRef.current.close();
@@ -699,10 +746,16 @@ export default function LiveViewerScreen() {
           )}
         </View>
 
-        <View style={styles.viewerChip}>
+        <TouchableOpacity
+          style={styles.viewerChip}
+          activeOpacity={0.7}
+          onPress={() => setShowViewersList(true)}
+          accessibilityLabel={t('live.viewersList') || 'Ver espectadores'}
+          accessibilityRole="button"
+        >
           <View style={styles.viewerDot} />
           <Text style={styles.viewerChipText}>{viewerCount.toLocaleString()}</Text>
-        </View>
+        </TouchableOpacity>
 
         <View style={[styles.qualityDot, { backgroundColor: qualityColor }]} />
 
@@ -949,6 +1002,48 @@ export default function LiveViewerScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* Viewers list sheet — Instagram-style "who's watching".
+          Recent joiners on top, capped at 100 to keep render cheap. */}
+      <Modal
+        visible={showViewersList}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowViewersList(false)}
+      >
+        <Pressable style={styles.viewersListBackdrop} onPress={() => setShowViewersList(false)}>
+          <Pressable style={styles.viewersListSheet} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.viewersListHandle} />
+            <View style={styles.viewersListHeader}>
+              <Text style={styles.viewersListTitle}>
+                {t('live.viewersList') || 'Espectadores'} · {viewerCount.toLocaleString()}
+              </Text>
+              <TouchableOpacity onPress={() => setShowViewersList(false)} style={styles.viewersListClose}>
+                <IconX size={20} color="#fff" />
+              </TouchableOpacity>
+            </View>
+            {viewers.length === 0 ? (
+              <View style={styles.viewersListEmpty}>
+                <Text style={styles.viewersListEmptyText}>
+                  {t('live.viewersListEmpty') || 'Ninguém entrou ainda'}
+                </Text>
+              </View>
+            ) : (
+              <ScrollView style={styles.viewersListScroll} keyboardShouldPersistTaps="handled">
+                {viewers.map((v) => (
+                  <View key={v.email} style={styles.viewerRow}>
+                    <AvatarCircle name={v.name} email={v.email} size={40} />
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text style={styles.viewerRowName} numberOfLines={1}>{v.name}</Text>
+                      <Text style={styles.viewerRowEmail} numberOfLines={1}>{v.email}</Text>
+                    </View>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -1156,6 +1251,33 @@ const styles = StyleSheet.create({
   },
 
   // Viewer chip (live count) — sits in the top bar between host pill and close.
+  viewersListBackdrop: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end',
+  },
+  viewersListSheet: {
+    backgroundColor: '#16162b', borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    paddingBottom: 28, maxHeight: '70%',
+  },
+  viewersListHandle: {
+    alignSelf: 'center', width: 40, height: 4, borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.25)', marginTop: 10, marginBottom: 4,
+  },
+  viewersListHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 18, paddingTop: 12, paddingBottom: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(255,255,255,0.08)',
+  },
+  viewersListTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  viewersListClose: { padding: 6 },
+  viewersListEmpty: { paddingVertical: 40, alignItems: 'center' },
+  viewersListEmptyText: { color: 'rgba(255,255,255,0.55)', fontSize: 14 },
+  viewersListScroll: { paddingHorizontal: 16, paddingTop: 8 },
+  viewerRow: {
+    flexDirection: 'row', alignItems: 'center', paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(255,255,255,0.05)',
+  },
+  viewerRowName: { color: '#fff', fontSize: 14, fontWeight: '600' },
+  viewerRowEmail: { color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 1 },
   viewerChip: {
     flexDirection: 'row',
     alignItems: 'center',
