@@ -167,6 +167,35 @@ function getSavedCredentials() {
   return null;
 }
 
+// Surgical per-account cache cleaner. Targets ONLY the three bare-key MMKV
+// leaks + one legacy localStorage key that demonstrably bleed across logins
+// when the server response doesn't overwrite them for the new user:
+//   • MMKV `chat_conversations` — written by services/api.js on login; if a
+//     fresh account has zero conversations the previous user's blob stays.
+//   • MMKV `omc_profile`        — cached profile blob (display name, avatar).
+//   • MMKV `omc_call_history`   — call log persisted across sessions.
+//   • localStorage `chatyy_convs_v1` (web) — legacy unscoped twin of the
+//     user-scoped key now used by chat list.
+// Deliberately does NOT touch:
+//   • SQLite/localDb (would nuke outbox/pending_messages → broke Android send
+//     during the 2026-05-11 aggressive-fix incident).
+//   • AsyncStorage `u:*` keys (already user-scoped by key prefix).
+//   • AsyncStorage `mail_*` keys (may include auth state / saved creds).
+//   • SecureStore (bio_token etc).
+async function clearAccountScopedMmkv() {
+  try {
+    const { remove: mmkvRemove } = require('../services/mmkv');
+    mmkvRemove('chat_conversations');
+    mmkvRemove('omc_profile');
+    mmkvRemove('omc_call_history');
+  } catch {}
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('chatyy_convs_v1');
+    }
+  } catch {}
+}
+
 // Aggressively wipe every per-account cache on the device. Goes well beyond
 // `clearAllCache()` (which only touches MMKV @chatyy_cache_*) and `clearChatCache()`
 // (which only resets the chat SQLite/in-memory layer). Catches AsyncStorage
@@ -566,11 +595,22 @@ export function AuthProvider({ children }) {
   }, []);
 
   const login = useCallback(async (email, password) => {
+    // Capture the previously-active email BEFORE api.login mutates it, so
+    // we can detect an account switch (or first login on a device that
+    // previously had another user signed in) and surgically purge the
+    // three bare-key MMKV blobs + the legacy unscoped localStorage twin
+    // that don't include the user identity in their key and therefore
+    // leak across accounts.
+    const _prevEmail = (api.getActiveAccountEmail?.() || '').toLowerCase();
     const r = await api.login(email, password);
     if (r.success && !r.data?.requires_verification) {
       // Re-arm the auto-logout guard so a future token expiry on THIS
       // session routes to /login again (flag is once-per-process).
       try { api.resetAuthFailureSignal?.(); } catch {}
+      const _newEmail = (r.data?.email || email || '').toLowerCase();
+      if (!_prevEmail || _prevEmail !== _newEmail) {
+        await clearAccountScopedMmkv();
+      }
       await clearAllCache();
       const clearChatCache = await getLazyClearChatCache(); await clearChatCache();
       setCacheUser(r.data?.email || email);
@@ -622,6 +662,9 @@ export function AuthProvider({ children }) {
   }, [loadAccounts, registerPushAfterAuth, prefetchAvatar, prefetchProfile]);
 
   const completeLoginAfterChallenge = useCallback(async (data) => {
+    // Snapshot the prev email BEFORE we mutate auth state so we can detect
+    // an account switch and run the surgical bare-key cleaner.
+    const _prevEmail = (api.getActiveAccountEmail?.() || '').toLowerCase();
     if (data?.token) {
       api.setAuthTokenDirect(data.token);
     }
@@ -632,6 +675,10 @@ export function AuthProvider({ children }) {
     // expires later, the redirect-to-login fires again. Without this, a
     // second expiry in the same session silently swallows 401s.
     try { api.resetAuthFailureSignal?.(); } catch {}
+    const _newEmail = (data?.email || '').toLowerCase();
+    if (!_prevEmail || _prevEmail !== _newEmail) {
+      await clearAccountScopedMmkv();
+    }
     await clearAllCache();
     const _clearChat = await getLazyClearChatCache(); await _clearChat();
     setCacheUser(data?.email);
@@ -681,20 +728,23 @@ export function AuthProvider({ children }) {
     // e quebrava o reuso do token nas trocas de conta seguintes.
     api.upsertAccount(data.email || email, api.getAuthToken?.() || '', name);
     api.setActiveAccountEmail(data.email || email);
-    // Wipe the local cache whenever the bearer-token login lands on a
-    // potentially different identity:
+    // Surgically clear the three bare-key MMKV blobs + legacy localStorage
+    // twin when the bearer-token login lands on a potentially different
+    // identity:
     //   • isAccountSwitch — explicit prev≠new (classic account switch).
     //   • !prevEmail      — no active session (cold start, or right after
     //     logout). Critical for fresh signup: phone_signup → loginWithToken
     //     comes in here with prevEmail='', so without this the new user
-    //     would inherit the old user's chat drafts, conversations cache,
-    //     effect-seen flags, etc. Privacy bug (#"criou nova conta e puxou
-    //     todas as conversas do cache do celular").
+    //     would inherit the old user's conversations cache / profile blob.
     // The "preserve cache for Face ID re-login of same user" optimization
     // still applies — that path always has prevEmail set AND prev==new.
+    //
+    // Replaces the previous aggressive clearAllPerAccountCaches() call
+    // which also nuked the SQLite outbox + AsyncStorage `u:*` keys and
+    // broke Android send (rollback 2026-05-11).
     const shouldNuke = isAccountSwitch || !prevEmail;
     if (shouldNuke) {
-      await clearAllPerAccountCaches();
+      await clearAccountScopedMmkv();
     }
     setCacheUser(data.email || email);
     setUser(data);
@@ -714,11 +764,14 @@ export function AuthProvider({ children }) {
   const signup = useCallback(async (username, password, name, domain) => {
     const r = await api.signup(username, password, name, domain);
     if (r.success) {
-      // Defense-in-depth: signup creates a brand new account, so wipe ALL
-      // per-account state from any previous user that may have used this
-      // device. clearAllCache() alone only touches MMKV — it leaves
-      // AsyncStorage chat drafts, chat locks, premium flag, etc. behind.
-      await clearAllPerAccountCaches();
+      // Defense-in-depth: signup creates a brand new account, so surgically
+      // clear the three bare-key MMKV blobs + legacy localStorage twin
+      // that don't include user identity and would otherwise bleed the
+      // previous user's conversations / profile / call history into the
+      // newly-created account. Switched from the aggressive
+      // clearAllPerAccountCaches() because that also nuked SQLite outbox
+      // + AsyncStorage `u:*` keys and broke Android send (2026-05-11).
+      await clearAccountScopedMmkv();
       setCacheUser(r.data?.email);
       setUser(r.data);
       loadAccounts();

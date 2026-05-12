@@ -376,20 +376,24 @@ export async function registerForPushNotifications() {
       },
     ]);
 
-    // Legacy categories (backward compat with already-sent notifications)
+    // chat_message — canonical category sent by backend (firebase_push.php sets
+    // categoryId: 'chat_message' in the FCM data payload when type === 'chat_message').
+    // WhatsApp/iMessage-style quick reply: user types inline without opening app.
+    // expo-notifications maps this to a RemoteInput action on Android FCM too.
     await Notifications.setNotificationCategoryAsync('chat_message', [
       {
-        identifier: 'reply_chat',
+        identifier: 'reply',
         buttonTitle: 'Responder',
         textInput: {
           submitButtonTitle: 'Enviar',
           placeholder: 'Mensagem...',
         },
+        options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
       },
       {
-        identifier: 'mark_read_chat',
+        identifier: 'mark_read',
         buttonTitle: 'Marcar como lido',
-        options: { isDestructive: false, isAuthenticationRequired: false },
+        options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
       },
     ]);
 
@@ -637,16 +641,18 @@ export async function setupNotificationListeners() {
       handleMarkReadFromNotification(data);
       return;
     }
-    // CHAT: Reply with text input
-    if ((actionId === 'REPLY' || actionId === 'reply_chat') && data?.conversation_id) {
+    // CHAT: Reply with text input (WhatsApp/iMessage-style quick reply).
+    // Accepts canonical `reply` (chat_message category) plus legacy `REPLY`/`reply_chat`.
+    if ((actionId === 'reply' || actionId === 'REPLY' || actionId === 'reply_chat') && data?.conversation_id) {
       const userText = response.userText;
       if (userText?.trim()) {
         handleChatReplyFromNotification(data.conversation_id, userText.trim());
       }
       return;
     }
-    // CHAT: Mark as read
-    if ((actionId === 'MARK_READ' || actionId === 'mark_read_chat') && data?.conversation_id) {
+    // CHAT: Mark as read. `mark_read` is shared with the email legacy handler above,
+    // but that branch guards on `data?.uid` so chat pushes (with `conversation_id`) fall through here.
+    if ((actionId === 'mark_read' || actionId === 'MARK_READ' || actionId === 'mark_read_chat') && data?.conversation_id) {
       handleMarkReadChatFromNotification(data.conversation_id);
       return;
     }
