@@ -115,6 +115,10 @@ function CallScreenInner() {
   const [addParticipantCandidates, setAddParticipantCandidates] = useState([]);
   const [floatingEmojis, setFloatingEmojis] = useState([]);
   const [onHold, setOnHold] = useState(false);
+  // Peer-side hold flag — set when the remote sends call_hold with on:true.
+  // Drives the "X em espera" banner so the local user knows why audio/video
+  // appears frozen and stops talking expecting a reply.
+  const [peerOnHold, setPeerOnHold] = useState(false);
   const [showMoreSheet, setShowMoreSheet] = useState(false);
   // Quick-reactions row — opens on long-press of the "more" button (or
   // after user taps a dedicated reactions trigger). Provides a 5-emoji
@@ -1827,6 +1831,27 @@ function CallScreenInner() {
         // Reorder codec preference (VP9 > H.264 > VP8) antes do offer
         applyCodecPreferences(pc);
 
+        // Seed HD bitrate on the video sender before the adaptive stats
+        // loop kicks in (~3s delay). Without this, the encoder starts at
+        // its default ~300kbps and the first few seconds of video look
+        // pixelated. 1.5Mbps is a safe HD floor; the adaptive loop will
+        // bump it to 2.5Mbps when quality reads 5 or trim it down on
+        // weaker networks.
+        try {
+          for (const sender of pc.getSenders()) {
+            if (sender.track?.kind !== 'video') continue;
+            try {
+              const params = sender.getParameters();
+              if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+              params.encodings[0].maxBitrate = 1500000;
+              params.encodings[0].maxFramerate = 30;
+              params.encodings[0].networkPriority = 'high';
+              params.encodings[0].priority = 'high';
+              sender.setParameters(params).catch(() => {});
+            } catch {}
+          }
+        } catch {}
+
         // ── NAT keepalive via DataChannel ──
         // Some mobile carriers have aggressive NAT timeouts (15-30s).
         // A DataChannel ping every 10s keeps the UDP binding alive.
@@ -2670,14 +2695,56 @@ function CallScreenInner() {
         const newTrack = videoStream.getVideoTracks()[0];
         localStreamRef.current.addTrack(newTrack);
 
-        // Check if there's already a video sender (transceiver) we can reuse
-        const sender = pcRef.current.getSenders().find(s => s.track === null || s.track?.kind === 'video');
-        if (sender) {
-          await sender.replaceTrack(newTrack);
+        // Check if there's already a video sender (transceiver) we can reuse.
+        // The original audio-only setup answer-side requested offerToReceiveVideo,
+        // which creates a recvonly transceiver. Reuse it via replaceTrack, but
+        // we MUST bump the transceiver direction to 'sendrecv' (it's recvonly
+        // by default) — without that, the peer never receives our media even
+        // though replaceTrack succeeded. That's the bug that caused the
+        // acceptor of a video-upgrade to see only their own video.
+        let usedExistingSender = false;
+        const existingSender = pcRef.current.getSenders().find(s => s.track === null || s.track?.kind === 'video');
+        if (existingSender) {
+          await existingSender.replaceTrack(newTrack);
+          usedExistingSender = true;
+          try {
+            const transceivers = pcRef.current.getTransceivers?.() || [];
+            for (const tr of transceivers) {
+              if (tr.sender === existingSender) {
+                if (tr.direction !== 'sendrecv') {
+                  try { tr.direction = 'sendrecv'; } catch {}
+                }
+                break;
+              }
+            }
+          } catch (e) {
+            console.warn('[Call] could not flip transceiver to sendrecv:', e?.message);
+          }
         } else {
           // No video sender exists — add new track to peer connection
           pcRef.current.addTrack(newTrack, localStreamRef.current);
         }
+        // Renegotiation flag — both addTrack and "flip recvonly→sendrecv"
+        // change the SDP, so we always need a fresh offer/answer roundtrip.
+        const _needsRenegotiation = true; // eslint-disable-line no-unused-vars
+
+        // Seed HD bitrate on the just-attached video sender. Mirrors the
+        // initial setup so the first frames after audio→video upgrade
+        // aren't blocky (encoder defaults to ~300kbps otherwise).
+        try {
+          for (const s of pcRef.current.getSenders()) {
+            if (s.track?.kind !== 'video') continue;
+            try {
+              const params = s.getParameters();
+              if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+              params.encodings[0].maxBitrate = 1500000;
+              params.encodings[0].maxFramerate = 30;
+              params.encodings[0].networkPriority = 'high';
+              params.encodings[0].priority = 'high';
+              s.setParameters(params).catch(() => {});
+            } catch {}
+          }
+        } catch {}
 
         setVideoEnabled(true);
 
@@ -2811,8 +2878,9 @@ function CallScreenInner() {
 
       const newStream = await getUserMediaFn({
         video: {
-          width: { ideal: 640 },
-          height: { ideal: 480 },
+          width: { ideal: 1280, max: 1920 },
+          height: { ideal: 720, max: 1080 },
+          frameRate: { ideal: 30, max: 30 },
           facingMode: newFacing ? 'user' : 'environment',
         },
       });
@@ -2844,30 +2912,73 @@ function CallScreenInner() {
   // Load conversation members the first time the add-participant modal opens.
   // We filter out anyone already on the call client-side via groupPeersRef so
   // the user only sees people who can actually be invited (no duplicates).
+  //
+  // Fallback: when the convo is 1:1 (only 2 members) OR chatGroupInfo returns
+  // nothing useful, we additionally pull the user's contacts + recent chat
+  // conversations so the list isn't limited to that single existing peer.
   useEffect(() => {
-    if (!showAddParticipant || !conversationId) return;
+    if (!showAddParticipant) return;
     let cancelled = false;
     (async () => {
       try {
-        const { chatGroupInfo } = require('../services/api');
-        const r = await chatGroupInfo(conversationId);
-        if (cancelled) return;
-        const members = r?.data?.members || r?.members || [];
+        const api = require('../services/api');
         const inCall = new Set([
           (user?.email || '').toLowerCase(),
           ...Array.from(groupPeersRef.current?.keys?.() || []).map(e => (e || '').toLowerCase()),
         ]);
-        const candidates = members.filter(m => {
-          const email = (m.email || '').toLowerCase();
-          return email && !inCall.has(email);
-        });
-        setAddParticipantCandidates(candidates);
+        if (contactEmail) inCall.add((contactEmail + '').toLowerCase());
+
+        const seen = new Map(); // email -> candidate (dedupe)
+        const addCandidate = (raw) => {
+          if (!raw) return;
+          const email = ((raw.email || raw.peer_email || raw.member_email || '') + '').toLowerCase();
+          if (!email || inCall.has(email)) return;
+          if (seen.has(email)) return;
+          seen.set(email, {
+            email,
+            name: raw.name || raw.display_name || raw.peer_name || email.split('@')[0],
+          });
+        };
+
+        // 1) Try conversation members first (group calls).
+        let members = [];
+        if (conversationId) {
+          try {
+            const r = await api.chatGroupInfo(conversationId);
+            members = r?.data?.members || r?.members || [];
+          } catch {}
+          members.forEach(addCandidate);
+        }
+
+        // 2) If the convo is 1:1 (< 2 invitable members) OR no convo at all,
+        //    pull user's address book + recent chat conversations as fallback.
+        if (seen.size < 1 || !conversationId || members.length < 3) {
+          try {
+            const c = await api.getContactsList?.();
+            const contacts = c?.data?.contacts || c?.contacts || c?.data || c || [];
+            if (Array.isArray(contacts)) contacts.forEach(addCandidate);
+          } catch {}
+          try {
+            const cv = await api.chatConversations?.();
+            const convos = cv?.data?.conversations || cv?.conversations || cv?.data || cv || [];
+            if (Array.isArray(convos)) {
+              convos.forEach(co => {
+                // direct conversations expose peer_email; group convos expose members[]
+                if (co?.peer_email) addCandidate({ email: co.peer_email, name: co.peer_name || co.name });
+                if (Array.isArray(co?.members)) co.members.forEach(addCandidate);
+              });
+            }
+          } catch {}
+        }
+
+        if (cancelled) return;
+        setAddParticipantCandidates(Array.from(seen.values()));
       } catch (e) {
         if (__DEV__) console.warn('[call.addParticipant.load]', e?.message);
       }
     })();
     return () => { cancelled = true; };
-  }, [showAddParticipant, conversationId, user?.email]);
+  }, [showAddParticipant, conversationId, user?.email, contactEmail]);
 
   const handleInviteToCall = useCallback(async (email) => {
     if (!email || addParticipantBusy) return;
@@ -2888,17 +2999,25 @@ function CallScreenInner() {
   const handleScreenShare = useCallback(async () => {
     if (!pcRef.current) return;
 
-    // Helper: pega getDisplayMedia do lugar certo por plataforma
+    // Helper: pega getDisplayMedia do lugar certo por plataforma.
+    // - Web: passes the constraints object as the W3C spec dictates.
+    // - Native: @stream-io/react-native-webrtc.getDisplayMedia() accepts no
+    //   arguments. On iOS it needs a ReplayKit broadcast extension to
+    //   actually work, and on Android it needs a foreground service +
+    //   MediaProjection. If the native module isn't there, we throw
+    //   'unsupported' so the upstream catch shows the friendly alert.
     const getDisplay = async (constraints) => {
       if (Platform.OS === 'web') {
         if (!navigator?.mediaDevices?.getDisplayMedia) throw new Error('unsupported');
         return navigator.mediaDevices.getDisplayMedia(constraints);
       }
-      // Native: @stream-io/react-native-webrtc expõe mediaDevices.getDisplayMedia
+      // Native: lib expõe getDisplayMedia mas só funciona com extension nativa.
       try {
         const webrtc = require('@stream-io/react-native-webrtc');
         if (webrtc?.mediaDevices?.getDisplayMedia) {
-          return webrtc.mediaDevices.getDisplayMedia(constraints);
+          // Lib signature ignora os constraints; chame sem args pra evitar
+          // type-mismatch quando a ponte JNI valida o argumento.
+          return webrtc.mediaDevices.getDisplayMedia();
         }
       } catch {}
       throw new Error('unsupported');
@@ -3159,8 +3278,39 @@ function CallScreenInner() {
     }
 
     setOnHold(newHold);
+
+    // Notify the peer so they see an "Em espera" banner. Without this, the
+    // other party just sees the call freeze with no explanation. Mirrors the
+    // existing call_video_toggle / call_screen_share patterns.
+    try {
+      sendSignaling('call_hold', {
+        call_id: callId,
+        target_email: contactEmail,
+        on: newHold,
+      });
+    } catch {}
+
     resetControlsTimer();
-  }, [onHold, audioMuted, videoEnabled, resetControlsTimer]);
+  }, [onHold, audioMuted, videoEnabled, resetControlsTimer, callId, contactEmail, sendSignaling]);
+
+  // Listen for remote peer's hold notification — mirror state into peerOnHold
+  // so the banner renders. Also guards against the multi-device echo where Go
+  // WS broadcasts the message back to the sender's own other sessions.
+  useEffect(() => {
+    try {
+      const mailWs = require('../services/websocket').default;
+      const unsub = mailWs.on('call_hold', (data) => {
+        if (data?.call_id && data.call_id !== callId) return;
+        try {
+          const me = (user?.email || '').toLowerCase();
+          const sender = (data?.email || data?.from_email || '').toLowerCase();
+          if (sender && me && sender === me) return;
+        } catch {}
+        setPeerOnHold(!!(data?.on ?? data?.on_hold ?? data?.hold));
+      });
+      return () => { try { unsub(); } catch {} };
+    } catch {}
+  }, [callId, user?.email]);
 
   // ── Call Recording ──
   // Uses MediaRecorder (web) to capture the mixed audio from the peer connection.
@@ -3350,6 +3500,7 @@ function CallScreenInner() {
         if (data.action === 'request') {
           setPendingVideoRequest({ from: data.email || contactEmail });
         } else if (data.action === 'cancel' || data.action === 'declined') {
+          const wasWaiting = videoUpgradeRequestedRef.current;
           setPendingVideoRequest(null);
           // If WE were the one waiting, clear the flag so a future press
           // restarts the request flow rather than silently activating.
@@ -3368,6 +3519,18 @@ function CallScreenInner() {
               videoUpgradeCountdownRef.current = null;
             }
           } catch {}
+          // Tell the requester their peer declined. Only show on the side
+          // that was actually waiting (wasWaiting) AND only for 'declined'
+          // (cancel is when the requester themselves cancelled — no popup).
+          if (wasWaiting && data.action === 'declined') {
+            try {
+              const { Alert } = require('react-native');
+              Alert.alert(
+                t('call.videoRequestDeclinedTitle') || 'Recusado',
+                (t('call.videoRequestDeclinedBody') || '{name} recusou o vídeo.').replace('{name}', (contactName || contactEmail || '')),
+              );
+            } catch {}
+          }
         } else if (data.action === 'accepted') {
           // Peer accepted our request. The flag is already set; calling
           // handleToggleVideo now skips the request branch and runs the
@@ -3839,11 +4002,21 @@ function CallScreenInner() {
           )}
 
           {/* Peer muted indicator */}
-          {remoteAudioMuted && peerConnected && !ended && (
+          {remoteAudioMuted && peerConnected && !ended && !peerOnHold && (
             <View style={styles.peerMutedBanner}>
               <IconMicOff size={14} color="#fff" />
               <Text style={styles.peerMutedBannerText}>
                 {(t('call.peerMuted') || '{name} está no mudo').replace('{name}', callerName)}
+              </Text>
+            </View>
+          )}
+
+          {/* Peer hold indicator — takes precedence over muted banner. */}
+          {peerOnHold && peerConnected && !ended && (
+            <View style={styles.peerMutedBanner}>
+              <IconPause size={14} color="#fff" />
+              <Text style={styles.peerMutedBannerText}>
+                {(t('call.peerOnHold') || '{name} em espera').replace('{name}', callerName)}
               </Text>
             </View>
           )}

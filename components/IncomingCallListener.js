@@ -918,21 +918,67 @@ export default function IncomingCallListener() {
       } catch {}
     }
 
-    // Notify caller that call was accepted
+    // Notify caller that call was accepted.
+    // CRITICAL: mailWs._send silently DROPS non-chat messages when the socket
+    // isn't OPEN. If the WS hiccups during accept (background→foreground
+    // transition, reconnect mid-ring, slow network), the caller never gets
+    // call_accepted and sits on "Calling..." forever with ringtone playing.
+    // Fix: verify connection, queue+retry if dead, and resend a couple of
+    // times to survive transient socket drops.
     try {
       const mailWs = require('../services/websocket').default;
       console.log('[IncomingCall] WS isConnected=' + mailWs.isConnected + ' isHealthy=' + mailWs.isHealthy);
-      mailWs._send({
-        type: 'call_debug',
-        call_id: callId,
-        msg: 'handleAccept: sending call_accepted to ' + callerEmail,
-      });
-      mailWs._send({
+      const acceptPayload = {
         type: 'call_accepted',
         conversation_id: conversationId,
         call_id: callId,
         target_email: callerEmail,
-      });
+      };
+
+      const sendAccept = () => {
+        try {
+          if (mailWs.isConnected) {
+            mailWs._send(acceptPayload);
+            return true;
+          }
+        } catch {}
+        return false;
+      };
+
+      // 1st attempt — immediate (best case: WS is already open)
+      const firstOk = sendAccept();
+      if (!firstOk) {
+        console.warn('[IncomingCall] WS not connected on accept, will retry');
+        // Try to force a reconnect so the retry has a live socket
+        try {
+          if (!mailWs.isConnected && typeof mailWs.connect === 'function') {
+            const token = mailWs.token;
+            if (token) {
+              mailWs.destroyed = false;
+              mailWs.reconnectAttempt = 0;
+              mailWs.connect(token);
+            }
+          }
+        } catch {}
+      }
+
+      // Retries to survive transient socket drops / server-side state races.
+      // The server only accepts call_accepted while state===RINGING (~30s
+      // window), so multiple sends within 3s are safe — duplicates are a
+      // no-op once the state flips to ACCEPTED.
+      let retryAttempts = 0;
+      const retryHandle = setInterval(() => {
+        retryAttempts++;
+        const ok = sendAccept();
+        if (ok && retryAttempts >= 2) {
+          // Send twice over the wire then stop; server is idempotent.
+          clearInterval(retryHandle);
+        } else if (retryAttempts >= 8) {
+          // Give up after ~4s — if call_accepted hasn't landed by now,
+          // the caller will hit their own 30s ringing timeout anyway.
+          clearInterval(retryHandle);
+        }
+      }, 500);
     } catch (e) {
       console.log('[IncomingCall] call_accepted send error:', e);
     }
