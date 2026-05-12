@@ -114,7 +114,17 @@ class MailWebSocket {
     // Native: reconnect when app comes back from background
     // iOS kills WebSocket after ~30s in background
     if (Platform.OS !== 'web') {
+      // Android quirk: AppState fires 'inactive' on transient events
+      // (notification shade pull-down, control-center, system dialog).
+      // Treating those as 'background' tore down ping + reconnect timers
+      // every few seconds, surfacing as a permanent "Reconectando..."
+      // loop. The 'active' handler reconnected, then the next 'inactive'
+      // killed it again. Now we IGNORE 'inactive' entirely and only act
+      // on 'active' ↔ 'background' transitions, matching what WhatsApp's
+      // network layer does. iOS doesn't fire spurious 'inactive', so
+      // it's a no-op there.
       this._appStateHandler = AppState.addEventListener('change', (nextState) => {
+        if (nextState === 'inactive') return;
         if (nextState === 'active') {
           this._hidden = false;
           // Check if WS is still alive

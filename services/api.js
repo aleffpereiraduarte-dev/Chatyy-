@@ -2671,9 +2671,13 @@ export async function chatGetNotes() {
   return apiCall('chat_get_notes', {});
 }
 
-// Vanish mode
-export async function chatSetVanishMode(conversationId, vanish) {
-  return apiCall('chat_set_vanish_mode', { conversation_id: conversationId, vanish }, 'POST');
+// Vanish mode — backend (chat.php case 'chat_set_vanish_mode') reads
+// `enabled`, not `vanish`. Previously the toggle silently no-op'd
+// because the param name didn't match. Send both to stay compatible
+// with any older handler that may still read `vanish`.
+export async function chatSetVanishMode(conversationId, enabled) {
+  const on = !!enabled;
+  return apiCall('chat_set_vanish_mode', { conversation_id: conversationId, enabled: on, vanish: on }, 'POST');
 }
 
 // Username system

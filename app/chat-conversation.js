@@ -6600,16 +6600,27 @@ export default function ChatConversationScreen() {
     effectTimeoutRef.current = setTimeout(() => setActiveEffect(null), 2500);
   }, []);
 
-  // Vanish mode toggle handler
+  // Vanish mode toggle handler. Optimistic flip so the menu button
+  // updates instantly, then reconcile with the server's authoritative
+  // value. Without the optimistic flip the user just sees nothing
+  // happen for ~300ms and assumes the toggle is broken.
   const handleToggleVanishMode = useCallback(async () => {
     if (!conversationId) return;
+    const next = !vanishMode;
+    setVanishMode(next);
     try {
-      const r = await api.chatSetVanishMode(conversationId);
+      const r = await api.chatSetVanishMode(conversationId, next);
       if (r?.success) {
-        setVanishMode(!!r.data?.vanish_mode);
+        const serverVal = r.data?.enabled ?? r.data?.vanish_mode;
+        if (typeof serverVal === 'boolean') setVanishMode(serverVal);
+      } else {
+        // Revert on failure so the UI doesn't lie about its state.
+        setVanishMode(!next);
       }
-    } catch {}
-  }, [conversationId]);
+    } catch {
+      setVanishMode(!next);
+    }
+  }, [conversationId, vanishMode]);
 
   // Wallpaper — per-conversation override. Try API first (synced across devices),
   // fall back to local AsyncStorage for offline.
@@ -6738,26 +6749,60 @@ export default function ChatConversationScreen() {
     checkLock();
   }, [chatLockKey]);
 
+  // Lock a chat. WhatsApp parity: try Face ID / fingerprint first
+  // (much faster + matches OS expectations), fall back to password only
+  // when biometric isn't available or the user opts out. The biometric
+  // path stores a marker (`__bio__`) instead of a password — there's
+  // nothing to compare against because the OS handles auth.
   const handleSetChatLock = async (password) => {
-    if (!password || password.length < 4) {
-      safeAlert(t('common.error'), t('chatConv.lockMinLength') || 'Password must be at least 4 characters');
-      return;
+    let useBiometric = false;
+    if (Platform.OS !== 'web' && !password) {
+      try {
+        const LA = require('expo-local-authentication');
+        const [hw, enrolled] = await Promise.all([
+          LA.hasHardwareAsync().catch(() => false),
+          LA.isEnrolledAsync().catch(() => false),
+        ]);
+        if (hw && enrolled) {
+          // Confirm the user can authenticate right now before flipping
+          // the lock — otherwise we could lock them out forever if their
+          // Face ID is broken/disabled.
+          const res = await LA.authenticateAsync({
+            promptMessage: t('chatConv.lockBioPrompt') || 'Confirme para bloquear este chat',
+            cancelLabel: t('common.cancel') || 'Cancelar',
+            disableDeviceFallback: false,
+          });
+          if (!res?.success) return; // user cancelled — abort silently
+          useBiometric = true;
+        }
+      } catch {}
     }
+    if (!useBiometric) {
+      if (!password || password.length < 4) {
+        safeAlert(t('common.error'), t('chatConv.lockMinLength') || 'Password must be at least 4 characters');
+        return;
+      }
+    }
+    const stored = useBiometric ? '__bio__' : password;
     if (Platform.OS === 'web') {
-      localStorage.setItem(chatLockKey, password);
+      localStorage.setItem(chatLockKey, stored);
     } else {
       try {
         const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-        await AsyncStorage.setItem(chatLockKey, password);
+        await AsyncStorage.setItem(chatLockKey, stored);
       } catch {}
     }
-    // Sync lock state with backend
     try { await api.chatLock(conversationId, true); } catch {}
     setChatLocked(true);
-    setChatUnlocked(true); // Already in the chat, keep unlocked
+    setChatUnlocked(true);
     setShowLockSetup(false);
     setLockPassInput('');
-    safeAlert(t('chatConv.lockSet') || 'Lock set', t('chatConv.lockSetDesc') || 'This chat is now password protected');
+    safeAlert(
+      t('chatConv.lockSet') || 'Lock set',
+      useBiometric
+        ? (t('chatConv.lockBioSet') || 'Este chat agora pede Face ID / digital')
+        : (t('chatConv.lockSetDesc') || 'This chat is now password protected')
+    );
   };
 
   const handleRemoveChatLock = async () => {
@@ -20828,6 +20873,13 @@ export default function ChatConversationScreen() {
               borderWidth: isDark ? 1 : 0, borderColor: 'rgba(255,255,255,0.06)',
               opacity: headerMenuOpacity,
               transform: [{ scale: headerMenuScale }],
+              // Cap the menu height so it can't run off the bottom of the
+              // screen. Bug 2026-05-12: on shorter phones the menu had ~14
+              // items but the panel rendered fixed-height — items below
+              // "Ativar modo invisível" sat below the viewport with no
+              // way to reach them. Now the body scrolls and shows every
+              // option, regardless of screen size.
+              maxHeight: Dimensions.get('window').height - insets.top - insets.bottom - 80,
               ...Platform.select({
                 ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 16 },
                 android: { elevation: 14 },
@@ -20835,7 +20887,7 @@ export default function ChatConversationScreen() {
               }),
             }}
           >
-          <Pressable onPress={e => e.stopPropagation()}>
+          <Pressable onPress={e => e.stopPropagation()} style={{ flex: 1 }}>
           {/* Header label — tiny uppercase title for visual context, like
               iOS share sheets. Subtle and small so it doesn't compete. */}
           <Text style={{
@@ -20845,6 +20897,12 @@ export default function ChatConversationScreen() {
           }}>
             {t('chatConv.moreOptions') || 'Mais opções'}
           </Text>
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            bounces={false}
+            contentContainerStyle={{ paddingBottom: 6 }}
+          >
             {(() => {
               const sections = [
                 { divider: false, items: [
@@ -21073,6 +21131,7 @@ export default function ChatConversationScreen() {
               });
               return out;
             })()}
+          </ScrollView>
           </Pressable>
           </Animated.View>
         </Pressable>
