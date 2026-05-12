@@ -3974,24 +3974,23 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                           </Svg>
                         </Pressable>
                       ) : null}
-                      <View style={{
-                        position: 'absolute', bottom: -2, right: -2,
-                        width: 22, height: 22, borderRadius: 11,
-                        backgroundColor: isDark ? '#0d1117' : '#fff',
-                        borderWidth: 2, borderColor: isDark ? '#0d1117' : '#fff',
-                        alignItems: 'center', justifyContent: 'center',
-                      }}>
+                      {item._smartPin && (
                         <View style={{
-                          width: 18, height: 18, borderRadius: 9,
-                          backgroundColor: item._smartPin ? '#F59E0B' : '#7C3AED',
+                          position: 'absolute', bottom: -2, right: -2,
+                          width: 22, height: 22, borderRadius: 11,
+                          backgroundColor: isDark ? '#0d1117' : '#fff',
+                          borderWidth: 2, borderColor: isDark ? '#0d1117' : '#fff',
                           alignItems: 'center', justifyContent: 'center',
                         }}>
-                          {item._smartPin
-                            ? <IconSparkles size={10} color="#fff" />
-                            : <IconPin size={10} color="#fff" />
-                          }
+                          <View style={{
+                            width: 18, height: 18, borderRadius: 9,
+                            backgroundColor: '#F59E0B',
+                            alignItems: 'center', justifyContent: 'center',
+                          }}>
+                            <IconSparkles size={10} color="#fff" />
+                          </View>
                         </View>
-                      </View>
+                      )}
                       {unread > 0 && (
                         <View style={{
                           position: 'absolute', top: -2, right: -2,
