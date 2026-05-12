@@ -10806,19 +10806,41 @@ export default function ChatConversationScreen() {
           // background if the first sample is poor (>100m horizontal
           // accuracy). The optimistic message is sent on the first sample;
           // we patch coords + redo geocode after High lands.
+          //
+          // CRITICAL: getCurrentPositionAsync has NO native timeout on
+          // Android — it can hang forever indoors / on weak GPS. Wrap in
+          // Promise.race so we bail at 12s instead of leaving the user
+          // staring at a loading state (reported 2026-05-12: "Android
+          // localização não envia"). Each attempt gets its own race.
           let firstAcc = 9999;
+          const withTimeout = (p, ms, label) => Promise.race([
+            p,
+            new Promise((_, rej) => setTimeout(() => rej(new Error('loc_timeout_' + label)), ms)),
+          ]);
           try {
-            const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+            const loc = await withTimeout(
+              Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+              12000, 'balanced',
+            );
             latitude = loc.coords.latitude;
             longitude = loc.coords.longitude;
             firstAcc = loc.coords.accuracy || 9999;
           } catch (e) {
-            // Try one more time with High accuracy if Balanced failed (some
-            // devices flake on the first cold-start request).
-            const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-            latitude = loc.coords.latitude;
-            longitude = loc.coords.longitude;
-            firstAcc = loc.coords.accuracy || 9999;
+            // Try one more time with High accuracy if Balanced failed/timed
+            // out (some devices flake on the first cold-start request).
+            try {
+              const loc = await withTimeout(
+                Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }),
+                12000, 'high',
+              );
+              latitude = loc.coords.latitude;
+              longitude = loc.coords.longitude;
+              firstAcc = loc.coords.accuracy || 9999;
+            } catch (e2) {
+              // Both failed/timed out — surface a friendly error instead of
+              // crashing on latitude.toFixed(5) below.
+              throw new Error('location_unavailable');
+            }
           }
           // If the first sample was vague (cell tower triangulation), fire
           // a High-accuracy refresh in the background — the geocode worker
