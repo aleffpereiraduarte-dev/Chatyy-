@@ -14587,18 +14587,18 @@ export default function ChatConversationScreen() {
             ? (durationSec < 60 ? `${durationSec}s` : `${Math.floor(durationSec / 60)}m ${durationSec % 60}s`)
             : '';
 
-          const callTimeStr = callData.started_at
-            ? (_d => isNaN(_d.getTime()) ? '' : _d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))(new Date(callData.started_at))
-            : '';
+          const callTimeStr = callData.started_at ? formatTime(callData.started_at) : '';
+          // Inner card style intentionally has NO own background/border —
+          // earlier it had bg + borderRadius + borderWidth which created a
+          // "card-inside-bubble" look, making the bubble's meta row
+          // (timestamp + checks) visually appear OUTSIDE that inner card
+          // (reported 2026-05-12: "horários fora do balão"). Now the call
+          // content flows inline inside styles.bubble, so the bubble IS the
+          // visual card and the timestamp sits at the bottom right.
           return (
-            <View style={{ minWidth: 220, maxWidth: 280, paddingVertical: 2 }}>
+            <View style={{ minWidth: 220, maxWidth: 280 }}>
               <View style={{
                 flexDirection: 'row', alignItems: 'center', gap: 10,
-                paddingHorizontal: 12, paddingVertical: 10,
-                backgroundColor: isOwn ? (isDark ? 'rgba(124,58,237,0.25)' : 'rgba(124,58,237,0.12)') : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'),
-                borderRadius: 16,
-                borderWidth: 1,
-                borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
               }}>
                 <View style={{
                   width: 38, height: 38, borderRadius: 19,
