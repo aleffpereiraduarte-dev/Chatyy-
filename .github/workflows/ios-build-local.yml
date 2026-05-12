@@ -27,7 +27,11 @@ permissions:
 
 jobs:
   build:
-    runs-on: [self-hosted, macOS, ios-build]
+    # 2026-05-12: Mac 207 self-hosted runner foi desativado. Migrei pra
+    # macos-latest (GitHub cloud) — grátis no plano atual, builds em
+    # 20-30min com Xcode 16+. Setup de keychain + provisioning profile
+    # via secrets passos abaixo.
+    runs-on: macos-latest
     timeout-minutes: 90
     env:
       KEYCHAIN_NAME: chatyy-build.keychain-db
