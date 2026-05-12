@@ -683,6 +683,10 @@ export default function Profile({
   // Per-user contact nickname (WhatsApp-style rename). Loaded from the
   // chat_nickname_list endpoint on mount; overrides display name locally.
   const [nicknameValue, setNicknameValue] = useState('');
+  // Cross-platform nickname edit modal — Alert.prompt only works on iOS,
+  // so Android needs a real modal. State here so the menu can open it.
+  const [nicknameModalOpen, setNicknameModalOpen] = useState(false);
+  const [nicknameDraft, setNicknameDraft] = useState('');
 
   useEffect(() => {
     if (!fetchKey) return;
@@ -1976,6 +1980,13 @@ export default function Profile({
                       'plain-text', nicknameValue || ''
                     );
                   } catch {}
+                } else {
+                  // Android: Alert.prompt doesn't exist. Open our custom
+                  // <NicknameEditModal> sheet (rendered below) so the user
+                  // can edit. Was an empty branch before, which made the
+                  // menu item look broken on Android phones.
+                  setNicknameDraft(nicknameValue || '');
+                  setNicknameModalOpen(true);
                 }
               }}
               style={menuItemStyle(colors)}
@@ -2003,6 +2014,67 @@ export default function Profile({
           <TouchableOpacity onPress={() => setMenuOpen(false)} style={{ alignItems: 'center', paddingVertical: 14, marginTop: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors?.border }}>
             <Text style={{ fontSize: 15, color: colors?.textSecondary }}>{t?.('common.cancel') || 'Cancelar'}</Text>
           </TouchableOpacity>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  ) : null;
+
+  // WhatsApp-style nickname editor — cross-platform Modal so Android
+  // also has a way to rename contacts (iOS-only Alert.prompt was the
+  // gap user reported as "não dá pra trocar nome").
+  const nicknameModalNode = !actions.is_self && identity?.email ? (
+    <Modal visible={nicknameModalOpen} transparent animationType="fade" onRequestClose={() => setNicknameModalOpen(false)}>
+      <Pressable onPress={() => setNicknameModalOpen(false)} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+        <Pressable onPress={(e) => e.stopPropagation?.()} style={{
+          width: '100%', maxWidth: 360,
+          backgroundColor: colors?.surface || '#fff',
+          borderRadius: 18, padding: 20,
+          borderWidth: 1, borderColor: colors?.border || 'rgba(0,0,0,0.08)',
+        }}>
+          <Text style={{ fontSize: 17, fontWeight: '700', color: colors?.text, marginBottom: 6 }}>
+            {t?.('profile.nickname') || 'Apelido'}
+          </Text>
+          <Text style={{ fontSize: 13, color: colors?.textSecondary, marginBottom: 14 }}>
+            {t?.('profile.nicknameHint') || 'Só você vê este nome. Pode trocar quando quiser.'}
+          </Text>
+          <TextInput
+            value={nicknameDraft}
+            onChangeText={setNicknameDraft}
+            placeholder={identity?.name || identity?.email?.split('@')[0] || ''}
+            placeholderTextColor={colors?.textTertiary}
+            autoFocus
+            maxLength={60}
+            style={{
+              fontSize: 16, color: colors?.text,
+              borderWidth: 1, borderColor: colors?.border || 'rgba(0,0,0,0.12)',
+              borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10,
+              backgroundColor: colors?.background,
+            }}
+          />
+          <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
+            <TouchableOpacity
+              onPress={() => setNicknameModalOpen(false)}
+              style={{ flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: 'center', backgroundColor: colors?.background, borderWidth: 1, borderColor: colors?.border || 'rgba(0,0,0,0.08)' }}
+            >
+              <Text style={{ fontSize: 15, color: colors?.text, fontWeight: '500' }}>{t?.('common.cancel') || 'Cancelar'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={async () => {
+                const val = nicknameDraft.trim();
+                setNicknameModalOpen(false);
+                try {
+                  const api = require('../services/api');
+                  const { setNicknameLocal } = require('../services/nicknames');
+                  await api.chatNicknameSet(identity.email, val);
+                  setNicknameLocal(identity.email, val);
+                  setNicknameValue(val);
+                } catch {}
+              }}
+              style={{ flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: 'center', backgroundColor: '#7C3AED' }}
+            >
+              <Text style={{ fontSize: 15, color: '#fff', fontWeight: '600' }}>{t?.('common.save') || 'Salvar'}</Text>
+            </TouchableOpacity>
+          </View>
         </Pressable>
       </Pressable>
     </Modal>
@@ -2081,6 +2153,7 @@ export default function Profile({
         {settingsNode}
         {followersNode}
         {menuNode}
+        {nicknameModalNode}
       </>
     );
   }

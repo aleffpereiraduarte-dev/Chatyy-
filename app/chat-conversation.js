@@ -5689,7 +5689,15 @@ export default function ChatConversationScreen() {
         if (n) return n;
       }
     } catch {}
-    return emailToDisplayName(params.name || '');
+    // Bug 2026-05-12: header was rendering BLANK when params.name wasn't
+    // passed (e.g. opened from a push payload or deep link that only
+    // carried `email`). emailToDisplayName('') → '' → empty title above
+    // "visto há 6m". Always fall back to formatting the peer email so
+    // there's never an empty header — user reported "Carol não aparece".
+    const fromName = emailToDisplayName(params.name || '');
+    if (fromName) return fromName;
+    const peer = params.email || '';
+    return peer ? emailToDisplayName(peer) : '';
   });
 
   // Screen context for One AI moved below `members` declaration to avoid TDZ.
