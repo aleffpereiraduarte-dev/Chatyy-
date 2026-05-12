@@ -122,25 +122,7 @@ export default function MessageBubbleEffect({ effect, messageId, isOwn, children
   ];
 
   if (validEffect === 'invisible-ink') {
-    return (
-      <View>
-        <Animated.View style={{ opacity: revealed ? 1 : 0.05 }}>
-          {children}
-        </Animated.View>
-        {!revealed && (
-          <TouchableWithoutFeedback onPress={() => setRevealed(true)}>
-            <View style={[StyleSheet.absoluteFillObject, {
-              borderRadius: 18,
-              backgroundColor: 'rgba(70,70,80,0.92)',
-              alignItems: 'center', justifyContent: 'center',
-              overflow: 'hidden',
-            }]}>
-              <InvisibleInkParticles />
-            </View>
-          </TouchableWithoutFeedback>
-        )}
-      </View>
-    );
+    return <InvisibleInkBubble messageId={messageId}>{children}</InvisibleInkBubble>;
   }
 
   // Slam: dust shockwave ring expands outward from the bubble's
@@ -208,17 +190,85 @@ export default function MessageBubbleEffect({ effect, messageId, isOwn, children
   );
 }
 
+// iMessage-grade Invisible Ink: dark noise overlay fully hides the bubble
+// until tapped. Reveal fades the mask out + text in over 320ms. After 12s
+// the mask re-applies (matching Apple's auto-re-hide on inactivity) so the
+// "secret" feel persists across re-reads. Tap toggles instantly.
+function InvisibleInkBubble({ messageId, children }) {
+  // We track revealed state internally; PLAYED registers the message-id so
+  // returning to the conversation after scrolling away preserves the
+  // revealed state for the session (otherwise it'd re-mask every render).
+  const revealedKey = `inkRevealed_${messageId || 'tmp'}`;
+  const [revealed, setRevealed] = useState(() => PLAYED.has(revealedKey));
+  const maskOpacity = useRef(new Animated.Value(revealed ? 0 : 1)).current;
+  const textOpacity = useRef(new Animated.Value(revealed ? 1 : 0)).current;
+  const reHideTimer = useRef(null);
+
+  const reveal = () => {
+    if (reHideTimer.current) { clearTimeout(reHideTimer.current); reHideTimer.current = null; }
+    setRevealed(true);
+    PLAYED.add(revealedKey);
+    Animated.parallel([
+      Animated.timing(maskOpacity, { toValue: 0, duration: 320, useNativeDriver: true }),
+      Animated.timing(textOpacity, { toValue: 1, duration: 320, useNativeDriver: true }),
+    ]).start();
+    // Auto-re-hide after 12s (iMessage parity). User can tap again to reveal.
+    reHideTimer.current = setTimeout(() => {
+      setRevealed(false);
+      PLAYED.delete(revealedKey);
+      Animated.parallel([
+        Animated.timing(maskOpacity, { toValue: 1, duration: 420, useNativeDriver: true }),
+        Animated.timing(textOpacity, { toValue: 0, duration: 280, useNativeDriver: true }),
+      ]).start();
+    }, 12000);
+  };
+
+  useEffect(() => () => {
+    if (reHideTimer.current) clearTimeout(reHideTimer.current);
+  }, []);
+
+  return (
+    <TouchableWithoutFeedback onPress={revealed ? undefined : reveal}>
+      <View style={{ position: 'relative' }}>
+        {/* Layer 1: the message bubble, opacity-controlled. We render it
+            even when masked so the bubble takes its real size — particles
+            then fill that real size via absoluteFill on layer 2. */}
+        <Animated.View style={{ opacity: textOpacity }}>
+          {children}
+        </Animated.View>
+        {/* Layer 2: full-opacity dark mask + animated particles. Fades to 0
+            on reveal. pointerEvents='none' lets the outer Touchable handle
+            taps from anywhere in the bubble area. */}
+        <Animated.View
+          pointerEvents="none"
+          style={[StyleSheet.absoluteFillObject, {
+            opacity: maskOpacity,
+            borderRadius: 18,
+            backgroundColor: '#1a1a2e',
+            overflow: 'hidden',
+          }]}
+        >
+          <InvisibleInkParticles />
+        </Animated.View>
+      </View>
+    </TouchableWithoutFeedback>
+  );
+}
+
 function InvisibleInkParticles() {
-  // Three layered passes of particles with different sizes, opacity
-  // ranges, and animation periods so the surface never settles into a
-  // visible pattern. iMessage uses GL noise; we approximate with 36
-  // independent fades — cheaper, indistinguishable in motion.
+  // 90 independent particles with brownian-style fade cycles approximate
+  // iMessage's GL noise without the GPU cost. Sizes 2–6px on a high-DPI
+  // screen actually read as visible glitter; the previous 1–4 was too
+  // subtle and made the mask look flat. Bias toward white with a 30%
+  // chance of pale-violet for the iMessage "fizz" sparkle.
   const passes = useRef(
-    Array.from({ length: 36 }).map(() => ({
+    Array.from({ length: 90 }).map(() => ({
       v: new Animated.Value(Math.random()),
-      size: 1 + Math.random() * 3,        // 1–4 px
-      duration: 400 + Math.random() * 800,
-      color: Math.random() > 0.7 ? 'rgba(220,220,255,1)' : 'rgba(255,255,255,1)',
+      size: 2 + Math.random() * 4,        // 2–6 px
+      duration: 350 + Math.random() * 850,
+      color: Math.random() > 0.7
+        ? 'rgba(210,210,255,1)'  // pale violet sparkle (30%)
+        : 'rgba(255,255,255,1)', // bright white (70%)
       left: Math.random() * 100,
       top: Math.random() * 100,
     }))
