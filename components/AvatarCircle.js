@@ -74,13 +74,31 @@ function getAvatarVersion(email) {
   return _avatarVersions.get(String(email).toLowerCase()) || 0;
 }
 
-function getInitials(name) {
-  if (!name) return '';
-  const trimmed = name.trim();
+// Bug 2026-05-12: initials flipped after restart (JA→AU, ML→OF) because
+// different screens pass `name` differently (full display name vs handle
+// vs email local-part). With no avatar image, the rendered text changed
+// every cold-start until the API hydrated the canonical name. Now we
+// pick a STABLE source by always using the email when available — the
+// part before `@` split on space/dot/dash gives a deterministic result
+// regardless of which screen's display-name happened to populate first.
+function getInitials(name, email) {
+  // Prefer email's local-part when available — stable across cold starts.
+  // Falls back to `name` only when there's no email (group convs without
+  // an email backing).
+  const src = (typeof email === 'string' && email.includes('@'))
+    ? email.split('@')[0]
+    : (name || '');
+  if (!src) return '';
+  const trimmed = String(src).trim();
   if (!trimmed) return '';
-  const parts = trimmed.split(/[\s@]+/).filter(Boolean);
+  // Split on whitespace + dots/dashes/underscores so "joao.almeida",
+  // "joao-almeida", and "joao_almeida" all give "JA".
+  const parts = trimmed.split(/[\s._\-]+/).filter(Boolean);
   if (parts.length >= 2) return ((parts[0][0] || '') + (parts[1][0] || '')).toUpperCase();
-  return parts[0]?.[0]?.toUpperCase() || '';
+  // Single token — take first 2 letters so "ces" → "CE" (instead of just "C",
+  // which is too generic and clashes with every other C-name).
+  const first = parts[0] || '';
+  return (first.slice(0, 2) || '').toUpperCase();
 }
 
 function hashColor(name) {
@@ -166,8 +184,12 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
   const showImage = avatarUrl && !imgError;
 
   const displayName = name || email || '';
-  const initials = getInitials(displayName);
-  const bgColor = hashColor(displayName);
+  // Use email-first initials so the letters stay stable across cold
+  // starts (see getInitials docstring). bgColor still hashes on the
+  // display name so two different emails with the same initials get
+  // different background colors — keeps the visual hierarchy intact.
+  const initials = getInitials(name, email);
+  const bgColor = hashColor((email || displayName).toLowerCase());
   const accessLabel = displayName ? `Avatar of ${displayName}` : 'User avatar';
 
   const ImageComponent = ExpoImage || RNImage;

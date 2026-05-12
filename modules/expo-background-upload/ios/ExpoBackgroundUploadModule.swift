@@ -30,22 +30,40 @@ public class ExpoBackgroundUploadModule: Module {
     private var libraryObserver: PhotoLibraryObserver?
     private var lastObserverFireAt: TimeInterval = 0
 
-    /// Schedule a local "Backup completo!" notification. Called from the
-    /// `defer` of startNativeBackup whenever uploads finished and the app
-    /// is in the background (so the user knows even without opening the app).
-    private func notifyBackupComplete(count: Int) {
+    /// Schedule a local notification when a backup batch finishes while
+    /// the app is in background. Bug 2026-05-12: the title used to be
+    /// "Backup completo", which lied to users whose library still had
+    /// thousands of unbacked photos — the batch finished, not the whole
+    /// library. Apple Photos and Google Photos use much softer wording
+    /// for per-batch summaries. Now we differentiate:
+    ///   • truly done (remaining == 0)  → "Backup concluído"
+    ///   • still more to do (remaining > 0) → "X fotos salvas" + "ainda
+    ///     faltam Y" subtitle, no false sense of completion.
+    /// Also collapse repeats via the same identifier so the system
+    /// replaces the previous batch summary instead of stacking them.
+    private func notifyBackupComplete(count: Int, remaining: Int = 0) {
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
             guard granted else { return }
             let content = UNMutableNotificationContent()
-            content.title = "Backup completo"
-            content.body = "\(count) \(count == 1 ? "foto enviada" : "fotos enviadas") com sucesso."
+            if remaining <= 0 {
+                content.title = "Backup concluído"
+                content.body = "\(count) \(count == 1 ? "foto salva" : "fotos salvas") com sucesso."
+            } else {
+                content.title = "\(count) \(count == 1 ? "foto salva" : "fotos salvas")"
+                content.subtitle = "Ainda faltam \(remaining)"
+                content.body = "O backup continua quando o iPhone estiver no Wi-Fi e carregando."
+            }
             content.sound = .default
+            content.threadIdentifier = "chatyy.backup"
             let req = UNNotificationRequest(
                 identifier: "chatyy.backup.complete",
                 content: content,
-                trigger: nil  // deliver immediately
+                trigger: nil
             )
+            // Remove the previous batch notification before adding a new
+            // one so we don't grow a stack of duplicates over time.
+            center.removeDeliveredNotifications(withIdentifiers: ["chatyy.backup.complete"])
             center.add(req, withCompletionHandler: nil)
         }
     }
@@ -327,11 +345,15 @@ public class ExpoBackgroundUploadModule: Module {
                     self.bgTaskId = .invalid
                 }
                 // Phase 2 native: post a local notification on completion so
-                // the user sees "Backup completo" without opening the app.
+                // the user sees the batch result without opening the app.
                 // Only fires if we actually uploaded something AND the app
                 // is running in background (UIApplication state != active).
+                // We pass `remaining = total - uploaded` so the message
+                // accurately reflects whether the library is truly done
+                // or just this batch finished (see notifyBackupComplete).
                 if uploaded > 0 && UIApplication.shared.applicationState != .active {
-                    self.notifyBackupComplete(count: uploaded)
+                    let remaining = max(0, total - uploaded)
+                    self.notifyBackupComplete(count: uploaded, remaining: remaining)
                 }
             }
 
