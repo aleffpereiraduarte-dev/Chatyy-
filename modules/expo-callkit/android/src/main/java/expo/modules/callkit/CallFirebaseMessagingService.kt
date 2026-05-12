@@ -43,6 +43,16 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
 
             Log.d(TAG, "Incoming call from $callerName ($callerEmail) callId=$callId video=$hasVideo")
 
+            // If the app is foreground, JS Modal (IncomingCallListener) handles
+            // the call UI via the WS `call_invite` event. Showing the native
+            // IncomingCallActivity on top results in BOTH screens stacking and
+            // confusing the user (incidente 2026-05-12). Skip the native ring
+            // service entirely and let JS drive.
+            if (ExpoCallKitModule.isAppForeground) {
+                Log.d(TAG, "App is foreground — skipping native ring service, JS will handle")
+                return
+            }
+
             try {
                 val serviceIntent = Intent(applicationContext, CallRingingService::class.java).apply {
                     putExtra("call_id", callId)

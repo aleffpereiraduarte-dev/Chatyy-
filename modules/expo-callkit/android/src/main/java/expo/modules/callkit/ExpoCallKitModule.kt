@@ -20,6 +20,12 @@ class ExpoCallKitModule : Module() {
     // Static reference so IncomingCallActivity and CallActionReceiver can send events (thread-safe)
     private val instance = AtomicReference<ExpoCallKitModule?>(null)
 
+    // Foreground state — read by CallFirebaseMessagingService to suppress native UI
+    // when JS is already showing the in-app incoming call modal. Without this, both
+    // the native IncomingCallActivity AND the JS Modal fire simultaneously.
+    @Volatile
+    var isAppForeground: Boolean = false
+
     fun emitCallAnswered(callId: String) {
       val inst = instance.get()
       if (inst != null) {
@@ -70,6 +76,13 @@ class ExpoCallKitModule : Module() {
     OnDestroy {
       instance.compareAndSet(this@ExpoCallKitModule, null)
     }
+
+    // Track foreground/background so the FCM service can decide whether to show
+    // the native incoming call UI. When app is foreground we let the JS Modal
+    // (IncomingCallListener) handle the whole flow — showing native + JS at the
+    // same time confuses the user (incidente 2026-05-12).
+    OnActivityEntersForeground { isAppForeground = true }
+    OnActivityEntersBackground { isAppForeground = false }
 
     AsyncFunction("setup") {
       // Create the notification channel for calls
