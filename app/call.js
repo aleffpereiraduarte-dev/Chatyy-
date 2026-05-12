@@ -1668,11 +1668,29 @@ function CallScreenInner() {
           } catch (e) {
             console.warn('[Call] RTCAudioSession error:', e?.message);
           }
-          // Force earpiece for audio calls, speaker for video calls (WhatsApp behavior)
+          // Force earpiece for audio calls, speaker for video calls (WhatsApp behavior).
+          // 2026-05-12: setForceSpeakerphoneOn(false) was leaving Android in a
+          // limbo state where neither earpiece nor speaker routed the WebRTC
+          // RX audio (video calls worked because speaker=true bypasses it).
+          // chooseAudioRoute is explicit + WhatsApp-grade.
           try {
             const InCallManager = require('react-native-incall-manager').default;
             const shouldSpeaker = isVideoParam === '1' || isVideoParam === 'true';
-            InCallManager.setForceSpeakerphoneOn(shouldSpeaker);
+            if (shouldSpeaker) {
+              InCallManager.setForceSpeakerphoneOn(true);
+              if (typeof InCallManager.chooseAudioRoute === 'function') {
+                try { InCallManager.chooseAudioRoute('SPEAKER_PHONE'); } catch {}
+              }
+            } else {
+              // Audio call → earpiece. Be explicit: force speakerphone OFF
+              // AND request EARPIECE route. Some Android devices need both.
+              InCallManager.setForceSpeakerphoneOn(false);
+              if (typeof InCallManager.chooseAudioRoute === 'function') {
+                try { InCallManager.chooseAudioRoute('EARPIECE'); } catch (e) {
+                  console.warn('[Call] chooseAudioRoute EARPIECE failed:', e?.message);
+                }
+              }
+            }
             console.log('[Call] Initial audio route:', shouldSpeaker ? 'SPEAKER' : 'EARPIECE');
           } catch (e) {
             console.warn('[Call] InCallManager initial route error:', e?.message);
@@ -5170,7 +5188,11 @@ const styles = StyleSheet.create({
   },
   videoRequestSheet: {
     position: 'absolute',
-    bottom: 180,
+    // Lifted from 180 → 240 so the sheet doesn't overlap the bottom call
+    // controls (Mudo/Video/Hangup/Alto-falante). On phones with safe area
+    // bottom inset (iPhone 14/15/16) the previous 180 was clipping the
+    // controls behind the sheet — reported 2026-05-12 print.
+    bottom: 240,
     left: 24,
     right: 24,
     backgroundColor: 'rgba(20, 20, 26, 0.97)',
