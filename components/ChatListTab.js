@@ -4260,30 +4260,48 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           onPress={() => { try { router.push('/one'); } catch {} }}
           activeOpacity={0.7}
           style={{
-            flexDirection: 'row', alignItems: 'center', gap: 12,
-            paddingHorizontal: 16, paddingVertical: 12,
+            flexDirection: 'row', alignItems: 'center', gap: 14,
+            paddingHorizontal: 16, paddingVertical: 14,
             borderBottomWidth: StyleSheet.hairlineWidth,
             borderBottomColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
           }}
         >
-          <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center',
-            ...(isWeb ? { boxShadow: '0 2px 12px rgba(124,58,237,0.4)' } : {}) }}>
-            <Svg width={24} height={24} viewBox="0 0 24 24" fill="none">
+          <View style={{
+            width: 52, height: 52, borderRadius: 26,
+            backgroundColor: '#7C3AED',
+            alignItems: 'center', justifyContent: 'center',
+            ...(isWeb ? { boxShadow: '0 4px 16px rgba(124,58,237,0.5)' } : {}),
+          }}>
+            <View style={{
+              position: 'absolute', top: 4, left: 6,
+              width: 18, height: 12, borderRadius: 10,
+              backgroundColor: 'rgba(255,255,255,0.22)',
+              transform: [{ rotate: '-25deg' }],
+            }} />
+            <Svg width={26} height={26} viewBox="0 0 24 24" fill="none">
               <Path d="M12 3l1.8 4.6L18 9l-4.2 1.4L12 15l-1.8-4.6L6 9l4.2-1.4z" fill="#fff" />
               <Path d="M19 15l.9 2.3L22 18l-2.1.7L19 21l-.9-2.3L16 18l2.1-.7z" fill="#fff" />
             </Svg>
           </View>
           <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>
-              {t?.('one.title') || 'Chatyy One'}
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>
+                {t?.('one.title') || 'Chatyy One'}
+              </Text>
+              <View style={{
+                backgroundColor: isDark ? 'rgba(124,58,237,0.22)' : 'rgba(124,58,237,0.14)',
+                borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1,
+              }}>
+                <Text style={{ color: '#7C3AED', fontSize: 9, fontWeight: '800', letterSpacing: 0.6 }}>AI</Text>
+              </View>
+            </View>
             <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 2 }} numberOfLines={1}>
               {t?.('one.subtitle') || 'Pergunte qualquer coisa • IA pessoal'}
             </Text>
           </View>
-          <View style={{ backgroundColor: '#7C3AED', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 }}>
-            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700', letterSpacing: 0.5 }}>AI</Text>
-          </View>
+          <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+            <Path d="M9 6l6 6-6 6" stroke={colors.textSecondary} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          </Svg>
         </TouchableOpacity>
       )}
 
