@@ -1025,6 +1025,27 @@ function CallScreenInner() {
         sdp: data.sdp,
       }));
 
+      // Same pre-answer audit as the caller side — verify tracks are
+      // actually on the PC (and force-enable) BEFORE building the answer.
+      try {
+        const localStream = localStreamRef.current;
+        if (localStream && pc.getSenders) {
+          const senders = pc.getSenders();
+          const localTracks = localStream.getTracks();
+          const senderTracks = senders.map(s => s.track).filter(Boolean);
+          for (const t of localTracks) {
+            if (!senderTracks.includes(t)) {
+              try { pc.addTrack(t, localStream); console.log('[Call] pre-answer: re-attached ' + t.kind); } catch {}
+            }
+            try {
+              if (t.kind === 'audio' && !audioMuted) t.enabled = true;
+              if (t.kind === 'video' && videoEnabledRef.current) t.enabled = true;
+            } catch {}
+          }
+          console.log('[Call] pre-answer audit: senders=' + pc.getSenders().length + ' localTracks=' + localTracks.length);
+        }
+      } catch {}
+
       // Force the answer to advertise both audio + video reception. Without
       // this, browsers omit the video m-line in the answer when no local
       // video track was added yet, which permanently freezes incoming video
@@ -2185,6 +2206,44 @@ function CallScreenInner() {
                 setReconnecting(false);
                 setConnectionFailed(false);
               }
+              // ROOT-CAUSE GUARD (2026-05-12): user reported "conecta mas não
+              // envia áudio nem vídeo" — peers see ICE 'connected' but no
+              // RTP flowing. Verify all local senders have a non-null,
+              // enabled track; force-enable + verify transceiver direction
+              // is sendrecv. If any sender is missing its track (race during
+              // setupCall), re-attach from localStreamRef.
+              try {
+                const localStream = localStreamRef.current;
+                if (localStream && pcRef.current) {
+                  const senders = pcRef.current.getSenders ? pcRef.current.getSenders() : [];
+                  const localTracks = localStream.getTracks();
+                  // Re-enable any track muted in transit (track.enabled = false)
+                  for (const t of localTracks) {
+                    if (t.kind === 'audio' && !audioMuted) t.enabled = true;
+                    if (t.kind === 'video' && videoEnabledRef.current) t.enabled = true;
+                  }
+                  // Re-attach any track that lost its sender binding
+                  for (const t of localTracks) {
+                    const bound = senders.find(s => s.track === t);
+                    if (!bound) {
+                      try { pcRef.current.addTrack(t, localStream); } catch {}
+                    }
+                  }
+                  // Force transceivers to sendrecv (defaults can degrade to
+                  // sendonly/recvonly mid-negotiation on RN WebRTC)
+                  try {
+                    const transceivers = pcRef.current.getTransceivers ? pcRef.current.getTransceivers() : [];
+                    for (const tr of transceivers) {
+                      if (tr.direction !== 'sendrecv' && tr.direction !== 'stopped') {
+                        try { tr.direction = 'sendrecv'; } catch {}
+                      }
+                    }
+                  } catch {}
+                  console.log('[Call] post-connect track audit: senders=' + senders.length + ' localTracks=' + localTracks.length);
+                }
+              } catch (auditErr) {
+                console.warn('[Call] post-connect audit err:', auditErr?.message);
+              }
               // WhatsApp-grade: when ICE finally lands, re-affirm Android audio
               // routing one more time. Reports of "voz só vem alguns segundos
               // depois" trace back to AudioManager.setMode flipping AFTER the
@@ -2300,6 +2359,42 @@ function CallScreenInner() {
           if (endedRef.current || !mounted || !pcRef.current) {
             console.log('[Call] caller setup aborted after accept wait — ended=' + endedRef.current);
             return;
+          }
+
+          // CRITICAL track audit BEFORE createOffer. User reported asymmetric
+          // bug: Android→iOS goes mute, iOS→Android works. Strong signal that
+          // Android caller addTrack races getUserMedia — tracks aren't on the
+          // PC when the offer is built, so the SDP has no audio m-line and
+          // iOS never hears anything. Defensive re-attach + verify here.
+          try {
+            const localStream = localStreamRef.current;
+            if (localStream && pc.getSenders) {
+              const senders = pc.getSenders();
+              const localTracks = localStream.getTracks();
+              const senderTracks = senders.map(s => s.track).filter(Boolean);
+              const audioOnPc = senderTracks.some(t => t.kind === 'audio');
+              const videoOnPc = senderTracks.some(t => t.kind === 'video');
+              console.log('[Call] pre-offer audit: senders=' + senders.length + ' audio=' + audioOnPc + ' video=' + videoOnPc + ' localTracks=' + localTracks.length);
+              // Re-attach any missing track
+              for (const t of localTracks) {
+                if (!senderTracks.includes(t)) {
+                  try {
+                    pc.addTrack(t, localStream);
+                    console.log('[Call] pre-offer: re-attached missing ' + t.kind + ' track');
+                  } catch (e) { console.warn('[Call] pre-offer addTrack err:', e?.message); }
+                }
+                // Force track.enabled=true (the worst-of-both case is a
+                // muted track in the SDP — peer's WebRTC engine then drops
+                // RTP at the decoder because the m-line says active but
+                // packets show silence/black frames).
+                try {
+                  if (t.kind === 'audio' && !audioMuted) t.enabled = true;
+                  if (t.kind === 'video' && video) t.enabled = true;
+                } catch {}
+              }
+            }
+          } catch (auditErr) {
+            console.warn('[Call] pre-offer audit failed:', auditErr?.message);
           }
 
           console.log('[Call] Creating offer...');
