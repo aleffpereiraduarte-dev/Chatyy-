@@ -3994,9 +3994,13 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
       (only.type || '').startsWith('video') ||
       /\.(mp4|mov|webm|avi|mkv|m4v|3gp)$/i.test(only.name || only.uri || '')
     );
-    const shouldAutoOpen = !!only && !onlyIsVideo;
-    editorAutoOpenedRef.current = shouldAutoOpen;
-    setCropOpen(shouldAutoOpen);
+    // 2026-05-12: removed auto-open of PhotoEditor on iOS single-image
+    // send. User reported the editor screen was buggy and not actually
+    // working — they wanted it gone. The editor is still reachable via
+    // the crop toolbar button in the preview, so anyone who DOES want to
+    // edit can still tap into it. Default flow: preview → caption → send.
+    editorAutoOpenedRef.current = false;
+    setCropOpen(false);
   }, [visible, filesProp]);
 
   if (!visible || files.length === 0) return null;
@@ -8434,6 +8438,91 @@ export default function ChatConversationScreen() {
       const unsubMsg = mailWs.on('chat_message', onIncomingMessage);
       const unsubMsgSummary = mailWs.on('chat_summary', onIncomingMessage);
       wsUnsubs.push(unsubMsg, unsubMsgSummary);
+
+      // Bug 2026-05-12: edit/delete/reaction/poll_vote were only applied
+      // via the TCP signal-server path. Devices that hit the Node WS hub
+      // instead (web + the sender's other devices) never saw their own
+      // edit or poll vote in the open thread until they reopened it.
+      // chat.php broadcastChatMessage publishes those events on the
+      // `chat_{convId}` channel with the enriched chat_messages row in
+      // `data`, so we can apply directly. Event names match what
+      // websocket.js emits (msg.type from the WS server frame): 'edit',
+      // 'delete', 'reaction', 'poll_vote'. Idempotency: each handler
+      // keys by message id and replaces fields — a duplicate via TCP+WS
+      // just no-ops.
+      const _extractWsMsg = (payload) => {
+        if (!payload) return null;
+        if (payload.id && payload.conversation_id) return payload;
+        if (payload.message && payload.message.id) return payload.message;
+        if (payload.data && payload.data.id) return payload.data;
+        return null;
+      };
+
+      const onWsEdit = (payload) => {
+        if (!mountedRef.current) return;
+        const m = _extractWsMsg(payload);
+        if (!m || String(m.conversation_id) !== String(conversationId)) return;
+        setMessages(prev => prev.map(row => {
+          if (row.id === m.id) {
+            return { ...row, content: m.content, edited_at: m.edited_at || new Date().toISOString(), edited: true };
+          }
+          if (row.reply_to && Number(row.reply_to.id) === Number(m.id)) {
+            return { ...row, reply_to: { ...row.reply_to, content: String(m.content || '').slice(0, 200) } };
+          }
+          return row;
+        }));
+      };
+      wsUnsubs.push(mailWs.on('edit', onWsEdit));
+
+      const onWsPollVote = (payload) => {
+        if (!mountedRef.current) return;
+        const m = _extractWsMsg(payload);
+        if (!m || String(m.conversation_id) !== String(conversationId)) return;
+        // broadcastChatMessage enriches msg.poll with fresh vote_counts
+        // and total_votes on poll_vote events — merge straight in.
+        // my_votes is per-device (server doesn't know who's looking),
+        // so preserve the existing value unless the payload supplied one.
+        setMessages(prev => prev.map(row => {
+          if (row.id !== m.id) return row;
+          const fresh = m.poll || {};
+          const prevPoll = row.poll || {};
+          return {
+            ...row,
+            poll: {
+              ...prevPoll,
+              ...fresh,
+              my_votes: (fresh.my_votes && fresh.my_votes.length) ? fresh.my_votes : prevPoll.my_votes,
+            },
+          };
+        }));
+      };
+      wsUnsubs.push(mailWs.on('poll_vote', onWsPollVote));
+
+      const onWsReaction = (payload) => {
+        if (!mountedRef.current) return;
+        const m = _extractWsMsg(payload);
+        if (!m || String(m.conversation_id) !== String(conversationId)) return;
+        if (!m.reactions) return;
+        setMessages(prev => prev.map(row => row.id === m.id ? { ...row, reactions: m.reactions } : row));
+      };
+      wsUnsubs.push(mailWs.on('reaction', onWsReaction));
+
+      const onWsDelete = (payload) => {
+        if (!mountedRef.current) return;
+        const m = _extractWsMsg(payload);
+        if (!m || String(m.conversation_id) !== String(conversationId)) return;
+        setMessages(prev => prev.map(row => {
+          if (row.id !== m.id) return row;
+          return {
+            ...row,
+            deleted_at: m.deleted_at || new Date().toISOString(),
+            content: '',
+            file_url: '',
+            deleted_by: m.deleted_by || '',
+          };
+        }));
+      };
+      wsUnsubs.push(mailWs.on('delete', onWsDelete));
 
       // WS queue overflow — fired by the WS client when the offline message
       // queue hits its 100-entry cap. Without listener, the message was

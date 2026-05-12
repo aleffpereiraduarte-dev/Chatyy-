@@ -212,9 +212,26 @@ async function getStoredToken() {
       return typeof localStorage !== 'undefined' ? localStorage.getItem('mail_token') : null;
     }
     const SecureStore = require('expo-secure-store');
-    return await SecureStore.getItemAsync('mail_token');
+    const token = await SecureStore.getItemAsync('mail_token');
+    // One-time migration: existing tokens were stored with the default
+    // accessibility (WHEN_UNLOCKED) so they can't be read on a locked
+    // device — which is exactly when CallKit needs the token to wake
+    // the WS for an incoming call. Re-write with
+    // AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY so the next locked-screen
+    // answer can actually hydrate auth. Idempotent: the write is cheap
+    // and the keychain ACL just updates in place.
+    if (token && Platform.OS === 'ios' && !_tokenAccessMigrated) {
+      _tokenAccessMigrated = true;
+      try {
+        await SecureStore.setItemAsync('mail_token', token, {
+          keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY,
+        });
+      } catch {}
+    }
+    return token;
   } catch { return null; }
 }
+let _tokenAccessMigrated = false;
 
 async function storeToken(token) {
   try {
@@ -226,8 +243,22 @@ async function storeToken(token) {
       return;
     }
     const SecureStore = require('expo-secure-store');
-    if (token) await SecureStore.setItemAsync('mail_token', token);
-    else await SecureStore.deleteItemAsync('mail_token');
+    if (token) {
+      // iOS: AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY lets the keychain entry
+      // be read while the screen is locked (provided the device was
+      // unlocked at least once since boot). Without this the default
+      // accessibility is WHEN_UNLOCKED and SecureStore.getItemAsync
+      // returns null on a locked phone — which is exactly the state
+      // we're in when CallKit wakes the app from a VoIP push and the
+      // user accepts the call from the lock screen. Result: no token,
+      // no WS reconnect, the call screen lands without an SDP offer
+      // and the user sees the "answer failed" black screen.
+      await SecureStore.setItemAsync('mail_token', token, {
+        keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY,
+      });
+    } else {
+      await SecureStore.deleteItemAsync('mail_token');
+    }
   } catch {}
   // Mirror the new token into UserDefaults so the iOS BGTaskScheduler photo
   // backup handler — which runs without JS — has a fresh token waiting.
