@@ -10770,8 +10770,13 @@ export default function ChatConversationScreen() {
     // Anti-duplicate guard: ignore if already sending
     if (sharingLocationRef.current) return;
     sharingLocationRef.current = true;
+    // IMPORTANT: do NOT call setUploading(true) here. `uploading` gates the
+    // chat composer's send button (disabled={uploading}, line ~18814), so
+    // a stuck location fetch would block ALL text sends — reported by user
+    // 2026-05-12: "Android para de deixar mandar msg toda vez que arruma
+    // localização". sharingLocationRef alone is enough to prevent double-
+    // tap on the location action.
     try {
-      setUploading(true);
       let latitude, longitude;
 
       if (Platform.OS === 'web') {
@@ -10960,13 +10965,14 @@ export default function ChatConversationScreen() {
       liveLocTimeoutRef.current = null;
     }
     try {
-      setUploading(true);
+      // Same reasoning as handleShareLocation — don't gate the chat composer
+      // (`uploading`) on a position fetch that can hang. liveLocIntervalRef
+      // is the natural per-session guard.
       let latitude, longitude;
 
       if (Platform.OS === 'web') {
         if (!navigator?.geolocation) {
           safeAlert('Error', t('chatConv.locationError') || 'Geolocation not available');
-          setUploading(false);
           return;
         }
         const pos = await new Promise((resolve, reject) => {
@@ -10979,7 +10985,6 @@ export default function ChatConversationScreen() {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') {
           safeAlert(t('chatConv.permission') || 'Permission', t('chatConv.locationPermission') || 'Allow location access in settings.');
-          setUploading(false);
           return;
         }
         const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
