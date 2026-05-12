@@ -273,10 +273,12 @@ export async function registerForPushNotifications() {
     _diagPush('load_modules', loaded ? 'ok' : 'failed');
     if (!loaded) return null;
 
+    // 2026-05-12: Removed hard return on !Device.isDevice. Keeping the log via
+    // diag so we can SEE when isDevice is false (potential root cause of zero
+    // Android tokens system-wide). Letting registration proceed anyway —
+    // worst case Expo Push fails further down and we record THAT in the diag.
     if (!Device.isDevice) {
-      _diagPush('not_device', 'isDevice=false');
-      console.warn('[Push] Must use physical device');
-      return null;
+      _diagPush('not_device_continuing', 'isDevice=' + String(Device.isDevice) + ' brand=' + String(Device.brand || '?') + ' modelName=' + String(Device.modelName || '?'));
     }
 
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
