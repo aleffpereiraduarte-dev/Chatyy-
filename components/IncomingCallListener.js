@@ -851,45 +851,63 @@ export default function IncomingCallListener() {
             // and the user gets a "missed call" even though they tapped
             // Atender. Killing + reconnecting forces auth + re-delivery of
             // the pending offer.
-            const mailWs = require('../services/websocket').default;
-            try {
-              const wsToken = mailWs.token;
-              if (typeof mailWs._cleanup === 'function') mailWs._cleanup();
-              mailWs.destroyed = false;
-              mailWs.reconnectAttempt = 0;
-              if (wsToken && typeof mailWs.connect === 'function') mailWs.connect(wsToken);
-            } catch {}
-            let navigated = false;
-            let acceptSent = false;
-            let attempts = 0;
+            //
+            // Token retry: cold-start from native answer wakes JS before
+            // AsyncStorage / SecureStore are hydrated. mailWs.token can be
+            // null for the first 1-3s. Without retry, the WS never connects
+            // and the call hangs at "Conectando...".
+            (async () => {
+              const mailWs = require('../services/websocket').default;
+              let wsToken = null;
+              const _delays = [0, 250, 400, 600, 900, 1200, 1500, 1800, 2100, 2500];
+              for (let attempt = 0; attempt < _delays.length && !wsToken; attempt++) {
+                if (_delays[attempt] > 0) await new Promise(r => setTimeout(r, _delays[attempt]));
+                try { wsToken = mailWs.token; } catch {}
+                if (!wsToken) {
+                  try {
+                    const api = require('../services/api');
+                    wsToken = api.getToken?.() || api.getAuthToken?.() || null;
+                  } catch {}
+                }
+              }
+              try {
+                if (typeof mailWs._cleanup === 'function') mailWs._cleanup();
+                mailWs.destroyed = false;
+                mailWs.reconnectAttempt = 0;
+                if (wsToken && typeof mailWs.connect === 'function') mailWs.connect(wsToken);
+              } catch {}
+              let navigated = false;
+              let acceptSent = false;
+              let attempts = 0;
 
-            const poll = () => {
-              attempts++;
-              if (navigated) return;
-              if (mailWs.isConnected && !acceptSent) {
-                console.log('[IncomingCall] Android pending: WS connected, sending call_accepted to ' + callerEmail);
-                mailWs._send({
-                  type: 'call_accepted',
-                  call_id: callId,
-                  conversation_id: conversationId,
-                  target_email: callerEmail,
-                });
-                acceptSent = true;
-              }
-              if (acceptSent && !navigated) {
-                navigated = true;
-                router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0`);
-                return;
-              }
-              if (attempts < 20) {
-                setTimeout(poll, 500);
-              } else if (!navigated) {
-                navigated = true;
-                console.log('[IncomingCall] Android pending: timeout, navigating anyway');
-                router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0`);
-              }
-            };
-            poll();
+              const poll = () => {
+                attempts++;
+                if (navigated) return;
+                if (mailWs.isConnected && !acceptSent) {
+                  console.log('[IncomingCall] Android pending: WS connected, sending call_accepted to ' + callerEmail);
+                  mailWs._send({
+                    type: 'call_accepted',
+                    call_id: callId,
+                    conversation_id: conversationId,
+                    target_email: callerEmail,
+                  });
+                  acceptSent = true;
+                }
+                if (acceptSent && !navigated) {
+                  navigated = true;
+                  router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&autoAccepted=1`);
+                  return;
+                }
+                if (attempts < 30) {
+                  setTimeout(poll, 500);
+                } else if (!navigated) {
+                  navigated = true;
+                  console.log('[IncomingCall] Android pending: timeout, navigating anyway');
+                  router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&autoAccepted=1`);
+                }
+              };
+              poll();
+            })();
             return true;
           }
         } catch (e) {
