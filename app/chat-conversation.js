@@ -14242,7 +14242,11 @@ export default function ChatConversationScreen() {
 
           // Card dimensions (WhatsApp-ish). Map height ~180 like WhatsApp.
           const CARD_W = 260;
-          const MAP_H = 170;
+          // Live location bubble height — slightly smaller on Android because the
+          // 170px on a 1080×2340 portrait phone leaves the bubble feeling
+          // dominant and pushes other content off-screen (user feedback
+          // 2026-05-12: "ta muito grande").
+          const MAP_H = Platform.OS === 'android' ? 140 : 170;
           const cardBg = isOwn
             ? (isDark ? '#1F2C34' : '#D9FDD3')
             : (isDark ? '#1F2C34' : '#FFFFFF');
@@ -18748,7 +18752,14 @@ export default function ChatConversationScreen() {
           // safe-area inset does NOT update — leaving phantom padding that
           // shows as a white strip / cuts the composer. With 0 here the
           // composer sits flush on top of the keyboard, no flash gap.
-          paddingBottom: keyboardHeight > 0 ? 0 : Math.max(insets.bottom, Spacing.sm),
+          // 2026-05-12: cap Android padding at 16px max to eliminate the
+          // visible "gab" (gap) below composer when keyboard dismisses but
+          // gesture bar inset stays inflated.
+          paddingBottom: keyboardHeight > 0
+            ? 0
+            : (Platform.OS === 'android'
+                ? Math.min(Math.max(insets.bottom, Spacing.sm), 16)
+                : Math.max(insets.bottom, Spacing.sm)),
         }]}>
           {/* WhatsApp pill container — 2026 refined.
               Telegram-style horizontal swipe: a short flick LEFT on the

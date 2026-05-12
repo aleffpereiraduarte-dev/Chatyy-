@@ -2562,10 +2562,14 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         } else if (data?.status === 'disconnected') {
           wasConnected = false;
           if (!bannerTimer) {
+            // Bumped 5s → 12s (2026-05-12): user reported banner "fica
+            // reconectando" — most reconnects on flaky cellular happen
+            // under 10s, so the 5s threshold flashed the banner constantly.
+            // 12s lets WS auto-heal cycles complete invisibly.
             bannerTimer = setTimeout(() => {
               if (!wasConnected && !mailWs.isConnected) setWsDownBanner(true);
               bannerTimer = null;
-            }, 5000);
+            }, 12000);
           }
         }
       }));
