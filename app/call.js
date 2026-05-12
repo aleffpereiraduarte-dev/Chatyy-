@@ -138,6 +138,12 @@ function CallScreenInner() {
   const [isRecording, setIsRecording] = useState(false);
   const [remoteIsRecording, setRemoteIsRecording] = useState(false);
   const [remoteAudioMuted, setRemoteAudioMuted] = useState(false);
+  // Peer's camera state — independent from our local `videoEnabled`. When the
+  // remote peer disables their camera, RTCView keeps painting the last frame
+  // until the track ends, so we must hide the view ourselves. Starts `true`
+  // because we assume peer has camera on in a video call; the very first
+  // call_video_toggle (or the absence of an active video track) will reset.
+  const [peerVideoEnabled, setPeerVideoEnabled] = useState(true);
   // Pending video upgrade request from peer ({ from } when set, null otherwise)
   const [pendingVideoRequest, setPendingVideoRequest] = useState(null);
   // Non-blocking toast for the *outgoing* video upgrade request: shows a
@@ -3436,6 +3442,11 @@ function CallScreenInner() {
         const remoteVideoOn = data.video_enabled ?? data.videoEnabled;
         console.log('[Call] Remote peer video toggle:', remoteVideoOn);
 
+        // Update peer-camera state for ALL platforms. Native RTCView holds
+        // the last frame if we keep rendering it after peer disables — gate
+        // the render on this flag so we fall back to the avatar overlay.
+        setPeerVideoEnabled(!!remoteVideoOn);
+
         // When remote enables video, ensure we show the remote video element
         if (Platform.OS === 'web' && remoteVideoOn) {
           // The remote video element will be created/updated when the track arrives via ontrack
@@ -3731,7 +3742,7 @@ function CallScreenInner() {
     try { return require('@stream-io/react-native-webrtc').RTCView; } catch { return null; }
   })() : null;
 
-  const showRemoteVideo = videoEnabled && peerConnected && (Platform.OS === 'web' ? !!remoteVideoRef.current : !!remoteStreamUrl);
+  const showRemoteVideo = videoEnabled && peerConnected && peerVideoEnabled && (Platform.OS === 'web' ? !!remoteVideoRef.current : !!remoteStreamUrl);
   const showLocalVideo = videoEnabled && (Platform.OS === 'web' ? !!localStreamRef.current : !!localStreamUrl);
   const isVideoCall = isVideoParam === '1' || isVideoParam === 'true';
 
@@ -3739,8 +3750,10 @@ function CallScreenInner() {
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
 
-      {/* Remote video (full screen) — native */}
-      {Platform.OS !== 'web' && RTCView && remoteStreamUrl && videoEnabled && peerConnected && (
+      {/* Remote video (full screen) — native. `peerVideoEnabled` gate is
+          required: RTCView keeps the last frame painted after peer disables
+          their camera, so without this we'd freeze on the last image. */}
+      {Platform.OS !== 'web' && RTCView && remoteStreamUrl && videoEnabled && peerConnected && peerVideoEnabled && (
         <RTCView
           streamURL={remoteStreamUrl}
           style={StyleSheet.absoluteFill}
