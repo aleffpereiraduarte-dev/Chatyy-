@@ -19,6 +19,14 @@ export function setActiveConversation(conversationId) {
 export function clearActiveConversation() {
   _activeConversationId = null;
 }
+// Exposed so ChatListTab can also skip bumping unread_count for messages
+// arriving INTO the conversation the user is currently viewing — without
+// this, every WS message inside the open chat re-incremented the list's
+// unread badge to 1+ and a back-press surfaced "X unread" for a thread
+// you literally just finished reading (reported 2026-05-12).
+export function getActiveConversation() {
+  return _activeConversationId;
+}
 
 // Incoming call callback — set by IncomingCallListener
 let _onIncomingCall = null;

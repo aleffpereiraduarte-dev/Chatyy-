@@ -2361,6 +2361,11 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     let unsubs = [];
     try {
       const mailWs = require('../services/websocket').default;
+      // Read-current active conv at the moment each WS event fires (not at
+      // effect-mount time) — getActiveConversation is updated by
+      // chat-conversation.js on every mount/unmount.
+      const { getActiveConversation } = require('../services/pushNotifications');
+      const activeConvId = () => { try { return getActiveConversation(); } catch { return null; } };
 
       // Subscribe to the user's personal chat channel. The backend emits
       // `chat_summary` events to `chat_user_{email}` whenever any
@@ -2471,7 +2476,15 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
               last_message_type: data.type || 'text',
               last_message_sender: data.sender_email || data.sender,
               last_message_at: data.created_at || new Date().toISOString(),
-              unread_count: isSelf ? (prev[idx].unread_count || 0) : ((prev[idx].unread_count || 0) + 1),
+              // Don't bump unread for a message landing IN the chat the user
+              // is currently inside — they're reading it now, so the badge
+              // should stay at 0. Without this guard, every msg WS event
+              // (including own outbound echoes from other devices) bumped
+              // the list badge by 1 even when the conv was open, so the
+              // user backed out and saw "ghost" unread for a chat they had
+              // just been reading. activeConvId is set by chat-conversation.js
+              // on mount and cleared on unmount.
+              unread_count: (isSelf || (() => { const a = activeConvId(); return a && String(a) === String(data.conversation_id); })()) ? (prev[idx].unread_count || 0) : ((prev[idx].unread_count || 0) + 1),
             };
             // Keep pinned conversations at top, insert updated after pinned
             const pinned = prev.filter((c, i) => i !== idx && !!c.pinned);

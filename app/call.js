@@ -4034,9 +4034,17 @@ function CallScreenInner() {
             </View>
           )}
 
-          {/* Peer wants to switch to video — accept/decline modal */}
+          {/* Peer wants to switch to video — accept/decline sheet.
+              WhatsApp/iMessage-style: icon + title + 2 round pill buttons
+              with explicit color semantics (green=accept, red=decline) +
+              decline icon X / accept icon Video. The earlier flat slab with
+              a single purple "Aceitar" button was confusing — users couldn't
+              tell which side accepted without reading. */}
           {pendingVideoRequest && peerConnected && !ended && (
             <View style={styles.videoRequestSheet}>
+              <View style={styles.videoRequestIconCircle}>
+                <IconVideo size={28} color="#fff" />
+              </View>
               <Text style={styles.videoRequestTitle}>
                 {(t('call.videoRequestTitle') || '{name} quer ativar o vídeo').replace('{name}', callerName)}
               </Text>
@@ -4046,6 +4054,7 @@ function CallScreenInner() {
               <View style={styles.videoRequestActions}>
                 <TouchableOpacity
                   style={[styles.videoRequestBtn, styles.videoRequestBtnDecline]}
+                  activeOpacity={0.85}
                   onPress={() => {
                     try {
                       sendSignaling('call_video_request', {
@@ -4057,10 +4066,12 @@ function CallScreenInner() {
                     setPendingVideoRequest(null);
                   }}
                 >
+                  <IconX size={18} color="#fff" />
                   <Text style={styles.videoRequestBtnText}>{t('common.decline') || 'Recusar'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.videoRequestBtn, styles.videoRequestBtnAccept]}
+                  activeOpacity={0.85}
                   onPress={() => {
                     try {
                       sendSignaling('call_video_request', {
@@ -4078,6 +4089,7 @@ function CallScreenInner() {
                     if (!videoEnabled) handleToggleVideo();
                   }}
                 >
+                  <IconVideo size={18} color="#fff" />
                   <Text style={[styles.videoRequestBtnText, { color: '#fff' }]}>{t('common.accept') || 'Aceitar'}</Text>
                 </TouchableOpacity>
               </View>
@@ -5107,44 +5119,73 @@ const styles = StyleSheet.create({
   },
   videoRequestSheet: {
     position: 'absolute',
-    bottom: 200,
-    left: 20,
-    right: 20,
-    backgroundColor: 'rgba(20, 20, 22, 0.96)',
-    borderRadius: 20,
-    padding: 20,
+    bottom: 180,
+    left: 24,
+    right: 24,
+    backgroundColor: 'rgba(20, 20, 26, 0.97)',
+    borderRadius: 24,
+    paddingTop: 28,
+    paddingBottom: 20,
+    paddingHorizontal: 24,
     zIndex: 30,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: 'rgba(255,255,255,0.1)',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.5,
+    shadowRadius: 32,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 24,
+  },
+  videoRequestIconCircle: {
+    width: 64, height: 64, borderRadius: 32,
+    backgroundColor: '#7c3aed',
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 14,
+    shadowColor: '#7c3aed',
+    shadowOpacity: 0.45,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 6 },
   },
   videoRequestTitle: {
     color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 17,
+    fontWeight: '700',
     marginBottom: 6,
     textAlign: 'center',
+    letterSpacing: -0.2,
   },
   videoRequestSubtitle: {
-    color: 'rgba(255,255,255,0.65)',
+    color: 'rgba(255,255,255,0.6)',
     fontSize: 13,
     textAlign: 'center',
-    marginBottom: 18,
+    marginBottom: 22,
+    lineHeight: 18,
   },
   videoRequestActions: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 10,
+    width: '100%',
   },
   videoRequestBtn: {
     flex: 1,
-    paddingVertical: 12,
-    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
   },
   videoRequestBtnDecline: {
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: 'rgba(239, 68, 68, 0.9)',
   },
   videoRequestBtnAccept: {
-    backgroundColor: '#7c3aed',
+    backgroundColor: '#22c55e',
+    shadowColor: '#22c55e',
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
   },
   videoRequestBtnText: {
     fontSize: 15,
