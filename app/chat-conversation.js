@@ -4059,7 +4059,10 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
-      <View style={previewStyles.container}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={previewStyles.container}
+      >
         {/* Header */}
         <View style={previewStyles.header}>
           <TouchableOpacity onPress={onClose} style={previewStyles.headerBtn}>
@@ -4244,7 +4247,7 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
             )}
           </TouchableOpacity>
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
