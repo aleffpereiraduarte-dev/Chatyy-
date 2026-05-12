@@ -1394,9 +1394,27 @@ function CallScreenInner() {
           const { stopRingtone } = require('../services/ringtone');
           stopRingtone();
         } catch {}
-        // Small delay to let audio session fully release from ringtone player
+        // PRE-WARM InCallManager + ExpoAudioSession BEFORE getUserMedia.
+        // Without this, AVAudioSession only gets the right category after
+        // the local mic stream is up (lines ~1641-1679), which means the
+        // first 1-3s of incoming RTP packets get dropped by the iOS audio
+        // engine — user reported "atendi mas demora pra ouvir a voz".
+        // WhatsApp pre-warms in CallKit's CXAnswerCallAction; this is the
+        // RN-level equivalent. Removed the 300ms ringtone-release sleep
+        // since stopRingtone() is synchronous and the AVAudioSession
+        // re-category below preempts whatever the ringtone left behind.
         if (Platform.OS !== 'web') {
-          await new Promise(r => setTimeout(r, 300));
+          try {
+            const InCallManager = require('react-native-incall-manager').default;
+            const isVideo = isVideoParam === '1' || isVideoParam === 'true';
+            InCallManager.start({ media: isVideo ? 'video' : 'audio', auto: false });
+          } catch (e) { console.log('[Call] InCallManager.start err:', e?.message); }
+          try {
+            const ExpoAudioSession = require('../modules/expo-audio-session').default;
+            const isVideo = isVideoParam === '1' || isVideoParam === 'true';
+            if (isVideo) ExpoAudioSession.activateForVideoCall?.();
+            else ExpoAudioSession.activateForCall?.(false);
+          } catch {}
         }
 
         const video = isVideoParam === '1' || isVideoParam === 'true';

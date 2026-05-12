@@ -4258,13 +4258,29 @@ const previewStyles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   header: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 10, paddingTop: Platform.OS === 'ios' ? 46 : 12, paddingBottom: 6,
+    paddingHorizontal: 10,
+    // Modal has `statusBarTranslucent` on Android — that means we draw
+    // under the status bar AND the system gesture indicator. paddingTop
+    // 12 was clipping the close X and edit buttons under the clock
+    // (reported 2026-05-12 "botões muito alto"). Use the real status
+    // bar height + 8.
+    paddingTop: Platform.OS === 'ios'
+      ? 46
+      : Math.max((require('react-native').StatusBar.currentHeight || 24) + 8, 32),
+    paddingBottom: 6,
   },
   headerBtn: { padding: 9 },
   mediaContainer: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   previewImage: { width: '100%', height: '100%' },
   videoPlaceholder: { alignItems: 'center', justifyContent: 'center' },
-  bottomBar: { paddingHorizontal: 12, paddingBottom: Platform.OS === 'ios' ? 34 : 16, paddingTop: 8 },
+  bottomBar: {
+    paddingHorizontal: 12,
+    // Same reason as header — Android edge-to-edge needs real safe-area
+    // bottom inset, not a hardcoded 16px that fails on phones with
+    // 48px gesture indicators.
+    paddingBottom: Platform.OS === 'ios' ? 34 : 24,
+    paddingTop: 8,
+  },
   captionRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   captionInput: {
     flex: 1, color: '#fff', fontSize: 16, backgroundColor: 'rgba(255,255,255,0.12)',
@@ -23075,6 +23091,15 @@ const styles = StyleSheet.create({
     borderRadius: 18, paddingHorizontal: 11,
     paddingTop: 6, paddingBottom: 5,
     minWidth: 82,
+    // flexShrink + alignSelf so Yoga measures the Text intrinsic width
+    // BEFORE applying minWidth — without these, the first render in a
+    // freshly mounted conversation laid the bubble out against a stale
+    // parent column width (FlatList content size shifts on insert) and
+    // wrapped the text into thin columns. Leaving and re-entering the
+    // chat re-measured against the stable width and looked right.
+    // Reported 2026-05-12.
+    flexShrink: 1,
+    alignSelf: 'flex-start',
     ...Platform.select({
       ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.14, shadowRadius: 10 },
       android: { elevation: 3 },
