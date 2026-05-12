@@ -3797,6 +3797,7 @@ export default {
   'live.enterTitle': 'Titulo del live (opcional)',
   'live.start': 'Iniciar',
   'live.watching': 'viendo',
+  'live.aoVivo': 'EN VIVO',
   'live.connected': 'En vivo',
   'live.host': 'Anfitrión',
   'live.cameraOff': 'Cámara apagada',

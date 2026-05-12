@@ -1183,6 +1183,39 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
     return () => clearInterval(t);
   }, [loadNotes]);
 
+  // Active live broadcasts (Instagram parity). Map: lowercased email → session id.
+  // Refreshed every 45s. Lives outrank story rings — a host who is both
+  // posting status AND streaming live shows the red AO VIVO ring, with tap
+  // going to /live-viewer instead of the story viewer.
+  const [livesByEmail, setLivesByEmail] = useState({});
+  useEffect(() => {
+    if (!user?.email) return undefined;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const r = await api.apiCall?.('live_list', null, 'POST');
+        if (cancelled) return;
+        const lives = r?.data?.lives || r?.lives || [];
+        const map = {};
+        for (const l of lives) {
+          if (l?.host_email && l?.id) map[String(l.host_email).toLowerCase()] = { id: l.id, host_name: l.host_name, viewer_count: l.viewer_count };
+        }
+        setLivesByEmail(map);
+      } catch {
+        if (!cancelled) setLivesByEmail({});
+      }
+    };
+    tick();
+    const iv = setInterval(tick, 45000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [user?.email]);
+  const liveAoVivo = (t('live.aoVivo') || 'AO VIVO').toUpperCase();
+  const openLiveViewer = useCallback((email, sessionId) => {
+    try {
+      router.push(`/live-viewer?session_id=${encodeURIComponent(sessionId)}&host_email=${encodeURIComponent(email)}`);
+    } catch {}
+  }, [router]);
+
   const myStatusGroup = statuses.find(s => s.email === user?.email);
   const myStatus = myStatusGroup?.items?.length > 0 ? myStatusGroup : null;
   const myNote = notes.find(n => n.email === user?.email);
@@ -1199,6 +1232,20 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
   const notesByEmail = new Map(notes.filter(n => n.email !== user?.email).map(n => [n.email, n]));
   const statusEmails = new Set(otherStatuses.map(s => s.email));
   const notesOnly = Array.from(notesByEmail.values()).filter(n => !statusEmails.has(n.email));
+
+  // Live-only entries: hosts streaming right now who don't already appear in
+  // the strip via a status. Rendered as a prepended live ring in the strip
+  // (Instagram's red AO VIVO ring) so followers always see active broadcasts
+  // at the top of home.
+  const liveOnlyEntries = useMemo(() => {
+    const out = [];
+    for (const [email, info] of Object.entries(livesByEmail)) {
+      if (email === (user?.email || '').toLowerCase()) continue;
+      if (statusEmails.has(email)) continue;
+      out.push({ email, name: info.host_name || email.split('@')[0], session_id: info.id });
+    }
+    return out;
+  }, [livesByEmail, statusEmails, user?.email]);
 
   const [statusViewerEmail, setStatusViewerEmail] = useState(null);
   const [statusViewersFor, setStatusViewersFor] = useState(null); // item being inspected for viewer list
@@ -1279,7 +1326,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
   // status" circle floating left-aligned looks like a layout glitch (caught
   // in QA 2026-05-07). The status camera in the chat list header still
   // gives a one-tap entrypoint for new posts.
-  const stripHasContent = !!myStatus || !!myNote || otherStatuses.length > 0 || notesOnly.length > 0;
+  const stripHasContent = !!myStatus || !!myNote || otherStatuses.length > 0 || notesOnly.length > 0 || liveOnlyEntries.length > 0;
   if (!stripHasContent) return null;
 
   return (
@@ -1380,15 +1427,44 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
           </Text>
         </TouchableOpacity>
 
+        {/* Live-only entries — broadcasters with no current status. Painted
+            with the red AO VIVO ring + tap routes to /live-viewer. Prepended
+            so they always sit at the head of the strip (after Your Story). */}
+        {liveOnlyEntries.map((l) => (
+          <View key={`live-only-${l.email}`} style={{ alignItems: 'center', width: 68 }}>
+            <TouchableOpacity
+              onPress={() => openLiveViewer(l.email, l.session_id)}
+              activeOpacity={0.7}
+              style={{ alignItems: 'center' }}
+            >
+              <StoryRingAvatar
+                name={l.name}
+                email={l.email}
+                size={54}
+                ringStyle="none"
+                isLive
+                liveLabel={liveAoVivo}
+                isDark={isDark}
+                colors={colors}
+              />
+              <Text style={{ fontSize: 11, color: colors.text, marginTop: 5, fontWeight: '500' }} numberOfLines={1}>
+                {l.name}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        ))}
+
         {/* Status stories (photos/videos) — unviewed have bright purple ring,
             partially-viewed keep a dimmer ring. Fully-viewed groups already
             filtered out above → only reachable via the user's profile. */}
         {otherStatuses.map((s) => {
           const allViewed = (s.items || []).every(it => it.viewed);
+          const liveInfo = livesByEmail[(s.email || '').toLowerCase()];
+          const isLive = !!liveInfo;
           return (
             <View key={`st-${s.email}`} style={{ alignItems: 'center', width: 68 }}>
               <TouchableOpacity
-                onPress={() => openStatus(s.email)}
+                onPress={() => isLive ? openLiveViewer(s.email, liveInfo.id) : openStatus(s.email)}
                 onLongPress={() => {
                   // WhatsApp-style action sheet: Reply (DM) + Mute. The badge
                   // (↩) already covers reply on a single tap; long-press here
@@ -1428,9 +1504,11 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
                   size={54}
                   ringStyle="solid"
                   allViewed={allViewed}
-                  badge="reply"
+                  isLive={isLive}
+                  liveLabel={liveAoVivo}
+                  badge={isLive ? null : 'reply'}
                   badgeAccessibilityLabel={t('status.reply') || 'Responder'}
-                  onBadgePress={() => { try {
+                  onBadgePress={isLive ? undefined : () => { try {
                     const { chatCreate } = require('../services/api');
                     chatCreate([s.email], '', 'direct').then(r => {
                       const cid = r?.data?.conversation_id || r?.data?.id;

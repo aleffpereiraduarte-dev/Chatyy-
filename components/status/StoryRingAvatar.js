@@ -52,6 +52,10 @@ export default function StoryRingAvatar({
   // conflicts with another animation on the same row (e.g. Vidiante avatar
   // halo). Pulse is opt-out, defaults to on for unviewed rings.
   pulse = true,
+  // Live broadcast mode — paints a red/pink gradient ring + AO VIVO chip
+  // anchored to the bottom of the avatar (Instagram parity).
+  isLive = false,
+  liveLabel = 'AO VIVO',
 }) {
   const _dim = dimmedColor || (isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)');
   const _badgeBorder = isDark ? '#0d0d0d' : '#fff';
@@ -64,21 +68,56 @@ export default function StoryRingAvatar({
   // even when 50 rings are visible at once.
   const pulseAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    if (!pulse || allViewed || ringStyle === 'none') return undefined;
+    if (!pulse || (allViewed && !isLive) || (ringStyle === 'none' && !isLive)) return undefined;
+    // Live state pulses faster + harder to draw the eye (Instagram parity).
+    const dur = isLive ? 700 : 1300;
     const loop = Animated.loop(Animated.sequence([
-      Animated.timing(pulseAnim, { toValue: 1, duration: 1300, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
-      Animated.timing(pulseAnim, { toValue: 0, duration: 1300, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      Animated.timing(pulseAnim, { toValue: 1, duration: dur, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      Animated.timing(pulseAnim, { toValue: 0, duration: dur, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
     ]));
     loop.start();
     return () => { try { loop.stop(); } catch {} };
-  }, [pulse, allViewed, ringStyle, pulseAnim]);
-  const pulseScale = pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.025] });
+  }, [pulse, allViewed, ringStyle, pulseAnim, isLive]);
+  const pulseScale = pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [1, isLive ? 1.05 : 1.025] });
 
   // Outer wrapper holds the ring (or no ring + padding placeholder so the
   // rendered footprint stays identical regardless of style — keeps row
   // alignment perfect when some entries have stories and others don't).
   let inner;
-  if (ringStyle === 'solid') {
+  if (isLive) {
+    // Live broadcast ring — Instagram-style red→pink→orange gradient that
+    // overrides whichever ringStyle the caller passed (live always wins).
+    const ringSize = size + 10;
+    const radius = (ringSize / 2) - 1.5;
+    inner = (
+      <Animated.View style={{
+        width: ringSize, height: ringSize,
+        alignItems: 'center', justifyContent: 'center',
+        transform: [{ scale: pulseScale }],
+      }}>
+        <View style={{ position: 'absolute', top: 0, left: 0 }}>
+          <Svg width={ringSize} height={ringSize}>
+            <Defs>
+              <LinearGradient id={`liveRing_${size}`} x1="0" y1="0" x2="1" y2="1">
+                <Stop offset="0" stopColor="#FF3B30" />
+                <Stop offset="0.5" stopColor="#FF2D55" />
+                <Stop offset="1" stopColor="#FF9500" />
+              </LinearGradient>
+            </Defs>
+            <SvgCircle
+              cx={ringSize / 2}
+              cy={ringSize / 2}
+              r={radius}
+              stroke={`url(#liveRing_${size})`}
+              strokeWidth={3}
+              fill="none"
+            />
+          </Svg>
+        </View>
+        <AvatarCircle name={name} email={email} size={size} />
+      </Animated.View>
+    );
+  } else if (ringStyle === 'solid') {
     // Modernized: gradient stroke (Instagram-style purple→violet) when
     // unviewed, flat dim grey when allViewed. SVG ring lives at the same
     // outer footprint as the previous border-based ring (size + 5 padding)
@@ -203,6 +242,40 @@ export default function StoryRingAvatar({
           <Text style={{ fontSize: 10, color: _avatarText, textAlign: 'center' }} numberOfLines={2}>
             {note}
           </Text>
+        </View>
+      ) : null}
+      {/* AO VIVO chip — bottom-center anchored when isLive. Sits over the
+          ring so it visually anchors the live state to the avatar
+          (Instagram parity). White border keeps it legible on any bg. */}
+      {isLive ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            bottom: -2,
+            left: 0, right: 0,
+            alignItems: 'center',
+            zIndex: 3,
+          }}
+        >
+          <View style={{
+            backgroundColor: '#FF2D55',
+            paddingHorizontal: 6, paddingVertical: 1.5,
+            borderRadius: 5,
+            borderWidth: 1.5, borderColor: _badgeBorder,
+            minWidth: 38,
+            alignItems: 'center',
+          }}>
+            <Text style={{
+              color: '#fff',
+              fontSize: 9,
+              fontWeight: '800',
+              letterSpacing: 0.4,
+              lineHeight: 11,
+            }}>
+              {liveLabel}
+            </Text>
+          </View>
         </View>
       ) : null}
       {/* Badge (+ or ↩). Bottom-right anchored, brand purple, white border

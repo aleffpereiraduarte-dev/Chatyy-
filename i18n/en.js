@@ -3800,6 +3800,7 @@ export default {
   'live.enterTitle': 'Live title (optional)',
   'live.start': 'Start',
   'live.watching': 'watching',
+  'live.aoVivo': 'LIVE',
   'live.connected': 'Live',
   'live.host': 'Host',
   'live.cameraOff': 'Camera off',

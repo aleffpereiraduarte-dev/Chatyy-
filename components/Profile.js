@@ -762,6 +762,32 @@ export default function Profile({
       } catch {}
     })();
   }, [identity?.email]);
+
+  // Live detection — Instagram parity. When the profile owner is currently
+  // broadcasting (active row in chat_live_sessions), we paint a red AO VIVO
+  // ring on the avatar and tap routes to /live-viewer instead of the story
+  // viewer / picker. Refetched every 60s so the badge clears within a minute
+  // of the host ending the stream.
+  const [liveSessionId, setLiveSessionId] = useState(null);
+  useEffect(() => {
+    if (!identity?.email) { setLiveSessionId(null); return undefined; }
+    let cancelled = false;
+    const target = identity.email.toLowerCase();
+    const tick = async () => {
+      try {
+        const r = await api.apiCall?.('live_list', null, 'POST');
+        if (cancelled) return;
+        const lives = r?.data?.lives || r?.lives || [];
+        const found = lives.find(l => (l?.host_email || '').toLowerCase() === target);
+        setLiveSessionId(found?.id || null);
+      } catch {
+        if (!cancelled) setLiveSessionId(null);
+      }
+    };
+    tick();
+    const iv = setInterval(tick, 60000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, [identity?.email]);
   const presence = data?.presence;
   const social = data?.social;
   const actions = data?.actions || {};
@@ -1243,6 +1269,8 @@ export default function Profile({
                 }} />
               );
             };
+            const isLive = !!liveSessionId;
+            const liveLabel = (t?.('live.aoVivo') || 'AO VIVO').toUpperCase();
             const inner = hasStories ? (
               <StoryRingAvatar
                 name={identity.name}
@@ -1251,13 +1279,15 @@ export default function Profile({
                 ringStyle="solid"
                 isDark={isDark}
                 colors={colors}
+                isLive={isLive}
+                liveLabel={liveLabel}
               />
             ) : (
               <View style={{
                 width: HALO_SIZE, height: HALO_SIZE,
                 alignItems: 'center', justifyContent: 'center',
               }}>
-                {renderHalo()}
+                {!isLive && renderHalo()}
                 <StoryRingAvatar
                   name={identity.name}
                   email={identity.email}
@@ -1265,9 +1295,27 @@ export default function Profile({
                   ringStyle="none"
                   isDark={isDark}
                   colors={colors}
+                  isLive={isLive}
+                  liveLabel={liveLabel}
                 />
               </View>
             );
+            // Live overrides every other tap intent — viewing a friend's live
+            // is the highest-priority action. Routes to /live-viewer with the
+            // session id so the WebRTC viewer hooks up immediately.
+            if (isLive) {
+              return (
+                <TouchableOpacity
+                  onPress={() => {
+                    try {
+                      router?.push?.(`/live-viewer?session_id=${encodeURIComponent(liveSessionId)}&host_email=${encodeURIComponent(identity.email)}`);
+                    } catch {}
+                  }}
+                  activeOpacity={0.85}
+                  accessibilityLabel={t?.('live.watching') || 'Assistir live'}
+                >{inner}</TouchableOpacity>
+              );
+            }
             // No stories → tapping the avatar should still feel responsive:
             //   - Self viewing own profile → open picker to publish a new story
             //     (Instagram pattern: tap avatar with "+" badge)
