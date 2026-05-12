@@ -4228,8 +4228,11 @@ function CallScreenInner() {
               </TouchableOpacity>
             )}
 
-            {/* Filters — only when video is on */}
-            {videoEnabled && peerConnected && (
+            {/* Filters — hidden until real-time video processing lands as a
+                native module (react-native-vision-camera + frame processor).
+                The previous button was a stub that toggled state but never
+                applied anything to the stream — reported 2026-05-12. */}
+            {false && videoEnabled && peerConnected && (
               <TouchableOpacity
                 style={styles.controlBtn}
                 onPress={() => setShowFilterPicker(prev => !prev)}
