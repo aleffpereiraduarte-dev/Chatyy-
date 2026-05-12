@@ -83,6 +83,19 @@ export default function LiveBroadcastScreen() {
   // muteReactions closure window) reads the current toggle value.
   const muteReactionsRef = useRef(false);
   useEffect(() => { muteReactionsRef.current = muteReactions; }, [muteReactions]);
+  // Invite-friends sheet — replaces the system Share fallback so the host can
+  // multi-select contacts and DM them the live link in one tap (TikTok parity).
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteContacts, setInviteContacts] = useState([]); // [{id, name, email}]
+  const [inviteSelected, setInviteSelected] = useState(new Set());
+  const [inviteSearch, setInviteSearch] = useState('');
+  const [inviteSending, setInviteSending] = useState(false);
+  const [inviteLoaded, setInviteLoaded] = useState(false);
+  // Join-requests inbox — viewers can request to come on as a guest, host
+  // sees a small toast/badge and can approve or deny (Instagram "Request to
+  // Join", TikTok "Go Live Together").
+  const [joinRequests, setJoinRequests] = useState([]); // [{email, name, ts}]
+  const [requestsOpen, setRequestsOpen] = useState(false);
 
   // Refs
   const localVideoRef = useRef(null);
@@ -241,6 +254,17 @@ export default function LiveBroadcastScreen() {
           // Mute toggle silences the heart animation client-side so the host
           // can focus during a busy live without redoing the server pipeline.
           if (!muteReactionsRef.current) spawnHeart();
+          break;
+        case 'live_join_request':
+          // Viewer wants to come on as a guest. Stack the request in the
+          // join-requests inbox; the host clears it via approve/deny.
+          if (msg.viewer_email) {
+            setJoinRequests(prev => {
+              if (prev.some(r => r.email === msg.viewer_email)) return prev;
+              return [{ email: msg.viewer_email, name: msg.viewer_name || msg.viewer_email.split('@')[0], ts: Date.now() }, ...prev].slice(0, 30);
+            });
+            try { require('react-native').Vibration.vibrate(10); } catch {}
+          }
           break;
       }
     };
@@ -617,6 +641,68 @@ export default function LiveBroadcastScreen() {
 
   // Share invite — copies the live URL on web, native share sheet otherwise.
   const handleShare = useCallback(async () => {
+    // Opens the invite-friends sheet (multi-select picker + search). Falls back
+    // to the system share menu only via the explicit "Compartilhar link" row
+    // inside the sheet, so the host always lands in the curated chat-invite
+    // flow first (TikTok parity) instead of jumping straight to OS share.
+    setInviteOpen(true);
+  }, []);
+
+  // Lazy-load the host's chat list the first time the invite sheet opens, so
+  // we don't pay the network cost during the live start sequence.
+  useEffect(() => {
+    if (!inviteOpen || inviteLoaded) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await api.chatConversations?.();
+        if (cancelled) return;
+        const convs = r?.data?.conversations || r?.conversations || r?.data || [];
+        // Flatten direct chats into a contact list. We keep `id`
+        // (conversation_id) so chatSend can target it directly without a
+        // chatCreate round-trip.
+        const flat = [];
+        const me = (user?.email || '').toLowerCase();
+        for (const c of (Array.isArray(convs) ? convs : [])) {
+          if ((c.type || 'direct') !== 'direct') continue;
+          // Backend exposes direct peers via `members`, `peer_email`, or `email`.
+          const peerEmail = (
+            (c.members || []).map(m => typeof m === 'string' ? m : m?.email)
+              .find(e => e && e.toLowerCase() !== me)
+            || c.peer_email || c.email || ''
+          );
+          if (!peerEmail) continue;
+          const peerName = c.name || c.peer_name || peerEmail.split('@')[0];
+          flat.push({ id: c.id, name: peerName, email: peerEmail });
+        }
+        setInviteContacts(flat);
+        setInviteLoaded(true);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [inviteOpen, inviteLoaded, user?.email]);
+
+  const sendInvites = useCallback(async () => {
+    const sid = sessionIdRef.current;
+    if (!sid || inviteSelected.size === 0) return;
+    setInviteSending(true);
+    const url = `https://chatyy.com.br/live/${sid}`;
+    const text = `${titleInput || 'Live'}: ${url}`;
+    const ids = Array.from(inviteSelected);
+    try {
+      await Promise.all(ids.map(convId => {
+        try { return api.chatSend?.(convId, text, 'text'); } catch { return null; }
+      }));
+    } catch {}
+    setInviteSending(false);
+    setInviteOpen(false);
+    setInviteSelected(new Set());
+    setInviteSearch('');
+    try { require('react-native').Vibration.vibrate(15); } catch {}
+  }, [inviteSelected, titleInput]);
+
+  // System share fallback — still useful for sharing to apps outside Chatyy.
+  const handleSystemShare = useCallback(async () => {
     const sid = sessionIdRef.current;
     if (!sid) return;
     const url = `https://chatyy.com.br/live/${sid}`;
@@ -634,7 +720,32 @@ export default function LiveBroadcastScreen() {
         await Share.share({ message: `${titleInput || 'Live'}: ${url}` });
       } catch {}
     }
+    setInviteOpen(false);
   }, [titleInput]);
+
+  // Approve / deny a viewer's join request. Approve sends a WS ack — the
+  // viewer's `live_join_approved` handler kicks off a separate guest WebRTC
+  // negotiation (deferred to native rebuild). For now, the approve path
+  // surfaces the visual ack so the host has a working button and the viewer
+  // gets a confirming toast.
+  const approveJoinRequest = useCallback((email) => {
+    try {
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'live_join_approve', session_id: sessionIdRef.current, viewer_email: email }));
+      }
+    } catch {}
+    setJoinRequests(prev => prev.filter(r => r.email !== email));
+  }, []);
+  const denyJoinRequest = useCallback((email) => {
+    try {
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'live_join_deny', session_id: sessionIdRef.current, viewer_email: email }));
+      }
+    } catch {}
+    setJoinRequests(prev => prev.filter(r => r.email !== email));
+  }, []);
 
   // Long-press a chat message to pin (host only). Wired through to LiveChat
   // via a callback prop, but we also expose a simple "pin latest" action on
@@ -1239,6 +1350,142 @@ export default function LiveBroadcastScreen() {
                 </TouchableOpacity>
               ))}
             </View>
+          </View>
+        </View>
+      ) : null}
+
+      {/* Join requests pill — Instagram-style "Pedidos" chip in the top-right
+          stack, shown only when there's at least one pending request. Tap
+          opens the requests sheet. */}
+      {joinRequests.length > 0 ? (
+        <TouchableOpacity
+          onPress={() => setRequestsOpen(true)}
+          activeOpacity={0.85}
+          style={{
+            position: 'absolute', top: insets.top + 64, right: 14,
+            backgroundColor: '#7C3AED', borderRadius: 16,
+            paddingHorizontal: 10, paddingVertical: 6,
+            flexDirection: 'row', alignItems: 'center', gap: 6,
+            zIndex: 30,
+          }}
+        >
+          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#facc15' }} />
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>
+            {joinRequests.length} {t('live.requestsCount') || 'pedindo pra entrar'}
+          </Text>
+        </TouchableOpacity>
+      ) : null}
+
+      {/* Requests sheet — list of viewers who tapped "Pedir pra entrar". Host
+          approves (we send live_join_approve via WS — actual SFU guest join
+          is a native-rebuild deliverable) or denies. */}
+      {requestsOpen ? (
+        <View style={liveSheetStyles.backdrop}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setRequestsOpen(false)} />
+          <View style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16, maxHeight: '70%' }]}>
+            <View style={liveSheetStyles.grabber} />
+            <Text style={liveSheetStyles.title}>{t('live.joinRequests') || 'Pedidos pra entrar'}</Text>
+            {joinRequests.length === 0 ? (
+              <Text style={liveSheetStyles.subtitle}>{t('live.noRequests') || 'Sem pedidos no momento'}</Text>
+            ) : (
+              <FlatList
+                data={joinRequests}
+                keyExtractor={(item) => item.email}
+                renderItem={({ item }) => (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)' }}>
+                    <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                      <Text style={{ color: '#fff', fontWeight: '700' }}>{(item.name || '?').slice(0, 1).toUpperCase()}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: '#fff', fontWeight: '600', fontSize: 15 }} numberOfLines={1}>{item.name}</Text>
+                      <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 12 }} numberOfLines={1}>{item.email}</Text>
+                    </View>
+                    <TouchableOpacity onPress={() => denyJoinRequest(item.email)} style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.08)', marginRight: 8 }} activeOpacity={0.7}>
+                      <Text style={{ color: '#fff', fontWeight: '600' }}>{t('common.deny') || 'Recusar'}</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => approveJoinRequest(item.email)} style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 14, backgroundColor: '#22c55e' }} activeOpacity={0.7}>
+                      <Text style={{ color: '#fff', fontWeight: '700' }}>{t('common.approve') || 'Aceitar'}</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+                style={{ maxHeight: 380 }}
+              />
+            )}
+          </View>
+        </View>
+      ) : null}
+
+      {/* Invite friends sheet — TikTok-style multi-select contact picker.
+          Hits chat_list to pull the host's direct chats, supports live-search
+          (case-insensitive), and DMs the live link to each selected contact
+          via chatSend in parallel. */}
+      {inviteOpen ? (
+        <View style={liveSheetStyles.backdrop}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setInviteOpen(false)} />
+          <View style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16, maxHeight: '85%' }]}>
+            <View style={liveSheetStyles.grabber} />
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+              <Text style={[liveSheetStyles.title, { flex: 1, marginBottom: 0 }]}>{t('live.inviteFriends') || 'Convidar amigos'}</Text>
+              <TouchableOpacity onPress={handleSystemShare} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)' }} activeOpacity={0.7}>
+                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>{t('live.shareLink') || 'Compartilhar link'}</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={{ backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 10 }}>
+              <TextInput
+                value={inviteSearch}
+                onChangeText={setInviteSearch}
+                placeholder={t('live.searchFriends') || 'Buscar amigos...'}
+                placeholderTextColor="rgba(255,255,255,0.45)"
+                style={{ color: '#fff', fontSize: 15, padding: 0 }}
+                autoCorrect={false}
+                autoCapitalize="none"
+              />
+            </View>
+            <FlatList
+              data={(() => {
+                const q = inviteSearch.trim().toLowerCase();
+                if (!q) return inviteContacts;
+                return inviteContacts.filter(c => (c.name || '').toLowerCase().includes(q) || (c.email || '').toLowerCase().includes(q));
+              })()}
+              keyExtractor={(item) => String(item.id)}
+              ListEmptyComponent={(
+                <Text style={[liveSheetStyles.subtitle, { textAlign: 'center', paddingVertical: 20 }]}>
+                  {inviteLoaded ? (t('live.noContactsFound') || 'Nenhum contato encontrado') : (t('common.loading') || 'Carregando...')}
+                </Text>
+              )}
+              renderItem={({ item }) => {
+                const selected = inviteSelected.has(item.id);
+                return (
+                  <TouchableOpacity
+                    onPress={() => setInviteSelected(prev => { const n = new Set(prev); if (n.has(item.id)) n.delete(item.id); else n.add(item.id); return n; })}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)' }}
+                    activeOpacity={0.7}
+                  >
+                    <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                      <Text style={{ color: '#fff', fontWeight: '700' }}>{(item.name || '?').slice(0, 1).toUpperCase()}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: '#fff', fontWeight: '600', fontSize: 15 }} numberOfLines={1}>{item.name}</Text>
+                      <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 12 }} numberOfLines={1}>{item.email}</Text>
+                    </View>
+                    <View style={{ width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: selected ? '#7C3AED' : 'rgba(255,255,255,0.3)', backgroundColor: selected ? '#7C3AED' : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
+                      {selected ? <Text style={{ color: '#fff', fontWeight: '900', fontSize: 12 }}>✓</Text> : null}
+                    </View>
+                  </TouchableOpacity>
+                );
+              }}
+              style={{ maxHeight: 360 }}
+            />
+            <TouchableOpacity
+              onPress={sendInvites}
+              disabled={inviteSelected.size === 0 || inviteSending}
+              style={[liveSheetStyles.closeBtn, (inviteSelected.size === 0 || inviteSending) && { opacity: 0.5 }]}
+              activeOpacity={0.85}
+            >
+              <Text style={liveSheetStyles.closeText}>
+                {inviteSending ? (t('common.sending') || 'Enviando...') : `${t('live.sendInvite') || 'Enviar convite'}${inviteSelected.size > 0 ? ` (${inviteSelected.size})` : ''}`}
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
       ) : null}

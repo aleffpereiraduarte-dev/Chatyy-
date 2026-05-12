@@ -320,6 +320,18 @@ export default function LiveViewerScreen() {
           if (msg.emoji && msg.emoji !== '❤️') spawnHeart(msg.emoji);
           else spawnHeart(msg.x);
           break;
+        case 'live_join_approve':
+          // Targeted via viewer_email filter — server fans out to the channel.
+          if (msg.viewer_email && user?.email && msg.viewer_email.toLowerCase() === user.email.toLowerCase()) {
+            try { require('react-native').Alert.alert(t('live.aoVivo') || 'AO VIVO', t('live.requestApproved') || 'O host aceitou seu pedido — entrando em breve...'); } catch {}
+          }
+          break;
+        case 'live_join_deny':
+          if (msg.viewer_email && user?.email && msg.viewer_email.toLowerCase() === user.email.toLowerCase()) {
+            try { require('react-native').Alert.alert(t('live.aoVivo') || 'AO VIVO', t('live.requestDenied') || 'O host recusou seu pedido'); } catch {}
+            setJoinRequested(false);
+          }
+          break;
         case 'live_ended':
           setLiveEnded(true);
           endTimerRef.current = setTimeout(() => { if (alive) router.back(); }, 4000);
@@ -586,6 +598,29 @@ export default function LiveViewerScreen() {
     try { api.followUser?.(hostEmail); } catch {}
   }, [hostEmail]);
 
+  // Request to come on as a guest (TikTok "Go LIVE Together", Instagram
+  // "Request to Join"). Sends a one-shot WS event the host listens for and
+  // shows a queue/inbox. Server side: the live channel already broadcasts
+  // every WS message to all subs of `live_${session_id}` so the host
+  // receives it without server changes.
+  const [joinRequested, setJoinRequested] = useState(false);
+  const requestToJoin = useCallback(() => {
+    if (joinRequested) return;
+    try {
+      const ws = wsRef.current;
+      if (ws && ws.readyState === WebSocket.OPEN && paramSessionId) {
+        ws.send(JSON.stringify({
+          type: 'live_join_request',
+          session_id: paramSessionId,
+          viewer_email: user?.email,
+          viewer_name: user?.name || (user?.email || '').split('@')[0],
+        }));
+        setJoinRequested(true);
+        setTimeout(() => setJoinRequested(false), 60000); // allow re-request after 1 min
+      }
+    } catch {}
+  }, [paramSessionId, user?.email, user?.name, joinRequested]);
+
   // Share the live broadcast link. Uses the native share sheet on iOS/Android
   // and navigator.share (or clipboard fallback) on web. The URL resolves to
   // the public live-viewer route for the session so anyone can join.
@@ -824,6 +859,31 @@ export default function LiveViewerScreen() {
           <View style={styles.liveBadgeDot} />
           <Text style={styles.liveBadgeText}>LIVE</Text>
         </Animated.View>
+      </View>
+
+      {/* "Pedir pra entrar" pill — TikTok/Instagram parity. Sits in the
+          left-bottom corner so it's discoverable on first launch (the right
+          rail is muscle-memory for hearts/share). Becomes a "Pediu ✓" disabled
+          chip for 60s after sending so spam is naturally rate-limited. */}
+      <View pointerEvents="box-none" style={{ position: 'absolute', left: 14, bottom: 200 + insets.bottom, zIndex: 5 }}>
+        <TouchableOpacity
+          onPress={requestToJoin}
+          activeOpacity={0.85}
+          disabled={joinRequested}
+          accessibilityLabel={t('live.requestToJoin') || 'Pedir pra entrar'}
+          accessibilityRole="button"
+          style={{
+            flexDirection: 'row', alignItems: 'center', gap: 6,
+            paddingHorizontal: 12, paddingVertical: 7,
+            borderRadius: 18,
+            backgroundColor: joinRequested ? 'rgba(255,255,255,0.18)' : 'rgba(124,58,237,0.95)',
+            borderWidth: 1, borderColor: joinRequested ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.4)',
+          }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>
+            {joinRequested ? (t('live.requestSent') || 'Pedido enviado ✓') : (t('live.requestToJoin') || 'Pedir pra entrar')}
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {/* Right rail — host avatar (tap to view profile / follow), heart,
