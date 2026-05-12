@@ -41,6 +41,23 @@ const pushNotificationsState = {
   deviceToken: null,
 };
 
+// Remote diagnostic: posts each step of registerForPushNotifications to the
+// backend so we can see WHERE on Android the chain breaks (Android has zero
+// tokens registered across the entire backend, so something silently fails
+// before sendTokenToBackend is called). Best-effort — drops silently if
+// auth not ready or network down. OTA-safe (no native deps).
+async function _diagPush(step, info) {
+  try {
+    const { apiCall } = require('./api');
+    apiCall('push_diag', {
+      step,
+      platform: Platform.OS,
+      info: info ? String(info).slice(0, 500) : '',
+      ts: new Date().toISOString(),
+    }, 'POST').catch(() => {});
+  } catch {}
+}
+
 // Trigger the foreground toast directly (used on web where native notifications are unavailable)
 export function _triggerForegroundToast(notif) {
   if (_onForegroundNotification && notif) {
@@ -250,16 +267,20 @@ async function _pushMentionsCurrentUser(data, content) {
 }
 
 export async function registerForPushNotifications() {
+  _diagPush('register_start', Platform.OS);
   try {
     const loaded = await loadModules();
+    _diagPush('load_modules', loaded ? 'ok' : 'failed');
     if (!loaded) return null;
 
     if (!Device.isDevice) {
+      _diagPush('not_device', 'isDevice=false');
       console.warn('[Push] Must use physical device');
       return null;
     }
 
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    _diagPush('existing_perm', existingStatus);
     let finalStatus = existingStatus;
 
     if (existingStatus !== 'granted') {
@@ -272,14 +293,26 @@ export async function registerForPushNotifications() {
         },
       });
       finalStatus = status;
+      _diagPush('request_perm', finalStatus);
     }
 
-    if (finalStatus !== 'granted') return null;
+    if (finalStatus !== 'granted') {
+      _diagPush('perm_denied', finalStatus);
+      return null;
+    }
 
     // Em standalone production builds expoConfig pode estar undefined —
     // easConfig.projectId é o fallback documentado.
     const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
-    const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
+    _diagPush('project_id', projectId || 'undefined');
+    let tokenData;
+    try {
+      tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
+      _diagPush('expo_token', tokenData?.data ? ('len=' + String(tokenData.data).length) : 'empty');
+    } catch (e) {
+      _diagPush('expo_token_err', e?.message || String(e));
+      throw e;
+    }
 
     // Android notification channels
     if (Platform.OS === 'android') {
@@ -509,15 +542,10 @@ export async function registerForPushNotifications() {
       for (let attempt = 1; attempt <= 2; attempt++) {
         try {
           deviceToken = await Notifications.getDevicePushTokenAsync();
-          console.warn(
-            '[Push] Android FCM token result (attempt ' + attempt + '):',
-            deviceToken && typeof deviceToken === 'object'
-              ? { type: deviceToken.type, hasData: !!deviceToken.data, dataLen: deviceToken.data ? String(deviceToken.data).length : 0 }
-              : deviceToken
-          );
+          _diagPush('fcm_device_attempt_' + attempt, deviceToken?.data ? ('type=' + (deviceToken.type || '?') + ' len=' + String(deviceToken.data).length) : ('type=' + (deviceToken?.type || '?') + ' empty'));
           if (deviceToken?.data) break;
         } catch (err) {
-          console.warn('[Push] Failed to get device FCM token (attempt ' + attempt + '):', err?.message || err);
+          _diagPush('fcm_device_err_' + attempt, err?.message || String(err));
           deviceToken = null;
         }
         if (attempt === 1) {
@@ -527,41 +555,45 @@ export async function registerForPushNotifications() {
 
       if (deviceToken?.data) {
         pushNotificationsState.deviceToken = deviceToken.data;
-        console.warn('[Push] Android FCM device token registered locally (type=' + (deviceToken.type || 'unknown') + ')');
+        _diagPush('fcm_device_ok', 'type=' + (deviceToken.type || '?'));
       } else {
-        console.warn('[Push] Android FCM device token UNAVAILABLE after retry — backend will not receive fcm_device token. Check google-services.json package_name and Firebase project.');
+        _diagPush('fcm_device_missing', 'no fcm token after retry');
       }
     }
 
     try { _setCachedPushToken(tokenData.data); } catch {}
+    _diagPush('register_done', 'ok');
     return tokenData.data;
   } catch (err) {
+    _diagPush('register_failed', err?.message || String(err));
     console.warn('[Push] Registration failed:', err.message);
     return null;
   }
 }
 
 export async function sendTokenToBackend(pushToken) {
+  _diagPush('send_start', pushToken ? ('len=' + String(pushToken).length) : 'no token');
   if (!pushToken) return;
   try {
     const { apiCall } = require('./api');
-    await apiCall('register_push_token', { token: pushToken, platform: Platform.OS }, 'POST');
+    const r1 = await apiCall('register_push_token', { token: pushToken, platform: Platform.OS }, 'POST');
+    _diagPush('send_expo', r1?.success ? 'ok' : ('fail:' + (r1?.error || 'unknown')));
 
     // Also register the raw FCM device token for Android incoming calls
     if (Platform.OS === 'android') {
       if (pushNotificationsState.deviceToken) {
-        console.warn('[Push] Sending Android fcm_device token to backend (len=' + String(pushNotificationsState.deviceToken).length + ')');
-        await apiCall('register_push_token', {
+        const r2 = await apiCall('register_push_token', {
           token: pushNotificationsState.deviceToken,
           platform: 'android',
           token_type: 'fcm_device',
         }, 'POST');
+        _diagPush('send_fcm', r2?.success ? 'ok' : ('fail:' + (r2?.error || 'unknown')));
       } else {
-        console.warn('[Push] Skipping fcm_device registration — pushNotificationsState.deviceToken is empty. Android calls (and FCM-direct payloads) will not work for this install.');
+        _diagPush('send_fcm_skip', 'no deviceToken in state');
       }
     }
   } catch (err) {
-    console.warn('[Push] Token send failed:', err?.message || err);
+    _diagPush('send_err', err?.message || String(err));
   }
 }
 
