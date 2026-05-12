@@ -146,7 +146,11 @@ export default function CallStatusBar() {
     } catch { try { router.push('/call'); } catch {} }
   }, [callData, router]);
 
-  if (!isInCall && !shouldShow) return null;
+  // Skip render entirely when on /call screen — without this, the bar
+  // (positioned absolute, full width, with green+red children) animates
+  // its translateY from 0→-100 and the bottom 8-10px of the bar bleeds
+  // visible above the call screen as a green+red strip (bug print 2026-05-12).
+  if (!shouldShow) return null;
 
   const m = Math.floor(duration / 60);
   const s = duration % 60;
