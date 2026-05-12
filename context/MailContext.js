@@ -415,14 +415,22 @@ export function MailProvider({ children }) {
   }, [loadEmails]);
 
   // Manual refresh (pull-to-refresh) — always use silent merge to preserve seen state
+  // Manual pull-to-refresh always resets to page 1 so the user sees the
+  // newest emails first. Bug 2026-05-12: refresh was reusing `page` from
+  // state, so if the user had scrolled and loaded page 3, pulling to refresh
+  // re-fetched page 3 (older emails) instead of the newest. Page 1 = newest
+  // in IMAP fetch order; setPage(1) keeps loadMore pagination consistent.
   const refresh = useCallback(() => {
-    loadEmails(currentFolder, page, search, '', '', true);
-  }, [currentFolder, page, search, loadEmails]);
+    setPage(1);
+    loadEmails(currentFolder, 1, search, '', '', true);
+  }, [currentFolder, search, loadEmails]);
 
-  // Silent refresh — background poll, no spinner, no scroll jump
+  // Silent refresh — background poll, no spinner, no scroll jump. Also
+  // fetches page 1 so new arrivals land at the top of the list without
+  // disturbing scroll position.
   const silentRefresh = useCallback(() => {
-    loadEmails(currentFolder, page, search, '', '', true);
-  }, [currentFolder, page, search, loadEmails]);
+    loadEmails(currentFolder, 1, search, '', '', true);
+  }, [currentFolder, search, loadEmails]);
 
   const doSearch = useCallback((q) => {
     setSearch(q);
