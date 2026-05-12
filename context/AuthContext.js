@@ -548,6 +548,26 @@ export function AuthProvider({ children }) {
     } catch {}
   }, []);
 
+  // Re-register push token EVERY time the app comes to foreground (throttled
+  // to once per 5min). Reason: Android fcm_device token can be missing if the
+  // initial registration ran before FCM SDK was warm (cold start race). Also
+  // tokens periodically rotate. Without re-registration, the user stops
+  // getting pushes silently. Suggested by user (2026-05-12): "tem que ser
+  // toda ves que a pessoa loga, faz mais sentido".
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    let lastReg = 0;
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      const now = Date.now();
+      if (now - lastReg < 5 * 60 * 1000) return; // throttle 5min
+      if (!user?.email) return; // only when logged in
+      lastReg = now;
+      registerPushAfterAuth();
+    });
+    return () => sub?.remove?.();
+  }, [user?.email, registerPushAfterAuth]);
+
   // Belt-and-suspenders: sync the bearer token + base URL to the App Group
   // every time the user state lands on a truthy email. Covers every path —
   // login, hydrate-from-cache, Face ID, QR pair, refetch — without having
