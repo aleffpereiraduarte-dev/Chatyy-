@@ -786,7 +786,27 @@ export default function Profile({
     };
     tick();
     const iv = setInterval(tick, 60000);
-    return () => { cancelled = true; clearInterval(iv); };
+    // WS instant updates — when this profile's owner goes live or ends a
+    // live, flip the badge state without waiting for the 60s poll.
+    let unsubOn, unsubOff;
+    try {
+      const mailWs = require('../services/websocket').default;
+      mailWs.subscribe?.('lives_global');
+      unsubOn = mailWs.on?.('live_started', (payload) => {
+        const d = payload?.data || payload || {};
+        if ((d.host_email || '').toLowerCase() === target) setLiveSessionId(d.session_id || null);
+      });
+      unsubOff = mailWs.on?.('live_ended', (payload) => {
+        const d = payload?.data || payload || {};
+        if ((d.host_email || '').toLowerCase() === target) setLiveSessionId(null);
+      });
+    } catch {}
+    return () => {
+      cancelled = true;
+      clearInterval(iv);
+      try { unsubOn?.(); } catch {}
+      try { unsubOff?.(); } catch {}
+    };
   }, [identity?.email]);
   const presence = data?.presence;
   const social = data?.social;

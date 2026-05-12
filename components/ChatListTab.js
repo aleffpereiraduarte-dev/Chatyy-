@@ -2459,6 +2459,33 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         try { mailWs.subscribe(`chat_user_${user.email}`); } catch {}
       }
 
+      // Global lives channel — instant home-strip updates when ANY user
+      // goes live or ends their live. Without this, the strip waits up to
+      // 45s for the next live_list poll. Two events:
+      //   live_started — push entry into livesByEmail
+      //   live_ended   — remove entry from livesByEmail
+      try { mailWs.subscribe('lives_global'); } catch {}
+      unsubs.push(mailWs.on('live_started', (payload) => {
+        const data = payload?.data || payload || {};
+        const email = (data.host_email || '').toLowerCase();
+        if (!email || email === (user?.email || '').toLowerCase()) return;
+        setLivesByEmail(prev => {
+          if (prev[email]) return prev;
+          return { ...prev, [email]: { id: data.session_id, host_name: data.host_name || email.split('@')[0], viewer_count: 0 } };
+        });
+      }));
+      unsubs.push(mailWs.on('live_ended', (payload) => {
+        const data = payload?.data || payload || {};
+        const email = (data.host_email || '').toLowerCase();
+        if (!email) return;
+        setLivesByEmail(prev => {
+          if (!prev[email]) return prev;
+          const next = { ...prev };
+          delete next[email];
+          return next;
+        });
+      }));
+
       unsubs.push(mailWs.on('typing', (data) => {
         if (!data?.conversation_id || data?.email === user?.email) return;
         const name = emailToDisplayName(data.name || data.email || '');
