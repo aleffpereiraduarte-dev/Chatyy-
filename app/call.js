@@ -1089,7 +1089,14 @@ function CallScreenInner() {
     // first call_end and the peer's listener is idempotent, so 1 send + 1
     // retry on a 1.2s backoff (in case of WS flap) is enough.
     const sendByeWithRetry = async () => {
-      const delays = [0, 1200];
+      // 3-attempt schedule (0ms, 800ms, 1800ms) — matches WhatsApp/Skype
+      // retry curves observed in pcap captures. 2× wasn't enough in dual-
+      // network handoff scenarios (WiFi→LTE during hangup tap): the first
+      // send raced the network switch and was dropped, the second arrived
+      // after the WS reconnect retry interval and the peer was already in a
+      // ghost-ringing state. 3 attempts spread across ~2s covers the WS
+      // reconnect window without spamming the relay.
+      const delays = [0, 800, 1800];
       for (let attempt = 0; attempt < delays.length; attempt++) {
         if (delays[attempt] > 0) await new Promise(r => setTimeout(r, delays[attempt]));
         try {
@@ -1858,6 +1865,35 @@ function CallScreenInner() {
         const pc = new RTC_PeerConnection(getIceConfig());
         pcRef.current = pc;
 
+        // Periodic TURN credential refresh. Cred lifetime is ~24h on our
+        // Coturn cluster; refresh every 20h to stay ahead of expiry on long
+        // calls (rare but real for kid-mode parental-supervised sessions).
+        // Without this, a call that survives past 23h breaks silently when
+        // the relay starts rejecting allocations mid-stream.
+        if (turnRefreshRef.current) { clearInterval(turnRefreshRef.current); turnRefreshRef.current = null; }
+        turnRefreshRef.current = setInterval(async () => {
+          if (endedRef.current) return;
+          // Only refresh when we're getting close to expiry (<2h) to avoid
+          // burning requests on short calls.
+          const remaining = turnExpiresAtRef.current - Date.now();
+          if (remaining > 2 * 60 * 60 * 1000) return;
+          try {
+            const mailWs = require('../services/websocket').default;
+            if (!mailWs.isConnected) return;
+            const creds = await new Promise((resolve) => {
+              const u = mailWs.on('turn_credentials', (d) => { u(); resolve(d?.credentials || d); });
+              mailWs._send({ type: 'get_turn_credentials' });
+              setTimeout(() => { u(); resolve(null); }, 4000);
+            });
+            if (creds?.urls) {
+              turnCredsRef.current = creds;
+              turnExpiresAtRef.current = Date.now() + 23 * 60 * 60 * 1000;
+              try { pcRef.current?.setConfiguration?.(getIceConfig()); } catch {}
+              console.log('[Call] TURN credentials refreshed proactively');
+            }
+          } catch {}
+        }, 60 * 60 * 1000); // check every hour
+
         // ICE connection timeout — 45 seconds to establish connection
         // (30s was too short for mobile networks with TURN relay negotiation)
         if (iceTimeoutRef.current) clearTimeout(iceTimeoutRef.current);
@@ -2117,6 +2153,29 @@ function CallScreenInner() {
                 setPeerConnected(true);
                 setReconnecting(false);
                 setConnectionFailed(false);
+              }
+              // WhatsApp-grade: when ICE finally lands, re-affirm Android audio
+              // routing one more time. Reports of "voz só vem alguns segundos
+              // depois" trace back to AudioManager.setMode flipping AFTER the
+              // first RTP packets arrive — re-asserting category here forces
+              // the playback path to bind to the call stream immediately. iOS
+              // is unaffected (CallKit owns the session) so we skip it.
+              if (Platform.OS === 'android') {
+                try {
+                  const InCallManager = require('react-native-incall-manager').default;
+                  if (typeof InCallManager.setForceSpeakerphoneOn === 'function') {
+                    const wantSpeaker = !!videoEnabledRef.current;
+                    InCallManager.setForceSpeakerphoneOn(wantSpeaker);
+                  }
+                  if (typeof InCallManager.chooseAudioRoute === 'function') {
+                    InCallManager.chooseAudioRoute(videoEnabledRef.current ? 'SPEAKER_PHONE' : 'EARPIECE');
+                  }
+                } catch {}
+                try {
+                  const ExpoAudioSession = require('../modules/expo-audio-session').default;
+                  if (videoEnabledRef.current) ExpoAudioSession.activateForVideoCall?.();
+                  else ExpoAudioSession.activateForCall?.(false);
+                } catch {}
               }
             } else if (state === 'disconnected') {
               // Brief disconnections happen during network switches - don't end call yet
