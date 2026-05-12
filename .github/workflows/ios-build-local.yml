@@ -146,6 +146,15 @@ jobs:
         run: node scripts/patch-shareext-signing.js
 
       - name: Install Pods
+        env:
+          # CocoaPods 1.16 + Ruby 4.0 fails with
+          # "Unicode Normalization not appropriate for ASCII-8BIT
+          # (Encoding::CompatibilityError)" when LANG is unset
+          # on the macos-latest runner — runner ships with C/POSIX
+          # locale by default. Force UTF-8 so String#unicode_normalize
+          # in Pod::Config#installation_root works.
+          LANG: en_US.UTF-8
+          LC_ALL: en_US.UTF-8
         run: |
           cd ios
           pod install --repo-update
