@@ -1444,9 +1444,15 @@ export default function ChatNewScreen() {
           value={searchText}
           onChangeText={handleSearch}
           onSubmitEditing={handleAddEmail}
-          autoFocus
+          // autoFocus removed — sticky keyboard on Android: user couldn't
+          // close it by tapping outside, blocked the comunidades/listas
+          // visible below. WhatsApp/Telegram pattern: search input
+          // available but only focused when the user taps it. Reported
+          // 2026-05-12 print 3.
           keyboardType="default"
           autoCapitalize="none"
+          returnKeyType="search"
+          blurOnSubmit
         />
         {searchText ? (
           <TouchableOpacity onPress={() => { setSearchText(''); setSearchResults([]); }} style={{ padding: 4 }}>

@@ -3040,10 +3040,20 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
       const dialNum = cleanNum.startsWith('+') ? cleanNum.slice(1) : cleanNum;
       setNumber(dialNum);
       setDialerVisible(true);
-      // Dispara handleCall após o state propagar no próximo tick.
-      setTimeout(() => {
-        try { handleCallRef.current?.(); } catch {}
-      }, 80);
+      // Dispara handleCall após o modal montar + handleCallRef ser setado.
+      // 80ms era curto demais — em devices lentos o ref ainda era null,
+      // o tap "fazia nada". 300ms cobre cold-start do modal sem nojo
+      // visual. Tentamos 3x com backoff caso o ref demore mais ainda.
+      let attempts = 0;
+      const tryDial = () => {
+        attempts++;
+        if (handleCallRef.current) {
+          try { handleCallRef.current(); } catch {}
+        } else if (attempts < 4) {
+          setTimeout(tryDial, 200);
+        }
+      };
+      setTimeout(tryDial, 250);
       return;
     }
     if (!router) return;
