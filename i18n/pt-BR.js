@@ -3083,6 +3083,8 @@ export default {
   'chatConv.liveLocation': 'Localização ao vivo',
   'chatConv.liveLocationDuration': 'Compartilhar por quanto tempo?',
   'chatConv.liveLocationEnded': 'Localização ao vivo encerrada',
+  'chatConv.liveEndsIn': 'Encerra em',
+  'chat.liveLocation': 'Localização ao vivo',
   'chatConv.tapToSeeLastLocation': 'Toque para ver última localização',
   'chatConv.liveBadge': 'AO VIVO',
   'chatConv.liveEndedBadge': 'ENCERRADA',

@@ -3037,6 +3037,8 @@ export default {
   'chatConv.liveLocation': 'Live location',
   'chatConv.liveLocationDuration': 'Share for how long?',
   'chatConv.liveLocationEnded': 'Live location ended',
+  'chatConv.liveEndsIn': 'Ends in',
+  'chat.liveLocation': 'Live location',
   'chatConv.tapToSeeLastLocation': 'Tap to see last location',
   'chatConv.liveBadge': 'LIVE',
   'chatConv.liveEndedBadge': 'ENDED',

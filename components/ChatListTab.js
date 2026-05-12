@@ -424,8 +424,14 @@ const ConversationRow = React.memo(function ConversationRow({
             content = '\uD83D\uDCDE ' + (t('chat.voiceCall') || 'Chamada de voz');
           }
         }
-        else if (parsed.type === 'location') content = '\uD83D\uDCCD ' + (t('chat.location') || 'Localização');
-        else if (parsed.type === 'contact') content = '\uD83D\uDC64 ' + (t('chat.contact') || 'Contato');
+        // Location msgs carry the type only on lastMsg.type (DB column) —
+        // the JSON payload is `{latitude, longitude, live, ...}` with NO
+        // `type` field. Old `parsed.type==='location'` missed and the raw
+        // JSON leaked into chat list preview (reported 2026-05-12 iOS print).
+        else if (lastMsg.type === 'location' || parsed.type === 'location' || (typeof parsed.latitude === 'number' && typeof parsed.longitude === 'number')) {
+          content = '\uD83D\uDCCD ' + (parsed.live ? (t('chat.liveLocation') || 'Localização ao vivo') : (t('chat.location') || 'Localização'));
+        }
+        else if (parsed.type === 'contact' || lastMsg.type === 'contact') content = '\uD83D\uDC64 ' + (t('chat.contact') || 'Contato');
         else if (parsed.file_url || parsed.attachment_url || parsed.media_url || (parsed.url && parsed.mime_type)) {
           content = '\uD83D\uDCCE ' + (t('chat.attachment') || 'Anexo');
         }

@@ -3035,6 +3035,8 @@ export default {
   'chatConv.online': 'en línea',
   'chatConv.away': 'ausente',
   'chatConv.liveLocation': 'Ubicación en vivo',
+  'chatConv.liveEndsIn': 'Termina en',
+  'chat.liveLocation': 'Ubicación en vivo',
   'chatConv.liveLocationDuration': 'Compartir por cuánto tiempo?',
   'chatConv.liveLocationEnded': 'Ubicación en vivo finalizada',
   'chatConv.tapToSeeLastLocation': 'Toca para ver última ubicación',
