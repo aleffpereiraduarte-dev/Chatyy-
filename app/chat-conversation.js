@@ -3939,6 +3939,47 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
   );
 }
 
+// VideoThumbImage: layered fallback poster for chat-bubble video tiles.
+// Tries (in order) thumbnail_url returned by the server, then the
+// ffmpeg-sibling `<file>.thumb.jpg`, then disappears silently if both
+// 404 — letting the parent's gradient placeholder show through. Was a
+// single naked <Image> source previously, which left the bubble dead
+// black whenever the .thumb.jpg pipeline failed (corrupt video,
+// missing codec, R2 upload race).
+function VideoThumbImage({ url, thumbnailUrl, style }) {
+  const candidates = React.useMemo(() => {
+    const out = [];
+    const abs = (u) => {
+      if (!u) return '';
+      if (u.startsWith('http') || u.startsWith('data:') || u.startsWith('blob:')) return u;
+      try { return api.getMediaUrl(u); } catch { return `https://chatyy.com.br${u}`; }
+    };
+    if (thumbnailUrl) {
+      out.push(abs(thumbnailUrl));
+      // Some rows store the raw path, the server adds `.thumb.jpg` only
+      // sometimes. Try both shapes.
+      if (!/\.(jpg|jpeg|png|webp)$/i.test(thumbnailUrl)) {
+        out.push(abs(thumbnailUrl) + '.thumb.jpg');
+      }
+    }
+    if (url) {
+      out.push(abs(url) + '.thumb.jpg');
+    }
+    return out.filter((v, i, a) => v && a.indexOf(v) === i);
+  }, [url, thumbnailUrl]);
+  const [idx, setIdx] = React.useState(0);
+  if (idx >= candidates.length) return null;
+  return (
+    <Image
+      key={candidates[idx]}
+      source={{ uri: candidates[idx] }}
+      style={style}
+      resizeMode="cover"
+      onError={() => setIdx(i => i + 1)}
+    />
+  );
+}
+
 // ============================================================
 // MEDIA PREVIEW (WhatsApp-like preview before sending with view-once toggle)
 // ============================================================
@@ -14103,20 +14144,35 @@ export default function ChatConversationScreen() {
                     </View>
                   ) : (
                     <View style={styles.videoOverlayAbsolute}>
-                      <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: 'rgba(255,255,255,0.9)', alignItems: 'center', justifyContent: 'center' }}>
-                        <Svg width={22} height={22} viewBox="0 0 24 24"><Path d="M8 5v14l11-7z" fill="#111" /></Svg>
+                      <View style={{ width: 68, height: 68, borderRadius: 34, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center', ...Platform.select({ web: { boxShadow: '0 2px 12px rgba(0,0,0,0.35)' } }) }}>
+                        <View style={{ width: 54, height: 54, borderRadius: 27, backgroundColor: 'rgba(255,255,255,0.95)', alignItems: 'center', justifyContent: 'center' }}>
+                          <Svg width={24} height={24} viewBox="0 0 24 24"><Path d="M8 5v14l11-7z" fill="#111" /></Svg>
+                        </View>
                       </View>
                     </View>
                   )}
                 </View>
               ) : (
-                <View style={{ width: 280, height: 200, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' }}>
+                <View style={{ width: 280, height: 200, backgroundColor: '#1f2937', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                  {/* Gradient placeholder visible whenever the real thumb
+                      isn't loaded yet (or doesn't exist). Was plain black
+                      → user reported "thumb do video tá preto". Now we
+                      show a subtle dark slate gradient + video icon
+                      watermark so even videos without a server thumbnail
+                      look intentional instead of broken. The Image
+                      layers on top with onError to hide cleanly if the
+                      remote .thumb.jpg 404s. */}
+                  <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, width: 280, height: 200, backgroundColor: '#111827' }} />
+                  <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 100, backgroundColor: 'rgba(55,65,81,0.5)' }} />
+                  <View pointerEvents="none" style={{ position: 'absolute', opacity: 0.18 }}>
+                    <IconVideo size={64} color="#9ca3af" />
+                  </View>
                   {/* Poster thumbnail generated server-side via ffmpeg —
                       avoids the flat gray panel while the video itself is
                       loaded only on tap (MediaViewer). The .thumb.jpg file
                       is created by chat_upload (chat.php) right after the
                       move_uploaded_file() step. If it doesn't exist the
-                      <Image> quietly falls back to the black background. */}
+                      Image's onError hides it so the gradient stays. */}
                   {msg.thumb_b64 && !vidUploading && (
                     <Image
                       source={{ uri: `data:image/jpeg;base64,${msg.thumb_b64}` }}
@@ -14126,17 +14182,10 @@ export default function ChatConversationScreen() {
                     />
                   )}
                   {msg.file_url && !vidUploading && (
-                    <Image
-                      source={{ uri: (() => {
-                        // Thumb precisa ser URL absoluta remota — concatenar
-                        // .thumb.jpg num file:// gera path local inexistente.
-                        // resolveMediaUri pode retornar file:// (cache do
-                        // vídeo principal), então usa msg.file_url bruto aqui.
-                        try { return api.getMediaUrl(msg.file_url) + '.thumb.jpg'; }
-                        catch { return (msg.file_url?.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`) + '.thumb.jpg'; }
-                      })() }}
+                    <VideoThumbImage
+                      url={msg.file_url}
+                      thumbnailUrl={msg.thumbnail_url}
                       style={{ position: 'absolute', top: 0, left: 0, width: 280, height: 200 }}
-                      resizeMode="cover"
                     />
                   )}
                   {vidUploading ? (
@@ -14165,12 +14214,23 @@ export default function ChatConversationScreen() {
                       <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{Math.round(vidDlProgress)}%</Text>
                     </View>
                   ) : (
-                    // Play button — tap no bubble (handler externo) abre o viewer,
-                    // que streama remoto se ainda não cacheou. Tamanho do vídeo
-                    // mostrado no badge bottom-left.
-                    <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}>
-                      <Svg width={24} height={24} viewBox="0 0 24 24"><Path d="M8 5v14l11-7z" fill="#fff" /></Svg>
+                    // iMessage / Instagram-grade play button: white frosted
+                    // circle with a soft outer ring + black play icon. The
+                    // double-layer (outer ring + inner solid) gives the
+                    // button readable contrast over busy thumbnails and a
+                    // premium "tappable" feel. Previous version was a flat
+                    // dark circle that disappeared on darker frames.
+                    <View style={{ width: 68, height: 68, borderRadius: 34, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center', ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 10 }, android: { elevation: 6 } }) }}>
+                      <View style={{ width: 54, height: 54, borderRadius: 27, backgroundColor: 'rgba(255,255,255,0.95)', alignItems: 'center', justifyContent: 'center' }}>
+                        <Svg width={24} height={24} viewBox="0 0 24 24"><Path d="M8 5v14l11-7z" fill="#111" /></Svg>
+                      </View>
                     </View>
+                  )}
+                  {/* Subtle gradient overlay so the duration badge stays
+                      readable on bright thumbnails and the play button
+                      pops on dark ones. Bottom-half black fade only. */}
+                  {!vidUploading && !vidIsDownloading && (
+                    <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 70, backgroundColor: 'rgba(0,0,0,0.18)' }} />
                   )}
                 </View>
               )}
