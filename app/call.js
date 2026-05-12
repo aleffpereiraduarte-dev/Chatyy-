@@ -1677,6 +1677,27 @@ function CallScreenInner() {
           } catch (e) {
             console.warn('[Call] InCallManager initial route error:', e?.message);
           }
+
+          // Android: re-affirm MODE_IN_COMMUNICATION + audio focus AFTER
+          // getUserMedia + expo-audio + InCallManager have run. Reported
+          // 2026-05-12: call connects (ICE + tracks ok) but no audio at all
+          // — root cause was expo-audio.setAudioMode resetting Android's
+          // AudioManager.mode back to MODE_NORMAL, which silences WebRTC
+          // audio engine (the engine routes to USAGE_VOICE_COMMUNICATION
+          // streams ONLY when mode == MODE_IN_COMMUNICATION). Re-call our
+          // native ExpoAudioSession.activateForCall to FORCE the right
+          // mode + request audio focus again.
+          if (Platform.OS === 'android') {
+            try {
+              const ExpoAudioSession = require('../modules/expo-audio-session').default;
+              const useSpeaker = isVideoParam === '1' || isVideoParam === 'true';
+              if (useSpeaker) ExpoAudioSession.activateForVideoCall?.();
+              else ExpoAudioSession.activateForCall?.(false);
+              console.log('[Call] Android: re-activated audio session post-getUserMedia');
+            } catch (e) {
+              console.warn('[Call] Android post-gUM audio session error:', e?.message);
+            }
+          }
           // Also use expo-audio-session module for iOS. We call the full
           // activateForCall / activateForVideoCall so the category is set
           // correctly (not just the speaker route override), and enable
@@ -1915,6 +1936,18 @@ function CallScreenInner() {
                 const { RTCAudioSession } = require('@stream-io/react-native-webrtc');
                 RTCAudioSession.audioSessionDidActivate();
               } catch {}
+              // Android: another re-affirm — once remote track arrives, force
+              // the audio mode back to MODE_IN_COMMUNICATION in case anything
+              // (expo-av, sound effects, ringtone teardown) reset it. This is
+              // the LAST safety net before audio is expected to flow.
+              if (Platform.OS === 'android') {
+                try {
+                  const ExpoAudioSession = require('../modules/expo-audio-session').default;
+                  const useSpeaker = isVideoParam === '1' || isVideoParam === 'true';
+                  if (useSpeaker) ExpoAudioSession.activateForVideoCall?.();
+                  else ExpoAudioSession.activateForCall?.(false);
+                } catch {}
+              }
             }
           }
         };
