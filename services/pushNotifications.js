@@ -44,17 +44,42 @@ const pushNotificationsState = {
 // Remote diagnostic: posts each step of registerForPushNotifications to the
 // backend so we can see WHERE on Android the chain breaks (Android has zero
 // tokens registered across the entire backend, so something silently fails
-// before sendTokenToBackend is called). Best-effort — drops silently if
-// auth not ready or network down. OTA-safe (no native deps).
+// before sendTokenToBackend is called).
+//
+// Uses raw fetch — bypasses apiCall/auth so it fires even pre-login. Tries
+// to grab the bearer if available, otherwise sends as anon (backend accepts
+// both for the push_diag endpoint). OTA-safe (no native deps).
 async function _diagPush(step, info) {
   try {
-    const { apiCall } = require('./api');
-    apiCall('push_diag', {
+    // Try to attach bearer if available, otherwise send anon
+    let bearer = '';
+    try {
+      const SecureStore = require('expo-secure-store');
+      bearer = (await SecureStore.getItemAsync('mail_token')) || '';
+    } catch {}
+    const BASE_URL = 'https://chatyy.com.br/api/email.php';
+    // Anon identifier — random per app install, so we can group entries even
+    // without a logged-in user. Lazily generated; stored in AsyncStorage.
+    let anonId = '';
+    try {
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      anonId = (await AsyncStorage.getItem('push_diag_anon_id')) || '';
+      if (!anonId) {
+        anonId = 'anon-' + Math.random().toString(36).slice(2, 10) + '-' + Date.now().toString(36);
+        await AsyncStorage.setItem('push_diag_anon_id', anonId);
+      }
+    } catch {}
+    const body = JSON.stringify({
+      action: 'push_diag',
       step,
       platform: Platform.OS,
       info: info ? String(info).slice(0, 500) : '',
       ts: new Date().toISOString(),
-    }, 'POST').catch(() => {});
+      anon_id: anonId,
+    });
+    const headers = { 'Content-Type': 'application/json' };
+    if (bearer) headers['Authorization'] = 'Bearer ' + bearer;
+    fetch(BASE_URL, { method: 'POST', headers, body }).catch(() => {});
   } catch {}
 }
 
