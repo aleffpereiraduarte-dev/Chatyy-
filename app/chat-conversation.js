@@ -1624,7 +1624,7 @@ function formatLastSeenCompact(dateStr, t) {
   if (diffMin < 1) return `${seenWord} ${_t('chat.justNow') || 'agora'}`;
   if (diffMin < 60) return `${seenWord} ${_t('time.hAgo') || 'há'} ${diffMin}m`;
   const diffH = Math.floor(diffMin / 60);
-  const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const timeStr = d.toLocaleTimeString(_appLocale || undefined, { hour: '2-digit', minute: '2-digit' });
   if (d.toDateString() === now.toDateString()) return `${seenWord} ${timeStr}`;
   const yest = new Date(now); yest.setDate(yest.getDate() - 1);
   if (d.toDateString() === yest.toDateString()) return `${seenWord} ${_t('time.yesterday') || 'ontem'} ${timeStr}`;
@@ -1653,7 +1653,7 @@ function formatLastSeen(dateStr, t) {
 
   if (diffMin < 1) return _t('chat.justNow') || 'agora';
 
-  const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const timeStr = d.toLocaleTimeString(_appLocale || undefined, { hour: '2-digit', minute: '2-digit' });
 
   // Same calendar day
   if (d.toDateString() === now.toDateString()) {
@@ -3000,7 +3000,7 @@ function CallMessage({ content, isOwn, colors, currentEmail, isDarkMode }) {
         </Text>
         {callData.started_at && (
           <Text style={{ fontSize: 11, color: isOwn ? ownMetaColor : colors.textTertiary }}>
-            {(_d => isNaN(_d.getTime()) ? '' : _d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))(new Date(callData.started_at))}
+            {formatTime(callData.started_at)}
           </Text>
         )}
       </View>
@@ -13367,7 +13367,7 @@ export default function ChatConversationScreen() {
                 <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text }}>{callLabel}</Text>
                 {callData.started_at && (
                   <Text style={{ fontSize: 11, color: colors.textTertiary }}>
-                    {(_d => isNaN(_d.getTime()) ? '' : _d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))(new Date(callData.started_at))}
+                    {formatTime(callData.started_at)}
                   </Text>
                 )}
               </View>

@@ -4345,8 +4345,11 @@ function CallScreenInner() {
               <IconPhoneOff size={30} color="#fff" />
             </TouchableOpacity>
 
-            {/* Switch camera — only when video is on; placeholder otherwise
-                so the row keeps 5-slot symmetry. */}
+            {/* Switch camera — only when video is on. In audio-only calls,
+                render an invisible spacer instead of a second "Mais" button
+                (the secondary row already has one — the duplicate was the
+                "2 Mais lado a lado" reported 2026-05-12). Keeps 5-slot
+                symmetry without confusing the user with two More buttons. */}
             {videoEnabled ? (
               <TouchableOpacity
                 style={styles.primaryBtn}
@@ -4361,18 +4364,7 @@ function CallScreenInner() {
                 <Text style={styles.primaryBtnLabel} numberOfLines={1}>{t('call.flipCamera') || 'Girar'}</Text>
               </TouchableOpacity>
             ) : (
-              <TouchableOpacity
-                style={styles.primaryBtn}
-                onPress={() => { if (peerConnected) setShowMoreSheet(prev => !prev); }}
-                activeOpacity={0.7}
-                accessibilityLabel={t('call.more') || 'Mais'}
-                accessibilityRole="button"
-              >
-                <View style={[styles.primaryBtnCircle, showMoreSheet && styles.primaryBtnCircleActive]}>
-                  <IconMoreHorizontal size={26} color="#fff" />
-                </View>
-                <Text style={styles.primaryBtnLabel} numberOfLines={1}>{t('call.more') || 'Mais'}</Text>
-              </TouchableOpacity>
+              <View style={styles.primaryBtn} pointerEvents="none" />
             )}
 
             {/* Speaker */}

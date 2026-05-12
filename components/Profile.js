@@ -705,7 +705,15 @@ export default function Profile({
     let cancelled = false;
     (async () => {
       try {
-        const r = await api.profileGet(fetchKey);
+        // Hard 12s timeout so skeleton can't sit forever waiting on a
+        // hung fetch — reported 2026-05-12 ("skeleton infinito no /perfil").
+        // Without this, an api.profileGet() that never resolves (slow CDN,
+        // dead socket on cellular handoff, etc.) leaves the user staring
+        // at gray placeholders until they kill the app.
+        const r = await Promise.race([
+          api.profileGet(fetchKey),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('profile_timeout')), 12000)),
+        ]);
         if (cancelled) return;
         if (r?.success && r.data) {
           _cacheSet(fetchKey, r.data);
