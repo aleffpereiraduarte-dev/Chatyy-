@@ -23079,16 +23079,16 @@ const styles = StyleSheet.create({
   // WhatsApp ~2-3dp mid-group). `msgRowGroupEnd` bumps this up for the
   // last msg in the group so the next speaker's bubble has clear visual
   // separation (~8dp, WhatsApp standard).
-  msgRow: { maxWidth: '78%', marginBottom: 1 },
+  msgRow: { maxWidth: '80%', marginBottom: 1 },
   msgRowGroupEnd: { marginBottom: 10 },
   msgRowOwn: { alignSelf: 'flex-end', marginRight: 10 },
   msgRowOther: { alignSelf: 'flex-start', marginLeft: 10 },
-  msgSenderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 2, marginLeft: 4 },
-  msgSender: { fontSize: 12.5, fontWeight: '700', letterSpacing: -0.1 },
+  msgSenderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 3, marginLeft: 4 },
+  msgSender: { fontSize: 13, fontWeight: '700', letterSpacing: -0.15 },
   replyIndicator: {
-    borderLeftWidth: 3, borderRadius: 10,
-    paddingHorizontal: 10, paddingVertical: 7,
-    marginBottom: 5,
+    borderLeftWidth: 3, borderRadius: 12,
+    paddingHorizontal: 10, paddingVertical: 8,
+    marginBottom: 6,
     // Natural width — lets the reply preview push the bubble out to
     // accommodate the quoted text + sender name. `alignSelf: 'stretch'`
     // (previous iteration) made it conform to the bubble, which in turn
@@ -23099,8 +23099,8 @@ const styles = StyleSheet.create({
   replyName: { fontSize: 13.5, fontWeight: '700', letterSpacing: -0.1, marginBottom: 2 },
   replyText: { fontSize: 13, lineHeight: 17, marginTop: 1, opacity: 0.85 },
   bubble: {
-    borderRadius: 18, paddingHorizontal: 11,
-    paddingTop: 6, paddingBottom: 5,
+    borderRadius: 18, paddingHorizontal: 12,
+    paddingTop: 7, paddingBottom: 6,
     minWidth: 82,
     // flexShrink + alignSelf so Yoga measures the Text intrinsic width
     // BEFORE applying minWidth — without these, the first render in a
@@ -23112,23 +23112,23 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     alignSelf: 'flex-start',
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.14, shadowRadius: 10 },
-      android: { elevation: 3 },
-      web: { boxShadow: '0 4px 12px rgba(0,0,0,0.10), 0 1px 3px rgba(0,0,0,0.06)' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 14 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 2px 8px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.05)' },
     }),
   },
   bubbleWithReply: { minWidth: 230 },
   bubbleOwn: {
-    borderTopLeftRadius: 16, borderTopRightRadius: 16,
-    borderBottomLeftRadius: 16, borderBottomRightRadius: 4,
+    borderTopLeftRadius: 18, borderTopRightRadius: 18,
+    borderBottomLeftRadius: 18, borderBottomRightRadius: 5,
   },
   bubbleOther: {
-    borderTopLeftRadius: 16, borderTopRightRadius: 16,
-    borderBottomLeftRadius: 4, borderBottomRightRadius: 16,
+    borderTopLeftRadius: 18, borderTopRightRadius: 18,
+    borderBottomLeftRadius: 5, borderBottomRightRadius: 18,
     borderWidth: 0, borderColor: 'transparent',
   },
   bubbleDeleted: { opacity: 0.55, paddingHorizontal: 12, paddingVertical: 8 },
-  msgText: { fontSize: 15.5, lineHeight: 20.5, letterSpacing: -0.05 },
+  msgText: { fontSize: 15.5, lineHeight: 20.5, letterSpacing: -0.08 },
   // Time + tick row. Always one line inside the bubble. Minimum width is
   // enforced by bubble.minWidth so the row never wraps and the V never
   // "falls behind" the bubble when the bubble is narrow.
@@ -23137,12 +23137,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'flex-end',
     flexWrap: 'nowrap',
-    gap: 3,
-    marginTop: 2,
+    gap: 4,
+    marginTop: 3,
     minHeight: 14,
   },
   editedLabel: { fontSize: 10, fontStyle: 'italic', opacity: 0.55 },
-  msgTime: { fontSize: 10.5, fontWeight: '500', letterSpacing: 0.3, opacity: 0.55, flexShrink: 0 },
+  msgTime: { fontSize: 10.5, fontWeight: '500', letterSpacing: 0.2, opacity: 0.6, flexShrink: 0 },
   videoOverlayAbsolute: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     alignItems: 'center', justifyContent: 'center',
