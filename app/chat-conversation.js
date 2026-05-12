@@ -5735,6 +5735,36 @@ export default function ChatConversationScreen() {
       const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
       const conv = convs.find(c => c.id === conversationId || String(c.id) === String(conversationId));
       _applyConvName(conv);
+      // WhatsApp parity: if the conversation row doesn't carry a
+      // display_name AND we don't have a custom nickname, fall back to
+      // the peer's PUBLIC PROFILE name (the name they set in their own
+      // signup). User reported the header showing only "visto há 6m"
+      // with no name above — that means display_name was empty in the
+      // chat_conversations row (older direct convs created before the
+      // name column was populated). profileGet() is cached server-side
+      // (60s) so this is cheap and only fires when there's a real gap.
+      try {
+        if ((conv?.type || 'direct') === 'direct') {
+          const peer = conv?.other_email || conv?.contact_email || params.email || '';
+          if (peer) {
+            let alreadyHaveCustomName = false;
+            try {
+              const nn = require('../services/nicknames').getNickname?.(peer);
+              if (nn) alreadyHaveCustomName = true;
+            } catch {}
+            const havServerName = !!(conv?.display_name || conv?.name);
+            if (!alreadyHaveCustomName && !havServerName) {
+              api.profileGet(peer).then(pr => {
+                if (!pr?.success) return;
+                const realName = pr.data?.identity?.name || pr.data?.name || '';
+                if (realName && realName !== peer) {
+                  setConversationName(realName);
+                }
+              }).catch(() => {});
+            }
+          }
+        }
+      } catch {}
     }).catch(() => {});
   }, [conversationId]);
 
