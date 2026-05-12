@@ -65,6 +65,9 @@ export default function LiveViewerScreen() {
   const [inputFocused, setInputFocused] = useState(false);
   const [burstHearts, setBurstHearts] = useState([]);
   const lastTapRef = useRef(0);
+  // Expanded chat sheet — Instagram parity: tap comments overlay to see the
+  // full chat history (not just the last 5 floating bubbles).
+  const [chatSheetOpen, setChatSheetOpen] = useState(false);
 
   // Refs
   const remoteVideoRef = useRef(null);
@@ -215,6 +218,27 @@ export default function LiveViewerScreen() {
     }, 15000);
     return () => clearTimeout(timer);
   }, [connected, liveEnded]);
+
+  // Offer-resync: WhatsApp-grade backstop for the most common stuck-connecting
+  // cause — broadcaster's WS handler missed the first `live_viewer_joined`
+  // (channel sub race, transient WS hiccup). After 6s + every 6s while still
+  // not connected, re-send `live_join` so the server re-broadcasts
+  // `live_viewer_joined` to the host and they create an offer for us.
+  useEffect(() => {
+    if (connected || liveEnded) return undefined;
+    if (!paramSessionId) return undefined;
+    const resync = () => {
+      if (connected || liveEnded) return;
+      try {
+        const ws = wsRef.current;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'live_join', session_id: paramSessionId }));
+        }
+      } catch {}
+    };
+    const iv = setInterval(resync, 6000);
+    return () => clearInterval(iv);
+  }, [connected, liveEnded, paramSessionId]);
 
   // Connect to signaling and WebRTC
   useEffect(() => {
@@ -1031,7 +1055,20 @@ export default function LiveViewerScreen() {
           lower-left third of the stage. The pill input sits below with the
           purple accent send button — disabled tone until there's text. */}
       <View style={[styles.bottomArea, { paddingBottom: insets.bottom + 10 }]} pointerEvents="box-none">
-        <View style={styles.commentsOverlay} pointerEvents="none">
+        <TouchableOpacity
+          onPress={() => setChatSheetOpen(true)}
+          activeOpacity={0.85}
+          style={styles.commentsOverlay}
+          accessibilityLabel={t('live.chat') || 'Chat ao vivo'}
+          accessibilityRole="button"
+        >
+          {chatMessages.length > 5 ? (
+            <View style={{ alignSelf: 'flex-start', marginBottom: 6, paddingHorizontal: 8, paddingVertical: 2, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 10 }} pointerEvents="none">
+              <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, fontWeight: '600' }}>
+                {t('live.seeAllComments') || 'Ver todos os comentários'} ↑
+              </Text>
+            </View>
+          ) : null}
           {visibleComments.map((m, idx) => {
             // Older comments fade softer. Stack alpha runs 0.35 → 1 from top.
             const stackAlpha = 0.35 + (idx / Math.max(visibleComments.length - 1, 1)) * 0.65;
@@ -1045,7 +1082,7 @@ export default function LiveViewerScreen() {
               </View>
             );
           })}
-        </View>
+        </TouchableOpacity>
 
         <View style={styles.inputBar}>
           <View style={[styles.inputPill, inputFocused && styles.inputPillFocused]}>
@@ -1145,6 +1182,40 @@ export default function LiveViewerScreen() {
                     <View style={{ flex: 1, marginLeft: 12 }}>
                       <Text style={styles.viewerRowName} numberOfLines={1}>{v.name}</Text>
                       <Text style={styles.viewerRowEmail} numberOfLines={1}>{v.email}</Text>
+                    </View>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Expanded chat sheet — full scrollable chat history (Instagram/TikTok
+          parity). Floating overlay shows only the last 5 messages; users tap
+          the overlay (or the "Ver todos os comentários" pill) to open this
+          sheet with the whole history. */}
+      <Modal visible={chatSheetOpen} animationType="slide" transparent onRequestClose={() => setChatSheetOpen(false)}>
+        <Pressable style={styles.viewersListBackdrop} onPress={() => setChatSheetOpen(false)}>
+          <Pressable style={[styles.viewersListSheet, { maxHeight: '75%' }]} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.viewersListHeader}>
+              <Text style={styles.viewersListTitle}>{t('live.chat') || 'Chat ao vivo'} · {chatMessages.length}</Text>
+              <TouchableOpacity onPress={() => setChatSheetOpen(false)} style={{ padding: 6 }}>
+                <IconX size={20} color="#fff" />
+              </TouchableOpacity>
+            </View>
+            {chatMessages.length === 0 ? (
+              <Text style={{ color: 'rgba(255,255,255,0.55)', textAlign: 'center', paddingVertical: 22 }}>
+                {t('live.sayHello') || 'Diga oi...'}
+              </Text>
+            ) : (
+              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 8 }}>
+                {chatMessages.map((m) => (
+                  <View key={m.id} style={{ flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 8, paddingHorizontal: 4, gap: 10 }}>
+                    <AvatarCircle name={m.name} email={m.email} size={32} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: 'rgba(255,255,255,0.85)', fontWeight: '700', fontSize: 13 }} numberOfLines={1}>{m.name}</Text>
+                      <Text style={{ color: '#fff', fontSize: 14, lineHeight: 18 }}>{m.content}</Text>
                     </View>
                   </View>
                 ))}

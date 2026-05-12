@@ -984,6 +984,37 @@ function CallScreenInner() {
     if (endedRef.current) return;
     if (pc.signalingState === 'closed' || pc.connectionState === 'closed') return;
 
+    // ROOT-CAUSE FIX (2026-05-12): when a callee receives `call_offer` over WS
+    // BEFORE the setupCall flow has finished addTrack (getUserMedia race), the
+    // answer SDP is created with zero local senders. Result: caller's audio
+    // m-line lands on `recvonly` at the callee end, so the audio engine never
+    // binds the inbound stream to playback. The classic "conecta mas ninguém
+    // escuta o outro" bug. We now wait up to 3s for the local stream to be
+    // ready before answering; if it never shows, we proceed anyway (better a
+    // mute call than no call), and the upgrade path can re-negotiate when the
+    // mic becomes available.
+    const waitForLocalTracks = async () => {
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        if (endedRef.current) return false;
+        if (localStreamRef.current && localStreamRef.current.getTracks().length > 0) {
+          // Also ensure we've actually called addTrack — check sender count.
+          if (pc.getSenders && pc.getSenders().some(s => s.track)) return true;
+          // Stream exists but tracks not on PC yet — try to add them now.
+          try {
+            localStreamRef.current.getTracks().forEach(t => {
+              const already = pc.getSenders().some(s => s.track === t);
+              if (!already) pc.addTrack(t, localStreamRef.current);
+            });
+            return true;
+          } catch {}
+        }
+        await new Promise(r => setTimeout(r, 100));
+      }
+      return false;
+    };
+    await waitForLocalTracks();
+
     try {
       // Glare: both sides sent offers simultaneously. Polite peer rolls back.
       if (pc.signalingState === 'have-local-offer') {
