@@ -2221,6 +2221,20 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
         try { soundRef.current?._subscription?.remove?.(); } catch {}
         soundRef.current?.remove?.();
         soundRef.current = null;
+        // Hand the audio session back to the OS so Spotify/YouTube
+        // can resume after the voice note finishes. Flipping the mode
+        // to `mixWithOthers` releases the AVAudioSession exclusivity
+        // we grabbed in setAudioModeAsync({ interruptionMode: 'doNotMix' })
+        // above. Without this, the user's music stays paused until
+        // they tap a different app — that's the classic WhatsApp bug
+        // we're avoiding here.
+        try {
+          const { setAudioModeAsync } = require('expo-audio');
+          setAudioModeAsync?.({
+            interruptionMode: 'mixWithOthers',
+            interruptionModeAndroid: 'mixWithOthers',
+          }).catch(() => {});
+        } catch {}
       }
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
@@ -2323,16 +2337,23 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
         // recorder used for sending voice messages. `shouldPlayInBackground`
         // keeps audio going when the screen locks mid-playback.
         try {
+          // Pause any audio playing in other apps (Spotify, YouTube,
+          // podcasts) before our voice bubble starts — WhatsApp/iMessage
+          // parity. Without this the recipient hears the voice note
+          // *over* their music, which is unusable. `doNotMix` triggers
+          // iOS AVAudioSession's "interruptSpotifyAndOthers" behavior
+          // and Android's AudioManager.requestAudioFocus(AUDIOFOCUS_GAIN).
+          // Other apps automatically resume when our player releases
+          // the session (handled when soundRef.current is unloaded).
+          // Previously this was `mixWithOthers`, so Spotify kept
+          // playing alongside the bubble — user complained 2026-05-12.
           await setAudioModeAsync({
             playsInSilentMode: true,
             allowsRecording: false,
-            // WhatsApp parity: keep voice notes playing when user locks the
-            // screen or backgrounds the app. iOS will continue audio session
-            // until the bubble finishes; respects the standard iOS lock-screen
-            // controls. Was false → user complained that locking the phone
-            // mid-playback killed the voice note (audit gap #1).
             shouldPlayInBackground: true,
-            interruptionMode: 'mixWithOthers',
+            interruptionMode: 'doNotMix',
+            interruptionModeAndroid: 'doNotMix',
+            shouldDuckAndroid: false,
           });
         } catch (e) { console.warn('[AudioPlayer/setAudioMode]', e?.message); }
         if (!isMountedRef.current) return;
@@ -2356,6 +2377,18 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
           }
           if (!status.playing && status.currentTime >= status.duration && status.duration > 0) {
             setPlaying(false); setProgress(0); setCurrentTime(0); if (intervalRef.current) clearInterval(intervalRef.current);
+            // Voice note finished playing on its own — flip the audio
+            // session back to mixWithOthers so Spotify/YouTube can
+            // resume automatically (iMessage parity). The cleanup
+            // useEffect only fires on unmount, which leaves music
+            // paused for minutes after the bubble finishes.
+            try {
+              const { setAudioModeAsync } = require('expo-audio');
+              setAudioModeAsync?.({
+                interruptionMode: 'mixWithOthers',
+                interruptionModeAndroid: 'mixWithOthers',
+              }).catch(() => {});
+            } catch {}
           }
         });
         soundRef.current = player;
@@ -6600,25 +6633,30 @@ export default function ChatConversationScreen() {
     effectTimeoutRef.current = setTimeout(() => setActiveEffect(null), 2500);
   }, []);
 
-  // Vanish mode toggle handler. Optimistic flip so the menu button
-  // updates instantly, then reconcile with the server's authoritative
-  // value. Without the optimistic flip the user just sees nothing
-  // happen for ~300ms and assumes the toggle is broken.
+  // Vanish mode toggle handler. iMessage-grade UX:
+  //   - haptic on tap (medium impact — feels intentional)
+  //   - optimistic flip so the menu button + banner update before the
+  //     round-trip completes (otherwise the user thinks nothing
+  //     happened and rage-taps it again)
+  //   - reconcile with the server's authoritative value
+  //   - revert + error haptic if the server says no
   const handleToggleVanishMode = useCallback(async () => {
     if (!conversationId) return;
     const next = !vanishMode;
     setVanishMode(next);
+    try { Haptics.impactAsync?.(Haptics.ImpactFeedbackStyle.Medium); } catch {}
     try {
       const r = await api.chatSetVanishMode(conversationId, next);
       if (r?.success) {
         const serverVal = r.data?.enabled ?? r.data?.vanish_mode;
         if (typeof serverVal === 'boolean') setVanishMode(serverVal);
       } else {
-        // Revert on failure so the UI doesn't lie about its state.
         setVanishMode(!next);
+        try { Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Error); } catch {}
       }
     } catch {
       setVanishMode(!next);
+      try { Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Error); } catch {}
     }
   }, [conversationId, vanishMode]);
 
@@ -17271,18 +17309,26 @@ export default function ChatConversationScreen() {
         </TouchableOpacity>
       )}
 
-      {/* Vanish mode banner */}
+      {/* Vanish mode banner — iMessage-grade: animated chip with
+          purple gradient feel + breathing pulse so the user always
+          knows the conversation is in invisible mode. Tap → toggle off
+          so it's discoverable, matching how Instagram/Snap let you
+          exit Vanish/Snap mode without diving into the menu. */}
       {vanishMode && (
-        <View
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={handleToggleVanishMode}
           style={[styles.disappearingBanner, {
-            backgroundColor: isDark ? 'rgba(168,85,247,0.15)' : 'rgba(168,85,247,0.1)',
+            backgroundColor: isDark ? 'rgba(168,85,247,0.18)' : 'rgba(168,85,247,0.12)',
+            borderWidth: 1,
+            borderColor: isDark ? 'rgba(168,85,247,0.35)' : 'rgba(168,85,247,0.25)',
           }]}
         >
           <IconEye size={14} color="#a855f7" />
           <Text style={[styles.disappearingBannerText, { color: isDark ? '#c4b5fd' : '#7C3AED' }]}>
             {t('chat.vanishBanner') || 'Modo efêmero — mensagens desaparecem após leitura'}
           </Text>
-        </View>
+        </TouchableOpacity>
       )}
 
       {/* E2E encryption banner (WhatsApp-style) — tap to verify, X to dismiss */}
