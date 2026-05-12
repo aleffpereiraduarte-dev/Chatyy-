@@ -3172,7 +3172,7 @@ function PollCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' }}
       keyboardVerticalOffset={0}
     >
@@ -3309,7 +3309,7 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }}
       keyboardVerticalOffset={0}
     >
@@ -3491,7 +3491,7 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated })
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' }}
       keyboardVerticalOffset={0}
     >
@@ -4060,7 +4060,7 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={previewStyles.container}
       >
         {/* Header */}
@@ -16850,7 +16850,7 @@ export default function ChatConversationScreen() {
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={[styles.container, { backgroundColor: isDark ? '#0E0A18' : '#F3EFF8' }]}
       keyboardVerticalOffset={0}
     >
@@ -19552,7 +19552,7 @@ export default function ChatConversationScreen() {
       {!!playlistEditor && (
         <Modal visible transparent animationType="slide" onRequestClose={() => setPlaylistEditor(null)}>
           <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             style={{ flex: 1 }}
             keyboardVerticalOffset={0}
           >
