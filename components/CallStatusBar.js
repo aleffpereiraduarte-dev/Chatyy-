@@ -4,12 +4,17 @@
  * All state comes from CallContext via lazy require.
  */
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Animated, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Animated, Platform, StatusBar } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
 import { IconPhone, IconPhoneOff, IconVideo } from './Icons';
 
-// Safe area top padding (no hook import to avoid circular dep)
-const SAFE_TOP = Platform.OS === 'ios' ? 50 : 24;
+// Safe area top padding (no hook import to avoid circular dep). On Android,
+// devices with punch-hole/notch report 36-48px via StatusBar.currentHeight —
+// the prior hardcoded 24px pushed the bar under the clock and made the
+// Desligar button overlap the gesture/notification area (reported 2026-05-12).
+const SAFE_TOP = Platform.OS === 'ios'
+  ? 50
+  : Math.max(24, (StatusBar.currentHeight || 24)) + 4;
 
 // Lazy resolved at module load (outside the component) — does NOT call hooks itself
 let _useCall = null;
