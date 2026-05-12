@@ -54,7 +54,12 @@ let API_URL = 'https://chatyy.com.br/api/email.php';
 export function getApiUrl() { return API_URL; }
 export let BASE_URL = 'https://chatyy.com.br';
 export const CDN_URL = 'https://media.chatyy.com.br';
-const TIMEOUT_MS = 15000;
+// Android cellular (Brazil 4G in particular) often takes >15s for the first
+// round-trip through Cloudflare proxy + PHP-FPM. 15s was producing
+// "timeout" aborts that left messages stuck in the offline queue while the
+// server had ALREADY persisted the row — user saw infinite clock icon and
+// thought send was broken. 25s aligns with WhatsApp/Telegram's tolerance.
+const TIMEOUT_MS = 25000;
 
 // Restore last known best server from MMKV (instant, <1ms)
 function _restoreCachedServer() {
@@ -2185,7 +2190,11 @@ async function _rustChatPost(path, payload) {
     const headers = { 'Content-Type': 'application/json' };
     if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
     const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 5000);
+    // 5s was too long on weak cellular — every send burned 5s waiting for
+    // Rust to time out before PHP fallback kicked in. 2s is enough to know
+    // if Rust is alive on a healthy network; on flaky links we fall through
+    // to PHP fast instead of stalling the user.
+    const t = setTimeout(() => ctrl.abort(), 2000);
     const r = await fetch(`${BASE_URL}/api/rust/chat/${path}`, {
       method: 'POST', headers, body: JSON.stringify(payload), signal: ctrl.signal,
     });

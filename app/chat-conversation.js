@@ -9711,11 +9711,15 @@ export default function ChatConversationScreen() {
           const state = await NetInfo.fetch();
           if (state?.type === 'cellular') {
             const gen = state.details?.cellularGeneration; // '2g'|'3g'|'4g'|'5g'
-            if (gen === '2g') _sendTimeoutMs = 30000;
-            else if (gen === '3g') _sendTimeoutMs = 20000;
-            else _sendTimeoutMs = 14000; // 4g/5g
+            if (gen === '2g') _sendTimeoutMs = 35000;
+            else if (gen === '3g') _sendTimeoutMs = 25000;
+            else _sendTimeoutMs = 20000; // 4g/5g — was 14s, Android jitter
+                                          // through Cloudflare proxy was
+                                          // tripping this on perfectly
+                                          // sound connections and queueing
+                                          // already-sent messages forever.
           } else if (state?.type === 'wifi') {
-            _sendTimeoutMs = 10000;
+            _sendTimeoutMs = 15000;       // was 10s, same reason
           }
         }
       } catch {}
@@ -10874,7 +10878,9 @@ export default function ChatConversationScreen() {
       const locPendingData = { temp_id: locTempId, client_message_id: locMsgId, conversation_id: conversationId, content, type: 'location', created_at: new Date().toISOString(), sender_email: currentEmail };
       await savePendingMessage(conversationId, locPendingData).catch(() => {});
 
+      console.log('[loc] about to chatSend static', { lat: latitude, lng: longitude });
       const r = await enqueueChatSend(() => api.chatSend(conversationId, content, 'location', null, null, null, locTempId, locMsgId));
+      console.log('[loc] chatSend result', { success: r?.success, hasId: !!r?.data?.id, msg: r?.message });
       let inserted = null;
       if (r.success && r.data?.id) {
         inserted = normalizeMessageTypes([r.data])[0];
@@ -10884,6 +10890,15 @@ export default function ChatConversationScreen() {
         });
         removePendingMessage(conversationId, locTempId).catch(() => {});
         requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
+      } else if (!r?.success) {
+        // Surface backend failure so user knows it didn't go through.
+        // Previously silent → user thought location share was broken when
+        // the network/auth was the actual culprit.
+        safeAlert(
+          t('common.error') || 'Erro',
+          (r?.message || t('chatConv.locationError') || 'Could not send location'),
+        );
+        return;
       }
 
       // Background: reverse geocode and update the message label (non-blocking)
@@ -10892,7 +10907,11 @@ export default function ChatConversationScreen() {
           let address = '';
           if (Platform.OS !== 'web') {
             const Location = require('expo-location');
-            const [geo] = await Location.reverseGeocodeAsync({ latitude, longitude });
+            // Same 4s ceiling — emulator-without-Play-Services hangs forever.
+            const [geo] = await Promise.race([
+              Location.reverseGeocodeAsync({ latitude, longitude }),
+              new Promise((_, rej) => setTimeout(() => rej(new Error('reverse_geocode_timeout')), 4000)),
+            ]);
             if (geo) address = [geo.street, geo.streetNumber, geo.district, geo.city].filter(Boolean).join(', ');
           } else {
             const geoRes = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`, { headers: { 'Accept-Language': 'pt-BR' } });
@@ -11039,11 +11058,24 @@ export default function ChatConversationScreen() {
           }
         } catch {}
       } else {
+        // Reverse geocode is BLOCKING this flow before chatSend. On Android
+        // emulators without Google Play Services (or weak network on real
+        // devices), Location.reverseGeocodeAsync HANGS — never throws, never
+        // resolves. The bare try/catch swallowed throw but couldn't cancel
+        // a hang. Result: GPS lock acquired, but the live location bubble
+        // never reaches the chat (silent freeze). Same fix as the static
+        // handleShareLocation path: 4s race + tolerate empty address.
         try {
           const Location = require('expo-location');
-          const [geo] = await Location.reverseGeocodeAsync({ latitude, longitude });
+          const geoRace = Promise.race([
+            Location.reverseGeocodeAsync({ latitude, longitude }),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('reverse_geocode_timeout')), 4000)),
+          ]);
+          const [geo] = await geoRace;
           if (geo) address = [geo.street, geo.streetNumber, geo.district, geo.city].filter(Boolean).join(', ');
-        } catch {}
+        } catch (e) {
+          console.log('[liveloc] reverseGeocode timeout/err:', e?.message);
+        }
       }
 
       const liveUntil = Math.floor(Date.now() / 1000) + durationSec;
@@ -11060,7 +11092,17 @@ export default function ChatConversationScreen() {
       const livePendingData = { temp_id: liveTempId, client_message_id: liveMsgId, conversation_id: conversationId, content, type: 'location', created_at: new Date().toISOString(), sender_email: currentEmail };
       await savePendingMessage(conversationId, livePendingData).catch(() => {});
 
+      console.log('[liveloc] about to chatSend', { lat: latitude, lng: longitude, hasAddr: !!address });
       const r = await enqueueChatSend(() => api.chatSend(conversationId, content, 'location', null, null, null, liveTempId, liveMsgId));
+      console.log('[liveloc] chatSend result', { success: r?.success, hasId: !!r?.data?.id, msg: r?.message });
+      if (!r?.success) {
+        // Surface backend failure — previously silent, user saw nothing.
+        safeAlert(
+          t('common.error') || 'Erro',
+          (r?.message || t('chatConv.locationError') || 'Could not send location'),
+        );
+        return;
+      }
       if (r.success && r.data?.id) {
         const normalizedMsg = normalizeMessageTypes([r.data])[0];
         setMessages(prev => prev.some(m => m.id === normalizedMsg.id) ? prev : [...prev, normalizedMsg]);
@@ -18403,7 +18445,7 @@ export default function ChatConversationScreen() {
 
       {/* Audio Recorder (replaces input bar when recording) */}
       {(conversationType !== 'channel' || members.find(m => m.email === currentEmail && m.role === 'admin')) && (isRecording ? (
-        <View style={{ paddingBottom: Math.max(insets.bottom, Spacing.sm) }}>
+        <View style={{ paddingBottom: keyboardHeight > 0 ? 0 : Math.max(insets.bottom, Spacing.sm) }}>
           <AudioRecorder
             onSend={handleSendAudio}
             onCancel={() => setIsRecording(false)}
@@ -18684,7 +18726,13 @@ export default function ChatConversationScreen() {
 
         <View style={[styles.inputBar, {
           backgroundColor: isDark ? '#0E0A18' : '#F3EFF8',
-          paddingBottom: keyboardHeight > 0 ? Spacing.sm : Math.max(insets.bottom, Spacing.sm),
+          // Android edge-to-edge w/ transparent navigationBar: insets.bottom
+          // ≈ 48px for gesture indicator. When keyboard opens, OS draws
+          // keyboard ON TOP of that area (gesture bar disappears), but the
+          // safe-area inset does NOT update — leaving phantom padding that
+          // shows as a white strip / cuts the composer. With 0 here the
+          // composer sits flush on top of the keyboard, no flash gap.
+          paddingBottom: keyboardHeight > 0 ? 0 : Math.max(insets.bottom, Spacing.sm),
         }]}>
           {/* WhatsApp pill container — 2026 refined.
               Telegram-style horizontal swipe: a short flick LEFT on the
