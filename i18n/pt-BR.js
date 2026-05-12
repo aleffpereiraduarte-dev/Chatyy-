@@ -2956,6 +2956,7 @@ export default {
   'chatConv.uploadError': 'Erro ao enviar arquivo',
   'chatConv.filePickError': 'Não foi possível abrir o seletor de arquivos',
   'chatConv.locationError': 'Não foi possível obter a localização',
+  'chatConv.locationTimeoutHint': 'Não conseguimos pegar sua posição. Tente em local aberto ou ligue o GPS.',
   'chatConv.audioUnavailable': 'Gravação de áudio não disponível',
   'chatConv.typing': 'está digitando...',
   'chatConv.sending': 'Enviando...',

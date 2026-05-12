@@ -2923,6 +2923,7 @@ export default {
   'chatConv.uploadError': 'Error al enviar archivo',
   'chatConv.filePickError': 'No se pudo abrir el selector de archivos',
   'chatConv.locationError': 'No se pudo obtener la ubicacion',
+  'chatConv.locationTimeoutHint': 'No pudimos obtener tu posicion. Intenta al aire libre o activa el GPS.',
   'chatConv.audioUnavailable': 'Grabacion de audio no disponible',
   'chatConv.typing': 'esta escribiendo...',
   'chatConv.sending': 'Enviando...',

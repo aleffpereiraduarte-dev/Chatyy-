@@ -10987,9 +10987,45 @@ export default function ChatConversationScreen() {
           safeAlert(t('chatConv.permission') || 'Permission', t('chatConv.locationPermission') || 'Allow location access in settings.');
           return;
         }
-        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-        latitude = loc.coords.latitude;
-        longitude = loc.coords.longitude;
+        // Same survival pattern as handleShareLocation: lastKnown for an
+        // instant first fix, then a timed Balanced + High race. Without
+        // timeouts, getCurrentPositionAsync hangs forever on Android
+        // indoors / weak GPS, leaving the live session never starting
+        // (reported 2026-05-12: "localizacao tempo real no Android não
+        // funciona").
+        try {
+          const cached = await Location.getLastKnownPositionAsync({ maxAge: 60000, requiredAccuracy: 200 });
+          if (cached) {
+            latitude = cached.coords.latitude;
+            longitude = cached.coords.longitude;
+          }
+        } catch {}
+        if (latitude == null) {
+          const withTimeout = (p, ms, label) => Promise.race([
+            p,
+            new Promise((_, rej) => setTimeout(() => rej(new Error('liveloc_timeout_' + label)), ms)),
+          ]);
+          try {
+            const loc = await withTimeout(
+              Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+              12000, 'balanced',
+            );
+            latitude = loc.coords.latitude;
+            longitude = loc.coords.longitude;
+          } catch (e) {
+            try {
+              const loc = await withTimeout(
+                Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }),
+                12000, 'high',
+              );
+              latitude = loc.coords.latitude;
+              longitude = loc.coords.longitude;
+            } catch (e2) {
+              safeAlert(t('chatConv.locationError') || 'Location unavailable', t('chatConv.locationTimeoutHint') || 'Could not get your position. Try outdoors or turn GPS on.');
+              return;
+            }
+          }
+        }
       }
 
       let address = '';
@@ -11049,7 +11085,14 @@ export default function ChatConversationScreen() {
               lng2 = p.coords.longitude;
             } else {
               const Location = require('expo-location');
-              const l = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+              // Same Android-hang guard as the initial fix: a stalled GPS
+              // request inside the interval would silently bump
+              // liveFailCount and kill the share. 8s per tick is enough
+              // for a real lock; longer = stale points.
+              const l = await Promise.race([
+                Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+                new Promise((_, rej) => setTimeout(() => rej(new Error('liveloc_tick_timeout')), 8000)),
+              ]);
               lat2 = l.coords.latitude;
               lng2 = l.coords.longitude;
             }
