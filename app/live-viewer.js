@@ -180,6 +180,42 @@ export default function LiveViewerScreen() {
   // Native remote stream URL for RTCView
   const [remoteStreamUrl, setRemoteStreamUrl] = useState(null);
 
+  // Fallback host info — if the route didn't include hostName/hostEmail
+  // (e.g. push notification only carried session_id), hit live_list once to
+  // resolve the host from the session id. Without this the header + connecting
+  // overlay show literal "?".
+  const [resolvedHost, setResolvedHost] = useState({ name: hostName, email: hostEmail });
+  useEffect(() => {
+    if (hostName && hostEmail) return undefined;
+    if (!paramSessionId) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await api.apiCall?.('live_list', null, 'POST');
+        if (cancelled) return;
+        const lives = r?.data?.lives || r?.lives || [];
+        const found = lives.find(l => l?.id === paramSessionId);
+        if (found) setResolvedHost({ name: found.host_name || (found.host_email || '').split('@')[0], email: found.host_email });
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [paramSessionId, hostName, hostEmail]);
+  const displayHostName = hostName || resolvedHost.name || (hostEmail || resolvedHost.email || '').split('@')[0] || '';
+  const displayHostEmail = hostEmail || resolvedHost.email || '';
+
+  // Stream-stuck timeout — if `connected` doesn't go true within 15s of mount,
+  // surface a real error instead of leaving the viewer staring at "Conectando..."
+  // forever (host may have ended the live or never sent an offer).
+  useEffect(() => {
+    if (connected || liveEnded) return undefined;
+    const timer = setTimeout(() => {
+      if (!connected && !liveEnded) {
+        setError(t('live.streamUnavailable') || 'Stream indisponível — host pode ter saído');
+      }
+    }, 15000);
+    return () => clearTimeout(timer);
+  }, [connected, liveEnded]);
+
   // Connect to signaling and WebRTC
   useEffect(() => {
     if (!RTC_PeerConnection || !RTC_SessionDescription || !RTC_IceCandidate) {
@@ -555,7 +591,7 @@ export default function LiveViewerScreen() {
   // the public live-viewer route for the session so anyone can join.
   const handleShare = useCallback(async () => {
     const url = `https://chatyy.com.br/live-viewer?sessionId=${encodeURIComponent(paramSessionId || '')}`;
-    const title = hostName ? `${hostName} está ao vivo no Chatyy` : 'Live no Chatyy';
+    const title = displayHostName ? `${displayHostName} está ao vivo no Chatyy` : 'Live no Chatyy';
     const message = paramTitle ? `${title}: ${paramTitle}\n${url}` : `${title}\n${url}`;
     try {
       if (Platform.OS === 'web') {
@@ -599,14 +635,14 @@ export default function LiveViewerScreen() {
           <View style={styles.endedDot} />
         </View>
         <AvatarCircle
-          name={hostName}
-          email={hostEmail}
+          name={displayHostName}
+          email={displayHostEmail}
           size={72}
           style={styles.endedAvatar}
         />
         <Text style={styles.endedText}>{t('live.hostEnded') || 'Saiu da live'}</Text>
         <Text style={styles.endedSub}>
-          {hostName ? `${hostName} ${t('live.liveEnded') || 'encerrou a transmissão'}` : (t('live.liveEnded') || 'Thanks for watching!')}
+          {displayHostName ? `${displayHostName} ${t('live.liveEnded') || 'encerrou a transmissão'}` : (t('live.liveEnded') || 'Thanks for watching!')}
         </Text>
 
         <View style={styles.endedActions}>
@@ -695,18 +731,31 @@ export default function LiveViewerScreen() {
       {!connected && (
         <View style={styles.connectingOverlay}>
           <AvatarCircle
-            name={hostName}
-            email={hostEmail}
+            name={displayHostName}
+            email={displayHostEmail}
             size={80}
             style={styles.connectingAvatar}
           />
           <Animated.Text style={[styles.connectingName, { opacity: connectingPulse }]}>
-            {hostName || hostEmail?.split('@')[0] || '?'}
+            {displayHostName || '…'}
           </Animated.Text>
-          <ActivityIndicator size="small" color="rgba(255,255,255,0.5)" style={{ marginTop: 16 }} />
-          <Animated.Text style={[styles.connectingText, { opacity: connectingPulse }]}>
-            {t('live.connecting') || 'Connecting...'}
-          </Animated.Text>
+          {!!error && /unavail|connection failed|stream/i.test(error) ? (
+            <>
+              <Text style={[styles.connectingText, { color: '#ef4444', marginTop: 14 }]}>
+                {error}
+              </Text>
+              <TouchableOpacity onPress={() => router.back()} style={{ marginTop: 18, paddingHorizontal: 24, paddingVertical: 10, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 20 }}>
+                <Text style={{ color: '#fff', fontWeight: '600' }}>{t('common.back') || 'Voltar'}</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <ActivityIndicator size="small" color="rgba(255,255,255,0.5)" style={{ marginTop: 16 }} />
+              <Animated.Text style={[styles.connectingText, { opacity: connectingPulse }]}>
+                {error || (t('live.connecting') || 'Connecting...')}
+              </Animated.Text>
+            </>
+          )}
         </View>
       )}
 
@@ -717,13 +766,13 @@ export default function LiveViewerScreen() {
       <View style={[styles.topBar, { paddingTop: insets.top + 10 }]} pointerEvents="box-none">
         <View style={styles.hostPill}>
           <AvatarCircle
-            name={hostName}
-            email={hostEmail}
+            name={displayHostName}
+            email={displayHostEmail}
             size={34}
           />
           <View style={styles.hostInfo}>
             <Text style={styles.hostName} numberOfLines={1}>
-              {hostName || hostEmail?.split('@')[0] || '?'}
+              {displayHostName || '…'}
             </Text>
             {paramTitle ? (
               <Text style={styles.liveTitle} numberOfLines={1}>{paramTitle}</Text>
@@ -789,8 +838,8 @@ export default function LiveViewerScreen() {
           style={styles.railAvatarWrap}
         >
           <AvatarCircle
-            name={hostName}
-            email={hostEmail}
+            name={displayHostName}
+            email={displayHostEmail}
             size={48}
             style={styles.railAvatar}
           />

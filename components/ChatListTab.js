@@ -1210,9 +1210,13 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
     return () => { cancelled = true; clearInterval(iv); };
   }, [user?.email]);
   const liveAoVivo = (t('live.aoVivo') || 'AO VIVO').toUpperCase();
-  const openLiveViewer = useCallback((email, sessionId) => {
+  const openLiveViewer = useCallback((email, sessionId, hostName) => {
     try {
-      router.push(`/live-viewer?session_id=${encodeURIComponent(sessionId)}&host_email=${encodeURIComponent(email)}`);
+      const params = new URLSearchParams();
+      params.set('sessionId', sessionId);
+      if (email) params.set('hostEmail', email);
+      if (hostName) params.set('hostName', hostName);
+      router.push(`/live-viewer?${params.toString()}`);
     } catch {}
   }, [router]);
 
@@ -1433,7 +1437,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
         {liveOnlyEntries.map((l) => (
           <View key={`live-only-${l.email}`} style={{ alignItems: 'center', width: 68 }}>
             <TouchableOpacity
-              onPress={() => openLiveViewer(l.email, l.session_id)}
+              onPress={() => openLiveViewer(l.email, l.session_id, l.name)}
               activeOpacity={0.7}
               style={{ alignItems: 'center' }}
             >

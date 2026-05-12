@@ -1308,7 +1308,7 @@ export default function Profile({
                 <TouchableOpacity
                   onPress={() => {
                     try {
-                      router?.push?.(`/live-viewer?session_id=${encodeURIComponent(liveSessionId)}&host_email=${encodeURIComponent(identity.email)}`);
+                      router?.push?.(`/live-viewer?sessionId=${encodeURIComponent(liveSessionId)}&hostEmail=${encodeURIComponent(identity.email)}&hostName=${encodeURIComponent(identity.name || (identity.email || '').split('@')[0])}`);
                     } catch {}
                   }}
                   activeOpacity={0.85}

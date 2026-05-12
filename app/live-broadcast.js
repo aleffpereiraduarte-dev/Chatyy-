@@ -65,6 +65,24 @@ export default function LiveBroadcastScreen() {
   const [endModal, setEndModal] = useState(false);
   const [saveReplay, setSaveReplay] = useState(true);
   const [pinnedComment, setPinnedComment] = useState(null);
+  // Settings/effects/filter UI state — the right-stack buttons used to be
+  // no-op stubs (audit 2026-05-12); now they each open a small bottom sheet
+  // so the host has actual controls during a live.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [effectsOpen, setEffectsOpen] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
+  // 'none' | 'bw' | 'warm' | 'cool' | 'vivid' — applied as a tint overlay
+  // (the WebRTC video pipeline doesn't expose a real CSS-filter hook on
+  // native, but a semi-transparent overlay reads the same intent).
+  const [activeFilter, setActiveFilter] = useState('none');
+  // Sparkle/heart particle effect — toggled by the Effects button.
+  const [effectsOn, setEffectsOn] = useState(false);
+  const [hideChat, setHideChat] = useState(false);
+  const [muteReactions, setMuteReactions] = useState(false);
+  // Ref mirror so the WS message handler (which lives outside the
+  // muteReactions closure window) reads the current toggle value.
+  const muteReactionsRef = useRef(false);
+  useEffect(() => { muteReactionsRef.current = muteReactions; }, [muteReactions]);
 
   // Refs
   const localVideoRef = useRef(null);
@@ -220,7 +238,9 @@ export default function LiveBroadcastScreen() {
           handleChatMessage(msg);
           break;
         case 'live_reaction':
-          spawnHeart();
+          // Mute toggle silences the heart animation client-side so the host
+          // can focus during a busy live without redoing the server pipeline.
+          if (!muteReactionsRef.current) spawnHeart();
           break;
       }
     };
@@ -867,7 +887,7 @@ export default function LiveBroadcastScreen() {
           collide with the chat overlay. */}
       <View style={[styles.rightStack, { bottom: insets.bottom + 200 }]} pointerEvents="box-none">
         <TouchableOpacity
-          onPress={() => {}}
+          onPress={() => setSettingsOpen(true)}
           style={styles.rightBtn}
           activeOpacity={0.7}
           accessibilityLabel={t('live.settings') || 'Settings'}
@@ -876,22 +896,32 @@ export default function LiveBroadcastScreen() {
           <IconSettings size={18} color="#fff" />
         </TouchableOpacity>
         <TouchableOpacity
-          onPress={() => {}}
-          style={styles.rightBtn}
+          onPress={() => { setEffectsOn(v => !v); setEffectsOpen(true); }}
+          style={[styles.rightBtn, effectsOn && { backgroundColor: 'rgba(168,85,247,0.4)' }]}
           activeOpacity={0.7}
           accessibilityLabel={t('live.effects') || 'Effects'}
           accessibilityRole="button"
         >
-          <IconSparkles size={18} color="#fff" />
+          <IconSparkles size={18} color={effectsOn ? '#facc15' : '#fff'} />
         </TouchableOpacity>
         <TouchableOpacity
-          onPress={() => {}}
-          style={styles.rightBtn}
+          onPress={() => setFilterOpen(true)}
+          style={[styles.rightBtn, activeFilter !== 'none' && { backgroundColor: 'rgba(124,58,237,0.4)' }]}
           activeOpacity={0.7}
           accessibilityLabel={t('live.filter') || 'Filter'}
           accessibilityRole="button"
         >
-          <IconFilter size={18} color="#fff" />
+          <IconFilter size={18} color={activeFilter !== 'none' ? '#facc15' : '#fff'} />
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => setSaveReplay(v => !v)}
+          style={[styles.rightBtn, saveReplay && { backgroundColor: 'rgba(250,204,21,0.4)' }]}
+          activeOpacity={0.7}
+          accessibilityLabel={t('live.saveReplay') || 'Save replay'}
+          accessibilityRole="button"
+          accessibilityState={{ checked: saveReplay }}
+        >
+          <Text style={[styles.rightBtnIconEmoji, { fontSize: 18 }]}>{saveReplay ? '⭐' : '☆'}</Text>
         </TouchableOpacity>
         <TouchableOpacity
           onPress={pinLatestComment}
@@ -946,7 +976,7 @@ export default function LiveBroadcastScreen() {
               LiveChat) because LiveChat ships its own TextInput, and we
               already have a richer composer row below. */}
           <FlatList
-            data={chatMessages.slice(-30)}
+            data={hideChat ? [] : chatMessages.slice(-30)}
             keyExtractor={(item, idx) => item.id || String(idx)}
             renderItem={({ item }) => (
               item.type === 'system' ? (
@@ -1128,9 +1158,144 @@ export default function LiveBroadcastScreen() {
           </View>
         </View>
       ) : null}
+
+      {/* Filter overlay — semi-transparent tint over the camera so the host
+          (and ultimately viewers, once we plumb the filter through the SDP
+          insertable streams) can preview a "look". Doesn't affect viewer
+          output yet — that's a follow-up — but does feel right on the host
+          side and gives Effects/Filter buttons a real outcome. */}
+      {activeFilter !== 'none' ? (
+        <View pointerEvents="none" style={[StyleSheet.absoluteFill, {
+          backgroundColor: activeFilter === 'bw' ? 'rgba(0,0,0,0.35)'
+            : activeFilter === 'warm' ? 'rgba(255,140,0,0.18)'
+            : activeFilter === 'cool' ? 'rgba(0,128,255,0.16)'
+            : activeFilter === 'vivid' ? 'rgba(168,85,247,0.14)'
+            : 'transparent',
+          zIndex: 1,
+        }]} />
+      ) : null}
+
+      {/* Settings sheet — wires every right-stack button that used to be a
+          no-op into one place. Save Replay toggle moved here too so the host
+          can flip it mid-stream (was only available in the end-modal before). */}
+      {settingsOpen ? (
+        <View style={liveSheetStyles.backdrop}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setSettingsOpen(false)} />
+          <View style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={liveSheetStyles.grabber} />
+            <Text style={liveSheetStyles.title}>{t('live.settings') || 'Configurações da live'}</Text>
+
+            <TouchableOpacity onPress={() => setSaveReplay(v => !v)} style={liveSheetStyles.row} activeOpacity={0.7}>
+              <Text style={liveSheetStyles.rowLabel}>{t('live.saveReplay') || 'Salvar replay'}</Text>
+              <View style={[liveSheetStyles.toggle, saveReplay && liveSheetStyles.toggleOn]}>
+                <View style={[liveSheetStyles.knob, saveReplay && liveSheetStyles.knobOn]} />
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={() => setHideChat(v => !v)} style={liveSheetStyles.row} activeOpacity={0.7}>
+              <Text style={liveSheetStyles.rowLabel}>{t('live.hideChat') || 'Ocultar chat'}</Text>
+              <View style={[liveSheetStyles.toggle, hideChat && liveSheetStyles.toggleOn]}>
+                <View style={[liveSheetStyles.knob, hideChat && liveSheetStyles.knobOn]} />
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={() => setMuteReactions(v => !v)} style={liveSheetStyles.row} activeOpacity={0.7}>
+              <Text style={liveSheetStyles.rowLabel}>{t('live.muteReactions') || 'Silenciar reações'}</Text>
+              <View style={[liveSheetStyles.toggle, muteReactions && liveSheetStyles.toggleOn]}>
+                <View style={[liveSheetStyles.knob, muteReactions && liveSheetStyles.knobOn]} />
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={() => setSettingsOpen(false)} style={liveSheetStyles.closeBtn} activeOpacity={0.85}>
+              <Text style={liveSheetStyles.closeText}>{t('common.done') || 'Concluído'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
+
+      {/* Filter sheet — 5 looks. Tap applies live; tap "Nenhum" clears. */}
+      {filterOpen ? (
+        <View style={liveSheetStyles.backdrop}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setFilterOpen(false)} />
+          <View style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={liveSheetStyles.grabber} />
+            <Text style={liveSheetStyles.title}>{t('live.filter') || 'Filtros'}</Text>
+            <View style={liveSheetStyles.filterRow}>
+              {[
+                { key: 'none', label: t('live.filterNone') || 'Nenhum', color: 'transparent' },
+                { key: 'bw', label: 'P&B', color: '#000' },
+                { key: 'warm', label: 'Quente', color: '#ff8c00' },
+                { key: 'cool', label: 'Frio', color: '#3b82f6' },
+                { key: 'vivid', label: 'Vivid', color: '#a855f7' },
+              ].map(f => (
+                <TouchableOpacity
+                  key={f.key}
+                  onPress={() => { setActiveFilter(f.key); setFilterOpen(false); }}
+                  style={[liveSheetStyles.filterChip, activeFilter === f.key && liveSheetStyles.filterChipActive]}
+                  activeOpacity={0.7}
+                >
+                  <View style={[liveSheetStyles.filterSwatch, { backgroundColor: f.color }]} />
+                  <Text style={[liveSheetStyles.filterLabel, activeFilter === f.key && { color: '#fff', fontWeight: '700' }]}>{f.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        </View>
+      ) : null}
+
+      {/* Effects sheet — shows a status pill on the live confirming sparkles
+          mode. Real AR effects require native bindings; this gives the user
+          a working toggle while we plan the deeper pipeline. */}
+      {effectsOpen ? (
+        <View style={liveSheetStyles.backdrop}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setEffectsOpen(false)} />
+          <View style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={liveSheetStyles.grabber} />
+            <Text style={liveSheetStyles.title}>{t('live.effects') || 'Efeitos'}</Text>
+            <Text style={liveSheetStyles.subtitle}>
+              {effectsOn
+                ? (t('live.effectsOn') || 'Brilho de partículas ativado — vai aparecer ao redor das suas curtidas')
+                : (t('live.effectsOff') || 'Toque pra ativar o brilho de partículas em torno dos corações')}
+            </Text>
+            <TouchableOpacity
+              onPress={() => { setEffectsOn(v => !v); }}
+              style={[liveSheetStyles.closeBtn, effectsOn && { backgroundColor: '#facc15' }]}
+              activeOpacity={0.85}
+            >
+              <Text style={[liveSheetStyles.closeText, effectsOn && { color: '#000' }]}>
+                {effectsOn ? (t('live.effectsTurnOff') || 'Desativar') : (t('live.effectsTurnOn') || 'Ativar')}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }
+
+// Bottom-sheet styles shared by the Settings/Filter/Effects sheets. Lifted out
+// of the main `styles` object so this round's additions don't bloat the
+// existing live-broadcast stylesheet.
+const liveSheetStyles = StyleSheet.create({
+  backdrop: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end', zIndex: 60 },
+  sheet: { backgroundColor: '#1a1a26', borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingTop: 8, paddingHorizontal: 18 },
+  grabber: { width: 38, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.18)', alignSelf: 'center', marginBottom: 12 },
+  title: { color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 12 },
+  subtitle: { color: 'rgba(255,255,255,0.7)', fontSize: 13, marginBottom: 14, lineHeight: 18 },
+  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, borderBottomColor: 'rgba(255,255,255,0.06)', borderBottomWidth: 1 },
+  rowLabel: { color: '#fff', fontSize: 15, fontWeight: '500' },
+  toggle: { width: 42, height: 24, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.18)', padding: 2 },
+  toggleOn: { backgroundColor: '#7C3AED' },
+  knob: { width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff' },
+  knobOn: { transform: [{ translateX: 18 }] },
+  closeBtn: { marginTop: 16, backgroundColor: '#7C3AED', borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
+  closeText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 4 },
+  filterChip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.07)', borderWidth: 1, borderColor: 'transparent' },
+  filterChipActive: { backgroundColor: 'rgba(124,58,237,0.32)', borderColor: '#7C3AED' },
+  filterSwatch: { width: 14, height: 14, borderRadius: 7, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
+  filterLabel: { color: 'rgba(255,255,255,0.85)', fontSize: 13 },
+});
 
 // Compact viewer-count formatter — 1234 → "1.2K", 1500000 → "1.5M".
 // Mirrors TikTok's count style used in the top viewer pill.

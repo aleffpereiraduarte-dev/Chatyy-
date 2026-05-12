@@ -462,7 +462,11 @@ function NotificationsScreenInner() {
         router.push(`/u/${encodeURIComponent(notif.author_email)}`);
         break;
       case 'live':
-        router.push({ pathname: '/live-viewer', params: { sessionId: data.session_id } });
+        router.push({ pathname: '/live-viewer', params: {
+          sessionId: data.session_id,
+          hostEmail: data.host_email || notif.author_email || '',
+          hostName: data.host_name || notif.author_name || '',
+        } });
         break;
       default:
         break;

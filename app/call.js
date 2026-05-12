@@ -92,6 +92,12 @@ function CallScreenInner() {
   // Call state
   const [audioMuted, setAudioMuted] = useState(false);
   const [videoEnabled, setVideoEnabled] = useState(isVideoParam === '1' || isVideoParam === 'true');
+  // Refs that mirror state so WS handlers (handleOffer/handleAnswer/etc.)
+  // read the freshest value instead of a stale closure capture — bug from
+  // audit 2026-05-12: handleOffer sent answer with stale `video` flag if the
+  // user toggled camera mid-ring, peer never knew video was live.
+  const videoEnabledRef = useRef(videoEnabled);
+  useEffect(() => { videoEnabledRef.current = videoEnabled; }, [videoEnabled]);
   // Default: earpiece (false) for audio calls, speaker (true) for video calls
   const [speakerOn, setSpeakerOn] = useState(isVideoParam === '1' || isVideoParam === 'true' ? true : false);
   const [callDuration, setCallDuration] = useState(0);
@@ -944,6 +950,12 @@ function CallScreenInner() {
   const handleAnswer = useCallback(async (data) => {
     const pc = pcRef.current;
     if (!pc || !data?.sdp) return;
+    // Guard against late answer arriving after call ended/teardown started.
+    // Without this, setPeerRinging + setRemoteDescription fire on a closed
+    // PC and either warn ("setRemoteDescription on closed connection") or
+    // throw — both visible to user as a phantom "ringing" or crash banner.
+    if (endedRef.current) return;
+    if (pc.signalingState === 'closed' || pc.connectionState === 'closed') return;
 
     // Caller proof-of-life: peer device processed our offer enough to send
     // an answer back. Flip to "ringing" UI until ICE actually connects.
@@ -968,6 +980,9 @@ function CallScreenInner() {
   const handleOffer = useCallback(async (data) => {
     const pc = pcRef.current;
     if (!pc || !data?.sdp) return;
+    // Drop late offers that arrive after teardown — see handleAnswer guard.
+    if (endedRef.current) return;
+    if (pc.signalingState === 'closed' || pc.connectionState === 'closed') return;
 
     try {
       // Glare: both sides sent offers simultaneously. Polite peer rolls back.
@@ -992,7 +1007,7 @@ function CallScreenInner() {
         target_email: contactEmail,
         sdp: answer.sdp,
         sdp_type: answer.type,
-        video: !!videoEnabled,
+        video: !!videoEnabledRef.current,
       });
 
       for (const candidate of iceCandidateQueueRef.current) {
