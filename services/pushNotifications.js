@@ -561,12 +561,15 @@ export async function registerForPushNotifications() {
       // never register a token that belongs to a different install.
       pushNotificationsState.deviceToken = null;
 
-      // Try up to twice — Firebase's first install handshake is sometimes
-      // not ready by the time the JS bundle calls into it, especially on
-      // cold start. A 1s wait + single retry covers that window without
-      // blocking the main token registration if FCM is genuinely broken.
+      // Try up to FIVE times with backoff — Firebase's first install handshake
+      // can be slow on cold start, slow networks, or after Google Play Services
+      // updates. WITHOUT fcm_device token, the user gets ZERO Android pushes
+      // because Expo Push for Android needs FCM Server Key uploaded to Expo
+      // creds (not currently configured). 5 attempts × 1.5s delay = 7.5s max.
+      // Incident 2026-05-12 round 2: only Expo token registered, no fcm_device,
+      // so all chat pushes failed with InvalidCredentials and never delivered.
       let deviceToken = null;
-      for (let attempt = 1; attempt <= 2; attempt++) {
+      for (let attempt = 1; attempt <= 5; attempt++) {
         try {
           deviceToken = await Notifications.getDevicePushTokenAsync();
           _diagPush('fcm_device_attempt_' + attempt, deviceToken?.data ? ('type=' + (deviceToken.type || '?') + ' len=' + String(deviceToken.data).length) : ('type=' + (deviceToken?.type || '?') + ' empty'));
@@ -575,8 +578,8 @@ export async function registerForPushNotifications() {
           _diagPush('fcm_device_err_' + attempt, err?.message || String(err));
           deviceToken = null;
         }
-        if (attempt === 1) {
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+        if (attempt < 5) {
+          await new Promise((resolve) => setTimeout(resolve, 1500));
         }
       }
 
