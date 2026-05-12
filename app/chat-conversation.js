@@ -12867,10 +12867,34 @@ export default function ChatConversationScreen() {
     for (let i = 0; i < reversedMessages.length; i++) {
       const item = reversedMessages[i];
       if (item._type === 'separator') { out[i] = item; continue; }
-      // Album virtual message — passes through enrichment unchanged. Read
-      // status (ticks) is rolled up from the LAST item so the outer bubble
-      // reflects whether the full batch was delivered/seen.
-      if (item._type === 'album') { out[i] = item; continue; }
+      // Album virtual message — compute its tick from the rolled-up
+      // delivered_at/read_at/status fields the album was built with
+      // (see messagesWithSeparators). Without this, photo albums sent by
+      // the current user stayed at single-✓ forever (reported 2026-05-12:
+      // "mandei uma foto no albun n aparece recibo").
+      if (item._type === 'album') {
+        const isOwnA = item.sender_email === currentEmail;
+        let albumStatus = 1;
+        if (item._pending) albumStatus = 0;
+        else if (item._failed) albumStatus = -1;
+        else if (isOwnA) {
+          if (item._read === true) albumStatus = 2;
+          else if (conversationType !== 'group' && item.read_at) albumStatus = 2;
+          else if (conversationType !== 'group' && maxReadId >= 0 && Number(item.id) > 0 && Number(item.id) <= maxReadId) albumStatus = 2;
+          else if (item._delivered) albumStatus = 1.5;
+          else if (conversationType !== 'group' && item.delivered_at) albumStatus = 1.5;
+        }
+        const prev = cache.get(item._key);
+        if (prev && prev.source === item && prev.enriched._readStatus === albumStatus) {
+          out[i] = prev.enriched;
+          newCache.set(item._key, prev);
+          continue;
+        }
+        const enriched = { ...item, _readStatus: albumStatus };
+        out[i] = enriched;
+        newCache.set(item._key, { enriched, source: item });
+        continue;
+      }
       const isOwn = item.sender_email === currentEmail;
       // WhatsApp tick semantics:
       //   0  pending  (clock)
@@ -13389,6 +13413,13 @@ export default function ChatConversationScreen() {
           </View>
         );
       }
+      // Album bubble footer — time + WhatsApp tick. The grid alone has no
+      // chrome, so a sender who shares 5 photos at once never saw ANY
+      // delivered/read indicator. Mirror the single-bubble meta row.
+      const albumTime = formatTime(item.created_at);
+      const albumTickColor = isOwn
+        ? (isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.55)')
+        : (isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.45)');
       return (
         <View style={{
           paddingHorizontal: 12,
@@ -13423,6 +13454,13 @@ export default function ChatConversationScreen() {
                 </Text>
               );
             })()}
+            <View style={{
+              flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end',
+              paddingHorizontal: 8, paddingBottom: 4, paddingTop: 2, gap: 4,
+            }}>
+              <Text style={{ fontSize: 10, color: albumTickColor, fontVariant: ['tabular-nums'] }}>{albumTime}</Text>
+              {isOwn && <AnimatedCheckStatus status={item._readStatus} color={albumTickColor} />}
+            </View>
           </View>
         </View>
       );
