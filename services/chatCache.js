@@ -34,7 +34,6 @@ import {
   dbSaveMessages, dbGetMessages, dbGetLastMessageId, dbDeleteMessage, dbUpdateMessage,
   dbSaveConversations, dbGetConversations,
   dbSavePending, dbGetPending, dbRemovePending,
-  dbClearAll,
   isDbReady, waitForDb,
 } from './db';
 
@@ -404,16 +403,6 @@ export async function clearChatCache() {
     const keys = _kvGetAllKeys().filter(k => k.startsWith('chat_'));
     keys.forEach(k => _kvRemove(k));
   } catch {}
-  // Native: drop the SQLite chat tables too — previously left for callers
-  // to invoke dbClearAll() separately, but the only callers were logout
-  // paths that DID call it; the login path did not, so a new user would
-  // momentarily render the prev user's messages/conversations from SQLite
-  // before the network catch-up overwrote them (race-y, especially on
-  // cellular cold start). Calling it here makes clearChatCache the single
-  // source of truth.
-  if (isNative) {
-    try { await dbClearAll(); } catch {}
-  }
   // Web: also clear the IndexedDB + localStorage mirror so the next user
   // doesn't momentarily see the previous user's conversations.
   if (Platform.OS === 'web') {
@@ -428,6 +417,7 @@ export async function clearChatCache() {
       }
     } catch {}
   }
+  // SQLite cleared separately via dbClearAll()
 }
 
 // --- Pending (unsent) message persistence ---

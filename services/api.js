@@ -828,30 +828,8 @@ export async function login(email, password) {
     }
     // Multi-account: store this account
     const name = r.data?.name || r.data?.email || email;
-    // Capture prev active email BEFORE upsert/setActive so we can detect
-    // an account switch and clear the bare-key MMKV slots that the
-    // hot-cache lines below will overwrite (or NOT overwrite, if the
-    // backend omits the field, in which case the previous user's data
-    // surfaces). See linha ~287 cacheConversations for who reads these.
-    const prevActive = (getActiveAccountEmail?.() || '').toLowerCase();
-    const newActive = String(r.data?.email || email || '').toLowerCase();
-    const isAccountSwitch = !!prevActive && prevActive !== newActive;
     upsertAccount(email, password, name);
     setActiveAccountEmail(email);
-
-    // If swapping into a different identity, drop the unscoped MMKV
-    // slots first — otherwise the next "instant render" pass would read
-    // the previous user's conversations/profile/call_history before the
-    // hot-cache lines below (which only write when the field is present
-    // in the login response) get to overwrite them.
-    if (isAccountSwitch) {
-      try {
-        const { remove: mmkvRemove } = require('./mmkv');
-        mmkvRemove('chat_conversations');
-        mmkvRemove('omc_profile');
-        mmkvRemove('omc_call_history');
-      } catch {}
-    }
 
     // Cache login response data for instant screen loads
     try {
