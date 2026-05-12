@@ -390,13 +390,24 @@ export async function startForegroundBackup(onProgress) {
       try {
         if (typeof NativeUpload.startNativeBackup === 'function') {
           console.log('[backup] calling startNativeBackup — full native path');
-          // Loop while the app is in the foreground and there are still pending
-          // photos. iOS cuts the background task to 30s–4min, so a single call
-          // of startNativeBackup typically uploads ~50–300 photos then returns
-          // with `stopped: true`. Previously we stopped there and relied on an
-          // AppState change to retry — with a 2-minute cooldown — which is what
-          // left backups frozen at partial counts. Now we just call it again
-          // immediately, as long as the app is still active.
+          // Loop while there are still pending photos. iOS cuts the background
+          // task to 30s–4min, so a single call of startNativeBackup typically
+          // uploads ~50–300 photos then returns with `stopped: true`. Previously
+          // we stopped there and relied on an AppState change to retry — with a
+          // 2-minute cooldown — which is what left backups frozen at partial
+          // counts. Now we call it again immediately.
+          //
+          // IMPORTANT: do NOT gate on `AppState.currentState === 'active'`.
+          // The native module uses URLSession.background + beginBackgroundTask,
+          // so iOS keeps uploading for 30s–4min after the app backgrounds. If
+          // we exit the JS loop the moment AppState flips, we abandon that
+          // background grace window — the in-flight pass finishes, fires the
+          // "X fotos enviadas" push, then nothing else gets enqueued.
+          // Keeping the loop running lets us spin again during the bg grace
+          // window. When iOS finally suspends the JS runtime, the awaiting
+          // promise pauses naturally; when the BGTaskScheduler (registered in
+          // the native module) wakes us later, it picks up from the same
+          // backed-up set in UserDefaults.
           let totalUploadedThisSession = 0;
           let lastTotal = 0;
           let spins = 0;
@@ -409,17 +420,25 @@ export async function startForegroundBackup(onProgress) {
             setBackupDebugEmail(userEmail);
             backupDebug('native.pass.loop.enter', { userEmail });
           } catch {}
-          while (spins++ < 30 && AppState.currentState === 'active' && !_stopFlag) {
+          while (spins++ < 30 && !_stopFlag) {
             const r = await NativeUpload.startNativeBackup(serverUrl, authToken, userEmail);
             const passUploaded = r?.uploaded || 0;
             const passTotal = r?.total || 0;
             const stopped = !!r?.stopped;
             totalUploadedThisSession += passUploaded;
             lastTotal = passTotal;
-            try { require('./backupEngine').backupDebug('native.pass', { spins, passUploaded, passTotal, stopped, err: r?.error || '' }); } catch {}
-            console.log(`[backup] native pass ${spins}: uploaded=${passUploaded} total=${passTotal} stopped=${stopped}`);
+            try { require('./backupEngine').backupDebug('native.pass', { spins, passUploaded, passTotal, stopped, err: r?.error || '', appState: AppState.currentState }); } catch {}
+            console.log(`[backup] native pass ${spins}: uploaded=${passUploaded} total=${passTotal} stopped=${stopped} state=${AppState.currentState}`);
             // If nothing uploaded this pass (all done, or stuck) — exit.
             if (passUploaded === 0) break;
+            // If iOS told the native side to stop (bg time expired) AND we're
+            // backgrounded, bail out — the next BGTaskScheduler wake-up (which
+            // the native module already scheduled) will pick it up. Spinning
+            // further would just hot-loop until JS gets killed.
+            if (stopped && AppState.currentState !== 'active') {
+              console.log('[backup] native stopped + backgrounded — yielding to BGTaskScheduler');
+              break;
+            }
             // Tiny yield so the main thread breathes between passes.
             await new Promise(r => setTimeout(r, 200));
           }
@@ -650,33 +669,47 @@ function setupAppStateListener() {
         });
       }, 3000); // 3s delay — was 15s, cut tighter so backup resumes almost immediately after iOS kills the background session
     } else if (state === 'background' && NativeUpload && Platform.OS === 'ios') {
-      // App going to background - quickly enqueue a batch via native module
-      console.log('[backup] Going to background - quick enqueue');
+      // App going to background.
+      //
+      // If a native backup is already running (startNativeBackup spinning),
+      // do NOTHING — the native module already has its own beginBackgroundTask
+      // window and URLSession.background will keep uploading after the app
+      // suspends. Enqueuing a separate legacy uploadBatch here races against
+      // the active session and burns the bg-time budget on duplicate work.
+      //
+      // If no backup is running but settings.enabled is true, refresh creds so
+      // the BGTaskScheduler wake-up (registered natively, fires every ~15min
+      // refresh / ~1h processing) has fresh auth to do its slice. We do NOT
+      // try to start a new foreground backup here — iOS will refuse and the
+      // JS task will get suspended in ~5s anyway.
       try {
-        const ML = require('expo-media-library');
-        const { status } = await ML.getPermissionsAsync();
-        if (status !== 'granted') return;
-        const backedUpIds = await getBackedUpMap();
-        const assets = await ML.getAssetsAsync({
-          mediaType: [ML.MediaType.photo, ML.MediaType.video],
-          first: 50, sortBy: [ML.SortBy.creationTime],
-        });
-        const pending = (assets?.assets || []).filter(a => !backedUpIds[a.id]);
-        if (pending.length === 0) return;
-        const filesForBatch = pending.map(a => ({ name: assetFilename(a), mime: assetMime(a) }));
-        const batchResult = await api.getPresignedBatch(filesForBatch);
-        if (batchResult?.success && batchResult?.data?.uploads) {
-          const requests = pending.map((asset, idx) => ({
-            assetId: asset.id,
-            presignedUrl: batchResult.data.uploads[idx].upload_url,
-            mimeType: assetMime(asset),
-            maxWidth: 0, maxHeight: 0,
-          }));
-          await NativeUpload.uploadBatch(requests);
-          console.log('[backup] Enqueued ' + pending.length + ' before background');
+        persistBackupCreds();
+        if (isLocked()) {
+          console.log('[backup] backgrounded with active native session — letting it continue');
+          return;
+        }
+        const settings = await getSettings();
+        if (!settings.enabled) return;
+        // No active session — kick off one native pass so the bg-time window
+        // (30s–4min via beginBackgroundTask) gets used to upload something
+        // before iOS suspends the JS runtime. startNativeBackup acquires its
+        // own state lock natively, so this is safe even if a future
+        // foreground call collides.
+        console.log('[backup] backgrounded with no active session — firing one native pass');
+        const serverUrl = api.BASE_URL;
+        const authToken = api.getAuthToken?.() || '';
+        const userEmail = (api.getSavedEmail && api.getSavedEmail()) || '';
+        if (!authToken || !userEmail) return;
+        if (typeof NativeUpload.startNativeBackup === 'function') {
+          // Fire-and-forget — we can't await here because the JS event loop
+          // is about to get suspended. The native side handles its own
+          // lifecycle via beginBackgroundTask.
+          NativeUpload.startNativeBackup(serverUrl, authToken, userEmail).catch((e) => {
+            console.warn('[backup] background-fire startNativeBackup error:', e?.message);
+          });
         }
       } catch (e) {
-        console.warn('[backup] Background enqueue error:', e?.message);
+        console.warn('[backup] Background handler error:', e?.message);
       }
     }
   });

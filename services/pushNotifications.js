@@ -26,6 +26,13 @@ export function setIncomingCallHandler(handler) {
   _onIncomingCall = handler;
 }
 
+// Internal state for native device FCM/APNs token. Declared up here (not
+// further down) so that registerForPushNotifications() can safely mutate
+// it without any TDZ / declaration-order risk.
+const pushNotificationsState = {
+  deviceToken: null,
+};
+
 // Trigger the foreground toast directly (used on web where native notifications are unavailable)
 export function _triggerForegroundToast(notif) {
   if (_onForegroundNotification && notif) {
@@ -478,14 +485,39 @@ export async function registerForPushNotifications() {
     // must be sent directly to the FCM token (not via Expo Push) to ensure
     // they reach our CallFirebaseMessagingService when the app is killed.
     if (Platform.OS === 'android') {
-      try {
-        const deviceToken = await Notifications.getDevicePushTokenAsync();
-        if (deviceToken?.data) {
-          // Store it so we can register it with the backend
-          pushNotificationsState.deviceToken = deviceToken.data;
+      // Reset any stale value from a previous registration attempt so we
+      // never register a token that belongs to a different install.
+      pushNotificationsState.deviceToken = null;
+
+      // Try up to twice — Firebase's first install handshake is sometimes
+      // not ready by the time the JS bundle calls into it, especially on
+      // cold start. A 1s wait + single retry covers that window without
+      // blocking the main token registration if FCM is genuinely broken.
+      let deviceToken = null;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          deviceToken = await Notifications.getDevicePushTokenAsync();
+          console.warn(
+            '[Push] Android FCM token result (attempt ' + attempt + '):',
+            deviceToken && typeof deviceToken === 'object'
+              ? { type: deviceToken.type, hasData: !!deviceToken.data, dataLen: deviceToken.data ? String(deviceToken.data).length : 0 }
+              : deviceToken
+          );
+          if (deviceToken?.data) break;
+        } catch (err) {
+          console.warn('[Push] Failed to get device FCM token (attempt ' + attempt + '):', err?.message || err);
+          deviceToken = null;
         }
-      } catch (err) {
-        console.warn('[Push] Failed to get device FCM token:', err.message);
+        if (attempt === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      }
+
+      if (deviceToken?.data) {
+        pushNotificationsState.deviceToken = deviceToken.data;
+        console.warn('[Push] Android FCM device token registered locally (type=' + (deviceToken.type || 'unknown') + ')');
+      } else {
+        console.warn('[Push] Android FCM device token UNAVAILABLE after retry — backend will not receive fcm_device token. Check google-services.json package_name and Firebase project.');
       }
     }
 
@@ -497,11 +529,6 @@ export async function registerForPushNotifications() {
   }
 }
 
-// Internal state for device token
-const pushNotificationsState = {
-  deviceToken: null,
-};
-
 export async function sendTokenToBackend(pushToken) {
   if (!pushToken) return;
   try {
@@ -509,15 +536,20 @@ export async function sendTokenToBackend(pushToken) {
     await apiCall('register_push_token', { token: pushToken, platform: Platform.OS }, 'POST');
 
     // Also register the raw FCM device token for Android incoming calls
-    if (Platform.OS === 'android' && pushNotificationsState.deviceToken) {
-      await apiCall('register_push_token', {
-        token: pushNotificationsState.deviceToken,
-        platform: 'android',
-        token_type: 'fcm_device',
-      }, 'POST');
+    if (Platform.OS === 'android') {
+      if (pushNotificationsState.deviceToken) {
+        console.warn('[Push] Sending Android fcm_device token to backend (len=' + String(pushNotificationsState.deviceToken).length + ')');
+        await apiCall('register_push_token', {
+          token: pushNotificationsState.deviceToken,
+          platform: 'android',
+          token_type: 'fcm_device',
+        }, 'POST');
+      } else {
+        console.warn('[Push] Skipping fcm_device registration — pushNotificationsState.deviceToken is empty. Android calls (and FCM-direct payloads) will not work for this install.');
+      }
     }
   } catch (err) {
-    console.warn('[Push] Token send failed:', err.message);
+    console.warn('[Push] Token send failed:', err?.message || err);
   }
 }
 

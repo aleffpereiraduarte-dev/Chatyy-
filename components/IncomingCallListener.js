@@ -137,8 +137,20 @@ function _bufferPendingIce(callId, candidate) {
 // the listener and double-show incoming UI mid-call. Lifecycle is the only
 // thing that may flip this back to false.
 let _callActive = false;
+// Callback set by the mounted component so external code (call.js teardown)
+// can reset the internal `acceptedRef` / `handlingRef`. Without this, after a
+// call ends the refs stayed `true` forever and the next incoming `call_invite`
+// hit the "already handling" early-return and never rendered the in-app
+// overlay — symptom: iOS user with app open hears nothing, sees no UI.
+let _resetCallHandlingState = null;
 export function setCallActive(active) {
+  const prev = _callActive;
   _callActive = !!active;
+  // When transitioning from active → inactive (call ended), clear handling
+  // refs so the next incoming call can render its Modal/overlay.
+  if (prev && !_callActive && typeof _resetCallHandlingState === 'function') {
+    try { _resetCallHandlingState(); } catch {}
+  }
 }
 export function isCallActive() { return _callActive; }
 
@@ -256,6 +268,18 @@ export default function IncomingCallListener() {
     } catch {}
   }, [user?.email]);
 
+  // Expose a reset callback so call.js's setCallActive(false) can clear the
+  // sticky handling refs when a call ends. Without this, accepting one call
+  // permanently blocked the in-app incoming overlay for every subsequent call
+  // (iOS foreground bug: nothing rendered when someone called).
+  useEffect(() => {
+    _resetCallHandlingState = () => {
+      acceptedRef.current = false;
+      handlingRef.current = false;
+    };
+    return () => { _resetCallHandlingState = null; };
+  }, []);
+
   useEffect(() => {
     _triggerIncomingCall = (data) => {
       if (data?.caller_email === user?.email) return;
@@ -327,7 +351,23 @@ export default function IncomingCallListener() {
         try { stopAllAudio(); } catch {}
 
         // If already accepted/handling (e.g. CallKit), still capture caller data but don't show UI
-        if (acceptedRef.current || handlingRef.current) {
+        // CRITICAL: acceptedRef/handlingRef can leak across calls — they're set to true
+        // when CallKit answer / handleAccept runs, but never reset when /call ends
+        // (call.js only flips _callActive). On the NEXT incoming call (foreground or
+        // not), this branch early-returned and the Modal never rendered. Fix: if the
+        // refs say "handling" but _callActive is false (no real call in progress) AND
+        // we have no different live call in callRef, treat the refs as stale and reset
+        // so this new call_invite falls through to showCall.
+        const sameCallId = callRef.current && callRef.current.call_id === (data?.call_id || data?.room_id);
+        if ((acceptedRef.current || handlingRef.current) && !_callActive && !sameCallId) {
+          console.log('[IncomingCall] call_invite: refs stale (no active call), resetting and falling through');
+          voipDiag('ws_call_invite_reset_stale_refs', data?.call_id || '', {
+            accepted: acceptedRef.current, handling: handlingRef.current,
+          });
+          acceptedRef.current = false;
+          handlingRef.current = false;
+          callRef.current = null;
+        } else if (acceptedRef.current || handlingRef.current) {
           console.log('[IncomingCall] call_invite: accepted/handling, updating callStateRef only');
           if (data?.caller_email && data?.call_id) {
             // Update callStateRef with richer WS data (has caller_email, conversation_id, caller_phone)
