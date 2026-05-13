@@ -43,13 +43,25 @@ jobs:
       - name: Patch ShareExtension signing (sets manual signing off)
         run: node scripts/patch-shareext-signing.js || true
 
-      - name: Install Pods
+      - name: Install Pods (with retry — CocoaPods CDN hits GitHub raw 429 randomly)
         env:
           LANG: en_US.UTF-8
           LC_ALL: en_US.UTF-8
         run: |
           cd ios
-          pod install --repo-update
+          for attempt in 1 2 3 4 5; do
+            echo "::group::pod install attempt $attempt"
+            if pod install --repo-update; then
+              echo "::endgroup::"
+              echo "pod install succeeded on attempt $attempt"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "pod install failed on attempt $attempt — waiting before retry"
+            sleep $((attempt * 30))
+          done
+          echo "::error::pod install failed after 5 attempts"
+          exit 1
 
       - name: Build for iOS Simulator (Release — JS bundle embedded, no Metro needed)
         run: |
