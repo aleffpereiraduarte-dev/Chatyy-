@@ -1813,16 +1813,15 @@ export default function OneScreen() {
       setConversations(convos);
       setCache('one_conversations', res, 7776000000).catch(() => {});
 
-      // Auto-restore if the last conversation is < 3 hours old (user
-      // requested 2026-05-09: "salva cache da conversa One por 3 horas da
-      // ultima mensagem"). Window is per-message: any reply within 3h
-      // resets the clock. Past 3h the screen opens fresh — avoids landing
-      // on yesterday's briefing when the user opens One in the morning.
+      // Auto-restore if the last conversation message is < 60 min old.
+      // Window is per-message: any reply within the hour resets the clock.
+      // Past 60 min the screen opens fresh — avoids landing on yesterday's
+      // briefing when the user opens One in the morning (user req 2026-05-13).
       if (autoRestore && convos.length > 0 && !conversationId && messages.length === 0) {
         const last = convos[0]; // most recent
         const lastUpdated = new Date(last.updated_at || last.created_at);
-        const hoursAgo = (Date.now() - lastUpdated.getTime()) / (1000 * 60 * 60);
-        if (hoursAgo >= 3) return; // older than 3h → start fresh
+        const msAgo = Date.now() - lastUpdated.getTime();
+        if (msAgo >= 3600000) return; // older than 60min → start fresh
         setConversationId(last.id);
         // Show cached messages instantly
         const cachedMsgs = await getCached('one_messages_' + last.id);
@@ -1852,10 +1851,10 @@ export default function OneScreen() {
   useEffect(() => {
     if (!initialLoaded) {
       setInitialLoaded(true);
-      // Auto-restore re-enabled with 3h window (2026-05-09 user request) —
-      // resume same conversation when returning to One within 3 hours of
-      // the last message; otherwise open fresh. Cached messages render
-      // instantly via getCached() before the network refresh lands.
+      // Auto-restore with 60-min window (2026-05-13 user request) —
+      // resume same conversation when returning to One within 60 min of
+      // the last message; otherwise open fresh in a new thread. Cached
+      // messages render instantly via getCached() before network lands.
       loadConversations(true);
     }
   }, [initialLoaded]);

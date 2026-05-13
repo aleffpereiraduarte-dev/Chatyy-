@@ -379,11 +379,16 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
   }, []);
 
   // Load active lives
+  // [bug-shape] Backend `live_list` returns `data.lives` (NOT `sessions`); the
+  // previous `r.data?.sessions` check was always falsy, so polling never
+  // populated nor cleared the strip — the hero stayed parked on screen until
+  // the user pulled to refresh. Fall back to legacy `sessions` for forward-compat.
   const loadLives = useCallback(async () => {
     try {
       const r = await api.liveList();
-      if (r && r.success && r.data?.sessions) {
-        setActiveLives(Array.isArray(r.data.sessions) ? r.data.sessions : []);
+      if (r && r.success) {
+        const list = r.data?.lives || r.data?.sessions || [];
+        setActiveLives(Array.isArray(list) ? list : []);
       }
     } catch (e) {
       console.warn('Live list error:', e);
@@ -459,8 +464,39 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
         // mid-scroll. Just drop the event — next valid broadcast or the 60s
         // poll will catch up.
       });
+
+      // Subscribe defensively in case this tab is the only one mounted
+      // (Feed-only deep link, web direct nav). ChatListTab subscribes too —
+      // the WS hub dedupes per-channel so double-subscribe is a no-op.
+      try { mailWs.subscribe?.('lives_global'); } catch {}
+
+      // [realtime-live-remove] On live_ended, mutate activeLives DIRECTLY
+      // instead of round-tripping through loadLives() — the API poll can race
+      // with the WS event (host ends, WS arrives, then a fresh poll returns
+      // the still-cached row, putting the hero back). Removing inline
+      // guarantees the hero disappears the instant the broadcast ends. On
+      // live_started we still re-fetch to pick up host_name/viewer_count
+      // metadata not carried by the WS payload.
       unsubLiveStart = mailWs.on('live_started', () => loadLives());
-      unsubLiveEnd = mailWs.on('live_ended', () => loadLives());
+      unsubLiveEnd = mailWs.on('live_ended', (payload) => {
+        const data = payload?.data || payload || {};
+        const sid = data.session_id || data.id;
+        const host = String(data.host_email || '').toLowerCase();
+        setActiveLives(prev => {
+          if (!Array.isArray(prev) || prev.length === 0) return prev;
+          const next = prev.filter(l => {
+            const lid = l?.id || l?.session_id;
+            const lhost = String(l?.host_email || l?.email || '').toLowerCase();
+            // Drop if EITHER session_id matches OR host_email matches (handles
+            // payloads missing one or the other; auto-stale broadcast carries
+            // both, regular live_end_cf carries both).
+            if (sid && lid && String(lid) === String(sid)) return false;
+            if (host && lhost && lhost === host) return false;
+            return true;
+          });
+          return next.length === prev.length ? prev : next;
+        });
+      });
     }
 
     // Only poll when WebSocket is actually offline — redundant 60s polls on

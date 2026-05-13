@@ -740,7 +740,14 @@ class MailWebSocket {
           const id = inner?.id;
           if (convId && sender && self && sender !== self && typeof id === 'number') {
             const api = require('./api');
-            if (typeof api.chatDeliveryAck === 'function') {
+            // Coalesce per-msg acks into a single POST per 250ms window.
+            // In an active conv a burst of 20 inbound messages would
+            // otherwise fire 20 HTTP POSTs back-to-back, burning radio +
+            // server CPU. Batched path is fire-and-forget and dedups ids
+            // internally, so calling for the same id is cheap.
+            if (typeof api.chatDeliveryAckBatched === 'function') {
+              api.chatDeliveryAckBatched(convId, [id]);
+            } else if (typeof api.chatDeliveryAck === 'function') {
               api.chatDeliveryAck(convId, [id]).catch(() => {});
             }
           }
@@ -807,7 +814,10 @@ class MailWebSocket {
             const id = inner?.id;
             if (convId && sender && self && sender !== self && typeof id === 'number') {
               const api = require('./api');
-              if (typeof api.chatDeliveryAck === 'function') {
+              // Batched coalescer (see chat_message branch above for why).
+              if (typeof api.chatDeliveryAckBatched === 'function') {
+                api.chatDeliveryAckBatched(convId, [id]);
+              } else if (typeof api.chatDeliveryAck === 'function') {
                 api.chatDeliveryAck(convId, [id]).catch(() => {});
               }
             }
@@ -939,6 +949,21 @@ class MailWebSocket {
     if (this.isConnected && Array.isArray(emails) && emails.length > 0) {
       this._send({ type: 'presence_query', emails });
     }
+  }
+
+  // Send read receipt over WS so peer flips ✓✓ blue ticks in <50ms instead
+  // of waiting on HTTP chat_mark_read round-trip (~300ms+). Server case
+  // `message_read` broadcasts back on `chat_{convId}` channel so the peer's
+  // open thread + other listeners flip in real-time. HTTP chatRead still
+  // fires for persistence — this is the in-band signaling fast-path.
+  sendMessageRead(conversationId, lastReadId) {
+    if (!this.isConnected || !conversationId) return;
+    this._send({
+      type: 'message_read',
+      conversation_id: conversationId,
+      message_ids: lastReadId ? [lastReadId] : [],
+      last_read_id: lastReadId || 0,
+    });
   }
 
   // Subscribe to presence changes for specific emails

@@ -4,10 +4,11 @@ import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
-import { IconPhone, IconVideo, IconX, IconPhoneOff } from './Icons';
+import { IconPhone, IconVideo, IconX, IconPhoneOff, IconVerifiedBadge } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import { startRingtone, stopRingtone } from '../services/ringtone';
 import { stopAllAudio } from '../services/audioManager';
+import { ensureContactIndex, lookupName as lookupDeviceContactName } from '../services/deviceContactLookup';
 
 // Lazy-load to break circular dependency with ChatCallsTab
 let addCallToHistory = () => {};
@@ -303,6 +304,12 @@ export default function IncomingCallListener() {
     };
     return () => { _resetCallHandlingState = null; };
   }, []);
+
+  // Warm the phone→name suffix index on mount so when a call comes in we can
+  // synchronously swap a raw number for the saved contact name during the
+  // first render (no flicker). Cheap: cached + no network. Fires once per
+  // listener lifecycle.
+  useEffect(() => { ensureContactIndex().catch(() => {}); }, []);
 
   useEffect(() => {
     _triggerIncomingCall = (data) => {
@@ -1013,10 +1020,21 @@ export default function IncomingCallListener() {
     // the user accepts from the JS overlay — otherwise the native screen
     // lingers on top of /call.
     try { callKeep.endCall(callId); } catch {}
-    const callerName = currentCall.caller_name || currentCall.caller_email?.split('@')[0] || '';
+    // Resolve display name same way as the render block: device address
+    // book wins so the active-call screen also reads "Mãe" instead of the
+    // raw phone the caller dialed.
+    const _callerPhone = currentCall.caller_phone || '';
+    const _phoneMatchName = _callerPhone ? lookupDeviceContactName(_callerPhone) : null;
+    const callerName = _phoneMatchName
+      || currentCall.caller_name
+      || currentCall.caller_email?.split('@')[0]
+      || '';
     const callerEmail = currentCall.caller_email || '';
     const isVideo = currentCall.video !== false ? '1' : '0';
     const conversationId = currentCall.conversation_id || '';
+    const callerVerifiedParam = (currentCall.caller_verified === true
+      || currentCall.caller_verified === 1
+      || currentCall.caller_verified === '1') ? '1' : '0';
 
     stopRingtone();
 
@@ -1106,7 +1124,7 @@ export default function IncomingCallListener() {
     // Navigate to call screen as callee
     setTimeout(() => {
       try {
-        const url = `/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0`;
+        const url = `/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&callerVerified=${callerVerifiedParam}`;
         router.push(url);
       } catch {}
       // DON'T reset handlingRef here — keep it true to block any late decline
@@ -1202,9 +1220,28 @@ export default function IncomingCallListener() {
 
   if (!call) return null;
 
-  const callerName = call.caller_name || call.caller_email?.split('@')[0] || '?';
+  // Caller display name with device-book override.
+  // Precedence: (1) name saved in this device's address book against the
+  // caller's verified phone (WhatsApp behavior — phone is the source of
+  // truth for "who this person is to me"), (2) the server-provided
+  // display_name carried in caller_name, (3) the email local-part fallback.
+  // The phone match is suffix-based via lookupDeviceContactName so it works
+  // across +55/55/no-country-code variants. Returns null when the caller
+  // either has no verified phone OR isn't in the contact book.
+  const callerPhone = call.caller_phone || '';
+  const phoneMatchName = callerPhone ? lookupDeviceContactName(callerPhone) : null;
+  const callerName = phoneMatchName
+    || call.caller_name
+    || call.caller_email?.split('@')[0]
+    || '?';
   const callerEmail = call.caller_email || '';
   const isVideo = call.video !== false;
+  // Trust the backend flag — set when the caller has completed Telnyx
+  // caller-id verification (PIN-confirmed phone in profile/data.json).
+  // Both '1' (string from FCM data payload) and true (JS bool) are valid.
+  const callerVerified = call.caller_verified === true
+    || call.caller_verified === 1
+    || call.caller_verified === '1';
 
   const renderRing = (anim, baseSize) => (
     <Animated.View style={{
@@ -1243,8 +1280,19 @@ export default function IncomingCallListener() {
             {renderRing(ring3, 140)}
             <AvatarCircle name={callerName} email={callerEmail} size={110} />
           </View>
-          <Text style={styles.callerName}>{callerName}</Text>
-          {call?.caller_phone ? <Text style={[styles.callerEmail, { fontSize: 16, marginBottom: 2 }]}>{call.caller_phone}</Text> : null}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            <Text style={styles.callerName} numberOfLines={1}>{callerName}</Text>
+            {callerVerified && (
+              <View
+                accessibilityLabel={t('call.verifiedCaller') || 'Verificado'}
+                accessibilityRole="image"
+                style={{ marginTop: 4 }}
+              >
+                <IconVerifiedBadge size={20} color="#34B7F1" />
+              </View>
+            )}
+          </View>
+          {callerPhone ? <Text style={[styles.callerEmail, { fontSize: 16, marginBottom: 2 }]}>{callerPhone}</Text> : null}
           <Text style={styles.callerEmail}>{callerEmail}</Text>
         </View>
 

@@ -513,6 +513,7 @@ export default {
   'photos.camera': 'Camera',
   'photos.upload': 'Upload',
   'photos.paused': 'Paused',
+  'photos.allSynced': 'All synced',
   'photos.searchPeoplePlaces': 'Search people, places & more',
   'common.refresh': 'Refresh',
   'time.justNow': 'now',
@@ -946,6 +947,7 @@ export default {
   // Incoming call
   'call.incomingVideo': 'Incoming video call...',
   'call.incomingAudio': 'Incoming voice call...',
+  'call.verifiedCaller': 'Verified',
   'call.accept': 'Accept',
   'call.decline': 'Decline',
   'call.callingVideo': 'Video calling...',
@@ -1158,6 +1160,7 @@ export default {
   'notifications.follow': 'New follower',
   'notifications.like': 'Like',
   'notifications.comment': 'Comment',
+  'notifications.markAllShort': 'Mark all',
   'compose.new': 'New',
   'compose.email': 'Email',
   'compose.chat': 'Message',

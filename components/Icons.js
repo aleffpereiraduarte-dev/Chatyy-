@@ -241,6 +241,26 @@ export function IconCheckCircle({ size, color, style }) {
   return <I size={size} color={color} style={style}><Path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><Polyline points="22 4 12 14.01 9 11.01"/></I>;
 }
 
+// WhatsApp Business / X premium-style verified badge — filled circle with a
+// white checkmark. Used on call screens and contact rows when the caller's
+// number is Telnyx-verified (telnyx_caller_id_verified flag). The fill color
+// is rendered via the `color` prop so callers can pass brand blue or green.
+export function IconVerifiedBadge({ size = 14, color = '#007AFF', style }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" style={typeof style === 'object' ? style : undefined}>
+      <Circle cx="12" cy="12" r="11" fill={color} stroke="none" />
+      <Polyline
+        points="7.5 12.5 10.5 15.5 16.5 9"
+        fill="none"
+        stroke="#ffffff"
+        strokeWidth="2.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </Svg>
+  );
+}
+
 export function IconEye({ size, color, style }) {
   return <I size={size} color={color} style={style}><Path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><Circle cx="12" cy="12" r="3"/></I>;
 }

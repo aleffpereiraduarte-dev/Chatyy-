@@ -22,7 +22,7 @@ import {
   IconMic, IconMicOff, IconVideo, IconVideoOff, IconPhoneOff,
   IconVolume2, IconVolume, IconArrowLeft, IconChevronDown, IconCameraFlip, IconScreenShare,
   IconPause, IconPlay, IconMoreHorizontal, IconPhone, IconRecord,
-  IconZap, IconUserPlus, IconX, IconSearch,
+  IconZap, IconUserPlus, IconX, IconSearch, IconVerifiedBadge,
 } from '../components/Icons';
 import { getPendingOffer, getPendingIceCandidates, getPendingTurnCredentials, setCallActive } from '../components/IncomingCallListener';
 // Lazy-load to break circular dependency
@@ -97,7 +97,17 @@ function CallScreenInner() {
     callId, contactName, contactEmail,
     isVideo: isVideoParam, conversationId,
     isCaller: isCallerParam,
+    callerVerified: callerVerifiedParam,
   } = params;
+  // Verified badge shows when the remote party completed Telnyx caller-id
+  // verification (we trust the push payload as the source of truth — peer
+  // signing is enforced by FCM/APNs delivery). Pure UI flag, no functional
+  // effect on the call. Both '1' (push payload string) and 1 (deep-link
+  // numeric) are accepted.
+  const peerVerified = callerVerifiedParam === '1'
+    || callerVerifiedParam === 1
+    || callerVerifiedParam === true
+    || callerVerifiedParam === 'true';
   const { user } = useAuth();
   const { t } = useLanguage();
   const insets = useSafeAreaInsets();
@@ -4806,7 +4816,18 @@ function CallScreenInner() {
                   </View>
                 )}
               </Animated.View>
-              <Text style={[styles.centerName, !isVideoCall && styles.centerNameAudio]} numberOfLines={1}>{callerName}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                <Text style={[styles.centerName, !isVideoCall && styles.centerNameAudio]} numberOfLines={1}>{callerName}</Text>
+                {peerVerified && (
+                  <View
+                    accessibilityLabel={t('call.verifiedCaller') || 'Verificado'}
+                    accessibilityRole="image"
+                    style={{ marginTop: 4 }}
+                  >
+                    <IconVerifiedBadge size={20} color="#34B7F1" />
+                  </View>
+                )}
+              </View>
               <Text style={[styles.centerStatus, connectionFailed && { color: '#ef4444' }]}>{statusText}</Text>
               {ended && (
                 <Text style={styles.endedHint}>{t('call.ended') || 'Chamada encerrada'}</Text>

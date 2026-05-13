@@ -6452,6 +6452,11 @@ export default function ChatConversationScreen() {
     try {
       const mailWs = require('../services/websocket').default;
       const emailInline = user?.email || '';
+      // Instant in-band signaling: fire WS message_read so the peer's bubble
+      // flips to ✓✓ blue in <50ms (vs ~300ms HTTP round-trip). chat.php
+      // still broadcasts the canonical chat_read after persistence — this
+      // is the fast path, the HTTP write above is the source of truth.
+      mailWs.sendMessageRead?.(conversationId, msgId);
       mailWs._emit?.('chat_read', {
         conversation_id: conversationId,
         reader_email: emailInline,
@@ -8873,6 +8878,39 @@ export default function ChatConversationScreen() {
       // Guard against regression AND no-op updates — setReadReceipts creates
       // a new array ref even if data is identical, which re-renders every
       // bubble and flickers the V tick when WS + TCP fire the same receipt.
+      // Server case `message_read` broadcasts type `message_read` on
+      // `chat_{convId}` directly from the peer's WS frame (faster than the
+      // PHP-broadcast `chat_read` which round-trips through chat.php). Wire
+      // it to the same flip-blue-ticks logic so the sender sees ✓✓ blue in
+      // <50ms instead of waiting for HTTP persistence. Bug 2026-05-13: this
+      // event was completely unlistened — only chat_read worked, so the
+      // optimistic WS path was silently dropped on the wire.
+      const unsubMsgRead = mailWs.on('message_read', (data) => {
+        if (!mountedRef.current) return;
+        if (String(data?.conversation_id) !== String(conversationId)) return;
+        const peerEmail = data?.read_by || data?.email;
+        if (!peerEmail || peerEmail === currentEmail) return;
+        const newId = data?.last_read_id || (Array.isArray(data?.message_ids) ? Math.max(...data.message_ids.filter(n => typeof n === 'number')) : 0);
+        if (!newId) return;
+        setReadReceipts(prev => {
+          const existing = prev.find(rr => rr.email === peerEmail);
+          if (existing) {
+            if ((existing.last_read_id || 0) >= newId) return prev;
+            return prev.map(rr => rr.email === peerEmail ? { ...rr, last_read_id: newId } : rr);
+          }
+          return [...prev, { email: peerEmail, last_read_id: newId }];
+        });
+        const isGroup = conversationType === 'group';
+        setMessages(prev => prev.map(m =>
+          m.sender_email === currentEmail && typeof m.id === 'number' && m.id <= newId
+            ? (isGroup
+                ? (!m._delivered ? { ...m, _delivered: true } : m)
+                : (!m._read ? { ...m, status: 'read', _read: true, _delivered: true } : m))
+            : m
+        ));
+      });
+      wsUnsubs.push(unsubMsgRead);
+
       const unsubRead = mailWs.on('chat_read', (data) => {
         if (!mountedRef.current) return;
         // Ignore our own locally-emitted read (fired by markReadUpTo); only

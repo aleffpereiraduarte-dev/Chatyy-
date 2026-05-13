@@ -9,6 +9,7 @@ import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, v
 import { getCached, setCache } from '../services/cache';
 import { useCall } from '../context/CallContext';
 import { useLanguage } from '../context/LanguageContext';
+import { ensureContactIndex, lookupName as lookupDeviceContactName } from '../services/deviceContactLookup';
 // SIP call — dynamic import to prevent crash if native WebRTC module fails
 let _sip = null;
 try { _sip = require('../services/sipCall'); } catch {}
@@ -670,9 +671,16 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
   const country = detectCountry(item.to_number || item.contactEmail);
   const isChatyy = item.source === 'chat';
   const rawName = item.contactName || item.contact_name || item.to_number || item.contactEmail || '?';
-  const displayName = (item.contactName || item.contact_name)
-    ? rawName
-    : prettifyHandle(rawName);
+  // History rows often store the raw phone as contactName (we don't know the
+  // saved name at write time). When that's the case (number-looking), try
+  // resolving against the device contact index so the row reads "Mãe"
+  // instead of "+5511…". Falls back to prettifyHandle otherwise. Index is
+  // already warm via DialerModal's mount + IncomingCallListener's lookup.
+  const hasSavedName = !!(item.contactName || item.contact_name) && !/^\+?\d[\d\s\-()]{3,}$/.test(String(rawName).trim());
+  const phoneForLookup = item.to_number || (typeof rawName === 'string' && /^\+?\d/.test(rawName) ? rawName : '');
+  const lookedUp = !hasSavedName && phoneForLookup ? lookupDeviceContactName(phoneForLookup) : null;
+  const displayName = lookedUp
+    || (hasSavedName ? rawName : prettifyHandle(rawName));
 
   return (
     <TouchableOpacity
@@ -2048,6 +2056,11 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
       loadPhoneContacts().then(pc => {
         if (pc && pc.length > 0) setPhoneContactsList(pc);
       }).catch(() => {});
+      // Also warm the lightweight phone→name suffix index so the active-call
+      // screen can swap the raw number for "Mãe" / "João" instantly when the
+      // call goes through. Network-free, runs in parallel with the heavier
+      // loads above.
+      ensureContactIndex().catch(() => {});
       // Favorites from call history
       callHistoryList().then(r => {
         if (r?.success && Array.isArray(r.data?.calls)) {
@@ -2290,13 +2303,22 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
     let phoneNum = number.trim();
     if (!phoneNum.startsWith('+')) phoneNum = '+55' + phoneNum;
 
+    // Look up the saved contact name from the device address book so the
+    // call screen + green ongoing-bar show "João" instead of "+5511…".
+    // Falls back to a dialerMatch hit (already resolved by the T9 logic),
+    // then null → screen falls back to the raw number. Cheap (Map lookup).
+    const resolvedName = (dialerMatch?.name || dialerMatch?.display_name)
+      || lookupDeviceContactName(phoneNum)
+      || lookupDeviceContactName(number)
+      || '';
+
     try {
       if (callMode === 'internet') {
         // SIP mode: direct WebRTC via Telnyx (call via internet)
-        setActiveCall({ number: phoneNum, contactName: '', state: 'connecting', duration: 0 });
+        setActiveCall({ number: phoneNum, contactName: resolvedName, state: 'connecting', duration: 0 });
         setCallResult({ success: true, message: t?.('calls.connecting') || 'Connecting...' });
         // Show green bar globally via CallContext
-        ctxStartCall({ contactName: phoneNum, contactEmail: '', isVideo: false, isCaller: true, callType: 'sip' });
+        ctxStartCall({ contactName: resolvedName || phoneNum, contactEmail: '', isVideo: false, isCaller: true, callType: 'sip' });
 
         // ─── Native audio routing + proximity sensor (SAME AS CHATYY P2P) ───
         // Activate the audio session for voice chat (earpiece by default, NOT
@@ -2349,7 +2371,7 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
             const _callId = `twilio_${_callStartTs}_${phoneNum.replace(/[^0-9]/g,'')}`;
             callHistoryAdd({
               contactEmail: phoneNum,           // phone number as identifier
-              contactName: phoneNum,            // we don't have a name here
+              contactName: resolvedName || phoneNum, // device-book name when known, else raw number
               callId: _callId,
               type: 'outgoing',
               video: 0,
@@ -2397,7 +2419,7 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
         });
       } else {
         // Callback mode: Telnyx calls your phone, then bridges to destination
-        setActiveCall({ number: phoneNum, contactName: '', state: 'phone_ringing', duration: 0 });
+        setActiveCall({ number: phoneNum, contactName: resolvedName, state: 'phone_ringing', duration: 0 });
         const r = await voipCall(phoneNum, '', true);
         if (r?.success) {
           setCallResult({ success: true, message: t?.('calls.answerPhone') || 'Answer your phone to connect the call' });
