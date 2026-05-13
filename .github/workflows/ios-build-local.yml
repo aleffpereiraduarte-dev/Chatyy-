@@ -219,27 +219,33 @@ jobs:
           cp "$IPA" ./build.ipa
           ls -la ./build.ipa
 
-      - name: Submit to TestFlight
-        # Auto-submit on push (the normal trigger), and on workflow_dispatch
-        # only when submit=true. Set submit=false on workflow_dispatch to get
-        # the .ipa as a download artifact instead.
+      - name: Submit to TestFlight (altool direto — bypass EAS queue, 20× mais rápido)
+        # ROOT CAUSE histórico: `eas-cli submit` enfileira no worker EAS hospedado +
+        # poll serializado pro Apple Transporter = 40min toda build. Apple's altool
+        # faz upload direto pro ASC: 90-180s. Pré-instalado em macos-latest.
         if: ${{ github.event_name == 'push' || inputs.submit == 'true' }}
         env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           ASC_KEY_B64: ${{ secrets.ASC_KEY_P8_BASE64 }}
+          ASC_KEY_ID: 'QSYM3KX73P'
+          ASC_ISSUER_ID: '494360d0-0420-4f1f-a1db-6be19eeb2d89'
         run: |
           if [ -z "$ASC_KEY_B64" ]; then
             echo "::error::Missing secret ASC_KEY_P8_BASE64 — required for App Store Connect auth."
             exit 1
           fi
-          # Restore asc_key.p8 from secret (eas.json references ./asc_key.p8).
-          echo "$ASC_KEY_B64" | base64 -d > ./asc_key.p8
-          npx eas-cli submit \
-            --platform ios \
-            --profile production \
-            --path ./build.ipa \
-            --non-interactive
-          rm -f ./asc_key.p8
+          # altool procura a key em ~/.appstoreconnect/private_keys/AuthKey_{ID}.p8
+          mkdir -p ~/.appstoreconnect/private_keys
+          echo "$ASC_KEY_B64" | base64 -d > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+          chmod 600 ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+          echo "→ Uploading build.ipa direct to ASC via altool…"
+          xcrun altool --upload-app \
+            --type ios \
+            --file ./build.ipa \
+            --apiKey "$ASC_KEY_ID" \
+            --apiIssuer "$ASC_ISSUER_ID" \
+            --verbose 2>&1 | tail -50
+          rm -f ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+          echo "✓ Submitted to ASC"
 
       - name: Auto-attach new build to TestFlight beta groups
         # Apple's "internal" groups can't be attached via API (422), but external
