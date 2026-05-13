@@ -6,6 +6,12 @@ const CACHE_KEY = '@chatyy_synced_contacts';
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour in milliseconds
 const CONSENT_KEY = '@chatyy_contacts_consent_v1'; // 'granted' | 'denied' | undefined
 
+// In-memory mirror of the persisted consent state. Avoids re-prompting the
+// user inside the same session when AsyncStorage hasn't flushed yet (race
+// between dismiss tap → resolve → next ensureContactsConsent call). Set
+// synchronously the moment the user makes a choice or dismisses.
+let _consentMemory = null;
+
 // Apple App Store guideline 5.1.2 requires an in-app disclosure before
 // the iOS permission prompt fires, explaining what data leaves the device
 // and why. We persist the user's choice so we don't re-ask on every entry
@@ -17,10 +23,16 @@ const CONSENT_KEY = '@chatyy_contacts_consent_v1'; // 'granted' | 'denied' | und
 // is expected to do that *after* this returns true.
 export async function ensureContactsConsent(t) {
   if (Platform.OS === 'web') return false;
+  // In-memory short-circuit covers two cases that AsyncStorage cannot: (a) a
+  // pending write hasn't flushed yet between rapid re-mounts, (b) the user
+  // dismissed by tapping outside / back button, which used to bypass the
+  // persistence step entirely and re-prompted on every chat-new mount.
+  if (_consentMemory === 'granted') return true;
+  if (_consentMemory === 'denied') return false;
   let saved = null;
   try { saved = await AsyncStorage.getItem(CONSENT_KEY); } catch {}
-  if (saved === 'granted') return true;
-  if (saved === 'denied') return false;
+  if (saved === 'granted') { _consentMemory = 'granted'; return true; }
+  if (saved === 'denied')  { _consentMemory = 'denied';  return false; }
   return await new Promise((resolve) => {
     const _t = typeof t === 'function' ? t : () => '';
     const title = _t('contactsConsent.title') || 'Encontrar amigos no Chatyy';
@@ -29,27 +41,29 @@ export async function ensureContactsConsent(t) {
       'Pra te mostrar quais amigos já estão no Chatyy, vamos enviar os números e emails dos seus contatos pro nosso servidor de forma criptografada (hash SHA-256). Os contatos não ficam armazenados depois da consulta e nunca são compartilhados com ninguém. Você pode revogar a qualquer momento em Configurações.';
     const cta = _t('contactsConsent.continue') || 'Continuar';
     const cancel = _t('common.notNow') || 'Agora não';
+    let settled = false;
+    const settle = (state, value) => {
+      if (settled) return;
+      settled = true;
+      _consentMemory = state;
+      AsyncStorage.setItem(CONSENT_KEY, state).catch(() => {});
+      resolve(value);
+    };
     Alert.alert(title, body, [
-      { text: cancel, style: 'cancel', onPress: async () => {
-          try { await AsyncStorage.setItem(CONSENT_KEY, 'denied'); } catch {}
-          resolve(false);
-        }
-      },
-      { text: cta, onPress: async () => {
-          try { await AsyncStorage.setItem(CONSENT_KEY, 'granted'); } catch {}
-          resolve(true);
-        }
-      },
-    ], { cancelable: true, onDismiss: () => resolve(false) });
+      { text: cancel, style: 'cancel', onPress: () => settle('denied', false) },
+      { text: cta, onPress: () => settle('granted', true) },
+    ], { cancelable: true, onDismiss: () => settle('denied', false) });
   });
 }
 
 export async function revokeContactsConsent() {
+  _consentMemory = 'denied';
   try { await AsyncStorage.setItem(CONSENT_KEY, 'denied'); } catch {}
   try { await AsyncStorage.removeItem(CACHE_KEY); } catch {}
 }
 
 export async function getContactsConsentState() {
+  if (_consentMemory) return _consentMemory;
   try { return await AsyncStorage.getItem(CONSENT_KEY); } catch { return null; }
 }
 
