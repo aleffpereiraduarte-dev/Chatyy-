@@ -1,0 +1,63 @@
+name: iOS Sim Artifact → Prod Server
+
+# Downloads an existing chatyy-ios-sim artifact from a previous successful
+# build and SCPs it to the prod server for Mac Docker QA. Saves a 20min
+# full rebuild when the .app is already built but a downstream step failed.
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_id:
+        description: 'Artifact ID to download (from previous ios-sim-build run)'
+        required: true
+        default: '6965412927'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Download artifact via API
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARTIFACT_ID: ${{ inputs.artifact_id }}
+        run: |
+          set -e
+          curl -sL -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$ARTIFACT_ID/zip" \
+            -o /tmp/artifact.zip
+          ls -la /tmp/artifact.zip
+          unzip -o /tmp/artifact.zip -d /tmp/artifact-extract
+          ls -la /tmp/artifact-extract/
+          # The artifact contains chatyy-sim.tar.gz inside
+          TAR=$(find /tmp/artifact-extract -name "*.tar.gz" | head -1)
+          if [ -z "$TAR" ]; then
+            echo "::error::No .tar.gz inside artifact"
+            ls -R /tmp/artifact-extract
+            exit 1
+          fi
+          cp "$TAR" /tmp/chatyy-sim.tar.gz
+          ls -la /tmp/chatyy-sim.tar.gz
+
+      - name: SCP to prod server
+        run: |
+          set -e
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          if ! ssh-keygen -y -f ~/.ssh/deploy_key >/dev/null 2>&1; then
+            echo "::error::SSH_KEY didn't parse"
+            exit 1
+          fi
+          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            /tmp/chatyy-sim.tar.gz \
+            "root@${{ secrets.SERVER_HOST }}:/var/www/mail/data/uploads/chatyy-sim.tar.gz"
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            "root@${{ secrets.SERVER_HOST }}" \
+            "ls -la /var/www/mail/data/uploads/chatyy-sim.tar.gz"
