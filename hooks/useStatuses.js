@@ -227,12 +227,35 @@ export default function useStatuses(currentEmail, opts = {}) {
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
 
+  // [silent-fail-w3] Schedule a single short retry on transient failure so the
+  // ring strip doesn't sit empty forever when a status_list call dies on flaky
+  // network. Belt-and-suspenders with the regular pollMs timer (which is 30s+);
+  // the 5s retry covers the gap where the user opens the app on a half-dead
+  // connection and the next poll is half a minute away.
+  const retryTimerRef = useRef(null);
+  const scheduleRetry = useCallback(() => {
+    if (retryTimerRef.current || !mountedRef.current) return;
+    retryTimerRef.current = setTimeout(() => {
+      retryTimerRef.current = null;
+      if (mountedRef.current) refetchRef.current?.();
+    }, 5000);
+  }, []);
+  const refetchRef = useRef(null);
+
   const refetch = useCallback(async () => {
     if (!enabled) return;
     try {
       const r = await api.statusList?.();
       if (!mountedRef.current) return;
-      if (!r?.success || !r.data) { setLoading(false); return; }
+      if (!r?.success || !r.data) {
+        // [silent-fail-w3] Non-success response with no data: arrange a single
+        // 5s retry. Previously this just stopped — if it failed during cold
+        // start the strip stayed empty until the next 30s poll tick.
+        console.warn('[silent-fail-w3] useStatuses non-success', r?.message);
+        scheduleRetry();
+        setLoading(false);
+        return;
+      }
       const norm = _normalize(r.data, currentEmail);
       const fp = _fingerprint(norm.mine, norm.others);
       if (fp !== fpRef.current) {
@@ -245,12 +268,23 @@ export default function useStatuses(currentEmail, opts = {}) {
         setCache('statuses', { groups: norm.groups, mine: norm.mine, others: norm.others }, 2592000000).catch(() => {});
         _writeMMKV({ groups: norm.groups, mine: norm.mine, others: norm.others });
       }
-    } catch {
-      // Network errors are silent — UI keeps showing whatever it had.
+    } catch (e) {
+      // [silent-fail-w3] Network/throw: keep current UI state but arm a 5s
+      // retry. Was completely silent before, contributing to "status strip
+      // looks broken" reports after spotty connection drops.
+      console.warn('[silent-fail-w3] useStatuses threw', e?.message);
+      scheduleRetry();
     } finally {
       if (mountedRef.current) setLoading(false);
     }
-  }, [currentEmail, enabled, warmCacheVideos]);
+  }, [currentEmail, enabled, warmCacheVideos, scheduleRetry]);
+
+  // Keep ref in sync so scheduleRetry can call the latest refetch without
+  // depending on it (would cause a re-create loop).
+  useEffect(() => { refetchRef.current = refetch; }, [refetch]);
+  useEffect(() => () => {
+    if (retryTimerRef.current) { clearTimeout(retryTimerRef.current); retryTimerRef.current = null; }
+  }, []);
 
   useEffect(() => {
     if (!enabled) return undefined;

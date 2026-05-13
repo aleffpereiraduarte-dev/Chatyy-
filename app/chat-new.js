@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import {
   View, Text, TouchableOpacity, StyleSheet, TextInput, Image,
   FlatList, ActivityIndicator, Alert, Platform, SectionList, Share, Linking,
-  ScrollView, Modal, ActionSheetIOS,
+  ScrollView, Modal, ActionSheetIOS, Animated,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -17,6 +17,7 @@ import { prettifyHandle } from '../services/displayName';
 import {
   IconArrowLeft, IconSearch, IconX, IconUsers, IconMessageSquare,
   IconCheck, IconPlus, IconMail, IconRefresh, IconClock, IconUserPlus,
+  IllustrationSearch,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 import BroadcastModal from '../components/BroadcastModal';
@@ -47,6 +48,41 @@ function IconBroadcastGlyph({ size = 18, color = '#fff' }) {
       <_BPath d="M16 8a5 5 0 0 1 0 8" />
       <_BPath d="M19 5a9 9 0 0 1 0 14" />
     </_BSvg>
+  );
+}
+
+// Tiny "on Chatyy" badge — purple circle with a check, signals that the
+// row is a registered Chatyy user. Rendered inline next to the contact name.
+function IconChatyyOnChat({ size = 14, color = '#7C3AED' }) {
+  return (
+    <_BSvg width={size} height={size} viewBox="0 0 24 24" fill={color}>
+      <_BPath d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1.5 14.2l-4-4 1.4-1.4 2.6 2.6 6.6-6.6L18.5 8l-8 8.2z" />
+    </_BSvg>
+  );
+}
+
+// Animated invite pill — wraps TouchableOpacity with press scale 0.97 spring
+// so the brand pill feels tactile (WhatsApp/iMessage-style press feedback).
+function InvitePill({ onPress, onLongPress, disabled, style, accessibilityLabel, children }) {
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const handleIn = () => Animated.spring(scaleAnim, { toValue: 0.97, useNativeDriver: true, tension: 300, friction: 10 }).start();
+  const handleOut = () => Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, tension: 200, friction: 12 }).start();
+  return (
+    <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+      <TouchableOpacity
+        onPress={onPress}
+        onLongPress={onLongPress}
+        onPressIn={handleIn}
+        onPressOut={handleOut}
+        disabled={disabled}
+        activeOpacity={0.85}
+        style={style}
+        accessibilityLabel={accessibilityLabel}
+        accessibilityRole="button"
+      >
+        {children}
+      </TouchableOpacity>
+    </Animated.View>
   );
 }
 
@@ -112,6 +148,17 @@ export default function ChatNewScreen() {
   const [searchText, setSearchText] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
+  const [searchFocused, setSearchFocused] = useState(false);
+  // Animated focus border around the search input — brand purple fades in on
+  // focus, fades out on blur. Polish hint from product (round 55).
+  const searchBorderAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(searchBorderAnim, {
+      toValue: searchFocused ? 1 : 0,
+      duration: 180,
+      useNativeDriver: false,
+    }).start();
+  }, [searchFocused, searchBorderAnim]);
   const [selectedMembers, setSelectedMembers] = useState([]);
   const [groupName, setGroupName] = useState('');
   const [creating, setCreating] = useState(false);
@@ -1028,7 +1075,7 @@ export default function ChatNewScreen() {
       <View style={{ paddingTop: 6, paddingBottom: 8 }}>
         <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingBottom: 4 }]}>
           <View style={sty.sectionAccentLine} />
-          <Text style={[sty.sectionTitle, { color: colors.textSecondary }]}>
+          <Text style={[sty.sectionTitle, { color: isDark ? '#A78BFA' : '#7C3AED' }]}>
             {t('chat.trendingTopicsTitle') || 'Tópicos populares'}
           </Text>
         </View>
@@ -1070,7 +1117,7 @@ export default function ChatNewScreen() {
       <View style={{ paddingTop: 4, paddingBottom: 8 }}>
         <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingBottom: 4 }]}>
           <View style={sty.sectionAccentLine} />
-          <Text style={[sty.sectionTitle, { color: colors.textSecondary }]}>
+          <Text style={[sty.sectionTitle, { color: isDark ? '#A78BFA' : '#7C3AED' }]}>
             {t('chat.discoverChannelsTitle') || 'Descobrir canais'}
           </Text>
         </View>
@@ -1142,13 +1189,14 @@ export default function ChatNewScreen() {
             <Text style={[sty.contactName, { color: colors.text }]}>{t('chat.inviteFriend')}</Text>
             <Text style={[sty.contactSub, { color: colors.textTertiary }]}>{t('chat.inviteFriendDesc')}</Text>
           </View>
-          <TouchableOpacity
-            style={[sty.inviteBtn, { backgroundColor: '#7C3AED' }]}
+          <InvitePill
+            style={[sty.inviteBtn, sty.inviteBtnWithIcon, { backgroundColor: '#7C3AED' }]}
             onPress={() => setShowInviteInput(true)}
-            activeOpacity={0.7}
+            accessibilityLabel={t('chat.invite')}
           >
+            <IconUserPlus size={13} color="#fff" />
             <Text style={sty.inviteBtnText}>{t('chat.invite')}</Text>
-          </TouchableOpacity>
+          </InvitePill>
         </View>
       );
     }
@@ -1202,20 +1250,22 @@ export default function ChatNewScreen() {
               }
             };
             return (
-              <TouchableOpacity
-                style={[sty.inviteBtn, { backgroundColor: '#7C3AED' }]}
+              <InvitePill
+                style={[sty.inviteBtn, sty.inviteBtnWithIcon, { backgroundColor: '#7C3AED' }]}
                 onPress={onTap}
                 onLongPress={onHold}
                 disabled={invitingEmail === item.email}
-                activeOpacity={0.7}
                 accessibilityLabel={t('chat.invite')}
               >
                 {invitingEmail === item.email ? (
                   <ActivityIndicator size={14} color="#fff" />
                 ) : (
-                  <Text style={sty.inviteBtnText}>{t('chat.invite')}</Text>
+                  <>
+                    <IconUserPlus size={13} color="#fff" />
+                    <Text style={sty.inviteBtnText}>{t('chat.invite')}</Text>
+                  </>
                 )}
-              </TouchableOpacity>
+              </InvitePill>
             );
           })()}
         </View>
@@ -1229,8 +1279,8 @@ export default function ChatNewScreen() {
         onPress={() => handleSelectContact(item)}
         activeOpacity={0.7}
       >
-        <View>
-          <AvatarCircle email={item.email} name={item.name || prettifyHandle(item.email)} size={48} colors={colors} />
+        <View style={sty.contactAvatarRing}>
+          <AvatarCircle email={item.email} name={item.name || prettifyHandle(item.email)} size={40} colors={colors} />
           {item.online && <View style={[sty.onlineDotSmall, { borderColor: colors.background }]} />}
         </View>
         <View style={sty.contactInfo}>
@@ -1238,12 +1288,12 @@ export default function ChatNewScreen() {
             <HighlightText
               text={item.name && !item.name.includes('@') ? item.name : prettifyHandle(item.email || item.name || '')}
               highlight={searchText}
-              style={[sty.contactName, { color: colors.text }]}
+              style={[sty.contactName, { color: colors.text, fontWeight: '700' }]}
               highlightStyle={{ backgroundColor: '#7C3AED30', fontWeight: '700' }}
             />
-            {/* CHATYY badge removed from every row — the list already lives under the
-                "Contatos no Chatyy" section header, so tagging each row was noisy. The
-                presence of the row + the @username pill already signals Chatyy-user. */}
+            {/* Tiny Chatyy badge — purple check circle SVG, signals registered user.
+                Less noisy than a pill, more affirmative than nothing. */}
+            <IconChatyyOnChat size={13} color="#7C3AED" />
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <HighlightText
@@ -1434,9 +1484,21 @@ export default function ChatNewScreen() {
         </View>
       )}
 
-      {/* Search Input */}
-      <View style={[sty.searchWrap, { backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7' }]}>
-        <IconSearch size={18} color={colors.textTertiary} />
+      {/* Search Input — animated brand focus border + clear button */}
+      <Animated.View
+        style={[
+          sty.searchWrap,
+          {
+            backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7',
+            borderWidth: 1.5,
+            borderColor: searchBorderAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: ['transparent', '#7C3AED'],
+            }),
+          },
+        ]}
+      >
+        <IconSearch size={18} color={searchFocused ? '#7C3AED' : colors.textTertiary} />
         <TextInput
           style={[sty.searchInput, { color: colors.text }]}
           placeholder={t('chat.searchOrType')}
@@ -1444,6 +1506,8 @@ export default function ChatNewScreen() {
           value={searchText}
           onChangeText={handleSearch}
           onSubmitEditing={handleAddEmail}
+          onFocus={() => setSearchFocused(true)}
+          onBlur={() => setSearchFocused(false)}
           // autoFocus removed — sticky keyboard on Android: user couldn't
           // close it by tapping outside, blocked the comunidades/listas
           // visible below. WhatsApp/Telegram pattern: search input
@@ -1455,11 +1519,19 @@ export default function ChatNewScreen() {
           blurOnSubmit
         />
         {searchText ? (
-          <TouchableOpacity onPress={() => { setSearchText(''); setSearchResults([]); }} style={{ padding: 4 }}>
-            <IconX size={16} color={colors.textTertiary} />
+          <TouchableOpacity
+            onPress={() => { setSearchText(''); setSearchResults([]); }}
+            style={sty.searchClearBtn}
+            accessibilityLabel={t('common.clear') || 'Limpar'}
+            accessibilityRole="button"
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <View style={sty.searchClearCircle}>
+              <IconX size={12} color="#fff" />
+            </View>
           </TouchableOpacity>
         ) : null}
-      </View>
+      </Animated.View>
 
       {/* Content */}
       {isLoading && !searchText && recentContacts.length === 0 ? (
@@ -1480,7 +1552,7 @@ export default function ChatNewScreen() {
                 <View style={{ paddingTop: 4, paddingBottom: 8 }}>
                   <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingBottom: 4 }]}>
                     <View style={sty.sectionAccentLine} />
-                    <Text style={[sty.sectionTitle, { color: colors.textSecondary }]}>
+                    <Text style={[sty.sectionTitle, { color: isDark ? '#A78BFA' : '#7C3AED' }]}>
                       {t('chat.discoverChannelsTitle') || 'Descobrir canais'}
                     </Text>
                   </View>
@@ -1497,9 +1569,7 @@ export default function ChatNewScreen() {
                 digits.length === (searchText || '').replace(/[\s+()\-.]/g, '').length;
               return (
                 <View style={sty.emptyResults}>
-                  <View style={[sty.emptyIconCircle, { backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7' }]}>
-                    <IconSearch size={32} color={colors.textTertiary} />
-                  </View>
+                  <IllustrationSearch size={148} color="#7C3AED" style={{ opacity: 0.95, marginBottom: 8 }} />
                   <Text style={[sty.emptyTitle, { color: colors.text }]}>
                     {isPhoneQuery
                       ? (t('chat.phoneNotOnChatyy') || 'Este número ainda não usa o Chatyy')
@@ -1558,7 +1628,9 @@ export default function ChatNewScreen() {
               renderSectionHeader={({ section: { title } }) => (
                 <View style={[sty.sectionHeader, { backgroundColor: isDark ? '#111' : '#f8f8fa' }]}>
                   <View style={sty.sectionAccentLine} />
-                  <Text style={[sty.sectionTitle, { color: colors.textSecondary }]}>{title}</Text>
+                  {/* Brand subtle in dark mode (rgba), full brand in light. Matches
+                      the polish spec for "uppercase letter-spacing 0.5 brand subtle". */}
+                  <Text style={[sty.sectionTitle, { color: isDark ? '#A78BFA' : '#7C3AED' }]}>{title}</Text>
                 </View>
               )}
               contentContainerStyle={sty.contactList}
@@ -1643,7 +1715,7 @@ export default function ChatNewScreen() {
                     <View style={sty.recentSection}>
                       <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingBottom: 4 }]}>
                         <View style={sty.sectionAccentLine} />
-                        <Text style={[sty.sectionTitle, { color: colors.textSecondary }]}>
+                        <Text style={[sty.sectionTitle, { color: isDark ? '#A78BFA' : '#7C3AED' }]}>
                           {t('chat.recentContacts')}
                         </Text>
                       </View>
@@ -1669,7 +1741,7 @@ export default function ChatNewScreen() {
                     <View style={{ paddingHorizontal: Spacing.md, marginTop: 6, marginBottom: 4 }}>
                       <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingHorizontal: 0, paddingBottom: 6 }]}>
                         <View style={sty.sectionAccentLine} />
-                        <Text style={[sty.sectionTitle, { color: colors.textSecondary }]}>
+                        <Text style={[sty.sectionTitle, { color: isDark ? '#A78BFA' : '#7C3AED' }]}>
                           {t('chat.broadcastList') || 'Listas de transmissão'}
                         </Text>
                       </View>
@@ -2139,6 +2211,12 @@ const sty = StyleSheet.create({
     borderRadius: 16, gap: 10,
   },
   searchInput: { flex: 1, fontSize: 15, padding: 0 },
+  searchClearBtn: { padding: 4 },
+  searchClearCircle: {
+    width: 20, height: 20, borderRadius: 10,
+    backgroundColor: '#7C3AED',
+    alignItems: 'center', justifyContent: 'center',
+  },
   addEmailRow: {
     flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
     paddingHorizontal: Spacing.md, paddingVertical: Spacing.md,
@@ -2204,6 +2282,13 @@ const sty = StyleSheet.create({
     paddingHorizontal: Spacing.md, paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth, gap: 14,
   },
+  contactAvatarRing: {
+    // Subtle brand ring around 40px avatar — signals "Chatyy user" without
+    // pill noise. 2px purple ring with 4px halo for crispness.
+    padding: 2, borderRadius: 24,
+    borderWidth: 1.5, borderColor: 'rgba(124,58,237,0.22)',
+    position: 'relative',
+  },
   contactInfo: { flex: 1 },
   contactName: { fontSize: 16, fontWeight: '500' },
   contactSub: { fontSize: 12, marginTop: 2, opacity: 0.7 },
@@ -2230,6 +2315,11 @@ const sty = StyleSheet.create({
     shadowRadius: 3,
   },
   inviteBtnText: { color: '#fff', fontSize: 12, fontWeight: '700', letterSpacing: 0.2 },
+  inviteBtnWithIcon: {
+    // Match brand pill spacing when icon + label render side-by-side. The
+    // icon adds visual weight so we expand padding slightly and use gap.
+    flexDirection: 'row', gap: 6, paddingHorizontal: 16,
+  },
   inviteIconBtn: {
     width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center',
   },
@@ -2271,7 +2361,7 @@ const sty = StyleSheet.create({
   sectionAccentLine: {
     width: 0, height: 0,
   },
-  sectionTitle: { fontSize: 13, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5, color: '#6D28D9' },
+  sectionTitle: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8, color: '#7C3AED' },
   createBtnWrap: { paddingHorizontal: Spacing.md, paddingTop: Spacing.sm },
   createBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',

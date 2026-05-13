@@ -259,6 +259,11 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
   const feedIdSetRef = useRef(new Set(_initialPosts.map(p => p.id)));
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  // [silent-fail-w3] Surface a feed load failure when nothing is on screen.
+  // Before: catch() only logged to console and left the user staring at the
+  // empty-state copy ("Seu feed está vazio"), which is misleading — the real
+  // issue was a 5xx / network drop.
+  const [feedError, setFeedError] = useState(false);
   const [createVisible, setCreateVisible] = useState(false);
   const [commentsPost, setCommentsPost] = useState(null);
   const [activeLives, setActiveLives] = useState([]);
@@ -348,9 +353,24 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
           });
         }
         setHasMore(newPosts.length >= 20);
+        setFeedError(false);
+      } else if (pageNum === 1) {
+        // [silent-fail-w3] Non-success on page 1 → flag error so the empty
+        // state can show a retry pill instead of pretending the feed is empty.
+        console.warn('[silent-fail-w3] feedList non-success', r?.message);
+        setPosts(prev => {
+          if ((prev?.length || 0) === 0) setFeedError(true);
+          return prev;
+        });
       }
     } catch (e) {
-      console.warn('Feed load error:', e);
+      console.warn('[silent-fail-w3] feedList threw', e?.message || e);
+      if (pageNum === 1) {
+        setPosts(prev => {
+          if ((prev?.length || 0) === 0) setFeedError(true);
+          return prev;
+        });
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -862,6 +882,31 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
 
   const renderEmpty = useCallback(() => {
     if (loading) return null;
+    // [silent-fail-w3] If the feed fetch failed with nothing cached, show a
+    // distinct error state with a tap-to-retry pill instead of the misleading
+    // "Seu feed está vazio" copy. Previously the catch only logged to console.
+    if (feedError) {
+      return (
+        <View style={styles.emptyContainer}>
+          <EmptyFeedIllustration isDark={isDark} />
+          <Text style={[styles.emptyText, { color: colors.text }]}>
+            {t('feed.loadError') || 'Erro ao carregar feed.'}
+          </Text>
+          <TouchableOpacity
+            accessibilityRole="button"
+            onPress={() => { setFeedError(false); setLoading(true); loadPosts(1, true); }}
+            activeOpacity={0.75}
+            style={{
+              marginTop: 12, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 999,
+              backgroundColor: isDark ? 'rgba(220,38,38,0.15)' : 'rgba(220,38,38,0.10)',
+            }}>
+            <Text style={{ color: '#dc2626', fontWeight: '700', fontSize: 13 }}>
+              {t('chat.retry') || 'Tentar novamente'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
     return (
       <View style={styles.emptyContainer}>
         <EmptyFeedIllustration isDark={isDark} />
@@ -873,7 +918,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
         </Text>
       </View>
     );
-  }, [loading, isDark, colors, t]);
+  }, [loading, feedError, isDark, colors, t, loadPosts]);
 
   // ── Tab toggle bar — sliding pill (premium messenger style) ──
   const tabSlide = useRef(new Animated.Value(feedMode === 'reels' ? 1 : 0)).current;

@@ -885,6 +885,7 @@ export default {
 
   // Common
   'common.cancel': 'Cancelar',
+  'common.clear': 'Limpiar',
   'common.confirm': 'Confirmar',
   'common.close': 'Cerrar',
   'common.continue': 'Continuar',
@@ -1013,6 +1014,8 @@ export default {
   'call.minimize': 'Minimizar',
   'call.qualityAutoLowered': 'Bajamos la calidad para mantener la conexión',
   'call.turnFailedReducedQuality': 'Calidad reducida (sin relay disponible)',
+  'call.unstableConnection': 'Conexión inestable',
+  'call.audioStalled': 'Sin audio del otro lado',
   'call.inCall': 'En llamada',
   'calls.openDialer': 'Abrir teclado',
   'calls.outgoing': 'Realizada',
@@ -3487,6 +3490,8 @@ export default {
   'chat.connecting': 'Conectando...',
   'chat.uploading': 'Enviando',
   'chat.retry': 'Tocar para reintentar',
+  'chat.loadError': 'Error al cargar chats.',
+  'feed.loadError': 'Error al cargar feed.',
 
   // Stickers
   'chat.stickers': 'Stickers',

@@ -885,6 +885,7 @@ export default {
 
   // Common
   'common.cancel': 'Cancel',
+  'common.clear': 'Clear',
   'common.confirm': 'Confirm',
   'common.close': 'Close',
   'common.continue': 'Continue',
@@ -1013,6 +1014,8 @@ export default {
   'call.minimize': 'Minimize',
   'call.qualityAutoLowered': 'Quality lowered to keep the call up',
   'call.turnFailedReducedQuality': 'Reduced quality (no relay available)',
+  'call.unstableConnection': 'Unstable connection',
+  'call.audioStalled': 'No audio from the other side',
   'call.inCall': 'On call',
   'calls.openDialer': 'Open dialer',
   'calls.outgoing': 'Outgoing',
@@ -3490,6 +3493,8 @@ export default {
   'chat.connecting': 'Connecting...',
   'chat.uploading': 'Uploading',
   'chat.retry': 'Tap to retry',
+  'chat.loadError': 'Failed to load chats.',
+  'feed.loadError': 'Failed to load feed.',
 
   // Stickers
   'chat.stickers': 'Stickers',

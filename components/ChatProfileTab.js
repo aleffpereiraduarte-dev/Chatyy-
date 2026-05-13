@@ -123,6 +123,50 @@ import { useBiometric } from '../context/BiometricContext';
 
 const ACCENT = '#7C3AED';
 
+// Brand pill with press scale 0.97 (spring). Used for "Editar perfil" hero
+// CTA and similar tactile buttons in the profile tab.
+function PressablePill({ onPress, style, children, accessibilityLabel, disabled }) {
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const handleIn = () => Animated.spring(scaleAnim, { toValue: 0.97, useNativeDriver: true, tension: 300, friction: 10 }).start();
+  const handleOut = () => Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, tension: 200, friction: 12 }).start();
+  return (
+    <Animated.View style={{ flex: style?.flex, transform: [{ scale: scaleAnim }] }}>
+      <TouchableOpacity
+        onPress={onPress}
+        onPressIn={handleIn}
+        onPressOut={handleOut}
+        activeOpacity={0.9}
+        style={style}
+        disabled={disabled}
+        accessibilityLabel={accessibilityLabel}
+        accessibilityRole="button"
+      >
+        {children}
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
+
+// Device-type SVG (web / mobile / desktop) for the Linked Devices row
+// subtitle. Stroke-style icons matching Icons.js conventions.
+function IconDeviceWeb({ size = 14, color = '#7C3AED' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Rect x="2" y="3" width="20" height="14" rx="2" />
+      <Line x1="8" y1="21" x2="16" y2="21" />
+      <Line x1="12" y1="17" x2="12" y2="21" />
+    </Svg>
+  );
+}
+function IconDeviceMobile({ size = 14, color = '#7C3AED' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Rect x="6" y="2" width="12" height="20" rx="2" />
+      <Line x1="12" y1="18" x2="12.01" y2="18" />
+    </Svg>
+  );
+}
+
 // ─── MMKV synchronous preload for instant first paint (anti-flicker) ───
 // Read cached profile + settings at module load time so the component's very
 // first render already has data on screen. Eliminates the empty-state flash
@@ -1075,16 +1119,28 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
             </TouchableOpacity>
 
-            {/* Linked Devices */}
+            {/* Linked Devices — show current device type as subtitle so the
+                user sees at-a-glance which platform they're on (web/mobile). */}
             <TouchableOpacity
               style={styles.linkRowModern}
               onPress={() => { try { router.push('/linked-devices'); } catch (e) { console.warn('[profile] nav:', e); } }}
               activeOpacity={0.7}
             >
               <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(59,130,246,0.1)' : '#EDE9FE' }]}>
-                <IconShield size={16} color="#3B82F6" />
+                {Platform.OS === 'web'
+                  ? <IconDeviceWeb size={16} color="#3B82F6" />
+                  : <IconDeviceMobile size={16} color="#3B82F6" />}
               </View>
-              <Text style={[styles.linkText, { color: colors.text }]}>{t?.('devices.title') || 'Dispositivos conectados'}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.linkText, { color: colors.text, flex: undefined }]}>{t?.('devices.title') || 'Dispositivos conectados'}</Text>
+                <Text style={[styles.deviceSubLine, { color: isDark ? '#6b7280' : '#9ca3af' }]}>
+                  {(t?.('devices.thisDevice') || 'Este dispositivo')}
+                  {' · '}
+                  {Platform.OS === 'web' ? 'Web' : (Platform.OS === 'ios' ? 'iOS' : 'Android')}
+                  {' · '}
+                  {t?.('time.now') || 'agora'}
+                </Text>
+              </View>
               <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
             </TouchableOpacity>
 
@@ -2018,13 +2074,17 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
           </View>
 
           <View style={styles.profileCardContent}>
-            {/* Avatar with camera overlay */}
+            {/* Avatar with brand ring + camera overlay */}
             <TouchableOpacity style={styles.avatarContainerModern} onPress={handleAvatarPick} activeOpacity={0.8}>
-              {avatarUrl ? (
-                <ExpoImage source={{ uri: avatarUrl }} style={styles.avatarModern} cachePolicy="memory-disk" transition={200} />
-              ) : (
-                <AvatarCircle name={name} email={currentEmail} size={96} />
-              )}
+              <View style={[styles.avatarBrandRing, {
+                borderColor: isDark ? 'rgba(167,139,250,0.55)' : 'rgba(124,58,237,0.45)',
+              }]}>
+                {avatarUrl ? (
+                  <ExpoImage source={{ uri: avatarUrl }} style={styles.avatarModern} cachePolicy="memory-disk" transition={200} />
+                ) : (
+                  <AvatarCircle name={name} email={currentEmail} size={96} />
+                )}
+              </View>
               <View style={[styles.cameraOverlayModern, Platform.select({
                 ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.35, shadowRadius: 4 },
                 android: { elevation: 4 },
@@ -2175,20 +2235,24 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <Text style={{ fontSize: 12, color: isDark ? '#9ca3af' : '#6b7280', marginTop: 2 }}>{t?.('profile.following') || 'Seguindo'}</Text>
             </TouchableOpacity>
           </View>
-          {/* Action buttons row — Instagram blue Edit + outlined Share */}
+          {/* Action buttons row — brand Edit pill (press scale 0.97) + outlined Share */}
           <View style={{ flexDirection: 'row', gap: 8 }}>
-            <TouchableOpacity
+            <PressablePill
               onPress={() => router?.push?.('/profile')}
-              activeOpacity={0.85}
               style={{
-                flex: 1, backgroundColor: '#0095F6', borderRadius: 8,
-                paddingVertical: 9, alignItems: 'center', justifyContent: 'center',
+                flex: 1, backgroundColor: ACCENT, borderRadius: 10,
+                paddingVertical: 10, alignItems: 'center', justifyContent: 'center',
+                ...Platform.select({
+                  ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 6 },
+                  android: { elevation: 2 },
+                  web: { boxShadow: '0 2px 8px rgba(124,58,237,0.25)' },
+                }),
               }}
             >
-              <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>
+              <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700', letterSpacing: 0.2 }}>
                 {t?.('profile.editProfile') || 'Editar perfil'}
               </Text>
-            </TouchableOpacity>
+            </PressablePill>
             <TouchableOpacity
               onPress={() => {
                 try {
@@ -2638,6 +2702,11 @@ const styles = StyleSheet.create({
     alignItems: 'center', paddingTop: 24, paddingBottom: 24, paddingHorizontal: 20,
   },
   avatarContainerModern: { position: 'relative' },
+  avatarBrandRing: {
+    // Brand purple halo around 96px avatar — signals "your Chatyy identity".
+    // 2.5px border with halo padding lifts the avatar off the gradient bg.
+    padding: 3, borderRadius: 54, borderWidth: 2.5,
+  },
   avatarModern: { width: 96, height: 96, borderRadius: 48 },
   cameraOverlayModern: {
     position: 'absolute', bottom: 0, right: 0,
@@ -2706,6 +2775,7 @@ const styles = StyleSheet.create({
   linkRowModern: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14, gap: 14, minHeight: 56 },
   linkText: { flex: 1, fontSize: 15, fontWeight: '500' },
   linkCount: { fontSize: 14, fontWeight: '500' },
+  deviceSubLine: { fontSize: 11.5, marginTop: 2, letterSpacing: 0.15 },
 
   // Button group
   btnGroup: { flexDirection: 'row', gap: 6 },

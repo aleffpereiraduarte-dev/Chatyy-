@@ -2041,6 +2041,11 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   // the user knows new messages aren't syncing live. Only shows after a
   // 3.5s delay (set by the connection listener) so brief flaps don't flash.
   const [wsDownBanner, setWsDownBanner] = useState(false);
+  // [silent-fail-w3] Surface a load failure when the cold-start fetch fails
+  // AND the user has nothing on screen — previously the catch swallowed it,
+  // leaving the user staring at the empty-state copy "start a new chat" even
+  // when the real problem was a 5xx / 401. Banner offers tap-to-retry.
+  const [loadError, setLoadError] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   // Real-time toast when a peer reacts to my status. Backend fires the
   // `status_reaction` WS event to the owner with reactor_name + emoji + status_id.
@@ -2403,6 +2408,12 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         setConversations(convs.filter(c => !c.archived));
         cacheConversations(convs).catch(() => {});
         mqttSubscribeAll(convs);
+        setLoadError(false);
+      } else if (_convsCountRef.current === 0) {
+        // [silent-fail-w3] Non-success on cold start with empty screen —
+        // surface the error banner so the user sees something actionable.
+        console.warn('[silent-fail-w3] chatList cold non-success', r?.message);
+        setLoadError(true);
       }
       const rAll = await api.chatConversations(searchText, true);
       if (!isFresh()) return;
@@ -2412,7 +2423,12 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         cacheConversations(all).catch(() => {});
         _saveNativeConversations(all);
       }
-    } catch {} finally {
+    } catch (e) {
+      // [silent-fail-w3] Was `catch {}` — completely silent. Now log + flag
+      // the banner if there's nothing on screen for the user to look at.
+      console.warn('[silent-fail-w3] chatList cold threw', e?.message);
+      if (_convsCountRef.current === 0) setLoadError(true);
+    } finally {
       if (isFresh()) { setLoading(false); setRefreshing(false); }
     }
   }, [searchText]);
@@ -4448,6 +4464,30 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             {t?.('chat.reconnecting') || 'Reconectando…'}
           </Text>
         </View>
+      )}
+      {/* [silent-fail-w3] Cold-start fetch failed and nothing is cached →
+          1-line banner with a tap-to-retry pill. Tinted red so users
+          distinguish it from the gray WS reconnecting banner above. */}
+      {loadError && !loading && (
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel={t?.('chat.retry') || 'Tentar novamente'}
+          onPress={() => { setLoadError(false); loadConversations(true); }}
+          activeOpacity={0.7}
+          style={{
+            flexDirection: 'row', alignItems: 'center', gap: 8,
+            paddingHorizontal: 14, paddingVertical: 8,
+            backgroundColor: isDark ? 'rgba(220,38,38,0.10)' : 'rgba(220,38,38,0.06)',
+            borderBottomWidth: StyleSheet.hairlineWidth,
+            borderBottomColor: isDark ? 'rgba(220,38,38,0.20)' : 'rgba(220,38,38,0.18)',
+          }}>
+          <Text style={{ flex: 1, fontSize: 12, color: '#dc2626', fontWeight: '600' }}>
+            {t?.('chat.loadError') || 'Erro ao carregar conversas.'}
+          </Text>
+          <Text style={{ fontSize: 12, color: '#dc2626', fontWeight: '700' }}>
+            {t?.('chat.retry') || 'Tentar novamente'}
+          </Text>
+        </TouchableOpacity>
       )}
       {/* Chatyy One AI quick access (like Snapchat's My AI) */}
       {!(searchQuery || '').trim() && (

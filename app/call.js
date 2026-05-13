@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Dimensions,
   Animated, Easing, StatusBar, PanResponder, AppState,
@@ -129,6 +129,21 @@ function CallScreenInner() {
   // Cleared once peerConnected flips true.
   const [peerRinging, setPeerRinging] = useState(false);
   const [ended, setEnded] = useState(false);
+  // Pre-connect watchdog (#892 fix 3). If we stay in 'new'/'connecting'
+  // for >8s without flipping to peerConnected/peerRinging, the user sees the
+  // dark background with the avatar but no readable signal — white-screen
+  // perception even when the JS tree is healthy. Flip this true after 8s to
+  // surface an explicit "Conectando…" overlay with spinner so they know the
+  // app is alive (not crashed) and still have a hangup affordance.
+  const [showSlowConnectOverlay, setShowSlowConnectOverlay] = useState(false);
+  useEffect(() => {
+    if (peerConnected || peerRinging || ended) {
+      setShowSlowConnectOverlay(false);
+      return;
+    }
+    const t8 = setTimeout(() => setShowSlowConnectOverlay(true), 8000);
+    return () => clearTimeout(t8);
+  }, [peerConnected, peerRinging, ended]);
   const [errorMsg, setErrorMsg] = useState(null);
   const [facingFront, setFacingFront] = useState(true);
   const [screenSharing, setScreenSharing] = useState(false);
@@ -228,6 +243,14 @@ function CallScreenInner() {
   const netInfoUnsubRef = useRef(null);
   const lastNetTypeRef = useRef(null);
   const turnExpiresAtRef = useRef(0); // timestamp when TURN creds expire
+  // wave w3 — track ICE failure recurrence so we can refresh TURN creds
+  // before retrying when failures are consecutive (stale-credential symptom).
+  const iceConsecutiveFailRef = useRef(0);
+  // wave w3 — stats-based "Conexão instável" pill (high packet loss >5%
+  // sustained > 10s) + audio-track-stall alert (peer's audio bytesReceived
+  // didn't tick for ~3 consecutive samples = ~6-15s depending on netType).
+  const [showUnstable, setShowUnstable] = useState(false);
+  const [audioStalled, setAudioStalled] = useState(false);
 
   // Subtle reconnect micro-banner: shown when peerConnected && reconnecting
   // (e.g. ICE restart while media still flowing). Fades in/out over 300ms so
@@ -403,7 +426,26 @@ function CallScreenInner() {
   const [remoteStream, setRemoteStream] = useState(null);
 
   const isCaller = isCallerParam === '1' || isCallerParam === 'true';
-  const callerName = contactName || contactEmail?.split('@')[0] || '?';
+  // Null safety: peer info (name/email) can be undefined/null during setup
+  // (e.g. CallKit pushed offer arrived before contact resolution finished, or
+  // the calling param was missing in the deep-link URL). Anything we render
+  // into <Text> must be a non-empty string — passing null/undefined would
+  // render nothing, but passing an object/number can throw "Objects are not
+  // valid as a React child" mid-render and white-screen the call. Force a
+  // String() coercion at the source so every consumer downstream is safe,
+  // and fall back to a generic locale label instead of a bare "?".
+  const _safePeerName = (() => {
+    if (contactName && typeof contactName === 'string' && contactName.trim()) return contactName.trim();
+    if (typeof contactEmail === 'string' && contactEmail.includes('@')) {
+      const local = contactEmail.split('@')[0];
+      if (local) return local;
+    }
+    return t('call.unknownPeer') || 'Chamada';
+  })();
+  const callerName = String(_safePeerName);
+  // Email may also be missing — coerce to string for AvatarCircle/get_avatar
+  // so they never receive `undefined` and short-circuit cleanly.
+  const _safePeerEmail = typeof contactEmail === 'string' ? contactEmail : '';
 
   // Auto-hide controls after 5s when video is showing
   const resetControlsTimer = useCallback(() => {
@@ -2217,12 +2259,21 @@ function CallScreenInner() {
               setPeerConnected(true);
               setReconnecting(false);
               iceRestartCountRef.current = 0;
+              // wave w3: reset consecutive fail counter on success so the
+              // next isolated 'failed' doesn't immediately trigger TURN refresh.
+              iceConsecutiveFailRef.current = 0;
             }
           } else if (state === 'disconnected') {
             // Brief disconnections are normal (WiFi<->cell, tunnel, etc.) - wait before acting
+            // wave w3: raised window 3s → 5s. Short transients (tunnel, AP roam,
+            // Wi-Fi DTIM doze) routinely take 2-4s to clear; restarting at 3s
+            // sometimes caused a redundant offer right when the original path
+            // was about to re-converge. 5s matches the spec for "real" drop.
             if (mounted) setReconnecting(true);
+            console.log('[call_quality_w3] ice disconnected, waiting 5s before auto-restart');
             disconnectTimeoutRef.current = setTimeout(async () => {
               if (mounted && !endedRef.current && pcRef.current?.iceConnectionState === 'disconnected') {
+                console.log('[call_quality_w3] still disconnected after 5s, restarting ICE');
                 // Refresh TURN credentials if they might be stale
                 if (!turnExpiresAtRef.current || (turnExpiresAtRef.current - Date.now()) < 2 * 60 * 60 * 1000) {
                   try {
@@ -2271,19 +2322,47 @@ function CallScreenInner() {
                   setErrorMsg(t('call.connectionFailed') || 'Connection failed. Tap to retry.');
                 }
               }
-            }, 3000);
+            }, 5000);
           } else if (state === 'failed') {
             // Try ICE restart on failure (up to 3 times)
             if (mounted && !endedRef.current && iceRestartCountRef.current < 3) {
               console.log('[Call] ICE failed, attempting restart', iceRestartCountRef.current + 1);
               setReconnecting(true);
               iceRestartCountRef.current++;
-              try {
-                if (pcRef.current.signalingState !== 'stable') {
-                  console.log('[Call] Skipping ICE restart on failure, signalingState:', pcRef.current.signalingState);
-                  return;
+              // wave w3: consecutive ICE failures usually mean the TURN
+              // credentials we got at setup are stale or the relay we picked
+              // is unhealthy. On the 2nd+ consecutive fail, fetch fresh
+              // creds from backend BEFORE the restart so the new offer
+              // re-picks a working relay path.
+              iceConsecutiveFailRef.current++;
+              const doRestart = async () => {
+                if (iceConsecutiveFailRef.current >= 2) {
+                  console.log('[call_quality_w3] consecutive ICE fail (' + iceConsecutiveFailRef.current + '), refreshing TURN creds before restart');
+                  try {
+                    const mailWs = require('../services/websocket').default;
+                    if (mailWs.isConnected) {
+                      const creds = await new Promise((resolve) => {
+                        const u = mailWs.on('turn_credentials', (d) => { u(); resolve(d?.credentials || d); });
+                        mailWs._send({ type: 'get_turn_credentials' });
+                        setTimeout(() => { u(); resolve(null); }, 3000);
+                      });
+                      if (creds?.urls) {
+                        turnCredsRef.current = creds;
+                        turnExpiresAtRef.current = Date.now() + 23 * 60 * 60 * 1000;
+                        if (pcRef.current?.setConfiguration) {
+                          try { pcRef.current.setConfiguration(getIceConfig()); } catch {}
+                        }
+                        console.log('[call_quality_w3] TURN creds refreshed after consecutive fail');
+                      }
+                    }
+                  } catch (e) { console.log('[call_quality_w3] TURN refresh error', e?.message); }
                 }
-                pcRef.current.createOffer({ iceRestart: true }).then(async offer => {
+                try {
+                  if (!pcRef.current || pcRef.current.signalingState !== 'stable') {
+                    console.log('[Call] Skipping ICE restart on failure, signalingState:', pcRef.current?.signalingState);
+                    return;
+                  }
+                  const offer = await pcRef.current.createOffer({ iceRestart: true });
                   await pcRef.current.setLocalDescription(offer);
                   sendSignaling('call_offer', {
                     call_id: callId,
@@ -2292,20 +2371,15 @@ function CallScreenInner() {
                     sdp_type: offer.type,
                     ice_restart: true,
                   });
-                }).catch(() => {
+                } catch {
                   if (mounted && !endedRef.current) {
                     setConnectionFailed(true);
                     setReconnecting(false);
                     setErrorMsg(t('call.connectionFailed') || 'Não foi possível conectar. Tente novamente.');
                   }
-                });
-              } catch {
-                if (mounted && !endedRef.current) {
-                  setConnectionFailed(true);
-                  setReconnecting(false);
-                  setErrorMsg(t('call.connectionFailed') || 'Não foi possível conectar. Tente novamente.');
                 }
-              }
+              };
+              doRestart();
             } else if (mounted && !endedRef.current) {
               // All ICE restarts exhausted — show reconnect button
               setConnectionFailed(true);
@@ -2722,6 +2796,11 @@ function CallScreenInner() {
     // don't burn ~10% extra battery on 4G/LTE for stats we rarely act on.
     let prevBytesReceived = 0;
     let prevTimestamp = 0;
+    // wave w3: "Conexão instável" pill (high loss sustained >10s) + audio stall detect.
+    let highLossStartTs = 0;
+    let lastPacketsLost = 0;
+    let lastPacketsReceived = 0;
+    let audioStallSamples = 0;
     const statsIntervalMs = (networkType && networkType !== 'wifi') ? 5000 : 2000;
     statsIntervalRef.current = setInterval(async () => {
       const pc = pcRef.current;
@@ -2779,6 +2858,61 @@ function CallScreenInner() {
           quality = 'poor';
           score = 1;
         }
+
+        // wave w3 — stats-based "Conexão instável" pill.
+        // Cumulative packetsLost can stay high after early-call drops even when
+        // current loss is 0%, so we compute the per-interval DELTA. Pill flips
+        // on only after loss > 5% has been sustained for >= 10s (debounces
+        // momentary RTP burst spikes that don't actually hurt the call).
+        try {
+          const lostDelta = Math.max(0, packetsLost - lastPacketsLost);
+          const recvDelta = Math.max(0, (packetsTotal - packetsLost) - lastPacketsReceived);
+          const intervalLossRate = (lostDelta + recvDelta) > 0
+            ? lostDelta / (lostDelta + recvDelta)
+            : 0;
+          lastPacketsLost = packetsLost;
+          lastPacketsReceived = packetsTotal - packetsLost;
+          if (intervalLossRate > 0.05) {
+            if (highLossStartTs === 0) highLossStartTs = Date.now();
+            if (Date.now() - highLossStartTs >= 10000) {
+              if (!showUnstable) {
+                console.log('[call_quality_w3] sustained packet loss >5% for >10s, showing unstable pill (loss=' + (intervalLossRate * 100).toFixed(1) + '%)');
+                setShowUnstable(true);
+              }
+            }
+          } else {
+            // Loss recovered — clear streak + hide pill.
+            if (highLossStartTs !== 0) {
+              highLossStartTs = 0;
+              if (showUnstable) {
+                console.log('[call_quality_w3] packet loss recovered, hiding unstable pill');
+                setShowUnstable(false);
+              }
+            }
+          }
+        } catch {}
+
+        // wave w3 — audio device monitoring. If peer's audio bytesReceived
+        // doesn't tick for 3 consecutive samples (≈ 6-15s depending on
+        // netType), it means RemoteAudioTrack stopped delivering data even
+        // though ICE may still report 'connected'. Surface a UI alert so the
+        // user knows it's the audio path, not their headset.
+        try {
+          if (prevBytesReceived > 0 && bytesReceived === prevBytesReceived) {
+            audioStallSamples++;
+            if (audioStallSamples >= 3 && !audioStalled) {
+              console.log('[call_quality_w3] remote audio stalled (' + audioStallSamples + ' samples, ' + (audioStallSamples * statsIntervalMs) + 'ms with 0 bytes)');
+              setAudioStalled(true);
+            }
+          } else if (bytesReceived > prevBytesReceived) {
+            if (audioStallSamples > 0 && audioStalled) {
+              console.log('[call_quality_w3] remote audio resumed after stall');
+            }
+            audioStallSamples = 0;
+            if (audioStalled) setAudioStalled(false);
+          }
+        } catch {}
+
         prevBytesReceived = bytesReceived;
         prevTimestamp = currentTimestamp;
 
@@ -4366,6 +4500,29 @@ function CallScreenInner() {
             </View>
           )}
 
+          {/* wave w3 — "Conexão instável" pill: sustained >5% packet loss
+              for >10s, even if RTT-based score didn't drop. Distinct from
+              the weak banner because the user may NOT see RTT spikes but
+              IS hearing choppy audio (loss-only path). Hidden when reconnecting
+              or weak-banner is already showing to avoid stacking. */}
+          {showUnstable && peerConnected && !ended && !reconnecting && !showWeakBanner && (
+            <View style={[styles.weakBanner, { backgroundColor: 'rgba(202,138,4,0.92)' }]}>
+              <Text style={styles.weakBannerText}>{t('call.unstableConnection') || 'Conexão instável'}</Text>
+            </View>
+          )}
+
+          {/* wave w3 — audio stall alert: peer's audio bytesReceived hasn't
+              ticked for 3+ samples. Means RemoteAudioTrack stalled. Red
+              backdrop because it's worse than a quality drop (no audio at
+              all). User can then bail and redial instead of waiting. */}
+          {audioStalled && peerConnected && !ended && (
+            <View style={[styles.weakBanner, { backgroundColor: 'rgba(127,29,29,0.92)' }]}>
+              <Text style={[styles.weakBannerText, { flex: 1 }]} numberOfLines={2}>
+                {t('call.audioStalled') || 'Sem áudio do outro lado'}
+              </Text>
+            </View>
+          )}
+
           {/* TURN refresh failure toast — surfaced after 3 strikes from
               webrtc.js. Tells the user we can't relay if they roam to a
               network that needs TURN; auto-fades after 4s. (audit gap #5) */}
@@ -4562,7 +4719,7 @@ function CallScreenInner() {
                     (FaceTime parity). Video upgrade requests / audio-only
                     calls keep the smaller 140 footprint to leave space
                     for the local PiP and reaction row. */}
-                <AvatarCircle name={callerName} email={contactEmail} size={isVideoCall ? 140 : 168} />
+                <AvatarCircle name={callerName} email={_safePeerEmail} size={isVideoCall ? 140 : 168} />
                 {/* Raised-hand overlay — appears on the contact's avatar
                     when they (or, in 1:1, the only remote) have their hand
                     up. In group calls each peer's tile would render its own;
@@ -5084,6 +5241,61 @@ function CallScreenInner() {
         </Pressable>
       </Modal>
 
+      {/* Slow-connect overlay (#892 fix 3) — if we stay in pre-connect for
+          >8s, paint an explicit "Conectando…" overlay with spinner over the
+          rest of the call screen. Without this, a stuck pcState='new' (e.g.
+          ICE gathering on a hostile network, TURN auth pending) looks like
+          a hung black screen even though everything is alive. Surface the
+          spinner + tappable hangup so the user always has a way out. */}
+      {showSlowConnectOverlay && !peerConnected && !peerRinging && !ended && (
+        <View
+          pointerEvents="box-none"
+          style={{
+            position: 'absolute',
+            top: 0, left: 0, right: 0, bottom: 0,
+            justifyContent: 'center',
+            alignItems: 'center',
+            backgroundColor: 'rgba(0,0,0,0.55)',
+            zIndex: 998,
+          }}
+          accessibilityLiveRegion="polite"
+          accessibilityLabel={t('call.connecting') || 'Conectando...'}
+        >
+          <View style={{
+            paddingVertical: 20, paddingHorizontal: 28,
+            borderRadius: 18,
+            backgroundColor: 'rgba(20,20,28,0.92)',
+            alignItems: 'center',
+            maxWidth: 320,
+          }}>
+            <ActivityIndicator size="large" color="#7C3AED" />
+            <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginTop: 14 }}>
+              {t('call.connecting') || 'Conectando...'}
+            </Text>
+            <Text style={{ color: '#cbd5e1', fontSize: 12.5, marginTop: 6, textAlign: 'center', lineHeight: 17 }}>
+              {t('call.slowConnectHint') || 'A conexão está demorando. Toque em desligar para tentar de novo.'}
+            </Text>
+            <TouchableOpacity
+              onPress={() => { try { handleEndCallRef.current && handleEndCallRef.current(); } catch {} }}
+              style={{
+                marginTop: 16,
+                paddingVertical: 10, paddingHorizontal: 22,
+                backgroundColor: '#dc2626',
+                borderRadius: 999,
+                flexDirection: 'row', alignItems: 'center',
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={t('call.hangup') || 'Desligar'}
+            >
+              <IconPhoneOff size={16} color="#fff" />
+              <Text style={{ color: '#fff', fontSize: 13.5, fontWeight: '700', marginLeft: 8 }}>
+                {t('call.hangup') || 'Desligar'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       {/* End-state card — fades over the screen for ~1.5s after hangup so
           the user reads "Chamada encerrada · MM:SS" with the contact's
           avatar before /call pops back. FaceTime/Skype parity. Pointer
@@ -5094,7 +5306,7 @@ function CallScreenInner() {
           style={[styles.endCardOverlay, { opacity: endCardAnim }]}
         >
           <View style={styles.endCard}>
-            <AvatarCircle name={callerName} email={contactEmail} size={84} />
+            <AvatarCircle name={callerName} email={_safePeerEmail} size={84} />
             <Text style={styles.endCardName} numberOfLines={1}>{callerName}</Text>
             <View style={styles.endCardRow}>
               <Text style={styles.endCardLabel} numberOfLines={1}>
@@ -6051,14 +6263,116 @@ const styles = StyleSheet.create({
   },
 });
 
-// Local ErrorBoundary safety net — if a render path inside CallScreen throws
-// (e.g. native module unavailable on a stale build), show a readable fallback
-// instead of a fully blank screen.
-import ErrorBoundary from '../components/ErrorBoundary';
+// Call-specific ErrorBoundary safety net (#892 fix 1). If a render path inside
+// CallScreen throws (native module missing on stale build, null prop access
+// on a midflight WebRTC callback, etc.) the generic app boundary would show
+// a "tente novamente" page that does NOT end the still-alive WebRTC session —
+// the user can't even hang up. Use a call-specific fallback with a single
+// big red "Desligar" button that tears down via __chatyyTeardownActiveCall +
+// router.back() so the silent render crash never traps the user mid-ringtone.
+//
+// Sentry reporting + crash_report beacon mirror the generic ErrorBoundary
+// so post-mortems still land, tagged surface='call' for filtering.
+class CallErrorBoundary extends React.Component {
+  state = { hasError: false, error: null };
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  componentDidCatch(error, errorInfo) {
+    console.error('[CallErrorBoundary]', error?.message, error?.stack, errorInfo?.componentStack);
+    try {
+      const { Sentry } = require('../services/sentry');
+      Sentry.captureException(error, { tags: { surface: 'call' } });
+    } catch {}
+    try {
+      fetch('https://chatyy.com.br/api/email.php?action=crash_report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: error?.message || 'CallScreen crash',
+          stack: (error?.stack || '').substring(0, 3000),
+          component: (errorInfo?.componentStack || '').substring(0, 2000),
+          surface: 'call',
+          fatal: true,
+        }),
+      }).catch(() => {});
+    } catch {}
+  }
+  _hangup = () => {
+    // Tear down the still-alive WebRTC session via the global teardown ref
+    // (set up inside CallScreenInner). If it's gone or throws, still fall
+    // back to router.back() so the user always escapes the dead UI.
+    try {
+      if (typeof globalThis !== 'undefined' && typeof globalThis.__chatyyTeardownActiveCall === 'function') {
+        globalThis.__chatyyTeardownActiveCall(null, 'CallErrorBoundary');
+      }
+    } catch {}
+    try { _clearGC && _clearGC(); } catch {}
+    try { setCallActive && setCallActive(false); } catch {}
+    try {
+      const { router } = require('expo-router');
+      router.back();
+    } catch {}
+    this.setState({ hasError: false, error: null });
+  };
+  render() {
+    if (this.state.hasError) {
+      return (
+        <View style={{
+          flex: 1,
+          backgroundColor: '#0a0a0f',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 32,
+        }}>
+          <View style={{
+            width: 64, height: 64, borderRadius: 32,
+            backgroundColor: 'rgba(239,68,68,0.15)',
+            alignItems: 'center', justifyContent: 'center',
+            marginBottom: 20,
+          }}>
+            <Svg width={32} height={32} viewBox="0 0 24 24" fill="none">
+              <SvgPath d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="#ef4444" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+            </Svg>
+          </View>
+          <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginBottom: 8, textAlign: 'center' }}>
+            Tela de chamada teve um erro
+          </Text>
+          <Text style={{ color: '#94a3b8', fontSize: 14, marginBottom: 28, textAlign: 'center', lineHeight: 20 }}>
+            Toque para desligar e tentar novamente.
+          </Text>
+          <TouchableOpacity
+            onPress={this._hangup}
+            activeOpacity={0.85}
+            style={{
+              backgroundColor: '#dc2626',
+              paddingVertical: 14, paddingHorizontal: 32,
+              borderRadius: 999,
+              flexDirection: 'row', alignItems: 'center',
+              shadowColor: '#dc2626', shadowOpacity: 0.4, shadowRadius: 16,
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Desligar"
+          >
+            <IconPhoneOff size={20} color="#fff" />
+            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700', marginLeft: 10 }}>
+              Desligar
+            </Text>
+          </TouchableOpacity>
+          {__DEV__ && this.state.error?.message ? (
+            <Text selectable style={{ color: '#f87171', fontSize: 11, marginTop: 24, fontFamily: 'monospace', textAlign: 'center' }} numberOfLines={4}>
+              {this.state.error.message}
+            </Text>
+          ) : null}
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function CallScreen(props) {
   return (
-    <ErrorBoundary>
+    <CallErrorBoundary>
       <CallScreenInner {...props} />
-    </ErrorBoundary>
+    </CallErrorBoundary>
   );
 }
