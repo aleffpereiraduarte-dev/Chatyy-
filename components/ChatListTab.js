@@ -42,6 +42,7 @@ import useStatuses from '../hooks/useStatuses';
 // already loves on home, just one source of truth now.
 import StoryRingAvatar from './status/StoryRingAvatar';
 import StoryViewer from './status/StoryViewer';
+import LiveBar from './LiveBar';
 import { useLanguage } from '../context/LanguageContext';
 
 let NativeSwipeable = null;
@@ -1262,6 +1263,25 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
     return out;
   }, [livesByEmail, statusEmails, user?.email]);
 
+  // Full list of active lives (excluding self) for the dedicated LiveBar at
+  // the very top of the chat list — surfaces EVERY broadcaster, regardless
+  // of whether they also have an active status. The story strip below still
+  // paints the red ring on duplicates, but the LiveBar is the "go here NOW"
+  // bar (Instagram parity).
+  const allLivesList = useMemo(() => {
+    const out = [];
+    for (const [email, info] of Object.entries(livesByEmail)) {
+      if (email === (user?.email || '').toLowerCase()) continue;
+      out.push({
+        host_email: email,
+        host_name: info.host_name || email.split('@')[0],
+        id: info.id,
+        viewer_count: info.viewer_count || 0,
+      });
+    }
+    return out;
+  }, [livesByEmail, user?.email]);
+
   const [statusViewerEmail, setStatusViewerEmail] = useState(null);
   const [statusViewersFor, setStatusViewersFor] = useState(null); // item being inspected for viewer list
   const [statusViewersList, setStatusViewersList] = useState([]);
@@ -1342,10 +1362,26 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
   // in QA 2026-05-07). The status camera in the chat list header still
   // gives a one-tap entrypoint for new posts.
   const stripHasContent = !!myStatus || !!myNote || otherStatuses.length > 0 || notesOnly.length > 0 || liveOnlyEntries.length > 0;
-  if (!stripHasContent) return null;
+  const hasLives = allLivesList.length > 0;
+  if (!stripHasContent && !hasLives) return null;
 
   return (
-    <View style={{ paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}>
+    <View style={{ paddingVertical: stripHasContent ? 10 : 0, borderBottomWidth: stripHasContent ? StyleSheet.hairlineWidth : 0, borderBottomColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}>
+      {/* Dedicated live bar — prepended above the story strip so contacts
+          who are streaming RIGHT NOW are the very first thing the user
+          sees on the chat list. Renders only when at least one host is
+          live. Tap routes to /live-viewer via openLiveViewer (same path
+          as every other live entry-point). */}
+      {hasLives && (
+        <LiveBar
+          lives={allLivesList}
+          onOpen={(email, sessionId, name) => openLiveViewer(email, sessionId, name)}
+          t={t}
+          isDark={isDark}
+          colors={colors}
+        />
+      )}
+      {stripHasContent ? (
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, gap: 14 }}>
         {/* Your story/note */}
         <TouchableOpacity
@@ -1568,6 +1604,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
           </TouchableOpacity>
         ))}
       </ScrollView>
+      ) : null}
 
       {/* Note create/edit modal */}
       {showNoteModal && (

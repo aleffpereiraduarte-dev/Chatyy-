@@ -18,6 +18,7 @@ function getNotificationType(data) {
   if (!data) return 'email';
   if (data.type === 'chat_message') return 'chat';
   if (data.type === 'meeting_reminder') return 'meeting';
+  if (data.type === 'live' || data.type === 'live_start') return 'live';
   return 'email';
 }
 
@@ -26,6 +27,7 @@ const TYPE_ACCENTS = {
   email: { light: '#2563eb', dark: '#60a5fa' },
   chat: { light: '#10b981', dark: '#34d399' },
   meeting: { light: '#8b5cf6', dark: '#c084fc' },
+  live: { light: '#dc2626', dark: '#f87171' },
 };
 
 // Avatar color from name
@@ -71,10 +73,42 @@ function TypeIcon({ type, color, size = 16 }) {
       return <IconMessageSquare size={size} color={color} />;
     case 'meeting':
       return <IconVideo size={size} color={color} />;
+    case 'live':
+      // Pulsing red dot — chosen over a generic camera/play icon because
+      // every other live surface in the app uses the heartbeat dot
+      // vocabulary (LiveIndicator, LiveBar, profile CTA). Keeps the brand
+      // language consistent.
+      return <LivePulseDot size={size} />;
     case 'email':
     default:
       return <IconMail size={size} color={color} />;
   }
+}
+
+// Pulsing red dot for the live notification type icon badge. Native-driven
+// opacity loop, mounted once when the toast is up so the work stops when
+// the toast dismisses.
+function LivePulseDot({ size = 16 }) {
+  const pulse = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 0.35, duration: 700, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+  return (
+    <Animated.View style={{
+      width: size * 0.55,
+      height: size * 0.55,
+      borderRadius: size,
+      backgroundColor: '#dc2626',
+      opacity: pulse,
+    }} />
+  );
 }
 
 // Type label key
@@ -82,6 +116,7 @@ function getTypeLabel(type) {
   switch (type) {
     case 'chat': return 'toast.typeChat';
     case 'meeting': return 'toast.typeMeeting';
+    case 'live': return 'live.aoVivo';
     case 'email':
     default: return 'toast.typeEmail';
   }
@@ -270,6 +305,17 @@ export default function NotificationToast({ notification, onDismiss }) {
       router.push(`/chat-conversation?id=${data.conversation_id}`);
     } else if (data?.type === 'meeting_reminder' && data?.room_id) {
       router.push(`/meeting-detail?room_id=${data.room_id}`);
+    } else if ((data?.type === 'live' || data?.type === 'live_start') && data?.session_id) {
+      // Live broadcast started by a friend — jump straight into the viewer.
+      // Pass host_email + host_name so the live-viewer's connecting overlay
+      // already shows the right avatar instead of a "?" placeholder while
+      // WebRTC handshakes. The session id is canonical (chat_live_sessions
+      // PG row), so the viewer subscribes to the right WS room on mount.
+      const params = new URLSearchParams();
+      params.set('sessionId', data.session_id);
+      if (data.host_email) params.set('hostEmail', data.host_email);
+      if (data.host_name) params.set('hostName', data.host_name);
+      router.push(`/live-viewer?${params.toString()}`);
     } else if (data?.type === 'new_email' && data?.uid) {
       const folder = data.folder || 'INBOX';
       router.push(`/read?uid=${data.uid}&folder=${encodeURIComponent(folder)}`);
@@ -497,26 +543,56 @@ export default function NotificationToast({ notification, onDismiss }) {
             )}
           </View>
 
-          {/* Dismiss button */}
-          <TouchableOpacity
-            onPress={(e) => {
-              e.stopPropagation?.();
-              if (timerRef.current) clearTimeout(timerRef.current);
-              dismiss();
-            }}
-            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-            style={{
-              marginLeft: 8,
-              width: 22,
-              height: 22,
-              borderRadius: 11,
-              backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <Text style={{ fontSize: 11, color: colors.textTertiary, fontWeight: '700' }}>{'\u2715'}</Text>
-          </TouchableOpacity>
+          {/* For live broadcasts: surface a red "Entrar" action pill instead
+              of the bare dismiss X \u2014 the friend's stream is the actionable
+              thing, not "ok thanks". Tap fires handleTap so the navigation
+              + dismiss path stays unified. The X stays accessible via the
+              swipe-up gesture. */}
+          {notifType === 'live' ? (
+            <TouchableOpacity
+              onPress={(e) => {
+                e.stopPropagation?.();
+                handleTap();
+              }}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              style={{
+                marginLeft: 8,
+                paddingHorizontal: 12,
+                paddingVertical: 7,
+                borderRadius: 12,
+                backgroundColor: '#dc2626',
+                alignItems: 'center',
+                justifyContent: 'center',
+                ...(Platform.OS === 'web' ? { boxShadow: '0 2px 8px rgba(220,38,38,0.35)' } : {}),
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={t('live.enter') || 'Entrar'}
+            >
+              <Text style={{ fontSize: 12, color: '#fff', fontWeight: '800', letterSpacing: 0.4 }}>
+                {(t('live.enter') || 'Entrar').toUpperCase()}
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              onPress={(e) => {
+                e.stopPropagation?.();
+                if (timerRef.current) clearTimeout(timerRef.current);
+                dismiss();
+              }}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              style={{
+                marginLeft: 8,
+                width: 22,
+                height: 22,
+                borderRadius: 11,
+                backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <Text style={{ fontSize: 11, color: colors.textTertiary, fontWeight: '700' }}>{'\u2715'}</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Action hint bar */}

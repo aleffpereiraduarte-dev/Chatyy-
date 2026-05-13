@@ -200,6 +200,93 @@ function FlatButton({ label, onPress, isPrimary, colors, isDark }) {
   );
 }
 
+// Live "Watch now" CTA — full-width red pulsing pill that surfaces a host's
+// active broadcast directly on their profile, just below the action row.
+// Instagram parity: when a friend is live, the only action that matters is
+// joining the stream, so this gets visual priority over Mensagem/Ligar/etc.
+//
+// Implementation notes:
+//   - native driver scale loop on the wrapping container so the pill feels
+//     alive without forcing a layout pass each frame
+//   - inner dot pulses opacity at 800ms (slightly faster than the outer
+//     scale) so it reads as a heartbeat, not a single sluggish breath
+//   - the press scale is layered on top of the loop via Animated.add so the
+//     tap feedback still works while the heartbeat is running
+function LiveWatchCta({ label, onPress }) {
+  const breath = useRef(new Animated.Value(0)).current;
+  const press = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(breath, { toValue: 1, duration: 900, useNativeDriver: true }),
+        Animated.timing(breath, { toValue: 0, duration: 900, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [breath]);
+  const breathScale = breath.interpolate({ inputRange: [0, 1], outputRange: [1, 1.025] });
+  const pressScale = press.interpolate({ inputRange: [0, 1], outputRange: [1, 0.97] });
+  const dotPulse = breath.interpolate({ inputRange: [0, 1], outputRange: [1, 0.35] });
+  return (
+    <Animated.View style={{
+      transform: [{ scale: breathScale }, { scale: pressScale }],
+      ...(Platform.OS !== 'web' ? {
+        shadowColor: '#dc2626',
+        shadowOpacity: 0.55,
+        shadowRadius: 14,
+        shadowOffset: { width: 0, height: 4 },
+        elevation: 6,
+      } : { boxShadow: '0 6px 18px rgba(220,38,38,0.45), 0 0 0 1px rgba(220,38,38,0.25)' }),
+      borderRadius: 14,
+    }}>
+      <TouchableOpacity
+        onPress={onPress}
+        onPressIn={() => Animated.spring(press, { toValue: 1, useNativeDriver: true, speed: 30, bounciness: 4 }).start()}
+        onPressOut={() => Animated.spring(press, { toValue: 0, useNativeDriver: true, speed: 22, bounciness: 8 }).start()}
+        activeOpacity={0.9}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 9,
+          paddingVertical: 13,
+          paddingHorizontal: 16,
+          borderRadius: 14,
+          backgroundColor: '#dc2626',
+        }}
+      >
+        <View style={{
+          width: 18,
+          height: 18,
+          borderRadius: 9,
+          backgroundColor: 'rgba(255,255,255,0.18)',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}>
+          <Animated.View style={{
+            width: 8,
+            height: 8,
+            borderRadius: 4,
+            backgroundColor: '#fff',
+            opacity: dotPulse,
+          }} />
+        </View>
+        <Text style={{
+          fontSize: 14.5,
+          fontWeight: '800',
+          color: '#fff',
+          letterSpacing: 0.3,
+        }}>
+          {label}
+        </Text>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
+
 // Secondary chip with icon + label — used for supplementary actions (call,
 // video, email) that sit below the primary Follow/Message row. Pill-shape
 // matches the FlatButton above so the action stack reads as one family.
@@ -1511,6 +1598,24 @@ export default function Profile({
               isDark={isDark}
             />
           </View>
+        )}
+
+        {/* "Assistindo agora" CTA — Instagram parity. Lives outrank every
+            other action on the profile, so we paint a bold red pulsing
+            full-width pill below the buttons when this profile's owner is
+            currently streaming. Tap routes straight to /live-viewer with the
+            session id resolved by the WS-driven liveSessionId effect above.
+            Hidden on self profiles (would be redundant — the user is the
+            host) and when liveSessionId is null. */}
+        {!actions.is_self && !!liveSessionId && (
+          <LiveWatchCta
+            onPress={() => {
+              try {
+                router?.push?.(`/live-viewer?sessionId=${encodeURIComponent(liveSessionId)}&hostEmail=${encodeURIComponent(identity.email)}&hostName=${encodeURIComponent(identity.name || (identity.email || '').split('@')[0])}`);
+              } catch {}
+            }}
+            label={t?.('live.watchingNow') || 'Assistindo agora'}
+          />
         )}
       </View>
     );

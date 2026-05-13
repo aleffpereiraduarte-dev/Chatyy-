@@ -10,7 +10,8 @@ import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import LiveChat from '../components/LiveChat'; // eslint-disable-line no-unused-vars -- kept for fallback
 import AvatarCircle from '../components/AvatarCircle';
-import { IconX, IconCameraFlip, IconMic, IconMicOff, IconVideo, IconVideoOff, IconHeart, IconShare, IconSend, IconSettings, IconUserPlus, IconSparkles, IconFilter, IconPin, IconStar, IconStarFilled } from '../components/Icons';
+import { IconX, IconCameraFlip, IconMic, IconMicOff, IconVideo, IconVideoOff, IconHeart, IconShare, IconSend, IconSettings, IconUserPlus, IconSparkles, IconFilter, IconPin, IconStar, IconStarFilled, IconGlobe, IconLock, IconUsers, IconEye, IconStop, IconCheck, IconBookmark } from '../components/Icons';
+import { useTheme } from '../context/ThemeContext';
 
 // Cross-platform WebRTC — same pattern as call.js
 let RTC_PeerConnection, RTC_SessionDescription, RTC_IceCandidate, getUserMediaFn, NativeRTCView;
@@ -42,12 +43,29 @@ export default function LiveBroadcastScreen() {
   const router = useRouter();
   const { user } = useAuth();
   const { t } = useLanguage();
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
 
   // Pre-live state
   const [preStart, setPreStart] = useState(true);
   const [titleInput, setTitleInput] = useState(params.title || '');
   const [countdown, setCountdown] = useState(null);
+  // Audience pill — Instagram Live "Who can watch": public | friends | private.
+  // Affects backend visibility flag in liveStart. Local-only pre-start.
+  const [audience, setAudience] = useState('public');
+  // Pre-live mirror facing toggle so the host can pick front/back camera
+  // BEFORE the countdown — same UX as Instagram & TikTok.
+  const [preFacing, setPreFacing] = useState('user');
+  // Insights modal (bottom-left pill expansion) — shows the viewers/reactions
+  // breakdown with the list of who joined.
+  const [insightsOpen, setInsightsOpen] = useState(false);
+  // Distinct viewers seen during the live — drives the "X viewers únicos"
+  // line on the end-card. Keyed by email; survives churn (viewers leaving
+  // mid-broadcast still count once).
+  const uniqueViewersRef = useRef(new Set());
+  const [uniqueViewers, setUniqueViewers] = useState(0);
+  // Recent joins (timestamps + names), drives the insights modal list.
+  const [joinFeed, setJoinFeed] = useState([]); // [{email,name,ts}]
 
   // Live state
   const [sessionId, setSessionId] = useState(null);
@@ -120,6 +138,21 @@ export default function LiveBroadcastScreen() {
   const countdownOpacity = useRef(new Animated.Value(0)).current;
   const prevViewerCount = useRef(0);
   const viewerBounce = useRef(new Animated.Value(1)).current;
+  // Pre-live title placeholder fade — soft sin-wave loop so the input invites
+  // the host to type a title even when empty (Instagram Live parity).
+  const placeholderFade = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (!preStart) return undefined;
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(placeholderFade, { toValue: 0.45, duration: 1400, useNativeDriver: true }),
+      Animated.timing(placeholderFade, { toValue: 1, duration: 1400, useNativeDriver: true }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  }, [preStart, placeholderFade]);
+  // End-card spring entrance — scale + opacity from below for the summary.
+  const endCardScale = useRef(new Animated.Value(0.85)).current;
+  const endCardOpacity = useRef(new Animated.Value(0)).current;
   // Live duration dot heartbeat — same heartbeat the recording bar uses, so
   // any "we're live" surface in the app reads as one rhythm.
   const livePulse = useRef(new Animated.Value(1)).current;
@@ -190,7 +223,11 @@ export default function LiveBroadcastScreen() {
       return false;
     }
     try {
-      const stream = await getUserMediaFn({ video: true, audio: true });
+      // Honor the host's pre-live front/back camera choice. facingMode is
+      // best-effort — desktops without a back camera fall back to default,
+      // which matches Instagram Live behavior.
+      facingRef.current = preFacing;
+      const stream = await getUserMediaFn({ video: { facingMode: preFacing }, audio: true });
       localStreamRef.current = stream;
       if (Platform.OS === 'web') {
         if (localVideoRef.current) localVideoRef.current.srcObject = stream;
@@ -218,7 +255,7 @@ export default function LiveBroadcastScreen() {
       setError(t('live.connectionFailed') || 'Failed to access camera');
       return false;
     }
-  }, [t]);
+  }, [t, preFacing]);
 
   // Latest-handler ref so ensureCameraStream above can call into
   // handleViewerJoined (declared further down) without creating a
@@ -277,7 +314,27 @@ export default function LiveBroadcastScreen() {
         case 'live_reaction':
           // Mute toggle silences the heart animation client-side so the host
           // can focus during a busy live without redoing the server pipeline.
-          if (!muteReactionsRef.current) spawnHeart();
+          if (!muteReactionsRef.current) {
+            // Pass the reactor identity so the heart can float with a tiny
+            // avatar chip (Instagram parity) — instantly readable "quem
+            // curtiu" without needing a separate toast.
+            spawnHeart({ name: msg.reactor_name || msg.reactor_email?.split('@')[0], email: msg.reactor_email });
+          }
+          break;
+        case 'live_viewer_count':
+          // Authoritative count from the WS server (channel subs minus the
+          // broadcaster). Previously the host only had peersRef.size, which
+          // lags 2-5s while WebRTC negotiates and goes stale if a peer fails
+          // mid-stream — server count is instant and survives peer drops.
+          if (typeof msg.count === 'number') setViewerCount(msg.count);
+          break;
+        case 'live_viewer_left':
+          // Server already broadcasts a follow-up viewer_count, but cleaning
+          // peer state proactively avoids zombie WebRTC tiles in the host UI.
+          if (msg.viewer_id && peersRef.current.has(msg.viewer_id)) {
+            try { peersRef.current.get(msg.viewer_id)?.close(); } catch {}
+            peersRef.current.delete(msg.viewer_id);
+          }
           break;
         case 'live_join_request':
           // Viewer wants to come on as a guest. Stack the request in the
@@ -324,8 +381,9 @@ export default function LiveBroadcastScreen() {
     return () => clearInterval(t);
   }, [preStart]);
 
-  // Heart animation
-  const spawnHeart = useCallback(() => {
+  // Heart animation — accepts optional reactor identity so each heart can
+  // float with a tiny avatar chip beside it (Instagram parity).
+  const spawnHeart = useCallback((reactor = null) => {
     setTotalLikes(c => c + 1);
     const id = ++heartIdRef.current;
     const x = SCREEN_W - 60 + (Math.random() - 0.5) * 40;
@@ -333,7 +391,7 @@ export default function LiveBroadcastScreen() {
     const anim = new Animated.Value(0);
 
     setHearts(prev => {
-      const next = [...prev, { id, x, y, anim }];
+      const next = [...prev, { id, x, y, anim, reactor }];
       if (next.length > MAX_HEARTS) return next.slice(-MAX_HEARTS);
       return next;
     });
@@ -411,10 +469,20 @@ export default function LiveBroadcastScreen() {
 
     setViewerCount(peersRef.current.size);
 
+    // Track unique viewers across the entire run — survives churn (viewer
+    // leaves & rejoins still counts once). Feeds the end-card summary.
+    const joinedEmail = (msg.viewer_email || '').toLowerCase();
+    const joinedName = msg.viewer_name || msg.viewer_email?.split('@')[0] || '?';
+    if (joinedEmail && !uniqueViewersRef.current.has(joinedEmail)) {
+      uniqueViewersRef.current.add(joinedEmail);
+      setUniqueViewers(uniqueViewersRef.current.size);
+      setJoinFeed(prev => [{ email: joinedEmail, name: joinedName, ts: Date.now() }, ...prev].slice(0, 50));
+    }
+
     // Show join message
     setChatMessages(prev => [...prev, {
       id: String(++chatIdRef.current),
-      name: msg.viewer_name || msg.viewer_email?.split('@')[0] || '?',
+      name: joinedName,
       email: msg.viewer_email,
       content: t('live.joined') || 'joined',
       type: 'system',
@@ -507,7 +575,7 @@ export default function LiveBroadcastScreen() {
       // Ask for camera + mic only now — the user actively tapped Go Live.
       const ok = await ensureCameraStream();
       if (!ok) return;
-      const res = await api.liveStart(titleInput.trim() || t('live.title') || 'Live');
+      const res = await api.liveStart(titleInput.trim() || t('live.title') || 'Live', { audience });
       const sid = res.data?.session_id || res.data?.session?.id;
       if (res.success && sid) {
         setSessionId(sid);
@@ -577,8 +645,14 @@ export default function LiveBroadcastScreen() {
     setEnded(true);
     setEndModal(false);
     sessionIdRef.current = null;
-    setTimeout(() => router.back(), 1500);
-  }, [router, saveReplay]);
+    // Spring entrance for the rich end-card. We DON'T auto-route back here
+    // anymore — the host can take their time on the summary and tap the
+    // Share / Save replay CTAs. The "Concluído" button handles the back nav.
+    Animated.parallel([
+      Animated.spring(endCardScale, { toValue: 1, friction: 6, tension: 80, useNativeDriver: true }),
+      Animated.timing(endCardOpacity, { toValue: 1, duration: 240, useNativeDriver: true }),
+    ]).start();
+  }, [saveReplay, endCardScale, endCardOpacity]);
 
   const handleEndLive = useCallback(() => {
     setEndModal(true);
@@ -857,17 +931,85 @@ export default function LiveBroadcastScreen() {
     return <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }]} />;
   };
 
-  // Ended state
+  // Ended state — rich summary card with duration / unique viewers / likes
+  // and two CTAs (share recap + save replay toggle). Spring entrance.
   if (ended) {
+    const recapUrl = (typeof window !== 'undefined' && uniqueViewersRef.current.size >= 0)
+      ? `https://chatyy.com.br/live/recap` : '';
+    const onShareRecap = async () => {
+      try {
+        if (Platform.OS === 'web' && typeof navigator !== 'undefined') {
+          if (navigator.share) { await navigator.share({ title: t('live.liveEnded') || 'Live encerrada', url: recapUrl }); }
+          else if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(recapUrl); }
+        } else {
+          const { Share } = require('react-native');
+          await Share.share({ message: (titleInput || 'Live') + ' — ' + recapUrl });
+        }
+      } catch {}
+    };
     return (
       <View style={styles.centered}>
-        <View style={styles.endedIcon}>
-          <IconVideo size={48} color="rgba(255,255,255,0.3)" />
-        </View>
-        <Text style={styles.endedText}>{t('live.liveEnded') || 'Live ended'}</Text>
-        <Text style={styles.endedStats}>
-          {formatDuration(liveDuration)} - {viewerCount} {t('live.viewers') || 'viewers'}
-        </Text>
+        <Animated.View style={[styles.endCard, {
+          transform: [{ scale: endCardScale }],
+          opacity: endCardOpacity,
+        }]}>
+          <View style={styles.endCardHero}>
+            <View style={styles.endCardIcon}>
+              <IconVideo size={32} color="#fff" />
+            </View>
+            <Text style={styles.endCardTitle}>{t('live.liveEnded') || 'Live encerrada'}</Text>
+            <Text style={styles.endCardSubtitle} numberOfLines={2}>
+              {titleInput || (t('live.title') || 'Live')}
+            </Text>
+          </View>
+
+          <View style={styles.endCardStatsRow}>
+            <View style={styles.endCardStat}>
+              <Text style={styles.endCardStatValue}>{formatDuration(liveDuration)}</Text>
+              <Text style={styles.endCardStatLabel}>{t('live.duration') || 'Duração'}</Text>
+            </View>
+            <View style={styles.endCardStatSep} />
+            <View style={styles.endCardStat}>
+              <Text style={styles.endCardStatValue}>{formatViewerCount(uniqueViewers)}</Text>
+              <Text style={styles.endCardStatLabel}>{t('live.uniqueViewers') || 'Únicos'}</Text>
+            </View>
+            <View style={styles.endCardStatSep} />
+            <View style={styles.endCardStat}>
+              <Text style={styles.endCardStatValue}>{formatViewerCount(totalLikes)}</Text>
+              <Text style={styles.endCardStatLabel}>{t('live.likes') || 'Curtidas'}</Text>
+            </View>
+          </View>
+
+          <View style={styles.endCardCtaRow}>
+            <TouchableOpacity
+              onPress={onShareRecap}
+              style={styles.endCardCtaSecondary}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel={t('live.share') || 'Compartilhar'}
+            >
+              <IconShare size={16} color="#fff" />
+              <Text style={styles.endCardCtaSecondaryText}>{t('live.share') || 'Compartilhar'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setSaveReplay(v => !v)}
+              style={[styles.endCardCtaPrimary, !saveReplay && styles.endCardCtaPrimaryOff]}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel={t('live.saveReplay') || 'Salvar replay'}
+              accessibilityState={{ checked: saveReplay }}
+            >
+              {saveReplay ? <IconStarFilled size={16} color="#000" /> : <IconBookmark size={16} color="#fff" />}
+              <Text style={[styles.endCardCtaPrimaryText, !saveReplay && { color: '#fff' }]}>
+                {saveReplay ? (t('live.replaySaved') || 'Replay salvo') : (t('live.saveReplay') || 'Salvar replay')}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <TouchableOpacity onPress={() => router.back()} style={styles.endCardDone} activeOpacity={0.7}>
+            <Text style={styles.endCardDoneText}>{t('common.done') || 'Concluído'}</Text>
+          </TouchableOpacity>
+        </Animated.View>
       </View>
     );
   }
@@ -889,8 +1031,14 @@ export default function LiveBroadcastScreen() {
     );
   }
 
-  // Pre-start screen
+  // Pre-start screen — Instagram Live setup: hero glass card, audience pill,
+  // pre-camera flip, animated placeholder sparkle, gradient brand CTA.
   if (preStart) {
+    const audOptions = [
+      { key: 'public',  Icon: IconGlobe, label: t('live.audPublic')  || 'Público' },
+      { key: 'friends', Icon: IconUsers, label: t('live.audFriends') || 'Amigos' },
+      { key: 'private', Icon: IconLock,  label: t('live.audPrivate') || 'Privado' },
+    ];
     return (
       <View style={styles.fullScreen}>
         {renderLocalVideo()}
@@ -905,34 +1053,86 @@ export default function LiveBroadcastScreen() {
             <IconX size={24} color="#fff" />
           </TouchableOpacity>
 
-          {/* User preview */}
-          <View style={styles.preContent}>
+          {/* Pre-live flip-camera — top-right, mirrors Instagram. Toggles the
+              facing preference; the actual stream is opened with this value
+              when the host taps "Começar". */}
+          <TouchableOpacity
+            onPress={() => setPreFacing(f => f === 'user' ? 'environment' : 'user')}
+            style={[styles.preFlipBtn, { top: insets.top + 16 }]}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={t('live.flipCamera') || 'Flip camera'}
+          >
+            <IconCameraFlip size={20} color="#fff" />
+          </TouchableOpacity>
+
+          {/* Hero glass card */}
+          <View style={styles.preHero}>
             <AvatarCircle
               name={user?.name || user?.email}
               email={user?.email}
               size={72}
               style={styles.preAvatar}
             />
-            <Text style={styles.preName}>{user?.name || user?.email?.split('@')[0]}</Text>
-            <TextInput
-              style={styles.titleInput}
-              value={titleInput}
-              onChangeText={setTitleInput}
-              placeholder={t('live.enterTitle') || 'Add a title for your live...'}
-              placeholderTextColor="rgba(255,255,255,0.35)"
-              returnKeyType="done"
-              accessibilityLabel={t('live.enterTitle') || 'Live title'}
-              maxLength={100}
-            />
+            <Text style={styles.preName} numberOfLines={1}>{user?.name || user?.email?.split('@')[0]}</Text>
+            <Text style={styles.preHint}>{t('live.preHint') || 'Tudo pronto pra ir ao vivo'}</Text>
+
+            <View style={styles.preTitleWrap}>
+              <TextInput
+                style={styles.titleInput}
+                value={titleInput}
+                onChangeText={setTitleInput}
+                placeholder={t('live.enterTitle') || 'Adicione um título à sua live...'}
+                placeholderTextColor="rgba(255,255,255,0.35)"
+                returnKeyType="done"
+                accessibilityLabel={t('live.enterTitle') || 'Live title'}
+                maxLength={100}
+              />
+              {!titleInput ? (
+                <Animated.View pointerEvents="none" style={[styles.preTitleSparkle, { opacity: placeholderFade }]}>
+                  <IconSparkles size={14} color="rgba(168,85,247,0.85)" />
+                </Animated.View>
+              ) : null}
+            </View>
+
+            {/* Audience selector — public/friends/private with brand-tinted
+                active state. Sent as `audience` to liveStart so the backend
+                can scope the announce push. */}
+            <View style={styles.preAudRow}>
+              <Text style={styles.preAudLabel}>{t('live.whoCanSee') || 'Quem pode ver'}</Text>
+              <View style={styles.preAudPills}>
+                {audOptions.map(opt => {
+                  const Icon = opt.Icon;
+                  const active = audience === opt.key;
+                  return (
+                    <TouchableOpacity
+                      key={opt.key}
+                      onPress={() => setAudience(opt.key)}
+                      style={[styles.preAudPill, active && styles.preAudPillActive]}
+                      activeOpacity={0.85}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: active }}
+                      accessibilityLabel={opt.label}
+                    >
+                      <Icon size={14} color={active ? '#fff' : 'rgba(255,255,255,0.75)'} />
+                      <Text style={[styles.preAudPillText, active && { color: '#fff', fontWeight: '800' }]}>
+                        {opt.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
             <TouchableOpacity
               onPress={handleStartLive}
               style={styles.startBtn}
-              activeOpacity={0.8}
+              activeOpacity={0.85}
               accessibilityLabel={t('live.goLive') || 'Go Live'}
               accessibilityRole="button"
             >
               <View style={styles.startBtnDot} />
-              <Text style={styles.startBtnText}>{t('live.goLive') || 'Go Live'}</Text>
+              <Text style={styles.startBtnText}>{t('live.goLive') || 'Começar'}</Text>
             </TouchableOpacity>
           </View>
 
@@ -1128,9 +1328,28 @@ export default function LiveBroadcastScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Floating hearts */}
+      {/* Live insights pill — bottom-left chip with viewer+reaction snapshot.
+          Tap opens the insights modal with the join feed. Backdrop blur on
+          web; soft dark fill on native (no native blur lib loaded here). */}
+      <TouchableOpacity
+        onPress={() => setInsightsOpen(true)}
+        activeOpacity={0.85}
+        style={[styles.insightsPill, { bottom: insets.bottom + 270, left: 14 }]}
+        accessibilityRole="button"
+        accessibilityLabel={t('live.insights') || 'Insights'}
+      >
+        <IconEye size={14} color="#fff" />
+        <Text style={styles.insightsPillText}>{formatViewerCount(viewerCount)}</Text>
+        <View style={styles.insightsPillDot} />
+        <IconHeart size={12} color="#fca5a5" />
+        <Text style={styles.insightsPillText}>{formatViewerCount(totalLikes)}</Text>
+      </TouchableOpacity>
+
+      {/* Floating hearts — Instagram-Live style: heart pop + tiny reactor
+          avatar (when known) drifts up with it so the host instantly sees
+          "quem curtiu". Random drift on X axis keeps the trail organic. */}
       {hearts.map(h => {
-        const translateY = h.anim.interpolate({ inputRange: [0, 1], outputRange: [0, -250] });
+        const translateY = h.anim.interpolate({ inputRange: [0, 1], outputRange: [0, -260] });
         const scale = h.anim.interpolate({ inputRange: [0, 0.2, 0.8, 1], outputRange: [0.3, 1.3, 1, 0.6] });
         const opacity = h.anim.interpolate({ inputRange: [0, 0.1, 0.8, 1], outputRange: [0, 1, 1, 0] });
         const translateX = h.anim.interpolate({ inputRange: [0, 1], outputRange: [0, (Math.random() - 0.5) * 80] });
@@ -1147,6 +1366,11 @@ export default function LiveBroadcastScreen() {
             pointerEvents="none"
           >
             <IconHeart size={28} color={LIVE_RED} />
+            {h.reactor?.email ? (
+              <View style={styles.heartAvatarChip}>
+                <AvatarCircle name={h.reactor.name} email={h.reactor.email} size={18} />
+              </View>
+            ) : null}
           </Animated.View>
         );
       })}
@@ -1172,12 +1396,18 @@ export default function LiveBroadcastScreen() {
                 </View>
               ) : (
                 <View style={styles.commentRow}>
-                  <AvatarCircle name={item.name} email={item.email} size={26} />
-                  <View style={styles.commentBubble}>
-                    <Text style={styles.commentName} numberOfLines={1}>
-                      {item.name}
-                      {item.isHost ? <Text style={styles.commentHostTag}> · {t('live.host') || 'Host'}</Text> : null}
-                    </Text>
+                  <AvatarCircle name={item.name} email={item.email} size={28} />
+                  <View style={[styles.commentBubble, item.isHost && styles.commentBubbleHost]}>
+                    <View style={styles.commentNameRow}>
+                      <Text style={[styles.commentName, item.isHost && { color: '#fff' }]} numberOfLines={1}>
+                        {item.name}
+                      </Text>
+                      {item.isHost ? (
+                        <View style={styles.commentHostChip}>
+                          <Text style={styles.commentHostChipText}>{t('live.host') || 'Host'}</Text>
+                        </View>
+                      ) : null}
+                    </View>
                     <Text style={styles.commentText}>{item.content}</Text>
                   </View>
                 </View>
@@ -1586,6 +1816,62 @@ export default function LiveBroadcastScreen() {
               <Text style={[liveSheetStyles.closeText, effectsOn && { color: '#000' }]}>
                 {effectsOn ? (t('live.effectsTurnOff') || 'Desativar') : (t('live.effectsTurnOn') || 'Ativar')}
               </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
+
+      {/* Insights sheet — expanded view of the bottom-left pill. Shows total
+          viewers (current + unique-during-run), reactions, and the join feed
+          (who came in, in order). Read-only, host-only. */}
+      {insightsOpen ? (
+        <View style={liveSheetStyles.backdrop}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setInsightsOpen(false)} />
+          <View style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16, maxHeight: '75%' }]}>
+            <View style={liveSheetStyles.grabber} />
+            <Text style={liveSheetStyles.title}>{t('live.insights') || 'Insights'}</Text>
+
+            <View style={styles.insightsStatsRow}>
+              <View style={styles.insightsStat}>
+                <Text style={styles.insightsStatValue}>{formatViewerCount(viewerCount)}</Text>
+                <Text style={styles.insightsStatLabel}>{t('live.watchingNow') || 'Assistindo agora'}</Text>
+              </View>
+              <View style={styles.insightsStat}>
+                <Text style={styles.insightsStatValue}>{formatViewerCount(uniqueViewers)}</Text>
+                <Text style={styles.insightsStatLabel}>{t('live.uniqueViewers') || 'Únicos'}</Text>
+              </View>
+              <View style={styles.insightsStat}>
+                <Text style={styles.insightsStatValue}>{formatViewerCount(totalLikes)}</Text>
+                <Text style={styles.insightsStatLabel}>{t('live.likes') || 'Curtidas'}</Text>
+              </View>
+            </View>
+
+            <Text style={[liveSheetStyles.subtitle, { marginTop: 12 }]}>
+              {t('live.joinFeedTitle') || 'Quem entrou'}
+            </Text>
+            {joinFeed.length === 0 ? (
+              <Text style={[liveSheetStyles.subtitle, { textAlign: 'center', paddingVertical: 14 }]}>
+                {t('live.noJoinsYet') || 'Ninguém entrou ainda'}
+              </Text>
+            ) : (
+              <FlatList
+                data={joinFeed}
+                keyExtractor={(item, idx) => `${item.email}-${idx}`}
+                renderItem={({ item }) => (
+                  <View style={styles.insightsJoinRow}>
+                    <AvatarCircle name={item.name} email={item.email} size={32} />
+                    <View style={{ flex: 1, marginLeft: 10 }}>
+                      <Text style={styles.insightsJoinName} numberOfLines={1}>{item.name}</Text>
+                      <Text style={styles.insightsJoinEmail} numberOfLines={1}>{item.email}</Text>
+                    </View>
+                  </View>
+                )}
+                style={{ maxHeight: 320 }}
+              />
+            )}
+
+            <TouchableOpacity onPress={() => setInsightsOpen(false)} style={liveSheetStyles.closeBtn} activeOpacity={0.85}>
+              <Text style={liveSheetStyles.closeText}>{t('common.done') || 'Concluído'}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -2026,6 +2312,16 @@ const styles = StyleSheet.create({
     position: 'absolute',
     zIndex: 20,
   },
+  heartAvatarChip: {
+    position: 'absolute',
+    right: -10,
+    top: -8,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: '#fff',
+    overflow: 'hidden',
+    backgroundColor: '#0f0f1a',
+  },
 
   // Top-bar layout polish
   hostMeta: {
@@ -2156,11 +2452,33 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     maxWidth: '88%',
   },
+  // Host-authored comment: subtle purple tint + 1px brand border so the
+  // host's voice stands out in the rolling feed without screaming.
+  commentBubbleHost: {
+    backgroundColor: 'rgba(124,58,237,0.32)',
+    borderWidth: 1,
+    borderColor: 'rgba(168,85,247,0.55)',
+  },
+  commentNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 1,
+  },
   commentName: {
-    color: '#a78bfa', fontSize: 11, fontWeight: '800', letterSpacing: 0.3, marginBottom: 1,
+    color: '#a78bfa', fontSize: 11, fontWeight: '800', letterSpacing: 0.3,
   },
   commentHostTag: {
     color: '#f59e0b', fontSize: 10, fontWeight: '700',
+  },
+  commentHostChip: {
+    backgroundColor: '#f59e0b',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 6,
+  },
+  commentHostChipText: {
+    color: '#000', fontSize: 9, fontWeight: '900', letterSpacing: 0.5,
   },
   commentText: {
     color: '#fff', fontSize: 13, lineHeight: 17,
@@ -2391,5 +2709,244 @@ const styles = StyleSheet.create({
   },
   endModalConfirmText: {
     color: '#fff', fontSize: 14, fontWeight: '800', letterSpacing: 0.3,
+  },
+
+  // ----- Pre-live hero card -----
+  // The old `.preContent` is preserved above; the new `.preHero` wraps it with
+  // a glass card, hint, and audience pill area. Both render w/ AvatarCircle.
+  preHero: {
+    width: '88%',
+    maxWidth: 400,
+    alignItems: 'center',
+    backgroundColor: 'rgba(20,20,32,0.55)',
+    borderRadius: 24,
+    paddingVertical: 22,
+    paddingHorizontal: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    ...(Platform.OS === 'web' ? {
+      backdropFilter: 'blur(18px)', WebkitBackdropFilter: 'blur(18px)',
+      boxShadow: '0 18px 50px rgba(0,0,0,0.55), 0 0 1px rgba(168,85,247,0.4)',
+    } : {}),
+  },
+  preHint: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+    marginTop: -16,
+    marginBottom: 16,
+  },
+  preTitleWrap: {
+    width: '100%',
+    position: 'relative',
+    marginBottom: 16,
+  },
+  preTitleSparkle: {
+    position: 'absolute',
+    right: 14, top: 0, bottom: 0,
+    justifyContent: 'center',
+  },
+  preAudRow: {
+    width: '100%',
+    marginBottom: 20,
+    alignItems: 'center',
+  },
+  preAudLabel: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.7,
+    textTransform: 'uppercase',
+    marginBottom: 8,
+  },
+  preAudPills: {
+    flexDirection: 'row',
+    gap: 8,
+    justifyContent: 'center',
+  },
+  preAudPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.07)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  preAudPillActive: {
+    backgroundColor: 'rgba(124,58,237,0.55)',
+    borderColor: 'rgba(168,85,247,0.85)',
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 0 14px rgba(124,58,237,0.4)',
+    } : {}),
+  },
+  preAudPillText: {
+    color: 'rgba(255,255,255,0.78)',
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+  },
+  preFlipBtn: {
+    position: 'absolute',
+    left: 20,
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    alignItems: 'center', justifyContent: 'center',
+    zIndex: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+
+  // ----- Live insights pill (bottom-left compact stats chip) -----
+  insightsPill: {
+    position: 'absolute',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    zIndex: 9,
+    ...(Platform.OS === 'web' ? { backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)' } : {}),
+  },
+  insightsPillText: {
+    color: '#fff', fontSize: 12, fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+  },
+  insightsPillDot: {
+    width: 3, height: 3, borderRadius: 1.5,
+    backgroundColor: 'rgba(255,255,255,0.35)',
+    marginHorizontal: 2,
+  },
+  insightsStatsRow: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(124,58,237,0.12)',
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(124,58,237,0.25)',
+    marginTop: 4,
+  },
+  insightsStat: { flex: 1, alignItems: 'center' },
+  insightsStatValue: {
+    color: '#fff', fontSize: 20, fontWeight: '800',
+    fontVariant: ['tabular-nums'], marginBottom: 2,
+  },
+  insightsStatLabel: {
+    color: 'rgba(255,255,255,0.55)', fontSize: 10,
+    fontWeight: '600', letterSpacing: 0.4, textTransform: 'uppercase',
+  },
+  insightsJoinRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomColor: 'rgba(255,255,255,0.06)', borderBottomWidth: 1,
+  },
+  insightsJoinName: { color: '#fff', fontSize: 14, fontWeight: '600' },
+  insightsJoinEmail: { color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 1 },
+
+  // ----- End-state rich card -----
+  endCard: {
+    width: '100%',
+    maxWidth: 380,
+    backgroundColor: '#1a1a26',
+    borderRadius: 24,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 24px 70px rgba(0,0,0,0.7), 0 0 1px rgba(168,85,247,0.5)',
+    } : {}),
+  },
+  endCardHero: {
+    alignItems: 'center',
+    paddingVertical: 8,
+    marginBottom: 18,
+  },
+  endCardIcon: {
+    width: 64, height: 64, borderRadius: 32,
+    backgroundColor: LIVE_RED,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 12,
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 6px 22px rgba(220,38,38,0.45)',
+    } : {}),
+  },
+  endCardTitle: {
+    color: '#fff', fontSize: 22, fontWeight: '800', letterSpacing: 0.2,
+    marginBottom: 4,
+  },
+  endCardSubtitle: {
+    color: 'rgba(255,255,255,0.55)', fontSize: 13, lineHeight: 17,
+    textAlign: 'center',
+    maxWidth: 280,
+  },
+  endCardStatsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(124,58,237,0.12)',
+    borderRadius: 16,
+    paddingVertical: 16,
+    paddingHorizontal: 8,
+    marginBottom: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(124,58,237,0.25)',
+  },
+  endCardStat: { flex: 1, alignItems: 'center' },
+  endCardStatValue: {
+    color: '#fff', fontSize: 20, fontWeight: '800',
+    fontVariant: ['tabular-nums'], marginBottom: 2,
+  },
+  endCardStatLabel: {
+    color: 'rgba(255,255,255,0.55)', fontSize: 11, fontWeight: '600',
+    letterSpacing: 0.3, textTransform: 'uppercase',
+  },
+  endCardStatSep: { width: 1, height: 30, backgroundColor: 'rgba(255,255,255,0.12)' },
+  endCardCtaRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 12,
+  },
+  endCardCtaSecondary: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center', justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 13,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
+  },
+  endCardCtaSecondaryText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  endCardCtaPrimary: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center', justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 13,
+    borderRadius: 14,
+    backgroundColor: '#facc15',
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 4px 18px rgba(250,204,21,0.4)',
+    } : {}),
+  },
+  endCardCtaPrimaryOff: {
+    backgroundColor: 'rgba(124,58,237,0.85)',
+  },
+  endCardCtaPrimaryText: { color: '#000', fontSize: 14, fontWeight: '800', letterSpacing: 0.2 },
+  endCardDone: {
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  endCardDoneText: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });

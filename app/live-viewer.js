@@ -7,6 +7,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
+import { useTheme } from '../context/ThemeContext';
 import * as api from '../services/api';
 import AvatarCircle from '../components/AvatarCircle';
 import {
@@ -69,6 +70,8 @@ export default function LiveViewerScreen() {
   const router = useRouter();
   const { user } = useAuth();
   const { t } = useLanguage();
+  const { colors } = useTheme();
+  const brandAccent = colors?.primary || ACCENT;
   const insets = useSafeAreaInsets();
 
   const [connected, setConnected] = useState(false);
@@ -88,6 +91,14 @@ export default function LiveViewerScreen() {
   // Expanded chat sheet — Instagram parity: tap comments overlay to see the
   // full chat history (not just the last 5 floating bubbles).
   const [chatSheetOpen, setChatSheetOpen] = useState(false);
+  // Host quick-peek (Instagram long-press preview) — shows a compact card
+  // floating over the stream with avatar/name/quick actions. Long-press only,
+  // single tap on the avatar still does the rail tap (toggleFollow).
+  const [hostPeekOpen, setHostPeekOpen] = useState(false);
+  // Per-comment heart reaction inline chip — keyed by message id. Set on
+  // double-tap of a floating comment; auto-clears via animated timeout.
+  const [commentHearts, setCommentHearts] = useState({}); // { [msgId]: Animated.Value }
+  const lastCommentTapRef = useRef({}); // { [msgId]: ts }
 
   // Refs
   const remoteVideoRef = useRef(null);
@@ -99,6 +110,12 @@ export default function LiveViewerScreen() {
   const iceCandidateQueueRef = useRef([]);
   const endTimerRef = useRef(null);
   const reconnectTimerRef = useRef(null);
+  // Anti-spam: client-side rate limit on the WS comment + reaction wires.
+  // Comments: 1 per 1.2s (Instagram parity). Reactions: coalesced @ 200ms
+  // (5 hearts/sec max) so long-press burst doesn't flood the channel even
+  // though each tap still spawns a local heart animation instantly.
+  const lastChatSendAtRef = useRef(0);
+  const lastReactionSendAtRef = useRef(0);
   // Full-screen container ref — used by react-native-view-shot to snap the
   // live frame + comment overlay (Instagram/TikTok "save snap" parity).
   const screenRef = useRef(null);
@@ -112,12 +129,27 @@ export default function LiveViewerScreen() {
   const endedFade = useRef(new Animated.Value(0)).current;
   const livePulse = useRef(new Animated.Value(1)).current;
   const heartScale = useRef(new Animated.Value(1)).current;
+  // Connecting overlay entrance — spring fade-in from below so the skeleton
+  // doesn't pop in cold. Reset to 0 on mount, spring to 1.
+  const connectingEntrance = useRef(new Animated.Value(0)).current;
+  // Joined transition — slides up a gradient overlay reveal once `connected`
+  // flips true, then fades out. Looks like Instagram's "stream loaded" wipe.
+  const joinedReveal = useRef(new Animated.Value(0)).current;
+  // Input pill focus lift — scales slightly + shifts up so the bar feels
+  // alive instead of a static rectangle.
+  const inputLift = useRef(new Animated.Value(0)).current;
   // Viewer-count "+1" bump — small floating chip that pops above the eye pill
   // whenever a new viewer joins. Instagram/TikTok parity: subtle but lively.
   const viewerCountScale = useRef(new Animated.Value(1)).current;
   const viewerPlusOneAnim = useRef(new Animated.Value(0)).current;
   const [viewerPlusOneVisible, setViewerPlusOneVisible] = useState(false);
   const prevViewerCountRef = useRef(0);
+  // Entry-flash overlay — paints a white "Entrando…" curtain over the whole
+  // screen for the first 500ms after mount, then fades to 0. Makes the
+  // tap → live-viewer transition feel instant even on slow WebRTC handshakes
+  // (the user gets a confirmation that something is happening while the
+  // skeleton card behind it is still spinning up). Plays exactly once.
+  const entryFlash = useRef(new Animated.Value(1)).current;
 
   // ICE config
   const iceConfig = {
@@ -160,6 +192,46 @@ export default function LiveViewerScreen() {
     loop.start();
     return () => loop.stop();
   }, [connected, liveEnded]);
+
+  // Connecting overlay entrance — spring up from 0 → 1 on mount so the
+  // skeleton card lands softly instead of cold-popping. Skip if already
+  // connected by the time we get here (deep-link warm path).
+  useEffect(() => {
+    if (connected || liveEnded) return undefined;
+    Animated.spring(connectingEntrance, {
+      toValue: 1, friction: 7, tension: 110, useNativeDriver: true,
+    }).start();
+    return undefined;
+  }, [connected, liveEnded, connectingEntrance]);
+
+  // Entry-flash — fade the white "Entrando…" curtain out over 500ms. Runs
+  // once on mount regardless of connection state so every tap to enter
+  // gives the same instant-feedback feel.
+  useEffect(() => {
+    Animated.timing(entryFlash, {
+      toValue: 0,
+      duration: 500,
+      useNativeDriver: true,
+    }).start();
+  }, [entryFlash]);
+
+  // Joined transition — when `connected` flips true, run a slide-up gradient
+  // reveal that wipes the skeleton off the screen. The overlay starts fully
+  // opaque, then translates up and fades over ~700ms (Instagram parity).
+  useEffect(() => {
+    if (!connected) { joinedReveal.setValue(0); return; }
+    Animated.sequence([
+      Animated.timing(joinedReveal, { toValue: 1, duration: 520, useNativeDriver: true }),
+    ]).start();
+  }, [connected, joinedReveal]);
+
+  // Input pill focus lift — spring scale + translateY when input gains focus.
+  useEffect(() => {
+    Animated.spring(inputLift, {
+      toValue: inputFocused ? 1 : 0,
+      friction: 6, tension: 140, useNativeDriver: true,
+    }).start();
+  }, [inputFocused, inputLift]);
 
   // Viewer-count pop: when the count goes up, the chip bumps + a small "+1"
   // floats up briefly. Skips the first render so we don't fire on mount.
@@ -567,6 +639,13 @@ export default function LiveViewerScreen() {
   }, []);
 
   const handleSendChat = useCallback((text) => {
+    // Anti-spam rate limit: 1 comment / 1.2s. Drops silently below threshold
+    // so the composer feels "instant" but the WS server isn't flooded by a
+    // sticky-key viewer. Mirrors Instagram Live's invisible client throttle.
+    const now = Date.now();
+    if (now - lastChatSendAtRef.current < 1200) return;
+    lastChatSendAtRef.current = now;
+
     const senderName = user?.name || user?.email?.split('@')[0] || 'You';
     const entry = new Animated.Value(0);
 
@@ -646,7 +725,13 @@ export default function LiveViewerScreen() {
     spawnHeart();
     popHeartButton();
 
-    // Send reaction via WS
+    // Local heart spawns every tap, but the WS reaction is coalesced @ 200ms
+    // (5/s cap). Long-press / rapid-tap still feels rich locally, but the
+    // server doesn't see a packet storm. Other viewers see ~5 hearts/sec
+    // float per fan, which matches Instagram/TikTok's perceived density.
+    const now = Date.now();
+    if (now - lastReactionSendAtRef.current < 200) return;
+    lastReactionSendAtRef.current = now;
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'live_reaction',
@@ -740,10 +825,48 @@ export default function LiveViewerScreen() {
   }, [paramSessionId, hostName, paramTitle]);
 
   // Tap a floating comment → seed the input with "@name " so the reply UX
-  // mirrors Instagram Live (and gives the comment a clear target). We also
-  // focus the input so the keyboard pops without an extra tap.
+  // mirrors Instagram Live (and gives the comment a clear target). Double-tap
+  // within 280ms → emit a heart-reaction chip on the comment row (animated)
+  // and fire a normal heart so the broadcaster sees the love. Single tap
+  // still seeds @reply.
+  const fireCommentHeart = useCallback((msgId) => {
+    const anim = new Animated.Value(0);
+    setCommentHearts(prev => ({ ...prev, [msgId]: anim }));
+    Animated.sequence([
+      Animated.timing(anim, { toValue: 1, duration: 220, useNativeDriver: true }),
+      Animated.delay(900),
+      Animated.timing(anim, { toValue: 0, duration: 240, useNativeDriver: true }),
+    ]).start(() => {
+      setCommentHearts(prev => {
+        if (!prev[msgId]) return prev;
+        const next = { ...prev };
+        delete next[msgId];
+        return next;
+      });
+    });
+  }, []);
+
   const handleReplyToComment = useCallback((msg) => {
-    if (!msg?.name) return;
+    if (!msg?.name || !msg?.id) return;
+    const now = Date.now();
+    const lastTap = lastCommentTapRef.current[msg.id] || 0;
+    if (now - lastTap < 280) {
+      // Double-tap → heart reaction chip on the comment row + send heart.
+      lastCommentTapRef.current[msg.id] = 0;
+      fireCommentHeart(msg.id);
+      spawnHeart();
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        try {
+          wsRef.current.send(JSON.stringify({
+            type: 'live_reaction',
+            session_id: paramSessionId,
+            emoji: '❤️',
+          }));
+        } catch {}
+      }
+      return;
+    }
+    lastCommentTapRef.current[msg.id] = now;
     const handle = String(msg.name).replace(/\s+/g, '');
     setInputText((prev) => {
       // Avoid duplicating an @prefix if user already typed one for the same
@@ -753,6 +876,12 @@ export default function LiveViewerScreen() {
       return `@${handle} `;
     });
     setTimeout(() => { try { inputRef.current?.focus?.(); } catch {} }, 30);
+  }, [fireCommentHeart, spawnHeart, paramSessionId]);
+
+  // Long-press the host avatar (top bar or right rail) → opens Instagram-style
+  // quick-peek card. Single tap on the rail still toggles follow.
+  const openHostPeek = useCallback(() => {
+    setHostPeekOpen(true);
   }, []);
 
   // Capture a snapshot of the live stage (video + overlays) and save it to
@@ -800,16 +929,25 @@ export default function LiveViewerScreen() {
     }
   }, [t, showToast]);
 
-  // Long-press the rail heart → fire a 5-heart spam burst, Instagram-style.
+  // Long-press the rail heart → fire an 8-heart spam burst, Instagram-style.
   // Each heart is spawned ~80ms apart so the column reads like a stream of
   // taps without the user actually spamming. Also pops the button each round.
+  // Bumped from 5 → 8 (#887 baseline) so the long-press feels meatier and
+  // matches Instagram's "love bomb" cadence.
   const handleHeartLongPress = useCallback(() => {
     let i = 0;
     const fire = () => {
-      if (i++ >= 5) return;
+      if (i++ >= 8) return;
       spawnHeart();
       popHeartButton();
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
+      // Coalesce WS sends through the same 200ms throttle the single-tap uses.
+      // Locally we still spawn the burst so the viewer sees rich feedback,
+      // but the WS channel sees at most 1 reaction packet per 200ms — server
+      // doesn't get flooded even if a viewer mashes the heart button.
+      const now = Date.now();
+      if (now - lastReactionSendAtRef.current >= 200 &&
+          wsRef.current?.readyState === WebSocket.OPEN) {
+        lastReactionSendAtRef.current = now;
         wsRef.current.send(JSON.stringify({
           type: 'live_reaction',
           session_id: paramSessionId,
@@ -963,9 +1101,28 @@ export default function LiveViewerScreen() {
         )}
       </Pressable>
 
-      {/* Connecting overlay */}
+      {/* Connecting overlay — Instagram-style skeleton: black scrim, pulsing
+          avatar of the host, "Conectando à live de X..." text in spring fade
+          entrance. The whole card scales from 0.92 → 1 + rises 14px on mount
+          so it lands soft instead of cold-popping. */}
       {!connected && (
-        <View style={styles.connectingOverlay}>
+        <Animated.View
+          style={[
+            styles.connectingOverlay,
+            {
+              opacity: connectingEntrance,
+              transform: [
+                { translateY: connectingEntrance.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) },
+                { scale: connectingEntrance.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] }) },
+              ],
+            },
+          ]}
+        >
+          {/* Avatar gets its own pulse ring layered behind so the skeleton
+              card has the same red ring vocabulary as the connected top bar. */}
+          <View pointerEvents="none" style={styles.connectingAvatarHalo}>
+            <Animated.View style={[styles.connectingAvatarPulseRing, { opacity: connectingPulse }]} />
+          </View>
           <AvatarCircle
             name={displayHostName}
             email={displayHostEmail}
@@ -988,12 +1145,32 @@ export default function LiveViewerScreen() {
             <>
               <ActivityIndicator size="small" color="rgba(255,255,255,0.5)" style={{ marginTop: 16 }} />
               <Animated.Text style={[styles.connectingText, { opacity: connectingPulse }]}>
-                {error || (t('live.connecting') || 'Connecting...')}
+                {error || (displayHostName
+                  ? ((t('live.connectingTo') || 'Conectando à live de {name}…').replace('{name}', displayHostName))
+                  : (t('live.connecting') || 'Conectando…'))}
               </Animated.Text>
             </>
           )}
-        </View>
+        </Animated.View>
       )}
+
+      {/* Joined transition — slides up a gradient overlay that wipes the
+          black scrim off once the stream connects. Animated from y=0 → -H,
+          opacity 1 → 0 so the stream is revealed without a hard cut. */}
+      {connected ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.joinedReveal,
+            {
+              opacity: joinedReveal.interpolate({ inputRange: [0, 0.6, 1], outputRange: [1, 0.55, 0] }),
+              transform: [{
+                translateY: joinedReveal.interpolate({ inputRange: [0, 1], outputRange: [0, -SCREEN_H] }),
+              }],
+            },
+          ]}
+        />
+      ) : null}
 
       {/* Top bar — Instagram/TikTok-grade header. BIG host avatar (54px) with
           a pulsing red gradient ring + LIVE badge tucked under it. To the right:
@@ -1005,8 +1182,17 @@ export default function LiveViewerScreen() {
       <View style={[styles.topBar, { paddingTop: insets.top + 8 }]} pointerEvents="box-none">
         {/* Big host avatar + pulsing red ring + integrated LIVE pill. The ring
             uses Animated.View opacity so it breathes; the avatar itself stays
-            crisp (no scale animation — was distracting in QA). */}
-        <View style={styles.hostAvatarBlock} pointerEvents="box-none">
+            crisp (no scale animation — was distracting in QA). Long-press
+            opens an Instagram-style quick-peek card. Single tap stays inert
+            here (rail avatar handles toggleFollow). */}
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onLongPress={openHostPeek}
+          delayLongPress={280}
+          style={styles.hostAvatarBlock}
+          accessibilityLabel={t('live.quickPeek') || 'Ver perfil do host'}
+          accessibilityRole="button"
+        >
           <Animated.View style={[styles.avatarRingPulse, { opacity: livePulse }]} pointerEvents="none" />
           <View style={styles.avatarRingStatic} pointerEvents="none" />
           <AvatarCircle
@@ -1017,7 +1203,7 @@ export default function LiveViewerScreen() {
           <View style={styles.liveBadgeInline} pointerEvents="none">
             <Text style={styles.liveBadgeText}>{t('live.aoVivo') || 'AO VIVO'}</Text>
           </View>
-        </View>
+        </TouchableOpacity>
 
         <View style={styles.hostInfo}>
           <Text style={styles.hostName} numberOfLines={1}>
@@ -1120,6 +1306,8 @@ export default function LiveViewerScreen() {
       <View style={[styles.sideActions, { bottom: 200 + insets.bottom }]} pointerEvents="box-none">
         <TouchableOpacity
           onPress={toggleFollow}
+          onLongPress={openHostPeek}
+          delayLongPress={280}
           activeOpacity={0.85}
           accessibilityLabel="Host profile"
           accessibilityRole="button"
@@ -1331,8 +1519,10 @@ export default function LiveViewerScreen() {
                 </Animated.View>
               );
             }
-            // Tap a comment → @reply seed in input. Stop press from bubbling
-            // up to the parent overlay (which would open the full chat sheet).
+            // Tap a comment → @reply seed in input. Double-tap → heart
+            // reaction chip on the row. Stop press from bubbling up to the
+            // parent overlay (which would open the full chat sheet).
+            const heartAnim = commentHearts[m.id];
             return (
               <Animated.View
                 key={m.id}
@@ -1350,32 +1540,83 @@ export default function LiveViewerScreen() {
                     <Text style={styles.commentName} numberOfLines={1}>{m.name}</Text>
                     <Text style={styles.commentText} numberOfLines={3}>{m.content}</Text>
                   </View>
+                  {heartAnim ? (
+                    <Animated.View
+                      pointerEvents="none"
+                      style={[
+                        styles.commentHeartChip,
+                        {
+                          opacity: heartAnim,
+                          transform: [
+                            { scale: heartAnim.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] }) },
+                            { translateY: heartAnim.interpolate({ inputRange: [0, 1], outputRange: [4, -2] }) },
+                          ],
+                        },
+                      ]}
+                    >
+                      <IconHeart size={14} color="#fff" />
+                    </Animated.View>
+                  ) : null}
                 </TouchableOpacity>
               </Animated.View>
             );
           })}
         </TouchableOpacity>
 
-        <View style={styles.inputBar}>
-          <View style={[styles.inputPill, inputFocused && styles.inputPillFocused]}>
+        {/* Bottom input bar — pill input with the send SVG nested inside
+            the right side of the pill itself (Instagram parity). On focus the
+            entire bar lifts (translateY + scale) and the pill border picks up
+            the brand accent so it pops over the video frame. */}
+        <Animated.View
+          style={[
+            styles.inputBar,
+            {
+              transform: [
+                { translateY: inputLift.interpolate({ inputRange: [0, 1], outputRange: [0, -4] }) },
+                { scale: inputLift.interpolate({ inputRange: [0, 1], outputRange: [1, 1.02] }) },
+              ],
+            },
+          ]}
+        >
+          <View
+            style={[
+              styles.inputPill,
+              inputFocused && styles.inputPillFocused,
+              inputFocused && { borderColor: brandAccent },
+            ]}
+          >
             <TextInput
               ref={inputRef}
               style={styles.inputText}
               value={inputText}
               onChangeText={setInputText}
-              placeholder={t('live.commentHint') || t('live.commentPlaceholder') || 'Comentar...'}
+              placeholder={t('live.placeholderComment') || t('live.commentHint') || t('live.commentPlaceholder') || 'Comente...'}
               placeholderTextColor="rgba(255,255,255,0.65)"
               returnKeyType="send"
               onSubmitEditing={sendComment}
               onFocus={() => setInputFocused(true)}
               onBlur={() => setInputFocused(false)}
               blurOnSubmit={false}
-              accessibilityLabel={t('live.commentHint') || 'Comment'}
+              accessibilityLabel={t('live.placeholderComment') || 'Comment'}
             />
+            {/* Send SVG inside the pill's right edge — only appears when
+                there's text to send (Instagram parity). Tapping fires the
+                same sendComment handler bound to onSubmitEditing. */}
+            {inputText.trim() ? (
+              <TouchableOpacity
+                onPress={sendComment}
+                style={[styles.sendBtnInside, { backgroundColor: brandAccent }]}
+                activeOpacity={0.85}
+                accessibilityLabel="Send comment"
+                accessibilityRole="button"
+              >
+                <IconSend size={15} color="#fff" />
+              </TouchableOpacity>
+            ) : null}
           </View>
           {/* Inline heart shortcut — same action as the right-rail heart, but
               within thumb reach of the input bar (Instagram parity). Tap to
-              fire a single heart + WS reaction; long-press for the 5-spam
+              fire a single heart + WS reaction; long-press for the 8-spam
               burst. */}
           <Animated.View style={{ transform: [{ scale: heartScale }] }}>
             <TouchableOpacity
@@ -1390,18 +1631,7 @@ export default function LiveViewerScreen() {
               <IconHeart size={22} color={LIVE_RED} />
             </TouchableOpacity>
           </Animated.View>
-          {inputText.trim() ? (
-            <TouchableOpacity
-              onPress={sendComment}
-              style={[styles.sendBtn, styles.sendBtnActive]}
-              activeOpacity={0.85}
-              accessibilityLabel="Send comment"
-              accessibilityRole="button"
-            >
-              <IconSend size={16} color="#fff" />
-            </TouchableOpacity>
-          ) : null}
-        </View>
+        </Animated.View>
       </View>
 
       {/* Snapshot/error toast — surfaces save state for the new screenshot
@@ -1473,7 +1703,7 @@ export default function LiveViewerScreen() {
             <View style={styles.viewersListHandle} />
             <View style={styles.viewersListHeader}>
               <Text style={styles.viewersListTitle}>
-                {t('live.viewersList') || 'Espectadores'} · {viewerCount.toLocaleString()}
+                {t('live.whosWatching') || t('live.viewersList') || 'Quem está vendo'} · {viewerCount.toLocaleString()}
               </Text>
               <TouchableOpacity onPress={() => setShowViewersList(false)} style={styles.viewersListClose}>
                 <IconX size={20} color="#fff" />
@@ -1482,19 +1712,32 @@ export default function LiveViewerScreen() {
             {viewers.length === 0 ? (
               <View style={styles.viewersListEmpty}>
                 <Text style={styles.viewersListEmptyText}>
-                  {t('live.viewersListEmpty') || 'Ninguém entrou ainda'}
+                  {viewerCount <= 1
+                    ? (t('live.justYou') || 'Só você assistindo')
+                    : (t('live.viewersListEmpty') || 'Ninguém entrou ainda')}
                 </Text>
               </View>
             ) : (
               <ScrollView style={styles.viewersListScroll} keyboardShouldPersistTaps="handled">
                 {viewers.map((v) => (
-                  <View key={v.email} style={styles.viewerRow}>
-                    <AvatarCircle name={v.name} email={v.email} size={40} />
+                  <TouchableOpacity
+                    key={v.email}
+                    style={styles.viewerRow}
+                    activeOpacity={0.7}
+                    onPress={() => {
+                      // Tap a viewer row → close sheet + navigate to their
+                      // profile. Profile screen accepts ?email= query param.
+                      try { setShowViewersList(false); router.push(`/profile?email=${encodeURIComponent(v.email)}`); } catch {}
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={v.name}
+                  >
+                    <AvatarCircle name={v.name} email={v.email} size={32} />
                     <View style={{ flex: 1, marginLeft: 12 }}>
                       <Text style={styles.viewerRowName} numberOfLines={1}>{v.name}</Text>
                       <Text style={styles.viewerRowEmail} numberOfLines={1}>{v.email}</Text>
                     </View>
-                  </View>
+                  </TouchableOpacity>
                 ))}
               </ScrollView>
             )}
@@ -1535,6 +1778,105 @@ export default function LiveViewerScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* Host quick-peek (Instagram long-press preview). Compact card with
+          big avatar + name + LIVE pill + Follow/Share/Profile actions.
+          Backdrop tap dismisses. Triggered by long-press on the top-bar
+          host avatar or the right-rail host avatar. */}
+      <Modal visible={hostPeekOpen} animationType="fade" transparent onRequestClose={() => setHostPeekOpen(false)}>
+        <Pressable style={styles.peekBackdrop} onPress={() => setHostPeekOpen(false)}>
+          <Pressable style={styles.peekCard} onPress={(e) => e.stopPropagation?.()}>
+            <View style={styles.peekHeader}>
+              <View style={styles.peekAvatarRing} pointerEvents="none" />
+              <AvatarCircle
+                name={displayHostName}
+                email={displayHostEmail}
+                size={72}
+              />
+              <View style={styles.peekLivePill} pointerEvents="none">
+                <Text style={styles.liveBadgeText}>{t('live.aoVivo') || 'AO VIVO'}</Text>
+              </View>
+            </View>
+            <Text style={styles.peekName} numberOfLines={1}>{displayHostName || '…'}</Text>
+            {displayHostEmail ? (
+              <Text style={styles.peekEmail} numberOfLines={1}>{displayHostEmail}</Text>
+            ) : null}
+            <View style={styles.peekActions}>
+              <TouchableOpacity
+                onPress={() => { toggleFollow(); }}
+                activeOpacity={0.85}
+                style={[
+                  styles.peekActionBtn,
+                  following ? styles.peekActionGhost : { backgroundColor: brandAccent },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel={following ? (t('live.following') || 'Seguindo') : (t('live.follow') || 'Seguir')}
+              >
+                {following
+                  ? <IconCheck size={16} color="#fff" />
+                  : <IconUserPlus size={16} color="#fff" />}
+                <Text style={styles.peekActionText}>
+                  {following ? (t('live.following') || 'Seguindo') : (t('live.follow') || 'Seguir')}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => { setHostPeekOpen(false); handleShare(); }}
+                activeOpacity={0.85}
+                style={[styles.peekActionBtn, styles.peekActionGhost]}
+                accessibilityRole="button"
+                accessibilityLabel={t('live.share') || 'Compartilhar'}
+              >
+                <IconShare size={16} color="#fff" />
+                <Text style={styles.peekActionText}>{t('live.share') || 'Compartilhar'}</Text>
+              </TouchableOpacity>
+            </View>
+            {displayHostEmail ? (
+              <TouchableOpacity
+                onPress={() => {
+                  setHostPeekOpen(false);
+                  try { router.push(`/profile?email=${encodeURIComponent(displayHostEmail)}`); } catch {}
+                }}
+                activeOpacity={0.7}
+                style={styles.peekProfileLink}
+                accessibilityRole="button"
+              >
+                <Text style={styles.peekProfileLinkText}>
+                  {t('live.viewProfile') || 'Ver perfil'}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Entry-flash overlay — 500ms white curtain with "Entrando…" so the
+          tap → live-viewer feels instant, regardless of how long the WebRTC
+          handshake takes. Rendered LAST so it sits above every other layer
+          (top bar, connecting skeleton, joinedReveal). pointerEvents="none"
+          so it never eats taps even if a JS hiccup keeps it on screen a
+          frame longer than expected. */}
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          StyleSheet.absoluteFill,
+          {
+            backgroundColor: '#fff',
+            opacity: entryFlash,
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 99999,
+          },
+        ]}
+      >
+        <Text style={{
+          color: '#dc2626',
+          fontSize: 18,
+          fontWeight: '800',
+          letterSpacing: 0.6,
+        }}>
+          {t('live.entering') || 'Entrando…'}
+        </Text>
+      </Animated.View>
     </View>
   );
 }
@@ -2211,4 +2553,157 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   giftEmoji: { fontSize: 30 },
+
+  // Joined-transition reveal — a black layer that slides up off the screen
+  // once we've connected to the stream. Visual covers the entire viewport
+  // before sliding away (translateY animated to -SCREEN_H).
+  joinedReveal: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(15,15,26,0.92)',
+    zIndex: 6,
+    ...(Platform.OS === 'web' ? {
+      background: 'linear-gradient(to bottom, rgba(15,15,26,0.95), rgba(124,58,237,0.18) 60%, rgba(15,15,26,0.95))',
+    } : {}),
+  },
+
+  // Connecting overlay halo around the avatar — pulsing red ring that uses
+  // the same vocabulary as the connected top-bar ring (visual continuity).
+  connectingAvatarHalo: {
+    position: 'absolute',
+    width: 100, height: 100, borderRadius: 50,
+    alignItems: 'center', justifyContent: 'center',
+    marginTop: -20, // visually centers the ring behind the 80px avatar
+  },
+  connectingAvatarPulseRing: {
+    width: 100, height: 100, borderRadius: 50,
+    borderWidth: 2, borderColor: LIVE_RED,
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 0 24px rgba(220,38,38,0.5)',
+    } : {}),
+  },
+
+  // Send button nested inside the input pill (Instagram parity). Floats on
+  // the right edge of the pill; only appears when there's text to send.
+  sendBtnInside: {
+    position: 'absolute',
+    right: 5,
+    top: 5,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 10px rgba(124,58,237,0.55)' } : {}),
+  },
+
+  // Inline heart chip on a comment row — appears for ~1.3s on double-tap.
+  commentHeartChip: {
+    marginLeft: 6,
+    width: 22, height: 22, borderRadius: 11,
+    backgroundColor: LIVE_RED,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1.5, borderColor: '#fff',
+    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 8px rgba(220,38,38,0.55)' } : {}),
+  },
+
+  // Host quick-peek (long-press preview) — floats centered with a soft scrim.
+  peekBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  peekCard: {
+    width: '100%',
+    maxWidth: 340,
+    backgroundColor: '#16162b',
+    borderRadius: 22,
+    paddingTop: 22,
+    paddingBottom: 18,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 20px 60px rgba(0,0,0,0.55)',
+    } : {}),
+  },
+  peekHeader: {
+    width: 88, height: 88,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    marginBottom: 10,
+  },
+  peekAvatarRing: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    borderRadius: 44,
+    borderWidth: 2.5,
+    borderColor: LIVE_RED,
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 0 18px rgba(220,38,38,0.45)',
+    } : {}),
+  },
+  peekLivePill: {
+    position: 'absolute',
+    bottom: -4,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 5,
+    backgroundColor: LIVE_RED,
+    borderWidth: 1.5,
+    borderColor: '#fff',
+  },
+  peekName: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '800',
+    marginTop: 6,
+    letterSpacing: 0.2,
+  },
+  peekEmail: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  peekActions: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 16,
+    width: '100%',
+    justifyContent: 'center',
+  },
+  peekActionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 22,
+  },
+  peekActionGhost: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  peekActionText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  peekProfileLink: {
+    marginTop: 12,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  peekProfileLinkText: {
+    color: 'rgba(196,181,253,0.95)',
+    fontSize: 13,
+    fontWeight: '700',
+  },
 });

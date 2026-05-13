@@ -522,8 +522,27 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
 
   const isWeb = Platform.OS === 'web';
 
+  const openLive = useCallback((live) => {
+    router.push({
+      pathname: '/live-viewer',
+      params: {
+        sessionId: live.id || live.session_id,
+        hostEmail: live.host_email,
+        hostName: live.host_name,
+        title: live.title,
+      },
+    });
+  }, [router]);
+
   const renderLiveHeader = useCallback(() => {
     if (activeLives.length === 0) return null;
+    // First live → Instagram-style 16:9 hero card. Bigger avatar + blur-ish
+    // gradient overlay + LIVE badge + viewer count chip. The remaining lives
+    // fall back to the compact horizontal chip row so the feed isn't taken
+    // over by a hero per host.
+    const [hero, ...rest] = activeLives;
+    const heroName = hero.host_name || hero.host_email?.split('@')[0] || '?';
+    const heroViewers = hero.viewer_count || 0;
     return (
       <View style={[styles.liveSection, {
         backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)',
@@ -535,61 +554,110 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
             {t('live.liveNow')}
           </Text>
         </View>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.liveScroll}
+
+        {/* Hero card 16:9. Wraps the host avatar inside a red-tinted backdrop
+            with a dark gradient under the text so the LIVE chip + viewer
+            pill always read on any avatar art. */}
+        <TouchableOpacity
+          onPress={() => openLive(hero)}
+          activeOpacity={0.88}
+          accessibilityRole="button"
+          accessibilityLabel={`${t('live.liveNow')}: ${heroName}`}
+          style={[styles.liveHero, {
+            backgroundColor: isDark ? '#1a0e10' : '#fff',
+            ...(isWeb ? {
+              boxShadow: isDark
+                ? '0 6px 24px rgba(220,38,38,0.18), 0 2px 8px rgba(0,0,0,0.35)'
+                : '0 6px 24px rgba(220,38,38,0.12), 0 2px 8px rgba(0,0,0,0.08)',
+            } : {}),
+          }]}
         >
-          {activeLives.map((live) => (
-            <TouchableOpacity
-              key={live.id || live.session_id}
-              style={[styles.liveCard, {
-                backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#fff',
-                ...(isWeb ? {
-                  boxShadow: isDark
-                    ? '0 2px 8px rgba(0,0,0,0.3)'
-                    : '0 2px 8px rgba(0,0,0,0.08)',
-                } : {}),
-              }]}
-              onPress={() => router.push({
-                pathname: '/live-viewer',
-                params: {
-                  sessionId: live.id || live.session_id,
-                  hostEmail: live.host_email,
-                  hostName: live.host_name,
-                  title: live.title,
-                },
-              })}
-              activeOpacity={0.7}
-              accessibilityLabel={`${t('live.liveNow')}: ${live.host_name || live.host_email}`}
-              accessibilityRole="button"
-            >
-              <View style={styles.liveAvatarWrap}>
-                <View style={styles.liveAvatarRing}>
-                  <AvatarCircle
-                    name={live.host_name}
-                    email={live.host_email}
-                    size={50}
-                  />
-                </View>
-                <View style={styles.liveBadgeSmall}>
-                  <Text style={styles.liveBadgeText}>LIVE</Text>
-                </View>
+          {/* Backdrop tint layered behind everything for an Instagram-grade
+              red glow. AvatarCircle stays crisp on top. */}
+          <View style={styles.liveHeroBackdrop} pointerEvents="none" />
+          <View style={styles.liveHeroBackdropGradient} pointerEvents="none" />
+
+          <View style={styles.liveHeroContent}>
+            <View style={styles.liveHeroAvatarWrap}>
+              <View style={styles.liveHeroAvatarRing}>
+                <AvatarCircle
+                  name={heroName}
+                  email={hero.host_email}
+                  size={84}
+                />
               </View>
-              <Text style={[styles.liveHostName, { color: colors.text }]} numberOfLines={1}>
-                {live.host_name || live.host_email?.split('@')[0] || '?'}
+            </View>
+            <View style={styles.liveHeroTextCol}>
+              <View style={styles.liveHeroBadgeRow}>
+                <LiveIndicator size="small" viewerCount={heroViewers} />
+              </View>
+              <Text style={[styles.liveHeroName, { color: isDark ? '#fff' : '#111' }]} numberOfLines={1}>
+                {heroName}
               </Text>
-              {live.viewer_count != null && (
-                <Text style={[styles.liveViewers, { color: colors.textSecondary }]}>
-                  {live.viewer_count} {live.viewer_count === 1 ? t('live.viewer') : t('live.viewers')}
+              {!!hero.title && (
+                <Text style={[styles.liveHeroTitle, { color: isDark ? 'rgba(255,255,255,0.78)' : 'rgba(0,0,0,0.68)' }]} numberOfLines={2}>
+                  {hero.title}
                 </Text>
               )}
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+              <View style={styles.liveHeroCtaPill}>
+                <Text style={styles.liveHeroCtaText}>
+                  {(t('live.enter') || 'Entrar').toUpperCase()}
+                </Text>
+              </View>
+            </View>
+          </View>
+        </TouchableOpacity>
+
+        {/* Remaining lives — horizontal chip row, same compact look as before. */}
+        {rest.length > 0 && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={[styles.liveScroll, { marginTop: 10 }]}
+          >
+            {rest.map((live) => (
+              <TouchableOpacity
+                key={live.id || live.session_id}
+                style={[styles.liveCard, {
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#fff',
+                  ...(isWeb ? {
+                    boxShadow: isDark
+                      ? '0 2px 8px rgba(0,0,0,0.3)'
+                      : '0 2px 8px rgba(0,0,0,0.08)',
+                  } : {}),
+                }]}
+                onPress={() => openLive(live)}
+                activeOpacity={0.7}
+                accessibilityLabel={`${t('live.liveNow')}: ${live.host_name || live.host_email}`}
+                accessibilityRole="button"
+              >
+                <View style={styles.liveAvatarWrap}>
+                  <View style={styles.liveAvatarRing}>
+                    <AvatarCircle
+                      name={live.host_name}
+                      email={live.host_email}
+                      size={50}
+                    />
+                  </View>
+                  <View style={styles.liveBadgeSmall}>
+                    <Text style={styles.liveBadgeText}>LIVE</Text>
+                  </View>
+                </View>
+                <Text style={[styles.liveHostName, { color: colors.text }]} numberOfLines={1}>
+                  {live.host_name || live.host_email?.split('@')[0] || '?'}
+                </Text>
+                {live.viewer_count != null && (
+                  <Text style={[styles.liveViewers, { color: colors.textSecondary }]}>
+                    {live.viewer_count} {live.viewer_count === 1 ? t('live.viewer') : t('live.viewers')}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        )}
       </View>
     );
-  }, [activeLives, isDark, colors, t, router, isWeb]);
+  }, [activeLives, isDark, colors, t, openLive, isWeb]);
 
   const handlePressUser = useCallback((email) => {
     if (!email) return;
@@ -1191,6 +1259,82 @@ const styles = StyleSheet.create({
   liveViewers: {
     fontSize: 10,
     marginTop: 2,
+  },
+  // ─── Live hero card (Instagram parity 16:9-ish) ───
+  liveHero: {
+    marginHorizontal: 14,
+    borderRadius: 18,
+    overflow: 'hidden',
+    position: 'relative',
+    minHeight: 132,
+  },
+  liveHeroBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(220,38,38,0.10)',
+  },
+  liveHeroBackdropGradient: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, height: 64,
+    backgroundColor: 'rgba(220,38,38,0.16)',
+  },
+  liveHeroContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    gap: 14,
+  },
+  liveHeroAvatarWrap: {
+    position: 'relative',
+  },
+  liveHeroAvatarRing: {
+    borderWidth: 3,
+    borderColor: '#dc2626',
+    borderRadius: 50,
+    padding: 3,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#dc2626',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.55,
+        shadowRadius: 12,
+      },
+      android: { elevation: 5 },
+      web: { boxShadow: '0 0 16px rgba(220,38,38,0.55)' },
+    }),
+  },
+  liveHeroTextCol: {
+    flex: 1,
+    gap: 4,
+  },
+  liveHeroBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
+  liveHeroName: {
+    fontSize: 17,
+    fontWeight: '800',
+    letterSpacing: -0.2,
+  },
+  liveHeroTitle: {
+    fontSize: 13,
+    fontWeight: '500',
+    lineHeight: 18,
+  },
+  liveHeroCtaPill: {
+    alignSelf: 'flex-start',
+    marginTop: 8,
+    backgroundColor: '#dc2626',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 14,
+  },
+  liveHeroCtaText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 0.8,
   },
   // Tab bar
   tabBar: {
