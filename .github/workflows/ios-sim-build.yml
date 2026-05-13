@@ -92,3 +92,21 @@ jobs:
           name: chatyy-ios-sim
           path: ${{ steps.pkg.outputs.tarball }}
           retention-days: 5
+
+      - name: SCP tarball to prod server (so Mac Docker pode pegar)
+        if: success()
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+        run: |
+          if [ -z "$SSH_KEY" ] || [ -z "$SERVER_HOST" ]; then
+            echo "SERVER_HOST/SSH_KEY not configured — skipping SCP"
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          scp -i ~/.ssh/id_rsa "${{ steps.pkg.outputs.tarball }}" "root@${SERVER_HOST}:/var/www/mail/data/uploads/chatyy-sim.tar.gz"
+          echo "Tarball deployed to ${SERVER_HOST}:/var/www/mail/data/uploads/chatyy-sim.tar.gz"
+          rm -f ~/.ssh/id_rsa
