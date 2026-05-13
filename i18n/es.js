@@ -620,6 +620,7 @@ export default {
   'compose.saveDraft': 'Guardar borrador',
   'compose.draftSaved': 'Borrador guardado',
   'compose.improveText': 'Mejorar',
+  'compose.improving': 'Mejorando...',
   'compose.aiImproved': '✨ Texto mejorado',
   'compose.characters': 'caracteres',
   'compose.templates': 'Plantillas',
@@ -1200,6 +1201,7 @@ export default {
   'meetings.join': 'Unirse',
   'meetings.recap': 'Resumen',
   'meetings.schedule': 'Programar',
+  'meetings.scheduleCta': 'Programar reunión',
   'meetings.newMeeting': 'Nueva Reunión',
   'meetings.defaultTitle': 'Reunión',
   'meetings.createError': 'No se pudo crear la reunión. Intenta de nuevo.',
@@ -4245,6 +4247,7 @@ export default {
   'one.suggestReminder': 'Recordarme algo',
 
   // ChatGPT-style redesign
+  'one.emptyTitle': '¿Cómo puedo ayudar?',
   'one.emptyHint': '¿Cómo puedo ayudarte hoy?',
   'one.regenerate': 'Regenerar',
   'one.badResponse': 'Respuesta mala',

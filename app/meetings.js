@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet,
-  ActivityIndicator, RefreshControl, Alert, Platform,
+  ActivityIndicator, RefreshControl, Alert, Platform, Animated, Easing,
 } from 'react-native';
 // FlashList reverted to FlatList
 import { useRouter } from 'expo-router';
@@ -103,26 +103,66 @@ function RsvpBadge({ rsvp, colors, t }) {
   );
 }
 
+// Polish 2026-05-13: AO VIVO pulse — red-leaning red dot scales + fades in a
+// breathing loop while a meeting is active. Vermelho seguindo o spec (não
+// mais accent purple). Looped Animated nativeDriver-safe (opacity+scale only).
+function LivePulseDot({ color = '#EF4444' }) {
+  const pulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 900, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0, duration: 900, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+  const scale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.45] });
+  const opacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 0.25] });
+  return (
+    <View style={{ width: 8, height: 8, justifyContent: 'center', alignItems: 'center' }}>
+      <Animated.View style={{ position: 'absolute', width: 14, height: 14, borderRadius: 7, backgroundColor: color, opacity, transform: [{ scale }] }} />
+      <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: color }} />
+    </View>
+  );
+}
+
 function MeetingCard({ meeting, colors, isDark, onPress, onJoin, onCopy, t }) {
   const stale = isStale(meeting);
   const isActive = meeting.status === 'active' && !stale;
   const isPast = meeting.status === 'ended' || meeting.status === 'cancelled' || stale;
   const joinable = canJoin(meeting);
 
+  // Polish 2026-05-13: time pill brand-tinted to the left of the title.
+  // For active meetings we promote it to AO VIVO red pulse; for past meetings
+  // it shows "Ended" relative time; otherwise shows the scheduled time.
+  const timeLabel = isPast
+    ? relativeTime(meeting.ended_at || meeting.created_at, t)
+    : meeting.scheduled_at
+      ? relativeTime(meeting.scheduled_at, t)
+      : formatDateTime(meeting.created_at, t('_locale'));
+
   return (
     <TouchableOpacity
       style={[styles.card,
         { backgroundColor: colors.surface, shadowColor: isDark ? '#000' : '#94a3b8' },
-        isActive && { borderLeftWidth: 3, borderLeftColor: ACCENT }]}
+        isActive && { borderLeftWidth: 3, borderLeftColor: '#EF4444' }]}
       onPress={onPress}
       activeOpacity={0.7}
     >
       <View style={styles.cardHeader}>
         <View style={styles.cardTitleRow}>
-          {isActive && (
-            <View style={[styles.liveBadge, { backgroundColor: ACCENT + '18' }]}>
-              <View style={[styles.liveDot, { backgroundColor: ACCENT }]} />
-              <Text style={[styles.liveText, { color: ACCENT }]}>{t('meetings.live')}</Text>
+          {/* Time pill — brand-tinted; replaced by red AO VIVO pill when active */}
+          {isActive ? (
+            <View style={[styles.liveBadge, { backgroundColor: '#EF444418' }]}>
+              <LivePulseDot color="#EF4444" />
+              <Text style={[styles.liveText, { color: '#EF4444' }]}>{t('meetings.live')}</Text>
+            </View>
+          ) : (
+            <View style={[styles.timePill, { backgroundColor: ACCENT + '14' }]}>
+              <IconClock size={11} color={ACCENT} />
+              <Text style={[styles.timePillText, { color: ACCENT }]} numberOfLines={1}>{timeLabel}</Text>
             </View>
           )}
           <Text style={[styles.cardTitle, { color: colors.text }]} numberOfLines={1}>
@@ -136,17 +176,17 @@ function MeetingCard({ meeting, colors, isDark, onPress, onJoin, onCopy, t }) {
       </View>
 
       <View style={styles.cardMeta}>
-        <View style={styles.metaItem}>
-          <IconClock size={14} color={colors.textSecondary} />
-          <Text style={[styles.metaText, { color: colors.textSecondary }]}>
-            {isPast
-              ? `${t('meetings.ended')}: ${relativeTime(meeting.ended_at || meeting.created_at, t)}`
-              : meeting.scheduled_at
-                ? relativeTime(meeting.scheduled_at, t)
-                : formatDateTime(meeting.created_at, t('_locale'))}
-          </Text>
-        </View>
-        {/* BUG FIX: participant_count is now correctly sent by backend */}
+        {/* When active, time pill é AO VIVO no header — mostramos "Ended" label
+            só pra past, e participant count em todos os estados. */}
+        {isPast && (
+          <View style={styles.metaItem}>
+            <IconClock size={14} color={colors.textSecondary} />
+            <Text style={[styles.metaText, { color: colors.textSecondary }]}>
+              {`${t('meetings.ended')}: ${relativeTime(meeting.ended_at || meeting.created_at, t)}`}
+            </Text>
+          </View>
+        )}
+        {/* Participants count SVG + N */}
         {meeting.participant_count > 0 && (
           <View style={styles.metaItem}>
             <IconUsers size={14} color={colors.textSecondary} />
@@ -364,6 +404,9 @@ function MeetingsScreenInner() {
 
   const renderEmpty = () => {
     if (loading) return null;
+    // Polish 2026-05-13: empty state — SVG calendar (existing IconCalendar)
+    // ilustração + CTA "Agendar reunião" só na aba Upcoming (onde faz sentido
+    // criar uma). Past/Active não mostram CTA porque não dá pra "criar passado".
     return (
       <View style={styles.emptyContainer}>
         <View style={[styles.emptyIconWrap, { backgroundColor: ACCENT + '15' }]}>
@@ -377,6 +420,18 @@ function MeetingsScreenInner() {
               ? t('meetings.emptyActive')
               : t('meetings.emptyPast')}
         </Text>
+        {tab === 'upcoming' && (
+          <TouchableOpacity
+            style={[styles.emptyCta, { backgroundColor: ACCENT }]}
+            onPress={() => router.push('/meeting-create')}
+            activeOpacity={0.85}
+            accessibilityLabel={t('meetings.scheduleCta')}
+            accessibilityRole="button"
+          >
+            <IconCalendar size={16} color="#fff" />
+            <Text style={styles.emptyCtaText}>{t('meetings.scheduleCta')}</Text>
+          </TouchableOpacity>
+        )}
       </View>
     );
   };
@@ -504,6 +559,13 @@ const styles = StyleSheet.create({
   },
   liveDot: { width: 7, height: 7, borderRadius: 4 },
   liveText: { fontSize: FontSize.xs, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
+  // Polish 2026-05-13: brand-tinted time pill, sits left of meeting title.
+  timePill: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 9, paddingVertical: 3,
+    borderRadius: 14, maxWidth: 160,
+  },
+  timePillText: { fontSize: FontSize.xs, fontWeight: '700', letterSpacing: -0.1 },
   cardMeta: { flexDirection: 'row', gap: Spacing.md, marginBottom: 10 },
   metaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   metaText: { fontSize: FontSize.sm },
@@ -540,6 +602,16 @@ const styles = StyleSheet.create({
   },
   emptyTitle: { fontSize: FontSize.lg, fontWeight: '700', marginTop: Spacing.xs },
   emptySubtitle: { fontSize: FontSize.sm, textAlign: 'center', marginTop: Spacing.xs, lineHeight: 20 },
+  // Polish 2026-05-13: CTA on empty state — primary brand, sits below subtitle.
+  emptyCta: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    marginTop: Spacing.lg,
+    paddingHorizontal: 18, paddingVertical: 11,
+    borderRadius: 14,
+    shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3, shadowRadius: 10, elevation: 4,
+  },
+  emptyCtaText: { color: '#fff', fontSize: FontSize.md, fontWeight: '700', letterSpacing: -0.1 },
   fabRow: {
     flexDirection: 'row', gap: Spacing.sm, paddingHorizontal: Spacing.md,
     paddingTop: Spacing.sm,

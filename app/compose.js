@@ -82,6 +82,73 @@ function formatShortDate(dateStr) {
   });
 }
 
+// ─── Send button (primary CTA) ──────────────────────────────
+// Animated press scale (0.97 spring) layered on top of the brand shadow
+// for a tactile, weight-bearing send. Inline ActivityIndicator while
+// sending. Icon = SVG (IconSend). Long-press opens schedule sheet.
+function SendButton({ size, sending, onPress, onLongPress, colors, label }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const pressIn = () => {
+    Animated.spring(scale, {
+      toValue: 0.97, useNativeDriver: true, friction: 7, tension: 220,
+    }).start();
+  };
+  const pressOut = () => {
+    Animated.spring(scale, {
+      toValue: 1, useNativeDriver: true, friction: 5, tension: 180,
+    }).start();
+  };
+  return (
+    <Animated.View style={{ transform: [{ scale }] }}>
+      <TouchableOpacity
+        style={[
+          s.sendBtn,
+          size === 'large' && s.sendBtnLarge,
+          { backgroundColor: colors.primary },
+          sending && s.sendBtnDisabled,
+        ]}
+        onPress={onPress}
+        onPressIn={pressIn}
+        onPressOut={pressOut}
+        onLongPress={onLongPress}
+        delayLongPress={350}
+        disabled={sending}
+        activeOpacity={0.85}
+        accessibilityLabel={label + ' (Ctrl+Enter)'}
+        accessibilityRole="button"
+      >
+        {sending ? (
+          <ActivityIndicator size="small" color="#fff" />
+        ) : (
+          <>
+            <IconSend size={size === 'large' ? 18 : 15} color="#fff" />
+            <Text style={[s.sendBtnText, size === 'large' && s.sendBtnTextLarge]}>{label}</Text>
+          </>
+        )}
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
+
+// ─── Rotating sparkle (used in AI buttons while busy) ────────
+// Continuous 360° rotation, 1.2s linear, used while AI is composing/improving.
+function SpinningSparkle({ size, color }) {
+  const rot = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.timing(rot, { toValue: 1, duration: 1200, useNativeDriver: true })
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [rot]);
+  const spin = rot.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+  return (
+    <Animated.View style={{ transform: [{ rotate: spin }] }}>
+      <IconSparkles size={size} color={color} />
+    </Animated.View>
+  );
+}
+
 // ─── Subject field with floating label (Material-style) ───
 // Animated label that lifts + scales when focused or filled. Border tints
 // to primary on focus. Counter sits bottom-right inside the card.
@@ -1025,7 +1092,11 @@ export default function ComposeScreen() {
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.toolbarInner} keyboardShouldPersistTaps="handled">
         <TouchableOpacity
           onPress={() => setShowAI(true)}
-          style={[s.toolBtn, { backgroundColor: colors.primaryLight }]}
+          style={[
+            s.toolBtn,
+            s.aiBtnHalo,
+            { backgroundColor: colors.primaryLight, borderColor: colors.primary + '33' },
+          ]}
           accessibilityLabel={showMeet ? t('compose.writeWithAI') : t('compose.ai')}
           accessibilityRole="button"
         >
@@ -1034,13 +1105,16 @@ export default function ComposeScreen() {
         </TouchableOpacity>
         <TouchableOpacity
           onPress={handleImprove}
-          style={[s.toolBtn, { backgroundColor: colors.surfaceVariant }]}
+          style={[s.toolBtn, { backgroundColor: improving ? colors.primaryLight : colors.surfaceVariant }]}
           disabled={improving}
           accessibilityLabel={t('compose.improveText')}
           accessibilityRole="button"
         >
           {improving ? (
-            <ActivityIndicator size="small" color={colors.primary} />
+            <>
+              <SpinningSparkle size={13} color={colors.primary} />
+              <Text style={[s.toolBtnText, { color: colors.primary }]}>{t('compose.improving') || t('compose.improveText')}</Text>
+            </>
           ) : (
             <>
               <IconSparkles size={13} color={colors.textSecondary} />
@@ -1116,31 +1190,18 @@ export default function ComposeScreen() {
   );
 
   // ── Send button component ──
+  // Press scale to 0.97 on press-in with spring release for a tactile,
+  // weight-bearing CTA. Brand shadow already lives in s.sendBtn — the press
+  // anim layers on top without touching elevation/shadow.
   const renderSendButton = (size = 'default') => (
-    <TouchableOpacity
-      style={[
-        s.sendBtn,
-        size === 'large' && s.sendBtnLarge,
-        { backgroundColor: colors.primary },
-        sending && s.sendBtnDisabled,
-      ]}
+    <SendButton
+      size={size}
+      sending={sending}
       onPress={handleSend}
       onLongPress={() => { if (!sending) setShowSendOptions(true); }}
-      delayLongPress={350}
-      disabled={sending}
-      activeOpacity={0.85}
-      accessibilityLabel={t('compose.send') + ' (Ctrl+Enter)'}
-      accessibilityRole="button"
-    >
-      {sending ? (
-        <ActivityIndicator size="small" color="#fff" />
-      ) : (
-        <>
-          <IconSend size={size === 'large' ? 18 : 15} color="#fff" />
-          <Text style={[s.sendBtnText, size === 'large' && s.sendBtnTextLarge]}>{t('compose.send')}</Text>
-        </>
-      )}
-    </TouchableOpacity>
+      colors={colors}
+      label={t('compose.send')}
+    />
   );
 
   // Long-press Send → presets (1h / amanhã 8h / custom). Picking a preset
@@ -1500,17 +1561,21 @@ export default function ComposeScreen() {
               colors={colors}
             />
 
-            {/* Body — Card with rich text */}
+            {/* Body — Card with rich text. Subtle brand-tinted shadow gives
+                the editor surface a feeling of "live focus" without needing
+                JS focus state from RichTextEditor (which doesn't expose
+                onFocus/onBlur). Border still rests on borderLight so it's
+                not aggressive in the unfocused state. */}
             <View style={[
               s.bodyCard,
               {
                 borderColor: colors.borderLight,
                 backgroundColor: colors.surface,
                 ...Platform.select({
-                  web: { boxShadow: '0 2px 12px rgba(0,0,0,0.04)' },
+                  web: { boxShadow: '0 2px 14px rgba(124,58,237,0.06), 0 0 0 1px rgba(124,58,237,0.04)' },
                   default: {
-                    shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 8,
-                    shadowOffset: { width: 0, height: 2 }, elevation: 1,
+                    shadowColor: '#7C3AED', shadowOpacity: 0.08, shadowRadius: 10,
+                    shadowOffset: { width: 0, height: 3 }, elevation: 2,
                   },
                 }),
               },
@@ -1947,6 +2012,16 @@ const s = StyleSheet.create({
         transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
       },
       default: {},
+    }),
+  },
+  // AI primary tool button — brand-tinted halo gives the spark CTA a soft
+  // glow that reads as "smart" without being loud. Border at ~20% primary
+  // tracks theme via inline override.
+  aiBtnHalo: {
+    borderWidth: 1,
+    ...Platform.select({
+      web: { boxShadow: '0 0 0 3px rgba(124,58,237,0.08), 0 2px 6px rgba(124,58,237,0.18)' },
+      default: { shadowColor: '#7C3AED', shadowOpacity: 0.18, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
     }),
   },
   toolBtnText: { fontSize: 12, fontWeight: '600', letterSpacing: 0.2 },

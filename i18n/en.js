@@ -620,6 +620,7 @@ export default {
   'compose.saveDraft': 'Save draft',
   'compose.draftSaved': 'Draft saved',
   'compose.improveText': 'Improve',
+  'compose.improving': 'Improving...',
   'compose.aiImproved': '✨ Text improved',
   'compose.characters': 'characters',
   'compose.templates': 'Templates',
@@ -1200,6 +1201,7 @@ export default {
   'meetings.join': 'Join',
   'meetings.recap': 'Recap',
   'meetings.schedule': 'Schedule',
+  'meetings.scheduleCta': 'Schedule a meeting',
   'meetings.newMeeting': 'New Meeting',
   'meetings.defaultTitle': 'Meeting',
   'meetings.createError': 'Could not create meeting. Try again.',
@@ -4248,6 +4250,7 @@ export default {
   'one.suggestReminder': 'Remind me of something',
 
   // ChatGPT-style redesign
+  'one.emptyTitle': 'How can I help?',
   'one.emptyHint': 'How can I help today?',
   'one.regenerate': 'Regenerate',
   'one.badResponse': 'Bad response',

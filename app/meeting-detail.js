@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView,
-  ActivityIndicator, Alert, Platform, RefreshControl,
+  ActivityIndicator, Alert, Platform, RefreshControl, Animated, Easing,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -67,6 +67,18 @@ export default function MeetingDetailScreen() {
   const [rsvpLoading, setRsvpLoading] = useState(null);
   const [copied, setCopied] = useState(false);
   const [myRsvp, setMyRsvp] = useState(null);
+
+  // Polish 2026-05-13: copy-link toast — slides in from top, fades out after 2s.
+  // Native-driver-safe (translateY + opacity only).
+  const toastAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (copied) {
+      Animated.spring(toastAnim, { toValue: 1, tension: 220, friction: 12, useNativeDriver: true }).start();
+    } else {
+      Animated.timing(toastAnim, { toValue: 0, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+    }
+  }, [copied, toastAnim]);
+  const toastTranslate = toastAnim.interpolate({ inputRange: [0, 1], outputRange: [-30, 0] });
 
   const loadInfo = useCallback(async () => {
     try {
@@ -247,6 +259,20 @@ export default function MeetingDetailScreen() {
         </Text>
       </View>
 
+      {/* Copy-link toast (Polish 2026-05-13) — sits below header, slides in
+          when copied=true, fades back. Não bloqueia interação. */}
+      {copied && (
+        <Animated.View pointerEvents="none" style={[
+          styles.copyToast,
+          { backgroundColor: isDark ? colors.surface : colors.text, opacity: toastAnim, transform: [{ translateY: toastTranslate }] },
+        ]}>
+          <IconCheck size={14} color={isDark ? ACCENT : colors.background} />
+          <Text style={[styles.copyToastText, { color: isDark ? colors.text : colors.background }]}>
+            {t('meetingDetail.copied')}
+          </Text>
+        </Animated.View>
+      )}
+
       <ScrollView
         contentContainerStyle={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadInfo(); }} colors={[ACCENT]} tintColor={ACCENT} />}
@@ -357,7 +383,9 @@ export default function MeetingDetailScreen() {
           </View>
           {participants.map((p, i) => (
             <View key={p.user_id || p.email || i} style={[styles.participantRow, i < participants.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight || colors.border + '30' }]}>
-              <AvatarCircle name={p.display_name || p.email} email={p.email} size={40} style={{ marginRight: Spacing.md }} />
+              {/* Polish 2026-05-13: 32px avatar (grid-style density), role chip
+                  reads as proper pill (existing roleBadge style already capped). */}
+              <AvatarCircle name={p.display_name || p.email} email={p.email} size={32} style={{ marginRight: Spacing.md }} />
               <View style={{ flex: 1 }}>
                 <Text style={[styles.participantName, { color: colors.text }]}>
                   {p.display_name || p.email}
@@ -605,4 +633,17 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease, transform 160ms ease', cursor: 'pointer' } : {}),
   },
   secondaryBtnText: { fontSize: FontSize.sm, fontWeight: '700', letterSpacing: -0.1 },
+  // Polish 2026-05-13: copy-link toast — floats below header, fade+slide-down.
+  copyToast: {
+    position: 'absolute', top: 70, alignSelf: 'center', zIndex: 100,
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 16, paddingVertical: 10,
+    borderRadius: 22,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  copyToastText: { fontSize: FontSize.sm, fontWeight: '700', letterSpacing: -0.1 },
 });

@@ -330,12 +330,15 @@ export default function ReadScreen() {
 // `primary` mode renders a filled pill (Telegram-style primary CTA) — only
 // the Reply uses it so the bottom bar hierarquy reads "tap aqui pra responder
 // + 3 atalhos secundários" at a glance instead of "4 botões iguais".
+// Polish 2026-05-13: rounded 12px container + press scale 0.97 spring + SVG-only
+// (Icon component already SVG via Icons.js). Non-primary buttons get a subtle
+// surface tint on press so the rounded 12 shape reads instead of floating icons.
 function ActionBarButton({ icon: Icon, label, color, onPress, accessibilityLabel, primary }) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
   const innerStyle = primary
-    ? { backgroundColor: color, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 22, flexDirection: 'row', alignItems: 'center', gap: 8 }
-    : { alignItems: 'center' };
+    ? { backgroundColor: color, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 12, flexDirection: 'row', alignItems: 'center', gap: 8 }
+    : { alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 };
   const iconColor = primary ? '#fff' : color;
   const textColor = primary ? '#fff' : color;
 
@@ -347,17 +350,17 @@ function ActionBarButton({ icon: Icon, label, color, onPress, accessibilityLabel
       accessibilityRole="button"
       onPressIn={() => {
         Animated.spring(scaleAnim, {
-          toValue: 0.85,
-          tension: 300,
-          friction: 10,
+          toValue: 0.97,
+          tension: 320,
+          friction: 12,
           useNativeDriver: true,
         }).start();
       }}
       onPressOut={() => {
         Animated.spring(scaleAnim, {
           toValue: 1,
-          tension: 160,
-          friction: 10,
+          tension: 180,
+          friction: 9,
           useNativeDriver: true,
         }).start();
       }}

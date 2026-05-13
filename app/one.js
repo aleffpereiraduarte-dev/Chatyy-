@@ -17,6 +17,10 @@ import {
   IconChevronUp, IconChevronDown, IconTrash, IconCopy, IconRepeat,
   IconThumbsDown,
 } from '../components/Icons';
+// SVG primitives for the send-button gradient + empty-state sparkle illustration.
+// Pure-SVG keeps us off expo-linear-gradient (not a dep) and renders identically
+// on web/native.
+import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Circle as SvgCircle, Path as SvgPath, G as SvgG } from 'react-native-svg';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import * as api from '../services/api';
@@ -1241,25 +1245,36 @@ function StreamingCursor({ isDark }) {
   );
 }
 
-// Three-dot typing indicator shown while a tool is executing
+// Three-dot typing indicator shown while a tool is executing.
+// Wave animation: each dot rises ~6px with spring physics, staggered. Reads
+// as more lively than the old opacity-only pulse. Opacity still toggles so
+// the dot fades while it falls — the combined effect mirrors iMessage /
+// Telegram's "typing…" indicator more closely.
 function ToolTypingIndicator({ toolName, isDark, t }) {
-  const dot1 = useRef(new Animated.Value(0.3)).current;
-  const dot2 = useRef(new Animated.Value(0.3)).current;
-  const dot3 = useRef(new Animated.Value(0.3)).current;
+  const dot1 = useRef(new Animated.Value(0)).current;
+  const dot2 = useRef(new Animated.Value(0)).current;
+  const dot3 = useRef(new Animated.Value(0)).current;
   useEffect(() => {
-    const anim = (dot, delay) => Animated.loop(Animated.sequence([
+    const wave = (v, delay) => Animated.loop(Animated.sequence([
       Animated.delay(delay),
-      Animated.timing(dot, { toValue: 1, duration: 300, useNativeDriver: false }),
-      Animated.timing(dot, { toValue: 0.3, duration: 300, useNativeDriver: false }),
+      Animated.spring(v, { toValue: 1, tension: 220, friction: 8, useNativeDriver: false }),
+      Animated.spring(v, { toValue: 0, tension: 220, friction: 10, useNativeDriver: false }),
+      Animated.delay(360),
     ]));
-    Animated.parallel([anim(dot1, 0), anim(dot2, 150), anim(dot3, 300)]).start();
+    const a1 = wave(dot1, 0); const a2 = wave(dot2, 140); const a3 = wave(dot3, 280);
+    a1.start(); a2.start(); a3.start();
+    return () => { a1.stop(); a2.stop(); a3.stop(); };
   }, [dot1, dot2, dot3]);
-  const dotStyle = { width: 7, height: 7, borderRadius: 4, backgroundColor: isDark ? '#aaa' : '#666', marginHorizontal: 2 };
+  const dotBase = { width: 7, height: 7, borderRadius: 4, backgroundColor: isDark ? '#aaa' : '#666', marginHorizontal: 2 };
+  const animStyle = (v) => ({
+    opacity: v.interpolate({ inputRange: [0, 1], outputRange: [0.35, 1] }),
+    transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [0, -6] }) }],
+  });
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 2 }}>
-      <Animated.View style={[dotStyle, { opacity: dot1 }]} />
-      <Animated.View style={[dotStyle, { opacity: dot2 }]} />
-      <Animated.View style={[dotStyle, { opacity: dot3 }]} />
+      <Animated.View style={[dotBase, animStyle(dot1)]} />
+      <Animated.View style={[dotBase, animStyle(dot2)]} />
+      <Animated.View style={[dotBase, animStyle(dot3)]} />
       {toolName ? (
         <Text style={{ marginLeft: 8, fontSize: 11, color: isDark ? '#8696a0' : '#9ba5ab' }}>
           {toolName.replace(/_/g, ' ')}
@@ -1296,12 +1311,120 @@ function InlineStreamingDots({ isDark }) {
   );
 }
 
+// ── Brand-gradient send button (44px circle, purple gradient + SVG send icon).
+// Replaces the flat ACCENT-filled 36px button. The gradient (top-left light
+// purple → bottom-right ACCENT_DARK) plus a soft 1px inner highlight gives the
+// button a premium "polished pebble" feel matching ChatGPT 4.5/Anthropic UI.
+function BrandSendCircle({ size = 44, isDark }) {
+  const r = size / 2;
+  return (
+    <Svg width={size} height={size}>
+      <Defs>
+        <SvgLinearGradient id="brandSendGrad" x1="0" y1="0" x2="1" y2="1">
+          <Stop offset="0" stopColor="#A78BFA" stopOpacity="1" />
+          <Stop offset="0.6" stopColor={ACCENT} stopOpacity="1" />
+          <Stop offset="1" stopColor={ACCENT_DARK} stopOpacity="1" />
+        </SvgLinearGradient>
+      </Defs>
+      <SvgCircle cx={r} cy={r} r={r} fill="url(#brandSendGrad)" />
+      {/* Subtle inner highlight — adds a soft glass edge so the circle doesn't
+          read as a flat disk. Skipped in dark mode where the contrast already
+          pops against the canvas. */}
+      {!isDark && <SvgCircle cx={r} cy={r} r={r - 0.5} fill="none" stroke="rgba(255,255,255,0.35)" strokeWidth={1} />}
+      {/* Send arrow — paper-plane style, centered. Stroke 2.2 for crispness. */}
+      <SvgPath
+        d={`M ${r - 7} ${r + 1} L ${r + 7} ${r - 6} L ${r + 1} ${r + 7} L ${r - 1} ${r + 1} Z`}
+        fill="#fff"
+      />
+    </Svg>
+  );
+}
+
+// ── Empty-state sparkle illustration (large 96px SVG: one big sparkle +
+// two small accents). Replaces the previous solid circle + IconSparkles
+// duo with a more illustrative mark so the empty canvas feels considered.
+function SparkleIllustration({ size = 96, isDark }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 96 96">
+      <Defs>
+        <SvgLinearGradient id="sparkBigGrad" x1="0" y1="0" x2="1" y2="1">
+          <Stop offset="0" stopColor="#C4B5FD" stopOpacity="1" />
+          <Stop offset="0.55" stopColor={ACCENT} stopOpacity="1" />
+          <Stop offset="1" stopColor={ACCENT_DARK} stopOpacity="1" />
+        </SvgLinearGradient>
+        <SvgLinearGradient id="sparkSmallGrad" x1="0" y1="0" x2="1" y2="1">
+          <Stop offset="0" stopColor="#A78BFA" stopOpacity="1" />
+          <Stop offset="1" stopColor={ACCENT} stopOpacity="1" />
+        </SvgLinearGradient>
+      </Defs>
+      {/* Soft halo behind main sparkle */}
+      <SvgCircle cx="48" cy="48" r="34" fill={isDark ? 'rgba(124,58,237,0.16)' : 'rgba(124,58,237,0.10)'} />
+      {/* Big sparkle (4-point star) centered */}
+      <SvgPath
+        d="M48 18 L52 44 L78 48 L52 52 L48 78 L44 52 L18 48 L44 44 Z"
+        fill="url(#sparkBigGrad)"
+      />
+      {/* Small sparkle top-right */}
+      <SvgPath
+        d="M76 16 L78 24 L86 26 L78 28 L76 36 L74 28 L66 26 L74 24 Z"
+        fill="url(#sparkSmallGrad)"
+        opacity={0.85}
+      />
+      {/* Tiny sparkle bottom-left */}
+      <SvgPath
+        d="M16 70 L17.5 75 L22.5 76.5 L17.5 78 L16 83 L14.5 78 L9.5 76.5 L14.5 75 Z"
+        fill="url(#sparkSmallGrad)"
+        opacity={0.7}
+      />
+    </Svg>
+  );
+}
+
+// ── Suggested-prompt chip (horizontal scroll on the empty state). Brand
+// outline 1px, transparent fill, press scale 0.96 with spring. Built as a
+// small inline component so each chip owns its own animated value (avoids
+// a shared scale flickering between presses).
+function PromptChip({ label, sub, onPress, isDark }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const handleIn = () => Animated.spring(scale, { toValue: 0.96, tension: 320, friction: 14, useNativeDriver: true }).start();
+  const handleOut = () => Animated.spring(scale, { toValue: 1, tension: 280, friction: 12, useNativeDriver: true }).start();
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      onPressIn={handleIn}
+      onPressOut={handleOut}
+      activeOpacity={0.85}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <Animated.View style={[st.promptChip, {
+        borderColor: isDark ? 'rgba(167,139,250,0.55)' : 'rgba(124,58,237,0.45)',
+        backgroundColor: isDark ? 'rgba(124,58,237,0.10)' : 'rgba(124,58,237,0.06)',
+        transform: [{ scale }],
+      }]}>
+        <Text style={[st.promptChipLabel, { color: isDark ? '#ECECEC' : '#0D0D0D' }]} numberOfLines={1}>{label}</Text>
+        {sub ? (
+          <Text style={[st.promptChipSub, { color: isDark ? '#9CA3AF' : '#6B7280' }]} numberOfLines={1}>{sub}</Text>
+        ) : null}
+      </Animated.View>
+    </TouchableOpacity>
+  );
+}
+
 function MessageRow({ item, colors, isDark, onSpeak, speakingId, t, onCopy, onRegenerate, isLastAI, onLongPressAI }) {
   const isUser = item.role === 'user';
   const isSpeaking = speakingId === item.id;
+  // Entrance: fadeIn + slideUp 8px. The slide gives the row a subtle "rise"
+  // motion that ChatGPT/Claude apps use to make new messages feel placed,
+  // not just popped in. Both animated values share the same timing so we
+  // don't drift between opacity and position.
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(8)).current;
   useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
+    Animated.parallel([
+      Animated.timing(fadeAnim, { toValue: 1, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
+    ]).start();
   }, []);
 
   const isStreaming = !!item._streaming;
@@ -1311,7 +1434,7 @@ function MessageRow({ item, colors, isDark, onSpeak, speakingId, t, onCopy, onRe
   // ── User: subtle gray pill, right-aligned, no avatar (ChatGPT 2026 style)
   if (isUser) {
     return (
-      <Animated.View style={[st.userRow, { opacity: fadeAnim }]}>
+      <Animated.View style={[st.userRow, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
         <View style={[st.userPill, {
           backgroundColor: isDark ? '#2A2A2A' : '#F1F1F4',
         }]}>
@@ -1327,7 +1450,7 @@ function MessageRow({ item, colors, isDark, onSpeak, speakingId, t, onCopy, onRe
   // ── AI: no bubble, plain left-aligned text. Small "One" chip+avatar header
   // sits above the first paragraph. Long-press opens the context sheet.
   return (
-    <Animated.View style={[st.aiRow, { opacity: fadeAnim }]}>
+    <Animated.View style={[st.aiRow, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
       {/* Header chip — small gray pill with avatar + "One" label */}
       <TouchableOpacity
         activeOpacity={0.85}
@@ -2908,48 +3031,54 @@ export default function OneScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={st.emptyCenter}>
-          {/* Subtle brand mark */}
-          <View style={[st.emptyLogoCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.12)' }]}>
-            <IconSparkles size={26} color={ACCENT_DARK} />
+          {/* SVG sparkle illustration — 3-point composition (big sparkle +
+              two accents). Replaces the previous solid circle behind a
+              single icon for a more illustrative mark. */}
+          <View style={{ marginBottom: 18 }}>
+            <SparkleIllustration size={96} isDark={isDark} />
           </View>
+          {/* Title — "Como posso ajudar?" (i18n). Personalized greeting still
+              shown on top as a small eyebrow when we know the first name. */}
+          {firstName ? (
+            <Text style={[st.emptyGreeting, { color: isDark ? '#9CA3AF' : '#6B7280', fontSize: 14, fontWeight: '500', marginBottom: 6 }]}>
+              {`${getGreeting(t)}, ${firstName}`}
+            </Text>
+          ) : null}
           <Text style={[st.emptyGreeting, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}>
-            {firstName ? `${getGreeting(t)}, ${firstName}` : (t('one.greeting') || 'Hi, I\'m One')}
+            {t('one.emptyTitle') || 'How can I help?'}
           </Text>
           <Text style={[st.emptySubtitle, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>
             {t('one.emptyHint') || 'How can I help today?'}
           </Text>
         </View>
 
-        {/* 2×2 prompt grid */}
-        <View style={st.sugArea}>
-          <View style={[st.sugGrid, isWide && { maxWidth: CONTENT_MAX }]}>
-            {sugCards.map((item) => (
-              <TouchableOpacity
-                key={item.key}
-                style={[st.sugCard, {
-                  // Light gray fill on the cards (was bg=#fff which read as a
-                  // floating border-only tile on white canvas — user reported
-                  // it as "fundinho cinza claro nos botoes"). Dark mode keeps
-                  // the existing translucent overlay.
-                  backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#F4F4F6',
-                  borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)',
-                  ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'transform 0.15s ease, background-color 0.15s ease' } : {}),
-                }]}
-                onPress={() => {
-                  if (item.msg.endsWith(' ') || item.msg.endsWith(': ')) {
-                    setInputText(item.msg);
-                  } else {
-                    sendMessage(item.msg);
-                  }
-                }}
-                activeOpacity={0.7}
-              >
-                <Text style={[st.sugCardLabel, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}>{item.label}</Text>
-                <Text style={[st.sugCardSub, { color: isDark ? '#9CA3AF' : '#6B7280' }]} numberOfLines={2}>{item.sub}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
+        {/* Horizontal scroll prompt chips — brand outline + press scale 0.96.
+            Replaces the old 2×2 grid; a scrollable rail surfaces more prompts
+            without crowding the empty canvas and reads more like a modern
+            ChatGPT/Claude entry. We keep the same sugCards source so adding
+            new prompts is one-line. */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 4 }}
+          keyboardShouldPersistTaps="handled"
+        >
+          {sugCards.map((item) => (
+            <PromptChip
+              key={item.key}
+              label={item.label}
+              sub={item.sub}
+              isDark={isDark}
+              onPress={() => {
+                if (item.msg.endsWith(' ') || item.msg.endsWith(': ')) {
+                  setInputText(item.msg);
+                } else {
+                  sendMessage(item.msg);
+                }
+              }}
+            />
+          ))}
+        </ScrollView>
       </ScrollView>
     );
   };
@@ -3105,9 +3234,12 @@ export default function OneScreen() {
                 </View>
               </TouchableOpacity>
             ) : (inputText.trim() || attachedImage) ? (
-              <TouchableOpacity onPress={() => sendMessage()} activeOpacity={0.7}>
-                <View style={[st.sendBtnClean, { backgroundColor: ACCENT }]}>
-                  <IconSend size={16} color="#fff" />
+              <TouchableOpacity onPress={() => sendMessage()} activeOpacity={0.85}>
+                {/* Brand-gradient 44px circle — see BrandSendCircle. The SVG
+                    is absolute-positioned; we use a same-size wrapper so the
+                    layout slot matches the stop/voice buttons. */}
+                <View style={st.sendBtnBrand}>
+                  <BrandSendCircle size={44} isDark={isDark} />
                 </View>
               </TouchableOpacity>
             ) : (
@@ -3319,6 +3451,28 @@ const st = StyleSheet.create({
     marginLeft: 4, marginBottom: 2,
     ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'transform 140ms ease' } : {}),
   },
+  // Brand-gradient send button — 44px circle, taller than the stop/voice
+  // 36px buttons. The slight footprint bump makes "send" the primary CTA
+  // visually even before color/gradient. Drop-shadow grounds the circle.
+  sendBtnBrand: {
+    width: 44, height: 44,
+    alignItems: 'center', justifyContent: 'center',
+    marginLeft: 4, marginBottom: 0,
+    ...Platform.select({
+      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.32, shadowRadius: 8 },
+      android: { elevation: 4 },
+      web: { boxShadow: `0 4px 12px ${ACCENT}55`, cursor: 'pointer', transition: 'transform 140ms ease' },
+    }),
+  },
+  // Suggested-prompt chip — empty-state horizontal scroll list.
+  promptChip: {
+    paddingHorizontal: 14, paddingVertical: 10,
+    borderRadius: 18, borderWidth: 1,
+    marginRight: 8,
+    minWidth: 120, maxWidth: 220,
+  },
+  promptChipLabel: { fontSize: 13, fontWeight: '600', letterSpacing: -0.1 },
+  promptChipSub: { fontSize: 11, fontWeight: '400', marginTop: 1 },
 
   // ─── Bottom sheets (model picker + context menu) ───
   sheetDim: {

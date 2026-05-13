@@ -370,6 +370,32 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
     }
   }, [email?.uid]);
 
+  // Polish 2026-05-13: star bounce — spring scale pulse when star is toggled.
+  // The 1.0 → 1.32 → 1.0 sequence reads as a "pop" without a destination
+  // change of size (matches Twitter/Instagram favourite affordance).
+  const starScale = useRef(new Animated.Value(1)).current;
+  const handleStarPress = useCallback(() => {
+    haptic.light();
+    Animated.sequence([
+      Animated.spring(starScale, { toValue: 1.32, tension: 280, friction: 5, useNativeDriver: true }),
+      Animated.spring(starScale, { toValue: 1, tension: 220, friction: 8, useNativeDriver: true }),
+    ]).start();
+    onStar?.(email);
+  }, [email, onStar, starScale]);
+
+  // Polish 2026-05-13: quoted-body chevron rotates 0 → 180° via spring when
+  // expand/collapse fires (works alongside existing LayoutAnimation height
+  // tween). Keeps useNativeDriver:true since only transform is animated.
+  const quotedChevron = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.spring(quotedChevron, {
+      toValue: showQuoted ? 1 : 0,
+      tension: 180, friction: 9,
+      useNativeDriver: true,
+    }).start();
+  }, [showQuoted, quotedChevron]);
+  const chevronRotate = quotedChevron.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '180deg'] });
+
   if (!email) return null;
 
   const avatarColor = getAvatarColor(email.from_name || email.from || 'unknown');
@@ -470,7 +496,11 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
                 <Text style={[s.quotedToggleText, { color: colors.textSecondary }]}>
                   {showQuoted ? (t('email.hideHistory') || t('reader.hideQuoted')) : (t('email.showHistory') || '...')}
                 </Text>
-                {showQuoted ? <IconChevronUp size={14} color={colors.textSecondary} /> : <IconChevronDown size={14} color={colors.textSecondary} />}
+                {/* Polish 2026-05-13: chevron rotates via spring (0 ↔ 180°)
+                    in sync com expand/collapse (LayoutAnimation já anima altura). */}
+                <Animated.View style={{ transform: [{ rotate: chevronRotate }] }}>
+                  <IconChevronDown size={14} color={colors.textSecondary} />
+                </Animated.View>
               </TouchableOpacity>
               {showQuoted && (
                 <div
@@ -603,6 +633,10 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
               <Text style={[s.quotedToggleText, { color: colors.textSecondary }]}>
                 {showQuoted ? (t('email.hideHistory') || t('reader.hideQuoted')) : (t('email.showHistory') || '...')}
               </Text>
+              {/* Polish 2026-05-13: chevron spring rotate matching web path. */}
+              <Animated.View style={{ transform: [{ rotate: chevronRotate }] }}>
+                <IconChevronDown size={14} color={colors.textSecondary} />
+              </Animated.View>
             </TouchableOpacity>
             {showQuoted && (
               <Text style={[s.bodyText, { color: colors.textSecondary, marginTop: 8, paddingLeft: 12, borderLeftWidth: 3, borderLeftColor: colors.borderLight }]}>{quoted}</Text>
@@ -713,12 +747,16 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
           {email.subject || t('reader.noSubject')}
         </Text>
         <View style={s.headerActions}>
-          <TouchableOpacity onPress={() => { haptic.light(); onStar?.(email); }} style={s.headerBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel={email.flagged ? 'Remove star' : 'Add star'} accessibilityRole="button">
-            {email.flagged ? (
-              <IconStarFilled size={22} color={colors.starColor} />
-            ) : (
-              <IconStar size={22} color={colors.starEmpty} />
-            )}
+          <TouchableOpacity onPress={handleStarPress} style={s.headerBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel={email.flagged ? 'Remove star' : 'Add star'} accessibilityRole="button">
+            <Animated.View style={{ transform: [{ scale: starScale }] }}>
+              {email.flagged ? (
+                /* Polish 2026-05-13: starred = filled gold (#F5B400) with spring
+                   bounce pulse on toggle (1 → 1.32 → 1 sequence) */
+                <IconStarFilled size={22} color={colors.starColor || '#F5B400'} />
+              ) : (
+                <IconStar size={22} color={colors.starEmpty} />
+              )}
+            </Animated.View>
           </TouchableOpacity>
           {onClose && (
             <TouchableOpacity onPress={onClose} style={s.headerBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityLabel="Close" accessibilityRole="button">
@@ -728,10 +766,15 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
         </View>
       </View>
 
-      {/* Sender info — with profile photo, shadow, and verified-style layout */}
+      {/* Sender hero pill — 40px avatar with subtle brand ring, name bold, email gray
+          Polish 2026-05-13: ring é (colors.primary + '22') 2px border ao redor do
+          avatar + leve shadow. Tamanho 40 segue o spec da polish round. */}
       <View style={s.senderRow}>
-        <View style={{ marginRight: Spacing.md + 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 6, elevation: 3 }}>
-          <AvatarCircle name={email.from_name || email.from} email={email.from} size={50} />
+        <View style={[
+          s.senderAvatarRing,
+          { borderColor: (colors.primary || '#7C3AED') + '33', shadowColor: colors.primary || '#7C3AED' },
+        ]}>
+          <AvatarCircle name={email.from_name || email.from} email={email.from} size={40} />
         </View>
         <View style={s.senderInfo}>
           <View style={s.senderNameRow}>
@@ -1418,6 +1461,18 @@ const s = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center', marginRight: Spacing.md + 2,
   },
   senderAvatarText: { color: '#fff', fontSize: 21, fontWeight: '800' },
+  // Polish 2026-05-13: subtle brand ring around 40px avatar — 2px border +
+  // soft halo shadow. Matches the sender-hero-pill spec.
+  senderAvatarRing: {
+    width: 46, height: 46, borderRadius: 23,
+    borderWidth: 2,
+    alignItems: 'center', justifyContent: 'center',
+    marginRight: Spacing.md + 2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
+    elevation: 3,
+  },
   senderInfo: { flex: 1 },
   senderNameRow: { flexDirection: 'row', alignItems: 'center' },
   senderName: { fontSize: 16, fontWeight: '800', letterSpacing: -0.3 },

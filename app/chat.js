@@ -1077,6 +1077,10 @@ function ChatHub() {
 // Persisted MRU of recently opened apps. Plain MMKV/localStorage so we
 // don't bother the network with a sync — local feel is the point.
 const RECENT_APPS_KEY = 'apps_recent_v1';
+// App-usage counter — increments on every launch and persists alongside the
+// MRU list. Used to sort items within each section so the apps the user
+// actually touches surface at the top (iOS Spotlight + Pixel launcher pattern).
+const APP_USAGE_KEY = 'apps_usage_v1';
 const _readRecentApps = () => {
   try {
     if (Platform.OS === 'web') {
@@ -1099,19 +1103,54 @@ const _writeRecentApps = (list) => {
     }
   } catch {}
 };
+const _readAppUsage = () => {
+  try {
+    if (Platform.OS === 'web') {
+      const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(APP_USAGE_KEY) : null;
+      return raw ? JSON.parse(raw) : {};
+    }
+    const { mmkv } = require('../services/mmkv');
+    const raw = mmkv?.getString(APP_USAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+};
+const _writeAppUsage = (obj) => {
+  try {
+    const v = JSON.stringify(obj || {});
+    if (Platform.OS === 'web') {
+      if (typeof localStorage !== 'undefined') localStorage.setItem(APP_USAGE_KEY, v);
+    } else {
+      const { mmkv } = require('../services/mmkv');
+      mmkv?.set(APP_USAGE_KEY, v);
+    }
+  } catch {}
+};
 const _bumpRecentApp = (key) => {
   const cur = _readRecentApps().filter(k => k !== key);
   cur.unshift(key);
   _writeRecentApps(cur);
+  // Bump usage count too so section sort knows the user's favorites.
+  try {
+    const u = _readAppUsage();
+    u[key] = (u[key] || 0) + 1;
+    _writeAppUsage(u);
+  } catch {}
 };
 
 // One app tile in the drawer (used in both Recentes row and section grid).
-// Press scales the icon down 0.9 with spring back; if there's an unread
-// badge, the badge gets a subtle continuous pulse so the user's eye catches
-// it without us yelling — iOS Mail / Sparrow style.
+// Hover lifts to 1.02 (spring), active press drops to 0.97 (snappier than
+// the old 0.9). Badge gets a continuous pulse PLUS a rolling flip whenever
+// the count itself changes — iOS Mail / Sparrow + Telegram counter style.
 function AppTile({ item, badge, onPress, colors, isDark }) {
   const scale = useRef(new Animated.Value(1)).current;
   const badgePulse = useRef(new Animated.Value(1)).current;
+  // Rolling animation state — when `badge` value mutates, the digit slides
+  // up (translateY -10 → 0) with a tiny fade. Mirrors WhatsApp/Telegram
+  // unread counter behavior. We keep the prev text around for one frame so
+  // the outgoing digit is visible briefly underneath the new one.
+  const rollY = useRef(new Animated.Value(0)).current;
+  const rollOpacity = useRef(new Animated.Value(1)).current;
+  const prevBadgeRef = useRef(badge);
   useEffect(() => {
     if (!badge) return undefined;
     const loop = Animated.loop(Animated.sequence([
@@ -1121,17 +1160,33 @@ function AppTile({ item, badge, onPress, colors, isDark }) {
     loop.start();
     return () => loop.stop();
   }, [badge]);
-  const press = (to) => Animated.spring(scale, {
-    toValue: to, tension: 320, friction: 14, useNativeDriver: true,
+  useEffect(() => {
+    // Trigger rolling flip only when value actually changes (and was/became >0).
+    const prev = prevBadgeRef.current;
+    if (prev !== badge && (prev || badge)) {
+      rollY.setValue(-10);
+      rollOpacity.setValue(0);
+      Animated.parallel([
+        Animated.spring(rollY, { toValue: 0, tension: 280, friction: 14, useNativeDriver: true }),
+        Animated.timing(rollOpacity, { toValue: 1, duration: 180, useNativeDriver: true }),
+      ]).start();
+    }
+    prevBadgeRef.current = badge;
+  }, [badge, rollY, rollOpacity]);
+  // Press scale: 0.97 (subtle, snappy). Hover scale: 1.02 (lifts the tile).
+  const animateTo = (to) => Animated.spring(scale, {
+    toValue: to, tension: 340, friction: 16, useNativeDriver: true,
   }).start();
   return (
     <Pressable
       onPress={onPress}
-      onPressIn={() => press(0.9)}
-      onPressOut={() => press(1)}
+      onPressIn={() => animateTo(0.97)}
+      onPressOut={() => animateTo(1)}
+      onHoverIn={() => animateTo(1.02)}
+      onHoverOut={() => animateTo(1)}
       style={({ hovered }) => ({
         width: '25%', alignItems: 'center', paddingVertical: 10,
-        ...(hovered ? { opacity: 0.85 } : null),
+        ...(hovered ? { opacity: 0.95 } : null),
       })}
       accessibilityRole="button"
       accessibilityLabel={item.label + (badge ? `, ${badge} novos` : '')}
@@ -1153,10 +1208,18 @@ function AppTile({ item, badge, onPress, colors, isDark }) {
             alignItems: 'center', justifyContent: 'center',
             borderWidth: 2, borderColor: isDark ? '#0f0f14' : '#fff',
             transform: [{ scale: badgePulse }],
+            overflow: 'hidden',
           }}>
-            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800' }} numberOfLines={1}>
+            <Animated.Text
+              style={{
+                color: '#fff', fontSize: 10, fontWeight: '800',
+                transform: [{ translateY: rollY }],
+                opacity: rollOpacity,
+              }}
+              numberOfLines={1}
+            >
               {badge > 99 ? '99+' : String(badge)}
-            </Text>
+            </Animated.Text>
           </Animated.View>
         )}
       </Animated.View>
@@ -1170,8 +1233,14 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
   // MRU drawer bar — reflects the last 4 apps the user opened. Refreshes
   // whenever the drawer opens (cheap, list is at most 8 entries).
   const [recentKeys, setRecentKeys] = useState(() => _readRecentApps());
+  // Usage counter per app key — drives section sort so power users see their
+  // top-3 within each group bubble up to the front.
+  const [usageMap, setUsageMap] = useState(() => _readAppUsage());
   React.useEffect(() => {
-    if (visible) setRecentKeys(_readRecentApps());
+    if (visible) {
+      setRecentKeys(_readRecentApps());
+      setUsageMap(_readAppUsage());
+    }
   }, [visible]);
 
   // SVG icon render helper — each item stores icon component + color
@@ -1222,16 +1291,29 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
   ]), [t, onOpenFeed, onOpenStatus, onOpenChannels, onOpenCommunities, onClose, router, userEmail]);
 
   const qLower = q.trim().toLowerCase();
-  const filteredSections = useMemo(() => (
-    qLower
+  // Sort items within each section by usage count desc — most-used first,
+  // ties keep original section order (which is curated). Search results
+  // also benefit from the same sort.
+  const sortByUsage = useCallback((items) => {
+    const score = (k) => (usageMap?.[k] || 0);
+    return [...items].sort((a, b) => score(b.key) - score(a.key));
+  }, [usageMap]);
+  const filteredSections = useMemo(() => {
+    const base = qLower
       ? sections.map(s => ({ ...s, items: s.items.filter(i => i.label.toLowerCase().includes(qLower)) })).filter(s => s.items.length > 0)
-      : sections
-  ), [qLower, sections]);
+      : sections;
+    return base.map(s => ({ ...s, items: sortByUsage(s.items) }));
+  }, [qLower, sections, sortByUsage]);
 
   const handlePress = useCallback((it) => {
     // MRU bookkeeping — every launch bumps the key to the front of the
-    // recents list so the drawer's "Recentes" row is always fresh.
-    try { _bumpRecentApp(it.key); } catch {}
+    // recents list AND increments the per-app usage counter (drives the
+    // section sort). State updates so the user sees a live resort next
+    // open without waiting for unmount/remount.
+    try {
+      _bumpRecentApp(it.key);
+      setUsageMap(_readAppUsage());
+    } catch {}
     if (it.action) { it.action(); return; }
     onClose();
     try { router.push(it.route); } catch (e) { console.warn('[chat] router.push failed:', e); }
@@ -1259,7 +1341,19 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
       <TouchableOpacity
         activeOpacity={1}
         onPress={onClose}
-        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}
+        // Subtle backdrop "blur" — real GPU blur needs expo-blur which isn't
+        // a dep; on web we use CSS backdrop-filter, on native we lean on a
+        // slightly heavier tint + tiny brand tone so the canvas behind the
+        // drawer recedes instead of just darkening. Subtle, not aggressive.
+        style={{
+          flex: 1,
+          backgroundColor: isDark ? 'rgba(8,8,14,0.62)' : 'rgba(10,10,18,0.42)',
+          justifyContent: 'flex-end',
+          ...(Platform.OS === 'web' ? {
+            backdropFilter: 'blur(6px) saturate(120%)',
+            WebkitBackdropFilter: 'blur(6px) saturate(120%)',
+          } : {}),
+        }}
       >
         <TouchableOpacity
           activeOpacity={1}
@@ -1321,7 +1415,18 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
                 Added" + Android launcher recents pattern. */}
             {!qLower && recentItems.length > 0 && (
               <View style={{ marginBottom: 18 }}>
-                <Text style={{ fontSize: 13, fontWeight: '700', color: isDark ? '#9ca3af' : '#374151', letterSpacing: -0.1, textTransform: 'none', marginBottom: 12, paddingHorizontal: 6 }}>
+                {/* Recents pill header — brand-subtle, slight letterSpacing
+                    and uppercase so it reads as a section title, not a body
+                    label. Mirrors the iOS "Recently Added" eyebrow style. */}
+                <Text style={{
+                  fontSize: 11,
+                  fontWeight: '700',
+                  color: isDark ? 'rgba(124,58,237,0.78)' : '#7C3AED',
+                  letterSpacing: 0.5,
+                  textTransform: 'uppercase',
+                  marginBottom: 12,
+                  paddingHorizontal: 6,
+                }}>
                   {t('apps.recent') || 'Recentes'}
                 </Text>
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
@@ -1347,7 +1452,18 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
               </View>
             ) : filteredSections.map((section) => (
               <View key={section.title} style={{ marginBottom: 18 }}>
-                <Text style={{ fontSize: 13, fontWeight: '700', color: isDark ? '#9ca3af' : '#374151', letterSpacing: -0.1, textTransform: 'none', marginBottom: 12, paddingHorizontal: 6 }}>
+                {/* Section header — matches the Recents eyebrow treatment
+                    (uppercase + 0.5 letterSpacing) but in a neutral muted
+                    color so it doesn't compete visually with Recentes. */}
+                <Text style={{
+                  fontSize: 11,
+                  fontWeight: '700',
+                  color: isDark ? '#9ca3af' : '#6b7280',
+                  letterSpacing: 0.5,
+                  textTransform: 'uppercase',
+                  marginBottom: 12,
+                  paddingHorizontal: 6,
+                }}>
                   {section.title}
                 </Text>
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>

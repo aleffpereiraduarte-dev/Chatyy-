@@ -20,7 +20,7 @@ import {
   IconUpload, IconDownload, IconTrash, IconStar, IconStarFilled, IconSearch,
   IconEdit, IconMoreVert, IconArrowLeft, IconPlus, IconClock, IconChevronRight,
   IconPaperclip, IconCheck, IconX, IconArchive, IconCamera, IconInbox,
-  IconEye, IconPlay,
+  IconEye, IconPlay, IconCloud,
 } from '../components/Icons';
 import FileViewer from '../components/FileViewer';
 import { ListSkeleton } from '../components/SkeletonLoader';
@@ -509,8 +509,16 @@ function StorageBar({ storageInfo, colors, t, isDark }) {
       },
       glassStyle(isDark),
     ]}>
-      {/* Percentage display */}
+      {/* Percentage display — Cloud glyph anchors the hero so the bar reads as
+          "Drive storage" instantly. Badge wraps icon + % in a single pill so it
+          carries the threshold color (green / amber / orange / red) coherently. */}
       <View style={styles.storageHeader}>
+        <View style={[
+          styles.storageCloudIcon,
+          { backgroundColor: fillColor + '18', borderColor: fillColor + '30' },
+        ]}>
+          <IconCloud size={16} color={fillColor} />
+        </View>
         <View style={{ flex: 1 }}>
           <Text style={[styles.storageMainText, { color: colors.text }]}>
             {Math.round(percent)}% {t('files.storageUsed', { used: '', quota: '' }).trim() || 'usado'}
@@ -578,6 +586,49 @@ function StorageBar({ storageInfo, colors, t, isDark }) {
         </Text>
       </View>
     </View>
+  );
+}
+
+// ============================================================
+// HAPTICS (fire-and-forget; no-op on web / unsupported)
+// ============================================================
+// Lazy-require so we don't pay the module cost on web bundles. Falls back
+// silently when expo-haptics is unavailable (e.g. RN bridge not ready).
+function triggerHaptic(kind = 'light') {
+  if (isWeb) return;
+  try {
+    const H = require('expo-haptics');
+    if (kind === 'medium') H.impactAsync?.(H.ImpactFeedbackStyle?.Medium);
+    else if (kind === 'heavy') H.impactAsync?.(H.ImpactFeedbackStyle?.Heavy);
+    else H.impactAsync?.(H.ImpactFeedbackStyle?.Light);
+  } catch {}
+}
+
+// ============================================================
+// GRID CARD PRESSABLE
+// ============================================================
+
+// Tiny wrapper so each grid card has its own scale ref (can't useRef inside
+// renderItem). Press-in → 0.97 scale + soft shadow elevation; press-out springs
+// back. Native driver only — no layout work, smooth on Android too.
+function GridCardPressable({ children, style, onPress, onLongPress, onContextMenu, activeOpacity = 0.9 }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const handleIn = () => Animated.spring(scale, { toValue: 0.97, useNativeDriver: true, friction: 7, tension: 220 }).start();
+  const handleOut = () => Animated.spring(scale, { toValue: 1, useNativeDriver: true, friction: 5, tension: 260 }).start();
+  return (
+    <Animated.View style={{ flex: 1, transform: [{ scale }] }}>
+      <TouchableOpacity
+        style={style}
+        onPress={onPress}
+        onLongPress={onLongPress}
+        onPressIn={handleIn}
+        onPressOut={handleOut}
+        activeOpacity={activeOpacity}
+        {...(isWeb && onContextMenu ? { onContextMenu } : {})}
+      >
+        {children}
+      </TouchableOpacity>
+    </Animated.View>
   );
 }
 
@@ -1003,6 +1054,21 @@ function FilesScreenInner() {
   const [searchResults, setSearchResults] = useState(null);
   const [showFab, setShowFab] = useState(false);
   const [actionMenu, setActionMenu] = useState(null);
+  // Spring entrance for the action sheet (long-press menu). Native Modal slide
+  // animation handles the off-screen translate; this layer adds the iOS-style
+  // overshoot scale so the sheet feels "popped" instead of just sliding flat.
+  const actionMenuScale = useRef(new Animated.Value(0.96)).current;
+  const actionMenuOpacity = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (actionMenu) {
+      actionMenuScale.setValue(0.96);
+      actionMenuOpacity.setValue(0);
+      Animated.parallel([
+        Animated.spring(actionMenuScale, { toValue: 1, tension: 280, friction: 14, useNativeDriver: true }),
+        Animated.timing(actionMenuOpacity, { toValue: 1, duration: 160, useNativeDriver: true }),
+      ]).start();
+    }
+  }, [actionMenu]);
   const [renameModal, setRenameModal] = useState(null);
   const [newFolderModal, setNewFolderModal] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
@@ -2178,7 +2244,7 @@ function FilesScreenInner() {
     if (item._type === 'folder') {
       const folderColor = getFolderColor(item.id);
       return (
-        <TouchableOpacity
+        <GridCardPressable
           style={[
             styles.gridItem,
             {
@@ -2188,8 +2254,8 @@ function FilesScreenInner() {
             glassStyle(isDark),
           ]}
           onPress={() => navigateToFolder(item.id)}
-          onLongPress={() => showActionMenu('folder', item)}
-          activeOpacity={0.7}
+          onLongPress={() => { triggerHaptic('medium'); showActionMenu('folder', item); }}
+          onContextMenu={(e) => { e?.preventDefault?.(); showActionMenu('folder', item); }}
         >
           <View style={[styles.gridItemIcon, { backgroundColor: isDark ? folderColor + '18' : folderColor + '10' }]}>
             <IconFolder size={30} color={folderColor} />
@@ -2198,7 +2264,7 @@ function FilesScreenInner() {
             {highlightMatch(item.name, searchMode ? searchText : '', colors.primary)}
           </Text>
           <Text style={[styles.gridItemMeta, { color: colors.textTertiary }]}>{t('files.folder')}</Text>
-        </TouchableOpacity>
+        </GridCardPressable>
       );
     }
     const fileIndex = displayFiles.indexOf(item);
@@ -2209,7 +2275,7 @@ function FilesScreenInner() {
     const isItemSelected = selectedIds.has(item.id);
 
     return (
-      <TouchableOpacity
+      <GridCardPressable
         style={[
           styles.gridItem,
           {
@@ -2228,12 +2294,13 @@ function FilesScreenInner() {
           else handleFileOpen(item, fileIndex >= 0 ? fileIndex : 0);
         }}
         onLongPress={() => {
-          // Long-press always opens action menu (not multi-select)
+          // Long-press always opens action menu (not multi-select). Medium haptic
+          // matches WhatsApp/iOS context-menu feel.
+          triggerHaptic('medium');
           showActionMenu(tab === 'trash' ? 'trash_file' : 'file', item);
         }}
         // Web: right-click also opens action menu
-        {...(isWeb ? { onContextMenu: (e) => { e?.preventDefault?.(); showActionMenu(tab === 'trash' ? 'trash_file' : 'file', item); } } : {})}
-        activeOpacity={0.7}
+        onContextMenu={(e) => { e?.preventDefault?.(); showActionMenu(tab === 'trash' ? 'trash_file' : 'file', item); }}
       >
         {multiSelect && (
           <View style={styles.gridCheckbox}>
@@ -2274,7 +2341,7 @@ function FilesScreenInner() {
             <IconStarFilled size={12} color="#f59e0b" />
           </View>
         )}
-      </TouchableOpacity>
+      </GridCardPressable>
     );
   };
 
@@ -2779,7 +2846,7 @@ function FilesScreenInner() {
               // Brand-tinted shadow so the FAB feels like a branded action.
               { shadowColor: '#7C3AED', shadowOpacity: 0.35, shadowRadius: 12 },
             ]}
-            onPress={handleUpload}
+            onPress={() => { triggerHaptic('light'); handleUpload(); }}
             onPressIn={() => Animated.spring(uploadFabScale, { toValue: 0.94, useNativeDriver: true, friction: 6, tension: 180 }).start()}
             onPressOut={() => Animated.spring(uploadFabScale, { toValue: 1, useNativeDriver: true, friction: 5, tension: 220 }).start()}
             disabled={uploading}
@@ -2800,10 +2867,16 @@ function FilesScreenInner() {
       {/* ============ ACTION MENU MODAL ============ */}
       <Modal visible={!!actionMenu} transparent animationType="slide" onRequestClose={() => setActionMenu(null)}>
         <TouchableOpacity style={styles.modalBackdrop} activeOpacity={1} onPress={() => setActionMenu(null)}>
-          <View style={[
+          <Animated.View style={[
             styles.actionSheet,
             {
               backgroundColor: isDark ? 'rgba(21,30,46,0.95)' : 'rgba(255,255,255,0.97)',
+              // Spring scale + linear fade gives the long-press menu an iOS-style
+              // "pop" instead of just sliding flat. transformOrigin keeps the
+              // scale anchored to the bottom-center of the sheet on web.
+              opacity: actionMenuOpacity,
+              transform: [{ scale: actionMenuScale }],
+              ...(isWeb ? { transformOrigin: 'bottom center' } : {}),
             },
             isWeb && {
               backdropFilter: 'blur(30px) saturate(200%)',
@@ -3005,7 +3078,7 @@ function FilesScreenInner() {
               </View>
               <Text style={[styles.actionItemText, { color: colors.textTertiary }]}>{t('common.cancel')}</Text>
             </TouchableOpacity>
-          </View>
+          </Animated.View>
         </TouchableOpacity>
       </Modal>
 
@@ -3560,7 +3633,11 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
   },
   storageHeader: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8,
+    flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 10,
+  },
+  storageCloudIcon: {
+    width: 30, height: 30, borderRadius: 10, borderWidth: 1,
+    alignItems: 'center', justifyContent: 'center',
   },
   storageMainText: { fontSize: FontSize.sm, fontWeight: '700', letterSpacing: -0.2 },
   storageSubLine: { fontSize: 10, marginTop: 1 },
@@ -3568,7 +3645,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10,
   },
   storagePercentText: { fontSize: FontSize.sm, fontWeight: '800' },
-  storageTrack: { height: 8, borderRadius: 4, overflow: 'hidden' },
+  // Slimmer 6px track reads as "polished" rather than "fat utility bar" —
+  // matches the storage cards on backup/photos screens (round 51 alignment).
+  storageTrack: { height: 6, borderRadius: 3, overflow: 'hidden' },
   storageFillDrive: {
     // backgroundColor is supplied inline so it can vary with usage %
     height: '100%', borderRadius: 4,
