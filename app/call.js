@@ -45,17 +45,21 @@ const initCallModules = (() => {
   };
 })();
 
-// Lazy-load callkeep only on native to avoid TDZ on web
-let reportConnected = () => {};
-let callKeepEnd = () => {};
-let callKeepStart = async () => ({ success: false });
+// Lazy-load callkeep only on native. Single object ref so Hermes minifier
+// doesn't TDZ on individual `let` bindings — same bug that broke incoming
+// call native screen, fixed by collapsing to one object.
+const callKeep = {
+  reportConnected: () => {},
+  endCall: () => {},
+  startCall: async () => ({ success: false }),
+};
 
 if (Platform.OS !== 'web') {
   try {
     const ck = require('../services/callkeep');
-    reportConnected = ck.reportConnected;
-    callKeepEnd = ck.endCall;
-    callKeepStart = ck.startCall;
+    if (ck.reportConnected) callKeep.reportConnected = ck.reportConnected;
+    if (ck.endCall) callKeep.endCall = ck.endCall;
+    if (ck.startCall) callKeep.startCall = ck.startCall;
   } catch (e) {
     console.warn('[Call] Failed to load callkeep:', e.message);
   }
@@ -1252,7 +1256,7 @@ function CallScreenInner() {
       } catch {}
     }
 
-    callKeepEnd(callId);
+    callKeep.endCall(callId);
     setCallStateInternal('ended');
     // Always clear the global "call active" flag on the explicit end path
     // (codex finding: cleanup didn't always reset it, so IncomingCallListener
@@ -1383,7 +1387,7 @@ function CallScreenInner() {
           attachRemoteStream(event.streams[0]);
           setPeerConnected(true);
           setReconnecting(false);
-          reportConnected(callId);
+          callKeep.reportConnected(callId);
         }
       };
 
@@ -1597,7 +1601,7 @@ function CallScreenInner() {
                 RTCAudioSession.audioSessionDidDeactivate();
               } catch {}
             }
-            callKeepEnd(callId);
+            callKeep.endCall(callId);
             if (localStreamRef.current) {
               localStreamRef.current.getTracks().forEach(t => { try { t.stop(); } catch {} });
               localStreamRef.current = null;
@@ -1640,7 +1644,7 @@ function CallScreenInner() {
           try { pcRef.current?.close?.(); } catch {}
           pcRef.current = null;
           try { setCallActive(false); } catch {}
-          try { callKeepEnd(callId); } catch {}
+          try { callKeep.endCall(callId); } catch {}
           // Log the missed/declined call to local history so it shows in
           // the Calls tab even before the chat sync round-trips.
           try {
@@ -2095,7 +2099,7 @@ function CallScreenInner() {
           }
           if (mounted) {
             setPeerConnected(true);
-            reportConnected(callId);
+            callKeep.reportConnected(callId);
             if (Platform.OS !== 'web') {
               try {
                 const { RTCAudioSession } = require('@stream-io/react-native-webrtc');
@@ -2368,7 +2372,7 @@ function CallScreenInner() {
             console.log('[Call] call_invite already sent for ' + callId + ' — skipping duplicate');
           } else {
             globalThis.__chatyyLastCallInviteId = callId;
-            callKeepStart(callId, callerName, contactEmail, video);
+            callKeep.startCall(callId, callerName, contactEmail, video);
             sendSignaling('call_invite', {
               call_id: callId,
               target_email: contactEmail,
@@ -2584,7 +2588,7 @@ function CallScreenInner() {
         try { pcRef.current.close(); } catch {}
         pcRef.current = null;
       }
-      if (callId) callKeepEnd(callId);
+      if (callId) callKeep.endCall(callId);
       if (Platform.OS !== 'web') {
         try {
           const { setAudioModeAsync } = require('expo-audio');

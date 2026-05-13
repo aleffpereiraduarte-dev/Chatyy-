@@ -622,6 +622,13 @@ export default function IncomingCallListener() {
           setCallActive(true);
           stopRingtone();
 
+          // Android: dismiss IncomingCallActivity now that user accepted from
+          // the native screen. Without this, the full-screen Activity lingers
+          // over /call. iOS CallKit auto-dismisses, so skip there.
+          if (Platform.OS === 'android') {
+            try { callKeep.endCall(data.callId); } catch {}
+          }
+
           // Use callStateRef if available (populated by onIncomingCall), otherwise use event data
           const currentCall = callStateRef.current;
           const callId = currentCall?.call_id || data.callId || '';
