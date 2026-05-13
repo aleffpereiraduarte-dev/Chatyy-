@@ -51,14 +51,14 @@ jobs:
           cd ios
           pod install --repo-update
 
-      - name: Build for iOS Simulator (no signing)
+      - name: Build for iOS Simulator (Release — JS bundle embedded, no Metro needed)
         run: |
           set -x
           cd ios
           xcodebuild \
             -workspace "$APP_NAME.xcworkspace" \
             -scheme "$APP_NAME" \
-            -configuration Debug \
+            -configuration Release \
             -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' \
             -derivedDataPath "$RUNNER_TEMP/dd" \
