@@ -998,14 +998,24 @@ function CallScreenInner() {
       while (Date.now() < deadline) {
         if (endedRef.current) return false;
         if (localStreamRef.current && localStreamRef.current.getTracks().length > 0) {
-          // Also ensure we've actually called addTrack — check sender count.
+          // Also ensure we've actually bound tracks to senders — check sender count.
           if (pc.getSenders && pc.getSenders().some(s => s.track)) return true;
-          // Stream exists but tracks not on PC yet — try to add them now.
+          // Stream exists but no sender has a track yet — bind via replaceTrack
+          // on the fixed-order transceivers (added at PC creation). Avoid
+          // addTrack here: it would append a NEW m-line and break the locked
+          // ordering that the m-line-mismatch fix (2026-05-12) depends on.
           try {
-            localStreamRef.current.getTracks().forEach(t => {
-              const already = pc.getSenders().some(s => s.track === t);
-              if (!already) pc.addTrack(t, localStreamRef.current);
-            });
+            const transceivers = pc.getTransceivers ? pc.getTransceivers() : [];
+            const audioTrack = localStreamRef.current.getAudioTracks()[0];
+            const videoTrack = localStreamRef.current.getVideoTracks()[0];
+            const audioTx = transceivers.find(tr => tr.sender && (tr.sender.track?.kind === 'audio' || tr.receiver?.track?.kind === 'audio' || tr.mid === '0'));
+            const videoTx = transceivers.find(tr => tr.sender && (tr.sender.track?.kind === 'video' || tr.receiver?.track?.kind === 'video' || tr.mid === '1'));
+            if (audioTrack && audioTx?.sender && audioTx.sender.track !== audioTrack) {
+              try { await audioTx.sender.replaceTrack(audioTrack); } catch {}
+            }
+            if (videoTrack && videoTx?.sender && videoTx.sender.track !== videoTrack) {
+              try { await videoTx.sender.replaceTrack(videoTrack); } catch {}
+            }
             return true;
           } catch {}
         }
@@ -1025,24 +1035,27 @@ function CallScreenInner() {
         sdp: data.sdp,
       }));
 
-      // Same pre-answer audit as the caller side — verify tracks are
-      // actually on the PC (and force-enable) BEFORE building the answer.
+      // Pre-answer audit — bind tracks via replaceTrack on the locked-order
+      // transceivers (audio first, video second) instead of addTrack. addTrack
+      // would shift m-line positions and trip "subsequent offer doesn't match"
+      // on the next renegotiation.
       try {
         const localStream = localStreamRef.current;
-        if (localStream && pc.getSenders) {
-          const senders = pc.getSenders();
-          const localTracks = localStream.getTracks();
-          const senderTracks = senders.map(s => s.track).filter(Boolean);
-          for (const t of localTracks) {
-            if (!senderTracks.includes(t)) {
-              try { pc.addTrack(t, localStream); console.log('[Call] pre-answer: re-attached ' + t.kind); } catch {}
-            }
-            try {
-              if (t.kind === 'audio' && !audioMuted) t.enabled = true;
-              if (t.kind === 'video' && videoEnabledRef.current) t.enabled = true;
-            } catch {}
+        if (localStream && pc.getTransceivers) {
+          const transceivers = pc.getTransceivers();
+          const audioTrack = localStream.getAudioTracks()[0];
+          const videoTrack = localStream.getVideoTracks()[0];
+          const audioTx = transceivers.find(tr => tr.sender && (tr.sender.track?.kind === 'audio' || tr.receiver?.track?.kind === 'audio' || tr.mid === '0'));
+          const videoTx = transceivers.find(tr => tr.sender && (tr.sender.track?.kind === 'video' || tr.receiver?.track?.kind === 'video' || tr.mid === '1'));
+          if (audioTrack && audioTx?.sender && audioTx.sender.track !== audioTrack) {
+            try { await audioTx.sender.replaceTrack(audioTrack); console.log('[Call] pre-answer: replaceTrack audio'); } catch {}
           }
-          console.log('[Call] pre-answer audit: senders=' + pc.getSenders().length + ' localTracks=' + localTracks.length);
+          if (videoTrack && videoTx?.sender && videoTx.sender.track !== videoTrack) {
+            try { await videoTx.sender.replaceTrack(videoTrack); console.log('[Call] pre-answer: replaceTrack video'); } catch {}
+          }
+          if (audioTrack && !audioMuted) audioTrack.enabled = true;
+          if (videoTrack && videoEnabledRef.current) videoTrack.enabled = true;
+          console.log('[Call] pre-answer audit: tx=' + transceivers.length + ' audioTx=' + !!audioTx + ' videoTx=' + !!videoTx);
         }
       } catch {}
 
@@ -1346,11 +1359,22 @@ function CallScreenInner() {
         }
       }, 30000);
 
-      // Re-add local tracks
+      // Re-add local tracks — use fixed-order transceivers + replaceTrack
+      // so m-lines never reorder across the reconnect (would otherwise hit
+      // "subsequent offer doesn't match" same as the initial caller path).
       if (localStreamRef.current) {
-        localStreamRef.current.getTracks().forEach(track => {
-          pc.addTrack(track, localStreamRef.current);
-        });
+        const stream = localStreamRef.current;
+        try {
+          const audioTx = pc.addTransceiver('audio', { direction: 'sendrecv' });
+          const videoTx = pc.addTransceiver('video', { direction: 'sendrecv' });
+          const audioTrack = stream.getAudioTracks()[0];
+          const videoTrack = stream.getVideoTracks()[0];
+          if (audioTrack && audioTx?.sender) { try { await audioTx.sender.replaceTrack(audioTrack); } catch {} }
+          if (videoTrack && videoTx?.sender) { try { await videoTx.sender.replaceTrack(videoTrack); } catch {} }
+          else if (videoTx) { try { videoTx.direction = 'inactive'; } catch {} }
+        } catch (e) {
+          stream.getTracks().forEach(track => { try { pc.addTrack(track, stream); } catch {} });
+        }
         applyCodecPreferences(pc);
       }
 
@@ -1991,9 +2015,29 @@ function CallScreenInner() {
           }
         }, 45000);
 
-        stream.getTracks().forEach(track => {
-          pc.addTrack(track, stream);
-        });
+        // CRITICAL (2026-05-12): use addTransceiver in FIXED ORDER (audio, then
+        // video) so m-line positions are locked at PC creation. WebRTC rejects
+        // a subsequent offer whose m-lines drift from a previous offer/answer
+        // (saw "order of m-lines in subsequent offer doesn't match" on caller
+        // setLocalDescription, blocking every Chatyy↔Chatyy call). Tracks then
+        // bind via replaceTrack, which doesn't disturb m-line ordering.
+        try {
+          const audioTx = pc.addTransceiver('audio', { direction: 'sendrecv' });
+          const videoTx = pc.addTransceiver('video', { direction: 'sendrecv' });
+          const audioTrack = stream.getAudioTracks()[0];
+          const videoTrack = stream.getVideoTracks()[0];
+          if (audioTrack && audioTx?.sender) {
+            try { await audioTx.sender.replaceTrack(audioTrack); } catch {}
+          }
+          if (videoTrack && videoTx?.sender) {
+            try { await videoTx.sender.replaceTrack(videoTrack); } catch {}
+          } else if (videoTx) {
+            try { videoTx.direction = 'inactive'; } catch {}
+          }
+        } catch (e) {
+          console.warn('[Call] addTransceiver path failed, falling back to addTrack:', e?.message);
+          stream.getTracks().forEach(track => { try { pc.addTrack(track, stream); } catch {} });
+        }
         // Reorder codec preference (VP9 > H.264 > VP8) antes do offer
         applyCodecPreferences(pc);
 
@@ -2222,11 +2266,18 @@ function CallScreenInner() {
                     if (t.kind === 'audio' && !audioMuted) t.enabled = true;
                     if (t.kind === 'video' && videoEnabledRef.current) t.enabled = true;
                   }
-                  // Re-attach any track that lost its sender binding
+                  // Re-bind any track that lost its sender via replaceTrack
+                  // on the matching transceiver. Avoid addTrack here — it
+                  // would append a NEW m-line and break already-negotiated
+                  // SDP ordering (see 2026-05-12 m-line mismatch fix).
+                  const transceivers = pcRef.current.getTransceivers ? pcRef.current.getTransceivers() : [];
                   for (const t of localTracks) {
                     const bound = senders.find(s => s.track === t);
                     if (!bound) {
-                      try { pcRef.current.addTrack(t, localStream); } catch {}
+                      const tx = transceivers.find(tr => tr.sender && (tr.sender.track?.kind === t.kind || (!tr.sender.track && (tr.receiver?.track?.kind === t.kind || tr.mid === (t.kind === 'audio' ? '0' : '1')))));
+                      if (tx && tx.sender) {
+                        try { tx.sender.replaceTrack(t).catch(() => {}); } catch {}
+                      }
                     }
                   }
                   // Force transceivers to sendrecv (defaults can degrade to
@@ -2361,37 +2412,35 @@ function CallScreenInner() {
             return;
           }
 
-          // CRITICAL track audit BEFORE createOffer. User reported asymmetric
-          // bug: Android→iOS goes mute, iOS→Android works. Strong signal that
-          // Android caller addTrack races getUserMedia — tracks aren't on the
-          // PC when the offer is built, so the SDP has no audio m-line and
-          // iOS never hears anything. Defensive re-attach + verify here.
+          // PRE-OFFER TRACK AUDIT — uses replaceTrack on the fixed-order
+          // transceivers from PC creation so m-line ordering NEVER changes
+          // (fix for "subsequent offer doesn't match" error, 2026-05-12).
+          // Original concern (Android→iOS muted): a track missing on the PC
+          // when createOffer ran — solved here by checking each transceiver
+          // for a bound track and replaceTrack-ing from localStream if not.
           try {
             const localStream = localStreamRef.current;
-            if (localStream && pc.getSenders) {
-              const senders = pc.getSenders();
-              const localTracks = localStream.getTracks();
-              const senderTracks = senders.map(s => s.track).filter(Boolean);
-              const audioOnPc = senderTracks.some(t => t.kind === 'audio');
-              const videoOnPc = senderTracks.some(t => t.kind === 'video');
-              console.log('[Call] pre-offer audit: senders=' + senders.length + ' audio=' + audioOnPc + ' video=' + videoOnPc + ' localTracks=' + localTracks.length);
-              // Re-attach any missing track
-              for (const t of localTracks) {
-                if (!senderTracks.includes(t)) {
-                  try {
-                    pc.addTrack(t, localStream);
-                    console.log('[Call] pre-offer: re-attached missing ' + t.kind + ' track');
-                  } catch (e) { console.warn('[Call] pre-offer addTrack err:', e?.message); }
-                }
-                // Force track.enabled=true (the worst-of-both case is a
-                // muted track in the SDP — peer's WebRTC engine then drops
-                // RTP at the decoder because the m-line says active but
-                // packets show silence/black frames).
-                try {
-                  if (t.kind === 'audio' && !audioMuted) t.enabled = true;
-                  if (t.kind === 'video' && video) t.enabled = true;
-                } catch {}
+            if (localStream && pc.getTransceivers) {
+              const transceivers = pc.getTransceivers();
+              const audioTx = transceivers.find(t => (t.sender?.track?.kind === 'audio') || (t.receiver?.track?.kind === 'audio') || t.mid === '0');
+              const videoTx = transceivers.find(t => (t.sender?.track?.kind === 'video') || (t.receiver?.track?.kind === 'video') || t.mid === '1');
+              const audioTrack = localStream.getAudioTracks()[0];
+              const videoTrack = localStream.getVideoTracks()[0];
+              console.log('[Call] pre-offer audit: tx=' + transceivers.length + ' audioTx=' + !!audioTx + ' videoTx=' + !!videoTx + ' audioTrack=' + !!audioTrack + ' videoTrack=' + !!videoTrack);
+              if (audioTx && audioTx.sender && audioTrack && audioTx.sender.track !== audioTrack) {
+                try { await audioTx.sender.replaceTrack(audioTrack); console.log('[Call] pre-offer: replaceTrack audio'); } catch (e) { console.warn('[Call] pre-offer replaceTrack audio err:', e?.message); }
               }
+              if (videoTx && videoTx.sender && videoTrack && videoTx.sender.track !== videoTrack) {
+                try { await videoTx.sender.replaceTrack(videoTrack); console.log('[Call] pre-offer: replaceTrack video'); } catch (e) { console.warn('[Call] pre-offer replaceTrack video err:', e?.message); }
+              }
+              // Force track.enabled=true (the worst-of-both case is a
+              // muted track in the SDP — peer's WebRTC engine then drops
+              // RTP at the decoder because the m-line says active but
+              // packets show silence/black frames).
+              try {
+                if (audioTrack && !audioMuted) audioTrack.enabled = true;
+                if (videoTrack && video) videoTrack.enabled = true;
+              } catch {}
             }
           } catch (auditErr) {
             console.warn('[Call] pre-offer audit failed:', auditErr?.message);
