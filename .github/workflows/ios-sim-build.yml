@@ -1,0 +1,94 @@
+name: iOS Simulator Build (artifact for QA on Mac Docker)
+
+# Builds Chatyy.app for iOS Simulator (no signing, no provisioning) and uploads
+# as a downloadable artifact. Used to QA the iOS app on the Mac Docker which
+# can boot iOS Simulator but cannot build .app locally (Xcode 16+ actool/ibtool
+# need GPU per memory ios_docker_xcode_build_blocked).
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/triggers/ios-sim-build.txt'
+
+permissions:
+  contents: read
+
+jobs:
+  build-sim:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      APP_NAME: Chatyy
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Set up Xcode (latest stable)
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install npm deps
+        run: npm ci --no-audit --no-fund
+
+      - name: Run expo prebuild
+        run: npx expo prebuild --platform ios --no-install --clean
+
+      - name: Patch ShareExtension signing (sets manual signing off)
+        run: node scripts/patch-shareext-signing.js || true
+
+      - name: Install Pods
+        env:
+          LANG: en_US.UTF-8
+          LC_ALL: en_US.UTF-8
+        run: |
+          cd ios
+          pod install --repo-update
+
+      - name: Build for iOS Simulator (no signing)
+        run: |
+          set -x
+          cd ios
+          xcodebuild \
+            -workspace "$APP_NAME.xcworkspace" \
+            -scheme "$APP_NAME" \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/dd" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            EXPANDED_CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Locate built .app + tarball
+        id: pkg
+        run: |
+          set -x
+          APP_PATH=$(find "$RUNNER_TEMP/dd" -type d -name "$APP_NAME.app" -path "*iphonesimulator*" | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "::error::No $APP_NAME.app found in DerivedData"
+            find "$RUNNER_TEMP/dd" -name "*.app" -maxdepth 6
+            exit 1
+          fi
+          echo "App at: $APP_PATH"
+          ls -la "$APP_PATH"
+          PARENT=$(dirname "$APP_PATH")
+          cd "$PARENT"
+          tar -czf "$RUNNER_TEMP/chatyy-sim.tar.gz" "$APP_NAME.app"
+          ls -la "$RUNNER_TEMP/chatyy-sim.tar.gz"
+          echo "tarball=$RUNNER_TEMP/chatyy-sim.tar.gz" >> $GITHUB_OUTPUT
+
+      - name: Upload .app as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chatyy-ios-sim
+          path: ${{ steps.pkg.outputs.tarball }}
+          retention-days: 5
