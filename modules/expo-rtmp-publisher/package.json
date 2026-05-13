@@ -1,0 +1,36 @@
+{
+  "name": "expo-rtmp-publisher",
+  "version": "0.1.0",
+  "description": "Native RTMP/RTMPS publisher (camera + mic) for Expo. Targets Cloudflare Stream Live ingest.",
+  "main": "build/index.js",
+  "types": "build/index.d.ts",
+  "scripts": {
+    "build": "expo-module build",
+    "clean": "expo-module clean",
+    "lint": "expo-module lint",
+    "test": "expo-module test",
+    "prepare": "expo-module prepare",
+    "prepublishOnly": "expo-module prepublishOnly",
+    "expo-module": "expo-module"
+  },
+  "keywords": [
+    "expo",
+    "rtmp",
+    "rtmps",
+    "livestream",
+    "cloudflare-stream",
+    "haishinkit"
+  ],
+  "repository": "https://github.com/aleffduarte/webmail-app",
+  "author": "Chatyy / OneMundo",
+  "license": "MIT",
+  "homepage": "https://github.com/aleffduarte/webmail-app/tree/main/modules/expo-rtmp-publisher",
+  "files": [
+    "build",
+    "ios",
+    "android",
+    "src",
+    "expo-module.config.json",
+    "README.md"
+  ]
+}

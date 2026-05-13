@@ -1,0 +1,9 @@
+{
+  "platforms": ["ios", "android"],
+  "ios": {
+    "modules": ["ExpoRtmpPublisherModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.rtmp.ExpoRtmpPublisherModule"]
+  }
+}

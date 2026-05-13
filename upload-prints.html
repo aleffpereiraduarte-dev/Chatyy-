@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Upload Prints — Chatyy</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; min-height: 100vh; font-family: -apple-system, system-ui, sans-serif;
+    background: linear-gradient(135deg, #1a0a2e 0%, #2d1b69 100%); color: #fff;
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  .card {
+    background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 20px; padding: 28px 24px; max-width: 460px; width: 100%;
+    backdrop-filter: blur(20px);
+  }
+  h1 { margin: 0 0 6px; font-size: 22px; font-weight: 700; }
+  .sub { color: rgba(255,255,255,0.6); font-size: 13px; margin-bottom: 22px; }
+  .drop {
+    border: 2px dashed rgba(255,255,255,0.25); border-radius: 14px; padding: 32px 16px;
+    text-align: center; cursor: pointer; transition: all 0.2s;
+  }
+  .drop:hover, .drop.over { border-color: #A78BFA; background: rgba(167,139,250,0.08); }
+  .drop input { display: none; }
+  .drop-label { font-size: 15px; font-weight: 600; }
+  .drop-hint { font-size: 12px; color: rgba(255,255,255,0.5); margin-top: 6px; }
+  .desc {
+    width: 100%; margin-top: 14px; padding: 12px 14px;
+    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 10px; color: #fff; font-size: 14px; font-family: inherit;
+    resize: vertical; min-height: 60px;
+  }
+  .desc:focus { outline: none; border-color: #A78BFA; }
+  .btn {
+    width: 100%; margin-top: 14px; padding: 14px;
+    background: #7C3AED; border: 0; border-radius: 10px;
+    color: #fff; font-size: 15px; font-weight: 700; cursor: pointer;
+    transition: transform 0.1s, opacity 0.2s;
+  }
+  .btn:hover { transform: scale(1.01); }
+  .btn:active { transform: scale(0.98); }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .preview {
+    margin-top: 12px; border-radius: 10px; overflow: hidden;
+    max-height: 280px; display: none;
+  }
+  .preview img { width: 100%; display: block; }
+  .msg {
+    margin-top: 14px; padding: 10px 12px; border-radius: 8px;
+    font-size: 13px; display: none;
+  }
+  .msg.ok { background: rgba(34,197,94,0.15); color: #4ade80; border: 1px solid rgba(34,197,94,0.3); display: block; }
+  .msg.err { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.3); display: block; }
+  .progress { height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; margin-top: 8px; overflow: hidden; display: none; }
+  .progress.show { display: block; }
+  .progress-bar { height: 100%; background: #A78BFA; width: 0; transition: width 0.15s; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Upload Prints</h1>
+  <div class="sub">Mande screenshots pro Claude analisar</div>
+
+  <label class="drop" id="drop">
+    <input type="file" id="file" accept="image/*,application/pdf">
+    <div class="drop-label" id="dropLabel">Toque pra escolher arquivo</div>
+    <div class="drop-hint">PNG, JPG, HEIC, PDF — até 30 MB</div>
+  </label>
+
+  <div class="preview" id="preview"><img id="previewImg" alt=""></div>
+
+  <textarea class="desc" id="desc" placeholder="Descrição (opcional)"></textarea>
+
+  <div class="progress" id="progress"><div class="progress-bar" id="progressBar"></div></div>
+
+  <button class="btn" id="upload" disabled>Enviar</button>
+
+  <div class="msg" id="msg"></div>
+</div>
+
+<script>
+(function() {
+  const dropEl = document.getElementById('drop');
+  const fileEl = document.getElementById('file');
+  const labelEl = document.getElementById('dropLabel');
+  const previewEl = document.getElementById('preview');
+  const previewImg = document.getElementById('previewImg');
+  const descEl = document.getElementById('desc');
+  const btnEl = document.getElementById('upload');
+  const msgEl = document.getElementById('msg');
+  const progressEl = document.getElementById('progress');
+  const progressBar = document.getElementById('progressBar');
+
+  let chosen = null;
+
+  function showMsg(text, ok) {
+    msgEl.textContent = text;
+    msgEl.className = 'msg ' + (ok ? 'ok' : 'err');
+  }
+  function hideMsg() { msgEl.className = 'msg'; }
+
+  function setFile(f) {
+    if (!f) return;
+    chosen = f;
+    labelEl.textContent = f.name + ' (' + Math.round(f.size / 1024) + ' KB)';
+    btnEl.disabled = false;
+    hideMsg();
+    if (f.type && f.type.indexOf('image/') === 0) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        previewImg.src = e.target.result;
+        previewEl.style.display = 'block';
+      };
+      reader.readAsDataURL(f);
+    } else {
+      previewEl.style.display = 'none';
+    }
+  }
+
+  fileEl.addEventListener('change', (e) => setFile(e.target.files[0]));
+
+  ['dragenter','dragover'].forEach(ev => dropEl.addEventListener(ev, (e) => {
+    e.preventDefault(); e.stopPropagation(); dropEl.classList.add('over');
+  }));
+  ['dragleave','drop'].forEach(ev => dropEl.addEventListener(ev, (e) => {
+    e.preventDefault(); e.stopPropagation(); dropEl.classList.remove('over');
+  }));
+  dropEl.addEventListener('drop', (e) => {
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
+      setFile(e.dataTransfer.files[0]);
+    }
+  });
+
+  // Paste from clipboard (desktop)
+  document.addEventListener('paste', (e) => {
+    if (!e.clipboardData) return;
+    for (const item of e.clipboardData.items) {
+      if (item.kind === 'file') {
+        const f = item.getAsFile();
+        if (f) { setFile(f); return; }
+      }
+    }
+  });
+
+  btnEl.addEventListener('click', () => {
+    if (!chosen) return;
+    btnEl.disabled = true;
+    btnEl.textContent = 'Enviando…';
+    progressEl.classList.add('show');
+    progressBar.style.width = '0';
+    hideMsg();
+
+    const form = new FormData();
+    form.append('file', chosen);
+    if (descEl.value.trim()) form.append('description', descEl.value.trim());
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/upload-print.php', true);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) progressBar.style.width = (e.loaded / e.total * 100) + '%';
+    };
+    xhr.onload = () => {
+      btnEl.disabled = false;
+      btnEl.textContent = 'Enviar';
+      progressEl.classList.remove('show');
+      try {
+        const r = JSON.parse(xhr.responseText);
+        if (r.ok) {
+          showMsg('✓ Enviado: ' + (r.path || r.filename || 'OK'), true);
+          chosen = null;
+          fileEl.value = '';
+          labelEl.textContent = 'Toque pra escolher arquivo';
+          previewEl.style.display = 'none';
+          descEl.value = '';
+          btnEl.disabled = true;
+        } else {
+          showMsg('Erro: ' + (r.error || 'falhou'), false);
+        }
+      } catch (e) {
+        showMsg('Erro: resposta inválida (' + xhr.status + ')', false);
+      }
+    };
+    xhr.onerror = () => {
+      btnEl.disabled = false;
+      btnEl.textContent = 'Enviar';
+      progressEl.classList.remove('show');
+      showMsg('Erro de rede', false);
+    };
+    xhr.send(form);
+  });
+})();
+</script>
+</body>
+</html>

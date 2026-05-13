@@ -1,0 +1,36 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+apply plugin: 'expo-module-gradle-plugin'
+
+group = 'expo.modules.rtmp'
+version = '0.1.0'
+
+android {
+  namespace 'expo.modules.rtmp'
+  defaultConfig {
+    versionCode 1
+    versionName '0.1.0'
+    minSdkVersion 21
+  }
+}
+
+repositories {
+  // pedroSG94/rtmp-rtsp-stream-client-java is published via JitPack.
+  // The host app's settings.gradle / android/build.gradle should already include:
+  //   maven { url 'https://jitpack.io' }
+  // If not, uncomment below — but prefer adding it at the project level so
+  // every native module benefits.
+  // maven { url 'https://jitpack.io' }
+}
+
+dependencies {
+  // TODO: enable when implementing the real publisher.
+  //
+  // pedroSG94/rtmp-rtsp-stream-client-java (https://github.com/pedroSG94/rtmp-rtsp-stream-client-java)
+  // is the de-facto RTMP/RTMPS Android library. Covers Camera2, MediaCodec
+  // H264/H265/AAC, OpenGL filters, auth, and adaptive bitrate.
+  //
+  // implementation 'com.github.pedroSG94.RootEncoder:library:2.4.4'
+  //
+  // (Old GA — "rtmp-rtsp-stream-client-java" — was renamed to RootEncoder.)
+}

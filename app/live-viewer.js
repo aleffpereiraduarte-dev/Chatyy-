@@ -47,6 +47,55 @@ if (Platform.OS === 'web') {
   }
 }
 
+// Native HLS player — lazy require expo-video so web bundles don't pull native
+// surface area we can't use. expo-video ships with the rest of the app (SDK
+// 55+) and is already used by status/reels/chat media. iOS + Android both
+// decode m3u8 natively via AVPlayer / ExoPlayer — no extra deps needed.
+let _ExpoVideoMod = null;
+function _loadExpoVideo() {
+  if (_ExpoVideoMod !== null) return _ExpoVideoMod || null;
+  try { _ExpoVideoMod = require('expo-video'); return _ExpoVideoMod; }
+  catch { _ExpoVideoMod = false; return null; }
+}
+
+// Native HLS player — used when backend reports stream_type === 'cf_hls'.
+// Hides spinner once first frame decodes (readyToPlay) and bubbles errors up
+// via onReady / onError so the parent can flip `connected`/`hlsError`.
+function LiveHlsNativePlayer({ uri, onReady, onError }) {
+  const mod = _loadExpoVideo();
+  if (!mod) {
+    // expo-video failed to load (very old runtime) — surface the error so
+    // the overlay can show "Live indisponível" instead of staring at black.
+    useEffect(() => { onError?.(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    return <View style={[StyleSheet.absoluteFill, { backgroundColor: '#0f0f1a' }]} />;
+  }
+  const { useVideoPlayer, VideoView } = mod;
+  const player = useVideoPlayer(uri, (p) => {
+    try { p.loop = false; p.muted = false; p.play(); } catch {}
+  });
+  useEffect(() => {
+    const sub = player.addListener?.('statusChange', (s) => {
+      if (s?.error) { onError?.(s.error); return; }
+      if (s?.status === 'readyToPlay' || s?.status === 'playing') onReady?.();
+    });
+    return () => { try { sub?.remove?.(); } catch {} };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => {
+    try { player.pause?.(); } catch {}
+    try { player.replace?.(null); } catch {}
+    try { player.release?.(); } catch {}
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <VideoView
+      player={player}
+      style={StyleSheet.absoluteFill}
+      contentFit="cover"
+      nativeControls={false}
+      allowsPictureInPicture={false}
+    />
+  );
+}
+
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const WS_URL = Platform.OS === 'web' ? 'wss://chatyy.com.br/ws' : 'wss://ws.chatyy.com.br/ws';
 const MAX_HEARTS = 20;
@@ -75,6 +124,14 @@ export default function LiveViewerScreen() {
   const insets = useSafeAreaInsets();
 
   const [connected, setConnected] = useState(false);
+  // Stream-type branch: backend tells us via `live_session_info` whether this
+  // session streams via Cloudflare Stream HLS (`cf_hls`) or legacy WebRTC P2P
+  // (`webrtc`). Default `webrtc` so a backend that hasn't shipped the new
+  // payload yet still works — zero-regression.
+  const [streamType, setStreamType] = useState('webrtc');
+  const [hlsUrl, setHlsUrl] = useState(null);
+  const [hlsError, setHlsError] = useState(false);
+  const [hlsRetryKey, setHlsRetryKey] = useState(0);
   const [viewerCount, setViewerCount] = useState(0);
   const [viewers, setViewers] = useState([]); // [{email, name, joinedAt}]
   const [showViewersList, setShowViewersList] = useState(false);
@@ -253,7 +310,14 @@ export default function LiveViewerScreen() {
 
   // Connection quality dot — derived from PC stats. Falls back to peer-state
   // poll every 4s so the dot still moves on web where stats() is async.
+  // HLS sessions don't have a PeerConnection, so we just report 'good' once
+  // playback begins (the CDN handles delivery quality for us; we don't have
+  // per-viewer telemetry to surface anyway).
   useEffect(() => {
+    if (streamType === 'cf_hls') {
+      setConnQuality(connected ? 'good' : 'poor');
+      return undefined;
+    }
     if (!connected) { setConnQuality('poor'); return; }
     let cancelled = false;
     const tick = async () => {
@@ -283,7 +347,7 @@ export default function LiveViewerScreen() {
     tick();
     const id = setInterval(tick, 4000);
     return () => { cancelled = true; clearInterval(id); };
-  }, [connected]);
+  }, [connected, streamType]);
 
   // Load chat history
   useEffect(() => {
@@ -347,9 +411,14 @@ export default function LiveViewerScreen() {
   // (channel sub race, transient WS hiccup). After 6s + every 6s while still
   // not connected, re-send `live_join` so the server re-broadcasts
   // `live_viewer_joined` to the host and they create an offer for us.
+  //
+  // Skip the resync for HLS sessions — Cloudflare Stream doesn't depend on
+  // the host generating per-viewer offers, so spamming `live_join` adds noise
+  // without speeding anything up.
   useEffect(() => {
     if (connected || liveEnded) return undefined;
     if (!paramSessionId) return undefined;
+    if (streamType === 'cf_hls') return undefined;
     const resync = () => {
       if (connected || liveEnded) return;
       try {
@@ -361,14 +430,14 @@ export default function LiveViewerScreen() {
     };
     const iv = setInterval(resync, 6000);
     return () => clearInterval(iv);
-  }, [connected, liveEnded, paramSessionId]);
+  }, [connected, liveEnded, paramSessionId, streamType]);
 
   // Connect to signaling and WebRTC
   useEffect(() => {
-    if (!RTC_PeerConnection || !RTC_SessionDescription || !RTC_IceCandidate) {
-      setError(t('live.connectionFailed') || 'WebRTC not supported on this device');
-      return;
-    }
+    // WebRTC absence is no longer fatal here — sessions that stream via HLS
+    // (Cloudflare Stream) don't need a PeerConnection at all. We only bail
+    // if WebRTC is missing AND the backend later confirms `stream_type` is
+    // `webrtc` (handleOffer surfaces the error in that path).
     let alive = true;
     let attempt = 0;
     let ws;
@@ -406,6 +475,18 @@ export default function LiveViewerScreen() {
             type: 'live_join',
             session_id: paramSessionId,
           }));
+          break;
+        case 'live_session_info':
+          // Backend tells us how this session is streamed. For Cloudflare
+          // Stream we just hand the m3u8 URL to expo-video; for WebRTC we
+          // fall through and wait for `live_offer` like before.
+          if (msg.stream_type === 'cf_hls' && msg.hls_url) {
+            setStreamType('cf_hls');
+            setHlsUrl(String(msg.hls_url));
+            setHlsError(false);
+          } else if (msg.stream_type === 'webrtc') {
+            setStreamType('webrtc');
+          }
           break;
         case 'live_offer':
           // Update ICE with TURN credentials if provided
@@ -1078,7 +1159,38 @@ export default function LiveViewerScreen() {
           burst over the stream without stealing taps from controls overlaid
           on top (those have higher zIndex). */}
       <Pressable style={StyleSheet.absoluteFill} onPress={handleStageTap}>
-        {Platform.OS === 'web' ? (
+        {streamType === 'cf_hls' && hlsUrl ? (
+          // Cloudflare Stream HLS branch — no PeerConnection. Web uses the
+          // platform <video> tag (HLS plays natively on Safari; on
+          // Chrome/Firefox the player still requests the manifest fine for
+          // CF Stream's adaptive ladder via MSE polyfills baked into the
+          // player on most modern browsers, but the bare tag is enough for
+          // our purposes since Chrome supports the m3u8 URL with the
+          // `cloudflarestream.com` CORS+CDN setup). Native uses expo-video.
+          Platform.OS === 'web' ? (
+            <video
+              key={`hls-${hlsRetryKey}`}
+              src={hlsUrl}
+              autoPlay
+              playsInline
+              controls={false}
+              onCanPlay={() => { setConnected(true); setHlsError(false); }}
+              onError={() => setHlsError(true)}
+              style={{
+                position: 'absolute', top: 0, left: 0,
+                width: '100%', height: '100%',
+                objectFit: 'cover', backgroundColor: '#0f0f1a',
+              }}
+            />
+          ) : (
+            <LiveHlsNativePlayer
+              key={`hls-${hlsRetryKey}`}
+              uri={hlsUrl}
+              onReady={() => { setConnected(true); setHlsError(false); }}
+              onError={() => setHlsError(true)}
+            />
+          )
+        ) : Platform.OS === 'web' ? (
           <video
             ref={remoteVideoRef}
             autoPlay
@@ -1132,7 +1244,28 @@ export default function LiveViewerScreen() {
           <Animated.Text style={[styles.connectingName, { opacity: connectingPulse }]}>
             {displayHostName || '…'}
           </Animated.Text>
-          {!!error && /unavail|connection failed|stream/i.test(error) ? (
+          {hlsError && streamType === 'cf_hls' ? (
+            // HLS playback bailed — most common cause is the manifest not
+            // being ready yet (Cloudflare needs ~10-15s after broadcaster
+            // first publishes before HLS edges have a segment). Surface a
+            // friendly retry instead of looping the spinner forever.
+            <>
+              <Text style={[styles.connectingText, { color: '#ef4444', marginTop: 14 }]}>
+                {t('live.streamUnavailable') || 'Live indisponível'}
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
+                <TouchableOpacity
+                  onPress={() => { setHlsError(false); setHlsRetryKey((k) => k + 1); }}
+                  style={{ paddingHorizontal: 22, paddingVertical: 10, backgroundColor: 'rgba(255,255,255,0.18)', borderRadius: 20 }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '600' }}>{t('common.retry') || 'Tentar novamente'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => router.back()} style={{ paddingHorizontal: 22, paddingVertical: 10, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 20 }}>
+                  <Text style={{ color: '#fff', fontWeight: '600' }}>{t('common.back') || 'Voltar'}</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          ) : !!error && /unavail|connection failed|stream/i.test(error) ? (
             <>
               <Text style={[styles.connectingText, { color: '#ef4444', marginTop: 14 }]}>
                 {error}
