@@ -33,7 +33,7 @@ if (Platform.OS === 'web') {
 }
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
-const WS_URL = Platform.OS === 'web' ? 'wss://chatyy.com.br/ws' : 'wss://mail.onemundo.com.br/ws';
+const WS_URL = Platform.OS === 'web' ? 'wss://chatyy.com.br/ws' : 'wss://ws.chatyy.com.br/ws';
 const LIVE_RED = '#dc2626';
 const MAX_HEARTS = 20;
 

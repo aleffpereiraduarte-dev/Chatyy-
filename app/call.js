@@ -845,18 +845,18 @@ function CallScreenInner() {
   };
 
   // ICE servers config
-  // TURN URLs must use mail.onemundo.com.br (resolves directly to 69.62.103.131)
-  // chatyy.com.br goes through Cloudflare and won't reach coturn
+  // TURN URLs use turn.chatyy.com.br — grey-cloud DNS A record (NOT Cloudflare
+  // proxied) pointing to coturn on 217.216.67.99. CF proxy doesn't pass UDP.
   const TURN_FALLBACK_URLS = [
-    'turn:mail.onemundo.com.br:3478?transport=udp',
-    'turn:mail.onemundo.com.br:3478?transport=tcp',
-    'turns:mail.onemundo.com.br:5349?transport=tcp',
+    'turn:turn.chatyy.com.br:3478?transport=udp',
+    'turn:turn.chatyy.com.br:3478?transport=tcp',
+    'turns:turn.chatyy.com.br:5349?transport=tcp',
   ];
   const STUN_ONLY_SERVERS = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:mail.onemundo.com.br:3478' },
+    { urls: 'stun:turn.chatyy.com.br:3478' },
   ];
   const turnCredsRef = useRef(null);
   const getIceConfig = () => {
@@ -864,7 +864,7 @@ function CallScreenInner() {
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:mail.onemundo.com.br:3478' },
+        { urls: 'stun:turn.chatyy.com.br:3478' },
       ],
       // Configs avançados REMOVIDOS — user reportou "não pode conectar com
       // servidor" logo que tenta ligar. bundlePolicy/iceCandidatePoolSize

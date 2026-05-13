@@ -165,7 +165,7 @@ export default function MeetingDetailScreen() {
     // chatyy.com.br + onemundo.com.br alike), native uses canonical prod host.
     const base = Platform.OS === 'web'
       ? (typeof window !== 'undefined' && window.location?.origin) || 'https://chatyy.com.br'
-      : 'https://mail.onemundo.com.br';
+      : 'https://chatyy.com.br';
     const link = `${base}/meet/${room_id}`;
     try {
       if (Clipboard?.setStringAsync) {

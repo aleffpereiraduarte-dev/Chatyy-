@@ -22,7 +22,7 @@ import {
 } from '../components/Icons';
 
 const TABS = ['upcoming', 'past', 'active'];
-const MEET_BASE = Platform.OS === 'web' ? 'https://chatyy.com.br/meet/' : 'https://mail.onemundo.com.br/meet/';
+const MEET_BASE = Platform.OS === 'web' ? 'https://chatyy.com.br/meet/' : 'https://chatyy.com.br/meet/';
 const ACCENT = '#7C3AED';
 
 const safeAlert = (title, message, buttons) => {

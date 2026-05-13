@@ -18,7 +18,7 @@ export default function DocumentosViewerScreen() {
   const [loading, setLoading] = useState(true);
   const [canGoBack, setCanGoBack] = useState(false);
   const [error, setError] = useState(false);
-  const url = (Array.isArray(params.url) ? params.url[0] : params.url) || (Platform.OS === 'web' ? 'https://chatyy.com.br/docs/' : 'https://mail.onemundo.com.br/docs/');
+  const url = (Array.isArray(params.url) ? params.url[0] : params.url) || (Platform.OS === 'web' ? 'https://chatyy.com.br/docs/' : 'https://chatyy.com.br/docs/');
 
   useEffect(() => {
     if (Platform.OS === 'web') {

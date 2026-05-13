@@ -39,7 +39,7 @@ function getTelnyxWsUrl() {
 const ICE_SERVERS = [
   { urls: 'stun:stun.telnyx.com:3478' },
   { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:mail.onemundo.com.br:3478' },
+  { urls: 'stun:turn.chatyy.com.br:3478' },
   // TURN via our coturn — credentials set dynamically in startSipCall if available
 ];
 
