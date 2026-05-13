@@ -436,20 +436,33 @@ export default function ChildRestrictionGuard({ children }) {
   const handleAskParent = useCallback(async () => {
     // Map current block reason → backend reason. blocked is one of:
     // 'bedtime' | 'screentime' | 'chat_disabled' | 'feed_disabled' | 'calls_disabled' | null
+    // Backend (parental.php kids_ask_parent) whitelist é apenas:
+    // extra_time | new_contact | new_app | help | other
+    // Mapeia todos os blocks pra 'extra_time' (bedtime/screentime = literally more time)
+    // ou 'help' (chat/feed/calls disabled — pedido genérico de unlock).
+    // Antes mandava bedtime_unlock/chat_unlock/etc → backend retornava 400 e o
+    // catch{} engolia silenciosamente — child clicava "Pedir desbloqueio" e
+    // parente nunca recebia notificação. Round 57 fix.
     const TYPE_MAP = {
-      bedtime:         'bedtime_unlock',
-      screentime:      'bedtime_unlock',
-      chat_disabled:   'chat_unlock',
-      feed_disabled:   'feed_unlock',
-      calls_disabled:  'calls_unlock',
+      bedtime:         'extra_time',
+      screentime:      'extra_time',
+      chat_disabled:   'help',
+      feed_disabled:   'help',
+      calls_disabled:  'help',
     };
-    const askType = TYPE_MAP[blocked] || 'bedtime_unlock';
+    const askType = TYPE_MAP[blocked] || 'help';
+    const reasonNote = blocked ? `unlock:${blocked}` : '';
     try {
       const apiModule = require('../services/api');
       if (apiModule.kidsAskParent) {
-        await apiModule.kidsAskParent(askType, '', { surface: 'app' });
+        const r = await apiModule.kidsAskParent(askType, reasonNote, { surface: 'app' });
+        if (!r?.success) {
+          console.warn('[Kids] askParent failed:', r?.message);
+        }
       }
-    } catch {}
+    } catch (e) {
+      console.warn('[Kids] askParent error:', e?.message || e);
+    }
     setAskParentSent(true);
     setTimeout(() => setAskParentSent(false), 5000);
   }, [blocked]);
