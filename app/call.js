@@ -3397,7 +3397,18 @@ function CallScreenInner() {
         }
 
         if (Platform.OS !== 'web' && localStreamRef.current.toURL) {
-          setLocalStreamUrl(localStreamRef.current.toURL());
+          // Reusing the audio-only MediaStream's URL doesn't trigger RTCView
+          // to bind the just-added video track (URL hash unchanged → renderer
+          // skips re-attach). Cria uma stream SEPARADA só com o video track,
+          // ela tem URL nova → RTCView monta e mostra a preview da câmera.
+          try {
+            const webrtcMod = require('@stream-io/react-native-webrtc');
+            const previewStream = new webrtcMod.MediaStream([newTrack]);
+            setLocalStreamUrl(previewStream.toURL());
+          } catch (previewErr) {
+            console.warn('[Call] preview stream create failed, fallback:', previewErr?.message);
+            setLocalStreamUrl(localStreamRef.current.toURL());
+          }
         }
 
         // Notify remote peer that video was enabled (audio→video upgrade)
