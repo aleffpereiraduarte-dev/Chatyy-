@@ -95,18 +95,18 @@ jobs:
 
       - name: SCP tarball to prod server (so Mac Docker pode pegar)
         if: success()
-        env:
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-          SSH_KEY: ${{ secrets.SSH_KEY }}
         run: |
-          if [ -z "$SSH_KEY" ] || [ -z "$SERVER_HOST" ]; then
-            echo "SERVER_HOST/SSH_KEY not configured — skipping SCP"
-            exit 0
-          fi
+          set -e
           mkdir -p ~/.ssh
-          echo "$SSH_KEY" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H "$SERVER_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
-          scp -i ~/.ssh/id_rsa "${{ steps.pkg.outputs.tarball }}" "root@${SERVER_HOST}:/var/www/mail/data/uploads/chatyy-sim.tar.gz"
-          echo "Tarball deployed to ${SERVER_HOST}:/var/www/mail/data/uploads/chatyy-sim.tar.gz"
-          rm -f ~/.ssh/id_rsa
+          # ci.yml padrão: appendar \n pra openssh-client aceitar
+          printf '%s\n' "${{ secrets.SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          if ! ssh-keygen -y -f ~/.ssh/deploy_key >/dev/null 2>&1; then
+            echo "::error::SSH_KEY didn't parse"
+            exit 1
+          fi
+          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            "${{ steps.pkg.outputs.tarball }}" \
+            "root@${{ secrets.SERVER_HOST }}:/var/www/mail/data/uploads/chatyy-sim.tar.gz"
+          echo "Tarball deployed to ${{ secrets.SERVER_HOST }}:/var/www/mail/data/uploads/chatyy-sim.tar.gz"
