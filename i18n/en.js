@@ -1014,6 +1014,7 @@ export default {
   'call.minimize': 'Minimize',
   'call.qualityAutoLowered': 'Quality lowered to keep the call up',
   'call.turnFailedReducedQuality': 'Reduced quality (no relay available)',
+  'call.videoUnavailable': 'Camera unavailable — audio only',
   'call.unstableConnection': 'Unstable connection',
   'call.audioStalled': 'No audio from the other side',
   'call.inCall': 'On call',

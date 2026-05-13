@@ -1127,6 +1127,21 @@ function CallScreenInner() {
       if (pc.signalingState === 'have-local-offer') {
         await pc.setLocalDescription({type: 'rollback'});
       }
+
+      // Pre-seed recvonly transceivers se ainda não existem — garante m-line order
+      // (audio=0, video=1) ANTES de setRemoteDescription. Sem isso, em answer-via-push
+      // o handleOffer pode rodar antes do setupCall criar transceivers, e createAnswer
+      // sai com m-lines em ordem aleatória → tela preta sem handshake (#3).
+      try {
+        if (pc.getTransceivers && pc.getTransceivers().length === 0 && pc.addTransceiver) {
+          pc.addTransceiver('audio', { direction: 'recvonly' });
+          pc.addTransceiver('video', { direction: 'recvonly' });
+          console.log('[Call] handleOffer: pre-seeded recvonly transceivers (audio,video)');
+        }
+      } catch (preseedErr) {
+        console.warn('[Call] pre-seed tx failed:', preseedErr?.message);
+      }
+
       await pc.setRemoteDescription(new (rtcRef.current.SessionDescription || RTCSessionDescription)({
         type: data.sdp_type || data.type || 'offer',
         sdp: data.sdp,
@@ -1818,16 +1833,26 @@ function CallScreenInner() {
           } catch (e) {
             console.log('[Call] native audio session error:', e?.message);
           }
-        } else if (Platform.OS !== 'web') {
+        } else if (Platform.OS === 'android') {
+          // Android: força MODE_IN_COMMUNICATION via InCallManager ANTES do getUserMedia,
+          // pra WebRTC abrir AudioRecord no perfil voice-call (não music) e ativar
+          // AEC/AGC nativos. expo-audio AudioModule.setAudioMode REVERTE pra MODE_NORMAL
+          // silenciosamente — não usar aqui. Kotlin prewarm (IncomingCallActivity#841)
+          // só cobre answer-via-push, não outgoing.
           try {
-            const { AudioModule } = require('expo-audio');
-            AudioModule.setAudioMode({
-              interruptionMode: 'doNotMix',
-              playsInSilentMode: true,
-              shouldPlayInBackground: true,
-            });
+            const InCallManager = require('react-native-incall-manager').default;
+            const isVideo = isVideoParam === '1' || isVideoParam === 'true';
+            InCallManager.start({ media: isVideo ? 'video' : 'audio', auto: true });
+            InCallManager.setForceSpeakerphoneOn(isVideo);
+            console.log('[Call] InCallManager.start mode=' + (isVideo ? 'video' : 'audio'));
           } catch (e) {
-            console.log('[Call] early setAudioMode error:', e);
+            console.log('[Call] InCallManager.start error:', e?.message);
+            // Last-resort fallback — expo-audio doesn't set IN_COMMUNICATION but at least
+            // pauses music so user knows call is on.
+            try {
+              const { AudioModule } = require('expo-audio');
+              AudioModule.setAudioMode({ interruptionMode: 'doNotMix', playsInSilentMode: true, shouldPlayInBackground: true });
+            } catch (e2) { console.log('[Call] fallback AudioModule error:', e2?.message); }
           }
         }
 
@@ -1853,7 +1878,31 @@ function CallScreenInner() {
         const timeoutPromise = new Promise((_, reject) =>
           setTimeout(() => reject(new Error('Permissão de câmera/microfone expirou')), 30000)
         );
-        const stream = await Promise.race([mediaPromise, timeoutPromise]);
+        let stream;
+        try {
+          stream = await Promise.race([mediaPromise, timeoutPromise]);
+        } catch (mediaErr) {
+          console.error('[Call] getUserMedia primary failed:', mediaErr?.message);
+          // Fallback: se video falhou (câmera ocupada, perm recusada), tenta audio-only
+          // pra não cair em "tela preta sem nada". Usuário pode ligar a câmera depois.
+          if (video) {
+            try {
+              console.log('[Call] retry getUserMedia audio-only fallback');
+              stream = await getUserMediaFn({
+                audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: { ideal: 2 }, sampleRate: { ideal: 48000 } },
+                video: false,
+              });
+              setVideoEnabled(false);
+              videoEnabledRef.current = false;
+              try { setErrorMsg(t('call.videoUnavailable') || 'Câmera indisponível — usando só áudio'); } catch {}
+            } catch (audioErr) {
+              console.error('[Call] getUserMedia audio-only also failed:', audioErr?.message);
+              throw mediaErr;
+            }
+          } else {
+            throw mediaErr;
+          }
+        }
         console.log('[Call] getUserMedia OK: audio=' + stream.getAudioTracks().length + ' video=' + stream.getVideoTracks().length);
 
         if (!mounted) {
