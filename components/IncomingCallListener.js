@@ -22,11 +22,17 @@ const initAddCallToHistory = (() => {
   };
 })();
 
-// Lazy-load callkeep only on native platforms to avoid TDZ on web
-let callKeepEnd = () => {};
-let addCallKeepListeners = () => {};
-let addIncomingCallListener = () => {};
-let consumePendingCall = () => {};
+// Lazy-load callkeep only on native platforms. Use a single object ref so
+// Hermes minifier doesn't TDZ on individual `let` bindings (incident:
+// "Property 'callKeepEnd' doesn't exist" silently swallowed entire module load
+// on Android, blocking native incoming call screen).
+const callKeep = {
+  endCall: () => {},
+  addCallKeepListeners: () => () => {},
+  addIncomingCallListener: () => () => {},
+  consumePendingCall: () => null,
+  displayIncomingCall: () => false,
+};
 
 // Cold-start diagnostic — fire-and-forget POST to backend at each step
 // so we can trace the call accept flow on iPhone without needing Mac/Console.
@@ -36,10 +42,11 @@ try { voipDiag = require('../services/voipDiag').default; } catch {}
 if (Platform.OS !== 'web') {
   try {
     const ck = require('../services/callkeep');
-    callKeepEnd = ck.endCall;
-    addCallKeepListeners = ck.addCallKeepListeners;
-    addIncomingCallListener = ck.addIncomingCallListener;
-    consumePendingCall = ck.consumePendingCall;
+    if (ck.endCall) callKeep.endCall = ck.endCall;
+    if (ck.addCallKeepListeners) callKeep.addCallKeepListeners = ck.addCallKeepListeners;
+    if (ck.addIncomingCallListener) callKeep.addIncomingCallListener = ck.addIncomingCallListener;
+    if (ck.consumePendingCall) callKeep.consumePendingCall = ck.consumePendingCall;
+    if (ck.displayIncomingCall) callKeep.displayIncomingCall = ck.displayIncomingCall;
   } catch (e) {
     console.warn('[IncomingCallListener] Failed to load callkeep:', e.message);
   }
@@ -232,6 +239,23 @@ export default function IncomingCallListener() {
     handlingRef.current = false;
     // Force reset _callActive so the Modal is not blocked
     _callActive = false;
+
+    // Android: trigger native full-screen IncomingCallActivity over keyguard
+    // so the call rings even when phone is locked or app is backgrounded.
+    // iOS uses CallKit via VoIP push (handled by addIncomingCallListener).
+    if (Platform.OS === 'android') {
+      try {
+        callKeep.displayIncomingCall(
+          data.call_id || data.room_id,
+          data.caller_name || data.caller_email || 'Chatyy',
+          data.caller_email || '',
+          data.video !== false,
+          data.conversation_id || '',
+        );
+      } catch (e) {
+        console.warn('[IncomingCall] Android displayIncomingCall failed:', e?.message);
+      }
+    }
     /* legacy _callActiveTimer removed in favor of explicit lifecycle */
 
     callStateRef.current = data;
@@ -545,14 +569,16 @@ export default function IncomingCallListener() {
       }));
     } catch {}
 
-    // CallKit native listeners (iOS) — used when VoIP push shows native call screen
+    // CallKit native listeners — iOS via VoIP/CallKit, Android via
+    // IncomingCallActivity over keyguard. Both platforms emit onAnswer/onEnd
+    // through the same ExpoCallKit event channel.
     let cleanupCallKeep = () => {};
     let cleanupIncomingCall = () => {};
-    if (Platform.OS === 'ios') {
+    if (Platform.OS === 'ios' || Platform.OS === 'android') {
       // Listen for VoIP push incoming call event
       // ALWAYS populate callStateRef (needed for accept handler)
       // In FOREGROUND: also dismiss CallKit, let WS Modal handle
-      cleanupIncomingCall = addIncomingCallListener((data) => {
+      cleanupIncomingCall = callKeep.addIncomingCallListener((data) => {
         console.log('[IncomingCall] CallKit onIncomingCall, callId=' + data.callId);
         // Only populate callStateRef if WS hasn't already set it with richer data
         // (WS call_invite has caller_email, conversation_id etc — VoIP push may not)
@@ -575,11 +601,11 @@ export default function IncomingCallListener() {
         console.log('[IncomingCall] onIncomingCall appState=' + appState);
         if (appState === 'active') {
           console.log('[IncomingCall] App in foreground — dismissing CallKit, Modal will handle');
-          callKeepEnd(data.callId);
+          callKeep.endCall(data.callId);
         }
       });
 
-      cleanupCallKeep = addCallKeepListeners({
+      cleanupCallKeep = callKeep.addCallKeepListeners({
         onAnswer: async (data) => {
           console.log('[IncomingCall] CallKit onAnswer, callId=' + data.callId);
           voipDiag('answer_fired', data.callId, {
@@ -827,7 +853,7 @@ export default function IncomingCallListener() {
     if (Platform.OS === 'android') {
       const handleAndroidPendingCall = () => {
         try {
-          const pending = consumePendingCall();
+          const pending = callKeep.consumePendingCall();
           if (pending && pending.callId) {
             console.log('[IncomingCall] Android: found pending accepted call:', pending.callId);
             acceptedRef.current = true;
@@ -953,7 +979,7 @@ export default function IncomingCallListener() {
     }
     try { if (Platform.OS !== 'web') { const H = require('expo-haptics'); H.impactAsync?.(H.ImpactFeedbackStyle.Medium); } } catch {}
     handlingRef.current = true;
-    acceptedRef.current = true; // MUST be set before callKeepEnd triggers onEnd
+    acceptedRef.current = true; // MUST be set before callKeep.endCall triggers onEnd
 
     const currentCall = callStateRef.current || call;
     if (!currentCall) { console.log('[IncomingCall] handleAccept: no currentCall'); handlingRef.current = false; return; }
@@ -961,6 +987,11 @@ export default function IncomingCallListener() {
     if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
 
     const callId = currentCall.call_id || currentCall.room_id;
+
+    // Dismiss the native IncomingCallActivity (Android) / CallKit (iOS) when
+    // the user accepts from the JS overlay — otherwise the native screen
+    // lingers on top of /call.
+    try { callKeep.endCall(callId); } catch {}
     const callerName = currentCall.caller_name || currentCall.caller_email?.split('@')[0] || '';
     const callerEmail = currentCall.caller_email || '';
     const isVideo = currentCall.video !== false ? '1' : '0';
@@ -1109,6 +1140,8 @@ export default function IncomingCallListener() {
     const currentCall = callStateRef.current || call;
     if (currentCall) {
       const callId = currentCall.call_id || currentCall.room_id;
+      // Dismiss native IncomingCallActivity/CallKit when user declines from JS overlay
+      try { callKeep.endCall(callId); } catch {}
       // Log declined call as missed in history
       initAddCallToHistory();
       addCallToHistory({
