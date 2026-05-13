@@ -2,194 +2,637 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
 <title>Upload Prints — Chatyy</title>
 <style>
-  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
   body {
-    margin: 0; min-height: 100vh; font-family: -apple-system, system-ui, sans-serif;
-    background: linear-gradient(135deg, #1a0a2e 0%, #2d1b69 100%); color: #fff;
-    display: flex; align-items: center; justify-content: center; padding: 20px;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
+    background: #0a0a14; color: #e8e8f0; min-height: 100vh; padding: 16px;
+    -webkit-font-smoothing: antialiased;
   }
-  .card {
-    background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 20px; padding: 28px 24px; max-width: 460px; width: 100%;
-    backdrop-filter: blur(20px);
+  .wrap { max-width: 720px; margin: 24px auto; }
+  h1 { font-size: 22px; font-weight: 800; margin-bottom: 4px; letter-spacing: -0.3px; }
+  .sub { color: #8b8ba0; font-size: 13px; margin-bottom: 20px; }
+
+  .dropzone {
+    border: 2px dashed #3a3a4d; border-radius: 18px; padding: 32px 20px;
+    text-align: center; transition: all 0.2s;
+    background: #14141f; cursor: pointer; position: relative;
   }
-  h1 { margin: 0 0 6px; font-size: 22px; font-weight: 700; }
-  .sub { color: rgba(255,255,255,0.6); font-size: 13px; margin-bottom: 22px; }
-  .drop {
-    border: 2px dashed rgba(255,255,255,0.25); border-radius: 14px; padding: 32px 16px;
-    text-align: center; cursor: pointer; transition: all 0.2s;
+  .dropzone:hover, .dropzone.over { border-color: #7C3AED; background: #1c1730; }
+  .dropzone .icon-svg { margin: 0 auto 10px; display: block; }
+  .dropzone .hint { color: #d8d8e8; font-size: 15px; font-weight: 600; }
+  .dropzone .small { color: #6c6c82; font-size: 12px; margin-top: 6px; }
+  input[type=file] { display: none; }
+
+  .list { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .item {
+    background: #14141f; border-radius: 14px; padding: 12px;
+    display: flex; gap: 12px; align-items: flex-start;
   }
-  .drop:hover, .drop.over { border-color: #A78BFA; background: rgba(167,139,250,0.08); }
-  .drop input { display: none; }
-  .drop-label { font-size: 15px; font-weight: 600; }
-  .drop-hint { font-size: 12px; color: rgba(255,255,255,0.5); margin-top: 6px; }
-  .desc {
-    width: 100%; margin-top: 14px; padding: 12px 14px;
-    background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
-    border-radius: 10px; color: #fff; font-size: 14px; font-family: inherit;
-    resize: vertical; min-height: 60px;
+  .thumb {
+    width: 96px; height: 96px; flex-shrink: 0;
+    background: #20202e; border-radius: 10px;
+    object-fit: cover; cursor: pointer; position: relative;
+    border: 1px solid #2a2a3a;
   }
-  .desc:focus { outline: none; border-color: #A78BFA; }
+  .thumb-wrap { position: relative; width: 96px; height: 96px; flex-shrink: 0; }
+  .thumb-edit-badge {
+    position: absolute; bottom: 4px; right: 4px;
+    background: #7C3AED; color: #fff; font-size: 10px; font-weight: 700;
+    padding: 3px 6px; border-radius: 6px; pointer-events: none;
+  }
+  .item .meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  .item .name { font-size: 12px; color: #b8b8ce; word-break: break-all; }
+  .desc-input {
+    width: 100%; min-height: 56px; max-height: 120px;
+    background: #1c1c2a; border: 1px solid #2a2a3a; border-radius: 8px;
+    color: #e8e8f0; padding: 8px 10px; font-size: 13px; font-family: inherit; resize: vertical;
+  }
+  .desc-input:focus { outline: none; border-color: #7C3AED; }
+  .item-actions { display: flex; gap: 6px; align-items: center; }
+  .btn-tiny {
+    background: #2a2a3a; color: #d8d8e8; border: none;
+    padding: 5px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer;
+  }
+  .btn-tiny:hover { background: #353548; }
+  .btn-tiny.del { background: rgba(239,68,68,0.15); color: #f87171; }
+  .item .status { font-size: 11px; color: #8b8ba0; }
+  .item .status.ok { color: #4ade80; }
+  .item .status.err { color: #ef4444; }
+  .bar { height: 3px; background: #20202e; border-radius: 2px; overflow: hidden; }
+  .bar > div { height: 100%; background: linear-gradient(90deg, #7C3AED, #A78BFA); width: 0; transition: width 0.15s; }
+
+  .footer-actions {
+    margin-top: 18px; display: flex; gap: 10px; justify-content: flex-end;
+  }
   .btn {
-    width: 100%; margin-top: 14px; padding: 14px;
-    background: #7C3AED; border: 0; border-radius: 10px;
-    color: #fff; font-size: 15px; font-weight: 700; cursor: pointer;
-    transition: transform 0.1s, opacity 0.2s;
+    background: #7C3AED; color: #fff; border: none; padding: 12px 24px;
+    border-radius: 999px; font-size: 14px; font-weight: 700; cursor: pointer;
+    transition: all 0.15s;
   }
-  .btn:hover { transform: scale(1.01); }
-  .btn:active { transform: scale(0.98); }
-  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-  .preview {
-    margin-top: 12px; border-radius: 10px; overflow: hidden;
-    max-height: 280px; display: none;
+  .btn:hover:not(:disabled) { background: #6d2fd6; transform: scale(1.02); }
+  .btn:active:not(:disabled) { transform: scale(0.98); }
+  .btn:disabled { background: #2a2a3a; color: #6c6c82; cursor: not-allowed; }
+  .btn.secondary { background: #2a2a3a; color: #d8d8e8; }
+  .btn.secondary:hover:not(:disabled) { background: #353548; }
+
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(10px);
+    background: #4ade80; color: #0f0f17; padding: 12px 22px; border-radius: 999px;
+    font-weight: 700; font-size: 13px; opacity: 0; transition: all 0.25s;
+    pointer-events: none; z-index: 1000; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
   }
-  .preview img { width: 100%; display: block; }
-  .msg {
-    margin-top: 14px; padding: 10px 12px; border-radius: 8px;
-    font-size: 13px; display: none;
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.err { background: #ef4444; color: #fff; }
+
+  /* ── ANNOTATION EDITOR MODAL ── */
+  .editor-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.92); z-index: 100;
+    display: none; flex-direction: column; padding: 0;
   }
-  .msg.ok { background: rgba(34,197,94,0.15); color: #4ade80; border: 1px solid rgba(34,197,94,0.3); display: block; }
-  .msg.err { background: rgba(239,68,68,0.15); color: #f87171; border: 1px solid rgba(239,68,68,0.3); display: block; }
-  .progress { height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; margin-top: 8px; overflow: hidden; display: none; }
-  .progress.show { display: block; }
-  .progress-bar { height: 100%; background: #A78BFA; width: 0; transition: width 0.15s; }
+  .editor-overlay.show { display: flex; }
+  .editor-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 16px; background: #0f0f17; border-bottom: 1px solid #20202e;
+  }
+  .editor-title { font-size: 14px; color: #b8b8ce; font-weight: 600; }
+  .editor-close {
+    background: #2a2a3a; color: #fff; border: none; padding: 8px 16px;
+    border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 600;
+  }
+  .editor-save {
+    background: #7C3AED; color: #fff; border: none; padding: 8px 18px;
+    border-radius: 8px; font-size: 13px; cursor: pointer; font-weight: 700;
+  }
+  .editor-canvas-wrap {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    overflow: hidden; padding: 16px; position: relative;
+  }
+  .editor-canvas {
+    max-width: 100%; max-height: 100%;
+    background: #fff; cursor: crosshair;
+    touch-action: none; box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  }
+  .editor-tools {
+    display: flex; gap: 8px; padding: 12px 16px; background: #0f0f17;
+    border-top: 1px solid #20202e; overflow-x: auto; align-items: center;
+  }
+  .tool-btn {
+    background: #1c1c2a; border: 2px solid transparent; color: #d8d8e8;
+    padding: 8px 12px; border-radius: 10px; cursor: pointer;
+    font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 6px;
+    white-space: nowrap;
+  }
+  .tool-btn:hover { background: #252535; }
+  .tool-btn.active { background: #7C3AED; color: #fff; border-color: #A78BFA; }
+  .color-swatch {
+    width: 28px; height: 28px; border-radius: 50%; cursor: pointer;
+    border: 3px solid transparent; transition: all 0.15s;
+    flex-shrink: 0;
+  }
+  .color-swatch.active { border-color: #fff; transform: scale(1.15); }
+  .size-slider {
+    -webkit-appearance: none; appearance: none;
+    width: 80px; height: 4px; background: #2a2a3a; border-radius: 2px; outline: none;
+  }
+  .size-slider::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 16px; height: 16px; background: #7C3AED; border-radius: 50%; cursor: pointer;
+  }
+
+  @media (max-width: 480px) {
+    .wrap { margin: 12px auto; }
+    .item { flex-direction: column; }
+    .thumb-wrap { width: 100%; height: 160px; }
+    .thumb { width: 100%; height: 100%; }
+    .editor-tools { padding: 10px 12px; gap: 6px; }
+    .tool-btn { padding: 7px 10px; font-size: 11px; }
+  }
 </style>
 </head>
 <body>
-<div class="card">
+<div class="wrap">
   <h1>Upload Prints</h1>
-  <div class="sub">Mande screenshots pro Claude analisar</div>
+  <p class="sub">Anota o problema com círculo/seta antes de enviar. Multi-upload com descrição.</p>
 
-  <label class="drop" id="drop">
-    <input type="file" id="file" accept="image/*,application/pdf">
-    <div class="drop-label" id="dropLabel">Toque pra escolher arquivo</div>
-    <div class="drop-hint">PNG, JPG, HEIC, PDF — até 30 MB</div>
+  <label class="dropzone" id="dz" for="fileInput">
+    <svg class="icon-svg" width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+      <polyline points="17 8 12 3 7 8"/>
+      <line x1="12" y1="3" x2="12" y2="15"/>
+    </svg>
+    <div class="hint">Toque ou arraste arquivos</div>
+    <div class="small">PNG, JPG, HEIC, PDF — vários ao mesmo tempo. Cole também (Ctrl+V).</div>
+    <input id="fileInput" type="file" accept="image/*,application/pdf" multiple>
   </label>
 
-  <div class="preview" id="preview"><img id="previewImg" alt=""></div>
+  <div class="list" id="list"></div>
 
-  <textarea class="desc" id="desc" placeholder="Descrição (opcional)"></textarea>
+  <div class="footer-actions" id="footer" style="display:none">
+    <button class="btn secondary" id="clearAll">Limpar tudo</button>
+    <button class="btn" id="sendAll">Enviar todos</button>
+  </div>
+</div>
 
-  <div class="progress" id="progress"><div class="progress-bar" id="progressBar"></div></div>
+<div class="toast" id="toast"></div>
 
-  <button class="btn" id="upload" disabled>Enviar</button>
-
-  <div class="msg" id="msg"></div>
+<!-- ANNOTATION EDITOR MODAL -->
+<div class="editor-overlay" id="editor">
+  <div class="editor-header">
+    <button class="editor-close" id="editorClose">Cancelar</button>
+    <div class="editor-title" id="editorTitle">Anotar</div>
+    <button class="editor-save" id="editorSave">Salvar</button>
+  </div>
+  <div class="editor-canvas-wrap">
+    <canvas class="editor-canvas" id="canvas"></canvas>
+  </div>
+  <div class="editor-tools">
+    <button class="tool-btn active" data-tool="pen">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg>
+      Lápis
+    </button>
+    <button class="tool-btn" data-tool="circle">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/></svg>
+      Círculo
+    </button>
+    <button class="tool-btn" data-tool="arrow">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+      Seta
+    </button>
+    <button class="tool-btn" data-tool="rect">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+      Caixa
+    </button>
+    <button class="tool-btn" data-tool="text">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+      Texto
+    </button>
+    <button class="tool-btn" id="undoBtn">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+      Desfazer
+    </button>
+    <div style="display:flex; gap:6px; align-items:center; padding-left:8px; border-left:1px solid #20202e; margin-left:4px;">
+      <div class="color-swatch active" data-color="#ef4444" style="background:#ef4444"></div>
+      <div class="color-swatch" data-color="#f59e0b" style="background:#f59e0b"></div>
+      <div class="color-swatch" data-color="#4ade80" style="background:#4ade80"></div>
+      <div class="color-swatch" data-color="#3b82f6" style="background:#3b82f6"></div>
+      <div class="color-swatch" data-color="#A78BFA" style="background:#A78BFA"></div>
+      <div class="color-swatch" data-color="#ffffff" style="background:#ffffff; border-color:#3a3a4d"></div>
+      <div class="color-swatch" data-color="#000000" style="background:#000000; border-color:#3a3a4d"></div>
+    </div>
+    <input type="range" class="size-slider" id="sizeSlider" min="2" max="20" value="6">
+  </div>
 </div>
 
 <script>
 (function() {
-  const dropEl = document.getElementById('drop');
-  const fileEl = document.getElementById('file');
-  const labelEl = document.getElementById('dropLabel');
-  const previewEl = document.getElementById('preview');
-  const previewImg = document.getElementById('previewImg');
-  const descEl = document.getElementById('desc');
-  const btnEl = document.getElementById('upload');
-  const msgEl = document.getElementById('msg');
-  const progressEl = document.getElementById('progress');
-  const progressBar = document.getElementById('progressBar');
+  // ─── State ────────────────────────────────
+  const files = []; // [{ id, file, blob, name, desc, status, fill }]
+  let editorTargetId = null;
+  let editorImg = null;
+  let editorTool = 'pen';
+  let editorColor = '#ef4444';
+  let editorSize = 6;
+  let editorHistory = []; // stack of imageData for undo
+  let drawing = false;
+  let drawStart = { x: 0, y: 0 };
+  let drawSnapshot = null;
 
-  let chosen = null;
+  // ─── DOM ────────────────────────────────
+  const dz = document.getElementById('dz');
+  const input = document.getElementById('fileInput');
+  const list = document.getElementById('list');
+  const toast = document.getElementById('toast');
+  const footer = document.getElementById('footer');
+  const sendAllBtn = document.getElementById('sendAll');
+  const clearAllBtn = document.getElementById('clearAll');
+  const editor = document.getElementById('editor');
+  const editorClose = document.getElementById('editorClose');
+  const editorSave = document.getElementById('editorSave');
+  const editorTitle = document.getElementById('editorTitle');
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const sizeSlider = document.getElementById('sizeSlider');
+  const undoBtn = document.getElementById('undoBtn');
 
-  function showMsg(text, ok) {
-    msgEl.textContent = text;
-    msgEl.className = 'msg ' + (ok ? 'ok' : 'err');
+  // ─── Toast ────────────────────────────────
+  function showToast(msg, isError) {
+    toast.textContent = msg;
+    toast.classList.toggle('err', !!isError);
+    toast.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(() => toast.classList.remove('show'), 2400);
   }
-  function hideMsg() { msgEl.className = 'msg'; }
 
-  function setFile(f) {
+  // ─── File handling ────────────────────────────────
+  ['dragover','dragenter'].forEach(e => dz.addEventListener(e, ev => {
+    ev.preventDefault(); dz.classList.add('over');
+  }));
+  ['dragleave','drop'].forEach(e => dz.addEventListener(e, ev => {
+    ev.preventDefault(); dz.classList.remove('over');
+  }));
+  dz.addEventListener('drop', ev => addFiles(ev.dataTransfer.files));
+  input.addEventListener('change', ev => addFiles(ev.target.files));
+
+  // Paste support
+  document.addEventListener('paste', ev => {
+    const items = ev.clipboardData?.items;
+    if (!items) return;
+    const fs = [];
+    for (const it of items) if (it.kind === 'file') {
+      const f = it.getAsFile();
+      if (f) fs.push(f);
+    }
+    if (fs.length) addFiles(fs);
+  });
+
+  function addFiles(fileList) {
+    if (!fileList || !fileList.length) return;
+    Array.from(fileList).forEach(f => {
+      const id = 'f_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
+      files.push({ id, file: f, blob: f, name: f.name, desc: '', status: 'ready', fillEl: null });
+      renderItem(id);
+    });
+    footer.style.display = 'flex';
+  }
+
+  function renderItem(id) {
+    const f = files.find(x => x.id === id);
     if (!f) return;
-    chosen = f;
-    labelEl.textContent = f.name + ' (' + Math.round(f.size / 1024) + ' KB)';
-    btnEl.disabled = false;
-    hideMsg();
-    if (f.type && f.type.indexOf('image/') === 0) {
+    const item = document.createElement('div');
+    item.className = 'item';
+    item.id = 'item_' + id;
+
+    const thumbWrap = document.createElement('div');
+    thumbWrap.className = 'thumb-wrap';
+    const thumb = document.createElement('img');
+    thumb.className = 'thumb';
+    thumb.alt = f.name;
+    if (f.file.type.startsWith('image/')) {
       const reader = new FileReader();
-      reader.onload = (e) => {
-        previewImg.src = e.target.result;
-        previewEl.style.display = 'block';
-      };
-      reader.readAsDataURL(f);
+      reader.onload = e => thumb.src = e.target.result;
+      reader.readAsDataURL(f.blob);
+      thumb.addEventListener('click', () => openEditor(id));
+      const badge = document.createElement('div');
+      badge.className = 'thumb-edit-badge';
+      badge.textContent = 'Anotar';
+      thumbWrap.appendChild(thumb);
+      thumbWrap.appendChild(badge);
     } else {
-      previewEl.style.display = 'none';
+      thumb.style.cssText += 'display:flex;align-items:center;justify-content:center;background:#20202e;';
+      thumbWrap.appendChild(thumb);
     }
+
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    const nm = document.createElement('div');
+    nm.className = 'name';
+    nm.textContent = f.name + ' · ' + Math.round(f.file.size / 1024) + ' KB';
+
+    const desc = document.createElement('textarea');
+    desc.className = 'desc-input';
+    desc.placeholder = 'Onde está o problema? Ex: "botão de play não aparece no canto sup. dir."';
+    desc.value = f.desc;
+    desc.addEventListener('input', () => { f.desc = desc.value; });
+
+    const actions = document.createElement('div');
+    actions.className = 'item-actions';
+    const status = document.createElement('div');
+    status.className = 'status';
+    status.id = 'status_' + id;
+    const bar = document.createElement('div');
+    bar.className = 'bar';
+    bar.style.display = 'none';
+    bar.id = 'bar_' + id;
+    const fill = document.createElement('div');
+    bar.appendChild(fill);
+    f.fillEl = fill;
+    f.barEl = bar;
+    f.statusEl = status;
+
+    if (f.file.type.startsWith('image/')) {
+      const editBtn = document.createElement('button');
+      editBtn.className = 'btn-tiny';
+      editBtn.textContent = '✎ Anotar';
+      editBtn.addEventListener('click', () => openEditor(id));
+      actions.appendChild(editBtn);
+    }
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn-tiny del';
+    delBtn.textContent = 'Remover';
+    delBtn.addEventListener('click', () => removeItem(id));
+    actions.appendChild(delBtn);
+    actions.appendChild(status);
+
+    meta.appendChild(nm);
+    meta.appendChild(desc);
+    meta.appendChild(actions);
+    meta.appendChild(bar);
+
+    item.appendChild(thumbWrap);
+    item.appendChild(meta);
+    list.appendChild(item);
   }
 
-  fileEl.addEventListener('change', (e) => setFile(e.target.files[0]));
+  function removeItem(id) {
+    const idx = files.findIndex(x => x.id === id);
+    if (idx < 0) return;
+    files.splice(idx, 1);
+    document.getElementById('item_' + id)?.remove();
+    if (!files.length) footer.style.display = 'none';
+  }
 
-  ['dragenter','dragover'].forEach(ev => dropEl.addEventListener(ev, (e) => {
-    e.preventDefault(); e.stopPropagation(); dropEl.classList.add('over');
-  }));
-  ['dragleave','drop'].forEach(ev => dropEl.addEventListener(ev, (e) => {
-    e.preventDefault(); e.stopPropagation(); dropEl.classList.remove('over');
-  }));
-  dropEl.addEventListener('drop', (e) => {
-    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]) {
-      setFile(e.dataTransfer.files[0]);
-    }
+  clearAllBtn.addEventListener('click', () => {
+    if (!files.length) return;
+    if (!confirm('Limpar todos?')) return;
+    files.length = 0;
+    list.innerHTML = '';
+    footer.style.display = 'none';
   });
 
-  // Paste from clipboard (desktop)
-  document.addEventListener('paste', (e) => {
-    if (!e.clipboardData) return;
-    for (const item of e.clipboardData.items) {
-      if (item.kind === 'file') {
-        const f = item.getAsFile();
-        if (f) { setFile(f); return; }
+  // ─── Editor (canvas annotations) ────────────────────────────────
+  function openEditor(id) {
+    const f = files.find(x => x.id === id);
+    if (!f || !f.file.type.startsWith('image/')) return;
+    editorTargetId = id;
+    editorTitle.textContent = f.name;
+    editorHistory = [];
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        editorImg = img;
+        // Constrain canvas to viewport — keep aspect ratio
+        const maxW = Math.min(window.innerWidth - 40, 1200);
+        const maxH = window.innerHeight - 220;
+        let w = img.width, h = img.height;
+        const scale = Math.min(maxW / w, maxH / h, 1);
+        canvas.width = w * scale;
+        canvas.height = h * scale;
+        canvas.style.width = canvas.width + 'px';
+        canvas.style.height = canvas.height + 'px';
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        pushHistory();
+        editor.classList.add('show');
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(f.blob);
+  }
+
+  function pushHistory() {
+    editorHistory.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+    if (editorHistory.length > 25) editorHistory.shift();
+  }
+  function undo() {
+    if (editorHistory.length <= 1) return;
+    editorHistory.pop();
+    ctx.putImageData(editorHistory[editorHistory.length - 1], 0, 0);
+  }
+
+  // Tool selection
+  document.querySelectorAll('.tool-btn[data-tool]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tool-btn[data-tool]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      editorTool = btn.dataset.tool;
+    });
+  });
+  undoBtn.addEventListener('click', undo);
+  document.querySelectorAll('.color-swatch').forEach(sw => {
+    sw.addEventListener('click', () => {
+      document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
+      sw.classList.add('active');
+      editorColor = sw.dataset.color;
+    });
+  });
+  sizeSlider.addEventListener('input', () => { editorSize = parseInt(sizeSlider.value, 10); });
+
+  // Canvas drawing
+  function canvasPos(ev) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const x = (ev.touches ? ev.touches[0].clientX : ev.clientX) - rect.left;
+    const y = (ev.touches ? ev.touches[0].clientY : ev.clientY) - rect.top;
+    return { x: x * scaleX, y: y * scaleY };
+  }
+  function startDraw(ev) {
+    ev.preventDefault();
+    drawing = true;
+    drawStart = canvasPos(ev);
+    drawSnapshot = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    if (editorTool === 'text') {
+      const text = prompt('Texto:');
+      if (text) {
+        ctx.fillStyle = editorColor;
+        ctx.font = (editorSize * 4) + 'px sans-serif';
+        ctx.fillText(text, drawStart.x, drawStart.y);
+        pushHistory();
+      }
+      drawing = false;
+      return;
+    }
+    if (editorTool === 'pen') {
+      ctx.beginPath();
+      ctx.moveTo(drawStart.x, drawStart.y);
+      ctx.strokeStyle = editorColor;
+      ctx.lineWidth = editorSize;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+    }
+  }
+  function moveDraw(ev) {
+    if (!drawing) return;
+    ev.preventDefault();
+    const p = canvasPos(ev);
+    if (editorTool === 'pen') {
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+    } else {
+      // Preview shape from snapshot
+      ctx.putImageData(drawSnapshot, 0, 0);
+      ctx.strokeStyle = editorColor;
+      ctx.lineWidth = editorSize;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      if (editorTool === 'circle') {
+        const r = Math.hypot(p.x - drawStart.x, p.y - drawStart.y);
+        ctx.beginPath();
+        ctx.arc(drawStart.x, drawStart.y, r, 0, 2 * Math.PI);
+        ctx.stroke();
+      } else if (editorTool === 'rect') {
+        ctx.strokeRect(drawStart.x, drawStart.y, p.x - drawStart.x, p.y - drawStart.y);
+      } else if (editorTool === 'arrow') {
+        drawArrow(drawStart.x, drawStart.y, p.x, p.y, editorSize);
       }
     }
+  }
+  function endDraw() {
+    if (!drawing) return;
+    drawing = false;
+    pushHistory();
+  }
+  function drawArrow(x1, y1, x2, y2, size) {
+    const headLen = Math.max(size * 3, 10);
+    const angle = Math.atan2(y2 - y1, x2 - x1);
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - headLen * Math.cos(angle - Math.PI / 6), y2 - headLen * Math.sin(angle - Math.PI / 6));
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - headLen * Math.cos(angle + Math.PI / 6), y2 - headLen * Math.sin(angle + Math.PI / 6));
+    ctx.stroke();
+  }
+
+  canvas.addEventListener('mousedown', startDraw);
+  canvas.addEventListener('mousemove', moveDraw);
+  canvas.addEventListener('mouseup', endDraw);
+  canvas.addEventListener('mouseleave', endDraw);
+  canvas.addEventListener('touchstart', startDraw, { passive: false });
+  canvas.addEventListener('touchmove', moveDraw, { passive: false });
+  canvas.addEventListener('touchend', endDraw);
+
+  editorClose.addEventListener('click', () => {
+    editor.classList.remove('show');
+    editorTargetId = null;
   });
-
-  btnEl.addEventListener('click', () => {
-    if (!chosen) return;
-    btnEl.disabled = true;
-    btnEl.textContent = 'Enviando…';
-    progressEl.classList.add('show');
-    progressBar.style.width = '0';
-    hideMsg();
-
-    const form = new FormData();
-    form.append('file', chosen);
-    if (descEl.value.trim()) form.append('description', descEl.value.trim());
-
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', '/api/upload-print.php', true);
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) progressBar.style.width = (e.loaded / e.total * 100) + '%';
-    };
-    xhr.onload = () => {
-      btnEl.disabled = false;
-      btnEl.textContent = 'Enviar';
-      progressEl.classList.remove('show');
-      try {
-        const r = JSON.parse(xhr.responseText);
-        if (r.ok) {
-          showMsg('✓ Enviado: ' + (r.path || r.filename || 'OK'), true);
-          chosen = null;
-          fileEl.value = '';
-          labelEl.textContent = 'Toque pra escolher arquivo';
-          previewEl.style.display = 'none';
-          descEl.value = '';
-          btnEl.disabled = true;
-        } else {
-          showMsg('Erro: ' + (r.error || 'falhou'), false);
+  editorSave.addEventListener('click', () => {
+    if (!editorTargetId) return;
+    canvas.toBlob(blob => {
+      const f = files.find(x => x.id === editorTargetId);
+      if (f && blob) {
+        f.blob = blob;
+        // Update thumbnail
+        const itemEl = document.getElementById('item_' + editorTargetId);
+        const thumbEl = itemEl?.querySelector('.thumb');
+        if (thumbEl) {
+          const reader = new FileReader();
+          reader.onload = e => thumbEl.src = e.target.result;
+          reader.readAsDataURL(blob);
         }
-      } catch (e) {
-        showMsg('Erro: resposta inválida (' + xhr.status + ')', false);
+        showToast('Anotação salva');
       }
-    };
-    xhr.onerror = () => {
-      btnEl.disabled = false;
-      btnEl.textContent = 'Enviar';
-      progressEl.classList.remove('show');
-      showMsg('Erro de rede', false);
-    };
-    xhr.send(form);
+      editor.classList.remove('show');
+      editorTargetId = null;
+    }, 'image/png');
   });
+
+  // Keyboard shortcuts in editor
+  document.addEventListener('keydown', ev => {
+    if (!editor.classList.contains('show')) return;
+    if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'z') { ev.preventDefault(); undo(); }
+    if (ev.key === 'Escape') editorClose.click();
+  });
+
+  // ─── Send ────────────────────────────────
+  sendAllBtn.addEventListener('click', async () => {
+    if (!files.length) return;
+    sendAllBtn.disabled = true;
+    sendAllBtn.textContent = 'Enviando…';
+    let okCount = 0, errCount = 0;
+    for (const f of files) {
+      if (f.status === 'ok') { okCount++; continue; }
+      await uploadOne(f);
+      if (f.status === 'ok') okCount++; else errCount++;
+    }
+    sendAllBtn.disabled = false;
+    sendAllBtn.textContent = 'Enviar todos';
+    if (errCount === 0) showToast(`✓ ${okCount} arquivo(s) enviado(s)`);
+    else showToast(`${okCount} ok · ${errCount} erro(s)`, true);
+  });
+
+  function uploadOne(f) {
+    return new Promise(resolve => {
+      f.statusEl.textContent = 'enviando…';
+      f.statusEl.className = 'status';
+      f.barEl.style.display = 'block';
+      f.fillEl.style.width = '0';
+
+      const fd = new FormData();
+      const filename = f.name.replace(/\.[^.]+$/, '') + (f.blob.type === 'image/png' && !f.name.endsWith('.png') ? '.png' : '');
+      fd.append('file', f.blob, filename);
+      if (f.desc.trim()) fd.append('description', f.desc.trim());
+
+      const xhr = new XMLHttpRequest();
+      xhr.upload.onprogress = e => {
+        if (e.lengthComputable) f.fillEl.style.width = (e.loaded / e.total * 100) + '%';
+      };
+      xhr.onload = () => {
+        f.fillEl.style.width = '100%';
+        try {
+          const r = JSON.parse(xhr.responseText);
+          if (r.ok) {
+            f.status = 'ok';
+            f.statusEl.textContent = '✓ enviado';
+            f.statusEl.className = 'status ok';
+          } else {
+            f.status = 'err';
+            f.statusEl.textContent = '✗ ' + (r.error || 'erro');
+            f.statusEl.className = 'status err';
+          }
+        } catch (e) {
+          f.status = 'err';
+          f.statusEl.textContent = '✗ resposta inválida';
+          f.statusEl.className = 'status err';
+        }
+        resolve();
+      };
+      xhr.onerror = () => {
+        f.status = 'err';
+        f.statusEl.textContent = '✗ rede';
+        f.statusEl.className = 'status err';
+        resolve();
+      };
+      xhr.open('POST', '/api/upload-print.php');
+      xhr.send(fd);
+    });
+  }
 })();
 </script>
 </body>

@@ -1230,11 +1230,8 @@ export default function LiveViewerScreen() {
             },
           ]}
         >
-          {/* Avatar gets its own pulse ring layered behind so the skeleton
-              card has the same red ring vocabulary as the connected top bar. */}
-          <View pointerEvents="none" style={styles.connectingAvatarHalo}>
-            <Animated.View style={[styles.connectingAvatarPulseRing, { opacity: connectingPulse }]} />
-          </View>
+          {/* Clean connecting state — só o avatar, sem ring extra atrás (o
+              square border visível em iOS confundia o user, round 56 fix). */}
           <AvatarCircle
             name={displayHostName}
             email={displayHostEmail}
@@ -2390,6 +2387,9 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   railAvatar: {
+    // borderRadius matches AvatarCircle 48/2 — sem isso aparece um quadrado
+    // branco em volta do círculo (round 56 fix).
+    borderRadius: 24,
     borderWidth: 2,
     borderColor: '#fff',
   },
