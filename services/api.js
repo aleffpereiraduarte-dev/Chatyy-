@@ -4873,7 +4873,9 @@ export async function getMutualFollowers(email) {
 // ============================================================
 // LIVE STREAMING API
 // ============================================================
-export async function liveStart(title) { return apiCall('live_start', { title }, 'POST'); }
+export async function liveStart(title, opts = {}) {
+  return apiCall('live_start', { title, ...(opts.audience ? { audience: opts.audience } : {}) }, 'POST');
+}
 export async function liveEnd(sessionId) { return apiCall('live_end', { session_id: sessionId }, 'POST'); }
 export async function liveList() { return apiCall('live_list', {}, 'POST'); }
 export async function liveUpdateViewers(sessionId, count) { return apiCall('live_update_viewers', { session_id: sessionId, viewer_count: count }, 'POST'); }

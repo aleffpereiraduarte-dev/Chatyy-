@@ -132,6 +132,8 @@ export default function LiveBroadcastScreen() {
   const heartIdRef = useRef(0);
   const endedRef = useRef(false);
   const reconnectTimerRef = useRef(null);
+  const liveStartedAckRef = useRef(false);
+  const liveStartedAckTimeoutRef = useRef(null);
 
   // Animations
   const countdownScale = useRef(new Animated.Value(0)).current;
@@ -283,12 +285,39 @@ export default function LiveBroadcastScreen() {
       try { msg = JSON.parse(event.data); } catch { return; }
 
       switch (msg.type) {
-        case 'auth_success':
-          // After auth, start live session
-          ws.send(JSON.stringify({
-            type: 'live_start',
-            session_id: sessionIdRef.current,
-          }));
+        case 'auth_success': {
+          // After auth, start live session. Sem sessionIdRef.current válido,
+          // WS server silenciosamente ignora (guard `if (c.email && msg.session_id)`),
+          // e o host fica subscrito ao canal user mas NÃO ao canal live_<id> —
+          // viewers que pedem join nunca recebem offer → "Conectando..." eterno.
+          const sid = sessionIdRef.current;
+          if (!sid) {
+            console.error('[Live] auth_success but sessionId is null — abort live_start');
+            setError(t('live.startFailed') || 'Falha ao iniciar live');
+            try { ws.close(); } catch {}
+            return;
+          }
+          console.log('[Live] sending live_start session=' + sid);
+          ws.send(JSON.stringify({ type: 'live_start', session_id: sid }));
+          // Ack watchdog — if WS server doesn't echo live_started in 5s, the
+          // subscribe never happened. Surface the error instead of waiting forever.
+          if (liveStartedAckTimeoutRef.current) clearTimeout(liveStartedAckTimeoutRef.current);
+          liveStartedAckTimeoutRef.current = setTimeout(() => {
+            if (!liveStartedAckRef.current && !endedRef.current) {
+              console.error('[Live] live_started ack timeout (5s) — WS subscribe failed');
+              setError(t('live.startTimeout') || 'Sem resposta do servidor');
+            }
+          }, 5000);
+          break;
+        }
+        case 'live_started':
+          // Server confirmed broadcast registered + channel subscribed.
+          liveStartedAckRef.current = true;
+          if (liveStartedAckTimeoutRef.current) {
+            clearTimeout(liveStartedAckTimeoutRef.current);
+            liveStartedAckTimeoutRef.current = null;
+          }
+          console.log('[Live] live_started ack received');
           break;
         case 'live_viewer_joined':
           handleViewerJoined(msg);
@@ -356,7 +385,12 @@ export default function LiveBroadcastScreen() {
       }
     };
 
-    ws.onerror = () => {};
+    ws.onerror = (e) => {
+      // Antes era silent fail — onerror engolido escondia falhas de TLS/auth/CORS
+      // que deixavam o host preso em "Conectando..." sem nunca enviar live_start.
+      console.warn('[Live] WS error:', e?.message || e?.type || 'unknown');
+      try { setError(t('live.connectionFailed') || 'Falha de conexão ao servidor'); } catch {}
+    };
   }, [user]);
 
   // Connection quality heartbeat — heuristic based on peer connection health
