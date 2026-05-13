@@ -1145,12 +1145,17 @@ export class BackupEngine {
           if (!FSLegacy?.FileSystemUploadType?.BINARY_CONTENT) {
             throw new Error('FSLegacy_unavailable');
           }
+          // BACKGROUND session — Android: WorkManager-backed task that survives
+          // app being backgrounded/killed (vs FOREGROUND which dies the moment
+          // the JS thread suspends). iOS: URLSession.background. Was previously
+          // FOREGROUND which is why "o sistema de foto quando eu minimizo o app
+          // ele para" — JS upload got cut every time user minimized.
           const result = await withTimeout(
             FSLegacy.uploadAsync(fullUploadUrl, uploadUri, {
               httpMethod: 'PUT',
               uploadType: FSLegacy.FileSystemUploadType.BINARY_CONTENT,
               headers: uploadHeaders,
-              sessionType: FSLegacy.FileSystemSessionType.FOREGROUND,
+              sessionType: FSLegacy.FileSystemSessionType.BACKGROUND,
             }),
             streamTimeout,
             'fs_stream'

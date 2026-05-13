@@ -3,6 +3,18 @@ import { View, Text, Animated, StyleSheet, Platform } from 'react-native';
 
 const LIVE_RED = '#dc2626';
 
+// Humanize big counts (1.2K / 12K / 1.4M). Locale-aware separator.
+function humanize(n) {
+  const v = Number(n) || 0;
+  if (v < 1000) return String(v);
+  const sep = (() => {
+    try { return (1.1).toLocaleString().includes(',') ? ',' : '.'; } catch { return '.'; }
+  })();
+  if (v < 10000) return (Math.floor(v / 100) / 10).toString().replace('.', sep) + 'K';
+  if (v < 1_000_000) return Math.floor(v / 1000) + 'K';
+  return (Math.floor(v / 100_000) / 10).toString().replace('.', sep) + 'M';
+}
+
 export default function LiveIndicator({ size = 'small', viewerCount }) {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const glowAnim = useRef(new Animated.Value(0)).current;
@@ -71,7 +83,7 @@ export default function LiveIndicator({ size = 'small', viewerCount }) {
           <View style={styles.countContainer}>
             <View style={styles.countDivider} />
             <Text style={[styles.count, isLarge && styles.countLarge]}>
-              {viewerCount >= 1000 ? `${(viewerCount / 1000).toFixed(1)}k` : viewerCount}
+              {humanize(viewerCount)}
             </Text>
           </View>
         )}

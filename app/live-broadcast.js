@@ -10,7 +10,7 @@ import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import LiveChat from '../components/LiveChat'; // eslint-disable-line no-unused-vars -- kept for fallback
 import AvatarCircle from '../components/AvatarCircle';
-import { IconX, IconCameraFlip, IconMic, IconMicOff, IconVideo, IconVideoOff, IconHeart, IconShare, IconSend, IconSettings, IconUserPlus, IconSparkles, IconFilter } from '../components/Icons';
+import { IconX, IconCameraFlip, IconMic, IconMicOff, IconVideo, IconVideoOff, IconHeart, IconShare, IconSend, IconSettings, IconUserPlus, IconSparkles, IconFilter, IconPin, IconStar, IconStarFilled } from '../components/Icons';
 
 // Cross-platform WebRTC — same pattern as call.js
 let RTC_PeerConnection, RTC_SessionDescription, RTC_IceCandidate, getUserMediaFn, NativeRTCView;
@@ -533,10 +533,16 @@ export default function LiveBroadcastScreen() {
           api.liveUpdateViewers(sessionIdRef.current, count).catch(() => {});
         }, 10000);
       } else {
-        setError(res.message || t('live.connectionFailed') || 'Connection failed');
+        setError(res?.message || t('live.connectionFailed') || 'Connection failed');
       }
-    } catch {
-      setError(t('live.connectionFailed') || 'Connection failed');
+    } catch (e) {
+      // Was empty `catch {}` — masked real reason (e.g., auth expired,
+      // CDN 502, parental block). Surface the message so the user knows
+      // whether to retry / re-login / wait. Falls back to the generic
+      // i18n string if the exception has no message.
+      console.warn('[live] start failed:', e?.message || e);
+      const detail = e?.message ? ` (${e.message})` : '';
+      setError((t('live.connectionFailed') || 'Connection failed') + detail);
     }
   }, [titleInput, connectSignaling, t, animateCountdown, ensureCameraStream]);
 
@@ -967,7 +973,21 @@ export default function LiveBroadcastScreen() {
           duration timer + connection-quality bars + close. Glass background. */}
       <View style={[styles.topBar, { paddingTop: insets.top + 10 }]}>
         <View style={styles.topLeft}>
-          <AvatarCircle name={user?.name || user?.email} email={user?.email} size={36} />
+          {/* Host avatar with a red pulse ring — same red as the LIVE pill so
+              the "we are live" rhythm reads as one beat. The ring sits behind
+              the avatar (Animated.View at -3 inset) so the image itself stays
+              crisp; only the halo scales. */}
+          <View style={styles.hostAvatarWrap}>
+            <Animated.View
+              pointerEvents="none"
+              style={[styles.hostAvatarPulseRing, {
+                transform: [{ scale: livePulse }],
+                opacity: livePulse.interpolate({ inputRange: [1, 1.5], outputRange: [0.7, 0] }),
+              }]}
+            />
+            <View style={styles.hostAvatarRing} pointerEvents="none" />
+            <AvatarCircle name={user?.name || user?.email} email={user?.email} size={36} />
+          </View>
           <View style={styles.hostMeta}>
             <View style={styles.liveBadge}>
               <Animated.View style={[styles.liveBadgeDot, {
@@ -997,13 +1017,17 @@ export default function LiveBroadcastScreen() {
             </View>
             <Text style={styles.durationText}>{formatDuration(liveDuration)}</Text>
           </View>
+          {/* Red end-live button — destaque visual (vs the cinza closeBtn2)
+              so the host immediately knows where to tap to end. Uses IconStop
+              (the stop square SVG) to communicate intent better than IconX. */}
           <TouchableOpacity
             onPress={handleEndLive}
-            style={styles.closeBtn2}
+            style={styles.endLiveBtn}
             accessibilityLabel={t('live.endLive') || 'End live'}
             accessibilityRole="button"
+            activeOpacity={0.85}
           >
-            <IconX size={18} color="#fff" />
+            <View style={styles.endLiveBtnInner} />
           </TouchableOpacity>
         </View>
       </View>
@@ -1017,11 +1041,14 @@ export default function LiveBroadcastScreen() {
         </View>
       ) : null}
 
-      {/* Pinned comment — sits below the title bar, brand-purple accent + 📌. */}
+      {/* Pinned comment — brand-purple accent + IconPin SVG (no emoji per
+          design rule: components/Icons.js only for UI affordances). */}
       {pinnedComment ? (
         <View style={[styles.pinnedWrap, { top: titleInput ? 130 : 100 }]}>
           <View style={styles.pinnedCard}>
-            <Text style={styles.pinnedIcon}>📌</Text>
+            <View style={styles.pinnedIconWrap}>
+              <IconPin size={14} color="#fff" />
+            </View>
             <View style={styles.pinnedBody}>
               <Text style={styles.pinnedName} numberOfLines={1}>{pinnedComment.name}</Text>
               <Text style={styles.pinnedContent} numberOfLines={2}>{pinnedComment.content}</Text>
@@ -1077,7 +1104,9 @@ export default function LiveBroadcastScreen() {
           accessibilityRole="button"
           accessibilityState={{ checked: saveReplay }}
         >
-          <Text style={[styles.rightBtnIconEmoji, { fontSize: 18 }]}>{saveReplay ? '⭐' : '☆'}</Text>
+          {saveReplay
+            ? <IconStarFilled size={20} color="#fbbf24" />
+            : <IconStar size={20} color="#fff" />}
         </TouchableOpacity>
         <TouchableOpacity
           onPress={pinLatestComment}
@@ -1086,7 +1115,7 @@ export default function LiveBroadcastScreen() {
           accessibilityLabel={t('live.pinComment') || 'Pin latest'}
           accessibilityRole="button"
         >
-          <Text style={styles.rightBtnIconEmoji}>📌</Text>
+          <IconPin size={18} color="#fff" />
         </TouchableOpacity>
         <TouchableOpacity
           onPress={handleFlipCamera}
@@ -1911,6 +1940,40 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
   },
+  // Red end-live CTA — TikTok pattern: a clear red orb with a white square
+  // "stop" mark. Far more discoverable than a generic X.
+  endLiveBtn: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: LIVE_RED,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.85)',
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 0 14px rgba(220,38,38,0.65), 0 2px 8px rgba(0,0,0,0.35)',
+    } : {}),
+  },
+  endLiveBtnInner: {
+    width: 12, height: 12, borderRadius: 2,
+    backgroundColor: '#fff',
+  },
+  // Host avatar with pulse ring — sits at top-left of the live header.
+  hostAvatarWrap: {
+    width: 44, height: 44,
+    alignItems: 'center', justifyContent: 'center',
+    position: 'relative',
+  },
+  hostAvatarPulseRing: {
+    position: 'absolute',
+    width: 50, height: 50, borderRadius: 25,
+    borderWidth: 2,
+    borderColor: LIVE_RED,
+  },
+  hostAvatarRing: {
+    position: 'absolute',
+    width: 40, height: 40, borderRadius: 20,
+    borderWidth: 2,
+    borderColor: LIVE_RED,
+  },
   bottomArea: {
     position: 'absolute',
     bottom: 0,
@@ -2034,8 +2097,10 @@ const styles = StyleSheet.create({
       boxShadow: '0 4px 14px rgba(124,58,237,0.4)',
     } : {}),
   },
-  pinnedIcon: {
-    fontSize: 16,
+  pinnedIconWrap: {
+    width: 24, height: 24, borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center', justifyContent: 'center',
   },
   pinnedBody: { flex: 1 },
   pinnedName: {

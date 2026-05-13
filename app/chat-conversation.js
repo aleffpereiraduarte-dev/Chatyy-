@@ -1896,7 +1896,27 @@ function TypingDotsFade({ visible, color }) {
 }
 
 const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, renderRef }) {
-  const rendered = renderRef.current(item);
+  // Silent-fail audit: a single malformed payload (corrupt content JSON,
+  // missing required field, unexpected type, etc.) thrown inside
+  // renderMessage used to crash the WHOLE FlatList — the user would back
+  // out and never get past the loading state again on that conversation.
+  // Catch per-row so the rest of the thread keeps rendering, and log
+  // enough to trace which msg id triggered it next time. We render a
+  // tiny placeholder bubble so the user at least sees there's something
+  // missing rather than a silent gap.
+  let rendered = null;
+  try {
+    rendered = renderRef.current(item);
+  } catch (e) {
+    console.warn('[renderMessage] threw for item', item?.id, e?.message);
+    return (
+      <View style={{ paddingHorizontal: 12, paddingVertical: 6, opacity: 0.6 }}>
+        <Text style={{ fontSize: 12, color: '#999', fontStyle: 'italic' }}>
+          [Não foi possível exibir esta mensagem]
+        </Text>
+      </View>
+    );
+  }
   // iMessage-style bubble effect wrapper. Skips when no effect is set,
   // when the item is a separator, or when the effect is a screen-only
   // type (those render via MessageScreenEffect, not the bubble).
@@ -2834,15 +2854,22 @@ window.updatePos=function(){};
 window.addEventListener('message', function(e){var d=e&&e.data; if(d&&d.type==='updatePos'){window.updatePos(d.lat,d.lng);}});
 </script></body></html>`;
 
-  // 2026-05-09 v3: A key Maps Embed API v1 retorna 403 (não habilitada
-  // em GCP). Trocado pro keyless legacy embed (`maps.google.com/maps?...&output=embed`)
-  // que não precisa key — Google ainda mantém suportado e retorna 200.
-  // Pra live-tracking com pulse animado, mantém JS API quando key disponível
-  // (mesmo limite de billing aplica), senão cai pro Leaflet.
+  // 2026-05-13 (task #834): Maps JS API + Static + Embed v1 all rejected by
+  // the configured key — Static/Embed return HTTP 403 "API not activated" and
+  // the JS loader paints the "This page can't load Google Maps correctly"
+  // overlay at runtime (billing-not-enabled signature). Until GCP billing +
+  // API enablement land, both live AND static use the Leaflet (OSM) path.
+  // The keyless `maps.google.com/maps?...&output=embed` was previously used
+  // for static locations but Google started rendering the
+  // "Google Maps Platform rejected your request" red overlay inside that
+  // iframe (user-visible "Google Maps API error" in the live-location modal).
+  // Leaflet renders OSM tiles directly — no key, no rejection, identical UX.
+  // We keep `gmapsHtml` + `gKeylessEmbed` ready behind a feature flag so
+  // re-enabling billing is a one-line revert.
   const gKeylessEmbed = `<!DOCTYPE html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/><style>html,body{margin:0;padding:0;width:100%;height:100%;background:#000}iframe{border:0;width:100%;height:100%;display:block}</style></head><body><iframe loading="lazy" allowfullscreen referrerpolicy="no-referrer-when-downgrade" src="https://maps.google.com/maps?q=${numLat},${numLng}&z=17&output=embed"></iframe></body></html>`;
-  const html = isStillLive
-    ? (gmapsHtml || leafletHtml)
-    : (gKeylessEmbed);
+  // Google Maps JS API ativo (key validada HTTP 200 em 2026-05-13). Leaflet fica como fallback se _gKey vazio.
+  const USE_GMAPS_JS = true;
+  const html = USE_GMAPS_JS && gmapsHtml ? gmapsHtml : leafletHtml;
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -5944,6 +5971,12 @@ export default function ChatConversationScreen() {
   // with sinceId=0 so we recover the original payloads.
   const _hasPlaceholderRef = useRef(false);
   const _cacheCorruptedRef = useRef(false);
+  // Block status surfaced by chat_messages response (backend adds blocked_by_peer,
+  // i_blocked_peer, blocker_name fields). When peer blocked us OR we blocked them
+  // we render a banner above the composer and disable the input.
+  const [blockedByPeer, setBlockedByPeer] = useState(false);
+  const [iBlockedPeer, setIBlockedPeer] = useState(false);
+  const [blockerName, setBlockerName] = useState(null);
   const [messages, setMessages] = useState(() => {
     try {
       const raw = _initialCached || [];
@@ -6036,6 +6069,10 @@ export default function ChatConversationScreen() {
   const [cachedUris, setCachedUris] = useState({});
   // Skip the loader if we already painted from the native cache
   const [loading, setLoading] = useState(() => !_initialCached);
+  // Surface load failures so the empty state can offer retry instead of
+  // sitting silent on a blank screen when chatMessages returns !success
+  // or throws. See loadMessages() — the catch used to be `} catch {}`.
+  const [loadError, setLoadError] = useState(null);
   const [sending, setSending] = useState(false);
   // hasMore starts true if we painted from native cache — there are
   // probably more messages on the server. The first onReachTop will sort
@@ -7630,7 +7667,27 @@ export default function ChatConversationScreen() {
       // fresher state and jump the viewport. BUT if there are NO messages
       // on screen yet, always apply — never leave the user on an empty screen
       // just because a race guard triggered.
+      // Silent-fail audit: previously a non-success response (network down,
+      // 401, 500) returned with NO UI feedback — user sees a blank conv
+      // forever, no error, no retry hint. Surface a load error when there
+      // are zero rows on screen so the empty-state component can offer
+      // retry. With cached rows, we keep the stale render (better than
+      // wiping content) but log so the next pass can pick it up.
+      if (!r.success && mountedRef.current && !beforeId) {
+        if (_messagesCountRef.current === 0) {
+          setLoadError(r.message || (t('chatConv.loadError') || 'Não foi possível carregar as mensagens.'));
+        } else {
+          console.warn('[loadMessages] non-success with cached rows', r.message);
+        }
+      } else if (r.success && mountedRef.current) {
+        // Clear any previous load error since fresh data arrived.
+        setLoadError(null);
+      }
       if (r.success && mountedRef.current) {
+        // Surface block state from the response so the composer banner reacts.
+        setBlockedByPeer(!!r.data?.blocked_by_peer);
+        setIBlockedPeer(!!r.data?.i_blocked_peer);
+        setBlockerName(r.data?.blocker_name || null);
         let newMsgs = processIncoming(r.data?.messages || []);
         // Hydrate _localUri for media messages from syncIndex BEFORE setMessages
         // so the very first render already paints file:// instead of the
@@ -7860,6 +7917,28 @@ export default function ChatConversationScreen() {
           const SMALL_TYPES = ['image', 'audio', 'voice', 'gif', 'sticker'];
           const HEAVY_TYPES = ['video', 'file'];
           const allowedTypes = isWifi ? [...SMALL_TYPES, ...HEAVY_TYPES] : SMALL_TYPES;
+          // Task #886 — explicit audio sweep BEFORE the general media batch.
+          // Audio is the only "must always have offline" media; getCachedUri
+          // returns the remote URL if not yet cached, so a separate sweep
+          // through prefetchAudioMessage ensures every voice/audio bubble in
+          // the freshly-loaded batch starts downloading immediately, even
+          // before the general preCacheUrls round-trip. force-bypass cellular
+          // gate is implicit via saveMediaPermanent (no _isHeavyByUrl check).
+          try {
+            const audioMsgs = newMsgs.filter(m => (m.type === 'audio' || m.type === 'voice') && m.file_url);
+            if (audioMsgs.length > 0) {
+              const { prefetchAudioMessage } = require('../services/mediaCache');
+              try { console.log('[audio_offline] load sweep', audioMsgs.length, 'msgs'); } catch {}
+              for (const m of audioMsgs) {
+                const remote = api.getMediaUrl(m.file_url);
+                prefetchAudioMessage(remote).then(local => {
+                  if (local && local !== remote && mountedRef.current) {
+                    setCachedUris(prev => prev[remote] ? prev : { ...prev, [remote]: local });
+                  }
+                }).catch(() => {});
+              }
+            }
+          } catch {}
           const getMediaSrc = (m) => {
             if (m.file_url) return m.file_url;
             if ((m.type === 'gif' || m.type === 'sticker') && typeof m.content === 'string' && m.content.startsWith('http')) return m.content;
@@ -7889,7 +7968,16 @@ export default function ChatConversationScreen() {
           }
         }
       }
-    } catch {} finally {
+    } catch (e) {
+      // Silent-fail audit: a thrown exception (unexpected JSON, decrypt
+      // crash, etc.) used to vanish — user stays on the loading state or
+      // sees no content. Surface as a load error when the screen is empty
+      // so the empty-state component can render a retry CTA.
+      console.warn('[loadMessages] threw', e?.message);
+      if (mountedRef.current && !beforeId && _messagesCountRef.current === 0) {
+        setLoadError(e?.message || (t('chatConv.loadError') || 'Não foi possível carregar as mensagens.'));
+      }
+    } finally {
       if (!mountedRef.current) return;
       setLoading(false);
       loadingMoreRef.current = false;
@@ -8550,14 +8638,28 @@ export default function ChatConversationScreen() {
           if (msg.id && !String(msg.id).startsWith('tmp_')) {
             _cacheOne(conversationId, msg);
           }
-          // Background-cache + permanently save media files (native only)
+          // Background-cache + permanently save media files (native only).
+          // Task #886 — audio/voice use prefetchAudioMessage helper so the
+          // [audio_offline] log lands + same dedup as the chat-list path.
+          // Other media types still go through saveMediaPermanent directly.
           if (msg.file_url && ['image', 'video', 'audio', 'voice', 'gif', 'sticker', 'file'].includes(msg.type)) {
             const remoteUrl = api.getMediaUrl(msg.file_url);
-            saveMediaPermanent(remoteUrl).then(localUri => {
-              if (localUri !== remoteUrl && mountedRef.current) {
-                setCachedUris(prev => ({ ...prev, [remoteUrl]: localUri }));
-              }
-            }).catch(() => {});
+            if (msg.type === 'audio' || msg.type === 'voice') {
+              try {
+                const { prefetchAudioMessage } = require('../services/mediaCache');
+                prefetchAudioMessage(remoteUrl).then(localUri => {
+                  if (localUri && localUri !== remoteUrl && mountedRef.current) {
+                    setCachedUris(prev => ({ ...prev, [remoteUrl]: localUri }));
+                  }
+                }).catch(() => {});
+              } catch {}
+            } else {
+              saveMediaPermanent(remoteUrl).then(localUri => {
+                if (localUri !== remoteUrl && mountedRef.current) {
+                  setCachedUris(prev => ({ ...prev, [remoteUrl]: localUri }));
+                }
+              }).catch(() => {});
+            }
           }
 
           // Send delivery ack for incoming messages (WhatsApp-style double check).
@@ -9166,6 +9268,18 @@ export default function ChatConversationScreen() {
             cacheSingleMessage(conversationId, msg).catch(() => {});
             try { _nativeChatViewRef.current?.reload?.(); } catch {}
           })();
+          // Task #886 — TCP receive path was silent on audio prefetch. The WS
+          // path already auto-saves all media, but TCP was the orphan branch
+          // and on devices where the TCP signal-server delivers first (sender
+          // device on cellular, e.g.), the audio stayed un-cached until the
+          // user tapped it. Fire-and-forget — saveMediaPermanent inside the
+          // helper handles dedup vs the WS path's saveMediaPermanent.
+          if (msg.file_url && (msg.type === 'audio' || msg.type === 'voice') && Platform.OS !== 'web') {
+            try {
+              const { prefetchAudioMessage } = require('../services/mediaCache');
+              prefetchAudioMessage(api.getMediaUrl(msg.file_url)).catch(() => {});
+            } catch {}
+          }
           // Trigger receive sound only for genuinely new messages from others
           if (isFromOther) {
             try { require('../services/notificationSound').playChatReceiveSound(); } catch {}
@@ -10980,11 +11094,31 @@ export default function ChatConversationScreen() {
           if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(progress * 100) }));
         }, 'audio');
       }
-      if (r.success && r.data) {
+      // Null guard: if both the voice-session finalize and the fallback upload
+      // returned undefined (e.g., a thrown error inside chatUploadFile that
+      // escaped its own try/catch), reading r.success crashes with TypeError
+      // and the outer catch silently queues for retry without ever telling the
+      // user what happened. Optional-chain the access so the !r.success branch
+      // below handles the "no response at all" case gracefully too.
+      if (r?.success && r.data) {
         const msg = r.data.message || r.data;
         setMessages(prev => prev.map(m => m.id === tempId ? { ...msg, _pending: false } : m));
         // Relay via WS for instant delivery
         try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, msg, tempId, getMemberEmails()); } catch {}
+        // Task #886 — adopt the just-recorded local audio as the cached copy
+        // for the canonical CDN URL the server returned. Without this, the
+        // next time the bubble re-renders (or the user reopens the chat) the
+        // AudioPlayer re-downloads our own voice note from the CDN — wasted
+        // bytes + brief "loading…" flash for media we already have on disk.
+        // WhatsApp parity: outbound voice notes play offline immediately.
+        if (Platform.OS !== 'web' && msg?.file_url && audioData?.uri && typeof audioData.uri === 'string' && audioData.uri.startsWith('file://')) {
+          try {
+            const { adoptLocalFileAsCache } = require('../services/mediaCache');
+            const remote = api.getMediaUrl(msg.file_url);
+            // Fire-and-forget — failure just means the next load re-downloads.
+            adoptLocalFileAsCache(remote, audioData.uri).catch(() => {});
+          } catch {}
+        }
       } else {
         // Falhou no server (5xx, timeout, etc) → queue pra retry automático
         // quando a rede voltar. Antes ficava como _failed e só re-enviava
@@ -13364,6 +13498,118 @@ export default function ChatConversationScreen() {
     []
   );
 
+  // PERF: ListHeaderComponent was inline JSX — recreated every parent render
+  // (and the parent re-renders on EVERY keystroke via setInputText). That
+  // forced the TypingBubbleHost subtree to reconcile per character typed
+  // even though its inputs (typingUser/typingIsRecording/typingEntries/
+  // aiTyping/colors/t) hadn't changed. Memoize so the header reference is
+  // stable across keystroke renders and only flips when typing state moves.
+  const listHeader = useMemo(() => (
+    <>
+      {aiTyping ? (
+        <TypingBubbleHost user="Chatyy AI" recording={false} colors={colors} t={t} />
+      ) : null}
+      <TypingBubbleHost user={typingUser} recording={typingIsRecording} colors={colors} t={t} entries={typingEntries} />
+    </>
+  ), [aiTyping, typingUser, typingIsRecording, typingEntries, colors, t]);
+
+  // PERF: ListFooterComponent — same story as listHeader. The "load more"
+  // spinner only ever has 2 states (visible/hidden) but the inline form
+  // built a fresh element on each parent render.
+  const listFooter = useMemo(() => (
+    loadingMore ? (
+      <View style={styles.loadMoreBtn}>
+        <ActivityIndicator size="small" color={colors.primary} />
+      </View>
+    ) : null
+  ), [loadingMore, colors.primary]);
+
+  // PERF: ListEmptyComponent was a huge inline ternary subtree
+  // (skeleton / loadError / empty-state with two SVGs + 4 Text). Re-built
+  // and reconciled per keystroke on the empty state path (a freshly opened
+  // chat shows this until first message). Memoize so only the underlying
+  // dependencies trigger a refresh.
+  const listEmpty = useMemo(() => {
+    if (loading && ChatBubbleSkeleton) {
+      return (
+        <View style={{ transform: [{ scaleY: -1 }], paddingTop: 20 }}>
+          {[1,2,3,4,5,6].map(i => (
+            <ChatBubbleSkeleton key={i} isOwn={i % 2 === 0} colors={colors} isDark={isDark} />
+          ))}
+        </View>
+      );
+    }
+    if (loadError) {
+      return (
+        <View style={[styles.emptyMessages, { transform: [{ scaleY: -1 }], paddingHorizontal: 32 }]}>
+          <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600', textAlign: 'center', marginBottom: 8 }}>
+            {t('chatConv.loadErrorTitle') || 'Não foi possível carregar'}
+          </Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 13, textAlign: 'center', marginBottom: 18 }}>
+            {loadError}
+          </Text>
+          <TouchableOpacity
+            onPress={() => { setLoadError(null); loadMessages(true); }}
+            style={{ backgroundColor: '#7C3AED', paddingHorizontal: 22, paddingVertical: 10, borderRadius: 22 }}
+          >
+            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>
+              {t('common.retry') || 'Tentar novamente'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    return (
+      <View style={[styles.emptyMessages, { transform: [{ scaleY: -1 }] }]}>
+        <View style={{
+          width: 96, height: 96, borderRadius: 48,
+          backgroundColor: isDark ? 'rgba(124,58,237,0.10)' : 'rgba(124,58,237,0.10)',
+          alignItems: 'center', justifyContent: 'center', marginBottom: 18,
+          ...(Platform.OS === 'web' ? { boxShadow: '0 8px 32px rgba(124,58,237,0.18)' } : {}),
+        }}>
+          <View style={{
+            width: 72, height: 72, borderRadius: 36,
+            backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.18)',
+            alignItems: 'center', justifyContent: 'center',
+          }}>
+            <IconLock size={32} color="#7C3AED" />
+          </View>
+        </View>
+        <Text style={{
+          fontSize: 16, fontWeight: '800', textAlign: 'center',
+          color: isDark ? '#e9edef' : '#111b21',
+          marginBottom: 6, letterSpacing: -0.2,
+        }}>
+          {e2eEnabled
+            ? (t('chatConv.e2eEmptyTitle') || 'Conversa protegida')
+            : (t('chatConv.emptyTitle') || 'Diga olá')}
+        </Text>
+        <Text style={{
+          fontSize: 13.5, textAlign: 'center', lineHeight: 19,
+          paddingHorizontal: 48,
+          color: isDark ? 'rgba(233,237,239,0.55)' : 'rgba(17,27,33,0.55)',
+        }}>
+          {e2eEnabled
+            ? (t('chatConv.e2eEmpty') || 'Mensagens protegidas com criptografia de ponta a ponta. Ninguém fora desta conversa pode ler.')
+            : (t('chatConv.empty') || 'Envie uma mensagem para iniciar a conversa.')}
+        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 16, opacity: 0.6 }}>
+          <IconSparkles size={12} color={isDark ? 'rgba(233,237,239,0.55)' : 'rgba(17,27,33,0.55)'} />
+          <Text style={{
+            marginLeft: 6,
+            fontSize: 11.5,
+            fontWeight: '600',
+            letterSpacing: 0.4,
+            textTransform: 'uppercase',
+            color: isDark ? 'rgba(233,237,239,0.55)' : 'rgba(17,27,33,0.55)',
+          }}>
+            Início da conversa
+          </Text>
+        </View>
+      </View>
+    );
+  }, [loading, loadError, e2eEnabled, isDark, colors, t, loadMessages]);
+
   // Edit history viewer
   const [editHistoryModal, setEditHistoryModal] = useState({ visible: false, loading: false, versions: [], currentContent: '' });
   // Lazy-load the user's sticker packs the first time the Stickers tab
@@ -13410,12 +13656,18 @@ export default function ChatConversationScreen() {
       if (r?.success) {
         setEditHistoryModal(prev => ({ ...prev, loading: false, versions: r.data?.versions || [] }));
       } else {
-        setEditHistoryModal(prev => ({ ...prev, loading: false }));
+        // Silent-fail audit: previously the modal cleared loading but
+        // showed nothing — user tapped "edited" and the sheet just stayed
+        // empty with zero feedback. Surface the failure via the modal
+        // body so the user knows it's a server miss and can retry.
+        console.warn('[editHistory] load failed', r?.message);
+        setEditHistoryModal(prev => ({ ...prev, loading: false, error: r?.message || (t('common.error') || 'Erro') }));
       }
-    } catch {
-      setEditHistoryModal(prev => ({ ...prev, loading: false }));
+    } catch (e) {
+      console.warn('[editHistory] threw', e?.message);
+      setEditHistoryModal(prev => ({ ...prev, loading: false, error: e?.message || (t('common.error') || 'Erro') }));
     }
-  }, [messages]);
+  }, [messages, t]);
 
   // Pretty-print a disappearing-timer duration in seconds for the top banner
   // and any picker labels. WhatsApp parity: round to whole units, prefer the
@@ -15060,8 +15312,6 @@ export default function ChatConversationScreen() {
                       </Text>
                     ) : (
                       <>
-                        {callTimeStr ? <Text style={{ fontSize: 12, color: isOwn ? 'rgba(255,255,255,0.6)' : colors.textTertiary }}>{callTimeStr}</Text> : null}
-                        {callTimeStr && durationStr ? <Text style={{ fontSize: 10, color: isOwn ? 'rgba(255,255,255,0.4)' : colors.textTertiary }}>{'\u00B7'}</Text> : null}
                         {durationStr ? <Text style={{ fontSize: 12, color: isOwn ? 'rgba(255,255,255,0.6)' : colors.textTertiary }}>{durationStr}</Text> : null}
                       </>
                     )}
@@ -18186,87 +18436,9 @@ export default function ChatConversationScreen() {
           // `minIndexForVisible:1` means "don't shift if we're actively on
           // the first row" — which in inverted mode is the latest message.
           maintainVisibleContentPosition={Platform.OS === 'ios' ? { minIndexForVisible: 1, autoscrollToTopThreshold: 100 } : undefined}
-          ListHeaderComponent={
-            <>
-              {aiTyping ? (
-                <TypingBubbleHost user="Chatyy AI" recording={false} colors={colors} t={t} />
-              ) : null}
-              <TypingBubbleHost user={typingUser} recording={typingIsRecording} colors={colors} t={t} entries={typingEntries} />
-            </>
-          }
-          ListFooterComponent={
-            loadingMore ? (
-              <View style={styles.loadMoreBtn}>
-                <ActivityIndicator size="small" color={colors.primary} />
-              </View>
-            ) : null
-          }
-          ListEmptyComponent={
-            // While the chat is actively fetching and we have no cache hit,
-            // show skeleton bubbles instead of a "no messages" screen —
-            // otherwise there's an awkward flash of the empty state before
-            // the real messages render. Telegram-parity.
-            loading && ChatBubbleSkeleton ? (
-              <View style={{ transform: [{ scaleY: -1 }], paddingTop: 20 }}>
-                {[1,2,3,4,5,6].map(i => (
-                  <ChatBubbleSkeleton key={i} isOwn={i % 2 === 0} colors={colors} isDark={isDark} />
-                ))}
-              </View>
-            ) : (
-            <View style={[styles.emptyMessages, { transform: [{ scaleY: -1 }] }]}>
-              <View style={{
-                width: 96, height: 96, borderRadius: 48,
-                backgroundColor: isDark ? 'rgba(124,58,237,0.10)' : 'rgba(124,58,237,0.10)',
-                alignItems: 'center', justifyContent: 'center', marginBottom: 18,
-                ...(Platform.OS === 'web' ? { boxShadow: '0 8px 32px rgba(124,58,237,0.18)' } : {}),
-              }}>
-                <View style={{
-                  width: 72, height: 72, borderRadius: 36,
-                  backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.18)',
-                  alignItems: 'center', justifyContent: 'center',
-                }}>
-                  <IconLock size={32} color="#7C3AED" />
-                </View>
-              </View>
-              <Text style={{
-                fontSize: 16, fontWeight: '800', textAlign: 'center',
-                color: isDark ? '#e9edef' : '#111b21',
-                marginBottom: 6, letterSpacing: -0.2,
-              }}>
-                {e2eEnabled
-                  ? (t('chatConv.e2eEmptyTitle') || 'Conversa protegida')
-                  : (t('chatConv.emptyTitle') || 'Diga olá')}
-              </Text>
-              <Text style={{
-                fontSize: 13.5, textAlign: 'center', lineHeight: 19,
-                paddingHorizontal: 48,
-                color: isDark ? 'rgba(233,237,239,0.55)' : 'rgba(17,27,33,0.55)',
-              }}>
-                {e2eEnabled
-                  ? (t('chatConv.e2eEmpty') || 'Mensagens protegidas com criptografia de ponta a ponta. Ninguém fora desta conversa pode ler.')
-                  : (t('chatConv.empty') || 'Envie uma mensagem para iniciar a conversa.')}
-              </Text>
-              {/* Subtle "Início da conversa" hint with sparkles — small gray
-                  type centered, only on the real empty state (skeleton branch
-                  above doesn't render this). Reuses IconSparkles already
-                  imported. No new i18n key — Portuguese hardcoded matches the
-                  fallback strings above. */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 16, opacity: 0.6 }}>
-                <IconSparkles size={12} color={isDark ? 'rgba(233,237,239,0.55)' : 'rgba(17,27,33,0.55)'} />
-                <Text style={{
-                  marginLeft: 6,
-                  fontSize: 11.5,
-                  fontWeight: '600',
-                  letterSpacing: 0.4,
-                  textTransform: 'uppercase',
-                  color: isDark ? 'rgba(233,237,239,0.55)' : 'rgba(17,27,33,0.55)',
-                }}>
-                  Início da conversa
-                </Text>
-              </View>
-            </View>
-            )
-          }
+          ListHeaderComponent={listHeader}
+          ListFooterComponent={listFooter}
+          ListEmptyComponent={listEmpty}
           // NOTE: removeClippedSubviews is set above to `false` for the
           // inverted list — DO NOT re-set it here. The duplicate prop
           // re-enabled clipping on native and brought back the inverted
@@ -18549,6 +18721,10 @@ export default function ChatConversationScreen() {
             </View>
             {editHistoryModal.loading ? (
               <ActivityIndicator color={colors.primary} style={{ marginVertical: 24 }} />
+            ) : editHistoryModal.error ? (
+              <Text style={{ color: '#E11D48', fontSize: 13, textAlign: 'center', paddingVertical: 16 }}>
+                {t('chatConv.editHistoryError') || (t('common.error') || 'Erro ao carregar histórico')}
+              </Text>
             ) : (
               <ScrollView style={{ maxHeight: 420 }}>
                 {editHistoryModal.versions.length === 0 ? (
@@ -19022,8 +19198,62 @@ export default function ChatConversationScreen() {
           </ScrollView>
         )}
 
-        <View style={[styles.inputBar, {
+        {/* Peer block banner — surfaces blocked_by_peer / i_blocked_peer fields
+            returned by chat_messages. When peer blocked us we just disable the
+            composer below; when *we* blocked the peer we expose an Unblock
+            button so the user can recover without leaving the thread. */}
+        {blockedByPeer && conversationType === 'direct' && (
+          <View style={{
+            backgroundColor: '#ffe5e5',
+            paddingVertical: 12,
+            paddingHorizontal: 16,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+          }}>
+            <IconAlertTriangle size={18} color="#c0392b" />
+            <Text style={{ color: '#c0392b', fontWeight: '700', fontSize: 13, textAlign: 'center', flexShrink: 1 }}>
+              {`Você foi bloqueado por ${blockerName || 'este contato'}`}
+            </Text>
+          </View>
+        )}
+        {iBlockedPeer && !blockedByPeer && conversationType === 'direct' && (
+          <View style={{
+            backgroundColor: '#f0f0f0',
+            paddingVertical: 12,
+            paddingHorizontal: 16,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 10,
+          }}>
+            <IconShield size={18} color="#555" />
+            <Text style={{ color: '#333', fontWeight: '700', fontSize: 13, textAlign: 'center', flexShrink: 1 }}>
+              {`Você bloqueou ${blockerName || 'este contato'}. Desbloqueie pra mensagem.`}
+            </Text>
+            <TouchableOpacity
+              onPress={async () => {
+                try {
+                  const peer = params.email || '';
+                  if (!peer) return;
+                  const r = await api.chatUnblockUser(peer);
+                  if (r?.success) {
+                    setIBlockedPeer(false);
+                  }
+                } catch {}
+              }}
+              style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: '#7C3AED' }}
+              accessibilityRole="button"
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Desbloquear</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        <View pointerEvents={(blockedByPeer || iBlockedPeer) && conversationType === 'direct' ? 'none' : 'auto'} style={[styles.inputBar, {
           backgroundColor: isDark ? '#0E0A18' : '#F3EFF8',
+          opacity: (blockedByPeer || iBlockedPeer) && conversationType === 'direct' ? 0.4 : 1,
           // Android edge-to-edge w/ transparent navigationBar: insets.bottom
           // ≈ 48px for gesture indicator. When keyboard opens, OS draws
           // keyboard ON TOP of that area (gesture bar disappears), but the

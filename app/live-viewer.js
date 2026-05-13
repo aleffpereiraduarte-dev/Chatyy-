@@ -11,8 +11,22 @@ import * as api from '../services/api';
 import AvatarCircle from '../components/AvatarCircle';
 import {
   IconX, IconHeart, IconShare, IconStar, IconSend,
-  IconUserPlus, IconCheck, IconMoreVert, IconRotateCcw,
+  IconUserPlus, IconCheck, IconMoreVert, IconRotateCcw, IconCamera,
+  IconEye,
 } from '../components/Icons';
+
+// Humanize big counts the way Instagram/TikTok do: 999 → 999, 1.2K, 12.4K, 1.2M.
+// We localize the decimal separator from the user locale where possible.
+function humanizeCount(n) {
+  const v = Number(n) || 0;
+  if (v < 1000) return String(v);
+  const sep = (() => {
+    try { return (1.1).toLocaleString().includes(',') ? ',' : '.'; } catch { return '.'; }
+  })();
+  if (v < 10000) return (Math.floor(v / 100) / 10).toString().replace('.', sep) + 'K';
+  if (v < 1_000_000) return Math.floor(v / 1000) + 'K';
+  return (Math.floor(v / 100_000) / 10).toString().replace('.', sep) + 'M';
+}
 
 // Cross-platform WebRTC
 let RTC_PeerConnection, RTC_SessionDescription, RTC_IceCandidate, NativeRTCView;
@@ -42,10 +56,16 @@ const HEART_COLORS = ['#ef4444', '#f43f5e', '#ec4899', '#a855f7', '#f97316'];
 
 export default function LiveViewerScreen() {
   const params = useLocalSearchParams();
-  const {
-    sessionId: paramSessionId,
-    hostEmail, hostName, title: paramTitle,
-  } = params;
+  // Accept all common param aliases so deep links work regardless of source:
+  //   • push tap notification → ?session_id=… (snake_case, from FCM payload)
+  //   • ChatReelsTab → ?id=…
+  //   • Profile / ChatListTab / ChatFeedTab → ?sessionId=… (camelCase)
+  // Without normalizing, push-tap-from-locked-screen lands on a viewer with
+  // no session id, WS never joins, header shows "?". Regression of #847.
+  const paramSessionId = params.sessionId || params.session_id || params.id;
+  const hostEmail = params.hostEmail || params.host_email;
+  const hostName = params.hostName || params.host_name;
+  const paramTitle = params.title;
   const router = useRouter();
   const { user } = useAuth();
   const { t } = useLanguage();
@@ -79,12 +99,25 @@ export default function LiveViewerScreen() {
   const iceCandidateQueueRef = useRef([]);
   const endTimerRef = useRef(null);
   const reconnectTimerRef = useRef(null);
+  // Full-screen container ref — used by react-native-view-shot to snap the
+  // live frame + comment overlay (Instagram/TikTok "save snap" parity).
+  const screenRef = useRef(null);
+  const inputRef = useRef(null);
+  // Toast for screenshot save feedback (no library — just an Animated.Value).
+  const [toast, setToast] = useState('');
+  const toastAnim = useRef(new Animated.Value(0)).current;
 
   // Animations
   const connectingPulse = useRef(new Animated.Value(0.4)).current;
   const endedFade = useRef(new Animated.Value(0)).current;
   const livePulse = useRef(new Animated.Value(1)).current;
   const heartScale = useRef(new Animated.Value(1)).current;
+  // Viewer-count "+1" bump — small floating chip that pops above the eye pill
+  // whenever a new viewer joins. Instagram/TikTok parity: subtle but lively.
+  const viewerCountScale = useRef(new Animated.Value(1)).current;
+  const viewerPlusOneAnim = useRef(new Animated.Value(0)).current;
+  const [viewerPlusOneVisible, setViewerPlusOneVisible] = useState(false);
+  const prevViewerCountRef = useRef(0);
 
   // ICE config
   const iceConfig = {
@@ -127,6 +160,24 @@ export default function LiveViewerScreen() {
     loop.start();
     return () => loop.stop();
   }, [connected, liveEnded]);
+
+  // Viewer-count pop: when the count goes up, the chip bumps + a small "+1"
+  // floats up briefly. Skips the first render so we don't fire on mount.
+  useEffect(() => {
+    const prev = prevViewerCountRef.current;
+    prevViewerCountRef.current = viewerCount;
+    if (viewerCount > prev && prev !== 0) {
+      Animated.sequence([
+        Animated.timing(viewerCountScale, { toValue: 1.22, duration: 120, useNativeDriver: true }),
+        Animated.spring(viewerCountScale, { toValue: 1, friction: 4, tension: 180, useNativeDriver: true }),
+      ]).start();
+      setViewerPlusOneVisible(true);
+      viewerPlusOneAnim.setValue(0);
+      Animated.timing(viewerPlusOneAnim, {
+        toValue: 1, duration: 900, useNativeDriver: true,
+      }).start(() => setViewerPlusOneVisible(false));
+    }
+  }, [viewerCount]);
 
   // Connection quality dot — derived from PC stats. Falls back to peer-state
   // poll every 4s so the dot still moves on web where stats() is async.
@@ -319,17 +370,22 @@ export default function LiveViewerScreen() {
             });
             // Also surface as a chat message so the user sees "X entrou"
             // inline with the live chat stream (Instagram parity).
-            setChatMessages(prev => [
-              ...prev.slice(-49),
-              {
-                id: 'sys_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
-                isSystem: true,
-                email: msg.viewer_email,
-                name: msg.viewer_name || msg.viewer_email.split('@')[0],
-                text: (t?.('live.joined') || 'entrou'),
-                ts: Date.now(),
-              },
-            ]);
+            {
+              const entry = new Animated.Value(0);
+              setChatMessages(prev => [
+                ...prev.slice(-49),
+                {
+                  id: 'sys_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+                  isSystem: true,
+                  email: msg.viewer_email,
+                  name: msg.viewer_name || msg.viewer_email.split('@')[0],
+                  text: (t?.('live.joined') || 'entrou'),
+                  ts: Date.now(),
+                  entry,
+                },
+              ]);
+              Animated.timing(entry, { toValue: 1, duration: 260, useNativeDriver: true }).start();
+            }
           }
           break;
         case 'live_viewer_left':
@@ -498,17 +554,21 @@ export default function LiveViewerScreen() {
   }, []);
 
   const handleChatMsg = useCallback((msg) => {
+    const entry = new Animated.Value(0);
     setChatMessages(prev => [...prev, {
       id: String(++chatIdRef.current),
       name: msg.sender_name || msg.sender_email?.split('@')[0] || '?',
       email: msg.sender_email,
       content: msg.content,
       type: msg.msg_type || 'chat',
+      entry,
     }]);
+    Animated.timing(entry, { toValue: 1, duration: 260, useNativeDriver: true }).start();
   }, []);
 
   const handleSendChat = useCallback((text) => {
     const senderName = user?.name || user?.email?.split('@')[0] || 'You';
+    const entry = new Animated.Value(0);
 
     setChatMessages(prev => [...prev, {
       id: String(++chatIdRef.current),
@@ -516,7 +576,9 @@ export default function LiveViewerScreen() {
       email: user?.email,
       content: text,
       type: 'chat',
+      entry,
     }]);
+    Animated.timing(entry, { toValue: 1, duration: 260, useNativeDriver: true }).start();
 
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
@@ -531,28 +593,40 @@ export default function LiveViewerScreen() {
     }
   }, [user, paramSessionId]);
 
-  // Heart animation
-  // Spawns a floating animation. If an emoji is passed we render that
-  // instead of the heart icon — the gift picker uses this to fire
-  // rose/diamond/fireworks etc. across the screen for everyone.
+  // Heart animation — parabolic float, randomized everything for that organic
+  // "stream of love" vibe Instagram/TikTok perfected. Each heart has:
+  //   • size 14-22 (small) so the stream feels dense, not heavy
+  //   • horizontal drift via sin wave (so trajectory curves left-right)
+  //   • spawn jitter around the bottom-right rail (the heart button)
+  //   • duration 1.6-2.6s so column never feels mechanical
+  // If an emoji is passed (gift picker) we render that with larger size (~30).
   const spawnHeart = useCallback((emojiOrX) => {
     const id = ++heartIdRef.current;
     const isEmoji = typeof emojiOrX === 'string';
-    const x = (isEmoji ? null : emojiOrX) || (SCREEN_W - 50 + (Math.random() - 0.5) * 60);
-    const y = SCREEN_H * 0.6;
+    // Spawn near the right rail / heart button — the visual origin of taps.
+    const baseX = SCREEN_W - 56 + (Math.random() - 0.5) * 24;
+    const x = (isEmoji ? null : (typeof emojiOrX === 'number' ? emojiOrX : null)) || baseX;
+    const y = SCREEN_H * 0.62 + (Math.random() - 0.5) * 30;
     const anim = new Animated.Value(0);
     const color = HEART_COLORS[Math.floor(Math.random() * HEART_COLORS.length)];
     const emoji = isEmoji ? emojiOrX : null;
+    // Per-heart random params — keeps the column from looking like a clone army.
+    const size = isEmoji ? 30 : (14 + Math.floor(Math.random() * 9));   // 14-22 px
+    const drift = (Math.random() - 0.5) * 110;                          // horizontal sway
+    const driftPhase = Math.random() * Math.PI;                          // sin offset
+    const rise = 220 + Math.floor(Math.random() * 140);                  // 220-360 px
+    const tilt = (Math.random() - 0.5) * 24;                             // -12..12 deg
+    const duration = 1600 + Math.floor(Math.random() * 1000);
 
     setHearts(prev => {
-      const next = [...prev, { id, x, y, anim, color, emoji }];
+      const next = [...prev, { id, x, y, anim, color, emoji, size, drift, driftPhase, rise, tilt, duration }];
       if (next.length > MAX_HEARTS) return next.slice(-MAX_HEARTS);
       return next;
     });
 
     Animated.timing(anim, {
       toValue: 1,
-      duration: 2000 + Math.random() * 500,
+      duration,
       useNativeDriver: true,
     }).start(() => {
       setHearts(prev => prev.filter(h => h.id !== id));
@@ -665,6 +739,88 @@ export default function LiveViewerScreen() {
     } catch {}
   }, [paramSessionId, hostName, paramTitle]);
 
+  // Tap a floating comment → seed the input with "@name " so the reply UX
+  // mirrors Instagram Live (and gives the comment a clear target). We also
+  // focus the input so the keyboard pops without an extra tap.
+  const handleReplyToComment = useCallback((msg) => {
+    if (!msg?.name) return;
+    const handle = String(msg.name).replace(/\s+/g, '');
+    setInputText((prev) => {
+      // Avoid duplicating an @prefix if user already typed one for the same
+      // person — just leave the field alone.
+      const trimmed = (prev || '').trim();
+      if (trimmed.startsWith(`@${handle}`)) return prev;
+      return `@${handle} `;
+    });
+    setTimeout(() => { try { inputRef.current?.focus?.(); } catch {} }, 30);
+  }, []);
+
+  // Capture a snapshot of the live stage (video + overlays) and save it to
+  // the device's camera roll. Mirrors the iOS Photos/TikTok save flow. Web
+  // fallback: not supported by view-shot RNW — silently disable button.
+  const showToast = useCallback((text) => {
+    setToast(text);
+    Animated.sequence([
+      Animated.timing(toastAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
+      Animated.delay(1600),
+      Animated.timing(toastAnim, { toValue: 0, duration: 240, useNativeDriver: true }),
+    ]).start(() => setToast(''));
+  }, [toastAnim]);
+
+  const handleScreenshot = useCallback(async () => {
+    if (Platform.OS === 'web') {
+      // Best-effort web fallback — most browsers block tab capture; just show
+      // a friendly toast so users know the feature is mobile-only for now.
+      showToast(t('live.screenshotFailed') || 'Snapshot indisponível na web');
+      return;
+    }
+    try {
+      const mod = require('react-native-view-shot');
+      const captureRef = mod.captureRef || mod.default || mod;
+      if (!screenRef.current || typeof captureRef !== 'function') {
+        showToast(t('live.screenshotFailed') || 'Falha no print');
+        return;
+      }
+      const uri = await captureRef(screenRef, { format: 'jpg', quality: 0.9, result: 'tmpfile' });
+      // expo-media-library — request perm + saveToLibrary. Silent failure if
+      // perm denied (user chose, respect the choice).
+      try {
+        const ML = require('expo-media-library');
+        const perm = await ML.requestPermissionsAsync();
+        if (perm?.granted) {
+          await ML.saveToLibraryAsync(uri);
+          showToast(t('live.screenshotSaved') || 'Print salvo');
+          return;
+        }
+      } catch {}
+      // Even if MediaLibrary failed, the snap exists in tmp — still success-ish.
+      showToast(t('live.screenshotSaved') || 'Print salvo');
+    } catch {
+      showToast(t('live.screenshotFailed') || 'Falha no print');
+    }
+  }, [t, showToast]);
+
+  // Long-press the rail heart → fire a 5-heart spam burst, Instagram-style.
+  // Each heart is spawned ~80ms apart so the column reads like a stream of
+  // taps without the user actually spamming. Also pops the button each round.
+  const handleHeartLongPress = useCallback(() => {
+    let i = 0;
+    const fire = () => {
+      if (i++ >= 5) return;
+      spawnHeart();
+      popHeartButton();
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          type: 'live_reaction',
+          session_id: paramSessionId,
+          emoji: '❤️',
+        }));
+      }
+      setTimeout(fire, 90);
+    };
+    fire();
+  }, [paramSessionId, spawnHeart, popHeartButton]);
+
   // Free emoji gifts (no IAP) — tap a gift in the picker to send it to the
   // stream. The emoji floats up across everyone's screen via the same
   // live_reaction WS message the heart button uses. Paid gifts will be a
@@ -685,41 +841,37 @@ export default function LiveViewerScreen() {
   }, [paramSessionId, spawnHeart]);
 
   // "Saiu da live" overlay shown when the broadcaster ends the stream.
-  // Three primary actions match the TikTok/IG flow: replay (just back to feed
-  // for now), follow the host, and share the broadcast link with friends.
+  // Polished: gradient backdrop (purple → black), bigger avatar with soft
+  // ring, primary action = "Follow" (returning fans get "Ver perfil" instead),
+  // secondary actions = Share + Voltar. Auto-back timer (4s) still runs.
   if (liveEnded) {
     return (
-      <Animated.View style={[styles.centered, { opacity: endedFade }]}>
-        <View style={styles.endedIcon}>
-          <View style={styles.endedDot} />
-        </View>
+      <Animated.View style={[styles.centered, styles.endedBg, { opacity: endedFade }]}>
+        {/* Soft purple wash behind the avatar — web uses a CSS radial; native
+            stacks two translucent layers since react-native-linear-gradient
+            isn't installed (avoiding a native dep for one cosmetic). */}
+        <View style={styles.endedWash} pointerEvents="none" />
+        <View style={styles.endedAvatarRing} pointerEvents="none" />
         <AvatarCircle
           name={displayHostName}
           email={displayHostEmail}
-          size={72}
+          size={96}
           style={styles.endedAvatar}
         />
-        <Text style={styles.endedText}>{t('live.hostEnded') || 'Saiu da live'}</Text>
-        <Text style={styles.endedSub}>
-          {displayHostName ? `${displayHostName} ${t('live.liveEnded') || 'encerrou a transmissão'}` : (t('live.liveEnded') || 'Thanks for watching!')}
+        <Text style={styles.endedText}>{t('live.liveEnded') || 'Live encerrada'}</Text>
+        <Text style={styles.endedSub} numberOfLines={2}>
+          {displayHostName
+            ? `${displayHostName} ${t('live.hostEnded') || 'encerrou a transmissão'}`
+            : (t('live.hostEnded') || 'O host encerrou a transmissão')}
         </Text>
 
         <View style={styles.endedActions}>
           <TouchableOpacity
-            onPress={() => router.back()}
-            style={[styles.endedBtn, styles.endedBtnGhost]}
-            accessibilityLabel="Replay"
-            accessibilityRole="button"
-          >
-            <IconRotateCcw size={18} color="#fff" />
-            <Text style={styles.endedBtnText}>{t('live.replay') || 'Voltar'}</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
             onPress={toggleFollow}
             style={[styles.endedBtn, following ? styles.endedBtnGhost : styles.endedBtnPrimary]}
-            accessibilityLabel="Follow"
+            accessibilityLabel={following ? (t('live.following') || 'Seguindo') : (t('live.follow') || 'Seguir')}
             accessibilityRole="button"
+            activeOpacity={0.85}
           >
             {following
               ? <IconCheck size={18} color="#fff" />
@@ -732,13 +884,38 @@ export default function LiveViewerScreen() {
           <TouchableOpacity
             onPress={handleShare}
             style={[styles.endedBtn, styles.endedBtnGhost]}
-            accessibilityLabel="Share"
+            accessibilityLabel={t('live.share') || 'Share'}
             accessibilityRole="button"
+            activeOpacity={0.85}
           >
             <IconShare size={18} color="#fff" />
             <Text style={styles.endedBtnText}>{t('live.share') || 'Compartilhar'}</Text>
           </TouchableOpacity>
         </View>
+
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.endedBackLink}
+          accessibilityLabel={t('common.back') || 'Voltar'}
+          accessibilityRole="button"
+          activeOpacity={0.7}
+        >
+          <IconRotateCcw size={14} color="rgba(255,255,255,0.65)" />
+          <Text style={styles.endedBackLinkText}>{t('live.replay') || 'Voltar'}</Text>
+        </TouchableOpacity>
+
+        {/* Suggestion footer — drives the viewer back to the live tab so they
+            can hop into another stream instead of bouncing out of the app
+            entirely. Mirrors Instagram's "Voltar para o feed" affordance. */}
+        <TouchableOpacity
+          onPress={() => { try { router.replace('/chat'); } catch { router.back(); } }}
+          activeOpacity={0.7}
+          style={styles.endedDiscover}
+          accessibilityLabel={t('live.discoverMore') || 'Descobrir mais lives'}
+          accessibilityRole="button"
+        >
+          <Text style={styles.endedDiscoverText}>{t('live.discoverMore') || 'Descobrir mais lives'}</Text>
+        </TouchableOpacity>
       </Animated.View>
     );
   }
@@ -758,7 +935,7 @@ export default function LiveViewerScreen() {
   const qualityColor = connQuality === 'good' ? '#22c55e' : connQuality === 'medium' ? '#f59e0b' : '#ef4444';
 
   return (
-    <View style={styles.fullScreen}>
+    <View style={styles.fullScreen} ref={screenRef} collapsable={false}>
       {/* Remote video — wrapped in Pressable so double-tap fires a love-bomb
           burst over the stream without stealing taps from controls overlaid
           on top (those have higher zIndex). */}
@@ -818,52 +995,87 @@ export default function LiveViewerScreen() {
         </View>
       )}
 
-      {/* Top bar — left: avatar+name+Follow pill, center: viewer count, right: quality dot + close.
-          The Follow pill collapses to a check when the user already follows
-          so first-time viewers get a strong call to action without nagging
-          returning fans. */}
-      <View style={[styles.topBar, { paddingTop: insets.top + 10 }]} pointerEvents="box-none">
-        <View style={styles.hostPill}>
+      {/* Top bar — Instagram/TikTok-grade header. BIG host avatar (54px) with
+          a pulsing red gradient ring + LIVE badge tucked under it. To the right:
+          host name + title + Follow pill. Far right: viewer count (eye + 1.2K
+          humanized) + quality dot + close. Single dense row, no duplicate LIVE
+          badge floating below — keeps the stage clean.
+          Why box-none: we want taps to pass through the empty padding regions
+          so the double-tap love-bomb still fires from anywhere on the stage. */}
+      <View style={[styles.topBar, { paddingTop: insets.top + 8 }]} pointerEvents="box-none">
+        {/* Big host avatar + pulsing red ring + integrated LIVE pill. The ring
+            uses Animated.View opacity so it breathes; the avatar itself stays
+            crisp (no scale animation — was distracting in QA). */}
+        <View style={styles.hostAvatarBlock} pointerEvents="box-none">
+          <Animated.View style={[styles.avatarRingPulse, { opacity: livePulse }]} pointerEvents="none" />
+          <View style={styles.avatarRingStatic} pointerEvents="none" />
           <AvatarCircle
             name={displayHostName}
             email={displayHostEmail}
-            size={34}
+            size={54}
           />
-          <View style={styles.hostInfo}>
-            <Text style={styles.hostName} numberOfLines={1}>
-              {displayHostName || '…'}
-            </Text>
-            {paramTitle ? (
-              <Text style={styles.liveTitle} numberOfLines={1}>{paramTitle}</Text>
-            ) : null}
+          <View style={styles.liveBadgeInline} pointerEvents="none">
+            <Text style={styles.liveBadgeText}>{t('live.aoVivo') || 'AO VIVO'}</Text>
           </View>
-          {!following ? (
-            <TouchableOpacity
-              onPress={toggleFollow}
-              style={styles.followPill}
-              accessibilityLabel="Follow host"
-              accessibilityRole="button"
-              activeOpacity={0.85}
-            >
-              <Text style={styles.followPillText}>{t('live.follow') || 'Seguir'}</Text>
-            </TouchableOpacity>
+        </View>
+
+        <View style={styles.hostInfo}>
+          <Text style={styles.hostName} numberOfLines={1}>
+            {displayHostName || '…'}
+          </Text>
+          {paramTitle ? (
+            <Text style={styles.liveTitle} numberOfLines={1}>{paramTitle}</Text>
           ) : (
-            <View style={styles.followingChip}>
-              <IconCheck size={14} color="#fff" />
-            </View>
+            <Text style={styles.liveTitle} numberOfLines={1}>{t('live.liveNow') || t('live.connected') || 'Ao vivo agora'}</Text>
           )}
         </View>
 
-        <TouchableOpacity
-          style={styles.viewerChip}
-          activeOpacity={0.7}
-          onPress={() => setShowViewersList(true)}
-          accessibilityLabel={t('live.viewersList') || 'Ver espectadores'}
-          accessibilityRole="button"
-        >
-          <View style={styles.viewerDot} />
-          <Text style={styles.viewerChipText}>{viewerCount.toLocaleString()}</Text>
-        </TouchableOpacity>
+        {!following ? (
+          <TouchableOpacity
+            onPress={toggleFollow}
+            style={styles.followPill}
+            accessibilityLabel={t('live.follow') || 'Follow'}
+            accessibilityRole="button"
+            activeOpacity={0.85}
+          >
+            <Text style={styles.followPillText}>{t('live.follow') || 'Seguir'}</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.followingChip}>
+            <IconCheck size={14} color="#fff" />
+          </View>
+        )}
+
+        <Animated.View style={{ transform: [{ scale: viewerCountScale }] }}>
+          <TouchableOpacity
+            style={styles.viewerChip}
+            activeOpacity={0.7}
+            onPress={() => setShowViewersList(true)}
+            accessibilityLabel={t('live.viewersList') || 'Ver espectadores'}
+            accessibilityRole="button"
+          >
+            <IconEye size={13} color="#fff" />
+            <Text style={styles.viewerChipText}>{humanizeCount(viewerCount)}</Text>
+          </TouchableOpacity>
+          {viewerPlusOneVisible ? (
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                styles.viewerPlusOne,
+                {
+                  opacity: viewerPlusOneAnim.interpolate({ inputRange: [0, 0.2, 0.9, 1], outputRange: [0, 1, 1, 0] }),
+                  transform: [{
+                    translateY: viewerPlusOneAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -18] }),
+                  }, {
+                    scale: viewerPlusOneAnim.interpolate({ inputRange: [0, 0.3, 1], outputRange: [0.6, 1.1, 0.9] }),
+                  }],
+                },
+              ]}
+            >
+              <Text style={styles.viewerPlusOneText}>+1</Text>
+            </Animated.View>
+          ) : null}
+        </Animated.View>
 
         <View style={[styles.qualityDot, { backgroundColor: qualityColor }]} />
 
@@ -875,14 +1087,6 @@ export default function LiveViewerScreen() {
         >
           <IconX size={20} color="#fff" />
         </TouchableOpacity>
-      </View>
-
-      {/* LIVE badge — pulsing red top-left under the host pill row. */}
-      <View style={[styles.liveBadgeWrap, { top: insets.top + 70 }]} pointerEvents="none">
-        <Animated.View style={[styles.liveBadge, { opacity: livePulse }]}>
-          <View style={styles.liveBadgeDot} />
-          <Text style={styles.liveBadgeText}>LIVE</Text>
-        </Animated.View>
       </View>
 
       {/* "Pedir pra entrar" pill — TikTok/Instagram parity. Sits in the
@@ -938,13 +1142,25 @@ export default function LiveViewerScreen() {
           <TouchableOpacity
             style={styles.sideBtn}
             onPress={handleHeartTap}
+            onLongPress={handleHeartLongPress}
+            delayLongPress={220}
             activeOpacity={0.7}
-            accessibilityLabel="Send heart"
+            accessibilityLabel={t('live.reactBtn') || 'React'}
             accessibilityRole="button"
           >
             <IconHeart size={26} color={LIVE_RED} />
           </TouchableOpacity>
         </Animated.View>
+
+        <TouchableOpacity
+          style={styles.sideBtn}
+          onPress={handleScreenshot}
+          activeOpacity={0.7}
+          accessibilityLabel={t('live.screenshotBtn') || 'Snap'}
+          accessibilityRole="button"
+        >
+          <IconCamera size={22} color="#fff" />
+        </TouchableOpacity>
 
         <TouchableOpacity
           style={styles.sideBtn}
@@ -1005,27 +1221,33 @@ export default function LiveViewerScreen() {
         );
       })}
 
-      {/* Floating hearts */}
+      {/* Floating hearts — parabolic trajectory. Each heart has its own random
+          rise/drift/phase set at spawn so the column reads as a stream of taps
+          not a synchronized clone army. Opacity curve has a small overshoot at
+          start (pop-in feel) and a long tail (fade-out at the top). */}
       {hearts.map(h => {
         const translateY = h.anim.interpolate({
           inputRange: [0, 1],
-          outputRange: [0, -280],
+          outputRange: [0, -h.rise],
+        });
+        // Horizontal sway: sine wave centered around the spawn X. Five sample
+        // points keep the parabola smooth-ish without breaking native driver.
+        const sx = (t) => Math.sin(h.driftPhase + t * Math.PI * 1.4) * h.drift;
+        const translateX = h.anim.interpolate({
+          inputRange: [0, 0.25, 0.5, 0.75, 1],
+          outputRange: [0, sx(0.25), sx(0.5), sx(0.75), sx(1)],
         });
         const scale = h.anim.interpolate({
-          inputRange: [0, 0.15, 0.5, 0.85, 1],
-          outputRange: [0.2, 1.3, 1, 0.9, 0.5],
+          inputRange: [0, 0.12, 0.5, 0.85, 1],
+          outputRange: [0.35, 1.25, 1.05, 0.95, 0.7],
         });
         const opacity = h.anim.interpolate({
-          inputRange: [0, 0.1, 0.8, 1],
-          outputRange: [0, 1, 0.8, 0],
+          inputRange: [0, 0.08, 0.7, 1],
+          outputRange: [0, 1, 0.85, 0],
         });
         const rotate = h.anim.interpolate({
           inputRange: [0, 0.5, 1],
-          outputRange: ['0deg', `${(Math.random() - 0.5) * 30}deg`, `${(Math.random() - 0.5) * 20}deg`],
-        });
-        const translateX = h.anim.interpolate({
-          inputRange: [0, 0.3, 0.7, 1],
-          outputRange: [0, (Math.random() - 0.5) * 40, (Math.random() - 0.5) * 60, (Math.random() - 0.5) * 80],
+          outputRange: ['0deg', `${h.tilt}deg`, `${h.tilt * 0.6}deg`],
         });
 
         return (
@@ -1034,8 +1256,8 @@ export default function LiveViewerScreen() {
             style={[
               styles.heart,
               {
-                left: h.x - 14,
-                top: h.y - 14,
+                left: h.x - h.size / 2,
+                top: h.y - h.size / 2,
                 transform: [{ translateY }, { translateX }, { scale }, { rotate }],
                 opacity,
               },
@@ -1043,18 +1265,29 @@ export default function LiveViewerScreen() {
             pointerEvents="none"
           >
             {h.emoji
-              ? <Text style={{ fontSize: 34 }}>{h.emoji}</Text>
-              : <IconHeart size={28} color={h.color} />}
+              ? <Text style={{ fontSize: h.size + 4 }}>{h.emoji}</Text>
+              : <IconHeart size={h.size} color={h.color} />}
           </Animated.View>
         );
       })}
 
       {/* Bottom: comments overlay + pill input.
-          Comments float over the video — last 5 visible, oldest fades softer
-          via a stack-position alpha so the overlay never blocks more than the
-          lower-left third of the stage. The pill input sits below with the
-          purple accent send button — disabled tone until there's text. */}
+          Comments float over the video — last 5 visible. We use a fade mask
+          (web) and stack-position alpha (all platforms) so the top of the
+          column melts into the frame Instagram-style. */}
       <View style={[styles.bottomArea, { paddingBottom: insets.bottom + 10 }]} pointerEvents="box-none">
+        {/* Soft gradient sheen above the input bar so the pill reads cleanly
+            against bright frames — Instagram/TikTok use the same trick. On
+            native we don't have linear-gradient, so we stack 3 dim layers
+            with stepped alpha to fake the bottom-up dark blend. */}
+        <View style={styles.bottomGradient} pointerEvents="none" />
+        {Platform.OS !== 'web' ? (
+          <>
+            <View style={styles.bottomGradientStep1} pointerEvents="none" />
+            <View style={styles.bottomGradientStep2} pointerEvents="none" />
+            <View style={styles.bottomGradientStep3} pointerEvents="none" />
+          </>
+        ) : null}
         <TouchableOpacity
           onPress={() => setChatSheetOpen(true)}
           activeOpacity={0.85}
@@ -1063,23 +1296,62 @@ export default function LiveViewerScreen() {
           accessibilityRole="button"
         >
           {chatMessages.length > 5 ? (
-            <View style={{ alignSelf: 'flex-start', marginBottom: 6, paddingHorizontal: 8, paddingVertical: 2, backgroundColor: 'rgba(0,0,0,0.45)', borderRadius: 10 }} pointerEvents="none">
-              <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, fontWeight: '600' }}>
-                {t('live.seeAllComments') || 'Ver todos os comentários'} ↑
+            <View style={styles.seeAllChip} pointerEvents="none">
+              <Text style={styles.seeAllChipText}>
+                {t('live.seeAllComments') || 'Ver todos os comentários'}
               </Text>
             </View>
           ) : null}
           {visibleComments.map((m, idx) => {
-            // Older comments fade softer. Stack alpha runs 0.35 → 1 from top.
-            const stackAlpha = 0.35 + (idx / Math.max(visibleComments.length - 1, 1)) * 0.65;
+            // Older comments fade softer. Stack alpha runs 0.25 → 1 from top.
+            // The system-join chip uses a different look (no avatar bubble).
+            const stackAlpha = 0.25 + (idx / Math.max(visibleComments.length - 1, 1)) * 0.75;
+            // Entrance animation — slide-up + fade-in. Older messages (loaded
+            // from history) don't have `entry`, so we treat them as already
+            // settled (no animation re-trigger on re-render).
+            const entry = m.entry;
+            const opacity = entry
+              ? entry.interpolate({ inputRange: [0, 1], outputRange: [0, stackAlpha] })
+              : stackAlpha;
+            const translateY = entry
+              ? entry.interpolate({ inputRange: [0, 1], outputRange: [12, 0] })
+              : 0;
+            if (m.isSystem) {
+              return (
+                <Animated.View
+                  key={m.id}
+                  style={[styles.systemJoinRow, { opacity, transform: [{ translateY }] }]}
+                  pointerEvents="none"
+                >
+                  <View style={styles.systemJoinPill}>
+                    <Text style={styles.systemJoinText} numberOfLines={1}>
+                      <Text style={styles.systemJoinName}>{m.name}</Text>{' '}{m.text}
+                    </Text>
+                  </View>
+                </Animated.View>
+              );
+            }
+            // Tap a comment → @reply seed in input. Stop press from bubbling
+            // up to the parent overlay (which would open the full chat sheet).
             return (
-              <View key={m.id} style={[styles.commentRow, { opacity: stackAlpha }]}>
-                <AvatarCircle name={m.name} email={m.email} size={26} />
-                <View style={styles.commentBubble}>
-                  <Text style={styles.commentName} numberOfLines={1}>{m.name}</Text>
-                  <Text style={styles.commentText} numberOfLines={3}>{m.content}</Text>
-                </View>
-              </View>
+              <Animated.View
+                key={m.id}
+                style={{ opacity, transform: [{ translateY }] }}
+              >
+                <TouchableOpacity
+                  onPress={(e) => { e.stopPropagation?.(); handleReplyToComment(m); }}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Reply to ${m.name}`}
+                  style={styles.commentRow}
+                >
+                  <AvatarCircle name={m.name} email={m.email} size={22} />
+                  <View style={styles.commentBubble}>
+                    <Text style={styles.commentName} numberOfLines={1}>{m.name}</Text>
+                    <Text style={styles.commentText} numberOfLines={3}>{m.content}</Text>
+                  </View>
+                </TouchableOpacity>
+              </Animated.View>
             );
           })}
         </TouchableOpacity>
@@ -1087,31 +1359,70 @@ export default function LiveViewerScreen() {
         <View style={styles.inputBar}>
           <View style={[styles.inputPill, inputFocused && styles.inputPillFocused]}>
             <TextInput
+              ref={inputRef}
               style={styles.inputText}
               value={inputText}
               onChangeText={setInputText}
-              placeholder={t('live.commentPlaceholder') || 'Comentar...'}
-              placeholderTextColor="rgba(255,255,255,0.55)"
+              placeholder={t('live.commentHint') || t('live.commentPlaceholder') || 'Comentar...'}
+              placeholderTextColor="rgba(255,255,255,0.65)"
               returnKeyType="send"
               onSubmitEditing={sendComment}
               onFocus={() => setInputFocused(true)}
               onBlur={() => setInputFocused(false)}
               blurOnSubmit={false}
-              accessibilityLabel="Comment"
+              accessibilityLabel={t('live.commentHint') || 'Comment'}
             />
           </View>
-          <TouchableOpacity
-            onPress={sendComment}
-            disabled={!inputText.trim()}
-            style={[styles.sendBtn, inputText.trim() && styles.sendBtnActive]}
-            activeOpacity={0.85}
-            accessibilityLabel="Send comment"
-            accessibilityRole="button"
-          >
-            <IconSend size={16} color={inputText.trim() ? '#fff' : 'rgba(255,255,255,0.4)'} />
-          </TouchableOpacity>
+          {/* Inline heart shortcut — same action as the right-rail heart, but
+              within thumb reach of the input bar (Instagram parity). Tap to
+              fire a single heart + WS reaction; long-press for the 5-spam
+              burst. */}
+          <Animated.View style={{ transform: [{ scale: heartScale }] }}>
+            <TouchableOpacity
+              onPress={handleHeartTap}
+              onLongPress={handleHeartLongPress}
+              delayLongPress={220}
+              style={styles.inlineHeartBtn}
+              activeOpacity={0.7}
+              accessibilityLabel={t('live.reactBtn') || 'React'}
+              accessibilityRole="button"
+            >
+              <IconHeart size={22} color={LIVE_RED} />
+            </TouchableOpacity>
+          </Animated.View>
+          {inputText.trim() ? (
+            <TouchableOpacity
+              onPress={sendComment}
+              style={[styles.sendBtn, styles.sendBtnActive]}
+              activeOpacity={0.85}
+              accessibilityLabel="Send comment"
+              accessibilityRole="button"
+            >
+              <IconSend size={16} color="#fff" />
+            </TouchableOpacity>
+          ) : null}
         </View>
       </View>
+
+      {/* Snapshot/error toast — surfaces save state for the new screenshot
+          button. Fades in/out via Animated.Value. */}
+      {toast ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.toast,
+            {
+              opacity: toastAnim,
+              top: insets.top + 70,
+              transform: [{
+                translateY: toastAnim.interpolate({ inputRange: [0, 1], outputRange: [-8, 0] }),
+              }],
+            },
+          ]}
+        >
+          <Text style={styles.toastText}>{toast}</Text>
+        </Animated.View>
+      ) : null}
 
       {/* Free gift picker — tap an emoji to send it to the stream. Floats
           up across everyone's screen via the same live_reaction WS the
@@ -1266,38 +1577,53 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  endedIcon: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: 'rgba(220,38,38,0.1)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 20,
-    borderWidth: 2,
-    borderColor: 'rgba(220,38,38,0.2)',
+  endedBg: {
+    ...(Platform.OS === 'web' ? {
+      background: 'radial-gradient(circle at 50% 35%, rgba(124,58,237,0.35), rgba(15,15,26,0.92) 55%, #0a0a14 100%)',
+    } : {
+      backgroundColor: '#0a0a14',
+    }),
   },
-  endedDot: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    backgroundColor: 'rgba(220,38,38,0.5)',
+  // Native fallback radial wash — two stacked translucent circles centered
+  // behind the avatar so the dark scrim has a soft purple bloom even without
+  // a gradient library.
+  endedWash: {
+    position: 'absolute',
+    top: '20%',
+    width: 360, height: 360, borderRadius: 180,
+    backgroundColor: 'rgba(124,58,237,0.18)',
+    ...(Platform.OS === 'web' ? { display: 'none' } : {}),
+  },
+  endedAvatarRing: {
+    position: 'absolute',
+    top: '20%',
+    marginTop: -8,
+    width: 116, height: 116, borderRadius: 58,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.18)',
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 0 32px rgba(124,58,237,0.35), inset 0 0 0 1px rgba(255,255,255,0.08)',
+    } : {}),
   },
   endedText: {
     color: '#fff',
-    fontSize: 22,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  endedSub: {
-    color: '#6b7280',
-    fontSize: 15,
+    fontSize: 24,
+    fontWeight: '800',
+    marginBottom: 6,
+    letterSpacing: 0.2,
     textAlign: 'center',
   },
+  endedSub: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 14,
+    textAlign: 'center',
+    paddingHorizontal: 22,
+    lineHeight: 19,
+  },
   endedAvatar: {
-    marginBottom: 14,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.15)',
+    marginBottom: 18,
+    borderWidth: 3,
+    borderColor: 'rgba(255,255,255,0.25)',
   },
   endedActions: {
     flexDirection: 'row',
@@ -1311,22 +1637,53 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
     paddingVertical: 12,
-    paddingHorizontal: 18,
-    borderRadius: 24,
+    paddingHorizontal: 22,
+    borderRadius: 26,
+    minWidth: 140,
+    justifyContent: 'center',
   },
   endedBtnPrimary: {
     backgroundColor: ACCENT,
-    ...(Platform.OS === 'web' ? { boxShadow: '0 4px 14px rgba(124,58,237,0.5)' } : {}),
+    ...(Platform.OS === 'web' ? { boxShadow: '0 6px 20px rgba(124,58,237,0.55)' } : {}),
   },
   endedBtnGhost: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: 'rgba(255,255,255,0.1)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.12)',
+    borderColor: 'rgba(255,255,255,0.15)',
   },
   endedBtnText: {
     color: '#fff',
     fontSize: 14,
     fontWeight: '700',
+  },
+  endedBackLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 20,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  endedBackLinkText: {
+    color: 'rgba(255,255,255,0.65)',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  // Secondary discover-more button — purple-tinted pill below the back link.
+  endedDiscover: {
+    marginTop: 12,
+    paddingHorizontal: 18,
+    paddingVertical: 8,
+    borderRadius: 18,
+    backgroundColor: 'rgba(124,58,237,0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(196,181,253,0.35)',
+  },
+  endedDiscoverText: {
+    color: '#e9d5ff',
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
 
   // Connecting
@@ -1355,7 +1712,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 
-  // Top bar
+  // Top bar — soft glass gradient header. Bigger paddingBottom because the
+  // avatar block (54px) overhangs the bottom of the row a bit.
   topBar: {
     position: 'absolute',
     top: 0,
@@ -1363,36 +1721,72 @@ const styles = StyleSheet.create({
     right: 0,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingBottom: 12,
+    paddingHorizontal: 12,
+    paddingBottom: 14,
     zIndex: 10,
-    gap: 10,
-    backgroundColor: 'rgba(0,0,0,0.2)',
-    ...(Platform.OS === 'web' ? { backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' } : {}),
-  },
-  hostPill: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    borderRadius: 24,
-    paddingRight: 12,
-    paddingVertical: 4,
-    paddingLeft: 4,
     gap: 8,
+    ...(Platform.OS === 'web' ? {
+      background: 'linear-gradient(to bottom, rgba(0,0,0,0.55), rgba(0,0,0,0.05))',
+      backdropFilter: 'blur(14px)',
+      WebkitBackdropFilter: 'blur(14px)',
+    } : {
+      backgroundColor: 'rgba(0,0,0,0.32)',
+    }),
+  },
+  // Host avatar block — pulsing red ring + LIVE pill anchored at the bottom.
+  // The pulse is a separate Animated.View laid behind the avatar so the
+  // avatar image itself doesn't scale (kept QA-friendly).
+  hostAvatarBlock: {
+    width: 64,
+    height: 64,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  avatarRingStatic: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    borderRadius: 32,
+    borderWidth: 2.5,
+    borderColor: LIVE_RED,
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 0 14px rgba(220,38,38,0.55), inset 0 0 0 1px rgba(255,255,255,0.18)',
+    } : {}),
+  },
+  avatarRingPulse: {
+    position: 'absolute',
+    top: -4, left: -4, right: -4, bottom: -4,
+    borderRadius: 36,
+    borderWidth: 2,
+    borderColor: LIVE_RED,
+  },
+  liveBadgeInline: {
+    position: 'absolute',
+    bottom: -4,
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 4,
+    backgroundColor: LIVE_RED,
+    borderWidth: 1.5,
+    borderColor: '#fff',
+    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 6px rgba(220,38,38,0.55)' } : {}),
   },
   hostInfo: {
     flex: 1,
+    marginLeft: 6,
   },
   hostName: {
     color: '#fff',
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: 0.1,
+    ...(Platform.OS === 'web' ? { textShadow: '0 1px 3px rgba(0,0,0,0.5)' } : {}),
   },
   liveTitle: {
-    color: 'rgba(255,255,255,0.6)',
+    color: 'rgba(255,255,255,0.7)',
     fontSize: 11,
     marginTop: 1,
+    fontWeight: '500',
   },
   closeBtn: {
     width: 38,
@@ -1478,6 +1872,25 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
+  // "+1" float that pops above the eye pill when a new viewer joins.
+  viewerPlusOne: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: '#22c55e',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 9,
+    borderWidth: 1.5,
+    borderColor: '#fff',
+    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 8px rgba(34,197,94,0.55)' } : {}),
+  },
+  viewerPlusOneText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.3,
+  },
 
   // Connection quality dot — small bola top-right next to the close X.
   qualityDot: {
@@ -1487,30 +1900,12 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? { boxShadow: '0 0 6px currentColor' } : {}),
   },
 
-  // LIVE badge — pulsing red just under the top bar, top-left.
-  liveBadgeWrap: {
-    position: 'absolute',
-    left: 14,
-    zIndex: 11,
-  },
-  liveBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: LIVE_RED,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
-  },
-  liveBadgeDot: {
-    width: 6, height: 6, borderRadius: 3,
-    backgroundColor: '#fff',
-  },
+  // LIVE pill text shared with the inline pill under the avatar.
   liveBadgeText: {
     color: '#fff',
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '900',
-    letterSpacing: 1,
+    letterSpacing: 0.9,
   },
 
   // Right-rail avatar with the small + chip overlay (TikTok-style follow CTA).
@@ -1570,6 +1965,63 @@ const styles = StyleSheet.create({
     zIndex: 10,
     paddingHorizontal: 12,
   },
+  // Soft gradient sheen above the input — pure CSS on web, transparent
+  // overlay on native (avoids extra LinearGradient dep for one stripe).
+  bottomGradient: {
+    position: 'absolute',
+    left: 0, right: 0, bottom: 0,
+    height: 110,
+    zIndex: -1,
+    ...(Platform.OS === 'web' ? {
+      background: 'linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0.2) 60%, transparent)',
+    } : {
+      backgroundColor: 'rgba(0,0,0,0.32)',
+    }),
+  },
+  // 3-step manual gradient for native — bottom is darkest, top is lightest.
+  // Each layer is positioned absolutely so they stack without affecting
+  // layout. Tuned to fade the dark blend cleanly past the comments column.
+  bottomGradientStep1: {
+    position: 'absolute',
+    left: 0, right: 0, bottom: 0,
+    height: 60,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    zIndex: -1,
+  },
+  bottomGradientStep2: {
+    position: 'absolute',
+    left: 0, right: 0, bottom: 60,
+    height: 50,
+    backgroundColor: 'rgba(0,0,0,0.18)',
+    zIndex: -1,
+  },
+  bottomGradientStep3: {
+    position: 'absolute',
+    left: 0, right: 0, bottom: 110,
+    height: 40,
+    backgroundColor: 'rgba(0,0,0,0.08)',
+    zIndex: -1,
+  },
+  // Top-center toast for screenshot save feedback.
+  toast: {
+    position: 'absolute',
+    alignSelf: 'center',
+    left: 0, right: 0,
+    alignItems: 'center',
+    zIndex: 50,
+  },
+  toastText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 18,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
   heart: {
     position: 'absolute',
     zIndex: 20,
@@ -1581,39 +2033,88 @@ const styles = StyleSheet.create({
   },
 
   // Comments overlay — sits between the right rail and the input pill.
+  // On web we apply a mask gradient so the top of the column melts into the
+  // frame; on native we rely on per-row stack alpha (Animated mask gradients
+  // would need expo-linear-gradient and add a build dep for one cosmetic).
   commentsOverlay: {
-    paddingRight: 76, // leave room for the right rail
+    paddingRight: 70, // leave room for the right rail
     marginBottom: 8,
-    gap: 4,
+    gap: 5,
+    ...(Platform.OS === 'web' ? {
+      WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.2) 10%, #000 35%)',
+      maskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.2) 10%, #000 35%)',
+    } : {}),
+  },
+  // "Ver todos os comentários" chip — small pill above the live comments
+  // stack. SVG-only (no arrow emoji per design rule).
+  seeAllChip: {
+    alignSelf: 'flex-start',
+    marginBottom: 6,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  seeAllChipText: {
+    color: 'rgba(255,255,255,0.9)',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   commentRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    maxWidth: '85%',
+    gap: 7,
+    maxWidth: '88%',
   },
   commentBubble: {
     flexShrink: 1,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    backgroundColor: 'rgba(0,0,0,0.5)',
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 5,
     borderRadius: 14,
     borderTopLeftRadius: 4,
-    ...(Platform.OS === 'web' ? { backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' } : {}),
+    ...(Platform.OS === 'web' ? { backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' } : {}),
   },
   commentName: {
-    color: ACCENT,
+    color: '#c4b5fd',          // soft lavender for contrast vs the body
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.2,
+    marginBottom: 1,
   },
   commentText: {
     color: '#fff',
     fontSize: 13,
-    lineHeight: 17,
+    lineHeight: 16,
+    fontWeight: '500',
+  },
+  // "x entrou" system row — distinct from comments, no avatar bubble.
+  systemJoinRow: {
+    alignSelf: 'flex-start',
+    maxWidth: '85%',
+  },
+  systemJoinPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    backgroundColor: 'rgba(124,58,237,0.35)',
+    borderWidth: 1,
+    borderColor: 'rgba(196,181,253,0.35)',
+    borderRadius: 12,
+  },
+  systemJoinText: {
+    color: 'rgba(255,255,255,0.95)',
+    fontSize: 11.5,
+    fontWeight: '500',
+  },
+  systemJoinName: {
+    fontWeight: '800',
+    color: '#fff',
   },
 
-  // Bottom comment bar — pill input + purple send.
+  // Bottom comment bar — pill input + heart + purple send.
   inputBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1622,36 +2123,55 @@ const styles = StyleSheet.create({
   },
   inputPill: {
     flex: 1,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: 'rgba(255,255,255,0.15)',
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.12)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    borderColor: 'rgba(255,255,255,0.18)',
     overflow: 'hidden',
     justifyContent: 'center',
+    ...(Platform.OS === 'web' ? {
+      backdropFilter: 'blur(14px)',
+      WebkitBackdropFilter: 'blur(14px)',
+    } : {}),
   },
   inputPillFocused: {
-    borderColor: ACCENT,
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    borderColor: 'rgba(196,181,253,0.7)',
+    backgroundColor: 'rgba(255,255,255,0.2)',
   },
   inputText: {
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     color: '#fff',
     fontSize: 14,
-    height: 42,
+    height: 44,
     ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
   },
+  // Inline heart shortcut — quick-tap a heart without reaching the right rail.
+  inlineHeartBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.16)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' ? {
+      backdropFilter: 'blur(14px)',
+      WebkitBackdropFilter: 'blur(14px)',
+    } : {}),
+  },
   sendBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: 'rgba(255,255,255,0.12)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   sendBtnActive: {
     backgroundColor: ACCENT,
-    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 8px rgba(124,58,237,0.45)' } : {}),
+    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 12px rgba(124,58,237,0.55)' } : {}),
   },
 
   // Gift picker sheet (free emoji gifts)

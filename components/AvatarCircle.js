@@ -74,26 +74,35 @@ function getAvatarVersion(email) {
   return _avatarVersions.get(String(email).toLowerCase()) || 0;
 }
 
-// Bug 2026-05-12: initials flipped after restart (JA→AU, ML→OF) because
-// different screens pass `name` differently (full display name vs handle
-// vs email local-part). With no avatar image, the rendered text changed
-// every cold-start until the API hydrated the canonical name. Now we
-// pick a STABLE source by always using the email when available — the
-// part before `@` split on space/dot/dash gives a deterministic result
-// regardless of which screen's display-name happened to populate first.
+// Bug 2026-05-12 v2: initials flipped after restart (JA→AU, ML→OF, N→NO).
+// Previous attempt forced email-first, but the actual symptom is that the
+// `email` prop arriving at this component is sometimes WRONG during cold
+// start (ChatListTab can resolve the wrong "otherEmail" before currentEmail
+// hydrates, ending up with the current user's address for a row that's
+// really "João Alves"). Email-first then renders the current user's
+// initials (AU) on the contact's row.
+//
+// The right invariant is: trust `name` whenever it's a real human name
+// (callers ALWAYS pass `displayName = nickname || display_name ||
+// emailToDisplayName(email)`, see services/displayName.js & nicknames.js).
+// Only fall back to the email's local-part when `name` is empty or itself
+// looks like an email/handle. That keeps initials locked to the row's
+// visible text — if the row says "João Alves", the bubble says JA, even
+// if the avatar URL request comes back 404 or `email` is temporarily off.
 function getInitials(name, email) {
-  // Prefer email's local-part when available — stable across cold starts.
-  // Falls back to `name` only when there's no email (group convs without
-  // an email backing).
-  const src = (typeof email === 'string' && email.includes('@'))
-    ? email.split('@')[0]
-    : (name || '');
+  const _looksLikeEmail = (s) => typeof s === 'string' && /@/.test(s);
+  let src = '';
+  if (name && typeof name === 'string' && name.trim() && !_looksLikeEmail(name)) {
+    src = name.trim();
+  } else if (typeof email === 'string' && email.includes('@')) {
+    src = email.split('@')[0];
+  } else if (name && typeof name === 'string' && name.trim()) {
+    src = name.trim();
+  }
   if (!src) return '';
-  const trimmed = String(src).trim();
-  if (!trimmed) return '';
   // Split on whitespace + dots/dashes/underscores so "joao.almeida",
   // "joao-almeida", and "joao_almeida" all give "JA".
-  const parts = trimmed.split(/[\s._\-]+/).filter(Boolean);
+  const parts = src.split(/[\s._\-]+/).filter(Boolean);
   if (parts.length >= 2) return ((parts[0][0] || '') + (parts[1][0] || '')).toUpperCase();
   // Single token — take first 2 letters so "ces" → "CE" (instead of just "C",
   // which is too generic and clashes with every other C-name).
@@ -115,6 +124,22 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
   const [version, setVersion] = useState(() => getAvatarVersion(email));
   useEffect(() => { setImgError(false); setVersion(getAvatarVersion(email)); }, [email]);
 
+  // Subscribe to global cache bumps so this avatar refreshes when the user uploads a new pic.
+  // IMPORTANT: this useEffect must run UNCONDITIONALLY before any early returns so the hook
+  // call order stays stable across renders (otherwise React throws "Rendered fewer/more
+  // hooks than expected" if the email prop ever flips to/from ai@chatyy.com.br).
+  useEffect(() => {
+    const listener = (changedEmail) => {
+      if (!email) return;
+      if (String(changedEmail).toLowerCase() === String(email).toLowerCase()) {
+        setVersion(getAvatarVersion(email));
+        setImgError(false);
+      }
+    };
+    _versionListeners.add(listener);
+    return () => { _versionListeners.delete(listener); };
+  }, [email]);
+
   // ChatyyAI bot — special-cased gradient + sparkle icon. The bot has no
   // real account so its /get_avatar request would 400. Render in-app instead.
   if (typeof email === 'string' && email.toLowerCase() === 'ai@chatyy.com.br') {
@@ -134,18 +159,6 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
       </View>
     );
   }
-  // Subscribe to global cache bumps so this avatar refreshes when the user uploads a new pic
-  useEffect(() => {
-    const listener = (changedEmail) => {
-      if (!email) return;
-      if (String(changedEmail).toLowerCase() === String(email).toLowerCase()) {
-        setVersion(getAvatarVersion(email));
-        setImgError(false);
-      }
-    };
-    _versionListeners.add(listener);
-    return () => { _versionListeners.delete(listener); };
-  }, [email]);
   // Only fetch when `email` looks like a real address. Handles/usernames like
   // "@itsneres" or plain names sometimes leak through from feed posts and
   // would otherwise trigger a 400 loop against /get_avatar.
@@ -184,12 +197,15 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
   const showImage = avatarUrl && !imgError;
 
   const displayName = name || email || '';
-  // Use email-first initials so the letters stay stable across cold
-  // starts (see getInitials docstring). bgColor still hashes on the
-  // display name so two different emails with the same initials get
-  // different background colors — keeps the visual hierarchy intact.
+  // Initials follow `name` (the caller's resolved displayName chain:
+  // nickname > display_name > prettify(email)). See getInitials() above.
+  // Hash color tracks the SAME source so the bubble's color stays bound
+  // to the letters it shows — if a row's name flips for a moment, the
+  // background flips with it (never a mismatch between AU letters and
+  // a JA-colored circle, which used to flash on cold start).
   const initials = getInitials(name, email);
-  const bgColor = hashColor((email || displayName).toLowerCase());
+  const _colorSeed = (displayName || email || '').toLowerCase();
+  const bgColor = hashColor(_colorSeed);
   const accessLabel = displayName ? `Avatar of ${displayName}` : 'User avatar';
 
   const ImageComponent = ExpoImage || RNImage;
@@ -284,6 +300,7 @@ const styles = StyleSheet.create({
 function _avatarEqual(prev, next) {
   return (
     prev.email === next.email &&
+    prev.name === next.name &&
     prev.uri === next.uri &&
     prev.size === next.size &&
     prev.online === next.online &&

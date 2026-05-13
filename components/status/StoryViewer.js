@@ -19,7 +19,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, Pressable, Image,
   Platform, Modal, Alert, Animated, Keyboard, FlatList, ActivityIndicator,
-  PanResponder, AppState, Linking,
+  PanResponder, AppState, Linking, Easing, Dimensions,
 } from 'react-native';
 import * as api from '../../services/api';
 import { BASE_URL } from '../../services/api';
@@ -175,6 +175,11 @@ export default function StoryViewer({
   const [replyFocused, setReplyFocused] = useState(false);
   const [reactPop, setReactPop] = useState(null);
   const [emojiPulse, setEmojiPulse] = useState(null); // emoji currently scaling (UI feedback)
+  // Heart burst — long-press on ❤️ spawns 5 hearts that float up & fade.
+  // Each entry: { id, emoji, dx (start horizontal offset), size, anim }.
+  // Anim 0 → 1 over 1.2s: translateY -180, opacity 1 → 0, scale 0.6 → 1.
+  // Native-driven so the burst stays smooth on cheap Android.
+  const [hearts, setHearts] = useState([]);
   // Per-session video mute pref (defaults unmuted — video status is consciously
   // tapped, not autoplay scroll, so audio is expected). Persists across items
   // within a single viewer session; resets when modal closes.
@@ -209,6 +214,26 @@ export default function StoryViewer({
     }).start();
   }, [paused, replyFocused, uiOpacity]);
 
+  // Tap-hold ripple — Instagram-style radial spread when the user presses to
+  // pause. Lives at the touch point (set by onPressIn on the center zone),
+  // animates 0 → 1 over 320ms (scale 0.5 → 2.6, opacity 0.3 → 0). Keeps the
+  // hold gesture feeling tactile even with no haptic. Native-driven scale +
+  // opacity so it's free on cheap Android. Reset by setting state to null
+  // when paused goes false (or when the user releases).
+  const [rippleAt, setRippleAt] = useState(null); // { x, y } in screen coords
+  const rippleAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (rippleAt) {
+      rippleAnim.setValue(0);
+      Animated.timing(rippleAnim, {
+        toValue: 1, duration: 360, easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }).start();
+    } else {
+      rippleAnim.setValue(0);
+    }
+  }, [rippleAt, rippleAnim]);
+
   // Hold-to-pause visual cue. Goes 0 → 1 when the user holds the story.
   // Used to:
   //   - dim the progress bar (opacity 1 → 0.4) so it reads as "frozen"
@@ -224,6 +249,22 @@ export default function StoryViewer({
       useNativeDriver: true,
     }).start();
   }, [paused, pausedAnim]);
+
+  // Reply input entrance — slide-up + fade when focused. Backdrop darkens
+  // (proxy for backdrop-blur since expo-blur isn't bundled) so the input
+  // sits over a high-contrast surface and reads cleanly over busy stories.
+  // 0 = resting (input hugs bottom bar baseline), 1 = focused (lifted +
+  // backdrop active). 220ms timing matches the keyboardOffset cadence so
+  // the keyboard + composer animate in lockstep.
+  const replyEnter = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(replyEnter, {
+      toValue: replyFocused ? 1 : 0,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false, // backgroundColor lerp can't go native
+    }).start();
+  }, [replyFocused, replyEnter]);
 
   // Auto-pause when the app backgrounds — without this, the timer keeps
   // ticking, the user comes back, and the story they wanted to look at
@@ -288,6 +329,16 @@ export default function StoryViewer({
   // closes on release. Vertical-only: horizontal taps still hit the prev/next
   // pressables underneath.
   const dragY = useRef(new Animated.Value(0)).current;
+  // Horizontal drag — Instagram-style parallax swipe between user groups.
+  // Tracks `dx` while the gesture is active. On release: if past threshold
+  // AND a target group exists, snap toward it then fire onNextGroup/onPrevGroup
+  // (caller swaps stories prop). Otherwise spring back. Background shifts
+  // ~25% of dx for a subtle parallax peek at the "next" canvas underneath.
+  const dragX = useRef(new Animated.Value(0)).current;
+  // Screen width — captured once so the parallax interpolation can map the
+  // drag distance into a sensible fraction (~25%). Dimensions.get is cheap
+  // but we still cache to avoid hitting it every frame.
+  const winW = (() => { try { return Dimensions.get('window').width; } catch { return 360; } })();
   const dragOpacity = dragY.interpolate({
     inputRange: [0, 200, 400],
     outputRange: [1, 0.5, 0],
@@ -302,12 +353,26 @@ export default function StoryViewer({
   // of the screen). Captured on the move-start event by reading pageY against
   // window height. Reset every release so a new touch reads fresh.
   const swipeUpFromBottomRef = useRef(false);
+  // Track which axis the current gesture claimed so move/release branches
+  // don't fight each other (mixing dx + dy on the same frame looks janky).
+  // Set in onMoveShouldSetPanResponder, cleared on release/terminate.
+  const gestureAxisRef = useRef(null); // 'h' | 'v' | null
   const panResponder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (evt, gs) => {
+        // Horizontal swipe between user groups — only claim when there's
+        // actually a target on that side (onNextGroup/onPrevGroup wired
+        // AND we're not already at the edge). Threshold 12px + dx > dy*1.5
+        // so a slight diagonal still feels like horizontal intent.
+        if (Math.abs(gs.dx) > 12 && Math.abs(gs.dx) > Math.abs(gs.dy) * 1.5) {
+          const canNext = gs.dx < 0 && onNextGroup && groupIndex < groupCount - 1;
+          const canPrev = gs.dx > 0 && onPrevGroup && groupIndex > 0;
+          if (canNext || canPrev) { gestureAxisRef.current = 'h'; return true; }
+          return false;
+        }
         // Need a clean vertical gesture — beats taps + horizontal scrolls.
         if (Math.abs(gs.dy) <= 12 || Math.abs(gs.dy) <= Math.abs(gs.dx) * 1.5) return false;
-        if (gs.dy > 0) return true; // swipe-down → close
+        if (gs.dy > 0) { gestureAxisRef.current = 'v'; return true; } // swipe-down → close
         // Swipe-up only claims the responder when it started in the bottom
         // 30% of the screen — otherwise the user might be reaching for the
         // header or a sticker and we'd swallow their tap.
@@ -317,19 +382,69 @@ export default function StoryViewer({
           swipeUpFromBottomRef.current = (startY / H) >= 0.7;
         } catch { swipeUpFromBottomRef.current = false; }
         // Only claim if user actually has a link target — pointless otherwise.
-        return swipeUpFromBottomRef.current && !!activeLinkRef.current && gs.dy < -12;
+        if (swipeUpFromBottomRef.current && !!activeLinkRef.current && gs.dy < -12) {
+          gestureAxisRef.current = 'v'; return true;
+        }
+        return false;
       },
       onPanResponderGrant: () => { setPaused(true); },
       onPanResponderMove: (_evt, gs) => {
+        if (gestureAxisRef.current === 'h') {
+          // Horizontal parallax — only honor in the direction with a target.
+          const canNext = gs.dx < 0 && onNextGroup && groupIndex < groupCount - 1;
+          const canPrev = gs.dx > 0 && onPrevGroup && groupIndex > 0;
+          if (canNext || canPrev) dragX.setValue(gs.dx);
+          return;
+        }
         // We only animate the swipe-DOWN drag visually; swipe-up is a
         // discrete "pull up to reveal" gesture that fires on release.
         if (gs.dy >= 0) dragY.setValue(gs.dy);
       },
       onPanResponderRelease: (_evt, gs) => {
+        if (gestureAxisRef.current === 'h') {
+          // Horizontal commit — > 60px OR fling-fast → fire group nav.
+          const threshold = 60;
+          const fling = Math.abs(gs.vx) > 0.6;
+          gestureAxisRef.current = null;
+          if (gs.dx < -threshold || (gs.dx < 0 && fling)) {
+            if (onNextGroup && groupIndex < groupCount - 1) {
+              if (_Haptics && Platform.OS !== 'web') {
+                try { _Haptics.impactAsync(_Haptics.ImpactFeedbackStyle.Light); } catch {}
+              }
+              // Slide out to the left then snap back to 0 once the parent
+              // swaps the stories prop — caller is sync so this is fine.
+              Animated.timing(dragX, { toValue: -winW, duration: 180, useNativeDriver: true })
+                .start(() => {
+                  dragX.setValue(0);
+                  try { onNextGroup(); } catch {}
+                });
+              setPaused(false);
+              return;
+            }
+          } else if (gs.dx > threshold || (gs.dx > 0 && fling)) {
+            if (onPrevGroup && groupIndex > 0) {
+              if (_Haptics && Platform.OS !== 'web') {
+                try { _Haptics.impactAsync(_Haptics.ImpactFeedbackStyle.Light); } catch {}
+              }
+              Animated.timing(dragX, { toValue: winW, duration: 180, useNativeDriver: true })
+                .start(() => {
+                  dragX.setValue(0);
+                  try { onPrevGroup(); } catch {}
+                });
+              setPaused(false);
+              return;
+            }
+          }
+          // Below threshold — spring back to center.
+          Animated.spring(dragX, { toValue: 0, useNativeDriver: true, friction: 7, tension: 90 }).start();
+          setPaused(false);
+          return;
+        }
         // Swipe-up commit — > 60px upward + bottom-30% origin → open link.
         if (gs.dy < -60 && swipeUpFromBottomRef.current) {
           const target = activeLinkRef.current;
           swipeUpFromBottomRef.current = false;
+          gestureAxisRef.current = null;
           if (target) {
             if (_Haptics && Platform.OS !== 'web') {
               try { _Haptics.impactAsync(_Haptics.ImpactFeedbackStyle.Medium); } catch {}
@@ -339,6 +454,7 @@ export default function StoryViewer({
           setPaused(false);
           return;
         }
+        gestureAxisRef.current = null;
         if (gs.dy > 120 || gs.vy > 0.6) {
           Animated.timing(dragY, { toValue: 600, duration: 180, useNativeDriver: true })
             .start(() => { dragY.setValue(0); onClose?.(); });
@@ -349,6 +465,8 @@ export default function StoryViewer({
       },
       onPanResponderTerminate: () => {
         Animated.spring(dragY, { toValue: 0, useNativeDriver: true }).start();
+        Animated.spring(dragX, { toValue: 0, useNativeDriver: true }).start();
+        gestureAxisRef.current = null;
         setPaused(false);
         swipeUpFromBottomRef.current = false;
       },
@@ -490,9 +608,12 @@ export default function StoryViewer({
     }
     if (cur.type === 'video') return;
     if (paused) return;
+    // Instagram-style ease-out so the bar fills crisp at the start and
+    // glides into the seam — feels less mechanical than the linear ramp.
     animRef.current = Animated.timing(progressRef.current, {
       toValue: 1,
       duration: STORY_DURATION_MS,
+      easing: Easing.out(Easing.cubic),
       useNativeDriver: false,
     });
     animRef.current.start(({ finished }) => {
@@ -724,7 +845,11 @@ export default function StoryViewer({
     }}>
       {stories.map((_, i) => (
         <View key={i} style={{
-          flex: 1, height: 3, backgroundColor: 'rgba(255,255,255,0.28)',
+          // Pending segments: white @ 30% opacity (Instagram spec). Completed
+          // segments paint a solid gradient on top via the `i < safeIdx` branch
+          // below, so the user reads three distinct states cleanly: pending
+          // (30%), active (animating fill), completed (100% solid gradient).
+          flex: 1, height: 3, backgroundColor: 'rgba(255,255,255,0.3)',
           borderRadius: 2, overflow: 'hidden',
         }}>
           {i < safeIdx && (
@@ -767,11 +892,45 @@ export default function StoryViewer({
       <Animated.View
         style={{
           flex: 1, backgroundColor: '#000',
-          transform: [{ scale: entranceScale }, { translateY: dragY }],
+          // Combined transforms — scale (entrance), translateY (swipe-down),
+          // translateX (horizontal group swipe). Background parallax (~25%
+          // shift in the opposite direction) is rendered as a sibling layer
+          // below via the brand-tinted gradient so dragging right reveals a
+          // soft purple "peek" hinting at the next user underneath.
+          transform: [
+            { scale: entranceScale },
+            { translateY: dragY },
+            { translateX: dragX },
+          ],
           opacity: dragOpacity,
         }}
         {...panResponder.panHandlers}
       >
+        {/* Parallax peek backdrop — a soft brand-tinted layer that shifts at
+            ~25% of the drag in the OPPOSITE direction so the user feels like
+            the next/prev story canvas is sliding underneath. Sits at z=0,
+            below all chrome. Opacity ramps with |dx| so the peek only shows
+            during actual gestures, not during entrance. pointerEvents none
+            to keep tap zones intact. */}
+        <Animated.View
+          pointerEvents="none"
+          style={{
+            position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+            backgroundColor: '#1a0a2e',
+            zIndex: 0,
+            opacity: dragX.interpolate({
+              inputRange: [-winW, -40, 0, 40, winW],
+              outputRange: [0.6, 0.15, 0, 0.15, 0.6],
+              extrapolate: 'clamp',
+            }),
+            transform: [{
+              translateX: dragX.interpolate({
+                inputRange: [-winW, 0, winW],
+                outputRange: [winW * 0.25, 0, -winW * 0.25],
+              }),
+            }],
+          }}
+        />
         {renderProgressBars()}
 
         {/* Hold-to-pause icon — small ⏸ in the top-right that fades in only
@@ -799,36 +958,52 @@ export default function StoryViewer({
 
         {/* Header — avatar + name + relative time, plus own-only delete/add-more.
             Wrapped in Animated.View so it fades out when user long-presses to
-            inspect (paused) — Instagram pattern, unobstructs the photo. */}
+            inspect (paused) — Instagram pattern, unobstructs the photo.
+            Avatar + name + time live INSIDE a translucent pill so they read
+            cleanly over any background (white avatar on a white sky used to
+            disappear). The pill stretches just enough to wrap the metadata —
+            action buttons (delete/add/close) sit outside on the right. */}
         <Animated.View style={{
           position: 'absolute', top: Platform.OS === 'ios' ? 64 : 34, left: 0, right: 0,
-          flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, zIndex: 5, gap: 10,
+          flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, zIndex: 5, gap: 8,
           opacity: uiOpacity,
         }}>
-          {ownerEmail ? (
-            // White ring + soft glow around the owner avatar — gives the
-            // header a more "premium" feel and visually separates the avatar
-            // from busy story backgrounds. shadowColor white + radius 8 reads
-            // as a halo on iOS; elevation handles Android equivalent.
-            <View style={{
-              width: 40, height: 40, borderRadius: 20,
-              borderWidth: 2, borderColor: '#fff',
-              alignItems: 'center', justifyContent: 'center',
-              shadowColor: '#fff', shadowOpacity: 0.5, shadowRadius: 8, shadowOffset: { width: 0, height: 0 },
-              elevation: 6,
-            }}>
-              <AvatarCircle name={ownerName} email={ownerEmail} size={36} />
-            </View>
-          ) : null}
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }} numberOfLines={1}>
-              {ownerName}
-            </Text>
-            {cur?.created_at ? (
-              <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11, marginTop: 1 }}>
-                {formatRelTime(cur.created_at, t)}
-              </Text>
+          <View style={{
+            // Backdrop pill — dark translucent surface that reads as a soft
+            // backdrop-blur over any photo. 22px radius matches the avatar
+            // ring so the two read as one continuous shape; padding tuned so
+            // the avatar's outer halo doesn't get clipped.
+            flex: 1, minWidth: 0,
+            flexDirection: 'row', alignItems: 'center', gap: 10,
+            backgroundColor: 'rgba(0,0,0,0.42)',
+            borderRadius: 22, paddingLeft: 4, paddingRight: 12, paddingVertical: 4,
+            borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+          }}>
+            {ownerEmail ? (
+              // White ring + soft glow around the owner avatar — gives the
+              // header a more "premium" feel and visually separates the avatar
+              // from busy story backgrounds. Avatar bumped down to 32px to
+              // match Instagram header spec; pill height tracks.
+              <View style={{
+                width: 36, height: 36, borderRadius: 18,
+                borderWidth: 2, borderColor: '#fff',
+                alignItems: 'center', justifyContent: 'center',
+                shadowColor: '#fff', shadowOpacity: 0.5, shadowRadius: 8, shadowOffset: { width: 0, height: 0 },
+                elevation: 6,
+              }}>
+                <AvatarCircle name={ownerName} email={ownerEmail} size={32} />
+              </View>
             ) : null}
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }} numberOfLines={1}>
+                {ownerName}
+              </Text>
+              {cur?.created_at ? (
+                <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 11, marginTop: 1 }}>
+                  {formatRelTime(cur.created_at, t)}
+                </Text>
+              ) : null}
+            </View>
           </View>
           {isSelf && cur?.id && (
             <>
@@ -1152,9 +1327,47 @@ export default function StoryViewer({
         />
         <Pressable
           style={{ position: 'absolute', left: '30%', right: '30%', top: 110, bottom: 100 }}
-          onPressIn={() => setPaused(true)}
+          onPressIn={(e) => {
+            setPaused(true);
+            // Capture absolute screen position of the touch (pageX/pageY) so
+            // the ripple paints exactly where the user pressed, not at the
+            // pressable's origin. nativeEvent guards against synthetic web
+            // events that lack pageX/pageY.
+            try {
+              const x = e?.nativeEvent?.pageX;
+              const y = e?.nativeEvent?.pageY;
+              if (Number.isFinite(x) && Number.isFinite(y)) {
+                setRippleAt({ x, y });
+                // Clear after ripple finishes (~360ms) so a second press
+                // re-mounts the View and re-triggers the entry animation.
+                setTimeout(() => setRippleAt(null), 400);
+              }
+            } catch {}
+          }}
           onPressOut={() => setPaused(false)}
         />
+
+        {/* Tap-hold ripple — radial spread @ touch point. zIndex above media
+            but below chrome; pointerEvents none so it never blocks anything.
+            Scale 0.5 → 2.6, opacity 0.3 → 0 over 360ms. Color matches the
+            brand gradient so the cue reads as "Chatyy" not generic OS ink. */}
+        {rippleAt ? (
+          <Animated.View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              left: rippleAt.x - 60, top: rippleAt.y - 60,
+              width: 120, height: 120, borderRadius: 60,
+              backgroundColor: 'rgba(255,255,255,0.3)',
+              borderWidth: 2, borderColor: 'rgba(236,72,153,0.55)',
+              zIndex: 15,
+              opacity: rippleAnim.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0] }),
+              transform: [{
+                scale: rippleAnim.interpolate({ inputRange: [0, 1], outputRange: [0.5, 2.6] }),
+              }],
+            }}
+          />
+        ) : null}
 
         {/* Flying emoji animation */}
         {reactPop && (
@@ -1166,11 +1379,51 @@ export default function StoryViewer({
           </View>
         )}
 
-        {/* Bottom bar */}
+        {/* Heart burst — 5 hearts spawned by long-press on ❤️ in the reaction
+            row. Each one floats up ~180px while fading + scaling. Stacked at
+            bottom: 130 (above the reaction row) so the flock appears to lift
+            off the heart itself. zIndex 21 (one above reactPop) so the burst
+            survives even mid-pop. */}
+        {hearts.length > 0 && (
+          <View pointerEvents="none" style={{
+            position: 'absolute', left: 0, right: 0, bottom: 130,
+            alignItems: 'center', zIndex: 21,
+          }}>
+            {hearts.map(h => (
+              <Animated.Text
+                key={h.id}
+                style={{
+                  position: 'absolute',
+                  fontSize: h.size,
+                  opacity: h.anim.interpolate({
+                    inputRange: [0, 0.15, 0.8, 1],
+                    outputRange: [0, 1, 1, 0],
+                  }),
+                  transform: [
+                    { translateX: h.anim.interpolate({ inputRange: [0, 1], outputRange: [0, h.dx] }) },
+                    { translateY: h.anim.interpolate({ inputRange: [0, 1], outputRange: [0, -200] }) },
+                    { scale: h.anim.interpolate({ inputRange: [0, 0.3, 1], outputRange: [0.6, 1.15, 0.85] }) },
+                    { rotate: h.anim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', `${h.dx > 0 ? 12 : -12}deg`] }) },
+                  ],
+                }}
+              >
+                {h.emoji}
+              </Animated.Text>
+            ))}
+          </View>
+        )}
+
+        {/* Bottom bar — when reply is focused the surface darkens (proxy for
+            backdrop-blur since expo-blur isn't bundled) and lifts ~6px so the
+            composer reads as "elevated above the canvas" without an actual
+            translation that would fight the keyboard offset. */}
         <Animated.View style={{
           position: 'absolute', left: 0, right: 0, bottom: 0,
           paddingHorizontal: 14, paddingBottom: Platform.OS === 'ios' ? 28 : 14, paddingTop: 10,
-          backgroundColor: 'rgba(0,0,0,0.18)',
+          backgroundColor: replyEnter.interpolate({
+            inputRange: [0, 1],
+            outputRange: ['rgba(0,0,0,0.18)', 'rgba(0,0,0,0.55)'],
+          }),
           zIndex: 10,
           transform: [{ translateY: keyboardOffset }],
           opacity: uiOpacity,
@@ -1218,9 +1471,41 @@ export default function StoryViewer({
               <View style={{ flexDirection: 'row', justifyContent: 'space-around' }}>
                 {['❤️','🔥','😂','😮','😢','👏','👍'].map(emoji => {
                   const pulsing = emojiPulse === emoji;
+                  const isHeart = emoji === '❤️';
                   return (
                     <TouchableOpacity
                       key={emoji}
+                      // Long-press on the heart triggers a 5-heart burst with
+                      // randomized horizontal drift + size + delay so the
+                      // flock feels organic instead of cookie-cutter.
+                      // Other emojis keep the single-pop behavior (long-press
+                      // == tap on them) so the gesture stays predictable.
+                      onLongPress={isHeart ? () => {
+                        _haptic('medium');
+                        try { onReact?.(cur, emoji); } catch {}
+                        const now = Date.now();
+                        const burst = Array.from({ length: 5 }).map((_, i) => ({
+                          id: `${now}-${i}`,
+                          emoji,
+                          dx: (Math.random() - 0.5) * 120, // -60..+60 px drift
+                          size: 28 + Math.random() * 24,   // 28..52 px
+                          delay: i * 60,                   // staggered spawn
+                          anim: new Animated.Value(0),
+                        }));
+                        setHearts(prev => [...prev, ...burst]);
+                        burst.forEach(h => {
+                          Animated.timing(h.anim, {
+                            toValue: 1, duration: 1200, delay: h.delay,
+                            easing: Easing.out(Easing.quad),
+                            useNativeDriver: true,
+                          }).start();
+                        });
+                        // Reap after the longest one finishes — keeps state lean.
+                        setTimeout(() => {
+                          setHearts(prev => prev.filter(p => !burst.find(b => b.id === p.id)));
+                        }, 1500);
+                      } : undefined}
+                      delayLongPress={isHeart ? 280 : undefined}
                       onPress={() => {
                         _haptic('medium');
                         setEmojiPulse(emoji);
@@ -1260,11 +1545,25 @@ export default function StoryViewer({
                   </Text>
                 </View>
               ) : (
-                <View style={{
+                // Reply input wrapper — slide-up (4px) + brighten the field
+                // when focused so the active state is obvious. Native driver
+                // for transform; backgroundColor lerp via the parent's
+                // replyEnter (already non-native).
+                <Animated.View style={{
                   flexDirection: 'row', alignItems: 'center', gap: 8,
-                  backgroundColor: 'rgba(255,255,255,0.15)',
+                  backgroundColor: replyEnter.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: ['rgba(255,255,255,0.15)', 'rgba(255,255,255,0.22)'],
+                  }),
                   borderRadius: 24, paddingLeft: 14, paddingRight: 6,
-                  borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)',
+                  borderWidth: 1,
+                  borderColor: replyEnter.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: ['rgba(255,255,255,0.28)', 'rgba(255,255,255,0.55)'],
+                  }),
+                  transform: [{
+                    translateY: replyEnter.interpolate({ inputRange: [0, 1], outputRange: [0, -4] }),
+                  }],
                 }}>
                   <IconMessageSquare size={16} color="rgba(255,255,255,0.7)" />
                   <TextInput
@@ -1316,7 +1615,7 @@ export default function StoryViewer({
                       <IconSend size={15} color="#fff" />
                     </TouchableOpacity>
                   ) : null}
-                </View>
+                </Animated.View>
               )}
             </View>
           )}

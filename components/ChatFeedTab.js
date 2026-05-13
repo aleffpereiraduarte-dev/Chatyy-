@@ -241,8 +241,12 @@ function StoriesStrip({ user, colors, isDark, t, router }) {
   );
 }
 
-export default function ChatFeedTab({ colors, isDark, t, user, router }) {
-  const [feedMode, setFeedMode] = useState('posts'); // 'posts' | 'reels' | 'profile'
+export default function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedModeConsumed }) {
+  const [feedMode, setFeedMode] = useState(initialFeedMode === 'reels' ? 'reels' : 'posts'); // 'posts' | 'reels' | 'profile'
+  useEffect(() => {
+    if (initialFeedMode === 'reels' && feedMode !== 'reels') setFeedMode('reels');
+    if (initialFeedMode && typeof onFeedModeConsumed === 'function') onFeedModeConsumed();
+  }, [initialFeedMode]); // eslint-disable-line react-hooks/exhaustive-deps
   // Initial state reads from MMKV preload so the very first render already has data.
   const _initialPosts = Array.isArray(_preloadedFeedPosts) ? _preloadedFeedPosts : [];
   const [posts, setPosts] = useState(() => _initialPosts);

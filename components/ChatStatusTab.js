@@ -1756,14 +1756,26 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
 
       const file = { uri: uploadUri, name: uploadName, type: uploadType };
       const uploadR = await api.statusUpload(file);
-      if (uploadR.success && uploadR.data?.url) {
+      if (uploadR?.success && uploadR.data?.url) {
         const statusType = capture.type === 'video' ? 'video' : 'image';
         const extraMeta = capture.isBoomerang ? { is_boomerang: true } : {};
         const r = await api.statusPublish(uploadR.data.url, statusType, '#000000', null, extraMeta);
-        if (r.success) loadStatuses();
+        if (r?.success) {
+          loadStatuses();
+        } else {
+          // Camera capture published successfully to R2 but server rejected
+          // the status_create row — without this the user sees the camera
+          // close and assumes the status went up.
+          console.warn('[StatusCamera] publish rejected:', r?.message);
+          try { Alert.alert?.(t?.('common.error') || 'Erro', r?.message || t?.('status.publishFailed') || 'Não foi possível publicar o status.'); } catch {}
+        }
+      } else {
+        console.warn('[StatusCamera] upload failed:', uploadR?.message);
+        try { Alert.alert?.(t?.('common.error') || 'Erro', uploadR?.message || t?.('status.uploadFailed') || 'Falha no upload da mídia.'); } catch {}
       }
     } catch (e) {
       console.warn('[StatusCamera publish]', e);
+      try { Alert.alert?.(t?.('common.error') || 'Erro', (t?.('status.publishFailed') || 'Não foi possível publicar o status.') + (e?.message ? ` (${e.message})` : '')); } catch {}
     } finally {
       setPublishing(false);
     }
@@ -1800,30 +1812,49 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     try {
       if ((creatorMode === 'photo' || creatorMode === 'video') && photoFile) {
         const uploadR = await api.statusUpload(photoFile);
-        if (uploadR.success && uploadR.data?.url) {
+        if (uploadR?.success && uploadR.data?.url) {
           const caption = textContent.trim();
           const content = caption ? uploadR.data.url + '\n' + caption : uploadR.data.url;
           const statusType = creatorMode === 'video' ? 'video' : 'image';
           const r = await api.statusPublish(content, statusType, '#000000', musicData, extraMeta);
-          if (r.success) {
+          if (r?.success) {
             setCreatorVisible(false); setMusicPickerVisible(false); setSelectedMusic(null); loadStatuses();
             // Success haptic — without this, users tap "publish" and aren't sure
             // the post landed since the modal close + list reload have a brief gap.
             if (Platform.OS !== 'web') {
               try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
             }
+          } else {
+            // Server rejected status_create — surface so user can retry instead
+            // of staring at the open creator with no signal. Previously silent
+            // (`catch {}` below also swallowed thrown errors).
+            console.warn('[Status] publish rejected:', r?.message);
+            try { Alert.alert?.(t?.('common.error') || 'Erro', r?.message || t?.('status.publishFailed') || 'Não foi possível publicar o status.'); } catch {}
           }
+        } else {
+          // Upload failed (Rust + PHP fallback both returned !success). Tell
+          // the user — without this they sit on the creator with no feedback.
+          console.warn('[Status] upload failed:', uploadR?.message);
+          try { Alert.alert?.(t?.('common.error') || 'Erro', uploadR?.message || t?.('status.uploadFailed') || 'Falha no upload da mídia.'); } catch {}
         }
       } else {
         const r = await api.statusPublish(textContent.trim(), 'text', textBgColor, musicData, extraMeta);
-        if (r.success) {
+        if (r?.success) {
           setCreatorVisible(false); setMusicPickerVisible(false); setTextContent(''); setSelectedMusic(null); loadStatuses();
           if (Platform.OS !== 'web') {
             try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
           }
+        } else {
+          console.warn('[Status] text publish rejected:', r?.message);
+          try { Alert.alert?.(t?.('common.error') || 'Erro', r?.message || t?.('status.publishFailed') || 'Não foi possível publicar o status.'); } catch {}
         }
       }
-    } catch {} finally {
+    } catch (e) {
+      // Network/runtime exception. Was empty `catch {}` — user got zero
+      // feedback when a transient 5xx or DNS hiccup hit status publish.
+      console.warn('[Status] publish exception:', e?.message || e);
+      try { Alert.alert?.(t?.('common.error') || 'Erro', (t?.('status.publishFailed') || 'Não foi possível publicar o status.') + (e?.message ? ` (${e.message})` : '')); } catch {}
+    } finally {
       setPublishing(false);
     }
   }, [textContent, textBgColor, creatorMode, photoFile, publishing, loadStatuses, selectedMusic, textFontStyle, statusPrivacy]);

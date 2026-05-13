@@ -3080,6 +3080,27 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     });
   }, [router]);
 
+  // Memory #832: tap on the green phone icon in a call history row should
+  // redial the Chatyy call directly (WhatsApp parity), NOT just re-open the
+  // chat conversation. The row tap itself still opens the conversation
+  // (memory #452), but the explicit phone button is now a true callback.
+  // For phone-call rows it delegates to handleHistoryPress (auto-dial via
+  // dialer). For Chatyy rows it pushes /call as a fresh caller.
+  const handleHistoryCallBack = useCallback((item) => {
+    if (item?.to_number) {
+      handleHistoryPress(item);
+      return;
+    }
+    if (!router) return;
+    const email = item.contactEmail || item.contact_email || '';
+    const name = item.contactName || item.contact_name || '';
+    if (!email) return;
+    const isVideo = item.video ? '1' : '0';
+    // callId is generated freshly on the call screen for outgoing calls,
+    // so we pass an empty placeholder and let /call mint one.
+    router.push(`/call?contactName=${encodeURIComponent(name)}&contactEmail=${encodeURIComponent(email)}&isVideo=${isVideo}&isCaller=1`);
+  }, [router, handleHistoryPress]);
+
   const handleClearAll = useCallback(() => {
     const doIt = async () => {
       try {
@@ -3160,7 +3181,17 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         source: isPhone ? 'voip' : 'chat',
       });
     }
-    merged.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    // Null-safe sort: if either side has no timestamp (backend returned
+    // a partial row, or both .timestamp + .created_at are undefined),
+    // new Date(undefined) is Invalid Date and the subtraction yields NaN,
+    // which makes sort order non-deterministic and can swap "Hoje" rows
+    // into "Ontem" buckets on subsequent renders. Treat missing times as 0
+    // so they sink to the bottom predictably.
+    merged.sort((a, b) => {
+      const ta = a?.timestamp ? new Date(a.timestamp).getTime() : 0;
+      const tb = b?.timestamp ? new Date(b.timestamp).getTime() : 0;
+      return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
+    });
     return merged;
   }, [voipHistory, chatCalls, phoneContactsList]);
 
@@ -3349,7 +3380,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
                       language={language}
                       onPress={handleHistoryPress}
                       onInfoPress={setInfoItem}
-                      onCallBack={handleHistoryPress}
+                      onCallBack={handleHistoryCallBack}
                     />
                   </React.Fragment>
                 ))}

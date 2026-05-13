@@ -946,9 +946,11 @@ function ContactsScreenInner() {
     );
   }, [colors, handleEditContact, handleDelete, toggleFavorite, handleOpenProfile, handleQuickActions]);
 
-  // Section list header renderer
+  // Section list header renderer — alphabet letter with subtle brand accent
+  // bar so each section reads as a navigation anchor (iOS Contacts pattern).
   const renderSectionHeader = useCallback(({ section }) => (
-    <View style={[s.sectionHeader, { backgroundColor: colors.background }]}>
+    <View style={[s.sectionHeader, { backgroundColor: colors.background, flexDirection: 'row', alignItems: 'center', gap: 8 }]}>
+      <View style={{ width: 3, height: 12, borderRadius: 1.5, backgroundColor: colors.primary, opacity: 0.6 }} />
       <Text style={[s.sectionHeaderText, { color: colors.textTertiary }]}>{section.title}</Text>
     </View>
   ), [colors]);
@@ -1056,7 +1058,13 @@ function ContactsScreenInner() {
           {t('contacts.title')}{contacts.length > 0 ? ` (${contacts.length})` : ''}
         </Text>
         <View style={{ flexDirection: 'row', gap: 4 }}>
-          <TouchableOpacity onPress={() => { setForm({ name: '', email: '', phone: '', group: '', notes: '', favorite: false }); setEditContact(null); setShowAdd(true); }} style={s.addBtn}>
+          <TouchableOpacity
+            onPress={() => { setForm({ name: '', email: '', phone: '', group: '', notes: '', favorite: false }); setEditContact(null); setShowAdd(true); }}
+            style={[s.addBtn, { backgroundColor: colors.primary + '14', borderRadius: 18, width: 36, height: 36, alignItems: 'center', justifyContent: 'center' }]}
+            activeOpacity={0.7}
+            accessibilityLabel={t('contacts.addContact') || 'Add contact'}
+            accessibilityRole="button"
+          >
             <IconPlus size={20} color={colors.primary} />
           </TouchableOpacity>
         </View>

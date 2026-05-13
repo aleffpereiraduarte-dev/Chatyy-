@@ -234,21 +234,24 @@ export default function Onboarding({ onDone }) {
 
   const isLast = currentIndex === SLIDES.length - 1;
 
-  // CTA press animations.
+  // CTA press animations — tactile 0.97 dip + snappy return.
+  // Why 0.97 (not 0.96): subtler scale reads as confident-press on a primary
+  // brand button; deeper scales feel like the surface is sticky. Spring is
+  // friction=8 to land without overshoot.
   const onCtaPressIn = () => {
     Animated.spring(ctaScale, {
-      toValue: 0.96,
+      toValue: 0.97,
       useNativeDriver: true,
-      friction: 7,
-      tension: 200,
+      friction: 8,
+      tension: 260,
     }).start();
   };
   const onCtaPressOut = () => {
     Animated.spring(ctaScale, {
       toValue: 1,
       useNativeDriver: true,
-      friction: 5,
-      tension: 180,
+      friction: 6,
+      tension: 220,
     }).start();
   };
 
@@ -312,55 +315,36 @@ export default function Onboarding({ onDone }) {
         style={styles.flatList}
       />
 
-      {/* Dots: active = elongated purple gradient pill (24px), inactive = 6px gray */}
-      <View style={[styles.dotsContainer, isDesktop && styles.dotsContainerDesktop]}>
-        {SLIDES.map((_, i) => {
-          const inputRange = [(i - 1) * SCREEN_WIDTH, i * SCREEN_WIDTH, (i + 1) * SCREEN_WIDTH];
-          const dotWidth = scrollX.interpolate({
-            inputRange,
-            outputRange: [6, 24, 6],
-            extrapolate: 'clamp',
-          });
-          const activeOpacity = scrollX.interpolate({
-            inputRange,
-            outputRange: [0, 1, 0],
-            extrapolate: 'clamp',
-          });
-          const inactiveOpacity = scrollX.interpolate({
-            inputRange,
-            outputRange: [1, 0, 1],
-            extrapolate: 'clamp',
-          });
-          return (
-            <View key={i} style={styles.dotSlot}>
-              {/* Inactive (gray dot) */}
-              <Animated.View
-                style={[
-                  styles.dotInactive,
-                  {
-                    opacity: inactiveOpacity,
-                    backgroundColor: isDark ? 'rgba(255,255,255,0.28)' : 'rgba(60,30,100,0.22)',
-                  },
-                ]}
-              />
-              {/* Active (gradient pill) */}
-              <Animated.View
-                style={[
-                  styles.dotActive,
-                  {
-                    width: dotWidth,
-                    opacity: activeOpacity,
-                  },
-                  Platform.OS === 'web' && {
-                    background: `linear-gradient(90deg, ${BRAND}, #A78BFA)`,
-                    boxShadow: `0 2px 10px ${BRAND}66`,
-                  },
-                  Platform.OS !== 'web' && { backgroundColor: BRAND },
-                ]}
-              />
-            </View>
-          );
-        })}
+      {/* Progress bar — smooth fill driven by scrollX (replaces dot indicators).
+          Why: dots feel dated; a progressive bar gives clear "you're 60% through"
+          feedback during scroll, scales gracefully with slide count, and the
+          gradient mirrors the CTA so the eye links progress → action. */}
+      <View style={[styles.progressTrack, isDesktop && styles.progressTrackDesktop, {
+        backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(60,30,100,0.10)',
+      }]}
+      >
+        <Animated.View
+          style={[
+            styles.progressFill,
+            {
+              width: scrollX.interpolate({
+                inputRange: [0, Math.max(1, (SLIDES.length - 1) * SCREEN_WIDTH)],
+                outputRange: ['18%', '100%'],
+                extrapolate: 'clamp',
+              }),
+            },
+            Platform.OS === 'web' && {
+              background: `linear-gradient(90deg, ${BRAND}, #A78BFA)`,
+              boxShadow: `0 1px 8px ${BRAND}66`,
+            },
+            Platform.OS !== 'web' && { backgroundColor: BRAND },
+          ]}
+        />
+      </View>
+      <View style={styles.progressLabelRow}>
+        <Text style={[styles.progressLabel, { color: isDark ? 'rgba(255,255,255,0.65)' : 'rgba(60,30,100,0.65)' }]}>
+          {Math.min(currentIndex + 1, SLIDES.length)} / {SLIDES.length}
+        </Text>
       </View>
 
       {/* Primary CTA — purple gradient pill, full width, glow */}
@@ -538,35 +522,33 @@ const styles = StyleSheet.create({
     lineHeight: 30,
     maxWidth: 460,
   },
-  dotsContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 24,
-    gap: 8,
-    height: 12,
+  // Progressive bar (replaces dot indicators).
+  progressTrack: {
+    height: 4,
+    borderRadius: 3,
+    marginHorizontal: 56,
+    marginBottom: 8,
+    overflow: 'hidden',
   },
-  dotsContainerDesktop: {
-    marginBottom: 28,
-    gap: 10,
+  progressTrackDesktop: {
+    height: 5,
+    marginHorizontal: 'auto',
+    width: 320,
+    marginBottom: 10,
   },
-  dotSlot: {
-    width: 24,
-    height: 6,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dotInactive: {
-    position: 'absolute',
-    width: 6,
-    height: 6,
+  progressFill: {
+    height: '100%',
     borderRadius: 3,
   },
-  dotActive: {
-    position: 'absolute',
-    height: 6,
-    borderRadius: 3,
-    left: 0,
+  progressLabelRow: {
+    alignItems: 'center',
+    marginBottom: 18,
+  },
+  progressLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
   },
   ctaWrap: {
     width: '100%',

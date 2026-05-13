@@ -322,6 +322,10 @@ function parseICSEvents(icsContent) {
 // ============================================================
 function DayCellInner({ isSelected, isToday, isOtherMonth, day, colors }) {
   const scale = useRef(new Animated.Value(isSelected ? 1.08 : 1)).current;
+  // Subtle slow pulse on today's ring — gives the cell a "live" beat without
+  // distracting. Only animates when isToday is true; pauses otherwise so the
+  // animation loop doesn't burn frames on every other cell.
+  const todayPulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.spring(scale, {
       toValue: isSelected ? 1.08 : 1,
@@ -330,10 +334,21 @@ function DayCellInner({ isSelected, isToday, isOtherMonth, day, colors }) {
       useNativeDriver: true,
     }).start();
   }, [isSelected, scale]);
+  useEffect(() => {
+    if (!isToday) return undefined;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(todayPulse, { toValue: 1, duration: 1400, useNativeDriver: true }),
+        Animated.timing(todayPulse, { toValue: 0, duration: 1400, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [isToday, todayPulse]);
+  const pulseScale = todayPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.18] });
+  const pulseOpacity = todayPulse.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0] });
   return (
-    <Animated.View style={[
-      styles.dayCellInner,
-      { transform: [{ scale }] },
+    <Animated.View style={[styles.dayCellInner, { transform: [{ scale }] },
       // Today: 2px ring purple (no fill)
       isToday && { borderWidth: 2, borderColor: colors.primary, backgroundColor: 'transparent' },
       // Selected (and not today): solid fill so selection still reads strong
@@ -341,6 +356,16 @@ function DayCellInner({ isSelected, isToday, isOtherMonth, day, colors }) {
         ...(Platform.OS === 'web' ? { background: `linear-gradient(135deg, ${colors.primary}, #8b5cf6)`, boxShadow: `0 2px 8px ${colors.primary}40` } : {}),
       },
     ]}>
+      {isToday && (
+        <Animated.View
+          pointerEvents="none"
+          style={{
+            position: 'absolute', top: -3, left: -3, right: -3, bottom: -3,
+            borderRadius: 17, borderWidth: 2, borderColor: colors.primary,
+            opacity: pulseOpacity, transform: [{ scale: pulseScale }],
+          }}
+        />
+      )}
       <Text style={[
         styles.dayCellText,
         { color: isOtherMonth ? colors.textTertiary : colors.text },
@@ -350,6 +375,28 @@ function DayCellInner({ isSelected, isToday, isOtherMonth, day, colors }) {
         {day}
       </Text>
     </Animated.View>
+  );
+}
+
+// Small wrapper around the month-nav chevrons. Press tugs the arrow ~3px in
+// its direction of navigation and bounces back — communicates "this advances
+// the month" without needing a separate icon swap.
+function MonthNavBtn({ dir, onPress, colors, children }) {
+  const tx = useRef(new Animated.Value(0)).current;
+  const handlePress = () => {
+    const target = dir === 'prev' ? -3 : 3;
+    Animated.sequence([
+      Animated.timing(tx, { toValue: target, duration: 80, useNativeDriver: true }),
+      Animated.spring(tx, { toValue: 0, friction: 4, tension: 240, useNativeDriver: true }),
+    ]).start();
+    onPress && onPress();
+  };
+  return (
+    <TouchableOpacity onPress={handlePress} style={styles.monthArrow} activeOpacity={0.7}>
+      <Animated.View style={{ transform: [{ translateX: tx }] }}>
+        {children}
+      </Animated.View>
+    </TouchableOpacity>
   );
 }
 
@@ -428,11 +475,13 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
 
   return (
     <View style={styles.calendarGrid}>
-      {/* Month header */}
+      {/* Month header — chevrons get a subtle press nudge (translateX) so the
+          arrow visibly "leans" in the direction of navigation. Keeps the
+          press feedback distinct from a generic ripple. */}
       <View style={styles.monthHeader}>
-        <TouchableOpacity onPress={onPrevMonth} style={styles.monthArrow}>
+        <MonthNavBtn dir="prev" onPress={onPrevMonth} colors={colors}>
           <IconChevronLeft size={22} color={colors.text} />
-        </TouchableOpacity>
+        </MonthNavBtn>
         <View style={{ alignItems: 'center' }}>
           <Text style={[styles.monthTitle, { color: colors.text }]}>
             {(Array.isArray(t('calendar.months')) ? t('calendar.months') : [])[month] || ''} {year}
@@ -443,9 +492,9 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
             </Text>
           )}
         </View>
-        <TouchableOpacity onPress={onNextMonth} style={styles.monthArrow}>
+        <MonthNavBtn dir="next" onPress={onNextMonth} colors={colors}>
           <IconChevronRight size={22} color={colors.text} />
-        </TouchableOpacity>
+        </MonthNavBtn>
       </View>
 
       {/* Day headers */}

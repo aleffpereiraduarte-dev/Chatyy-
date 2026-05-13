@@ -493,7 +493,7 @@ function ChatHub() {
     // "Email" jumps to the inbox screen (same pattern as One).
     if (tab === 'email') { try { router.push('/inbox'); } catch (e) { console.warn("[chat] router.push failed:", e); } return; }
     // "Reels" opens feed with reels tab active
-    if (tab === 'reels') { handleTabPress('feed'); return; }
+    if (tab === 'reels') { setPendingReels(true); handleTabPress('feed'); return; }
     if (tab === activeTab) return;
     const idx = TAB_KEYS.indexOf(tab);
 
@@ -581,13 +581,14 @@ function ChatHub() {
   // that up and opens the creator immediately. Reset on first consume so a
   // refresh/re-render doesn't re-open the composer.
   const [autoNewStatus, setAutoNewStatus] = useState(() => params.new === '1');
+  const [pendingReels, setPendingReels] = useState(false);
   useEffect(() => {
     if (autoNewStatus) {
       const t = setTimeout(() => setAutoNewStatus(false), 500);
       return () => clearTimeout(t);
     }
   }, [autoNewStatus]);
-  const tabProps = { colors, isDark, t, user, router, searchQuery, setActiveTab, autoNewStatus };
+  const tabProps = { colors, isDark, t, user, router, searchQuery, setActiveTab, autoNewStatus, initialFeedMode: pendingReels ? 'reels' : undefined, onFeedModeConsumed: () => setPendingReels(false) };
 
   const titles = {
     feed: t('feed.title') || 'Feed',

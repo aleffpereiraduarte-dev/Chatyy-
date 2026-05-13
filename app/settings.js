@@ -469,12 +469,24 @@ function SettingsScreenInner() {
           </View>
         )}
 
-        {/* Profile Photo */}
+        {/* Profile Photo — wrap avatar in a subtle brand-color ring so the
+            account header reads as the "you" anchor on the settings screen
+            (matches the /u/[username] header treatment). */}
         {sectionMatches(t('settings.profile') || 'profile', user?.email) && (
         <View style={[s.section, s.profileSection, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
-          <AvatarCircle key={avatarKey} email={user?.email} name={user?.email} size={80} />
+          <View style={{
+            padding: 3, borderRadius: 50, borderWidth: 2, borderColor: colors.primary + '55',
+            ...(Platform.OS === 'web' ? { boxShadow: `0 0 0 4px ${colors.primary}10` } : {}),
+          }}>
+            <AvatarCircle key={avatarKey} email={user?.email} name={user?.email} size={80} />
+          </View>
           <Text style={[s.profileEmail, { color: colors.text }]}>{user?.email}</Text>
-          <TouchableOpacity style={[s.changePhotoBtn, { borderColor: colors.primary }]} onPress={handleChangePhoto}>
+          <TouchableOpacity
+            style={[s.changePhotoBtn, { borderColor: colors.primary }]}
+            onPress={handleChangePhoto}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+          >
             <Text style={[s.changePhotoBtnText, { color: colors.primary }]}>{t('settings.changePhoto')}</Text>
           </TouchableOpacity>
         </View>
@@ -2156,7 +2168,15 @@ const s = StyleSheet.create({
   changePhotoBtnText: {
     fontSize: FontSize.md, fontWeight: '700',
   },
-  sectionTitle: { fontSize: 20, fontWeight: '800', marginBottom: Spacing.lg, letterSpacing: -0.5 },
+  // Section title — kept big and bold (20px) so users still see it as the
+  // card heading, but added a thin uppercase eyebrow style via `sectionEyebrow`
+  // below for sections that opt-in. Letter-spacing tightened to -0.4 (was
+  // -0.5) so it doesn't look squashed at this size.
+  sectionTitle: { fontSize: 20, fontWeight: '800', marginBottom: Spacing.lg, letterSpacing: -0.4 },
+  // Eyebrow label — small uppercase brand-color tag rendered above a section
+  // title for screens that want extra navigability (iOS Settings pattern).
+  // Currently only used internally; rows opt in via <Text style={[s.sectionEyebrow, { color: colors.primary }]}/>.
+  sectionEyebrow: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 4, opacity: 0.85 },
   sectionTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.lg },
   // Setting row — adds a soft hover state on web so each row reads as
   // "tappable" without an explicit border. Spacing bumped slightly for

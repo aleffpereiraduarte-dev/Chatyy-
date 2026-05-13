@@ -402,6 +402,71 @@ export async function saveMediaPermanent(url) {
   return url;
 }
 
+// Adopt an existing local file (e.g. just-recorded voice note at
+// file:///.../voice_xxx.m4a) as the cached copy for a remote CDN URL.
+// Used by the SEND path: after the server returns the canonical file_url,
+// we already have the bytes on disk — copy them into the cache dir under
+// the deterministic key so subsequent loads of the SAME message (or any
+// other client viewing it later) hit the local copy instead of re-DLing.
+//
+// Idempotent: if the destination already exists we skip the copy. Returns
+// the local path on success or null on failure / unsupported (web).
+export async function adoptLocalFileAsCache(remoteUrl, localUri) {
+  if (Platform.OS === 'web' || !remoteUrl || !localUri) return null;
+  if (typeof localUri !== 'string' || !localUri.startsWith('file://')) return null;
+  const fs = getFS();
+  if (!fs) return null;
+  const dir = getSavedDir();
+  const key = urlToKey(remoteUrl);
+  const destPath = dir + key;
+  try {
+    // Skip if already adopted (deterministic key — same URL → same path).
+    try {
+      const existing = await fs.getInfoAsync(destPath);
+      if (existing.exists && existing.size > 0) {
+        registerSyncKey(remoteUrl, destPath);
+        return destPath;
+      }
+    } catch {}
+    // Ensure parent dir.
+    try {
+      const dirInfo = await fs.getInfoAsync(dir);
+      if (!dirInfo.exists) await fs.makeDirectoryAsync(dir, { intermediates: true });
+    } catch {}
+    // Source must still exist (expo-av sometimes purges its recording temp).
+    try {
+      const src = await fs.getInfoAsync(localUri);
+      if (!src.exists || !src.size) return null;
+    } catch { return null; }
+    await fs.copyAsync({ from: localUri, to: destPath });
+    registerSyncKey(remoteUrl, destPath);
+    return destPath;
+  } catch {
+    try { await fs.deleteAsync(destPath, { idempotent: true }); } catch {}
+    return null;
+  }
+}
+
+// Task #886 — prefetch a single audio message's media so the bubble plays
+// offline-clean even if the user never tapped it before going dark. Designed
+// to be called the instant a `type==='audio'|'voice'` row enters state (WS
+// receive, TCP receive, load, sync, etc). Idempotent: if the file is already
+// cached, returns the local path without re-downloading. force:true bypasses
+// the cellular gate — audio is tiny (~50-300KB), users always want it.
+//
+// Returns a Promise resolving to the local path on success or the remote URL
+// on failure. Callers should treat as fire-and-forget; the AudioPlayer will
+// pick up the cached file on its next mount via getCachedAudioUri.
+export function prefetchAudioMessage(remoteUrl) {
+  if (!remoteUrl || Platform.OS === 'web') return Promise.resolve(remoteUrl);
+  try { console.log('[audio_offline] prefetch', String(remoteUrl).slice(0, 80)); } catch {}
+  // saveMediaPermanent writes to documentDirectory (the "saved" dir) — same
+  // location getCachedAudioUri checks via the mediaCache consolidation hook,
+  // so a single download serves both the bubble's player AND the chat list
+  // preview. No cellular gate inside saveMediaPermanent → safe for audio.
+  return saveMediaPermanent(remoteUrl).catch(() => remoteUrl);
+}
+
 // Get permanent saved URI
 export async function getSavedUri(url) {
   if (!url || Platform.OS === 'web') return null;

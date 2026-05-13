@@ -441,7 +441,18 @@ const ConversationRow = React.memo(function ConversationRow({
         if (!caption && typeof parsed.caption === 'string' && parsed.caption.trim()) {
           caption = parsed.caption.trim();
         }
-      } catch {}
+      } catch {
+        // Silent-fail audit: when content "looked like JSON" (started with
+        // `{` and ended with `}`) but failed to parse, the raw JSON-ish
+        // string leaked into the preview row as-is — user sees `{"foo":...`
+        // garbage instead of a clean message preview. Bug class flagged in
+        // memory ("JSON leaked into chat list preview 2026-05-12"). Fall
+        // back to a generic media/text label so the row at least reads.
+        const looksLikeMedia = /file_url|attachment|media|http/i.test(content);
+        content = looksLikeMedia
+          ? ('📎 ' + (t('chat.attachment') || 'Anexo'))
+          : (t('chat.message') || 'Mensagem');
+      }
     }
     if (lastMsg.type === 'call_card' && !/Chamada/.test(content)) {
       content = '\uD83D\uDCDE ' + (t('chat.voiceCall') || 'Chamada');
@@ -2282,7 +2293,15 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       // Data is already painted — silent delta sync only
       api.chatConversations('', false).then(r => {
         if (!isFresh()) return;
-        if (!r?.success) return;
+        if (!r?.success) {
+          // Silent-fail audit: server returned non-success while cached
+          // rows are on screen. Keeping stale UI is correct (user has
+          // something usable) but at least log so the WS reconnect
+          // banner / auto-heal layer can pick it up — previously this
+          // hid 401/500 cascades on the chat list completely.
+          if (r?.message) console.warn('[ChatList] background sync non-success', r.message);
+          return;
+        }
         const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
         if (!convs.length) return;
         const fpNew = convs.map(c => `${c.id}:${c.unread_count ?? 0}:${c.updated_at || c.last_message_at || ''}`).join('|');
@@ -2297,7 +2316,9 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         cacheConversations(convs).catch(() => {});
         _saveNativeConversations(convs);
         mqttSubscribeAll(convs);
-      }).catch(() => {});
+      }).catch((e) => {
+        console.warn('[ChatList] background sync threw', e?.message);
+      });
       setLoading(false);
       setRefreshing(false);
       return;
@@ -2513,6 +2534,26 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       // on their per-user channel so the in-thread and list-screen paths
       // don't both fire). Server guarantees the same payload shape.
       const onIncomingForList = (data) => {
+        // Task #886 — auto-download voice notes the instant the WS event lands,
+        // even when the user is NOT inside the conversation. WhatsApp parity:
+        // by the time the user opens the chat the audio is already on disk and
+        // plays offline-clean. Other media types (image/video/file) still use
+        // the in-conversation `_isHeavyByUrl` cellular gate via tap-to-DL.
+        // Fire-and-forget; force:true because audio is tiny (~50KB-300KB) and
+        // we never want the cellular gate to defer voice — it would feel laggy.
+        // Refs to avoid closure stale: data.* is read fresh each event.
+        try {
+          const t = String(data?.type || '').toLowerCase();
+          if ((t === 'audio' || t === 'voice') && data?.file_url && Platform.OS !== 'web') {
+            const remote = api.getMediaUrl(data.file_url);
+            if (remote) {
+              // Shared #886 helper — writes to permanent dir (matches
+              // chat-conversation path), logs [audio_offline], idempotent.
+              const { prefetchAudioMessage } = require('../services/mediaCache');
+              prefetchAudioMessage(remote).catch(() => {});
+            }
+          }
+        } catch {}
         if (wsUpdateTimer.current) clearTimeout(wsUpdateTimer.current);
         wsUpdateTimer.current = setTimeout(() => {
           // Don't bump unread for messages we sent ourselves (echoed back

@@ -35,11 +35,20 @@ const initCallModules = (() => {
   let loaded = false;
   return () => {
     if (!loaded) {
-      const activeCallBar = require('../components/ActiveCallBar');
-      const chatCallsTab = require('../components/ChatCallsTab');
-      setActiveCall = activeCallBar.setActiveCall;
-      clearActiveCall = activeCallBar.clearActiveCall;
-      addCallToHistory = chatCallsTab.addCallToHistory;
+      // Defensive: ChatCallsTab is ~148KB with many deps. If a child import
+      // throws on a broken native build we must NOT let it kill /call —
+      // the user has a ringing call and a white screen means they can't
+      // even press decline. Isolated try per require so one fail doesn't
+      // void the other.
+      try {
+        const activeCallBar = require('../components/ActiveCallBar');
+        if (activeCallBar?.setActiveCall) setActiveCall = activeCallBar.setActiveCall;
+        if (activeCallBar?.clearActiveCall) clearActiveCall = activeCallBar.clearActiveCall;
+      } catch (e) { console.warn('[Call] ActiveCallBar load failed:', e?.message); }
+      try {
+        const chatCallsTab = require('../components/ChatCallsTab');
+        if (chatCallsTab?.addCallToHistory) addCallToHistory = chatCallsTab.addCallToHistory;
+      } catch (e) { console.warn('[Call] ChatCallsTab load failed:', e?.message); }
       loaded = true;
     }
   };
@@ -102,6 +111,14 @@ function CallScreenInner() {
   // user toggled camera mid-ring, peer never knew video was live.
   const videoEnabledRef = useRef(videoEnabled);
   useEffect(() => { videoEnabledRef.current = videoEnabled; }, [videoEnabled]);
+  // Mirror audioMuted into a ref so handleOffer (which fires on ICE restart
+  // + late renegotiation) reads the freshest value instead of the stale
+  // closure capture. Without this, a user who muted mid-call had their
+  // mic forcibly re-enabled (audioTrack.enabled = true) by the next
+  // renegotiation pass — visible as "mute button does nothing on the
+  // second leg of the call".
+  const audioMutedRef = useRef(audioMuted);
+  useEffect(() => { audioMutedRef.current = audioMuted; }, [audioMuted]);
   // Default: earpiece (false) for audio calls, speaker (true) for video calls
   const [speakerOn, setSpeakerOn] = useState(isVideoParam === '1' || isVideoParam === 'true' ? true : false);
   const [callDuration, setCallDuration] = useState(0);
@@ -252,6 +269,15 @@ function CallScreenInner() {
   const fadeAnim = useRef(new Animated.Value(1)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const controlsFadeAnim = useRef(new Animated.Value(1)).current;
+  // Spring entrance for the bottom action bar + top status strip on mount
+  // (FaceTime/WhatsApp parity). Drives translateY + opacity over ~260ms so
+  // the controls don't pop in flat as the screen renders.
+  const barEnterAnim = useRef(new Animated.Value(0)).current;
+  // End-state overlay fade — sits over the screen for ~1.5s after hangup
+  // with the avatar + "Chamada encerrada · 02:14" card before we navigate
+  // back. Drops the jarring instant-pop transition that used to flash
+  // straight to /chat.
+  const endCardAnim = useRef(new Animated.Value(0)).current;
   const endedRef = useRef(false);
   // Stash WhatsApp-grade Opus params on the SDP. The Opus payload type
   // varies (typically 111) so we look it up dynamically. Adds:
@@ -431,6 +457,20 @@ function CallScreenInner() {
       try { if (typeof globalThis !== 'undefined') delete globalThis.__chatyyTeardownActiveCall; } catch {}
     };
   }, [callId]);
+
+  // Spring entrance — fires once on mount. Drives the status strip +
+  // bottom action bar in from translateY:24 → 0 with fade. 260ms per spec,
+  // tension/friction tuned to read snappy not bouncy on a call surface.
+  // useNativeDriver:false to compose cleanly with controlsFadeAnim (which is
+  // non-native because it animates layout-driven opacity on Animated.View).
+  useEffect(() => {
+    Animated.spring(barEnterAnim, {
+      toValue: 1,
+      tension: 110,
+      friction: 11,
+      useNativeDriver: false,
+    }).start();
+  }, [barEnterAnim]);
 
   useEffect(() => {
     if (Platform.OS === 'web') {
@@ -960,6 +1000,17 @@ function CallScreenInner() {
     // throw — both visible to user as a phantom "ringing" or crash banner.
     if (endedRef.current) return;
     if (pc.signalingState === 'closed' || pc.connectionState === 'closed') return;
+    // Late/duplicate call_answer guard: only apply when we're actually
+    // waiting for an answer. If state is 'stable' the offer/answer cycle
+    // already completed (or we never sent an offer — e.g. a re-delivered
+    // answer after WS reconnect), and setRemoteDescription would throw
+    // `InvalidStateError`, killing the call setup silently. Cross-platform
+    // call regression (#877) traced to this when iOS sender retried the
+    // offer mid-flight and Android sent two answers back-to-back.
+    if (pc.signalingState !== 'have-local-offer') {
+      console.log('[Call] handleAnswer: skipping, signalingState=' + pc.signalingState);
+      return;
+    }
 
     // Caller proof-of-life: peer device processed our offer enough to send
     // an answer back. Flip to "ringing" UI until ICE actually connects.
@@ -1057,7 +1108,7 @@ function CallScreenInner() {
           if (videoTrack && videoTx?.sender && videoTx.sender.track !== videoTrack) {
             try { await videoTx.sender.replaceTrack(videoTrack); console.log('[Call] pre-answer: replaceTrack video'); } catch {}
           }
-          if (audioTrack && !audioMuted) audioTrack.enabled = true;
+          if (audioTrack && !audioMutedRef.current) audioTrack.enabled = true;
           if (videoTrack && videoEnabledRef.current) videoTrack.enabled = true;
           console.log('[Call] pre-answer audit: tx=' + transceivers.length + ' audioTx=' + !!audioTx + ' videoTx=' + !!videoTx);
         }
@@ -1069,6 +1120,12 @@ function CallScreenInner() {
       // even if the caller is sending it. The corresponding addTrack for
       // local video happens later when the user enables their camera.
       const answer = await pc.createAnswer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
+      // Apply WhatsApp-grade Opus tuning to the answer SDP as well — without
+      // this the callee falls back to default Opus (60ms ptime, no FEC, no
+      // DTX) while the caller is tuned. Mismatch surfaces as 1-3s of audio
+      // delay post-answer (#841) because the audio engine waits for the
+      // negotiated payload format to align before unmuting playback.
+      try { answer.sdp = applyOpusTuning(answer.sdp); } catch {}
       await pc.setLocalDescription(answer);
 
       sendSignaling('call_answer', {
@@ -1231,6 +1288,12 @@ function CallScreenInner() {
       try { pcRef.current.close(); } catch {}
       pcRef.current = null;
     }
+    // Drop any buffered ICE candidates so a stale candidate from this
+    // call can never be applied to the next PeerConnection (component
+    // remount preserves the iceCandidateQueueRef instance across HMR /
+    // PiP minimization re-entry; clearing here is the only place that
+    // catches the explicit-end path).
+    try { iceCandidateQueueRef.current = []; } catch {}
 
     // Audio session: prefer the new native module (notifies Spotify/Music
     // to resume). Fall back to expo-audio for parity if the module isn't
@@ -1270,6 +1333,18 @@ function CallScreenInner() {
     wsUnsubsRef.current.forEach(unsub => { try { unsub(); } catch {} });
     wsUnsubsRef.current = [];
 
+    // FaceTime-style end card — fade in over 220ms, hold ~1.1s, then nav.
+    // The total budget stays close to 1.5s so the user reads the duration +
+    // "encerrada" label before the screen pops back. Native driver because
+    // we only animate opacity.
+    try {
+      Animated.timing(endCardAnim, {
+        toValue: 1,
+        duration: 220,
+        useNativeDriver: true,
+      }).start();
+    } catch {}
+
     setTimeout(() => {
       try {
         if (router.canGoBack()) {
@@ -1280,8 +1355,8 @@ function CallScreenInner() {
       } catch {
         try { router.replace('/chat'); } catch {}
       }
-    }, 800);
-  }, [callId, contactEmail, sendSignaling, router]);
+    }, 1500);
+  }, [callId, contactEmail, sendSignaling, router, endCardAnim]);
 
   // Keep handleEndCallRef pointing at the latest handleEndCall so the
   // external __chatyyTeardownActiveCall (registered above before
@@ -4064,8 +4139,16 @@ function CallScreenInner() {
     try { return require('@stream-io/react-native-webrtc').RTCView; } catch { return null; }
   })() : null;
 
-  const showRemoteVideo = videoEnabled && peerConnected && peerVideoEnabled && (Platform.OS === 'web' ? !!remoteVideoRef.current : !!remoteStreamUrl);
-  const showLocalVideo = videoEnabled && (Platform.OS === 'web' ? !!localStreamRef.current : !!localStreamUrl);
+  // showRemoteVideo also depends on the native RTCView module being
+  // loadable. If the @stream-io/react-native-webrtc module is missing
+  // (broken native build), RTCView resolves null above and the absoluteFill
+  // <RTCView/> never renders — without this check we'd still claim video
+  // is "showing" and hide the avatar/centerArea fallback below, leaving
+  // the user staring at an empty black screen instead of the avatar +
+  // status + decline button.
+  const remoteVideoAvailable = Platform.OS === 'web' ? !!remoteVideoRef.current : (!!remoteStreamUrl && !!RTCView);
+  const showRemoteVideo = videoEnabled && peerConnected && peerVideoEnabled && remoteVideoAvailable;
+  const showLocalVideo = videoEnabled && (Platform.OS === 'web' ? !!localStreamRef.current : (!!localStreamUrl && !!RTCView));
   const isVideoCall = isVideoParam === '1' || isVideoParam === 'true';
 
   return (
@@ -4115,7 +4198,16 @@ function CallScreenInner() {
           {peerConnected && !ended && (
             <Animated.View
               pointerEvents="box-none"
-              style={[styles.statusStrip, { paddingTop: insets.top + 8, opacity: controlsFadeAnim }]}
+              style={[styles.statusStrip, {
+                paddingTop: insets.top + 8,
+                opacity: Animated.multiply(controlsFadeAnim, barEnterAnim),
+                transform: [{
+                  translateY: barEnterAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [-12, 0],
+                  }),
+                }],
+              }]}
             >
               <View style={styles.statusStripSide}>
                 <SignalBars quality={connectionQuality} score={qualityScore} rtt={rttMs} />
@@ -4228,10 +4320,26 @@ function CallScreenInner() {
               Pre-connect we show the loud orange banner; post-connect (media
               still flowing through ICE restart) we show the subtle one below. */}
           {reconnecting && !ended && !peerConnected && (
-            <View style={[styles.weakBanner, { backgroundColor: 'rgba(245,158,11,0.95)' }]}>
-              <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
-              <Text style={styles.weakBannerText}>{t('call.reconnecting') || 'Reconectando…'}</Text>
-            </View>
+            <Animated.View
+              style={[styles.reconnectBanner, {
+                // Slide-down from the top inset edge as the banner appears.
+                transform: [{
+                  translateY: barEnterAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [-40, 0],
+                  }),
+                }],
+              }]}
+            >
+              {/* Signal-loss SVG — broadcast tower with a slash, brand-amber. */}
+              <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" style={{ marginRight: 8 }}>
+                <SvgPath d="M5 12c2-2 5-2 7 0M3 9c4-4 11-4 15 0M7 15c1-1 3-1 4 0" stroke="#fff" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+                <SvgCircleHand cx={12} cy={18.5} r={1.3} fill="#fff" />
+                <SvgLine x1={3} y1={21} x2={21} y2={3} stroke="#fff" strokeWidth={1.6} strokeLinecap="round" opacity={0.7} />
+              </Svg>
+              <Text style={styles.reconnectBannerText}>{t('call.reconnecting') || 'Reconectando…'}</Text>
+              <ActivityIndicator size="small" color="rgba(255,255,255,0.9)" style={{ marginLeft: 8 }} />
+            </Animated.View>
           )}
 
           {/* Subtle reconnect micro-banner — peerConnected but ICE is
@@ -4647,9 +4755,28 @@ function CallScreenInner() {
         </TouchableOpacity>
       )}
 
-      {/* Bottom controls — WhatsApp style: 2 rows */}
-      {!ended && !connectionFailed && (
-        <Animated.View style={[styles.controlsBar, { paddingBottom: insets.bottom + 16, opacity: controlsFadeAnim }]}>
+      {/* Bottom controls — WhatsApp style: 2 rows.
+          Only `!ended` gates the row: previously `!connectionFailed` also
+          hid it, which meant if the call failed mid-video (RTCView still
+          painted the last remote frame) the user lost every visible
+          button — read as a frozen/white screen with no way to hang up.
+          The centerArea reconnect/end fallback only shows when
+          `!showRemoteVideo`, so we must keep this hangup reachable in all
+          other states. */}
+      {!ended && (
+        <Animated.View style={[styles.controlsBar, {
+          paddingBottom: insets.bottom + 16,
+          // controlsFadeAnim handles tap-to-hide. barEnterAnim drives the
+          // mount entrance (slide-up + fade) — multiplied so the entrance
+          // wins on first paint and tap-fade wins thereafter.
+          opacity: Animated.multiply(controlsFadeAnim, barEnterAnim),
+          transform: [{
+            translateY: barEnterAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: [28, 0],
+            }),
+          }],
+        }]}>
           {/* Secondary row: advanced controls (noise, hand, screen-share,
               add participant, filters, more). The primary 5-button row
               below carries mute / video / hangup / camera / speaker. */}
@@ -4956,6 +5083,33 @@ function CallScreenInner() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* End-state card — fades over the screen for ~1.5s after hangup so
+          the user reads "Chamada encerrada · MM:SS" with the contact's
+          avatar before /call pops back. FaceTime/Skype parity. Pointer
+          events disabled so it never blocks the still-pending teardown. */}
+      {ended && (
+        <Animated.View
+          pointerEvents="none"
+          style={[styles.endCardOverlay, { opacity: endCardAnim }]}
+        >
+          <View style={styles.endCard}>
+            <AvatarCircle name={callerName} email={contactEmail} size={84} />
+            <Text style={styles.endCardName} numberOfLines={1}>{callerName}</Text>
+            <View style={styles.endCardRow}>
+              <Text style={styles.endCardLabel} numberOfLines={1}>
+                {t('call.ended') || 'Chamada encerrada'}
+              </Text>
+              {callDuration > 0 && (
+                <>
+                  <Text style={styles.endCardDot}>·</Text>
+                  <Text style={styles.endCardDuration}>{formatDuration(callDuration)}</Text>
+                </>
+              )}
+            </View>
+          </View>
+        </Animated.View>
+      )}
     </View>
   );
 }
@@ -5164,13 +5318,21 @@ const styles = StyleSheet.create({
     left: 0,
     top: 0,
     width: 110,
-    height: 160,
-    borderRadius: 16,
+    height: 156,
+    borderRadius: 18,
     overflow: 'hidden',
     zIndex: 30,
-    elevation: 10,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.25)',
+    // Deeper shadow + hairline brand-purple ring so the PiP reads "lifted"
+    // off the remote frame instead of butted flat against it (FaceTime
+    // parity). Web ignores elevation; native uses it for Android raised
+    // surface, iOS draws shadow from shadowColor/Opacity/Radius/Offset.
+    elevation: 12,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.32)',
+    shadowColor: '#000',
+    shadowOpacity: 0.45,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
   },
   localVideo: {
     flex: 1,
@@ -5796,6 +5958,96 @@ const styles = StyleSheet.create({
     borderRadius: 25,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+
+  // End-state card — fades over the whole screen after hangup so the user
+  // reads contact name + duration before /call pops back. Sits above
+  // everything (zIndex 60) so even leftover banners don't bleed through.
+  endCardOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.78)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 60,
+    ...Platform.select({
+      web: { backdropFilter: 'blur(18px)' },
+      default: {},
+    }),
+  },
+  endCard: {
+    alignItems: 'center',
+    paddingHorizontal: 32,
+    paddingVertical: 28,
+    backgroundColor: 'rgba(28,28,32,0.92)',
+    borderRadius: 22,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.08)',
+    shadowColor: '#000',
+    shadowOpacity: 0.5,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 12 },
+    minWidth: 240,
+    maxWidth: '80%',
+  },
+  endCardName: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '700',
+    marginTop: 14,
+    letterSpacing: -0.3,
+    textAlign: 'center',
+  },
+  endCardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 6,
+    gap: 6,
+  },
+  endCardLabel: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  endCardDot: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 13,
+    marginHorizontal: 2,
+  },
+  endCardDuration: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 13,
+    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+  },
+
+  // Reconnect slide-down banner — replaces the old flat weakBanner with a
+  // dedicated row that includes a broadcast SVG + label + spinner. Sits at
+  // the top of the screen so the user sees status without blocking the
+  // center avatar or the action bar.
+  reconnectBanner: {
+    position: 'absolute',
+    top: 80,
+    left: 16,
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(245,158,11,0.95)',
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    zIndex: 18,
+    shadowColor: '#000',
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  reconnectBannerText: {
+    color: '#fff',
+    fontSize: 13.5,
+    fontWeight: '700',
+    letterSpacing: -0.1,
   },
 });
 

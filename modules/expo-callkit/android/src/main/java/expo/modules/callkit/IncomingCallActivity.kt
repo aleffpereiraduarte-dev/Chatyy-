@@ -328,6 +328,14 @@ class IncomingCallActivity : AppCompatActivity() {
   private fun onAccept() {
     stopRinging()
 
+    // #841: pre-warm AudioManager antes do RN mount pra WebRTC ontrack nao perder os primeiros 1-3s de RTP
+    try {
+      val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+      am.mode = android.media.AudioManager.MODE_IN_COMMUNICATION
+      am.requestAudioFocus(null, android.media.AudioManager.STREAM_VOICE_CALL,
+                           android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+    } catch (_: Exception) {}
+
     // Save to SharedPreferences so JS can read on cold start
     ExpoCallKitModule.savePendingAcceptedCall(
       this, callId ?: "", callerName ?: "", callerEmail ?: "", conversationId ?: "", hasVideo
@@ -352,7 +360,8 @@ class IncomingCallActivity : AppCompatActivity() {
       startActivity(launchIntent)
     }
 
-    finish()
+    // #867: finishAndRemoveTask remove a singleInstance task no mesmo frame (finish() pode deixar ghost window 200-600ms)
+    finishAndRemoveTask()
   }
 
   private fun onDecline() {

@@ -7,8 +7,9 @@ import {
   IconInbox, IconSend, IconDraft, IconTrash, IconAlertTriangle,
   IconArchive, IconStarFilled, IconCompose, IconFolder, IconClock,
   IconFolderPlus, IconPlus, IconX, IconCheck,
-  IconFilm, IconMessageSquare, IconCalendar, IconGlobe, IconUser, IconZap, IconCamera, IconStar, IconStickyNote, IconBell, IconSearch, IconBookmark,
+  IconFilm, IconMessageSquare, IconCalendar, IconGlobe, IconUser, IconZap, IconCamera, IconStar, IconStickyNote, IconBell, IconSearch, IconBookmark, IconChevronDown, IconLogout,
 } from './Icons';
+import AvatarCircle from './AvatarCircle';
 import { LABEL_COLORS, LABEL_NAMES } from './LabelPicker';
 import * as api from '../services/api';
 import { useConfirm } from './ConfirmModal';
@@ -590,34 +591,45 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
         </TouchableOpacity>
       )}
 
-      {/* Labels section */}
+      {/* Labels section — collapsible (chevron rotate spring) */}
       <View style={[s.divider, { borderTopColor: colors.borderLight }]} />
-      <Text style={[s.sectionLabel, { color: colors.textTertiary }]}>{t('sidebar.labels')}</Text>
-      {LABEL_NAMES.map(name => {
-        const labelStyle = LABEL_COLORS[name];
-        const lc = labelCounts?.[name];
-        const unreadCount = lc?.unread || 0;
-        const totalCount = lc?.total || 0;
-        return (
-          <LabelItem
-            key={name}
-            name={name}
-            labelStyle={labelStyle}
-            colors={colors}
-            isActive={activeLabel === name}
-            unreadCount={unreadCount}
-            totalCount={totalCount}
-            onPress={() => onFolderPress('INBOX', name)}
-          />
-        );
-      })}
+      <CollapsibleSection
+        title={t('sidebar.labels')}
+        colors={colors}
+        defaultExpanded={true}
+        storageKey="labels"
+      >
+        {LABEL_NAMES.map(name => {
+          const labelStyle = LABEL_COLORS[name];
+          const lc = labelCounts?.[name];
+          const unreadCount = lc?.unread || 0;
+          const totalCount = lc?.total || 0;
+          return (
+            <LabelItem
+              key={name}
+              name={name}
+              labelStyle={labelStyle}
+              colors={colors}
+              isActive={activeLabel === name}
+              unreadCount={unreadCount}
+              totalCount={totalCount}
+              onPress={() => onFolderPress('INBOX', name)}
+            />
+          );
+        })}
+      </CollapsibleSection>
 
-      {/* Logout */}
+      {/* User pill footer — avatar + name + status dot, tappable → profile.
+          Replaces the old text-only logout row. Logout moves to a small icon
+          on the right so the rail still has a one-tap escape, but the primary
+          action is "view/edit my profile" (Gmail/Outlook pattern). */}
       <View style={[s.divider, { borderTopColor: colors.borderLight }]} />
-      <TouchableOpacity
-        style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, gap: 10 }}
-        onPress={async () => {
-          // WhatsApp-grade confirm em vez de Alert.alert (Android 6 feel).
+      <UserPill
+        user={user}
+        colors={colors}
+        t={t}
+        onPress={() => onNavigate?.('/profile')}
+        onLogout={async () => {
           const ok = Platform.OS === 'web'
             ? window.confirm(t('sidebar.logoutConfirm') || 'Deseja sair da conta?')
             : await confirm({
@@ -628,15 +640,123 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
               });
           if (ok) doLogout?.();
         }}
-      >
-        <IconX size={18} color={colors.error || '#dc2626'} />
-        <Text style={{ color: colors.error || '#dc2626', fontSize: 14, fontWeight: '600' }}>{t('sidebar.logout') || 'Sair'}</Text>
-        {user?.email && (
-          <Text style={{ color: colors.textTertiary, fontSize: 11, marginLeft: 'auto' }} numberOfLines={1}>{user.email}</Text>
-        )}
-      </TouchableOpacity>
+      />
       <View style={{ height: 30 }} />
     </ScrollView>
+  );
+}
+
+// Collapsible section with chevron rotate spring.
+// Why: Labels/folders accumulate quickly; users want to collapse sections
+// they don't need without losing the section header context.
+function CollapsibleSection({ title, colors, defaultExpanded = true, children }) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const rotate = useRef(new Animated.Value(defaultExpanded ? 1 : 0)).current;
+  const childOpacity = useRef(new Animated.Value(defaultExpanded ? 1 : 0)).current;
+  const [hovered, setHovered] = useState(false);
+
+  const toggle = useCallback(() => {
+    const next = !expanded;
+    setExpanded(next);
+    Animated.parallel([
+      Animated.spring(rotate, {
+        toValue: next ? 1 : 0,
+        ...AnimTiming.springSnappy,
+        useNativeDriver: true,
+      }),
+      Animated.timing(childOpacity, {
+        toValue: next ? 1 : 0,
+        duration: AnimTiming.fast,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [expanded, rotate, childOpacity]);
+
+  const rotateDeg = rotate.interpolate({ inputRange: [0, 1], outputRange: ['-90deg', '0deg'] });
+  const webHover = Platform.OS === 'web' ? {
+    onMouseEnter: () => setHovered(true),
+    onMouseLeave: () => setHovered(false),
+  } : {};
+
+  return (
+    <View>
+      <TouchableOpacity
+        onPress={toggle}
+        activeOpacity={0.6}
+        style={[
+          s.collapsibleHeader,
+          hovered && Platform.OS === 'web' && { backgroundColor: colors.folderHover },
+        ]}
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}
+        {...webHover}
+      >
+        <Text style={[s.sectionLabel, { color: colors.textTertiary, paddingHorizontal: 0, marginBottom: 0, flex: 1 }]}>
+          {title}
+        </Text>
+        <Animated.View style={{ transform: [{ rotate: rotateDeg }] }}>
+          <IconChevronDown size={14} color={colors.textTertiary} />
+        </Animated.View>
+      </TouchableOpacity>
+      {expanded && (
+        <Animated.View style={{ opacity: childOpacity }}>
+          {children}
+        </Animated.View>
+      )}
+    </View>
+  );
+}
+
+// User pill footer — avatar + name + green dot + small logout icon.
+// Single tap on the pill body → profile; small X on the right → logout.
+function UserPill({ user, colors, t, onPress, onLogout }) {
+  const [hovered, setHovered] = useState(false);
+  const pressScale = useRef(new Animated.Value(1)).current;
+  const webHover = Platform.OS === 'web' ? {
+    onMouseEnter: () => setHovered(true),
+    onMouseLeave: () => setHovered(false),
+  } : {};
+
+  const name = user?.name || user?.email?.split('@')[0] || t('sidebar.profile') || 'Profile';
+  const email = user?.email || '';
+
+  return (
+    <Animated.View style={{ transform: [{ scale: pressScale }] }}>
+      <View style={[s.userPill, hovered && { backgroundColor: colors.folderHover }]} {...webHover}>
+        <TouchableOpacity
+          style={s.userPillBody}
+          onPress={onPress}
+          onPressIn={() => Animated.spring(pressScale, { toValue: 0.98, ...AnimTiming.springPress, useNativeDriver: true }).start()}
+          onPressOut={() => Animated.spring(pressScale, { toValue: 1, ...AnimTiming.springSmooth, useNativeDriver: true }).start()}
+          activeOpacity={0.75}
+          accessibilityRole="button"
+          accessibilityLabel={t('sidebar.profile') || 'Profile'}
+        >
+          <View style={s.userPillAvatarWrap}>
+            <AvatarCircle email={email} name={name} size={36} />
+            {/* Online status dot — green ring + dot */}
+            <View style={[s.userPillStatusDot, { borderColor: colors.sidebarBg, backgroundColor: '#10b981' }]} />
+          </View>
+          <View style={{ flex: 1, marginLeft: 10, minWidth: 0 }}>
+            <Text numberOfLines={1} style={[s.userPillName, { color: colors.text }]}>{name}</Text>
+            {!!email && (
+              <Text numberOfLines={1} style={[s.userPillEmail, { color: colors.textTertiary }]}>{email}</Text>
+            )}
+          </View>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={onLogout}
+          style={s.userPillLogout}
+          activeOpacity={0.6}
+          accessibilityRole="button"
+          accessibilityLabel={t('sidebar.logout') || 'Sair'}
+          {...(Platform.OS === 'web' ? { title: t('sidebar.logout') || 'Sair' } : {})}
+        >
+          <IconLogout size={18} color={colors.textSecondary} />
+        </TouchableOpacity>
+      </View>
+    </Animated.View>
   );
 }
 
@@ -911,4 +1031,54 @@ const s = StyleSheet.create({
     } : {}),
   },
   collapsedTooltipText: { fontSize: 12, fontWeight: '600' },
+  // Collapsible section header (chevron rotate spring)
+  collapsibleHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: 6,
+    marginBottom: Spacing.sm,
+    marginTop: 2,
+    borderRadius: 8,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 0.15s ease' } : {}),
+  },
+  // User pill footer (avatar + name + status dot, tappable to profile)
+  userPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginHorizontal: 8,
+    marginBottom: 4,
+    borderRadius: 14,
+    ...(Platform.OS === 'web' ? { transition: 'background-color 0.18s ease' } : {}),
+  },
+  userPillBody: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    minWidth: 0,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer' } : {}),
+  },
+  userPillAvatarWrap: { position: 'relative', width: 36, height: 36 },
+  userPillStatusDot: {
+    position: 'absolute',
+    right: -1,
+    bottom: -1,
+    width: 11,
+    height: 11,
+    borderRadius: 6,
+    borderWidth: 2,
+  },
+  userPillName: { fontSize: 13, fontWeight: '700', letterSpacing: -0.1 },
+  userPillEmail: { fontSize: 11, fontWeight: '500', marginTop: 1 },
+  userPillLogout: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 4,
+    ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 0.15s ease' } : {}),
+  },
 });

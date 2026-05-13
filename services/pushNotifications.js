@@ -332,13 +332,39 @@ export async function registerForPushNotifications() {
     // easConfig.projectId é o fallback documentado.
     const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
     _diagPush('project_id', projectId || 'undefined');
+    // #836: Android cold-start race vs Google Play Services → SERVICE_NOT_AVAILABLE.
+    // Retry 4× com backoff (250ms → 750ms → 1500ms → 3000ms) antes de desistir.
     let tokenData;
-    try {
-      tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
-      _diagPush('expo_token', tokenData?.data ? ('len=' + String(tokenData.data).length) : 'empty');
-    } catch (e) {
-      _diagPush('expo_token_err', e?.message || String(e));
-      throw e;
+    let lastErr = null;
+    const _retryDelays = [0, 250, 750, 1500, 3000];
+    for (let attempt = 0; attempt < _retryDelays.length; attempt++) {
+      if (_retryDelays[attempt] > 0) {
+        await new Promise(r => setTimeout(r, _retryDelays[attempt]));
+      }
+      try {
+        tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
+        if (tokenData?.data) {
+          _diagPush('expo_token', 'len=' + String(tokenData.data).length + (attempt > 0 ? ' attempt=' + (attempt + 1) : ''));
+          lastErr = null;
+          break;
+        }
+        _diagPush('expo_token_empty_attempt' + (attempt + 1), 'no data');
+      } catch (e) {
+        lastErr = e;
+        const msg = e?.message || String(e);
+        _diagPush('expo_token_err_attempt' + (attempt + 1), msg);
+        // Não retry em erros não-transient
+        if (!/SERVICE_NOT_AVAILABLE|TIMEOUT|TIMEDOUT|network/i.test(msg)) break;
+      }
+    }
+    if (lastErr || !tokenData?.data) {
+      _diagPush('expo_token_err_final', lastErr ? (lastErr.message || String(lastErr)) : 'no token after retries');
+      if (lastErr) throw lastErr;
+      // No error thrown but every retry returned empty data. Bail out cleanly
+      // instead of falling through — otherwise the `_setCachedPushToken(tokenData.data)`
+      // below would TypeError on `undefined.data` and we'd hit the outer
+      // catch with a misleading message.
+      return null;
     }
 
     // Android notification channels

@@ -1575,6 +1575,28 @@ export default function InboxScreen() {
                 </View>
                 <Text style={[s.noSelectionTitle, { color: colors.textSecondary }]}>{t('inbox.selectEmail')}</Text>
                 <Text style={[s.noSelectionSub, { color: colors.textTertiary }]}>{t('inbox.selectHint')}</Text>
+                {/* Brand CTA — turns the dead empty state into an actionable
+                    prompt to compose, mirroring how Gmail/Superhuman handle
+                    inbox-zero on desktop. */}
+                <TouchableOpacity
+                  onPress={() => router.push('/compose')}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('compose.new') || 'Compose'}
+                  style={{
+                    marginTop: 20, flexDirection: 'row', alignItems: 'center', gap: 8,
+                    backgroundColor: colors.primary, borderRadius: 14,
+                    paddingHorizontal: 18, paddingVertical: 11,
+                    ...(Platform.OS === 'web'
+                      ? { cursor: 'pointer', boxShadow: `0 4px 16px ${colors.primary}40` }
+                      : { shadowColor: colors.primary, shadowOpacity: 0.35, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 4 }),
+                  }}
+                >
+                  <IconCompose size={16} color="#fff" />
+                  <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700', letterSpacing: 0.1 }}>
+                    {t('compose.new') || 'New email'}
+                  </Text>
+                </TouchableOpacity>
               </View>
             )}
           </View>

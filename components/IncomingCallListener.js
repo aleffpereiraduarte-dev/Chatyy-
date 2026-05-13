@@ -496,6 +496,10 @@ export default function IncomingCallListener() {
           callRef.current = null;
           callStateRef.current = null;
           stopRingtone();
+          // Clear the 45s auto-missed timer so the timeout closure can't fire
+          // afterwards and log a *second* missed entry (or a missed entry for
+          // a call that was actually blocked, not missed).
+          if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
           setCall(null);
           acceptedRef.current = false;
           handlingRef.current = false;
@@ -513,6 +517,9 @@ export default function IncomingCallListener() {
           callRef.current = null;
           callStateRef.current = null;
           stopRingtone();
+          // Cancel the auto-missed timer — call was handled elsewhere, so we
+          // mustn't insert a phantom "missed" row 45s later.
+          if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
           setCall(null);
           acceptedRef.current = false; // Reset for next call
           handlingRef.current = false;
@@ -530,6 +537,8 @@ export default function IncomingCallListener() {
           callRef.current = null;
           callStateRef.current = null;
           stopRingtone();
+          // Cancel auto-missed timer — answered on another device.
+          if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
           setCall(null);
           acceptedRef.current = false;
           handlingRef.current = false;
@@ -564,6 +573,11 @@ export default function IncomingCallListener() {
           callRef.current = null;
           callStateRef.current = null;
           stopRingtone();
+          // CRITICAL: cancel the 45s auto-missed timer. Without this, both
+          // call_end and the timer fire addCallToHistory(type:'missed'), so the
+          // user saw the same missed call twice in the Calls tab whenever the
+          // caller hung up while the ringer was still active.
+          if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
           setCall(null);
         }
       }));
