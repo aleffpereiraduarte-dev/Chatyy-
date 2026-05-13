@@ -707,6 +707,14 @@ export default function LiveViewerScreen() {
   }, []);
 
   const handleChatMsg = useCallback((msg) => {
+    // WS server's live_chat broadcast does NOT exclude the sender (unlike
+    // live_reaction which passes clientId). handleSendChat already inserts
+    // an optimistic local bubble, so without this guard the sender sees
+    // their own message TWICE (optimistic + server echo). Skip self.
+    const myEmail = (user?.email || '').toLowerCase();
+    const fromEmail = (msg.sender_email || '').toLowerCase();
+    if (myEmail && fromEmail && myEmail === fromEmail) return;
+
     const entry = new Animated.Value(0);
     setChatMessages(prev => [...prev, {
       id: String(++chatIdRef.current),
@@ -717,14 +725,15 @@ export default function LiveViewerScreen() {
       entry,
     }]);
     Animated.timing(entry, { toValue: 1, duration: 260, useNativeDriver: true }).start();
-  }, []);
+  }, [user]);
 
   const handleSendChat = useCallback((text) => {
-    // Anti-spam rate limit: 1 comment / 1.2s. Drops silently below threshold
-    // so the composer feels "instant" but the WS server isn't flooded by a
-    // sticky-key viewer. Mirrors Instagram Live's invisible client throttle.
+    // Anti-spam rate limit: 1 comment / 600ms. Backend already enforces
+    // 15 msgs / 10s server-side, so the client throttle just smooths bursts.
+    // Was 1.2s — too aggressive, users tapping send rapidly hit silent
+    // drops and felt the composer was broken ("sistema quebrando").
     const now = Date.now();
-    if (now - lastChatSendAtRef.current < 1200) return;
+    if (now - lastChatSendAtRef.current < 600) return;
     lastChatSendAtRef.current = now;
 
     const senderName = user?.name || user?.email?.split('@')[0] || 'You';
@@ -867,23 +876,66 @@ export default function LiveViewerScreen() {
   // shows a queue/inbox. Server side: the live channel already broadcasts
   // every WS message to all subs of `live_${session_id}` so the host
   // receives it without server changes.
+  //
+  // Before: the entire send was wrapped in `try { if(ws.OPEN) send() } catch`
+  // — if the WS was reconnecting (or paramSessionId fell through a stale
+  // closure) NOTHING happened: no toast, no state flip, no error. User taps
+  // "Pedir pra entrar", button stays unchanged → "não funciona". Fix: surface
+  // a visible toast on every code-path and flip optimistic state so the user
+  // always gets feedback, even when the WS is mid-reconnect (the host's
+  // requests inbox is already tolerant of duplicates by email).
   const [joinRequested, setJoinRequested] = useState(false);
   const requestToJoin = useCallback(() => {
     if (joinRequested) return;
+    if (!paramSessionId || !user?.email) {
+      try { require('react-native').Alert.alert(t('live.aoVivo') || 'AO VIVO', t('live.requestSendFailed') || 'Não foi possível enviar o pedido — tente de novo'); } catch {}
+      return;
+    }
+    let sent = false;
     try {
       const ws = wsRef.current;
-      if (ws && ws.readyState === WebSocket.OPEN && paramSessionId) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
           type: 'live_join_request',
           session_id: paramSessionId,
           viewer_email: user?.email,
           viewer_name: user?.name || (user?.email || '').split('@')[0],
         }));
-        setJoinRequested(true);
-        setTimeout(() => setJoinRequested(false), 60000); // allow re-request after 1 min
+        sent = true;
       }
     } catch {}
-  }, [paramSessionId, user?.email, user?.name, joinRequested]);
+    if (sent) {
+      // Optimistic flip + a tiny haptic so the user feels the tap landed.
+      setJoinRequested(true);
+      try { require('react-native').Vibration.vibrate(8); } catch {}
+      setTimeout(() => setJoinRequested(false), 60000); // allow re-request after 1 min
+    } else {
+      // WS reconnecting — flip state anyway so the user sees the tap took
+      // effect, and queue a single retry once the socket reopens. The host's
+      // join-requests Set already dedupes by email so a stale duplicate is a
+      // no-op even if both attempts land.
+      setJoinRequested(true);
+      try { require('react-native').Vibration.vibrate(8); } catch {}
+      const retry = setInterval(() => {
+        try {
+          const ws2 = wsRef.current;
+          if (ws2 && ws2.readyState === WebSocket.OPEN) {
+            ws2.send(JSON.stringify({
+              type: 'live_join_request',
+              session_id: paramSessionId,
+              viewer_email: user?.email,
+              viewer_name: user?.name || (user?.email || '').split('@')[0],
+            }));
+            clearInterval(retry);
+          }
+        } catch {}
+      }, 800);
+      // Give up after 8s — if still not connected the live session is
+      // probably toast anyway.
+      setTimeout(() => clearInterval(retry), 8000);
+      setTimeout(() => setJoinRequested(false), 60000);
+    }
+  }, [paramSessionId, user?.email, user?.name, joinRequested, t]);
 
   // Share the live broadcast link. Uses the native share sheet on iOS/Android
   // and navigator.share (or clipboard fallback) on web. The URL resolves to

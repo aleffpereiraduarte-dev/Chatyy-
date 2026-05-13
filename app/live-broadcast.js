@@ -534,6 +534,14 @@ export default function LiveBroadcastScreen() {
   }, []);
 
   const handleChatMessage = useCallback((msg) => {
+    // WS server's live_chat broadcast does NOT exclude the sender. The host's
+    // handleSendChat already inserts an optimistic local bubble, so without
+    // this guard the host sees their own comment twice (echo from the server
+    // arrives ~200ms later, looks like duplicate send).
+    const myEmail = (user?.email || '').toLowerCase();
+    const fromEmail = (msg.sender_email || '').toLowerCase();
+    if (myEmail && fromEmail && myEmail === fromEmail) return;
+
     setChatMessages(prev => [...prev, {
       id: String(++chatIdRef.current),
       name: msg.sender_name || msg.sender_email?.split('@')[0] || '?',
@@ -541,7 +549,7 @@ export default function LiveBroadcastScreen() {
       content: msg.content,
       type: msg.msg_type || 'chat',
     }]);
-  }, []);
+  }, [user]);
 
   // Countdown animation
   const animateCountdown = useCallback((num) => {
