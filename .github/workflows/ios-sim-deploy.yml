@@ -11,6 +11,9 @@ on:
         description: 'Artifact ID to download (from previous ios-sim-build run)'
         required: true
         default: '6965412927'
+  push:
+    paths:
+      - '.github/triggers/ios-sim-deploy.txt'
 
 permissions:
   contents: read
@@ -24,7 +27,7 @@ jobs:
       - name: Download artifact via API
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ARTIFACT_ID: ${{ inputs.artifact_id }}
+          ARTIFACT_ID: ${{ inputs.artifact_id || '6965412927' }}
         run: |
           set -e
           curl -sL -H "Authorization: Bearer $GH_TOKEN" \
