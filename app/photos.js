@@ -904,7 +904,10 @@ export default function PhotosScreen() {
   useEffect(() => {
     const dc = deviceTotalCount || 0;
     const realPending = Math.max(0, dc - (backedUpTotal || 0));
-    if (dc > 0 && realPending > 5 && backupStatus === 'complete') {
+    // Bug 2026-05-14: threshold de 5 fazia status='complete' coexistir com
+    // pendingCount=1-5 — usuário via "todas backed up" E "N pendentes" ao
+    // mesmo tempo. Se há QUALQUER pendente real, status deve refletir isso.
+    if (dc > 0 && realPending > 0 && backupStatus === 'complete') {
       setBackupStatus('needs_backup');
     }
   }, [deviceTotalCount, backedUpTotal, backupStatus]);
