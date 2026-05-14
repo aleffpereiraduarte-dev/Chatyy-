@@ -448,12 +448,19 @@ export default function IncomingCallListener() {
           const appState = AppState.currentState;
           if (appState === 'active' && Platform.OS === 'android') {
             const { NativeModules } = require('react-native');
-            // Try both module names — IncomingCallModule (legacy) +
-            // ExpoCallKit.endCall (current native module). endCall cancels
-            // notification + stops CallRingingService.
-            try { NativeModules?.IncomingCallModule?.dismiss?.(callData.call_id || ''); } catch (_) {}
-            try { NativeModules?.ExpoCallKit?.endCall?.(callData.call_id || ''); } catch (_) {}
-            try { Notifications.dismissAllNotificationsAsync?.(); } catch (_) {}
+            // Try both module names. endCall cancels notification + stops
+            // CallRingingService. Retry 3× over 2s to defeat race conditions
+            // where FCM heads-up arrives ~100ms after WS call_invite or
+            // CallNotificationService starts AFTER the first dismiss call.
+            const dismissNative = () => {
+              try { NativeModules?.IncomingCallModule?.dismiss?.(callData.call_id || ''); } catch (_) {}
+              try { NativeModules?.ExpoCallKit?.endCall?.(callData.call_id || ''); } catch (_) {}
+              try { Notifications.dismissAllNotificationsAsync?.(); } catch (_) {}
+            };
+            dismissNative();
+            setTimeout(dismissNative, 250);
+            setTimeout(dismissNative, 800);
+            setTimeout(dismissNative, 1800);
           }
         } catch (_) {}
         showCall(callData);
