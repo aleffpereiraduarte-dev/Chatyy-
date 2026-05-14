@@ -437,6 +437,25 @@ export default function IncomingCallListener() {
         };
         callRef.current = callData;
         voipDiag('ws_call_invite_show_modal', callData.call_id);
+        // [bug #842 regression 2026-05-14] FCM data message can race the WS
+        // call_invite: FCM may have already fired CallRingingService showing
+        // the native IncomingCallActivity full-screen overlay BEFORE our
+        // CallFirebaseMessagingService foreground guard had AppState=active.
+        // When WS call_invite arrives and app is foreground, JS owns the UI —
+        // force-dismiss any native ring service / notification that may have
+        // slipped through so the user only sees ONE incoming-call screen.
+        try {
+          const appState = AppState.currentState;
+          if (appState === 'active' && Platform.OS === 'android') {
+            const { NativeModules } = require('react-native');
+            // Try both module names — IncomingCallModule (legacy) +
+            // ExpoCallKit.endCall (current native module). endCall cancels
+            // notification + stops CallRingingService.
+            try { NativeModules?.IncomingCallModule?.dismiss?.(callData.call_id || ''); } catch (_) {}
+            try { NativeModules?.ExpoCallKit?.endCall?.(callData.call_id || ''); } catch (_) {}
+            try { Notifications.dismissAllNotificationsAsync?.(); } catch (_) {}
+          }
+        } catch (_) {}
         showCall(callData);
       }));
 
@@ -670,6 +689,37 @@ export default function IncomingCallListener() {
           handlingRef.current = true;
           setCallActive(true);
           stopRingtone();
+
+          // [bug 2026-05-14 ios uplink-mic-silent] When user answers via
+          // native CallKit, AVAudioSession is owned by CallKit and activated
+          // BEFORE JS runs getUserMedia. The WebRTC C++ engine inspects
+          // RTCAudioSession at addTrack time and configures the VPIO audio
+          // unit accordingly — without an active mic input on the session,
+          // it allocates output-only and uplink is silent. Pre-fire the
+          // audio session activation HERE (before router.push) so by the
+          // time call.js creates the PC and runs addTrack, the session has
+          // input wired. Mirror what call.js does for outgoing calls.
+          if (Platform.OS === 'ios') {
+            try {
+              const ExpoAudioSession = require('../modules/expo-audio-session').default;
+              const isVideoCall = (callStateRef.current?.video || data?.hasVideo);
+              if (isVideoCall) {
+                ExpoAudioSession.activateForVideoCall?.();
+              } else {
+                ExpoAudioSession.activateForCall?.(false);
+              }
+              console.log('[IncomingCall] iOS: pre-armed AVAudioSession for native answer (uplink mic)');
+            } catch (e) {
+              console.warn('[IncomingCall] iOS audio pre-arm failed:', e?.message);
+            }
+            try {
+              const { RTCAudioSession } = require('@stream-io/react-native-webrtc');
+              RTCAudioSession.audioSessionDidActivate?.();
+              RTCAudioSession.audioSessionSetActive?.(true);
+            } catch (e) {
+              console.warn('[IncomingCall] iOS RTCAudioSession activate failed:', e?.message);
+            }
+          }
 
           // Android: dismiss IncomingCallActivity now that user accepted from
           // the native screen. Without this, the full-screen Activity lingers

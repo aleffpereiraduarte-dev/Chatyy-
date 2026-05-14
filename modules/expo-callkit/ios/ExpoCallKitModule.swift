@@ -62,6 +62,22 @@ public class ExpoCallKitModule: Module {
         self.setupProvider()
         self.setupVoipPush()
         self.setupNetworkMonitor()
+        // [bug 2026-05-14] Pre-arm AVAudioSession with .playAndRecord +
+        // .voiceChat at module load so when CallKit activates the session
+        // post-answer, the mic input route is already wired. Without this
+        // pre-arm, the session inherits .ambient/.solo from a prior
+        // expo-audio call, and CXAnswerCallAction → fulfill() → didActivate
+        // races with JS PC setup — by the time addTrack runs, the audio
+        // unit has no input attached and uplink mic is silent.
+        // setActive(false) keeps it inactive until CallKit owns it.
+        do {
+          let session = AVAudioSession.sharedInstance()
+          try session.setCategory(.playAndRecord, mode: .voiceChat,
+            options: [.allowBluetooth, .allowBluetoothA2DP, .duckOthers])
+          print("[ExpoCallKit] AVAudioSession pre-armed for voiceChat (mic capture ready)")
+        } catch {
+          print("[ExpoCallKit] AVAudioSession pre-arm failed: \(error)")
+        }
         print("[ExpoCallKit] Auto-initialized on module create")
       }
     }
@@ -600,6 +616,38 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
       try audioSession.setActive(true, options: [])
     } catch {
       print("[ExpoCallKit] Failed to configure AVAudioSession: \(error)")
+    }
+    // [bug 2026-05-14 uplink-mic-silent] When user accepts via native CallKit
+    // UI, AVAudioSession.didActivate fires BEFORE JS creates the
+    // RTCPeerConnection (cold-start path: onCallAnswered → router.push → JS
+    // mount → getUserMedia, can take 1-2s on slower devices). The WebRTC
+    // C++ engine inspects RTCAudioSession state at addTrack time — if it
+    // didn't observe a setActive(true) signal from the CallKit-owned
+    // session, the audio unit (VPIO) is configured WITHOUT mic input,
+    // hence "I hear them but they don't hear me". Manually signal the
+    // react-native-webrtc audio session that the CallKit session is now
+    // active so when JS later runs addTrack, the input is properly wired.
+    // This is the WhatsApp/Telegram pattern — they piggyback on didActivate
+    // to push the audio session state down into their audio engine.
+    let RTCAudioSessionClass: AnyClass? = NSClassFromString("RTCAudioSession")
+    if let cls = RTCAudioSessionClass {
+      let sel = NSSelectorFromString("sharedInstance")
+      if (cls as AnyObject).responds(to: sel) {
+        let rtcSessionUnmanaged = (cls as AnyObject).perform(sel)
+        if let rtcSession = rtcSessionUnmanaged?.takeUnretainedValue() as? NSObject {
+          // -[RTCAudioSession audioSessionDidActivate:] takes AVAudioSession
+          let activateSel = NSSelectorFromString("audioSessionDidActivate:")
+          if rtcSession.responds(to: activateSel) {
+            rtcSession.perform(activateSel, with: audioSession)
+            print("[ExpoCallKit] RTCAudioSession.audioSessionDidActivate forwarded")
+          }
+          // Mark isActive=YES so addTrack-time inspection picks up active state
+          let setActiveSel = NSSelectorFromString("setIsActive:")
+          if rtcSession.responds(to: setActiveSel) {
+            rtcSession.perform(setActiveSel, with: NSNumber(value: true))
+          }
+        }
+      }
     }
   }
   func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {

@@ -1788,22 +1788,28 @@ export default function OneScreen() {
 
   useFocusEffect(useCallback(() => {
     const ONE_HOUR_MS = 3600000;
-    const since = Date.now() - lastActiveAtRef.current;
-    if (since >= ONE_HOUR_MS) {
-      // Reset to a fresh conversation. We don't push a new history fetch —
-      // that's done lazily on first send/auto-restore. Just nuke the in-memory
-      // thread + conversation id so the empty state renders.
+    (async () => {
       try {
-        setMessages([]);
-        setConversationId(null);
-        // Updated timestamp so the next focus inside an hour stays put.
-        lastActiveAtRef.current = Date.now();
+        // Persist last-active across app kills via AsyncStorage. Per-account
+        // key prevents cache leak between users (memory: account_isolation_login_nuke).
+        const key = `oneAi.lastActiveAt.${user?.email || 'anon'}`;
+        const persisted = await getCached(key);
+        const stamp = (typeof persisted === 'number' && persisted > 0) ? persisted : lastActiveAtRef.current;
+        const since = Date.now() - stamp;
+        if (since >= ONE_HOUR_MS) {
+          setMessages([]);
+          setConversationId(null);
+          setCache(key, Date.now(), 86400000 * 30).catch(() => {});
+          lastActiveAtRef.current = Date.now();
+        } else {
+          lastActiveAtRef.current = stamp;
+        }
       } catch {}
-    }
+    })();
     return () => {
       try { aiAbortRef.current?.abort?.(); } catch {}
     };
-  }, []));
+  }, [user?.email]));
 
   const firstName = user?.name?.split(' ')[0] || user?.email?.split('@')[0] || '';
 
@@ -2169,8 +2175,13 @@ export default function OneScreen() {
     if (!msg && !attachedImage) return;
     if (loading) return;
     // [bug-fix #one-ai-1h] Mark activity so the focus-effect 60-min reset
-    // only kicks in after a real idle window.
+    // only kicks in after a real idle window. Persisted via AsyncStorage so
+    // it survives app kill — without this, refreshing kept stale convo.
     lastActiveAtRef.current = Date.now();
+    try {
+      const _k = `oneAi.lastActiveAt.${user?.email || 'anon'}`;
+      setCache(_k, Date.now(), 86400000 * 30).catch(() => {});
+    } catch {}
     // /save <label>: <command> — persists a workflow chip instead of
     // sending. Lets power-users build personal macros in one line.
     if (msg.startsWith('/save ') || msg.startsWith('/salvar ')) {
