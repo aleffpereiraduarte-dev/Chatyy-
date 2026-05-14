@@ -1158,9 +1158,11 @@ function CallScreenInner() {
       // sai com m-lines em ordem aleatória → tela preta sem handshake (#3).
       try {
         if (pc.getTransceivers && pc.getTransceivers().length === 0 && pc.addTransceiver) {
-          pc.addTransceiver('audio', { direction: 'recvonly' });
-          pc.addTransceiver('video', { direction: 'recvonly' });
-          console.log('[Call] handleOffer: pre-seeded recvonly transceivers (audio,video)');
+          // sendrecv (not recvonly) so callee can ALSO send its mic/cam upstream.
+          // recvonly meant: I receive but never transmit — caller heard nothing back.
+          pc.addTransceiver('audio', { direction: 'sendrecv' });
+          pc.addTransceiver('video', { direction: 'sendrecv' });
+          console.log('[Call] handleOffer: pre-seeded sendrecv transceivers (audio,video)');
         }
       } catch (preseedErr) {
         console.warn('[Call] pre-seed tx failed:', preseedErr?.message);
@@ -1185,9 +1187,14 @@ function CallScreenInner() {
           const videoTx = transceivers.find(tr => tr.sender && (tr.sender.track?.kind === 'video' || tr.receiver?.track?.kind === 'video' || tr.mid === '1'));
           if (audioTrack && audioTx?.sender && audioTx.sender.track !== audioTrack) {
             try { await audioTx.sender.replaceTrack(audioTrack); console.log('[Call] pre-answer: replaceTrack audio'); } catch {}
+            // Force sendrecv after binding track — replaceTrack alone keeps the
+            // transceiver in whatever direction it was created with (was recvonly,
+            // causing caller to never receive callee audio). #severe-audio-bug
+            try { if ('direction' in audioTx) audioTx.direction = 'sendrecv'; } catch {}
           }
           if (videoTrack && videoTx?.sender && videoTx.sender.track !== videoTrack) {
             try { await videoTx.sender.replaceTrack(videoTrack); console.log('[Call] pre-answer: replaceTrack video'); } catch {}
+            try { if ('direction' in videoTx) videoTx.direction = 'sendrecv'; } catch {}
           }
           if (audioTrack && !audioMutedRef.current) audioTrack.enabled = true;
           if (videoTrack && videoEnabledRef.current) videoTrack.enabled = true;
