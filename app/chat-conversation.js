@@ -67,6 +67,7 @@ import MessageScreenEffect, { SCREEN_EFFECT_IDS } from '../components/MessageScr
 import MessageBubbleEffect from '../components/MessageBubbleEffect';
 import MediaGallery from '../components/MediaGallery';
 import FormatToolbar from '../components/FormatToolbar';
+import RichTextOverlay from '../components/RichTextOverlay';
 import ChatNotificationSettingsSheet from '../components/ChatNotificationSettingsSheet';
 import { getCachedUri, preCacheUrls, cacheMedia, saveMediaPermanent, saveConversationMedia, initSyncCache } from '../services/mediaCache';
 const ExpoImage = Image;
@@ -19415,11 +19416,20 @@ export default function ChatConversationScreen() {
               <IconSmile size={22} color={showStickerPicker ? '#7C3AED' : (isDark ? '#8696a0' : '#8696a0')} />
             </TouchableOpacity>
 
-            {/* TextInput - center, flex: 1 */}
+            {/* TextInput - center, flex: 1.
+                Rich-text overlay (Telegram/iMessage parity): we render an
+                absolutely-positioned <RichTextOverlay> on top of the TextInput
+                that paints the same string with markdown markers (**, __, ~~,
+                etc.) HIDDEN and the inner text styled (bold/italic/strike).
+                The underlying TextInput keeps the raw markers in its value
+                (so send still ships markdown to the backend) but its text
+                color is transparent — caret + selection handles stay visible
+                because RN paints those separately from glyphs. */}
+            <View style={{ flex: 1, position: 'relative' }}>
             <TextInput
               ref={inputRef}
               style={{
-                flex: 1, fontSize: 15, color: colors.text,
+                width: '100%', fontSize: 15, color: 'transparent',
                 minHeight: 40, maxHeight: 120,
                 paddingHorizontal: 4,
                 paddingTop: Platform.OS === 'ios' ? 10 : 8,
@@ -19541,6 +19551,24 @@ export default function ChatConversationScreen() {
                 }
               }}
             />
+            {/* Visible rich-text layer painted ON TOP of the transparent
+                TextInput. Same font/size/padding so glyphs align 1:1 — the
+                caret + selection from the input below "stick" to the styled
+                spans the user sees. pointerEvents:none in the overlay lets
+                taps pass through to the input. */}
+            <RichTextOverlay
+              text={inputText}
+              style={{
+                fontSize: 15,
+                color: colors.text,
+                paddingHorizontal: 4,
+                paddingTop: Platform.OS === 'ios' ? 10 : 8,
+                paddingBottom: Platform.OS === 'ios' ? 10 : 8,
+                lineHeight: undefined,
+              }}
+              colors={colors}
+            />
+            </View>
 
             {/* Format button - only when typing */}
             {inputText.trim().length > 0 && (

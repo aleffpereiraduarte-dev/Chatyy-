@@ -3837,6 +3837,7 @@ export default {
   'live.chat': 'Chat en vivo',
   'live.sendMessage': 'Enviar mensaje...',
   'live.joined': 'entro',
+  'live.entered': 'entró a la live',
   'live.left': 'salio',
   'live.connecting': 'Conectando...',
   'live.connectionFailed': 'Error de conexión',

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, Animated,
-  Dimensions, ActivityIndicator, Share, Modal, Pressable, ScrollView,
+  View, Text, TouchableOpacity, StyleSheet, Platform, Animated,
+  Dimensions, Share, Modal, Pressable, ScrollView,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,10 +11,20 @@ import { useTheme } from '../context/ThemeContext';
 import * as api from '../services/api';
 import AvatarCircle from '../components/AvatarCircle';
 import {
-  IconX, IconHeart, IconShare, IconStar, IconSend,
-  IconUserPlus, IconCheck, IconMoreVert, IconRotateCcw, IconCamera,
-  IconEye, IconMessageCircle, IconPin,
+  IconX, IconHeart, IconShare, IconStar,
+  IconUserPlus, IconCheck, IconRotateCcw,
 } from '../components/Icons';
+// Live UI primitives (round 62 redesign — extracted from inline JSX into a
+// dedicated component family so the screen stays readable and each piece can
+// be polished independently. WebRTC/HLS/WS logic stays in this file).
+import LiveTopBar from '../components/live/LiveTopBar';
+import LivePinnedChip from '../components/live/LivePinnedChip';
+import LiveRightRail from '../components/live/LiveRightRail';
+import LiveSystemChipStack from '../components/live/LiveSystemChipStack';
+import LiveChatOverlay from '../components/live/LiveChatOverlay';
+import LiveCommentInput from '../components/live/LiveCommentInput';
+import LiveJoinPill from '../components/live/LiveJoinPill';
+import LiveConnectingOverlay from '../components/live/LiveConnectingOverlay';
 
 // Humanize big counts the way Instagram/TikTok do: 999 → 999, 1.2K, 12.4K, 1.2M.
 // We localize the decimal separator from the user locale where possible.
@@ -144,6 +154,16 @@ export default function LiveViewerScreen() {
   const [replaySaved, setReplaySaved] = useState(false);
   const [savingReplay, setSavingReplay] = useState(false);
   const [hearts, setHearts] = useState([]);
+  // Cumulative like counter for the right-rail heart display. Increments
+  // every time a heart is spawned (locally or from a remote reaction WS msg).
+  // Replaces the bare-icon look — TikTok/Instagram both show counts here.
+  const [likeCount, setLikeCount] = useState(0);
+  // System chip stack (joins/leaves) — separate from chat overlay so the
+  // glass pills can live in their own animated column on the left-bottom.
+  const [systemEvents, setSystemEvents] = useState([]);
+  const dismissSystemEvent = useCallback((id) => {
+    setSystemEvents(prev => prev.filter(e => e.id !== id));
+  }, []);
   const [error, setError] = useState('');
   const [following, setFollowing] = useState(false);
   const [connQuality, setConnQuality] = useState('good'); // good | medium | poor
@@ -559,24 +579,18 @@ export default function LiveViewerScreen() {
                 joinedAt: Date.now(),
               }, ...prev].slice(0, 100); // cap at 100 most-recent
             });
-            // Also surface as a chat message so the user sees "X entrou"
-            // inline with the live chat stream (Instagram parity).
-            {
-              const entry = new Animated.Value(0);
-              setChatMessages(prev => [
-                ...prev.slice(-49),
-                {
-                  id: 'sys_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
-                  isSystem: true,
-                  email: msg.viewer_email,
-                  name: msg.viewer_name || msg.viewer_email.split('@')[0],
-                  text: (t?.('live.joined') || 'entrou'),
-                  ts: Date.now(),
-                  entry,
-                },
-              ]);
-              Animated.timing(entry, { toValue: 1, duration: 260, useNativeDriver: true }).start();
-            }
+            // Surface as a system chip on the left-bottom stack (round 62
+            // redesign — joins/leaves no longer mix with the comment column).
+            setSystemEvents(prev => [
+              ...prev.slice(-9),
+              {
+                id: 'sys_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+                email: msg.viewer_email,
+                name: msg.viewer_name || msg.viewer_email.split('@')[0],
+                text: (t?.('live.entered') || t?.('live.joined') || 'entrou'),
+                ts: Date.now(),
+              },
+            ]);
           }
           break;
         case 'live_viewer_left':
@@ -833,6 +847,8 @@ export default function LiveViewerScreen() {
       if (next.length > MAX_HEARTS) return next.slice(-MAX_HEARTS);
       return next;
     });
+    // Bump the cumulative like counter shown on the right rail.
+    setLikeCount(c => c + 1);
 
     Animated.timing(anim, {
       toValue: 1,
@@ -1366,75 +1382,25 @@ export default function LiveViewerScreen() {
         )}
       </Pressable>
 
-      {/* Connecting overlay — Instagram-style skeleton: black scrim, pulsing
-          avatar of the host, "Conectando à live de X..." text in spring fade
-          entrance. The whole card scales from 0.92 → 1 + rises 14px on mount
-          so it lands soft instead of cold-popping. */}
+      {/* Connecting overlay — round 62 redesign extracted into LiveConnectingOverlay.
+          Pulsing red ring + round host avatar + "Conectando à live de X..." */}
       {!connected && (
-        <Animated.View
-          style={[
-            styles.connectingOverlay,
-            {
-              opacity: connectingEntrance,
-              transform: [
-                { translateY: connectingEntrance.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) },
-                { scale: connectingEntrance.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] }) },
-              ],
-            },
-          ]}
-        >
-          {/* Clean connecting state — só o avatar, sem ring extra atrás (o
-              square border visível em iOS confundia o user, round 56 fix). */}
-          <AvatarCircle
-            name={displayHostName}
-            email={displayHostEmail}
-            size={80}
-            style={styles.connectingAvatar}
-          />
-          <Animated.Text style={[styles.connectingName, { opacity: connectingPulse }]}>
-            {displayHostName || '…'}
-          </Animated.Text>
-          {hlsError && streamType === 'cf_hls' ? (
-            // HLS playback bailed — most common cause is the manifest not
-            // being ready yet (Cloudflare needs ~10-15s after broadcaster
-            // first publishes before HLS edges have a segment). Surface a
-            // friendly retry instead of looping the spinner forever.
-            <>
-              <Text style={[styles.connectingText, { color: '#ef4444', marginTop: 14 }]}>
-                {t('live.streamUnavailable') || 'Live indisponível'}
-              </Text>
-              <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
-                <TouchableOpacity
-                  onPress={() => { setHlsError(false); setHlsRetryKey((k) => k + 1); }}
-                  style={{ paddingHorizontal: 22, paddingVertical: 10, backgroundColor: 'rgba(255,255,255,0.18)', borderRadius: 20 }}
-                >
-                  <Text style={{ color: '#fff', fontWeight: '600' }}>{t('common.retry') || 'Tentar novamente'}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => router.back()} style={{ paddingHorizontal: 22, paddingVertical: 10, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 20 }}>
-                  <Text style={{ color: '#fff', fontWeight: '600' }}>{t('common.back') || 'Voltar'}</Text>
-                </TouchableOpacity>
-              </View>
-            </>
-          ) : !!error && /unavail|connection failed|stream/i.test(error) ? (
-            <>
-              <Text style={[styles.connectingText, { color: '#ef4444', marginTop: 14 }]}>
-                {error}
-              </Text>
-              <TouchableOpacity onPress={() => router.back()} style={{ marginTop: 18, paddingHorizontal: 24, paddingVertical: 10, backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 20 }}>
-                <Text style={{ color: '#fff', fontWeight: '600' }}>{t('common.back') || 'Voltar'}</Text>
-              </TouchableOpacity>
-            </>
-          ) : (
-            <>
-              <ActivityIndicator size="small" color="rgba(255,255,255,0.5)" style={{ marginTop: 16 }} />
-              <Animated.Text style={[styles.connectingText, { opacity: connectingPulse }]}>
-                {error || (displayHostName
-                  ? ((t('live.connectingTo') || 'Conectando à live de {name}…').replace('{name}', displayHostName))
-                  : (t('live.connecting') || 'Conectando…'))}
-              </Animated.Text>
-            </>
-          )}
-        </Animated.View>
+        <LiveConnectingOverlay
+          hostName={displayHostName}
+          hostEmail={displayHostEmail}
+          errorText={
+            hlsError && streamType === 'cf_hls'
+              ? (t('live.streamUnavailable') || 'Live indisponível')
+              : (!!error && /unavail|connection failed|stream/i.test(error) ? error : null)
+          }
+          showRetry={hlsError && streamType === 'cf_hls'}
+          onRetry={() => { setHlsError(false); setHlsRetryKey((k) => k + 1); }}
+          onBack={() => router.back()}
+          retryLabel={t('common.retry') || 'Tentar novamente'}
+          backLabel={t('common.back') || 'Voltar'}
+          connectingTo={t('live.connectingTo') || 'Conectando à live de {name}…'}
+          connectingFallback={t('live.connecting') || 'Conectando…'}
+        />
       )}
 
       {/* Joined transition — slides up a gradient overlay that wipes the
@@ -1455,230 +1421,51 @@ export default function LiveViewerScreen() {
         />
       ) : null}
 
-      {/* Top bar — Instagram/TikTok-grade header. BIG host avatar (54px) with
-          a pulsing red gradient ring + LIVE badge tucked under it. To the right:
-          host name + title + Follow pill. Far right: viewer count (eye + 1.2K
-          humanized) + quality dot + close. Single dense row, no duplicate LIVE
-          badge floating below — keeps the stage clean.
-          Why box-none: we want taps to pass through the empty padding regions
-          so the double-tap love-bomb still fires from anywhere on the stage. */}
-      <View style={[styles.topBar, { paddingTop: insets.top + 8 }]} pointerEvents="box-none">
-        {/* Big host avatar + pulsing red ring + integrated LIVE pill. The ring
-            uses Animated.View opacity so it breathes; the avatar itself stays
-            crisp (no scale animation — was distracting in QA). Long-press
-            opens an Instagram-style quick-peek card. Single tap stays inert
-            here (rail avatar handles toggleFollow). */}
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onLongPress={openHostPeek}
-          delayLongPress={280}
-          style={styles.hostAvatarBlock}
-          accessibilityLabel={t('live.quickPeek') || 'Ver perfil do host'}
-          accessibilityRole="button"
-        >
-          <Animated.View style={[styles.avatarRingPulse, { opacity: livePulse }]} pointerEvents="none" />
-          <View style={styles.avatarRingStatic} pointerEvents="none" />
-          <AvatarCircle
-            name={displayHostName}
-            email={displayHostEmail}
-            size={54}
-          />
-          <View style={styles.liveBadgeInline} pointerEvents="none">
-            <Text style={styles.liveBadgeText}>{t('live.aoVivo') || 'AO VIVO'}</Text>
-          </View>
-        </TouchableOpacity>
+      {/* Top bar — TikTok/Instagram-grade clean header (round 62 redesign).
+          Avatar + name + LIVE pill + viewer chip on the left, dots/share/X
+          icon trio on the right. All extracted to LiveTopBar. */}
+      <LiveTopBar
+        hostName={displayHostName}
+        hostEmail={displayHostEmail}
+        viewerCount={viewerCount}
+        paddingTop={insets.top}
+        liveLabel={t('live.aoVivo') || 'AO VIVO'}
+        viewersListLabel={t('live.viewersList') || 'Ver espectadores'}
+        onLongPressAvatar={openHostPeek}
+        onPressViewers={() => setShowViewersList(true)}
+        onPressMore={() => setGiftPickerVisible(true)}
+        onPressShare={handleShare}
+        onClose={() => router.back()}
+      />
 
-        <View style={styles.hostInfo}>
-          <Text style={styles.hostName} numberOfLines={1}>
-            {displayHostName || '…'}
-          </Text>
-          {paramTitle ? (
-            <Text style={styles.liveTitle} numberOfLines={1}>{paramTitle}</Text>
-          ) : (
-            <Text style={styles.liveTitle} numberOfLines={1}>{t('live.liveNow') || t('live.connected') || 'Ao vivo agora'}</Text>
-          )}
-        </View>
+      {/* System chip stack (joins/leaves) — left-bottom floating column.
+          Replaces the old inline "X entrou" rows in the chat overlay. */}
+      <LiveSystemChipStack
+        items={systemEvents}
+        bottom={Math.max(insets.bottom + 200, 220)}
+        onDismiss={dismissSystemEvent}
+      />
 
-        {!following ? (
-          <TouchableOpacity
-            onPress={toggleFollow}
-            style={styles.followPill}
-            accessibilityLabel={t('live.follow') || 'Follow'}
-            accessibilityRole="button"
-            activeOpacity={0.85}
-          >
-            <Text style={styles.followPillText}>{t('live.follow') || 'Seguir'}</Text>
-          </TouchableOpacity>
-        ) : (
-          <View style={styles.followingChip}>
-            <IconCheck size={14} color="#fff" />
-          </View>
-        )}
-
-        <Animated.View style={{ transform: [{ scale: viewerCountScale }] }}>
-          <TouchableOpacity
-            style={styles.viewerChip}
-            activeOpacity={0.7}
-            onPress={() => setShowViewersList(true)}
-            accessibilityLabel={t('live.viewersList') || 'Ver espectadores'}
-            accessibilityRole="button"
-          >
-            <IconEye size={13} color="#fff" />
-            <Text style={styles.viewerChipText}>{humanizeCount(viewerCount)}</Text>
-          </TouchableOpacity>
-          {viewerPlusOneVisible ? (
-            <Animated.View
-              pointerEvents="none"
-              style={[
-                styles.viewerPlusOne,
-                {
-                  opacity: viewerPlusOneAnim.interpolate({ inputRange: [0, 0.2, 0.9, 1], outputRange: [0, 1, 1, 0] }),
-                  transform: [{
-                    translateY: viewerPlusOneAnim.interpolate({ inputRange: [0, 1], outputRange: [0, -18] }),
-                  }, {
-                    scale: viewerPlusOneAnim.interpolate({ inputRange: [0, 0.3, 1], outputRange: [0.6, 1.1, 0.9] }),
-                  }],
-                },
-              ]}
-            >
-              <Text style={styles.viewerPlusOneText}>+1</Text>
-            </Animated.View>
-          ) : null}
-        </Animated.View>
-
-        <View style={[styles.qualityDot, { backgroundColor: qualityColor }]} />
-
-        <TouchableOpacity
-          onPress={() => router.back()}
-          style={styles.closeBtn}
-          accessibilityLabel="Close"
-          accessibilityRole="button"
-        >
-          <IconX size={20} color="#fff" />
-        </TouchableOpacity>
-      </View>
-
-      {/* "Pedir pra entrar" pill — TikTok/Instagram parity. Sits in the
-          left-bottom corner so it's discoverable on first launch (the right
-          rail is muscle-memory for hearts/share). Becomes a "Pediu ✓" disabled
-          chip for 60s after sending so spam is naturally rate-limited. */}
-      <View pointerEvents="box-none" style={{ position: 'absolute', left: 14, bottom: 200 + insets.bottom, zIndex: 5 }}>
-        <TouchableOpacity
-          onPress={requestToJoin}
-          activeOpacity={0.85}
-          disabled={joinRequested}
-          accessibilityLabel={t('live.requestToJoin') || 'Pedir pra entrar'}
-          accessibilityRole="button"
-          style={{
-            flexDirection: 'row', alignItems: 'center', gap: 6,
-            paddingHorizontal: 12, paddingVertical: 7,
-            borderRadius: 18,
-            backgroundColor: joinRequested ? 'rgba(255,255,255,0.18)' : 'rgba(124,58,237,0.95)',
-            borderWidth: 1, borderColor: joinRequested ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.4)',
-          }}
-        >
-          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>
-            {joinRequested ? (t('live.requestSent') || 'Pedido enviado ✓') : (t('live.requestToJoin') || 'Pedir pra entrar')}
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Right rail — host avatar (tap to view profile / follow), heart,
-          gift, share, more. Mirrors the TikTok layout so muscle memory carries
-          straight over from other live apps. */}
-      <View style={[styles.sideActions, { bottom: 200 + insets.bottom }]} pointerEvents="box-none">
-        <TouchableOpacity
-          onPress={toggleFollow}
-          onLongPress={openHostPeek}
-          delayLongPress={280}
-          activeOpacity={0.85}
-          accessibilityLabel="Host profile"
-          accessibilityRole="button"
-          style={styles.railAvatarWrap}
-        >
-          <AvatarCircle
-            name={displayHostName}
-            email={displayHostEmail}
-            size={48}
-            style={styles.railAvatar}
-          />
-          {!following ? (
-            <View style={styles.railAvatarPlus}>
-              <Text style={styles.railAvatarPlusText}>+</Text>
-            </View>
-          ) : null}
-        </TouchableOpacity>
-
-        <Animated.View style={{ transform: [{ scale: heartScale }] }}>
-          <TouchableOpacity
-            style={styles.sideBtn}
-            onPress={handleHeartTap}
-            onLongPress={handleHeartLongPress}
-            delayLongPress={220}
-            activeOpacity={0.7}
-            accessibilityLabel={t('live.reactBtn') || 'React'}
-            accessibilityRole="button"
-          >
-            <IconHeart size={26} color={LIVE_RED} />
-          </TouchableOpacity>
-        </Animated.View>
-
-        {/* Comment toggle — TikTok/Instagram parity. Hides the floating
-            comment overlay + input bar so the viewer can watch without chat
-            noise. Single-tap toggles, no long-press. Uses IconMessageCircle
-            (filled when chat shown, outline-style stroke is enough for off). */}
-        <TouchableOpacity
-          style={styles.sideBtn}
-          onPress={() => setChatHidden(h => !h)}
-          activeOpacity={0.7}
-          accessibilityLabel={chatHidden ? (t('live.showChat') || 'Mostrar chat') : (t('live.hideChat') || 'Ocultar chat')}
-          accessibilityRole="button"
-        >
-          <IconMessageCircle size={22} color={chatHidden ? 'rgba(255,255,255,0.55)' : '#fff'} />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.sideBtn}
-          onPress={handleScreenshot}
-          activeOpacity={0.7}
-          accessibilityLabel={t('live.screenshotBtn') || 'Snap'}
-          accessibilityRole="button"
-        >
-          <IconCamera size={22} color="#fff" />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.sideBtn}
-          onPress={handleShare}
-          activeOpacity={0.7}
-          accessibilityLabel={t('live.share') || 'Share'}
-          accessibilityRole="button"
-        >
-          <IconShare size={22} color="#fff" />
-        </TouchableOpacity>
-
-        {/* Gift button — placeholder slot in the rail. The actual picker is
-            free for now; once IAP coins ship this opens the paid grid. */}
-        <TouchableOpacity
-          style={styles.sideBtn}
-          onPress={() => setGiftPickerVisible(true)}
-          activeOpacity={0.7}
-          accessibilityLabel={t('live.sendGift') || 'Send gift'}
-          accessibilityRole="button"
-        >
-          <IconStar size={24} color="#fbbf24" />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.sideBtn}
-          onPress={handleShare}
-          activeOpacity={0.7}
-          accessibilityLabel="More"
-          accessibilityRole="button"
-        >
-          <IconMoreVert size={22} color="#fff" />
-        </TouchableOpacity>
-      </View>
+      {/* Right floating rail — like / chat-toggle / snapshot / share / more.
+          Like button shows the cumulative count below it (TikTok parity). */}
+      <LiveRightRail
+        bottom={Math.max(insets.bottom + 200, 220)}
+        likeCount={likeCount}
+        chatHidden={chatHidden}
+        onHeartPress={handleHeartTap}
+        onHeartLongPress={handleHeartLongPress}
+        onToggleChat={() => setChatHidden(h => !h)}
+        onSnapshot={handleScreenshot}
+        onShare={handleShare}
+        onMore={() => setGiftPickerVisible(true)}
+        i18n={{
+          like: t('live.like') || 'Curtir',
+          showChat: t('live.showChat') || 'Mostrar chat',
+          hideChat: t('live.hideChat') || 'Ocultar chat',
+          snapshot: t('live.screenshotBtn') || 'Snap',
+          share: t('live.share') || 'Compartilhar',
+        }}
+      />
 
       {/* Central love-bomb particles (double-tap). Spawn from screen middle
           and ride a radial vector outward — fade and shrink over ~900ms. */}
@@ -1756,15 +1543,11 @@ export default function LiveViewerScreen() {
         );
       })}
 
-      {/* Bottom: comments overlay + pill input.
-          Comments float over the video — last 5 visible. We use a fade mask
-          (web) and stack-position alpha (all platforms) so the top of the
-          column melts into the frame Instagram-style. */}
+      {/* Bottom: pinned + comments + join pill + input (round 62 redesign).
+          All UI pieces extracted into dedicated components. Pure layout glue
+          here — state lives in the screen, components are presentational. */}
       <View style={[styles.bottomArea, { paddingBottom: insets.bottom + 10 }]} pointerEvents="box-none">
-        {/* Soft gradient sheen above the input bar so the pill reads cleanly
-            against bright frames — Instagram/TikTok use the same trick. On
-            native we don't have linear-gradient, so we stack 3 dim layers
-            with stepped alpha to fake the bottom-up dark blend. */}
+        {/* Bottom dark blend — gradient on web, layered scrim on native. */}
         <View style={styles.bottomGradient} pointerEvents="none" />
         {Platform.OS !== 'web' ? (
           <>
@@ -1774,192 +1557,62 @@ export default function LiveViewerScreen() {
           </>
         ) : null}
 
-        {/* Pinned host comment — TikTok parity, sticky chip above the live
-            comments column. Yellow border + IconPin so it's visually distinct
-            from a regular floating message. Only renders when host pinned
-            via 'live_pin' WS event. Tap dismisses for this viewer only
-            (local state, no WS broadcast). */}
-        {pinnedMsg && !chatHidden ? (
-          <TouchableOpacity
-            activeOpacity={0.85}
-            onPress={() => setPinnedMsg(null)}
-            style={styles.pinnedChip}
-            accessibilityRole="button"
-            accessibilityLabel={t('live.pinned') || 'Pinned'}
-          >
-            <IconPin size={13} color="#fde047" />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.pinnedChipName} numberOfLines={1}>
-                {pinnedMsg.name}
-              </Text>
-              <Text style={styles.pinnedChipText} numberOfLines={2}>
-                {pinnedMsg.content}
-              </Text>
-            </View>
-          </TouchableOpacity>
+        {/* Pinned host chip (only when host pinned). */}
+        {!chatHidden ? (
+          <LivePinnedChip
+            pinnedMsg={pinnedMsg}
+            onDismiss={() => setPinnedMsg(null)}
+          />
         ) : null}
 
-        {chatHidden ? null : (
-        <TouchableOpacity
-          onPress={() => setChatSheetOpen(true)}
-          activeOpacity={0.85}
-          style={styles.commentsOverlay}
-          accessibilityLabel={t('live.chat') || 'Chat ao vivo'}
-          accessibilityRole="button"
-        >
-          {chatMessages.length > 5 ? (
-            <View style={styles.seeAllChip} pointerEvents="none">
-              <Text style={styles.seeAllChipText}>
-                {t('live.seeAllComments') || 'Ver todos os comentários'}
-              </Text>
-            </View>
-          ) : null}
-          {visibleComments.map((m, idx) => {
-            // Older comments fade softer. Stack alpha runs 0.25 → 1 from top.
-            // The system-join chip uses a different look (no avatar bubble).
-            const stackAlpha = 0.25 + (idx / Math.max(visibleComments.length - 1, 1)) * 0.75;
-            // Entrance animation — slide-up + fade-in. Older messages (loaded
-            // from history) don't have `entry`, so we treat them as already
-            // settled (no animation re-trigger on re-render).
-            const entry = m.entry;
-            const opacity = entry
-              ? entry.interpolate({ inputRange: [0, 1], outputRange: [0, stackAlpha] })
-              : stackAlpha;
-            const translateY = entry
-              ? entry.interpolate({ inputRange: [0, 1], outputRange: [12, 0] })
-              : 0;
-            if (m.isSystem) {
-              return (
-                <Animated.View
-                  key={m.id}
-                  style={[styles.systemJoinRow, { opacity, transform: [{ translateY }] }]}
-                  pointerEvents="none"
-                >
-                  <View style={styles.systemJoinPill}>
-                    <Text style={styles.systemJoinText} numberOfLines={1}>
-                      <Text style={styles.systemJoinName}>{m.name}</Text>{' '}{m.text}
-                    </Text>
-                  </View>
-                </Animated.View>
-              );
-            }
-            // Tap a comment → @reply seed in input. Double-tap → heart
-            // reaction chip on the row. Stop press from bubbling up to the
-            // parent overlay (which would open the full chat sheet).
-            const heartAnim = commentHearts[m.id];
-            return (
-              <Animated.View
-                key={m.id}
-                style={{ opacity, transform: [{ translateY }] }}
-              >
-                <TouchableOpacity
-                  onPress={(e) => { e.stopPropagation?.(); handleReplyToComment(m); }}
-                  activeOpacity={0.7}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Reply to ${m.name}`}
-                  style={styles.commentRow}
-                >
-                  <AvatarCircle name={m.name} email={m.email} size={22} />
-                  <View style={styles.commentBubble}>
-                    <Text style={styles.commentName} numberOfLines={1}>{m.name}</Text>
-                    <Text style={styles.commentText} numberOfLines={3}>{m.content}</Text>
-                  </View>
-                  {heartAnim ? (
-                    <Animated.View
-                      pointerEvents="none"
-                      style={[
-                        styles.commentHeartChip,
-                        {
-                          opacity: heartAnim,
-                          transform: [
-                            { scale: heartAnim.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] }) },
-                            { translateY: heartAnim.interpolate({ inputRange: [0, 1], outputRange: [4, -2] }) },
-                          ],
-                        },
-                      ]}
-                    >
-                      <IconHeart size={14} color="#fff" />
-                    </Animated.View>
-                  ) : null}
-                </TouchableOpacity>
-              </Animated.View>
-            );
-          })}
-        </TouchableOpacity>
-        )}
+        {/* Live chat overlay — last 5 comments float over the video, with
+            per-row entrance + double-tap heart chip support. */}
+        {!chatHidden ? (
+          <LiveChatOverlay
+            messages={chatMessages}
+            commentHearts={commentHearts}
+            onPressMessage={handleReplyToComment}
+            onOpenSheet={() => setChatSheetOpen(true)}
+            hasMore={chatMessages.length > 5}
+            seeAllLabel={t('live.seeAllComments') || 'Ver todos os comentários'}
+          />
+        ) : null}
 
-        {/* Bottom input bar — pill input with the send SVG nested inside
-            the right side of the pill itself (Instagram parity). On focus the
-            entire bar lifts (translateY + scale) and the pill border picks up
-            the brand accent so it pops over the video frame. Hidden when the
-            rail toggle hides the chat. */}
-        {chatHidden ? null : (
-        <Animated.View
-          style={[
-            styles.inputBar,
-            {
-              transform: [
-                { translateY: inputLift.interpolate({ inputRange: [0, 1], outputRange: [0, -4] }) },
-                { scale: inputLift.interpolate({ inputRange: [0, 1], outputRange: [1, 1.02] }) },
-              ],
-            },
-          ]}
-        >
-          <View
-            style={[
-              styles.inputPill,
-              inputFocused && styles.inputPillFocused,
-              inputFocused && { borderColor: brandAccent },
-            ]}
-          >
-            <TextInput
-              ref={inputRef}
-              style={styles.inputText}
-              value={inputText}
-              onChangeText={setInputText}
-              placeholder={t('live.placeholderComment') || t('live.commentHint') || t('live.commentPlaceholder') || 'Comente...'}
-              placeholderTextColor="rgba(255,255,255,0.65)"
-              returnKeyType="send"
-              onSubmitEditing={sendComment}
-              onFocus={() => setInputFocused(true)}
-              onBlur={() => setInputFocused(false)}
-              blurOnSubmit={false}
-              accessibilityLabel={t('live.placeholderComment') || 'Comment'}
+        {/* "Pedir pra entrar" pill — sits above the comment input. Hidden if
+            the chat is hidden (no input shown anyway). */}
+        {!chatHidden ? (
+          <View style={styles.joinPillRow}>
+            <LiveJoinPill
+              joinRequested={joinRequested}
+              onPress={requestToJoin}
+              label={t('live.requestToJoin') || 'Pedir pra entrar'}
+              sentLabel={t('live.requestSent') || 'Pedido enviado'}
             />
-            {/* Send SVG inside the pill's right edge — only appears when
-                there's text to send (Instagram parity). Tapping fires the
-                same sendComment handler bound to onSubmitEditing. */}
-            {inputText.trim() ? (
-              <TouchableOpacity
-                onPress={sendComment}
-                style={[styles.sendBtnInside, { backgroundColor: brandAccent }]}
-                activeOpacity={0.85}
-                accessibilityLabel="Send comment"
-                accessibilityRole="button"
-              >
-                <IconSend size={15} color="#fff" />
-              </TouchableOpacity>
-            ) : null}
           </View>
-          {/* Inline heart shortcut — same action as the right-rail heart, but
-              within thumb reach of the input bar (Instagram parity). Tap to
-              fire a single heart + WS reaction; long-press for the 8-spam
-              burst. */}
-          <Animated.View style={{ transform: [{ scale: heartScale }] }}>
-            <TouchableOpacity
-              onPress={handleHeartTap}
-              onLongPress={handleHeartLongPress}
-              delayLongPress={220}
-              style={styles.inlineHeartBtn}
-              activeOpacity={0.7}
-              accessibilityLabel={t('live.reactBtn') || 'React'}
-              accessibilityRole="button"
-            >
-              <IconHeart size={22} color={LIVE_RED} />
-            </TouchableOpacity>
-          </Animated.View>
-        </Animated.View>
-        )}
+        ) : null}
+
+        {/* Bottom input pill — sticky over the gradient. Heart pill in the
+            right edge swaps to a send button as soon as the user types. */}
+        {!chatHidden ? (
+          <LiveCommentInput
+            ref={inputRef}
+            value={inputText}
+            onChangeText={setInputText}
+            onSubmit={sendComment}
+            onHeartTap={handleHeartTap}
+            onHeartLongPress={handleHeartLongPress}
+            onFocus={() => setInputFocused(true)}
+            onBlur={() => setInputFocused(false)}
+            focused={inputFocused}
+            placeholder={t('live.placeholderComment') || t('live.commentHint') || t('live.commentPlaceholder') || 'Adicionar comentário...'}
+            brandAccent={brandAccent}
+            a11yLabels={{
+              comment: t('live.placeholderComment') || 'Comment',
+              send: t('live.sendMessage') || 'Send',
+              like: t('live.like') || 'Curtir',
+            }}
+          />
+        ) : null}
       </View>
 
       {/* Snapshot/error toast — surfaces save state for the new screenshot
@@ -2637,6 +2290,14 @@ const styles = StyleSheet.create({
     right: 0,
     zIndex: 10,
     paddingHorizontal: 12,
+  },
+  // Row hosting the "Pedir pra entrar" pill above the comment input. Adds a
+  // small bottom margin so the pill doesn't sit flush against the input.
+  joinPillRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    paddingRight: 70,
   },
   // Soft gradient sheen above the input — pure CSS on web, transparent
   // overlay on native (avoids extra LinearGradient dep for one stripe).

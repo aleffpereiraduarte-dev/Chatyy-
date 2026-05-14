@@ -3840,6 +3840,7 @@ export default {
   'live.chat': 'Live chat',
   'live.sendMessage': 'Send a message...',
   'live.joined': 'joined',
+  'live.entered': 'joined the live',
   'live.left': 'left',
   'live.connecting': 'Connecting...',
   'live.connectionFailed': 'Connection failed',

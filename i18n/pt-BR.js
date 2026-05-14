@@ -3902,6 +3902,7 @@ export default {
   'live.chat': 'Chat ao vivo',
   'live.sendMessage': 'Enviar mensagem...',
   'live.joined': 'entrou',
+  'live.entered': 'entrou na live',
   'live.left': 'saiu',
   'live.connecting': 'Conectando...',
   'live.connectionFailed': 'Falha na conexão',
