@@ -2254,8 +2254,7 @@ const styles = StyleSheet.create({
     } : {}),
   },
   preAvatar: {
-    borderWidth: 3,
-    borderColor: 'rgba(255,255,255,0.22)',
+    borderRadius: 999,
   },
   preName: {
     color: '#fff',

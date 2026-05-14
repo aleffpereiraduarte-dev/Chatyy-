@@ -153,8 +153,7 @@ const styles = StyleSheet.create({
     } : {}),
   },
   avatar: {
-    borderWidth: 3,
-    borderColor: 'rgba(255,255,255,0.25)',
+    borderRadius: 999,
   },
   name: {
     color: '#fff',
