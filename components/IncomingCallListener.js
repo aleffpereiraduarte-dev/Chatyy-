@@ -396,6 +396,10 @@ export default function IncomingCallListener() {
   // "Ligação encerrada" because the spurious onEnd tears down the WebRTC PC
   // and sends WS call_end to the caller, who then hangs up.
   const lastAnswerAtRef = useRef(0);
+  // call_id → timestamp of last WS call_end we sent. Used to dedup the
+  // call_end spam (8x in 3s observed in WS server logs after CallKit's
+  // spurious onEnd cascade).
+  const callEndSentRef = useRef({});
   // Use refs for handlers so CallKit callbacks always get latest version
   const handleAcceptRef = useRef(null);
   const handleDeclineRef = useRef(null);
@@ -951,11 +955,30 @@ export default function IncomingCallListener() {
           // to the caller. If the end arrives <3s after answer, drop it.
           if (Platform.OS === 'ios' && acceptedRef.current && lastAnswerAtRef.current > 0) {
             const sinceAnswer = Date.now() - lastAnswerAtRef.current;
-            if (sinceAnswer < 3000) {
+            // Bumped 3s → 5s — iOS audio-session activation can race up to ~4s
+            // on slower devices / cold-start. Real hangups always happen >5s
+            // after answer (user has to look at screen, press End).
+            if (sinceAnswer < 5000) {
               console.warn('[IncomingCall] iOS spurious onEnd ' + sinceAnswer + 'ms after answer — IGNORING');
               voipDiag('callkit_spurious_end_ignored', eventData?.callId || '', { sinceAnswer });
               return;
             }
+          }
+
+          // Dedup: WS-server log shows 8x call_end spam per call (4 from each
+          // side fired within 3s). Don't send WS call_end if we just sent one
+          // for the same call_id. Keeps caller from receiving N×Encerrada
+          // notifications and prevents the "call_accepted REJECTED state=ACCEPTED"
+          // server-side spam loop.
+          const _lastEndKey = String(eventData?.callId || '');
+          if (_lastEndKey) {
+            const now = Date.now();
+            const sentRecently = (callEndSentRef.current[_lastEndKey] || 0);
+            if (sentRecently && (now - sentRecently) < 2000) {
+              console.warn('[IncomingCall] dedup call_end <2s for', _lastEndKey);
+              return;
+            }
+            callEndSentRef.current[_lastEndKey] = now;
           }
 
           // Decide reason based on whether the call was accepted before this
