@@ -327,7 +327,21 @@ function getStoredAccounts() {
   try {
     if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
       const a = localStorage.getItem('mail_accounts');
-      _cachedAccounts = a ? JSON.parse(a) : [];
+      const parsed = a ? JSON.parse(a) : [];
+      // Defensive: legacy clients (or sloppy bearer injection paths) may
+      // have written an object map { "email": {...} } instead of the
+      // canonical array [{...}, {...}] — crashed inbox.js with
+      // "accounts.filter is not a function". Coerce to array shape.
+      if (Array.isArray(parsed)) {
+        _cachedAccounts = parsed;
+      } else if (parsed && typeof parsed === 'object') {
+        _cachedAccounts = Object.entries(parsed).map(([email, v]) => ({
+          email,
+          ...(v && typeof v === 'object' ? v : {}),
+        }));
+      } else {
+        _cachedAccounts = [];
+      }
       return _cachedAccounts;
     }
   } catch {}

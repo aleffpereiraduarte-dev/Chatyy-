@@ -1001,13 +1001,6 @@ function ChatHub() {
         ) : (
           <>
             <TabBarItem
-              icon={(active) => <IconEmailTab size={22} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
-              label="Email"
-              active={false}
-              onPress={() => handleTabPress('email')}
-              isDark={isDark}
-            />
-            <TabBarItem
               icon={(active) => <IconVideo size={22} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} />}
               label={t('chat.tabReels') || 'Reels'}
               active={false}

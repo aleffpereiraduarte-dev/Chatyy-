@@ -5,13 +5,6 @@ import {
   ActivityIndicator, PanResponder, Pressable, Alert, StatusBar,
   Linking, RefreshControl,
 } from 'react-native';
-
-// Android status bar safe area — `StatusBar.currentHeight` is null on iOS
-// (where the 54px ios padding already covers the notch) so we just hard-fall
-// to 24dp baseline if the runtime didn't report it. Used by the Status
-// composer header which was rendering UNDER the system bar on Android (clock
-// + nav icons overlapping the X close button).
-const ANDROID_TOP_INSET = (Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0);
 import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
 import StatusCamera from './StatusCamera';
@@ -39,6 +32,16 @@ try { mailWs = require('../services/websocket').default; } catch {}
 import Svg, { Circle as SvgCircle, Path, Rect, Defs, LinearGradient, Stop } from 'react-native-svg';
 import AnimatedStatusText from './status/AnimatedStatusText';
 import ReactionSwipeUp from './status/ReactionSwipeUp';
+
+// Android status bar safe area — `StatusBar.currentHeight` is null on iOS
+// (where the 54px ios padding already covers the notch) so we just hard-fall
+// to 24dp baseline if the runtime didn't report it. Used by the Status
+// composer header which was rendering UNDER the system bar on Android (clock
+// + nav icons overlapping the X close button). Moved BELOW all imports
+// 2026-05-14 because Metro's minifier hoisting created a TDZ on web
+// (`ReferenceError: Cannot access 'Jr' before initialization`) when this
+// const sat between import statements.
+const ANDROID_TOP_INSET = (Platform.OS === 'android' ? (StatusBar.currentHeight || 24) : 0);
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -778,6 +781,18 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   const [previewGroup, setPreviewGroup] = useState(null);
   const [viewerReply, setViewerReply] = useState('');
   const [isPaused, setIsPaused] = useState(false);
+
+  // Hoisted above handleReact (~line 916) which references these in its
+  // dep array. Previously declared at line 1131 — created a real TDZ on
+  // web (`Cannot access 'Jr' before initialization`) because useCallback
+  // evaluates deps at render time, BEFORE that later line ran.
+  const currentEmail = user?.email || '';
+  const currentName = user?.name || user?.email?.split('@')[0] || '';
+
+  // closeViewer is declared later (~line 1384). Forward callbacks
+  // (handleOpenForward, next/prev nav, etc.) call it via this ref to
+  // avoid TDZ on web minified bundle (`Cannot access 'Ca'`).
+  const closeViewerRef = useRef(null);
   const progressAnim = useRef(new Animated.Value(0)).current;
   const timerRef = useRef(null);
   const animRef = useRef(null);
@@ -986,11 +1001,11 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       }
       // Navigate to the conversation
       router.push(`/chat-conversation?id=${conv.id}&name=${encodeURIComponent(conv.name || conv.other_name || '')}`);
-      closeViewer();
+      closeViewerRef.current?.();
     } catch (err) {
       console.warn('[Status] Forward failed:', err);
     }
-  }, [viewerStatuses, viewerIndex, viewerOwnerName, t, router, closeViewer]);
+  }, [viewerStatuses, viewerIndex, viewerOwnerName, t, router]);
 
   // Creator state
   const [cameraVisible, setCameraVisible] = useState(false);
@@ -1125,9 +1140,6 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     };
   }, []);
 
-  const currentEmail = user?.email || '';
-  const currentName = user?.name || user?.email?.split('@')[0] || '';
-
   // Reply to a status — preferred path is the backend `status_reply_dm`
   // action which builds a proper "replied to your story" card (image/text
   // snapshot + reply text) on the server. We fall back to the legacy
@@ -1175,8 +1187,8 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
 
   // Swipe down to dismiss
   const panY = useRef(new Animated.Value(0)).current;
-  const closeViewerRef = useRef(null);
-  // Keep ref in sync (updated after closeViewer is defined below)
+  // closeViewerRef moved to top of component to break TDZ forward-ref
+  // from handleOpenForward (~line 954) that needs to call closeViewer.
 
   // PanResponder for swipe-down-to-close on the status viewer modal.
   // Uses CAPTURE phase so we beat the inner TouchableOpacity (which would
