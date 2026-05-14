@@ -909,6 +909,15 @@ function CallScreenInner() {
   // ───── End call ─────
   const handleEndCall = useCallback(() => {
     if (endedRef.current) return;
+    // [debug 2026-05-14 call-drops-on-answer]
+    // User reported that when the callee accepts, the caller hangs up
+    // within 1s — sending call_end x3 to the WS server. Stack trace
+    // here will reveal WHICH event path is firing (LiveKit Disconnected,
+    // ParticipantDisconnected, WS call_end echo, AppState change, etc.).
+    try {
+      console.warn('[Call] handleEndCall TRACE callId=' + callId + ' peer=' + peerConnected);
+      console.warn(new Error('handleEndCall stack').stack);
+    } catch {}
     endedRef.current = true;
     minimizedRef.current = false;
     _clearGC();
