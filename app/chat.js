@@ -163,10 +163,11 @@ const ACCENT_GLOW = 'rgba(124,58,237,0.35)';
 const ACCENT2 = '#6D28D9';
 const DESKTOP_BREAKPOINT = 900;
 
-// Mobile bottom bar: 5 tabs — Email + Reels + Chats + Calls + Apps
-// On desktop (width ≥ 900) the sidebar already has Email, so TAB_KEYS_DESKTOP
-// omits it; the phone bottom bar keeps Email as a primary tab.
-const TAB_KEYS_FULL = ['email', 'reels', 'chats', 'calls', 'apps'];
+// Mobile bottom bar: 4 tabs — Reels + Chats + Calls + Apps.
+// Email moved into the Apps drawer (still a top-level entry there) because
+// 5 tabs felt cluttered and competed with chats/calls for the user's eye.
+// Desktop already omits email since the sidebar exposes it.
+const TAB_KEYS_FULL = ['reels', 'chats', 'calls', 'apps'];
 // Desktop keeps the classic email-hub layout — user asked for it to stay as-is.
 // Profile is no longer a chat tab — tap the avatar in the header to reach
 // /u/{email}. Keeps a single profile surface across the whole app.
