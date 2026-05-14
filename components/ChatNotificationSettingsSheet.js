@@ -187,8 +187,9 @@ export default function ChatNotificationSettingsSheet({
 
           <ScrollView
             style={{ flex: 1 }}
-            contentContainerStyle={{ paddingBottom: 24 }}
+            contentContainerStyle={{ paddingBottom: Platform.OS === 'android' ? 64 : 48 }}
             keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
           >
             {loading && !settings ? (
               <View style={{ padding: 32, alignItems: 'center' }}>
