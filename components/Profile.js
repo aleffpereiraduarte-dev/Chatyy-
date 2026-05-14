@@ -60,29 +60,64 @@ try {
 const WEB = Platform.OS === 'web';
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
-// Module-level stale-while-revalidate cache for profile_get. Keyed by the
-// email-or-username argument. When a profile is re-opened within TTL we paint
-// instantly from cache and revalidate in the background, which is what
-// Instagram/WhatsApp feel like. Posts/reels/media thumbnails themselves are
-// cached by expo-image's disk layer (see GridItem below).
+// Stale-while-revalidate cache for profile_get. Keyed by the email-or-username
+// argument. Two layers:
+//   1. In-memory Map — instant within a session.
+//   2. MMKV — persists across cold starts so cold-open paints from disk and
+//      the screen never sits on a spinner when offline (was the bug: user
+//      reported "perfil só fica carregando, não salva cache").
 const _profileCache = new Map(); // key -> { data, ts }
 const PROFILE_TTL_MS = 2 * 60 * 1000; // 2 min — fresh enough for presence
+const PROFILE_MMKV_PREFIX = 'profile_v1:';
+
+let _mmkv = null;
+function _getMmkv() {
+  if (_mmkv) return _mmkv;
+  try { _mmkv = require('../services/mmkv'); } catch {}
+  return _mmkv;
+}
+
+function _mmkvKey(key) {
+  return PROFILE_MMKV_PREFIX + String(key).toLowerCase();
+}
 
 export function invalidateProfileCache(key) {
-  if (key == null) _profileCache.clear();
-  else _profileCache.delete(String(key).toLowerCase());
+  if (key == null) {
+    _profileCache.clear();
+    try {
+      const mmkv = _getMmkv();
+      mmkv?.getAllKeys?.()?.forEach?.(k => {
+        if (k.startsWith(PROFILE_MMKV_PREFIX)) mmkv.remove?.(k);
+      });
+    } catch {}
+    return;
+  }
+  const k = String(key).toLowerCase();
+  _profileCache.delete(k);
+  try { _getMmkv()?.remove?.(_mmkvKey(k)); } catch {}
 }
 
 function _cacheGet(key) {
   if (!key) return null;
-  const hit = _profileCache.get(String(key).toLowerCase());
-  if (!hit) return null;
-  return hit;
+  const id = String(key).toLowerCase();
+  const hit = _profileCache.get(id);
+  if (hit) return hit;
+  // Hydrate from MMKV on demand.
+  try {
+    const stored = _getMmkv()?.getJSON?.(_mmkvKey(id));
+    if (stored && stored.data) {
+      _profileCache.set(id, stored);
+      return stored;
+    }
+  } catch {}
+  return null;
 }
 
 function _cacheSet(key, data) {
   if (!key) return;
-  _profileCache.set(String(key).toLowerCase(), { data, ts: Date.now() });
+  const entry = { data, ts: Date.now() };
+  _profileCache.set(String(key).toLowerCase(), entry);
+  try { _getMmkv()?.setJSON?.(_mmkvKey(key), entry); } catch {}
 }
 
 // Lazy expo-image for disk-cached grid/story thumbnails (avoids blank flicker
@@ -828,6 +863,9 @@ export default function Profile({
           setErrStatus(/not authenticated/i.test(msg) ? 401 : 0);
         }
       } catch (e) {
+        // Offline / network failure: keep showing cached snapshot (no error,
+        // no spinner). Without this the screen sat on a skeleton when the
+        // device had no connection — reported "perfil só fica carregando".
         if (!cancelled && !cached) {
           const msg = e?.message || 'Failed to load profile';
           setErr(msg);

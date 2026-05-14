@@ -17,6 +17,7 @@ import {
 } from '../components/Icons';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
+import { queueOfflineAction, isOnline } from '../services/offlineCache';
 import BrandFab from '../components/BrandFab';
 let NoteGridSkeleton = null; try { NoteGridSkeleton = require('../components/SkeletonLoader').NoteGridSkeleton; } catch {}
 
@@ -958,7 +959,10 @@ export default function NotesScreen() {
     }
   }, [selectedNotebook, loadNotes, openEditor]);
 
-  // Auto-save
+  // Auto-save. Offline-tolerant: optimistic update in the local cache so the
+  // user sees the note immediately, then queue a server replay if the call
+  // fails or the device is offline. Without this, typing offline silently
+  // dropped the note (user reported "notas não salva no celular").
   const saveNote = useCallback(async () => {
     const title = editorTitleRef.current;
     const content = editorContentRef.current;
@@ -970,17 +974,51 @@ export default function NotesScreen() {
 
     if (!title.trim() && !content.trim()) return;
 
+    const payload = { title, content, color, is_pinned, is_sticky, notebook_id, tags };
+
+    // Optimistic update + replay queue path. Use a stable temp id for new
+    // notes so the next auto-save tick targets the same entry.
+    const queueOrUpdate = async () => {
+      if (editingNote?.id) {
+        await queueOfflineAction({ type: 'note_update', noteId: editingNote.id, payload });
+      } else {
+        const tempId = editingNote?._tempId || ('local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8));
+        setEditingNote(prev => prev ? { ...prev, _tempId: tempId } : { _tempId: tempId });
+        await queueOfflineAction({ type: 'note_create', payload: { ...payload, client_id: tempId } });
+      }
+    };
+
+    // Mirror current draft into the local notes list so it survives a cold
+    // start even when the server save never landed.
+    try {
+      const cached = await getCached('notes');
+      const existing = cached?.data?.notes || [];
+      const draftId = editingNote?.id || editingNote?._tempId || ('local_' + Date.now());
+      const draftNote = { id: draftId, ...payload, updated_at: new Date().toISOString(), _pendingSync: true };
+      const idx = existing.findIndex(n => n.id === draftId);
+      const next = idx >= 0
+        ? existing.map((n, i) => i === idx ? { ...n, ...draftNote } : n)
+        : [draftNote, ...existing];
+      setCache('notes', { success: true, data: { notes: next } }, 7776000000).catch(() => {});
+    } catch {}
+
+    if (!isOnline()) {
+      try { await queueOrUpdate(); } catch (e) { console.warn('Failed to queue note offline:', e); }
+      return;
+    }
+
     try {
       if (editingNote?.id) {
-        await api.notesUpdate(editingNote.id, { title, content, color, is_pinned, is_sticky, notebook_id, tags });
+        await api.notesUpdate(editingNote.id, payload);
       } else {
-        const res = await api.notesCreate({ title, content, color, is_pinned, is_sticky, notebook_id, tags });
+        const res = await api.notesCreate(payload);
         if (res?.success && res.data?.id) {
           setEditingNote(prev => prev ? { ...prev, id: res.data.id } : { id: res.data.id });
         }
       }
     } catch (e) {
-      console.warn('Failed to save note:', e);
+      console.warn('Failed to save note, queueing for retry:', e);
+      try { await queueOrUpdate(); } catch {}
     }
   }, [editingNote]);
 
