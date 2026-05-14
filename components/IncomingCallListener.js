@@ -754,7 +754,7 @@ export default function IncomingCallListener() {
               console.warn('[IncomingCall] iOS audio pre-arm failed:', e?.message);
             }
             try {
-              const { RTCAudioSession } = require('@stream-io/react-native-webrtc');
+              const { RTCAudioSession } = require('@livekit/react-native-webrtc');
               RTCAudioSession.audioSessionDidActivate?.();
               RTCAudioSession.audioSessionSetActive?.(true);
             } catch (e) {

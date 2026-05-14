@@ -1276,7 +1276,7 @@ export default function LoginScreen() {
         </TouchableOpacity>
       </View>
 
-      <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
           <View style={[s.center, !isDesktop && {
             // Mobile: anchor content to the TOP so the keyboard opening

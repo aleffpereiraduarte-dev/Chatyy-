@@ -78,6 +78,13 @@ try {
 
 import React, { Suspense } from "react";
 import { Platform, View as RNView, Text as RNText, Linking, Alert, Animated as _RNAnimated, InteractionManager } from 'react-native';
+// LiveKit RN: registra RTCPeerConnection/MediaStream/navigator.mediaDevices
+// no globalThis. Tem que rodar ANTES de qualquer import de livekit-client
+// ou @livekit/react-native. Native-only — web já tem WebRTC do browser.
+if (Platform.OS !== 'web') {
+  try { require('@livekit/react-native').registerGlobals(); }
+  catch (e) { if (typeof console !== 'undefined') console.warn('[LiveKit] registerGlobals failed:', e?.message); }
+}
 
 // Web has no native Animated module — force useNativeDriver:false globally
 // so every animation across the app stops spamming "RCTAnimation missing"

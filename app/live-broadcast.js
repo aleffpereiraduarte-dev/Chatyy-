@@ -23,7 +23,7 @@ if (Platform.OS === 'web') {
   getUserMediaFn = (c) => navigator.mediaDevices.getUserMedia(c);
 } else {
   try {
-    const webrtc = require('@stream-io/react-native-webrtc');
+    const webrtc = require('@livekit/react-native-webrtc');
     RTC_PeerConnection = webrtc.RTCPeerConnection;
     RTC_SessionDescription = webrtc.RTCSessionDescription;
     RTC_IceCandidate = webrtc.RTCIceCandidate;

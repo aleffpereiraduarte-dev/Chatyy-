@@ -30,7 +30,7 @@ if (Platform.OS === 'web') {
   }
 } else {
   try {
-    const webrtc = require('@stream-io/react-native-webrtc');
+    const webrtc = require('@livekit/react-native-webrtc');
     RTCPeerConnection = webrtc.RTCPeerConnection;
     RTCSessionDescription = webrtc.RTCSessionDescription;
     mediaDevices = webrtc.mediaDevices;

@@ -2843,7 +2843,7 @@ export default function OneScreen() {
     playActivationSound();
 
     // OpenAI Realtime via WebRTC — ChatGPT-style full-duplex voice.
-    // Works on both web and native thanks to @stream-io/react-native-webrtc.
+    // Works on both web and native thanks to @livekit/react-native-webrtc.
     // The server mints an ephemeral token; client opens an RTCPeerConnection
     // directly with OpenAI. No Whisper/TTS chain — true live conversation.
     // Falls back to the legacy Whisper path only if WebRTC is unavailable

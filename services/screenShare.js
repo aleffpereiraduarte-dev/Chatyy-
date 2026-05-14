@@ -44,7 +44,7 @@ let _webrtc = null;
 function getWebRTC() {
   if (_webrtc) return _webrtc;
   try {
-    _webrtc = require('@stream-io/react-native-webrtc');
+    _webrtc = require('@livekit/react-native-webrtc');
   } catch {
     _webrtc = null;
   }

@@ -1910,7 +1910,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
               lifts above the keyboard instead of being covered by it (was
               showing only the keyboard with a blank screen behind). */}
           <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             style={{ position:'absolute', bottom:0, left:0, right:0 }}
             keyboardVerticalOffset={0}
           >

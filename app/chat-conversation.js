@@ -3234,7 +3234,7 @@ function PollCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' }}
       keyboardVerticalOffset={0}
     >
@@ -3371,7 +3371,7 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }}
       keyboardVerticalOffset={0}
     >
@@ -3553,7 +3553,7 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated })
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' }}
       keyboardVerticalOffset={0}
     >
@@ -4167,7 +4167,7 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         style={previewStyles.container}
       >
         {/* Header */}
@@ -20236,7 +20236,7 @@ export default function ChatConversationScreen() {
       {!!playlistEditor && (
         <Modal visible transparent animationType="slide" onRequestClose={() => setPlaylistEditor(null)}>
           <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             style={{ flex: 1 }}
             keyboardVerticalOffset={0}
           >
@@ -21397,12 +21397,12 @@ export default function ChatConversationScreen() {
               opacity: headerMenuOpacity,
               transform: [{ scale: headerMenuScale }],
               // Cap the menu height so it can't run off the bottom of the
-              // screen. Bug 2026-05-12: on shorter phones the menu had ~14
-              // items but the panel rendered fixed-height — items below
-              // "Ativar modo invisível" sat below the viewport with no
-              // way to reach them. Now the body scrolls and shows every
-              // option, regardless of screen size.
-              maxHeight: Dimensions.get('window').height - insets.top - insets.bottom - 80,
+              // screen. The 160 reserve covers chat composer (~70px) +
+              // soft-key area on Android. Bug 2026-05-14: on Android com
+              // composer flutuante, panel encostava no input e cortava o
+              // último item "Ativar modo invisível" parcialmente visível
+              // (sem indicar que era scrollable).
+              maxHeight: Dimensions.get('window').height - insets.top - insets.bottom - 160,
               ...Platform.select({
                 ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 16 },
                 android: { elevation: 14 },

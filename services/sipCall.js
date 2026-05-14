@@ -14,7 +14,7 @@ function ensureWebRTC() {
   if (RTCPeerConnection) return true;
   try {
     if (Platform.OS !== 'web') {
-      const webrtc = require('@stream-io/react-native-webrtc');
+      const webrtc = require('@livekit/react-native-webrtc');
       RTCPeerConnection = webrtc.RTCPeerConnection;
       RTCSessionDescription = webrtc.RTCSessionDescription;
       mediaDevices = webrtc.mediaDevices;
@@ -311,10 +311,10 @@ async function handleMessage(msg) {
 }
 
 async function placeCall() {
-  // iOS: activate audio session BEFORE getUserMedia (required by @stream-io/react-native-webrtc)
+  // iOS: activate audio session BEFORE getUserMedia (required by @livekit/react-native-webrtc)
   if (Platform.OS !== 'web') {
     try {
-      const { RTCAudioSession } = require('@stream-io/react-native-webrtc');
+      const { RTCAudioSession } = require('@livekit/react-native-webrtc');
       RTCAudioSession.audioSessionDidActivate();
       if (__DEV__) console.log('[Verto] iOS audio session activated');
     } catch (e) {
@@ -488,7 +488,7 @@ function cleanup() {
       InCallManager.stop();
     } catch (e) {}
     try {
-      const { RTCAudioSession } = require('@stream-io/react-native-webrtc');
+      const { RTCAudioSession } = require('@livekit/react-native-webrtc');
       RTCAudioSession.audioSessionDidDeactivate();
     } catch (e) {}
   }

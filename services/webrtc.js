@@ -15,8 +15,8 @@ if (Platform.OS === 'web') {
   RTCIceCandidate = window.RTCIceCandidate;
   mediaDevices = navigator.mediaDevices;
 } else {
-  // @stream-io/react-native-webrtc (same lib used in call.js and sipCall.js)
-  const RNWebRTC = require('@stream-io/react-native-webrtc');
+  // @livekit/react-native-webrtc (same lib used in call.js and sipCall.js)
+  const RNWebRTC = require('@livekit/react-native-webrtc');
   RTCPeerConnection = RNWebRTC.RTCPeerConnection;
   RTCSessionDescription = RNWebRTC.RTCSessionDescription;
   RTCIceCandidate = RNWebRTC.RTCIceCandidate;

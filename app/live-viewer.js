@@ -47,7 +47,7 @@ if (Platform.OS === 'web') {
   RTC_IceCandidate = window.RTCIceCandidate;
 } else {
   try {
-    const webrtc = require('@stream-io/react-native-webrtc');
+    const webrtc = require('@livekit/react-native-webrtc');
     RTC_PeerConnection = webrtc.RTCPeerConnection;
     RTC_SessionDescription = webrtc.RTCSessionDescription;
     RTC_IceCandidate = webrtc.RTCIceCandidate;
@@ -743,7 +743,7 @@ export default function LiveViewerScreen() {
                 if (Platform.OS === 'web') {
                   stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
                 } else {
-                  const webrtc = require('@stream-io/react-native-webrtc');
+                  const webrtc = require('@livekit/react-native-webrtc');
                   stream = await webrtc.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: true });
                 }
                 guestStreamRef.current = stream;
