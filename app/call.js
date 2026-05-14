@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import AvatarCircle from '../components/AvatarCircle';
+import ConnectionBars from '../components/ConnectionBars';
 import {
   IconMic, IconMicOff, IconVideo, IconVideoOff, IconPhoneOff,
   IconVolume2, IconVolume, IconArrowLeft, IconChevronDown, IconCameraFlip, IconScreenShare,
@@ -165,6 +166,11 @@ function CallScreenInner() {
   const [addParticipantQuery, setAddParticipantQuery] = useState('');
   const [addParticipantBusy, setAddParticipantBusy] = useState(false);
   const [addParticipantCandidates, setAddParticipantCandidates] = useState([]);
+  // Track candidate-load lifecycle so the modal can show a loading state
+  // instead of jumping straight to "empty" while the API resolves. Without
+  // this the user sees `call.addParticipantEmpty` for ~300ms even on a healthy
+  // network — looks like the feature is broken.
+  const [addParticipantLoading, setAddParticipantLoading] = useState(false);
   const [floatingEmojis, setFloatingEmojis] = useState([]);
   const [onHold, setOnHold] = useState(false);
   // Peer-side hold flag — set when the remote sends call_hold with on:true.
@@ -450,7 +456,15 @@ function CallScreenInner() {
       const local = contactEmail.split('@')[0];
       if (local) return local;
     }
-    return t('call.unknownPeer') || 'Chamada';
+    // Try both spellings — code historically used `unknownPeer` but at
+    // least one Android screen-locked path surfaced `call.unknownperr`
+    // raw (likely a stale OTA referencing the typo'd key). i18n now has
+    // both, but we still prefer the canonical key here.
+    const txt = t('call.unknownPeer');
+    if (txt && txt !== 'call.unknownPeer') return txt;
+    const alt = t('call.unknownPerr');
+    if (alt && alt !== 'call.unknownPerr') return alt;
+    return 'Chamada';
   })();
   const callerName = String(_safePeerName);
   // Email may also be missing — coerce to string for AvatarCircle/get_avatar
@@ -3526,6 +3540,7 @@ function CallScreenInner() {
   useEffect(() => {
     if (!showAddParticipant) return;
     let cancelled = false;
+    setAddParticipantLoading(true);
     (async () => {
       try {
         const api = require('../services/api');
@@ -3557,14 +3572,21 @@ function CallScreenInner() {
           members.forEach(addCandidate);
         }
 
-        // 2) If the convo is 1:1 (< 2 invitable members) OR no convo at all,
-        //    pull user's address book + recent chat conversations as fallback.
-        if (seen.size < 1 || !conversationId || members.length < 3) {
+        // 2) ALWAYS pull contacts + recent conversations as a fallback, even
+        //    when the convo seemed group-y. The earlier gate (`members.length < 3`)
+        //    silently failed when chatGroupInfo returned a 3-person group whose
+        //    members were ALL already on the call — leaving the modal empty.
+        //    Pulling these unconditionally is cheap (two parallel reads) and
+        //    guarantees we surface at least the user's contact book.
+        const fetches = [];
+        fetches.push((async () => {
           try {
             const c = await api.getContactsList?.();
             const contacts = c?.data?.contacts || c?.contacts || c?.data || c || [];
             if (Array.isArray(contacts)) contacts.forEach(addCandidate);
           } catch {}
+        })());
+        fetches.push((async () => {
           try {
             const cv = await api.chatConversations?.();
             const convos = cv?.data?.conversations || cv?.conversations || cv?.data || cv || [];
@@ -3576,12 +3598,15 @@ function CallScreenInner() {
               });
             }
           } catch {}
-        }
+        })());
+        await Promise.all(fetches);
 
         if (cancelled) return;
         setAddParticipantCandidates(Array.from(seen.values()));
       } catch (e) {
         if (__DEV__) console.warn('[call.addParticipant.load]', e?.message);
+      } finally {
+        if (!cancelled) setAddParticipantLoading(false);
       }
     })();
     return () => { cancelled = true; };
@@ -4308,35 +4333,58 @@ function CallScreenInner() {
   else if (peerScreenSharing) statusText = formatDuration(callDuration);
   else if (peerConnected) statusText = formatDuration(callDuration);
 
-  // Signal bars component — maps 5-level quality score to visual bars
-  const SignalBars = ({ quality, score, rtt }) => {
-    // Map quality score (1-5) to bar count (1-5)
-    const bars = score || (quality === 'good' ? 4 : quality === 'medium' ? 2 : 1);
-    const color = bars >= 4 ? '#7C3AED' : bars === 3 ? '#f59e0b' : '#ef4444';
+  // Signal bars wrapper — maps internal 1-5 quality score to the 0-4 level
+  // accepted by <ConnectionBars/>. NO ms/latency number is shown to the user
+  // (Telegram pattern): a 230ms RTT reads as "bad" to a non-technical user
+  // even though voice calls are perfectly fine up to 300ms. Bars are
+  // universally understood as signal strength. RTT is still logged for
+  // debug via the stats interval — we just don't surface it on the UI.
+  //
+  // Score → level mapping:
+  //   5  → 4  (excellent, bright green)
+  //   4  → 3  (good, green)
+  //   3  → 2  (medium, yellow)
+  //   2  → 1  (poor, orange)
+  //   1  → 0  (very poor, red)
+  const SignalBars = ({ quality, score }) => {
+    const s = Number(score);
+    const level = Number.isFinite(s)
+      ? Math.max(0, Math.min(4, s - 1))
+      : (quality === 'good' ? 3 : quality === 'medium' ? 2 : 1);
     // audit gap #4 — when quality fell below 3 the WebRTC helper drops
     // bitrate/framerate via adaptBitrate(). Surface that with a tiny ↓
     // indicator next to the bars so the user knows we're already
     // compensating for their bad connection (not just rendering a bad call).
-    const bitrateAdapted = bars > 0 && bars < 3;
+    const bitrateAdapted = level > 0 && level < 2;
+    const a11y = bitrateAdapted
+      ? (t?.('call.qualityAutoLowered') || 'Reduzimos a qualidade para manter a conexão')
+      : (level >= 3
+        ? (t?.('call.signalStrong') || 'Sinal forte')
+        : (t?.('call.signalWeak') || 'Sinal fraco'));
     return (
       <View
-        style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 1.5, height: 14, marginLeft: 8 }}
-        accessibilityLabel={bitrateAdapted ? (t?.('call.qualityAutoLowered') || 'Reduzimos a qualidade pra manter conexão') : undefined}
+        style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 8 }}
+        accessibilityLabel={a11y}
+        accessibilityRole="image"
       >
-        {[1, 2, 3, 4, 5].map(i => (
-          <View key={i} style={{ width: 3, height: 2 + i * 2.5, borderRadius: 1, backgroundColor: i <= bars ? color : 'rgba(255,255,255,0.2)' }} />
-        ))}
+        <ConnectionBars level={level} size={14} />
         {bitrateAdapted && (
           <Svg width={9} height={11} viewBox="0 0 24 24" style={{ marginLeft: 3 }}>
-            <SvgPath d="M12 5v14M5 12l7 7 7-7" stroke={color} strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+            <SvgPath d="M12 5v14M5 12l7 7 7-7" stroke="#f97316" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" fill="none" />
           </Svg>
-        )}
-        {rtt !== null && rtt !== undefined && (
-          <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 9, marginLeft: 3, fontVariant: ['tabular-nums'] }}>{rtt}ms</Text>
         )}
       </View>
     );
   };
+  // Telegram pattern: only draw signal bars when there's a problem or we're
+  // still settling. Score >= 4 (good/excellent) hides them after a 5s
+  // grace window so the strip doesn't have permanent "everything is fine"
+  // chrome competing with the duration text.
+  const showSignalBars = (() => {
+    if (!Number.isFinite(qualityScore)) return true;
+    if (qualityScore <= 3) return true;          // bad-ish — always show
+    return callDuration < 5;                     // good — only first 5s
+  })();
 
   // Get RTCView for native video rendering
   const RTCView = Platform.OS !== 'web' ? (() => {
@@ -4414,7 +4462,7 @@ function CallScreenInner() {
               }]}
             >
               <View style={styles.statusStripSide}>
-                <SignalBars quality={connectionQuality} score={qualityScore} rtt={rttMs} />
+                {showSignalBars && <SignalBars quality={connectionQuality} score={qualityScore} />}
               </View>
               <View style={styles.statusStripCenter} pointerEvents="none">
                 <Text style={styles.statusStripDuration} accessibilityLabel={t('call.duration') || 'Duração'}>
@@ -5290,8 +5338,10 @@ function CallScreenInner() {
                 <IconX size={22} color="#fff" />
               </TouchableOpacity>
             </View>
-            {addParticipantCandidates.length === 0 ? (
-              <Text style={styles.addPartEmpty}>{t('call.addParticipantEmpty') || 'Todos do grupo já estão na chamada.'}</Text>
+            {addParticipantLoading && addParticipantCandidates.length === 0 ? (
+              <Text style={styles.addPartEmpty}>{t('call.addParticipantLoading') || 'Carregando contatos...'}</Text>
+            ) : addParticipantCandidates.length === 0 ? (
+              <Text style={styles.addPartEmpty}>{t('call.addParticipantEmpty') || 'Nenhum contato disponível para adicionar.'}</Text>
             ) : (
               <ScrollView style={{ maxHeight: 380 }} showsVerticalScrollIndicator={false}>
                 {addParticipantCandidates.map((m) => {

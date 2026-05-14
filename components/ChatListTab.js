@@ -2551,12 +2551,21 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       unsubs.push(mailWs.on('live_ended', (payload) => {
         const data = payload?.data || payload || {};
         const email = (data.host_email || '').toLowerCase();
-        if (!email) return;
+        const sid = String(data.session_id || data.id || '');
+        // Drop by EITHER host_email OR session_id — server payloads vary
+        // (auto-staled lives carry both; legacy `live_end` from WS path may
+        // carry only host_email or only session_id depending on which hub
+        // forwarded it). Belt-and-suspenders so the strip always clears.
+        if (!email && !sid) return;
         setLivesByEmail(prev => {
-          if (!prev[email]) return prev;
+          let mutated = false;
           const next = { ...prev };
-          delete next[email];
-          return next;
+          for (const k of Object.keys(prev)) {
+            const entry = prev[k];
+            if (email && k === email) { delete next[k]; mutated = true; continue; }
+            if (sid && String(entry?.id || '') === sid) { delete next[k]; mutated = true; }
+          }
+          return mutated ? next : prev;
         });
       }));
 

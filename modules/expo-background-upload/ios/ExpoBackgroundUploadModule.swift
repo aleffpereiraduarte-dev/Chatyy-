@@ -30,6 +30,29 @@ public class ExpoBackgroundUploadModule: Module {
     private var libraryObserver: PhotoLibraryObserver?
     private var lastObserverFireAt: TimeInterval = 0
 
+    // Counter of FRESH (non-deduped) uploads in the current session.
+    // Bug 2026-05-13: when a user's local backedUpSet was cleared (reinstall,
+    // logout/login, AsyncStorage purge, etc.) but the server still has every
+    // photo, the native module would iterate every PHAsset, hit precheck (or
+    // drive_init_upload), get `deduped:true` for ALL of them, increment
+    // `uploaded` for each dedup, and at end-of-session fire a "X fotos salvas"
+    // local notification. User saw 100% completed on the UI but kept getting
+    // hourly "100 fotos enviadas" pushes because every background wake-up
+    // repeated the precheck-only pass. Local notification must only fire when
+    // we actually uploaded new bytes, not when the server told us it already
+    // has everything.
+    private var freshUploadsThisSession: Int = 0
+    private let freshLock = NSLock()
+    private func bumpFreshUpload() {
+        freshLock.lock(); freshUploadsThisSession += 1; freshLock.unlock()
+    }
+    private func resetFreshCounter() {
+        freshLock.lock(); freshUploadsThisSession = 0; freshLock.unlock()
+    }
+    private func currentFreshUploads() -> Int {
+        freshLock.lock(); defer { freshLock.unlock() }; return freshUploadsThisSession
+    }
+
     /// Schedule a local notification when a backup batch finishes while
     /// the app is in background. Bug 2026-05-12: the title used to be
     /// "Backup completo", which lied to users whose library still had
@@ -295,6 +318,11 @@ public class ExpoBackgroundUploadModule: Module {
             self.shouldStop = false
             self.stateLock.unlock()
 
+            // Reset fresh-upload counter at start of each session — the
+            // batch-complete local notification only fires if at least one
+            // photo was actually transferred to R2 (not just dedup-confirmed).
+            self.resetFreshCounter()
+
             // Sweep orphaned temp files from previous crashed/interrupted
             // sessions. These accumulate when the app dies mid-upload (OOM,
             // app killed, etc.) and the deferred cleanup never runs. Without
@@ -351,9 +379,20 @@ public class ExpoBackgroundUploadModule: Module {
                 // We pass `remaining = total - uploaded` so the message
                 // accurately reflects whether the library is truly done
                 // or just this batch finished (see notifyBackupComplete).
-                if uploaded > 0 && UIApplication.shared.applicationState != .active {
+                // Only post the "X fotos salvas" banner when we actually
+                // PUT new bytes to R2 this session. If every "uploaded"
+                // entry was just a server-side dedup confirmation (precheck
+                // or drive_init_upload returned deduped:true), staying
+                // silent matches what the user sees in the UI: the photo
+                // is already on the server, there's nothing new to brag
+                // about. Without this gate, a user whose local backedUpSet
+                // got wiped (reinstall / logout / etc.) keeps getting
+                // hourly "100 fotos salvas" pushes for the same already-
+                // backed-up library on every background wake-up.
+                let fresh = self.currentFreshUploads()
+                if fresh > 0 && UIApplication.shared.applicationState != .active {
                     let remaining = max(0, total - uploaded)
-                    self.notifyBackupComplete(count: uploaded, remaining: remaining)
+                    self.notifyBackupComplete(count: fresh, remaining: remaining)
                 }
             }
 
@@ -736,6 +775,10 @@ public class ExpoBackgroundUploadModule: Module {
             // 5. Mark backed up + emit onComplete + tick counter for ETA
             markAssetBackedUp(assetId)
             recordAssetCompleted()
+            // Real PUT-to-R2 completed (not a server dedup). Bump the
+            // fresh-uploads counter that gates the "X fotos salvas"
+            // local notification at end of session.
+            bumpFreshUpload()
             sendEvent("onComplete", [
                 "assetId": assetId, "success": true, "httpStatus": 200
             ])

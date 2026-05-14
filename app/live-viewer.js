@@ -137,6 +137,12 @@ export default function LiveViewerScreen() {
   const [showViewersList, setShowViewersList] = useState(false);
   const [chatMessages, setChatMessages] = useState([]);
   const [liveEnded, setLiveEnded] = useState(false);
+  // Replay save flow — viewer can bookmark the recorded live so it shows
+  // up in /lives-saved after CF Stream finalizes the VOD (30s-2min).
+  // `replaySaved` flips immediately on tap (optimistic) and we call the
+  // API in the background. Failures rollback silently.
+  const [replaySaved, setReplaySaved] = useState(false);
+  const [savingReplay, setSavingReplay] = useState(false);
   const [hearts, setHearts] = useState([]);
   const [error, setError] = useState('');
   const [following, setFollowing] = useState(false);
@@ -160,6 +166,13 @@ export default function LiveViewerScreen() {
   // Refs
   const remoteVideoRef = useRef(null);
   const wsRef = useRef(null);
+  // Track auth-completion so requestToJoin can wait for it. Without this,
+  // tapping "Pedir pra entrar" right after opening the viewer screen sent
+  // the WS message before the server's `auth_success` came back — and the
+  // server's `live_join_request` handler guards on `c.email`, silently
+  // dropping the request. From the user's perspective the button does
+  // nothing and the host never sees the badge.
+  const wsAuthedRef = useRef(false);
   const pcRef = useRef(null);
   const sessionIdRef = useRef(paramSessionId);
   const chatIdRef = useRef(0);
@@ -471,6 +484,7 @@ export default function LiveViewerScreen() {
           return;
         case 'auth_success':
           // After auth, join the live session
+          wsAuthedRef.current = true;
           ws.send(JSON.stringify({
             type: 'live_join',
             session_id: paramSessionId,
@@ -573,6 +587,9 @@ export default function LiveViewerScreen() {
     };
 
     ws.onclose = () => {
+      // Drop auth flag on close so any pending `requestToJoin` retry waits
+      // for the next `auth_success` before sending again.
+      wsAuthedRef.current = false;
       if (!alive || liveEnded) return;
       // Exponential-ish backoff capped at 8s. After 5 fails give up so the
       // viewer sees a real error instead of looping forever on a dead session.
@@ -894,7 +911,11 @@ export default function LiveViewerScreen() {
     let sent = false;
     try {
       const ws = wsRef.current;
-      if (ws && ws.readyState === WebSocket.OPEN) {
+      // Only count as "sent" if BOTH the socket is open AND we already saw
+      // auth_success — otherwise the server's `live_join_request` handler
+      // bails on the missing `c.email` guard and the host never sees the
+      // request. wsAuthedRef gates that race.
+      if (ws && ws.readyState === WebSocket.OPEN && wsAuthedRef.current) {
         ws.send(JSON.stringify({
           type: 'live_join_request',
           session_id: paramSessionId,
@@ -919,7 +940,7 @@ export default function LiveViewerScreen() {
       const retry = setInterval(() => {
         try {
           const ws2 = wsRef.current;
-          if (ws2 && ws2.readyState === WebSocket.OPEN) {
+          if (ws2 && ws2.readyState === WebSocket.OPEN && wsAuthedRef.current) {
             ws2.send(JSON.stringify({
               type: 'live_join_request',
               session_id: paramSessionId,
@@ -1112,6 +1133,34 @@ export default function LiveViewerScreen() {
   }, [paramSessionId, spawnHeart]);
 
   // "Saiu da live" overlay shown when the broadcaster ends the stream.
+  // "Salvar live" tap → bookmark the recorded replay in the viewer's
+  // /lives-saved tab. Optimistic toggle (instant feedback); rollback on
+  // server failure. Idempotent on the backend so re-taps are no-ops.
+  const handleSaveReplay = useCallback(async () => {
+    if (!paramSessionId || savingReplay) return;
+    if (replaySaved) return; // already saved — could add unsave here later
+    setSavingReplay(true);
+    setReplaySaved(true); // optimistic
+    try {
+      const res = await api.liveSaveReplay(paramSessionId);
+      if (!res?.success) {
+        setReplaySaved(false);
+        showToast(res?.message || t('liveReplay.saveFailed') || 'Falha ao salvar');
+      } else {
+        showToast(t('liveReplay.savedToast') || 'Salvo em Lives');
+        // Schedule a recording-poll so the VOD URLs land fast — backend
+        // doesn't have a cron, viewer-triggered poll is cheap (CF API
+        // is rate-tolerant of single-uid lookups).
+        try { api.liveRecordingPoll(paramSessionId).catch(() => {}); } catch {}
+      }
+    } catch (e) {
+      setReplaySaved(false);
+      showToast(t('liveReplay.saveFailed') || 'Falha ao salvar');
+    } finally {
+      setSavingReplay(false);
+    }
+  }, [paramSessionId, savingReplay, replaySaved, t, showToast]);
+
   // Polished: gradient backdrop (purple → black), bigger avatar with soft
   // ring, primary action = "Follow" (returning fans get "Ver perfil" instead),
   // secondary actions = Share + Voltar. Auto-back timer (4s) still runs.
@@ -1162,7 +1211,35 @@ export default function LiveViewerScreen() {
             <IconShare size={18} color="#fff" />
             <Text style={styles.endedBtnText}>{t('live.share') || 'Compartilhar'}</Text>
           </TouchableOpacity>
+
+          {/* Salvar replay — bookmarka a live na aba "Lives salvas".
+              Aparece pra qualquer viewer (não-host); host já tem
+              acesso automático na lista dele em /lives-saved. */}
+          <TouchableOpacity
+            onPress={handleSaveReplay}
+            style={[styles.endedBtn, replaySaved ? styles.endedBtnGhost : styles.endedBtnPrimary]}
+            disabled={savingReplay || replaySaved}
+            accessibilityLabel={t('liveReplay.save') || 'Salvar live'}
+            accessibilityRole="button"
+            activeOpacity={0.85}
+          >
+            <IconStar size={18} color="#fff" />
+            <Text style={styles.endedBtnText}>
+              {replaySaved
+                ? (t('liveReplay.saved') || 'Salvo')
+                : (t('liveReplay.save') || 'Salvar live')}
+            </Text>
+          </TouchableOpacity>
         </View>
+
+        {/* Helper line under the buttons — explica que o replay vai
+            aparecer em "Lives salvas" e que pode demorar pra processar
+            na CDN (CF Stream leva 30s-2min pra finalizar o VOD). */}
+        {replaySaved && (
+          <Text style={styles.endedSub} numberOfLines={2}>
+            {t('liveReplay.processing') || 'Processando — vai aparecer em Lives salvas em alguns minutos'}
+          </Text>
+        )}
 
         <TouchableOpacity
           onPress={() => router.back()}

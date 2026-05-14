@@ -4883,11 +4883,52 @@ export async function getMutualFollowers(email) {
 export async function liveStart(title, opts = {}) {
   return apiCall('live_start', { title, ...(opts.audience ? { audience: opts.audience } : {}) }, 'POST');
 }
-export async function liveEnd(sessionId) { return apiCall('live_end', { session_id: sessionId }, 'POST'); }
+export async function liveEnd(sessionId, opts = {}) {
+  // `save_replay` lets the host opt-out of the CF Stream VOD being kept
+  // around as a replay. Backend default = true (most hosts want it).
+  const payload = { session_id: sessionId };
+  if (opts && Object.prototype.hasOwnProperty.call(opts, 'save_replay')) {
+    payload.save_replay = opts.save_replay ? 1 : 0;
+  }
+  return apiCall('live_end', payload, 'POST');
+}
+export async function liveEndCf(sessionId, opts = {}) {
+  const payload = { session_id: sessionId };
+  if (opts && Object.prototype.hasOwnProperty.call(opts, 'save_replay')) {
+    payload.save_replay = opts.save_replay ? 1 : 0;
+  }
+  return apiCall('live_end_cf', payload, 'POST');
+}
 export async function liveList() { return apiCall('live_list', {}, 'POST'); }
 export async function liveUpdateViewers(sessionId, count) { return apiCall('live_update_viewers', { session_id: sessionId, viewer_count: count }, 'POST'); }
 export async function liveSendChat(sessionId, content) { return apiCall('live_send_chat', { session_id: sessionId, content }, 'POST'); }
 export async function liveChatHistory(sessionId, limit = 50) { return apiCall('live_chat_history', { session_id: sessionId, limit }, 'POST'); }
+
+// Live replay / recording endpoints. CF Stream auto-records every push
+// session as a VOD; the backend polls live_inputs/{uid}/videos and stamps
+// recording_url + recording_mp4 on chat_live_sessions. Frontend uses these
+// wrappers to surface the replays in /lives-saved + the live-viewer
+// end-card "Salvar live" tap.
+export async function liveRecordingPoll(sessionId = null) {
+  // Pass session_id for a focused single-session poll (used by host after
+  // ending) or omit for a rolling 20-session sweep (used by /lives-saved).
+  return apiCall('live_recording_poll', sessionId ? { session_id: sessionId } : {}, 'POST');
+}
+export async function liveRecordingsList(limit = 50, offset = 0) {
+  return apiCall('live_recordings_list', { limit, offset }, 'POST');
+}
+export async function liveSaveReplay(sessionId) {
+  return apiCall('live_save_replay', { session_id: sessionId }, 'POST');
+}
+export async function liveUnsaveReplay(sessionId) {
+  return apiCall('live_unsave_replay', { session_id: sessionId }, 'POST');
+}
+export async function liveRecordingGet(sessionId) {
+  return apiCall('live_recording_get', { session_id: sessionId }, 'POST');
+}
+export async function liveRecordingDelete(sessionId) {
+  return apiCall('live_recording_delete', { session_id: sessionId }, 'POST');
+}
 
 // ============================================================
 // CALL HISTORY

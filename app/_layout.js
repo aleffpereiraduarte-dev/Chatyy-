@@ -1048,6 +1048,8 @@ export default function RootLayout() {
                   <Stack.Screen name="photo-new" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 200 }} />
                   <Stack.Screen name="live-broadcast" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120 }} />
                   <Stack.Screen name="live-viewer" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120 }} />
+                  <Stack.Screen name="lives-saved" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="live-replay" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120 }} />
                   <Stack.Screen name="notes" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="notebook-editor" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150, gestureEnabled: false }} />
                   <Stack.Screen name="plans" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
