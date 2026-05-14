@@ -446,7 +446,15 @@ export default function NotificationsHub({
 
   const handleAction = useCallback((item, kind) => {
     if (kind === 'follow_back') {
-      try { api.followUser?.({ email: item.actor_email }); } catch {}
+      // followUser espera string `targetEmail`, não objeto. O bug original
+      // passava `{ email }` → backend recebia `target_email = { email: ... }`
+      // e silenciosamente não persistia o follow. UI ficava "marcada" mas
+      // o servidor nunca registrava nada.
+      if (item?.actor_email) {
+        api.followUser?.(item.actor_email).catch((e) => {
+          console.warn('[NotificationsHub] followUser failed:', e?.message || e);
+        });
+      }
       setItems(prev => prev.map(n =>
         n.id === item.id ? { ...n, action_taken: 'follow_back' } : n
       ));

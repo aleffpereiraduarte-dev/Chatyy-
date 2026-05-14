@@ -541,14 +541,21 @@ export default function LiveBroadcastScreen() {
           }
           break;
         case 'live_join_request':
-          // Viewer wants to come on as a guest. Stack the request in the
-          // join-requests inbox; the host clears it via approve/deny.
+          // Viewer wants to come on as a guest (TikTok-style colab — host
+          // accepts, both go split-screen). Stack the request and surface
+          // a prominent prompt: auto-open the requests sheet so the host
+          // can't miss it while filming. Without the auto-open the chip
+          // top-right was easy to ignore and user complained the system
+          // "didn't work" — they never noticed the chip.
           if (msg.viewer_email) {
             setJoinRequests(prev => {
               if (prev.some(r => r.email === msg.viewer_email)) return prev;
               return [{ email: msg.viewer_email, name: msg.viewer_name || msg.viewer_email.split('@')[0], ts: Date.now() }, ...prev].slice(0, 30);
             });
-            try { require('react-native').Vibration.vibrate(10); } catch {}
+            // Strong buzz so host feels it on cheek/hand mid-stream.
+            try { require('react-native').Vibration.vibrate([0, 80, 60, 80]); } catch {}
+            // Auto-open the sheet so accept/deny is one tap away.
+            setRequestsOpen(true);
           }
           break;
       }
@@ -2341,7 +2348,7 @@ export default function LiveBroadcastScreen() {
         >
           <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#facc15' }} />
           <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>
-            {joinRequests.length} {t('live.requestsCount') || 'pedindo pra entrar'}
+            {joinRequests.length} {t('live.colabRequest') || 'pra colab'}
           </Text>
         </TouchableOpacity>
       ) : null}
@@ -2354,7 +2361,10 @@ export default function LiveBroadcastScreen() {
           <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setRequestsOpen(false)} />
           <View style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16, maxHeight: '70%' }]}>
             <View style={liveSheetStyles.grabber} />
-            <Text style={liveSheetStyles.title}>{t('live.joinRequests') || 'Pedidos pra entrar'}</Text>
+            <Text style={liveSheetStyles.title}>{t('live.colabRequests') || 'Pedidos pra colab'}</Text>
+            <Text style={[liveSheetStyles.subtitle, { marginBottom: 8 }]}>
+              {t('live.colabSubtitle') || 'Aceitar coloca a pessoa ao vivo com você (tipo TikTok colab).'}
+            </Text>
             {joinRequests.length === 0 ? (
               <Text style={liveSheetStyles.subtitle}>{t('live.noRequests') || 'Sem pedidos no momento'}</Text>
             ) : (

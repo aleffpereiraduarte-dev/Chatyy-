@@ -443,8 +443,16 @@ function NotificationsScreenInner() {
 
   const handleAction = useCallback((notif, kind) => {
     if (kind === 'follow_back') {
-      // Optimistic — placeholder API hook
-      try { api.followUser?.({ email: notif.author_email }); } catch {}
+      // followUser espera o email como string, não objeto. O bug original
+      // empurrava `{ email }` que virava `target_email = { email: '...' }`
+      // no backend e o follow nunca era persistido. Resultado: usuário
+      // apertava "Seguir de volta", UI marcava `action_taken` mas o servidor
+      // nunca registrou o follow.
+      if (notif?.author_email) {
+        api.followUser?.(notif.author_email).catch((e) => {
+          console.warn('[notifications] followUser failed:', e?.message || e);
+        });
+      }
       const tag = (n) => n.id === notif.id ? { ...n, action_taken: 'follow_back' } : n;
       Object.keys(cacheRef.current).forEach(k => {
         cacheRef.current[k] = cacheRef.current[k].map(tag);
