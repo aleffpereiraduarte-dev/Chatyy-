@@ -341,6 +341,27 @@ jobs:
                   print(f"⚠ build already attached to groups (409) — OK");
               else:
                   print(f"::error::attach failed {code}: {body_txt}"); sys.exit(1)
+          # Submit pra Beta App Review — REQUIRED toda build pra external group.
+          # Sem este POST, build trava em READY_FOR_BETA_SUBMISSION e testers
+          # externos NUNCA recebem update (descoberto 2026-05-13: 6 builds órfãos
+          # desde 467, last submitted manual). Apple aprova em <2h normalmente.
+          sub_body = {"data": {"type": "betaAppReviewSubmissions",
+                               "relationships": {"build": {"data": {"type": "builds", "id": build_id}}}}}
+          sub_req = urllib.request.Request(
+              "https://api.appstoreconnect.apple.com/v1/betaAppReviewSubmissions",
+              data=json.dumps(sub_body).encode(), headers=headers_post, method="POST")
+          try:
+              urllib.request.urlopen(sub_req)
+              print(f"✓ Build {VER} submitted to Beta App Review (Apple aprova <2h)")
+          except urllib.error.HTTPError as e:
+              code = e.code
+              body_txt = e.read().decode()[:500]
+              if code == 409:
+                  print(f"⚠ build already submitted to review (409) — OK")
+              elif code == 422 and 'already in review' in body_txt.lower():
+                  print(f"⚠ build already in review (422) — OK")
+              else:
+                  print(f"::error::beta submission failed {code}: {body_txt}"); sys.exit(1)
           PY
           rm -f ./asc_key.p8
 
