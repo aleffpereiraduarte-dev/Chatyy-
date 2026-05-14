@@ -1,36 +1,54 @@
 /**
- * LiveChatOverlay — bottom-area floating comment stream over the video.
+ * LiveChatOverlay — TikTok-grade floating comment stream over the video.
  *
- * Renders the last N (default 5) chat messages bottom-up, mimicking
- * TikTok/Instagram Live: transparent backgrounds with text-shadow, soft
- * mask gradient (web) and stack-alpha (native) to melt the top of the
- * column into the frame.
+ * Renders the last N (default 6) chat messages bottom-up.
  *
- * Each row supports:
- *   • single tap → @reply seed (parent handler)
- *   • double tap → heart chip animation (parent handler)
- *   • system rows ("@maria entrou") render as glass pills (no avatar)
+ * Features (#921 round):
+ *   • Each row slides up from bottom with spring entrance (entry anim).
+ *   • Stack alpha — older msgs fade as new ones come.
+ *   • Username CHIP COLORED by tier: gold (gifter), purple (host), default.
+ *   • Tap on row → @reply pre-fills input (onPressMessage).
+ *   • Long-press → host can pin (onLongPressHost) or remove (onRequestRemove).
+ *   • System "X entrou" chips inline w/ mini avatar (purple glass pill).
+ *   • Gift chip — golden chip with sparkle + amount badge.
+ *   • Heart float chip on side when msg has reactions (double-tap).
  *
- * Tap anywhere outside a row → opens the full chat sheet (onOpenSheet).
+ * Pure presentation. All animation values come from parent message objects;
+ * parent owns timeline + WS plumbing.
  */
 
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Animated,
 } from 'react-native';
 import AvatarCircle from '../AvatarCircle';
-import { IconHeart } from '../Icons';
+import { IconHeart, IconStar, IconUserPlus } from '../Icons';
 
+// Tier accent — matches the rest of the live UI brand palette.
 const LIVE_RED = '#dc2626';
+const TIER_HOST = '#7C3AED';     // purple chip behind host name
+const TIER_GIFT = '#fbbf24';     // gold chip for paying viewers
+const TIER_GUEST = '#22d3ee';    // cyan for co-host (post-approval)
+const TIER_DEFAULT = 'rgba(255,255,255,0.16)';
+
+function chipForTier(tier) {
+  if (tier === 'host') return TIER_HOST;
+  if (tier === 'gift' || tier === 'gifter') return TIER_GIFT;
+  if (tier === 'guest' || tier === 'cohost') return TIER_GUEST;
+  return TIER_DEFAULT;
+}
 
 export default function LiveChatOverlay({
   messages = [],
   commentHearts = {},
   onPressMessage,
   onOpenSheet,
+  onLongPressHost,
+  isHostView = false,
   hasMore = false,
   seeAllLabel = 'Ver todos os comentários',
+  hostEmail = null,
 }) {
-  const visible = messages.slice(-5);
+  const visible = messages.slice(-6);
 
   return (
     <TouchableOpacity
@@ -47,41 +65,84 @@ export default function LiveChatOverlay({
       ) : null}
 
       {visible.map((m, idx) => {
-        // Older comments fade softer; stack alpha 0.4 → 1 from top.
-        const stackAlpha = 0.4 + (idx / Math.max(visible.length - 1, 1)) * 0.6;
+        // Older comments fade softer; stack alpha 0.45 → 1 from top.
+        const stackAlpha = 0.45 + (idx / Math.max(visible.length - 1, 1)) * 0.55;
         const entry = m.entry;
         const opacity = entry
           ? entry.interpolate({ inputRange: [0, 1], outputRange: [0, stackAlpha] })
           : stackAlpha;
         const translateY = entry
-          ? entry.interpolate({ inputRange: [0, 1], outputRange: [8, 0] })
+          ? entry.interpolate({ inputRange: [0, 1], outputRange: [14, 0] })
           : 0;
+        const scale = entry
+          ? entry.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] })
+          : 1;
 
-        if (m.isSystem) {
+        // System chip (e.g. "@maria entrou")
+        if (m.isSystem || m.type === 'system') {
           return (
             <Animated.View
               key={m.id}
-              style={[styles.systemRow, { opacity, transform: [{ translateY }] }]}
+              style={[styles.systemRow, { opacity, transform: [{ translateY }, { scale }] }]}
               pointerEvents="none"
             >
               <View style={styles.systemPill}>
+                {m.email ? (
+                  <View style={styles.systemAvatarWrap}>
+                    <AvatarCircle name={m.name} email={m.email} size={16} />
+                  </View>
+                ) : (
+                  <IconUserPlus size={11} color="#fff" />
+                )}
                 <Text style={styles.systemText} numberOfLines={1}>
                   <Text style={styles.systemName}>{m.name}</Text>
-                  <Text>{` ${m.text}`}</Text>
+                  <Text>{` ${m.text || m.content || ''}`}</Text>
                 </Text>
               </View>
             </Animated.View>
           );
         }
 
+        // Gift chip — golden, with sparkle + amount
+        if (m.type === 'gift' || m.gift) {
+          return (
+            <Animated.View
+              key={m.id}
+              style={[styles.giftRow, { opacity, transform: [{ translateY }, { scale }] }]}
+              pointerEvents="none"
+            >
+              <View style={styles.giftPill}>
+                <View style={styles.giftAvatar}>
+                  <AvatarCircle name={m.name} email={m.email} size={20} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.giftName} numberOfLines={1}>{m.name}</Text>
+                  <Text style={styles.giftText} numberOfLines={1}>
+                    {m.giftLabel || (m.gift ? `enviou ${m.gift}` : 'enviou um presente')}
+                  </Text>
+                </View>
+                <View style={styles.giftAmount}>
+                  <IconStar size={12} color="#fff" />
+                  <Text style={styles.giftAmountText}>{m.amount || 1}</Text>
+                </View>
+              </View>
+            </Animated.View>
+          );
+        }
+
+        const tier = m.tier || (hostEmail && (m.email || '').toLowerCase() === hostEmail.toLowerCase() ? 'host' : 'default');
+        const chipBg = chipForTier(tier);
         const heartAnim = commentHearts[m.id];
+
         return (
           <Animated.View
             key={m.id}
-            style={{ opacity, transform: [{ translateY }] }}
+            style={{ opacity, transform: [{ translateY }, { scale }] }}
           >
             <TouchableOpacity
               onPress={(e) => { e.stopPropagation?.(); onPressMessage?.(m); }}
+              onLongPress={isHostView ? () => onLongPressHost?.(m) : undefined}
+              delayLongPress={350}
               activeOpacity={0.7}
               accessibilityRole="button"
               accessibilityLabel={`Reply to ${m.name}`}
@@ -89,7 +150,12 @@ export default function LiveChatOverlay({
             >
               <AvatarCircle name={m.name} email={m.email} size={26} />
               <View style={styles.body}>
-                <Text style={styles.name} numberOfLines={1}>{m.name}</Text>
+                <View style={[styles.nameChip, { backgroundColor: chipBg }]}>
+                  <Text style={styles.name} numberOfLines={1}>{m.name}</Text>
+                  {tier === 'host' ? <Text style={styles.tierBadge}>HOST</Text> : null}
+                  {tier === 'gift' ? <Text style={styles.tierBadge}>★</Text> : null}
+                  {(tier === 'guest' || tier === 'cohost') ? <Text style={styles.tierBadge}>COLAB</Text> : null}
+                </View>
                 <Text style={styles.text} numberOfLines={3}>{m.content}</Text>
               </View>
               {heartAnim ? (
@@ -101,7 +167,7 @@ export default function LiveChatOverlay({
                       opacity: heartAnim,
                       transform: [
                         { scale: heartAnim.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] }) },
-                        { translateY: heartAnim.interpolate({ inputRange: [0, 1], outputRange: [4, -2] }) },
+                        { translateY: heartAnim.interpolate({ inputRange: [0, 1], outputRange: [10, -4] }) },
                       ],
                     },
                   ]}
@@ -121,7 +187,7 @@ const styles = StyleSheet.create({
   overlay: {
     paddingRight: 70, // leave room for the right rail
     marginBottom: 8,
-    gap: 5,
+    gap: 6,
     ...(Platform.OS === 'web' ? {
       WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.2) 12%, #000 38%)',
       maskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.2) 12%, #000 38%)',
@@ -147,20 +213,39 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 8,
-    maxWidth: '92%',
+    maxWidth: '94%',
     paddingVertical: 3,
   },
   body: {
     flexShrink: 1,
-    paddingTop: 1,
+    paddingTop: 0,
+  },
+  // Colored name chip (per-tier background)
+  nameChip: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 9,
+    marginBottom: 2,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
   },
   name: {
-    color: 'rgba(229,231,235,0.95)',
+    color: '#fff',
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.2,
-    marginBottom: 1,
-    ...(Platform.OS === 'web' ? { textShadow: '0 1px 3px rgba(0,0,0,0.85)' } : {}),
+    ...(Platform.OS === 'web' ? { textShadow: '0 1px 2px rgba(0,0,0,0.6)' } : {}),
+  },
+  tierBadge: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.4,
+    opacity: 0.92,
   },
   text: {
     color: '#fff',
@@ -170,27 +255,89 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? { textShadow: '0 1px 2px rgba(0,0,0,0.85)' } : {}),
   },
 
-  // System row (e.g. "@maria entrou")
+  // System chip ("@maria entrou")
   systemRow: {
     alignSelf: 'flex-start',
-    maxWidth: '85%',
+    maxWidth: '88%',
   },
   systemPill: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingLeft: 4,
+    paddingRight: 11,
+    paddingVertical: 3,
     backgroundColor: 'rgba(124,58,237,0.35)',
     borderWidth: 1,
-    borderColor: 'rgba(196,181,253,0.4)',
-    borderRadius: 12,
+    borderColor: 'rgba(196,181,253,0.45)',
+    borderRadius: 14,
+  },
+  systemAvatarWrap: {
+    borderRadius: 10,
+    overflow: 'hidden',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.55)',
   },
   systemText: {
-    color: 'rgba(255,255,255,0.95)',
+    color: 'rgba(255,255,255,0.96)',
     fontSize: 11.5,
     fontWeight: '500',
   },
   systemName: {
     fontWeight: '800',
     color: '#fff',
+  },
+
+  // Gift chip (golden, with sparkle + amount)
+  giftRow: {
+    alignSelf: 'flex-start',
+    maxWidth: '94%',
+  },
+  giftPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingLeft: 5,
+    paddingRight: 8,
+    paddingVertical: 5,
+    backgroundColor: 'rgba(251,191,36,0.22)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(251,191,36,0.85)',
+    borderRadius: 16,
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 4px 14px rgba(251,191,36,0.35)',
+    } : {}),
+  },
+  giftAvatar: {
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 1.5,
+    borderColor: 'rgba(251,191,36,0.95)',
+  },
+  giftName: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '800',
+    ...(Platform.OS === 'web' ? { textShadow: '0 1px 2px rgba(0,0,0,0.7)' } : {}),
+  },
+  giftText: {
+    color: 'rgba(255,255,255,0.95)',
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  giftAmount: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 10,
+    backgroundColor: '#fbbf24',
+  },
+  giftAmountText: {
+    color: '#111',
+    fontWeight: '900',
+    fontSize: 11,
   },
 
   // Inline heart chip on a row (double-tap reaction)

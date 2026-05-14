@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Animated,
-  Alert, TextInput, Dimensions, StatusBar, FlatList,
+  Alert, TextInput, Dimensions, StatusBar, FlatList, Keyboard,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -9,6 +9,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import LiveChat from '../components/LiveChat'; // eslint-disable-line no-unused-vars -- kept for fallback
+import LiveChatOverlay from '../components/live/LiveChatOverlay';
 import AvatarCircle from '../components/AvatarCircle';
 import { IconX, IconCameraFlip, IconMic, IconMicOff, IconVideo, IconVideoOff, IconHeart, IconShare, IconSend, IconSettings, IconUserPlus, IconSparkles, IconFilter, IconPin, IconStar, IconStarFilled, IconGlobe, IconLock, IconUsers, IconEye, IconStop, IconCheck, IconBookmark } from '../components/Icons';
 import { useTheme } from '../context/ThemeContext';
@@ -50,6 +51,7 @@ export default function LiveBroadcastScreen() {
   const [preStart, setPreStart] = useState(true);
   const [titleInput, setTitleInput] = useState(params.title || '');
   const [countdown, setCountdown] = useState(null);
+  const [kbHeight, setKbHeight] = useState(0);
   // Audience pill — Instagram Live "Who can watch": public | friends | private.
   // Affects backend visibility flag in liveStart. Local-only pre-start.
   const [audience, setAudience] = useState('public');
@@ -101,6 +103,13 @@ export default function LiveBroadcastScreen() {
   // muteReactions closure window) reads the current toggle value.
   const muteReactionsRef = useRef(false);
   useEffect(() => { muteReactionsRef.current = muteReactions; }, [muteReactions]);
+  useEffect(() => {
+    const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const s = Keyboard.addListener(showEvt, (e) => setKbHeight(e.endCoordinates?.height || 0));
+    const h = Keyboard.addListener(hideEvt, () => setKbHeight(0));
+    return () => { s.remove(); h.remove(); };
+  }, []);
   // Invite-friends sheet — replaces the system Share fallback so the host can
   // multi-select contacts and DM them the live link in one tap (TikTok parity).
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -114,6 +123,13 @@ export default function LiveBroadcastScreen() {
   // Join", TikTok "Go Live Together").
   const [joinRequests, setJoinRequests] = useState([]); // [{email, name, ts}]
   const [requestsOpen, setRequestsOpen] = useState(false);
+  // Active guest co-broadcaster (round 921 — colab mode). Only one slot for
+  // now; expanding to multi-guest needs SFU. {email, name, pc, streamURL}.
+  const [guestPeer, setGuestPeer] = useState(null);
+  // Forward refs so the WS switch above can dispatch to handlers declared
+  // further down without hitting TDZ. Same pattern as handleViewerJoinedRef.
+  const handleGuestOfferRef = useRef(null);
+  const handleGuestIceRef = useRef(null);
 
   // Refs
   const localVideoRef = useRef(null);
@@ -405,6 +421,68 @@ export default function LiveBroadcastScreen() {
             peersRef.current.delete(msg.viewer_id);
           }
           break;
+        case 'live_chat_remove':
+          // Another (legit) host instance removed a comment — drop locally.
+          if (msg.msg_id) {
+            setChatMessages(prev => prev.filter(x => String(x.id) !== String(msg.msg_id)));
+          }
+          break;
+        case 'live_gift':
+          // Render a golden gift chip inline in the comment overlay.
+          {
+            const entry = new Animated.Value(0);
+            setChatMessages(prev => [...prev, {
+              id: 'gift_' + String(++chatIdRef.current),
+              name: msg.sender_name || (msg.sender_email || '').split('@')[0] || '?',
+              email: msg.sender_email,
+              type: 'gift',
+              gift: msg.gift,
+              amount: msg.amount || 1,
+              giftLabel: msg.gift ? ((t('live.sentGift') || 'enviou') + ' ' + msg.gift) : (t('live.sentGift') || 'enviou um presente'),
+              entry,
+            }]);
+            Animated.spring(entry, { toValue: 1, friction: 6, tension: 120, useNativeDriver: true }).start();
+          }
+          break;
+        case 'live_guest_offer':
+          // Approved viewer (guest) wants to publish their camera to the host.
+          // Stash for the host-side answer; the actual WebRTC negotiation is
+          // handled in handleGuestOffer (added in this round). When that
+          // succeeds, the guest's stream renders as a PiP card next to host.
+          handleGuestOfferRef.current?.(msg);
+          break;
+        case 'live_guest_ice':
+          handleGuestIceRef.current?.(msg);
+          break;
+        case 'live_guest_left':
+          // Drop guest peer + tile if we had one.
+          if (msg.guest_email) {
+            setGuestPeer(prev => {
+              if (prev?.email && prev.email.toLowerCase() === msg.guest_email.toLowerCase()) {
+                try { prev.pc?.close(); } catch {}
+                return null;
+              }
+              return prev;
+            });
+          }
+          break;
+        case 'live_guest_joined':
+          // Inline a system chip "X juntou-se ao colab" — same renderer as the
+          // "X entrou" join chip, just different text so viewers see the diff.
+          {
+            const entry = new Animated.Value(0);
+            setChatMessages(prev => [...prev, {
+              id: 'gj_' + String(++chatIdRef.current),
+              name: msg.guest_name || (msg.guest_email || '').split('@')[0] || '?',
+              email: msg.guest_email,
+              type: 'system',
+              text: t('live.joinedColab') || 'juntou-se ao colab',
+              content: t('live.joinedColab') || 'juntou-se ao colab',
+              entry,
+            }]);
+            Animated.spring(entry, { toValue: 1, friction: 7, tension: 120, useNativeDriver: true }).start();
+          }
+          break;
         case 'live_join_request':
           // Viewer wants to come on as a guest. Stack the request in the
           // join-requests inbox; the host clears it via approve/deny.
@@ -553,14 +631,18 @@ export default function LiveBroadcastScreen() {
       setJoinFeed(prev => [{ email: joinedEmail, name: joinedName, ts: Date.now() }, ...prev].slice(0, 50));
     }
 
-    // Show join message
+    // Show join message — animated entrance for the TikTok overlay.
+    const entry = new Animated.Value(0);
     setChatMessages(prev => [...prev, {
       id: String(++chatIdRef.current),
       name: joinedName,
       email: msg.viewer_email,
       content: t('live.joined') || 'joined',
+      text: t('live.joined') || 'joined',
       type: 'system',
+      entry,
     }]);
+    Animated.spring(entry, { toValue: 1, friction: 7, tension: 120, useNativeDriver: true }).start();
   }, [t]);
   // Public-name alias kept stable so the rest of the file (and the WS
   // onmessage switch) can call handleViewerJoined as before.
@@ -607,6 +689,88 @@ export default function LiveBroadcastScreen() {
     setViewerCount(peersRef.current.size);
   }, []);
 
+  // ─── Guest co-broadcast (#921 colab mode) ─────────────────────────────
+  // When the host approves a join request, the approved viewer publishes
+  // their camera/mic as a second WebRTC stream. We receive the offer here,
+  // build an `RTCPeerConnection`, and render the remote track as a PiP card.
+  // This is best-effort — full SFU support is still pending native rebuild,
+  // but this minimal P2P path lights up "colab" UX (host sees guest video).
+  const handleGuestOffer = useCallback(async (msg) => {
+    if (!msg || !msg.sdp || !RTC_PeerConnection) return;
+    // Reuse any previous guest peer (a re-offer from same guest).
+    try { guestPeer?.pc?.close(); } catch {}
+    const iceServers = msg.turn_credentials ? [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: msg.turn_credentials.urls, username: msg.turn_credentials.username, credential: msg.turn_credentials.credential },
+    ] : [{ urls: 'stun:stun.l.google.com:19302' }];
+    const pc = new RTC_PeerConnection({ iceServers });
+    let streamUrl = null;
+    pc.ontrack = (e) => {
+      const remoteStream = e.streams?.[0];
+      if (!remoteStream) return;
+      if (Platform.OS !== 'web' && remoteStream.toURL) {
+        streamUrl = remoteStream.toURL();
+        setGuestPeer(prev => prev ? { ...prev, streamUrl } : prev);
+      } else {
+        setGuestPeer(prev => prev ? { ...prev, stream: remoteStream } : prev);
+      }
+    };
+    pc.onicecandidate = (ev) => {
+      if (ev.candidate && wsRef.current?.readyState === WebSocket.OPEN) {
+        try {
+          wsRef.current.send(JSON.stringify({
+            type: 'live_guest_ice',
+            session_id: sessionIdRef.current,
+            guest_id: msg.guest_id,
+            candidate: ev.candidate,
+          }));
+        } catch {}
+      }
+    };
+    setGuestPeer({ email: msg.guest_email, name: msg.guest_name, pc, streamUrl: null });
+    try {
+      await pc.setRemoteDescription(new RTC_SessionDescription({ type: 'offer', sdp: msg.sdp }));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          type: 'live_guest_answer',
+          session_id: sessionIdRef.current,
+          guest_id: msg.guest_id,
+          sdp: answer.sdp,
+        }));
+      }
+    } catch (e) {
+      console.warn('[Live] guest offer fail', e);
+      try { pc.close(); } catch {}
+      setGuestPeer(null);
+    }
+  }, [guestPeer]);
+
+  const handleGuestIce = useCallback(async (msg) => {
+    if (!msg?.candidate || !guestPeer?.pc) return;
+    try { await guestPeer.pc.addIceCandidate(new RTC_IceCandidate(msg.candidate)); } catch {}
+  }, [guestPeer]);
+
+  useEffect(() => { handleGuestOfferRef.current = handleGuestOffer; }, [handleGuestOffer]);
+  useEffect(() => { handleGuestIceRef.current = handleGuestIce; }, [handleGuestIce]);
+
+  // Host removes the guest from colab.
+  const kickGuest = useCallback(() => {
+    if (!guestPeer) return;
+    try { guestPeer.pc?.close(); } catch {}
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      try {
+        wsRef.current.send(JSON.stringify({
+          type: 'live_guest_remove',
+          session_id: sessionIdRef.current,
+          guest_email: guestPeer.email,
+        }));
+      } catch {}
+    }
+    setGuestPeer(null);
+  }, [guestPeer]);
+
   const handleChatMessage = useCallback((msg) => {
     // WS server's live_chat broadcast does NOT exclude the sender. The host's
     // handleSendChat already inserts an optimistic local bubble, so without
@@ -616,14 +780,70 @@ export default function LiveBroadcastScreen() {
     const fromEmail = (msg.sender_email || '').toLowerCase();
     if (myEmail && fromEmail && myEmail === fromEmail) return;
 
+    // Spring-up entrance for the TikTok overlay (LiveChatOverlay reads m.entry).
+    const entry = new Animated.Value(0);
     setChatMessages(prev => [...prev, {
       id: String(++chatIdRef.current),
       name: msg.sender_name || msg.sender_email?.split('@')[0] || '?',
       email: msg.sender_email,
       content: msg.content,
       type: msg.msg_type || 'chat',
+      tier: msg.tier || null, // gift / gifter set by gift relays, else default
+      entry,
     }]);
+    Animated.spring(entry, { toValue: 1, friction: 7, tension: 120, useNativeDriver: true }).start();
   }, [user]);
+
+  // Host long-press a comment in the TikTok overlay → quick action sheet.
+  // For now: pin (already wired via legacy long-press) + remove (sends
+  // `live_chat_remove` so other viewers' overlays drop the message client-side).
+  const onLongPressComment = useCallback((m) => {
+    if (!m || !m.id) return;
+    try { require('react-native').Vibration.vibrate(10); } catch {}
+    Alert.alert(
+      m.name || 'Comentário',
+      m.content || '',
+      [
+        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+        {
+          text: t('live.pinComment') || 'Fixar',
+          onPress: () => {
+            const pinContent = m.content || '';
+            if (!pinContent) return;
+            setPinnedComment({ name: m.name || '?', content: pinContent });
+            if (wsRef.current?.readyState === WebSocket.OPEN) {
+              try {
+                wsRef.current.send(JSON.stringify({
+                  type: 'live_pin',
+                  session_id: sessionIdRef.current,
+                  content: pinContent,
+                  sender_name: m.name || '',
+                  sender_email: m.email || '',
+                }));
+              } catch {}
+            }
+          },
+        },
+        {
+          text: t('live.removeComment') || 'Remover',
+          style: 'destructive',
+          onPress: () => {
+            // Drop locally + tell viewers to drop too.
+            setChatMessages(prev => prev.filter(x => x.id !== m.id));
+            if (wsRef.current?.readyState === WebSocket.OPEN) {
+              try {
+                wsRef.current.send(JSON.stringify({
+                  type: 'live_chat_remove',
+                  session_id: sessionIdRef.current,
+                  msg_id: m.id,
+                }));
+              } catch {}
+            }
+          },
+        },
+      ],
+    );
+  }, [t]);
 
   // Countdown animation
   const animateCountdown = useCallback((num) => {
@@ -797,6 +1017,7 @@ export default function LiveBroadcastScreen() {
   const handleSendChat = useCallback((text) => {
     const trimmed = (text || '').trim();
     if (!trimmed) return;
+    const entry = new Animated.Value(0);
     const msg = {
       id: String(++chatIdRef.current),
       name: user?.name || user?.email?.split('@')[0] || 'You',
@@ -804,8 +1025,11 @@ export default function LiveBroadcastScreen() {
       content: trimmed,
       type: 'chat',
       isHost: true,
+      tier: 'host', // colored chip in LiveChatOverlay
+      entry,
     };
     setChatMessages(prev => [...prev, msg]);
+    Animated.spring(entry, { toValue: 1, friction: 7, tension: 120, useNativeDriver: true }).start();
 
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
@@ -1303,6 +1527,54 @@ export default function LiveBroadcastScreen() {
     <View style={styles.fullScreen}>
       {renderLocalVideo()}
 
+      {/* Guest co-broadcast PiP card (#921 colab mode). Renders the approved
+          viewer's camera in a draggable 110×150 card top-right of the host's
+          frame — TikTok "Go LIVE Together" pattern. Tap × to kick the guest. */}
+      {guestPeer ? (
+        <View style={{
+          position: 'absolute',
+          top: (insets?.top || 0) + 110,
+          right: 14,
+          width: 110,
+          height: 150,
+          borderRadius: 14,
+          backgroundColor: '#0b0b18',
+          borderWidth: 2,
+          borderColor: '#22d3ee',
+          overflow: 'hidden',
+          zIndex: 25,
+          ...(Platform.OS === 'web' ? { boxShadow: '0 6px 18px rgba(34,211,238,0.4)' } : {}),
+        }}>
+          {Platform.OS === 'web' ? (
+            <video
+              autoPlay
+              playsInline
+              ref={(ref) => { if (ref && guestPeer.stream && ref.srcObject !== guestPeer.stream) ref.srcObject = guestPeer.stream; }}
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            />
+          ) : (NativeRTCView && guestPeer.streamUrl ? (
+            <NativeRTCView streamURL={guestPeer.streamUrl} style={StyleSheet.absoluteFill} objectFit="cover" zOrder={1} />
+          ) : (
+            <View style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
+              <AvatarCircle name={guestPeer.name} email={guestPeer.email} size={48} />
+            </View>
+          ))}
+          <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 6, paddingVertical: 3 }}>
+            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800' }} numberOfLines={1}>
+              {t('live.guestColab') || 'Colab'} · {guestPeer.name || (guestPeer.email || '').split('@')[0]}
+            </Text>
+          </View>
+          <TouchableOpacity
+            onPress={kickGuest}
+            style={{ position: 'absolute', top: 4, right: 4, width: 22, height: 22, borderRadius: 11, backgroundColor: 'rgba(0,0,0,0.7)', alignItems: 'center', justifyContent: 'center' }}
+            activeOpacity={0.7}
+            accessibilityLabel={t('live.kickGuest') || 'Remove collab'}
+          >
+            <IconX size={12} color="#fff" />
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
       {/* Video off overlay */}
       {videoOff && (
         <View style={styles.videoOffOverlay}>
@@ -1538,75 +1810,32 @@ export default function LiveBroadcastScreen() {
           row with invite pill + text input + heart + share + flip. */}
       <View style={styles.bottomArea} pointerEvents="box-none">
         <View style={styles.chatScrollWrap} pointerEvents="box-none">
-          {/* TikTok-style comments column — bottom→up scroll, lightweight
-              rows with avatar + name + comment. Older lines fade at the top
-              via the gradient overlay. We render this inline (instead of
-              LiveChat) because LiveChat ships its own TextInput, and we
-              already have a richer composer row below. */}
-          <FlatList
-            data={hideChat ? [] : chatMessages.slice(-30)}
-            keyExtractor={(item, idx) => item.id || String(idx)}
-            renderItem={({ item }) => (
-              item.type === 'system' ? (
-                <View style={styles.commentSystem}>
-                  <Text style={styles.commentSystemText} numberOfLines={1}>
-                    {item.name} {item.content}
-                  </Text>
-                </View>
-              ) : (
-                <TouchableOpacity
-                  activeOpacity={0.85}
-                  delayLongPress={350}
-                  onLongPress={() => {
-                    // Long-press any chat row → pin that comment to all
-                    // viewers (TikTok parity). Broadcasts live_pin WS so the
-                    // viewer's overlay renders the yellow chip immediately.
-                    const pinName = item.name || (item.email || '').split('@')[0] || '?';
-                    const pinContent = item.content || '';
-                    if (!pinContent) return;
-                    setPinnedComment({ name: pinName, content: pinContent });
-                    if (wsRef.current?.readyState === WebSocket.OPEN) {
-                      try {
-                        wsRef.current.send(JSON.stringify({
-                          type: 'live_pin',
-                          session_id: sessionIdRef.current,
-                          content: pinContent,
-                          sender_name: pinName,
-                          sender_email: item.email || '',
-                        }));
-                      } catch {}
-                    }
-                    try { require('react-native').Vibration.vibrate(8); } catch {}
-                  }}
-                >
-                <View style={styles.commentRow}>
-                  <AvatarCircle name={item.name} email={item.email} size={28} />
-                  <View style={[styles.commentBubble, item.isHost && styles.commentBubbleHost]}>
-                    <View style={styles.commentNameRow}>
-                      <Text style={[styles.commentName, item.isHost && { color: '#fff' }]} numberOfLines={1}>
-                        {item.name}
-                      </Text>
-                      {item.isHost ? (
-                        <View style={styles.commentHostChip}>
-                          <Text style={styles.commentHostChipText}>{t('live.host') || 'Host'}</Text>
-                        </View>
-                      ) : null}
-                    </View>
-                    <Text style={styles.commentText}>{item.content}</Text>
-                  </View>
-                </View>
-                </TouchableOpacity>
-              )
-            )}
-            showsVerticalScrollIndicator={false}
-            contentContainerStyle={styles.commentListContent}
-            initialNumToRender={12}
-            maxToRenderPerBatch={12}
-          />
+          {/* TikTok-grade comments overlay (round 921). Same component the
+              viewer uses, with host-side long-press → pin/remove and the
+              colored-chip tier system (host=purple, gift=gold, guest=cyan).
+              Older lines fade via gradient mask + per-row stack-alpha; new
+              lines spring up from below. */}
+          {hideChat ? null : (
+            <LiveChatOverlay
+              messages={chatMessages}
+              onPressMessage={(m) => {
+                // Tap a row → seed an @reply in the composer (commentDraft).
+                if (!m) return;
+                const handle = (m.name || (m.email || '').split('@')[0] || '').replace(/\s+/g, '');
+                if (handle) setCommentDraft(prev => (prev ? prev + ' ' : '') + '@' + handle + ' ');
+              }}
+              onLongPressHost={onLongPressComment}
+              onOpenSheet={() => {}}
+              isHostView
+              hasMore={chatMessages.length > 6}
+              seeAllLabel={t('live.seeAllComments') || 'Ver todos os comentários'}
+              hostEmail={user?.email}
+            />
+          )}
           <View style={styles.chatTopFade} pointerEvents="none" />
         </View>
 
-        <View style={[styles.composerRow, { paddingBottom: insets.bottom + 12 }]}>
+        <View style={[styles.composerRow, { paddingBottom: (kbHeight > 0 ? kbHeight + 8 : insets.bottom + 12) }]}>
           {/* Primary purple "Convidar amigos" pill — TikTok places this at the
               bottom-left to drive viewer growth. */}
           <TouchableOpacity

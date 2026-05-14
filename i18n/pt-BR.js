@@ -3976,6 +3976,14 @@ export default {
   'live.viewersList': 'Espectadores',
   'live.viewersListEmpty': 'Ninguém entrou ainda',
   'live.joined': 'entrou',
+  'live.joinedColab': 'juntou-se ao colab',
+  'live.youreInColab': 'Você está no colab',
+  'live.removedFromColab': 'Você saiu do colab',
+  'live.guestUnavailable': 'Colab indisponível neste device',
+  'live.removeComment': 'Remover comentário',
+  'live.sentGift': 'enviou',
+  'live.guestColab': 'Colab',
+  'live.kickGuest': 'Remover colab',
   // 2026-05-12: bloco completo de chaves do live (estavam aparecendo
   // como "live.xxx" cru no broadcast/viewer screen).
   'live.aoVivo': 'AO VIVO',

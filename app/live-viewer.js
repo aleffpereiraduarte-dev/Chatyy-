@@ -203,6 +203,11 @@ export default function LiveViewerScreen() {
   // nothing and the host never sees the badge.
   const wsAuthedRef = useRef(false);
   const pcRef = useRef(null);
+  // Round 921 — guest co-broadcast (colab mode). When host approves our
+  // join_request, we open camera/mic + RTCPeerConnection and publish to host.
+  const guestPcRef = useRef(null);
+  const guestStreamRef = useRef(null);
+  const [guestPublishing, setGuestPublishing] = useState(false);
   const sessionIdRef = useRef(paramSessionId);
   const chatIdRef = useRef(0);
   const heartIdRef = useRef(0);
@@ -608,8 +613,89 @@ export default function LiveViewerScreen() {
         case 'live_join_approve':
           // Targeted via viewer_email filter — server fans out to the channel.
           if (msg.viewer_email && user?.email && msg.viewer_email.toLowerCase() === user.email.toLowerCase()) {
-            try { require('react-native').Alert.alert(t('live.aoVivo') || 'AO VIVO', t('live.requestApproved') || 'O host aceitou seu pedido — entrando em breve...'); } catch {}
+            // Round 921: actually publish as guest co-broadcaster instead of
+            // just popping an alert. We grab the camera+mic and send an SDP
+            // offer to the host via live_guest_offer. Host's RTCPeerConnection
+            // will render us as a PiP card. Falls back to the legacy alert on
+            // any error so the user still gets feedback.
+            (async () => {
+              try {
+                if (!RTC_PeerConnection) {
+                  require('react-native').Alert.alert(t('live.aoVivo') || 'AO VIVO', t('live.guestUnavailable') || 'Colab indisponível neste device.');
+                  return;
+                }
+                // We need media for the guest publish path. Web path uses
+                // navigator.mediaDevices.getUserMedia, native uses webrtc lib.
+                let stream;
+                if (Platform.OS === 'web') {
+                  stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                } else {
+                  const webrtc = require('@stream-io/react-native-webrtc');
+                  stream = await webrtc.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: true });
+                }
+                guestStreamRef.current = stream;
+                setGuestPublishing(true);
+                const pc = new RTC_PeerConnection({ iceServers: iceConfig.iceServers });
+                guestPcRef.current = pc;
+                stream.getTracks().forEach(tr => pc.addTrack(tr, stream));
+                pc.onicecandidate = (ev) => {
+                  if (ev.candidate && wsRef.current?.readyState === WebSocket.OPEN) {
+                    try {
+                      wsRef.current.send(JSON.stringify({
+                        type: 'live_guest_ice',
+                        session_id: paramSessionId,
+                        host_email: msg.host_email,
+                        candidate: ev.candidate,
+                      }));
+                    } catch {}
+                  }
+                };
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                if (wsRef.current?.readyState === WebSocket.OPEN) {
+                  wsRef.current.send(JSON.stringify({
+                    type: 'live_guest_offer',
+                    session_id: paramSessionId,
+                    host_email: msg.host_email,
+                    sdp: offer.sdp,
+                  }));
+                }
+                // Lightweight in-screen confirmation chip — no modal blocker.
+                setToast(t('live.youreInColab') || 'Você está no colab');
+                Animated.sequence([
+                  Animated.timing(toastAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
+                  Animated.delay(1400),
+                  Animated.timing(toastAnim, { toValue: 0, duration: 250, useNativeDriver: true }),
+                ]).start();
+              } catch (e) {
+                try { require('react-native').Alert.alert(t('live.aoVivo') || 'AO VIVO', (t('live.requestApproved') || 'O host aceitou seu pedido') + (Platform.OS === 'web' ? ' (camera permission?)' : '')); } catch {}
+              }
+            })();
           }
+          break;
+        case 'live_guest_answer':
+          // Host's SDP answer — apply it so the WebRTC connection establishes.
+          (async () => {
+            try {
+              if (guestPcRef.current && msg.sdp) {
+                await guestPcRef.current.setRemoteDescription(new RTC_SessionDescription({ type: 'answer', sdp: msg.sdp }));
+              }
+            } catch (e) { console.warn('[Live] guest answer fail', e); }
+          })();
+          break;
+        case 'live_guest_ice':
+          if (guestPcRef.current && msg.candidate) {
+            try { guestPcRef.current.addIceCandidate(new RTC_IceCandidate(msg.candidate)); } catch {}
+          }
+          break;
+        case 'live_guest_removed':
+          // Host kicked us. Tear down + notify.
+          try { guestPcRef.current?.close(); } catch {}
+          guestPcRef.current = null;
+          try { guestStreamRef.current?.getTracks().forEach(tr => tr.stop()); } catch {}
+          guestStreamRef.current = null;
+          setGuestPublishing(false);
+          try { require('react-native').Alert.alert(t('live.aoVivo') || 'AO VIVO', t('live.removedFromColab') || 'Você saiu do colab'); } catch {}
           break;
         case 'live_join_deny':
           if (msg.viewer_email && user?.email && msg.viewer_email.toLowerCase() === user.email.toLowerCase()) {
@@ -669,6 +755,16 @@ export default function LiveViewerScreen() {
         pcRef.current.close();
         pcRef.current = null;
       }
+      // Guest publish teardown — also let host know via WS if still alive.
+      try {
+        if (guestPcRef.current && ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'live_guest_leave', session_id: paramSessionId }));
+        }
+      } catch {}
+      try { guestPcRef.current?.close(); } catch {}
+      guestPcRef.current = null;
+      try { guestStreamRef.current?.getTracks().forEach(tr => tr.stop()); } catch {}
+      guestStreamRef.current = null;
       if (endTimerRef.current) clearTimeout(endTimerRef.current);
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       iceCandidateQueueRef.current = []; // Clear queued candidates
