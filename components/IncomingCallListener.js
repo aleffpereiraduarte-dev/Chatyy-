@@ -609,14 +609,15 @@ export default function IncomingCallListener() {
           setCall(null);
           acceptedRef.current = false;
           handlingRef.current = false;
-          // Best-effort native dismiss. Both modules ship with the app:
-          // - IncomingCallModule.dismiss (Android full-screen)
-          // - CallKitModule.endCall (iOS CallKit UI)
-          // Wrapped in try/catch so missing native side never crashes JS.
+          // Best-effort native dismiss. The Expo modules-API names are
+          // `ExpoCallKit.endCall` (both platforms — Android also broadcasts
+          // CLOSE_CALL_ACTIVITY to drop the full-screen overlay, iOS calls
+          // CXProvider.reportCall(.endedReason: .answeredElsewhere)).
+          // The legacy NativeModules.IncomingCallModule / CallKitModule paths
+          // never existed in this project; calling them was a silent no-op.
           try {
-            const { NativeModules } = require('react-native');
-            try { NativeModules?.IncomingCallModule?.dismiss?.(data?.call_id || ''); } catch (_) {}
-            try { NativeModules?.CallKitModule?.endCall?.(data?.call_id || ''); } catch (_) {}
+            const { endCall } = require('../services/callkeep');
+            endCall(data?.call_id || '');
           } catch (_) {}
         }
       }));

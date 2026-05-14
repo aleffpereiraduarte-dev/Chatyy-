@@ -182,6 +182,15 @@ class ExpoCallKitModule : Module() {
         val stopIntent = Intent(context, CallRingingService::class.java)
         context.stopService(stopIntent)
       } catch (_: Exception) {}
+      // Multi-device cancel: dismiss the IncomingCallActivity overlay too.
+      // Without this broadcast, when the user answers on phone A, phone B
+      // keeps its full-screen IncomingCallActivity sitting on top until the
+      // 30s missed-call timeout. The activity already registers a receiver
+      // for this exact action and finishes cleanly.
+      try {
+        val closeIntent = Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY")
+        context.sendBroadcast(closeIntent)
+      } catch (_: Exception) {}
     }
 
     Function("registerVoipPush") {
