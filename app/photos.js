@@ -2410,6 +2410,74 @@ export default function PhotosScreen() {
   const [fabOpen, setFabOpen] = useState(false);
   const fabRotateAnim = useRef(new Animated.Value(0)).current;
 
+  // ============================================================
+  // NEW POST FLOW — Instagram-style multi-select → carousel → publish
+  // ============================================================
+  // Picks 1..10 media items from device library (or camera) and hands them
+  // off to /photo-new for reorder/edit/remove + caption + publish. We stash
+  // the asset list in AsyncStorage (router params can't carry files) under a
+  // short-lived key the next screen reads on mount.
+  const startNewPostFlow = useCallback(async (mode = 'library') => {
+    try {
+      if (Platform.OS === 'web') {
+        // Web: re-use the existing FAB no-op path. Web users post via the
+        // feed CreatePostModal which is mounted elsewhere.
+        const ip = await import('expo-image-picker').catch(() => null);
+        if (!ip) return;
+      }
+      const ImagePicker = await import('expo-image-picker');
+      // Permission gate — silent re-prompt is fine, picker prompts itself.
+      if (mode !== 'camera') {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) {
+          safeAlert(
+            t('photos.permissionDenied') || 'Permissão negada',
+            t('photos.permissionDeniedDesc') || 'Permita acesso às fotos pra criar uma publicação.',
+          );
+          return;
+        }
+      }
+
+      const pick = mode === 'camera'
+        ? await ImagePicker.launchCameraAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            quality: 0.9,
+            videoMaxDuration: 60,
+          })
+        : await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            allowsMultipleSelection: true,
+            selectionLimit: 10,
+            quality: 0.9,
+            orderedSelection: true,
+          });
+
+      if (pick.canceled || !pick.assets?.length) return;
+
+      const items = pick.assets.map((a, idx) => {
+        const isVid = (a.type === 'video') || (a.mimeType || '').startsWith('video');
+        return {
+          id: `${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 7)}`,
+          uri: a.uri,
+          type: isVid ? 'video' : 'image',
+          width: a.width,
+          height: a.height,
+          duration: a.duration,
+          fileName: a.fileName || `media_${Date.now()}_${idx}.${isVid ? 'mp4' : 'jpg'}`,
+          mimeType: a.mimeType || (isVid ? 'video/mp4' : 'image/jpeg'),
+        };
+      });
+
+      await AsyncStorage.setItem('photoNew.pending', JSON.stringify(items));
+      router.push('/photo-new');
+    } catch (e) {
+      safeAlert(
+        t('photos.pickerError') || 'Erro',
+        e?.message || (t('photos.pickerErrorDesc') || 'Não foi possível abrir a galeria.'),
+      );
+    }
+  }, [router, t]);
+
   // Thumbnails: 200x200 JPEG cached to disk via thumbnailCache service
   // Grid shows cached file:// thumbUri (instant) or ph:// uri as fallback
 
@@ -2755,116 +2823,25 @@ export default function PhotosScreen() {
                   <Text style={{ fontSize: 13, color: '#7C3AED', fontWeight: '700' }}>×</Text>
                 </Pressable>
               )}
-              {/* Memories — Google Photos-grade horizontal carousel (280×140 with gradient overlay) */}
+              {/* Memories — iOS Photos-grade horizontal carousel (320×180 cinematic 16:9). */}
+              {/* Hard guard: section is hidden entirely when there's nothing to surface — */}
+              {/*   no memoriesData buckets AND not enough photos for the curated presets. */}
+              {/* Bucket-empty case (e.g. brand-new account) collapses cleanly. */}
               {!searchText && !showFavorites && !presetFilter && (memoriesData.length > 0 || filteredPhotos.length > 6) && (
-                <View style={{ marginTop: 4, marginBottom: 4 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, marginBottom: 10 }}>
-                    <Text style={[s.sectionTitle, { color: colors.text, fontSize: 17, letterSpacing: -0.3 }]}>
-                      {t('photos.memories') || 'Memórias'}
-                    </Text>
-                    <View style={{ flex: 1 }} />
-                    <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: '#7C3AED', marginRight: 6 }} />
-                    <Text style={{ fontSize: 12, color: colors.textSecondary, fontWeight: '600' }}>
-                      {(memoriesData.length || 0) + 3}
-                    </Text>
-                  </View>
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={{ paddingHorizontal: Spacing.md, paddingRight: Spacing.lg, gap: 10 }}
-                    decelerationRate="fast"
-                    snapToInterval={290}
-                  >
-                    {/* "1 ano atrás" / "X anos atrás" cards from real memories */}
-                    {memoriesData.slice(0, 4).map((mem, idx) => {
-                      const cover = mem.photos[0];
-                      const coverUri = cover ? (cover.isDevice && Platform.OS === 'ios'
-                        ? cover.uri
-                        : getThumbnailUrl(cover)) : null;
-                      const label = mem.yearsAgo === 1
-                        ? (t('photos.yearsAgo', { n: 1 }) || '1 ano atrás')
-                        : (t('photos.yearsAgoPlural', { n: mem.yearsAgo }) || `${mem.yearsAgo} anos atrás`);
-                      return (
-                        <Pressable
-                          key={`mem-${mem.yearsAgo}`}
-                          style={[s.memoryCardLg, { backgroundColor: colors.surface }]}
-                          onPress={() => {
-                            // Jump into first photo of memory bucket
-                            const idx0 = filteredPhotos.findIndex(p => p.id === cover?.id);
-                            if (idx0 >= 0) openViewer(idx0);
-                          }}
-                        >
-                          {coverUri ? (
-                            <Image source={{ uri: coverUri }} style={s.memoryCoverLg} resizeMode="cover" />
-                          ) : (
-                            <View style={[s.memoryCoverLg, { backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }]}>
-                              <IconImage size={32} color={colors.textTertiary} />
-                            </View>
-                          )}
-                          <View style={s.memoryGradient} pointerEvents="none" />
-                          <View style={s.memoryGradient2} pointerEvents="none" />
-                          <View style={s.memoryBadge}>
-                            <Text style={s.memoryBadgeText}>{mem.photos.length}</Text>
-                          </View>
-                          <View style={s.memoryTextWrap}>
-                            <Text style={s.memoryTitleLg} numberOfLines={1}>{label}</Text>
-                            <Text style={s.memorySubLg} numberOfLines={1}>{mem.photos.length} {t('photos.items') || 'fotos'}</Text>
-                          </View>
-                        </Pressable>
-                      );
-                    })}
-                    {/* Curated preset cards: "Verão 2025" / "Esta semana" / "Pessoas" */}
-                    {[
-                      { key: 'summer', title: `Verão ${(new Date().getMonth() >= 11 ? new Date().getFullYear() + 1 : new Date().getFullYear())}`, sub: 'Os melhores momentos', tint: ['#7C3AED', '#EC4899'] },
-                      { key: 'thisweek', title: 'Esta semana', sub: 'Novas memórias', tint: ['#0EA5E9', '#7C3AED'] },
-                      { key: 'people', title: 'Pessoas', sub: 'Quem aparece mais', tint: ['#F59E0B', '#7C3AED'] },
-                    ].map((preset, idx) => {
-                      const cover = filteredPhotos[(idx + 1) * 3] || filteredPhotos[idx] || null;
-                      const coverUri = cover ? (cover.isDevice && Platform.OS === 'ios' ? cover.uri : getThumbnailUrl(cover)) : null;
-                      return (
-                        <Pressable
-                          key={`preset-${preset.key}`}
-                          style={[s.memoryCardLg, { backgroundColor: preset.tint[0] }]}
-                          onPress={async () => {
-                            // Google Photos-grade memory: AI semantic search
-                            // against photo_labels (tags/objects/scene) +
-                            // optional date window. Each preset has a tuned
-                            // query that scores faces/scenes the way Google's
-                            // "Pessoas" / "Verão" / "Esta semana" panels do.
-                            setPresetFilter(preset.key);
-                            setPresetMLIds(null);
-                            const queries = {
-                              summer: 'beach pool sun outdoor vacation summer praia piscina sol verão férias',
-                              thisweek: '',
-                              people: 'person people face portrait selfie group friends pessoa pessoas rosto retrato selfie amigos',
-                            };
-                            const q = queries[preset.key] || '';
-                            if (!q) return; // thisweek is purely date-based
-                            setPresetLoading(true);
-                            try {
-                              const r = await api.photoSearchML(q, 1, 200);
-                              if (r?.success && Array.isArray(r.data?.files)) {
-                                setPresetMLIds(r.data.files);
-                              }
-                            } catch {} finally {
-                              setPresetLoading(false);
-                            }
-                          }}
-                        >
-                          {coverUri ? (
-                            <Image source={{ uri: coverUri }} style={[s.memoryCoverLg, { opacity: 0.78 }]} resizeMode="cover" />
-                          ) : null}
-                          <View style={[s.memoryGradient, { backgroundColor: preset.tint[0] + '40' }]} pointerEvents="none" />
-                          <View style={s.memoryGradient2} pointerEvents="none" />
-                          <View style={s.memoryTextWrap}>
-                            <Text style={s.memoryTitleLg} numberOfLines={1}>{preset.title}</Text>
-                            <Text style={s.memorySubLg} numberOfLines={1}>{preset.sub}</Text>
-                          </View>
-                        </Pressable>
-                      );
-                    })}
-                  </ScrollView>
-                </View>
+                <MemoriesCarousel
+                  colors={colors}
+                  isDark={isDark}
+                  t={t}
+                  memoriesData={memoriesData}
+                  filteredPhotos={filteredPhotos}
+                  getThumbnailUrl={getThumbnailUrl}
+                  openViewer={openViewer}
+                  api={api}
+                  setPresetFilter={setPresetFilter}
+                  setPresetMLIds={setPresetMLIds}
+                  setPresetLoading={setPresetLoading}
+                  s={s}
+                />
               )}
             </View>
           }
@@ -4141,24 +4118,24 @@ export default function PhotosScreen() {
         )}
       </View>
 
-      {/* FAB - Upload/Camera (Google Photos style) */}
+      {/* FAB - New post (Instagram-style multi-select) */}
       {!selectMode && activeTab === 'photos' && (
         <View style={[s.fabContainer, { bottom: 24 + insets.bottom }]}>
           {fabOpen && (
             <Animated.View style={[s.fabOptions, { opacity: fabRotateAnim }]}>
               <TouchableOpacity
                 style={[s.fabOption, { backgroundColor: colors.surface, ...Shadow.md }]}
-                onPress={() => { setFabOpen(false); /* trigger camera */ }}
+                onPress={() => { setFabOpen(false); startNewPostFlow('camera'); }}
               >
                 <IconCamera size={20} color={colors.primary} />
                 <Text style={[s.fabOptionText, { color: colors.text }]}>{t('photos.camera') || 'Camera'}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[s.fabOption, { backgroundColor: colors.surface, ...Shadow.md }]}
-                onPress={() => { setFabOpen(false); /* trigger upload */ }}
+                onPress={() => { setFabOpen(false); startNewPostFlow('library'); }}
               >
                 <IconCloudUpload size={20} color={colors.primary} />
-                <Text style={[s.fabOptionText, { color: colors.text }]}>{t('photos.upload') || 'Upload'}</Text>
+                <Text style={[s.fabOptionText, { color: colors.text }]}>{t('photos.newPost') || 'Nova publicação'}</Text>
               </TouchableOpacity>
             </Animated.View>
           )}
@@ -4166,11 +4143,18 @@ export default function PhotosScreen() {
             size={56}
             color={colors.primary}
             onPress={() => {
+              // Tap-to-open Instagram-style flow direct; long-press cycles options.
+              // For now: single tap opens the multi-select library flow (the
+              // user's #1 ask). Keep the legacy mini-menu accessible via the
+              // spring rotation when they need camera explicitly.
+              startNewPostFlow('library');
+            }}
+            onLongPress={() => {
               const newVal = !fabOpen;
               setFabOpen(newVal);
               Animated.spring(fabRotateAnim, { toValue: newVal ? 1 : 0, tension: 220, friction: 14, useNativeDriver: true }).start();
             }}
-            accessibilityLabel={t('photos.upload') || 'Upload'}
+            accessibilityLabel={t('photos.newPost') || 'Nova publicação'}
             contentTransform={[
               { rotate: fabRotateAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '45deg'] }) },
             ]}
@@ -4292,6 +4276,208 @@ export default function PhotosScreen() {
         onClose={() => setEditorVisible(false)}
       />
     </Animated.View>
+  );
+}
+
+// ============================================================
+// MEMORIES CAROUSEL — iOS Photos parity
+// ============================================================
+// Cinematic 320×180 (16:9) cards with bottom-up dark gradient overlay, glass
+// title slab, sparkle iconography, and a stagger fade+rise entrance (80ms per
+// card). Extracted into its own component so the entrance animation owns its
+// lifecycle (mounts once when section becomes visible) — folding it back into
+// the parent re-renders every scroll tick and burns the spring.
+function IconSparkles({ size = 16, color = '#fff' }) {
+  // iOS Photos uses a triple-twinkle sparkle for Memories. Path is a 4-point
+  // star with two satellite mini-stars — purely decorative, never load-bearing.
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+      <Path
+        d="M12 3l1.6 4.6L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.4L12 3z"
+        fill={color}
+      />
+      <Path d="M19 14l.7 1.8L21.5 16l-1.8.5L19 18l-.7-1.5L16.5 16l1.8-.5L19 14z" fill={color} opacity={0.8} />
+      <Path d="M5 16l.5 1.3L7 18l-1.5.4L5 20l-.5-1.6L3 18l1.5-.7L5 16z" fill={color} opacity={0.65} />
+    </Svg>
+  );
+}
+
+function MemoriesCarousel({
+  colors, isDark, t, memoriesData, filteredPhotos, getThumbnailUrl,
+  openViewer, api, setPresetFilter, setPresetMLIds, setPresetLoading, s,
+}) {
+  // Build the card list up front so stagger indexes line up with what renders.
+  // Years-ago buckets first (up to 4), then curated presets — same order as
+  // the original inline mapping, just hoisted so we can iterate twice.
+  const memoryCards = (memoriesData || []).slice(0, 4);
+  const presetCards = [
+    { key: 'summer', title: `Verão ${(new Date().getMonth() >= 11 ? new Date().getFullYear() + 1 : new Date().getFullYear())}`, sub: 'Os melhores momentos', tint: ['#7C3AED', '#EC4899'] },
+    { key: 'thisweek', title: 'Esta semana', sub: 'Novas memórias', tint: ['#0EA5E9', '#7C3AED'] },
+    { key: 'people', title: 'Pessoas', sub: 'Quem aparece mais', tint: ['#F59E0B', '#7C3AED'] },
+  ];
+  const totalCards = memoryCards.length + presetCards.length;
+
+  // Stagger anim: each card gets its own Animated.Value and fires 80ms after
+  // the previous one. useRef array — values persist across re-renders so the
+  // animation doesn't restart on parent state changes.
+  const animsRef = useRef(null);
+  if (!animsRef.current || animsRef.current.length !== totalCards) {
+    animsRef.current = Array.from({ length: totalCards }, () => new Animated.Value(0));
+  }
+  useEffect(() => {
+    const anims = animsRef.current.map((v, i) =>
+      Animated.timing(v, {
+        toValue: 1,
+        duration: 380,
+        delay: i * 80,
+        useNativeDriver: false,
+      })
+    );
+    Animated.parallel(anims).start();
+    // Run once on mount — entrance only plays the first time the section
+    // appears (we don't want it replaying on filter toggle).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const renderAnimCard = (idx, children) => {
+    const v = animsRef.current[idx] || new Animated.Value(1);
+    return (
+      <Animated.View
+        style={{
+          opacity: v,
+          transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }],
+        }}
+      >
+        {children}
+      </Animated.View>
+    );
+  };
+
+  return (
+    <View style={{ marginTop: 8, marginBottom: 6 }}>
+      {/* Section header: SVG sparkle + brand pill tag (replaces plain Text). */}
+      <View style={s.memoriesHeader}>
+        <View style={s.memoriesHeaderPill}>
+          <IconSparkles size={13} color="#7C3AED" />
+          <Text style={s.memoriesHeaderPillText}>
+            {(t('photos.memories') || 'Memórias').toUpperCase()}
+          </Text>
+        </View>
+        <View style={{ flex: 1 }} />
+        <Text style={[s.memoriesHeaderCount, { color: colors.textSecondary }]}>
+          {totalCards}
+        </Text>
+      </View>
+
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ paddingHorizontal: Spacing.md, paddingRight: Spacing.lg, gap: 12 }}
+        decelerationRate="fast"
+        snapToInterval={332}
+      >
+        {/* "1 ano atrás" / "X anos atrás" cards from real memory buckets. */}
+        {memoryCards.map((mem, idx) => {
+          const cover = mem.photos[0];
+          const coverUri = cover ? (cover.isDevice && Platform.OS === 'ios'
+            ? cover.uri
+            : getThumbnailUrl(cover)) : null;
+          const label = mem.yearsAgo === 1
+            ? (t('photos.yearsAgo', { n: 1 }) || '1 ano atrás')
+            : (t('photos.yearsAgoPlural', { n: mem.yearsAgo }) || `${mem.yearsAgo} anos atrás`);
+          return (
+            <React.Fragment key={`mem-${mem.yearsAgo}`}>
+              {renderAnimCard(idx, (
+                <Pressable
+                  style={[s.memoryCardLg, { backgroundColor: colors.surface }]}
+                  onPress={() => {
+                    // Tap → jump into the first photo of the memory bucket.
+                    // Future (tier-2): full-screen stories-style viewer. The
+                    // existing openViewer is the placeholder wire until then.
+                    const idx0 = filteredPhotos.findIndex(p => p.id === cover?.id);
+                    if (idx0 >= 0) openViewer(idx0);
+                  }}
+                >
+                  {coverUri ? (
+                    <Image source={{ uri: coverUri }} style={s.memoryCoverLg} resizeMode="cover" />
+                  ) : (
+                    <View style={[s.memoryCoverLg, { backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }]}>
+                      <IconImage size={36} color={colors.textTertiary} />
+                    </View>
+                  )}
+                  {/* iOS Photos pattern: bottom-up linear gradient covering ~50% */}
+                  <View style={s.memoryGradient} pointerEvents="none" />
+                  {/* Subtle top gradient softens the sparkle icon corner. */}
+                  <View style={s.memoryGradientTop} pointerEvents="none" />
+                  {/* Sparkle corner mark — signals "AI-curated memory". */}
+                  <View style={s.memorySparkle} pointerEvents="none">
+                    <IconSparkles size={16} color="#fff" />
+                  </View>
+                  <View style={s.memoryTextWrap}>
+                    <Text style={s.memoryTitleLg} numberOfLines={1}>{label}</Text>
+                    <Text style={s.memorySubLg} numberOfLines={1}>
+                      {mem.photos.length} {t('photos.items') || 'fotos'}
+                    </Text>
+                  </View>
+                </Pressable>
+              ))}
+            </React.Fragment>
+          );
+        })}
+
+        {/* Curated preset cards. */}
+        {presetCards.map((preset, idx) => {
+          const cover = filteredPhotos[(idx + 1) * 3] || filteredPhotos[idx] || null;
+          const coverUri = cover ? (cover.isDevice && Platform.OS === 'ios' ? cover.uri : getThumbnailUrl(cover)) : null;
+          return (
+            <React.Fragment key={`preset-${preset.key}`}>
+              {renderAnimCard(memoryCards.length + idx, (
+                <Pressable
+                  style={[s.memoryCardLg, { backgroundColor: preset.tint[0] }]}
+                  onPress={async () => {
+                    // Google Photos-grade memory: AI semantic search against
+                    // photo_labels (tags/objects/scene) + optional date window.
+                    setPresetFilter(preset.key);
+                    setPresetMLIds(null);
+                    const queries = {
+                      summer: 'beach pool sun outdoor vacation summer praia piscina sol verão férias',
+                      thisweek: '',
+                      people: 'person people face portrait selfie group friends pessoa pessoas rosto retrato selfie amigos',
+                    };
+                    const q = queries[preset.key] || '';
+                    if (!q) return; // thisweek is purely date-based
+                    setPresetLoading(true);
+                    try {
+                      const r = await api.photoSearchML(q, 1, 200);
+                      if (r?.success && Array.isArray(r.data?.files)) {
+                        setPresetMLIds(r.data.files);
+                      }
+                    } catch {} finally {
+                      setPresetLoading(false);
+                    }
+                  }}
+                >
+                  {coverUri ? (
+                    <Image source={{ uri: coverUri }} style={[s.memoryCoverLg, { opacity: 0.78 }]} resizeMode="cover" />
+                  ) : null}
+                  {/* Tint wash so curated cards keep their brand color even with cover photo. */}
+                  <View style={[s.memoryTintWash, { backgroundColor: preset.tint[0] + '38' }]} pointerEvents="none" />
+                  <View style={s.memoryGradient} pointerEvents="none" />
+                  <View style={s.memoryGradientTop} pointerEvents="none" />
+                  <View style={s.memorySparkle} pointerEvents="none">
+                    <IconSparkles size={16} color="#fff" />
+                  </View>
+                  <View style={s.memoryTextWrap}>
+                    <Text style={s.memoryTitleLg} numberOfLines={1}>{preset.title}</Text>
+                    <Text style={s.memorySubLg} numberOfLines={1}>{preset.sub}</Text>
+                  </View>
+                </Pressable>
+              ))}
+            </React.Fragment>
+          );
+        })}
+      </ScrollView>
+    </View>
   );
 }
 
@@ -4777,81 +4963,113 @@ const s = StyleSheet.create({
     padding: 4,
   },
 
-  // Memories — Google Photos-grade carousel cards
+  // Memories — iOS Photos-grade carousel cards (320×180, 16:9 cinematic).
+  // Shadow elevation tuned to read as a separate plane from the grid below;
+  // iOS uses similar values on the Memories carousel in Photos.app.
   memoryCardLg: {
-    width: 280,
-    height: 140,
-    borderRadius: 18,
+    width: 320,
+    height: 180,
+    borderRadius: 20,
     overflow: 'hidden',
     position: 'relative',
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.12, shadowRadius: 12 },
-      android: { elevation: 4 },
-      web: { boxShadow: '0 4px 20px rgba(0,0,0,0.10)' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 12 },
+      android: { elevation: 6 },
+      web: { boxShadow: '0 4px 12px rgba(0,0,0,0.18)' },
     }),
   },
   memoryCoverLg: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: '#1a1a2e',
   },
+  // Bottom-up dark gradient covering 50% of card height (iOS pattern).
+  // On native, fallback to flat dark layer since RN doesn't support CSS gradients.
   memoryGradient: {
     position: 'absolute',
     left: 0, right: 0, bottom: 0,
-    height: '70%',
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    height: '50%',
+    backgroundColor: 'rgba(0,0,0,0.5)',
     ...(Platform.OS === 'web' ? {
-      background: 'linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.18) 40%, rgba(0,0,0,0.78) 100%)',
+      background: 'linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.7) 100%)',
       backgroundColor: 'transparent',
     } : {}),
   },
-  memoryGradient2: {
+  // Subtle top gradient so the sparkle icon corner doesn't fight a bright sky.
+  memoryGradientTop: {
     position: 'absolute',
     left: 0, right: 0, top: 0,
-    height: '40%',
+    height: '32%',
     ...(Platform.OS === 'web' ? {
-      background: 'linear-gradient(180deg, rgba(0,0,0,0.32) 0%, transparent 100%)',
+      background: 'linear-gradient(180deg, rgba(0,0,0,0.28) 0%, transparent 100%)',
     } : {
-      backgroundColor: 'rgba(0,0,0,0.18)',
+      backgroundColor: 'rgba(0,0,0,0.16)',
     }),
+  },
+  memoryTintWash: {
+    ...StyleSheet.absoluteFillObject,
   },
   memoryTextWrap: {
     position: 'absolute',
-    left: 14,
-    right: 14,
-    bottom: 12,
+    left: 16,
+    right: 16,
+    bottom: 14,
   },
   memoryTitleLg: {
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: '800',
     color: '#fff',
     letterSpacing: -0.3,
-    textShadowColor: 'rgba(0,0,0,0.4)',
+    textShadowColor: 'rgba(0,0,0,0.45)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 4,
   },
   memorySubLg: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
-    color: 'rgba(255,255,255,0.86)',
-    marginTop: 2,
+    color: 'rgba(255,255,255,0.75)',
+    marginTop: 3,
+    letterSpacing: 0.1,
     textShadowColor: 'rgba(0,0,0,0.4)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
   },
-  memoryBadge: {
+  // Top-right sparkle marker (replaces the count chip). 16px SVG inside a
+  // small translucent capsule so it stays legible on bright covers.
+  memorySparkle: {
     position: 'absolute',
-    top: 10,
-    right: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 11,
-    backgroundColor: 'rgba(0,0,0,0.45)',
-    minWidth: 22,
+    top: 12,
+    right: 12,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0,0,0,0.32)',
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  memoryBadgeText: {
-    color: '#fff',
+  // Section header — sparkle + uppercase brand pill (replaces plain Text title).
+  memoriesHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.lg,
+    marginBottom: 12,
+  },
+  memoriesHeaderPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 14,
+    backgroundColor: 'rgba(124,58,237,0.10)',
+  },
+  memoriesHeaderPillText: {
     fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    color: '#7C3AED',
+  },
+  memoriesHeaderCount: {
+    fontSize: 12,
     fontWeight: '700',
   },
 
