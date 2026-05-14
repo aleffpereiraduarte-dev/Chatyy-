@@ -1332,8 +1332,8 @@ function DriveScreenInner() {
             {isFolder && item.file_count > 0 && <Text style={[styles.listItemSize, { color: colors.textTertiary }]}>{item.file_count} {item.file_count === 1 ? 'item' : 'itens'}</Text>}
             {!isFolder && <Text style={[styles.listItemSize, { color: colors.textTertiary }]}>{formatBytes(item.size)}</Text>}
             <Text style={[styles.listItemDate, { color: colors.textTertiary }]}>{formatDate(item.created_at || item.uploaded_at, t)}</Text>
-            {hasShare ? <IconUsers size={12} color={colors.primary} style={{ marginLeft: 6 }} /> : null}
-            {item.is_starred ? <IconStarFilled size={12} color="#f59e0b" style={{ marginLeft: 4 }} /> : null}
+            {Boolean(hasShare) && <IconUsers size={12} color={colors.primary} style={{ marginLeft: 6 }} />}
+            {Boolean(item.is_starred) && <IconStarFilled size={12} color="#f59e0b" style={{ marginLeft: 4 }} />}
           </View>
         </View>
         <TouchableOpacity style={styles.moreBtn} onPress={(e) => handleItemLongPress(item, e)}>
@@ -1454,7 +1454,7 @@ function DriveScreenInner() {
             <View style={styles.gridItemMeta}>
               {isFolder && item.file_count > 0 && <Text style={[styles.gridItemSize, { color: colors.textTertiary }]}>{item.file_count} {item.file_count === 1 ? 'item' : 'itens'}</Text>}
               {!isFolder && <Text style={[styles.gridItemSize, { color: colors.textTertiary }]}>{formatBytes(item.size)}</Text>}
-              {hasShare ? <IconUsers size={10} color={colors.primary} style={{ marginLeft: 4 }} /> : null}
+              {Boolean(hasShare) && <IconUsers size={10} color={colors.primary} style={{ marginLeft: 4 }} />}
             </View>
           </View>
         </TouchableOpacity>
