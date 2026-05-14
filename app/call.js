@@ -3627,28 +3627,80 @@ function CallScreenInner() {
     }
   }, [callId, conversationId, isVideoParam, addParticipantBusy]);
 
-  // Screen share (web only)
+  // Screen share — web uses navigator.getDisplayMedia, iOS uses a ReplayKit
+  // Broadcast Extension wired through services/screenShare.js, Android is
+  // unsupported (pending MediaProjection foreground service).
   const handleScreenShare = useCallback(async () => {
     if (!pcRef.current) return;
 
-    // Helper: pega getDisplayMedia do lugar certo por plataforma.
-    // - Web: passes the constraints object as the W3C spec dictates.
-    // - Native: @stream-io/react-native-webrtc.getDisplayMedia() accepts no
-    //   arguments. On iOS it needs a ReplayKit broadcast extension to
-    //   actually work, and on Android it needs a foreground service +
-    //   MediaProjection. If the native module isn't there, we throw
-    //   'unsupported' so the upstream catch shows the friendly alert.
+    // Try the new native iOS path first. When the broadcast extension is
+    // not installed (e.g. user on an OTA-only update that didn't include
+    // the native rebuild), this returns null and we fall through to the
+    // legacy getDisplayMedia path so behavior stays backwards-compatible.
+    let screenShareSvc = null;
+    try { screenShareSvc = require('../services/screenShare'); } catch {}
+
     const getDisplay = async (constraints) => {
       if (Platform.OS === 'web') {
         if (!navigator?.mediaDevices?.getDisplayMedia) throw new Error('unsupported');
         return navigator.mediaDevices.getDisplayMedia(constraints);
       }
-      // Native: lib expõe getDisplayMedia mas só funciona com extension nativa.
+      // iOS: prefer ReplayKit broadcast extension via service. The service
+      // presents the system picker and resolves with a track-like object
+      // we can hand to replaceTrack. Audio call still re-negotiates below.
+      if (Platform.OS === 'ios' && screenShareSvc?.startScreenShare) {
+        try {
+          const handle = await screenShareSvc.startScreenShare({
+            onStopped: () => {
+              // User stopped via iOS status bar — bubble up through the
+              // onended hook below so the swap-back logic runs.
+              try {
+                const t = screenStreamRef.current?.getVideoTracks?.()[0];
+                if (t && typeof t.dispatchEvent === 'function') {
+                  // Fire a synthetic 'ended' event so the existing onended
+                  // listener handles cleanup uniformly.
+                  try { t.stop?.(); } catch {}
+                }
+                // If the track lacks a real onended (placeholder case)
+                // call the same restore logic inline.
+                setScreenSharing((prev) => {
+                  if (!prev) return prev;
+                  const camTrack = localStreamRef.current?.getVideoTracks?.()[0];
+                  if (camTrack) {
+                    const s = pcRef.current?.getSenders?.()?.find(s => s.track?.kind === 'video');
+                    if (s) s.replaceTrack(camTrack).catch(() => {});
+                  }
+                  screenStreamRef.current = null;
+                  sendSignaling('call_screen_share', {
+                    call_id: callId,
+                    target_email: contactEmail,
+                    screen_sharing: false,
+                  });
+                  return false;
+                });
+              } catch {}
+            },
+          });
+          if (handle?.stream) {
+            // Store a stop hook on the stream so the existing cleanup path
+            // can call .stop() in one place.
+            try {
+              const origStop = handle.stream.getTracks?.()[0]?.stop?.bind(handle.stream.getTracks?.()[0]);
+              handle.stream._extStop = () => { try { handle.stop(); } catch {} if (origStop) origStop(); };
+            } catch {}
+            return handle.stream;
+          }
+          // Service returned null → user cancelled the picker or module missing.
+          throw new Error('unsupported');
+        } catch (e) {
+          // Fall through to legacy path
+          if (e?.message !== 'unsupported') console.warn('[Call] iOS screen share svc err:', e?.message);
+        }
+      }
+      // Legacy native path (Android etc.) — usually returns unsupported.
       try {
         const webrtc = require('@stream-io/react-native-webrtc');
         if (webrtc?.mediaDevices?.getDisplayMedia) {
-          // Lib signature ignora os constraints; chame sem args pra evitar
-          // type-mismatch quando a ponte JNI valida o argumento.
           return webrtc.mediaDevices.getDisplayMedia();
         }
       } catch {}
