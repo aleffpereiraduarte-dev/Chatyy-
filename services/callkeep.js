@@ -204,6 +204,21 @@ export function endCall(callId) {
   } catch {}
 }
 
+/**
+ * Tell the native side ("WhatsApp-grade warm path") that the in-app call
+ * screen has mounted and is ready to show. On Android this dismisses the
+ * IncomingCallActivity overlay that's been showing "Conectando com X..."
+ * since the user tapped Atender — without this the overlay sits on top
+ * of the freshly-loaded /call screen for 8s (its safety timeout). iOS
+ * implements this as a no-op since CallKit handles the handoff natively.
+ */
+export function notifyAppReady() {
+  if (!loadModule()) return;
+  try {
+    ExpoCallKit.notifyAppReady?.();
+  } catch {}
+}
+
 export function reportConnected(callId) {
   // Not needed - CallKit handles via answer action
 }

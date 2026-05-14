@@ -2865,6 +2865,8 @@ export default {
   'chatConv.translate': 'Traducir',
   'chatConv.translated': 'Traducido',
   'chatConv.translating': 'Traduciendo...',
+  'chatConv.autoTranslate': 'Auto-traducir',
+  'chatConv.autoTranslateOff': 'Apagado',
   'chatConv.hideTranscript': 'Ocultar transcripción',
   'chatConv.showTranscript': 'Mostrar transcripción',
   'chatConv.translateError': 'Error al traducir',

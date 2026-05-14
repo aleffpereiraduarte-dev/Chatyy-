@@ -436,8 +436,97 @@ class IncomingCallActivity : AppCompatActivity() {
       startActivity(launchIntent)
     }
 
-    // #867: finishAndRemoveTask remove a singleInstance task no mesmo frame (finish() pode deixar ghost window 200-600ms)
-    finishAndRemoveTask()
+    // WhatsApp-grade warm UI: instead of dropping the activity (which leaves the
+    // user staring at the launcher / home screen / black for 2-5s while the JS
+    // bundle parses + Hermes warms up), keep this activity on top with a
+    // "Conectando com X..." overlay until JS calls ExpoCallKit.notifyAppReady().
+    // The existing closeReceiver finishes us when that broadcast fires; we also
+    // arm an 8s safety timeout so a JS crash can't strand the overlay forever.
+    buildConnectingOverlay()
+    mainHandler.postDelayed({
+      try { finishAndRemoveTask() } catch (_: Exception) {}
+    }, 8000)
+  }
+
+  /**
+   * Swap the ringing UI for a "Conectando com X..." card while the JS bundle
+   * loads. Keeps the avatar + name in the same place so it feels like a
+   * continuous transition instead of a flicker → home screen → /call.
+   */
+  private fun buildConnectingOverlay() {
+    val root = FrameLayout(this).apply {
+      setBackgroundColor(Color.parseColor("#1a1a2e"))
+      layoutParams = FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT,
+        FrameLayout.LayoutParams.MATCH_PARENT
+      )
+    }
+    val container = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      gravity = Gravity.CENTER_HORIZONTAL
+      layoutParams = FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT,
+        FrameLayout.LayoutParams.MATCH_PARENT
+      ).apply { gravity = Gravity.CENTER }
+    }
+
+    val avatarSize = dpToPx(120)
+    avatarSizePx = avatarSize
+    val avatarBg = GradientDrawable().apply {
+      shape = GradientDrawable.OVAL
+      setColor(Color.parseColor("#16213e"))
+      setStroke(dpToPx(3), Color.parseColor("#2ecc71"))
+    }
+    val avatarText = TextView(this).apply {
+      val initial = callerName?.firstOrNull()?.uppercase() ?: "?"
+      text = initial
+      setTextColor(Color.WHITE)
+      textSize = 48f
+      gravity = Gravity.CENTER
+      background = avatarBg
+      layoutParams = LinearLayout.LayoutParams(avatarSize, avatarSize).apply {
+        gravity = Gravity.CENTER_HORIZONTAL
+        bottomMargin = dpToPx(24)
+      }
+    }
+    avatarTextView = avatarText
+    container.addView(avatarText)
+    fetchAndApplyAvatar()
+
+    val nameText = TextView(this).apply {
+      text = callerName
+      setTextColor(Color.WHITE)
+      textSize = 24f
+      gravity = Gravity.CENTER
+      layoutParams = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT,
+        LinearLayout.LayoutParams.WRAP_CONTENT
+      ).apply { bottomMargin = dpToPx(8) }
+    }
+    container.addView(nameText)
+
+    val statusText = TextView(this).apply {
+      text = "Conectando..."
+      setTextColor(Color.parseColor("#2ecc71"))
+      textSize = 16f
+      gravity = Gravity.CENTER
+      layoutParams = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT,
+        LinearLayout.LayoutParams.WRAP_CONTENT
+      ).apply { bottomMargin = dpToPx(24) }
+    }
+    container.addView(statusText)
+
+    val spinner = android.widget.ProgressBar(this).apply {
+      isIndeterminate = true
+      layoutParams = LinearLayout.LayoutParams(
+        dpToPx(36), dpToPx(36)
+      ).apply { gravity = Gravity.CENTER_HORIZONTAL }
+    }
+    container.addView(spinner)
+
+    root.addView(container)
+    setContentView(root)
   }
 
   private fun onDecline() {

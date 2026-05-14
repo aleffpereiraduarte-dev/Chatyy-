@@ -128,6 +128,14 @@ public class ExpoCallKitModule: Module {
       self.endCallAction(callId: callId)
     }
 
+    // iOS parity for the Android cold-start warm path. CallKit already
+    // handles the UI handoff natively (CXProvider drives the in-call screen),
+    // so this is a no-op here. Defined to avoid a JS-side optional-chain
+    // crash on the cross-platform call screen.
+    Function("notifyAppReady") { () -> Void in
+      // intentionally empty — CallKit handles iOS handoff
+    }
+
     Function("registerVoipPush") { () -> Void in
       DispatchQueue.main.async {
         self.setupVoipPush()

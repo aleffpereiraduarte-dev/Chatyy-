@@ -161,6 +161,19 @@ function qualityToLabel(q) {
 function CallScreenInner() {
   useEffect(() => { initCallModules(); }, []);
 
+  // WhatsApp-grade cold-start: the moment the call screen mounts (even before
+  // LiveKit connects), tell the native IncomingCallActivity to dismiss its
+  // "Conectando com X..." overlay. Without this, on Android cold-start the
+  // user sees the native card sitting on top of our JS UI for up to 8s (the
+  // safety timeout). iOS implementation is a no-op since CallKit handles
+  // the handoff natively.
+  useEffect(() => {
+    try {
+      const { notifyAppReady } = require('../services/callkeep');
+      notifyAppReady?.();
+    } catch {}
+  }, []);
+
   const router = useRouter();
   const params = useLocalSearchParams();
   const {

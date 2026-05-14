@@ -157,6 +157,18 @@ class ExpoCallKitModule : Module() {
       }
     }
 
+    // WhatsApp-grade cold-start: JS calls this when the in-app /call screen
+    // is mounted + ready to render. We broadcast CLOSE_CALL_ACTIVITY so the
+    // IncomingCallActivity overlay ("Conectando com X...") can finish itself
+    // cleanly. Without this the activity sits behind MainActivity stealing
+    // gestures until the 8s safety timeout fires.
+    Function("notifyAppReady") {
+      try {
+        val closeIntent = Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY")
+        context.sendBroadcast(closeIntent)
+      } catch (_: Exception) {}
+    }
+
     Function("endCall") { callId: String ->
       // JS calls this both after the user accepts (to dismiss the native UI)
       // and on real hangup. Mark the call as accepting so the deleteIntent
