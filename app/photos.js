@@ -3076,7 +3076,7 @@ export default function PhotosScreen() {
                     onPress={() => { setSearchTabQuery(tag.tag || tag); doMLSearch(tag.tag || tag); }}
                   >
                     <Text style={[s.filterChipText, { color: colors.text }]}>{tag.tag || tag}</Text>
-                    {tag.count && <Text style={{ color: colors.textSecondary, fontSize: 10, marginLeft: 4 }}>{tag.count}</Text>}
+                    {tag.count ? <Text style={{ color: colors.textSecondary, fontSize: 10, marginLeft: 4 }}>{tag.count}</Text> : null}
                   </TouchableOpacity>
                 ))}
               </View>
