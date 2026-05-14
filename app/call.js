@@ -1382,6 +1382,18 @@ function CallScreenInner() {
     // proximity sensor so the screen doesn't stay dark after the call
     // (was the "desliga mas n desliga" bug).
     try { _NativeAudioSession?.enableProximitySensor?.(false); } catch {}
+    if (Platform.OS === 'android') {
+      try {
+        const InCallManager = require('react-native-incall-manager').default;
+        InCallManager?.stop?.();
+        InCallManager?.setForceSpeakerphoneOn?.(false);
+      } catch {}
+      try {
+        const ExpoAudioSession = require('../modules/expo-audio-session').default;
+        ExpoAudioSession?.enableProximitySensor?.(false);
+        ExpoAudioSession?.deactivate?.();
+      } catch {}
+    }
     if (_NativeAudioSession?.deactivate) {
       _NativeAudioSession.deactivate().catch(() => {});
     } else if (Platform.OS !== 'web') {
@@ -4451,9 +4463,9 @@ function CallScreenInner() {
   // the user staring at an empty black screen instead of the avatar +
   // status + decline button.
   const remoteVideoAvailable = Platform.OS === 'web' ? !!remoteVideoRef.current : (!!remoteStreamUrl && !!RTCView);
-  const showRemoteVideo = videoEnabled && peerConnected && peerVideoEnabled && remoteVideoAvailable;
-  const showLocalVideo = videoEnabled && (Platform.OS === 'web' ? !!localStreamRef.current : (!!localStreamUrl && !!RTCView));
   const isVideoCall = isVideoParam === '1' || isVideoParam === 'true';
+  const showRemoteVideo = isVideoCall && peerConnected && peerVideoEnabled && remoteVideoAvailable;
+  const showLocalVideo = videoEnabled && (Platform.OS === 'web' ? !!localStreamRef.current : (!!localStreamUrl && !!RTCView));
 
   return (
     <View style={styles.container}>
@@ -4462,7 +4474,7 @@ function CallScreenInner() {
       {/* Remote video (full screen) — native. `peerVideoEnabled` gate is
           required: RTCView keeps the last frame painted after peer disables
           their camera, so without this we'd freeze on the last image. */}
-      {Platform.OS !== 'web' && RTCView && remoteStreamUrl && videoEnabled && peerConnected && peerVideoEnabled && (
+      {Platform.OS !== 'web' && RTCView && remoteStreamUrl && isVideoCall && peerConnected && peerVideoEnabled && (
         <RTCView
           streamURL={remoteStreamUrl}
           style={StyleSheet.absoluteFill}

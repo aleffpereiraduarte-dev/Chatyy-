@@ -978,6 +978,7 @@ export default {
   'call.cancel': 'Cancel',
   'call.ringing': 'Ringing...',
   'call.connecting': 'Connecting...',
+  'call.hangup': 'Hang up',
   'call.declined': 'Call declined',
   'call.noAnswer': 'No answer',
   'call.videoCall': 'Video call',
@@ -4015,6 +4016,7 @@ export default {
   'live.replaySaved': 'Replay saved',
   // Live replay / "Saved lives" tab — post-broadcast recordings (CF Stream VOD).
   'liveReplay.tab': 'Saved lives',
+  'liveReplay.viewReplays': 'View Saved Lives',
   'liveReplay.save': 'Save live',
   'liveReplay.saved': 'Saved',
   'liveReplay.savedToast': 'Saved to Lives',

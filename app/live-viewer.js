@@ -451,24 +451,31 @@ export default function LiveViewerScreen() {
     String(user.email).toLowerCase() === String(displayHostEmail).toLowerCase()
   );
 
-  // Stream-stuck timeout — if `connected` doesn't go true within 15s of mount,
+  // Stream-stuck timeout — if `connected` doesn't go true within 30s of mount,
   // surface a real error instead of leaving the viewer staring at "Conectando..."
   // forever (host may have ended the live or never sent an offer).
+  //
+  // Bumped from 15s → 30s because the original window often fired BEFORE the
+  // host's WebRTC offer landed on weak networks (host on cell, viewer on
+  // cell, host's renegotiation 8-12s, plus a 2-3s WS race). The "Stream
+  // indisponível" badge was triggering for streams that DID exist — viewer
+  // count was incrementing host-side while viewer was getting bounced out.
   useEffect(() => {
     if (connected || liveEnded) return undefined;
     const timer = setTimeout(() => {
       if (!connected && !liveEnded) {
         setError(t('live.streamUnavailable') || 'Stream indisponível — host pode ter saído');
       }
-    }, 15000);
+    }, 30000);
     return () => clearTimeout(timer);
   }, [connected, liveEnded]);
 
   // Offer-resync: WhatsApp-grade backstop for the most common stuck-connecting
   // cause — broadcaster's WS handler missed the first `live_viewer_joined`
-  // (channel sub race, transient WS hiccup). After 6s + every 6s while still
-  // not connected, re-send `live_join` so the server re-broadcasts
-  // `live_viewer_joined` to the host and they create an offer for us.
+  // (channel sub race, transient WS hiccup). After mount we re-send `live_join`
+  // aggressively the first 10s (every 3s — covers the WS race) then fall back
+  // to a 6s cadence afterwards. Server re-broadcasts `live_viewer_joined` to
+  // the host who then creates an offer for us.
   //
   // Skip the resync for HLS sessions — Cloudflare Stream doesn't depend on
   // the host generating per-viewer offers, so spamming `live_join` adds noise
@@ -477,6 +484,7 @@ export default function LiveViewerScreen() {
     if (connected || liveEnded) return undefined;
     if (!paramSessionId) return undefined;
     if (streamType === 'cf_hls') return undefined;
+    let burstCount = 0;
     const resync = () => {
       if (connected || liveEnded) return;
       try {
@@ -486,8 +494,15 @@ export default function LiveViewerScreen() {
         }
       } catch {}
     };
-    const iv = setInterval(resync, 6000);
-    return () => clearInterval(iv);
+    // First burst: 3s intervals for the first 10s (catches WS sub race).
+    const burst = setInterval(() => {
+      burstCount += 1;
+      resync();
+      if (burstCount >= 3) clearInterval(burst);
+    }, 3000);
+    // Slower cadence after that.
+    const slow = setInterval(resync, 6000);
+    return () => { clearInterval(burst); clearInterval(slow); };
   }, [connected, liveEnded, paramSessionId, streamType]);
 
   // Connect to signaling and WebRTC
@@ -1549,7 +1564,12 @@ export default function LiveViewerScreen() {
       </Pressable>
 
       {/* Connecting overlay — round 62 redesign extracted into LiveConnectingOverlay.
-          Pulsing red ring + round host avatar + "Conectando à live de X..." */}
+          Pulsing red ring + round host avatar + "Conectando à live de X..."
+
+          showRetry now also fires for the WebRTC "Stream indisponível" path —
+          before this only HLS got a Retry button, WebRTC viewers stuck in the
+          15s-timer error were forced to back out. Tap-to-retry sends a fresh
+          live_join over WS so the host re-issues the offer. */}
       {!connected && (
         <LiveConnectingOverlay
           hostName={displayHostName}
@@ -1559,8 +1579,22 @@ export default function LiveViewerScreen() {
               ? (t('live.streamUnavailable') || 'Live indisponível')
               : (!!error && /unavail|connection failed|stream/i.test(error) ? error : null)
           }
-          showRetry={hlsError && streamType === 'cf_hls'}
-          onRetry={() => { setHlsError(false); setHlsRetryKey((k) => k + 1); }}
+          showRetry={(hlsError && streamType === 'cf_hls') || (!!error && /unavail|stream/i.test(error))}
+          onRetry={() => {
+            setError('');
+            if (streamType === 'cf_hls') {
+              setHlsError(false);
+              setHlsRetryKey((k) => k + 1);
+            } else {
+              // WebRTC retry — re-send live_join so host re-broadcasts the offer.
+              try {
+                const ws = wsRef.current;
+                if (ws && ws.readyState === WebSocket.OPEN && paramSessionId) {
+                  ws.send(JSON.stringify({ type: 'live_join', session_id: paramSessionId }));
+                }
+              } catch {}
+            }
+          }}
           onBack={() => router.back()}
           retryLabel={t('common.retry') || 'Tentar novamente'}
           backLabel={t('common.back') || 'Voltar'}

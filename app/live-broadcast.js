@@ -84,6 +84,12 @@ export default function LiveBroadcastScreen() {
   const [connQuality, setConnQuality] = useState('good'); // good | medium | poor
   const [endModal, setEndModal] = useState(false);
   const [saveReplay, setSaveReplay] = useState(true);
+  // After teardown, capture whether a replay is actually being produced
+  // (CF Stream pipeline = yes; legacy WebRTC P2P = no). Drives the
+  // "Ver Lives Salvas" CTA on the end-card vs a plain "Concluído".
+  // Replaces the previous opaque UX where the host tapped "Salvar replay"
+  // but had no idea where the replay landed (or if it would exist at all).
+  const [endedHasRecording, setEndedHasRecording] = useState(false);
   const [pinnedComment, setPinnedComment] = useState(null);
   // Settings/effects/filter UI state — the right-stack buttons used to be
   // no-op stubs (audit 2026-05-12); now they each open a small bottom sheet
@@ -921,8 +927,27 @@ export default function LiveBroadcastScreen() {
   const performEndLive = useCallback(() => {
     endedRef.current = true;
     if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
-    if (sessionIdRef.current) {
-      api.liveEnd(sessionIdRef.current, { save_replay: saveReplay }).catch(() => {});
+    // Capture the just-ended session id BEFORE we null sessionIdRef.current
+    // below — the end-card renders "Ver Lives Salvas" CTA gated on this.
+    const endedSessionId = sessionIdRef.current;
+    if (endedSessionId) {
+      // Capture has_recording from the live_end response so the end-card
+      // knows whether to surface "Ver Lives Salvas" (CF Stream pipeline)
+      // vs a plain "Concluído" (legacy P2P — no VOD will materialize).
+      // Memory-safe — fires after teardown.
+      api.liveEnd(endedSessionId, { save_replay: saveReplay })
+        .then((res) => {
+          if (res?.success) {
+            setEndedHasRecording(!!(res.data?.has_recording));
+            // Best-effort poke at the recording_poll cron so the CF VOD URL
+            // lands faster — without this the /lives-saved row shows
+            // "Processing" for 1-2 extra minutes.
+            if (res.data?.has_recording) {
+              try { api.liveRecordingPoll(endedSessionId).catch(() => {}); } catch {}
+            }
+          }
+        })
+        .catch(() => {});
     }
 
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -957,6 +982,14 @@ export default function LiveBroadcastScreen() {
   }, [saveReplay, endCardScale, endCardOpacity]);
 
   const handleEndLive = useCallback(() => {
+    // Dismiss the comment composer keyboard first — without this, the end-live
+    // modal renders OVER an open keyboard on Android, the modal card jumps to
+    // sit above the keyboard, and the action buttons can fall offscreen
+    // (incident: host taps "Encerrar" with keyboard up → UI breaks).
+    // setKbHeight(0) too in case the willHide event hasn't fired yet by the
+    // time the modal mounts (Android sometimes delays it 80-100ms).
+    try { Keyboard.dismiss(); } catch {}
+    setKbHeight(0);
     setEndModal(true);
   }, []);
 
@@ -1327,6 +1360,29 @@ export default function LiveBroadcastScreen() {
               </Text>
             </TouchableOpacity>
           </View>
+
+          {/* "Ver Lives Salvas" — surfaces the replay landing page right
+              after the host ends. Only shown when the backend confirms a
+              recording is in flight (CF Stream pipeline + save_replay=true).
+              Without this CTA the host had no idea WHERE the replay went
+              (incident: user complaint "Replay onde tá?? Cadê?"). */}
+          {endedHasRecording && saveReplay ? (
+            <TouchableOpacity
+              onPress={() => {
+                try { router.replace('/lives-saved'); }
+                catch { router.push('/lives-saved'); }
+              }}
+              style={styles.endCardSeeReplays}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel={t('liveReplay.tab') || 'Lives salvas'}
+            >
+              <IconStarFilled size={16} color="#fff" />
+              <Text style={styles.endCardSeeReplaysText}>
+                {t('liveReplay.viewReplays') || 'Ver Lives Salvas'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
 
           <TouchableOpacity onPress={() => router.back()} style={styles.endCardDone} activeOpacity={0.7}>
             <Text style={styles.endCardDoneText}>{t('common.done') || 'Concluído'}</Text>
@@ -3435,5 +3491,23 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.55)',
     fontSize: 13,
     fontWeight: '600',
+  },
+  endCardSeeReplays: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(124,58,237,0.85)',
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    borderRadius: 14,
+    marginTop: 10,
+    marginHorizontal: 4,
+  },
+  endCardSeeReplaysText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
 });

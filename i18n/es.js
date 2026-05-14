@@ -978,6 +978,7 @@ export default {
   'call.cancel': 'Cancelar',
   'call.ringing': 'Llamando...',
   'call.connecting': 'Conectando...',
+  'call.hangup': 'Colgar',
   'call.declined': 'Llamada rechazada',
   'call.noAnswer': 'Sin respuesta',
   'call.videoCall': 'Videollamada',
@@ -4012,6 +4013,7 @@ export default {
   'live.replaySaved': 'Replay guardado',
   // Live replay / "Lives guardadas" tab — grabaciones post-live (CF Stream VOD).
   'liveReplay.tab': 'Lives guardadas',
+  'liveReplay.viewReplays': 'Ver Lives Guardadas',
   'liveReplay.save': 'Guardar live',
   'liveReplay.saved': 'Guardado',
   'liveReplay.savedToast': 'Guardado en Lives',
