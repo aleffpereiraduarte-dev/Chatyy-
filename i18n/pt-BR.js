@@ -4212,7 +4212,7 @@ export default {
   'photos.qualityEconomy': 'Economia de espaço',
   'photos.qualityEconomyDesc': 'Fotos comprimidas (qualidade alta, ocupa menos espaço)',
   'photos.uploadQuality': 'Qualidade do upload',
-  'photos.memories': 'Memorias',
+  'photos.memories': 'Memórias',
   'photos.yearsAgo': '{n} ano atras',
   'photos.yearsAgoPlural': '{n} anos atras',
   'photos.onThisDay': 'Neste dia',
@@ -4276,7 +4276,7 @@ export default {
 
   // Plans
   'plans.title': 'Chatyy One',
-  'plans.subtitle': 'Proteja suas memorias',
+  'plans.subtitle': 'Proteja suas memórias',
   'plans.free': 'Gratis',
   'plans.plus': 'One',
   'plans.family': 'Pro',

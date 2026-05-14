@@ -17507,12 +17507,15 @@ export default function ChatConversationScreen() {
 
   return (
     <KeyboardAvoidingView
-      // Android: undefined → KAV passes through, the system's
-      // windowSoftInputMode=adjustResize handles keyboard insets. With
-      // behavior="height" RN sometimes fails to restore container height
-      // when keyboard closes — leaves a phantom ~150px gray strip below
-      // the composer.
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      // iOS: padding. Android: 'height' explicitly. Pure adjustResize
+      // alone leaves the composer hidden behind Gboard's TOOLBAR row
+      // (sticker/GIF/emoji shortcuts) on real devices because IME-only
+      // insets don't account for the toolbar. behavior=height shrinks the
+      // KAV by the keyboard's reported height so the composer floats
+      // above. The "phantom strip on close" bug from before is mitigated
+      // by setting keyboardHeight=0 on keyboardDidHide in the listener,
+      // which already runs (line ~7160).
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={[styles.container, { backgroundColor: isDark ? '#0E0A18' : '#F3EFF8' }]}
       keyboardVerticalOffset={0}
     >
