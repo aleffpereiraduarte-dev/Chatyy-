@@ -13,7 +13,7 @@ import AvatarCircle from '../components/AvatarCircle';
 import {
   IconX, IconHeart, IconShare, IconStar, IconSend,
   IconUserPlus, IconCheck, IconMoreVert, IconRotateCcw, IconCamera,
-  IconEye,
+  IconEye, IconMessageCircle, IconPin,
 } from '../components/Icons';
 
 // Humanize big counts the way Instagram/TikTok do: 999 → 999, 1.2K, 12.4K, 1.2M.
@@ -154,6 +154,15 @@ export default function LiveViewerScreen() {
   // Expanded chat sheet — Instagram parity: tap comments overlay to see the
   // full chat history (not just the last 5 floating bubbles).
   const [chatSheetOpen, setChatSheetOpen] = useState(false);
+  // TikTok parity — comment toggle on the right rail. When hidden the floating
+  // comments overlay + input bar fade away so the viewer can enjoy the video
+  // without the chat noise. Bottom input collapses to just the inline heart.
+  const [chatHidden, setChatHidden] = useState(false);
+  // Pinned host comment — TikTok-style sticky chip above the comments column.
+  // Backend doesn't expose a pin endpoint yet; we keep this client-side so
+  // host can long-press their own messages (in live-broadcast) to pin one.
+  // Viewer just renders whatever the WS broadcasts (msg.type === 'live_pin').
+  const [pinnedMsg, setPinnedMsg] = useState(null);
   // Host quick-peek (Instagram long-press preview) — shows a compact card
   // floating over the stream with avatar/name/quick actions. Long-press only,
   // single tap on the avatar still does the rail tap (toggleFollow).
@@ -517,6 +526,21 @@ export default function LiveViewerScreen() {
           break;
         case 'live_chat':
           handleChatMsg(msg);
+          break;
+        case 'live_pin':
+          // Host pinned (or unpinned) a comment. Payload: { type: 'live_pin',
+          // content, sender_name, sender_email } — empty content clears. We
+          // keep this client-side (no persistence) so viewers who join after
+          // the pin just won't see it until host re-pins.
+          if (msg.content) {
+            setPinnedMsg({
+              content: String(msg.content),
+              name: msg.sender_name || (msg.sender_email || '').split('@')[0] || '?',
+              email: msg.sender_email || '',
+            });
+          } else {
+            setPinnedMsg(null);
+          }
           break;
         case 'live_viewer_count':
           // Authoritative count from server — always trust this over local
@@ -1599,6 +1623,20 @@ export default function LiveViewerScreen() {
           </TouchableOpacity>
         </Animated.View>
 
+        {/* Comment toggle — TikTok/Instagram parity. Hides the floating
+            comment overlay + input bar so the viewer can watch without chat
+            noise. Single-tap toggles, no long-press. Uses IconMessageCircle
+            (filled when chat shown, outline-style stroke is enough for off). */}
+        <TouchableOpacity
+          style={styles.sideBtn}
+          onPress={() => setChatHidden(h => !h)}
+          activeOpacity={0.7}
+          accessibilityLabel={chatHidden ? (t('live.showChat') || 'Mostrar chat') : (t('live.hideChat') || 'Ocultar chat')}
+          accessibilityRole="button"
+        >
+          <IconMessageCircle size={22} color={chatHidden ? 'rgba(255,255,255,0.55)' : '#fff'} />
+        </TouchableOpacity>
+
         <TouchableOpacity
           style={styles.sideBtn}
           onPress={handleScreenshot}
@@ -1735,6 +1773,33 @@ export default function LiveViewerScreen() {
             <View style={styles.bottomGradientStep3} pointerEvents="none" />
           </>
         ) : null}
+
+        {/* Pinned host comment — TikTok parity, sticky chip above the live
+            comments column. Yellow border + IconPin so it's visually distinct
+            from a regular floating message. Only renders when host pinned
+            via 'live_pin' WS event. Tap dismisses for this viewer only
+            (local state, no WS broadcast). */}
+        {pinnedMsg && !chatHidden ? (
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => setPinnedMsg(null)}
+            style={styles.pinnedChip}
+            accessibilityRole="button"
+            accessibilityLabel={t('live.pinned') || 'Pinned'}
+          >
+            <IconPin size={13} color="#fde047" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.pinnedChipName} numberOfLines={1}>
+                {pinnedMsg.name}
+              </Text>
+              <Text style={styles.pinnedChipText} numberOfLines={2}>
+                {pinnedMsg.content}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        ) : null}
+
+        {chatHidden ? null : (
         <TouchableOpacity
           onPress={() => setChatSheetOpen(true)}
           activeOpacity={0.85}
@@ -1821,11 +1886,14 @@ export default function LiveViewerScreen() {
             );
           })}
         </TouchableOpacity>
+        )}
 
         {/* Bottom input bar — pill input with the send SVG nested inside
             the right side of the pill itself (Instagram parity). On focus the
             entire bar lifts (translateY + scale) and the pill border picks up
-            the brand accent so it pops over the video frame. */}
+            the brand accent so it pops over the video frame. Hidden when the
+            rail toggle hides the chat. */}
+        {chatHidden ? null : (
         <Animated.View
           style={[
             styles.inputBar,
@@ -1891,6 +1959,7 @@ export default function LiveViewerScreen() {
             </TouchableOpacity>
           </Animated.View>
         </Animated.View>
+        )}
       </View>
 
       {/* Snapshot/error toast — surfaces save state for the new screenshot
@@ -2857,6 +2926,42 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     ...(Platform.OS === 'web' ? { boxShadow: '0 2px 10px rgba(124,58,237,0.55)' } : {}),
+  },
+
+  // Pinned host comment chip — yellow-bordered pill above the live comments
+  // column. TikTok parity. IconPin on the left, host name + message body
+  // stacked. Tap dismisses for this viewer only.
+  pinnedChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 6,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: 'rgba(253,224,71,0.55)',
+    maxWidth: '85%',
+    alignSelf: 'flex-start',
+    ...(Platform.OS === 'web' ? {
+      backdropFilter: 'blur(10px)',
+      WebkitBackdropFilter: 'blur(10px)',
+      boxShadow: '0 2px 10px rgba(253,224,71,0.18)',
+    } : {}),
+  },
+  pinnedChipName: {
+    color: '#fde047',
+    fontSize: 10.5,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase',
+  },
+  pinnedChipText: {
+    color: '#fff',
+    fontSize: 12.5,
+    lineHeight: 16,
+    fontWeight: '500',
   },
 
   // Inline heart chip on a comment row — appears for ~1.3s on double-tap.

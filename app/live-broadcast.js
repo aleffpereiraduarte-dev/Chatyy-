@@ -826,7 +826,23 @@ export default function LiveBroadcastScreen() {
     if (!trimmed) return;
     // If the host prefixes "📌 " they pin the next message instead of sending.
     if (trimmed.startsWith('📌 ')) {
-      setPinnedComment({ name: user?.name || user?.email?.split('@')[0] || 'You', content: trimmed.slice(2).trim() });
+      const pinName = user?.name || user?.email?.split('@')[0] || 'You';
+      const pinContent = trimmed.slice(2).trim();
+      setPinnedComment({ name: pinName, content: pinContent });
+      // Broadcast pin to viewers so the yellow TikTok-style pinned chip shows
+      // up over the live chat overlay for everyone. Backend WS doesn't need
+      // a special handler — the chan fan-out delivers any payload to subs.
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        try {
+          wsRef.current.send(JSON.stringify({
+            type: 'live_pin',
+            session_id: sessionIdRef.current,
+            content: pinContent,
+            sender_name: pinName,
+            sender_email: user?.email,
+          }));
+        } catch {}
+      }
       setCommentDraft('');
       return;
     }
@@ -1384,7 +1400,20 @@ export default function LiveBroadcastScreen() {
               <Text style={styles.pinnedContent} numberOfLines={2}>{pinnedComment.content}</Text>
             </View>
             <TouchableOpacity
-              onPress={() => setPinnedComment(null)}
+              onPress={() => {
+                setPinnedComment(null);
+                // Broadcast empty content so viewers clear their pinned chip too.
+                if (wsRef.current?.readyState === WebSocket.OPEN) {
+                  try {
+                    wsRef.current.send(JSON.stringify({
+                      type: 'live_pin',
+                      session_id: sessionIdRef.current,
+                      content: '',
+                      sender_email: user?.email,
+                    }));
+                  } catch {}
+                }
+              }}
               style={styles.pinnedClose}
               accessibilityLabel="Unpin"
               accessibilityRole="button"
@@ -1525,6 +1554,31 @@ export default function LiveBroadcastScreen() {
                   </Text>
                 </View>
               ) : (
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  delayLongPress={350}
+                  onLongPress={() => {
+                    // Long-press any chat row → pin that comment to all
+                    // viewers (TikTok parity). Broadcasts live_pin WS so the
+                    // viewer's overlay renders the yellow chip immediately.
+                    const pinName = item.name || (item.email || '').split('@')[0] || '?';
+                    const pinContent = item.content || '';
+                    if (!pinContent) return;
+                    setPinnedComment({ name: pinName, content: pinContent });
+                    if (wsRef.current?.readyState === WebSocket.OPEN) {
+                      try {
+                        wsRef.current.send(JSON.stringify({
+                          type: 'live_pin',
+                          session_id: sessionIdRef.current,
+                          content: pinContent,
+                          sender_name: pinName,
+                          sender_email: item.email || '',
+                        }));
+                      } catch {}
+                    }
+                    try { require('react-native').Vibration.vibrate(8); } catch {}
+                  }}
+                >
                 <View style={styles.commentRow}>
                   <AvatarCircle name={item.name} email={item.email} size={28} />
                   <View style={[styles.commentBubble, item.isHost && styles.commentBubbleHost]}>
@@ -1541,6 +1595,7 @@ export default function LiveBroadcastScreen() {
                     <Text style={styles.commentText}>{item.content}</Text>
                   </View>
                 </View>
+                </TouchableOpacity>
               )
             )}
             showsVerticalScrollIndicator={false}

@@ -379,9 +379,11 @@ function NotificationsScreenInner() {
     }
     try {
       const tabDef = TABS.find(tt => tt.key === tabKey);
-      const params = { limit: 60 };
-      if (tabDef?.types?.length === 1) params.type = tabDef.types[0];
-      const r = await api.notificationsList(params);
+      // [bug-fix #notif-1] notificationsList signature is (page, limit) — not
+      // an object. The previous `notificationsList(params)` call passed an
+      // object as `page`, so the backend got a bogus pagination cursor and
+      // returned [], plus markAllRead was no-op.
+      const r = await api.notificationsList(1, 60);
       if (r.success) {
         let items = r.data?.notifications || [];
         if (tabDef?.types && tabDef.types.length >= 1) {
@@ -406,15 +408,38 @@ function NotificationsScreenInner() {
     fetchTab(activeTab, true);
   }, [activeTab, fetchTab]);
 
+  // Animated fade-out for the unread rows after Marcar todas. Pure RN
+  // Animated.timing on a shared opacity ref drives the row tint AND the
+  // "Marcar todas" pill, so the user sees the read state collapse instantly
+  // without a flash of stale UI.
+  const markAllFadeAnim = useRef(new Animated.Value(1)).current;
+
   const markAllRead = useCallback(async () => {
+    // [bug-fix #notif-2] Wrong API name (`notificationsRead` doesn't exist;
+    // the export is `notificationsMarkRead`). Result: the call threw, the
+    // catch swallowed it, nothing was marked read AND the pill never
+    // disappeared. Use the real export.
+    // Optimistic local update first so the UI is instant, then fire-and-forget
+    // the network round-trip; on success the cache is already correct.
+    Object.keys(cacheRef.current).forEach(key => {
+      cacheRef.current[key] = (cacheRef.current[key] || []).map(n => ({ ...n, read: true }));
+    });
+    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    // Fade the unread rail tint out smoothly (200ms).
+    markAllFadeAnim.setValue(1);
+    Animated.timing(markAllFadeAnim, {
+      toValue: 0, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: true,
+    }).start();
     try {
-      await api.notificationsRead({ all: true });
-      Object.keys(cacheRef.current).forEach(key => {
-        cacheRef.current[key] = cacheRef.current[key].map(n => ({ ...n, read: true }));
-      });
-      setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-    } catch (e) {}
-  }, []);
+      // No id → backend marks ALL unread for this user (see email.php
+      // case 'notifications_mark_read').
+      await api.notificationsMarkRead();
+    } catch (e) {
+      // Network failure shouldn't visually rewind: the next pull-to-refresh
+      // re-fetches truth from the server. Log only.
+      console.warn('[notifications] markAllRead failed:', e?.message || e);
+    }
+  }, [markAllFadeAnim]);
 
   const handleAction = useCallback((notif, kind) => {
     if (kind === 'follow_back') {
@@ -432,7 +457,8 @@ function NotificationsScreenInner() {
 
   const handleTap = useCallback(async (notif) => {
     if (!notif.read) {
-      api.notificationsRead({ ids: [notif.id] }).catch(() => {});
+      // [bug-fix #notif-2 cont.] Same wrong name on the per-row tap.
+      api.notificationsMarkRead(notif.id).catch(() => {});
       Object.keys(cacheRef.current).forEach(key => {
         cacheRef.current[key] = cacheRef.current[key].map(n =>
           n.id === notif.id ? { ...n, read: true } : n

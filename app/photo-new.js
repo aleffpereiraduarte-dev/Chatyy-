@@ -243,11 +243,28 @@ export default function PhotoNew() {
       }
       const r = await api.feedCreatePost(formData);
       if (r?.success) {
-        safeAlert(
-          t('photoNew.published') || 'Publicado',
-          t('photoNew.publishedDesc') || 'Sua publicação foi enviada.',
-        );
-        router.back();
+        // [bug-fix #photos-novo] After publish the user expects Instagram-style
+        // "tap the novo card → open the carousel viewer". Previously we just
+        // bounced back to /photos with a toast and the user had to hunt for
+        // their own post on the feed. Now we route directly to /feed/[id]
+        // which renders the same post in a public-feed viewer (carousel +
+        // caption + actions). The route is auth-aware so logged-in users get
+        // interactive controls.
+        const postId = r?.data?.post?.id;
+        if (postId) {
+          // replace() instead of push() so the user doesn't bounce back into
+          // /photo-new on back (the staging key is already cleared on mount).
+          router.replace(`/feed/${postId}`);
+        } else {
+          // Fallback: backend didn't return an id (shouldn't happen, but
+          // safe). Keep the legacy behaviour so we never leave the user
+          // stuck on a spinner.
+          safeAlert(
+            t('photoNew.published') || 'Publicado',
+            t('photoNew.publishedDesc') || 'Sua publicação foi enviada.',
+          );
+          router.back();
+        }
       } else {
         setPublishing(false);
         safeAlert(

@@ -6518,6 +6518,14 @@ export default function ChatConversationScreen() {
   // (antes o user ocultava e voltava a aparecer ao reabrir a conversa).
   const TX_HIDDEN_KEY = `tx_hidden_v1_${conversationId || ''}`;
   const txHiddenSetRef = useRef(new Set());
+  // ON-DEMAND TRANSCRIPT CACHE — server never auto-injects msg.transcript into
+  // chat_get_messages (Whisper is expensive and the user wants opt-in per
+  // bubble). When the user taps "Transcrever" we POST chat_transcribe_audio,
+  // get the text, and persist {msgId: transcript} here. On chat re-open we
+  // rehydrate so the transcript stays visible for the user who actually
+  // requested it — without re-transcribing for everyone else.
+  const TX_REVEALED_KEY = `tx_revealed_v1_${conversationId || ''}`;
+  const txRevealedRef = useRef({}); // { [msgId]: transcript }
   // Hidrata o set ao abrir a conversa e aplica nos messages já carregadas.
   useEffect(() => {
     if (!conversationId) return;
@@ -6525,13 +6533,28 @@ export default function ChatConversationScreen() {
     (async () => {
       try {
         const AS = require('@react-native-async-storage/async-storage').default;
-        const raw = await AS.getItem(TX_HIDDEN_KEY);
-        const arr = raw ? JSON.parse(raw) : [];
+        const [rawHidden, rawRevealed] = await Promise.all([
+          AS.getItem(TX_HIDDEN_KEY),
+          AS.getItem(TX_REVEALED_KEY),
+        ]);
         if (cancelled) return;
-        const set = new Set(Array.isArray(arr) ? arr.map(String) : []);
+        const arrH = rawHidden ? JSON.parse(rawHidden) : [];
+        const set = new Set(Array.isArray(arrH) ? arrH.map(String) : []);
         txHiddenSetRef.current = set;
-        if (set.size > 0) {
-          setMessages(prev => prev.map(m => set.has(String(m.id)) ? { ...m, _txHidden: true } : m));
+        let revealed = {};
+        try { revealed = rawRevealed ? JSON.parse(rawRevealed) : {}; } catch { revealed = {}; }
+        if (revealed && typeof revealed === 'object') {
+          txRevealedRef.current = revealed;
+        }
+        if (set.size > 0 || Object.keys(txRevealedRef.current).length > 0) {
+          setMessages(prev => prev.map(m => {
+            let next = m;
+            const sid = String(m.id);
+            if (set.has(sid)) next = { ...next, _txHidden: true };
+            const cached = txRevealedRef.current[sid];
+            if (cached && !next.transcript) next = { ...next, transcript: cached };
+            return next;
+          }));
         }
       } catch {}
     })();
@@ -12107,7 +12130,17 @@ export default function ChatConversationScreen() {
       const r = await api.chatTranscribeAudio(msg.id);
       if (!mountedRef.current) return;
       if (r?.success && r.data?.transcript) {
-        settle({ transcript: r.data.transcript, _transcribeError: null });
+        const tx = r.data.transcript;
+        settle({ transcript: tx, _transcribeError: null });
+        // Persist locally so the same bubble shows the transcript on next
+        // chat re-open without re-calling the API. The server cache returns
+        // instantly anyway, but skipping the round-trip keeps the bubble
+        // stable across WS reconnects / app foreground refreshes.
+        try {
+          txRevealedRef.current = { ...txRevealedRef.current, [String(msg.id)]: tx };
+          const AS = require('@react-native-async-storage/async-storage').default;
+          AS.setItem(TX_REVEALED_KEY, JSON.stringify(txRevealedRef.current)).catch(() => {});
+        } catch {}
       } else if (r?.data?.error === 'transcription_not_configured') {
         settle({ _transcribeError: 'unavailable' });
       } else {
@@ -12116,7 +12149,7 @@ export default function ChatConversationScreen() {
     } catch (e) {
       settle({ _transcribeError: e?.message || 'failed' });
     }
-  }, []);
+  }, [TX_REVEALED_KEY]);
 
   // Double-tap to heart react with animated pop
   const lastTapRef = useRef({});
@@ -12928,6 +12961,13 @@ export default function ChatConversationScreen() {
             textToTranslate = String(tr.data.transcript || '');
             // Mirror onto the message so the bubble's transcript label fills in too.
             setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, transcript: textToTranslate } : m));
+            // Persist revealed state — user explicitly asked to translate, so
+            // showing the transcript across reloads matches expectation.
+            try {
+              txRevealedRef.current = { ...txRevealedRef.current, [String(msg.id)]: textToTranslate };
+              const AS = require('@react-native-async-storage/async-storage').default;
+              AS.setItem(TX_REVEALED_KEY, JSON.stringify(txRevealedRef.current)).catch(() => {});
+            } catch {}
           }
         } catch {}
       }

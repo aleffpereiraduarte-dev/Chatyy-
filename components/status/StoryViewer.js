@@ -464,6 +464,15 @@ export default function StoryViewer({
         }
         gestureAxisRef.current = null;
         if (gs.dy > 120 || gs.vy > 0.6) {
+          // Mount-grace guard — if the opening tap from the home strip leaks
+          // into the freshly-mounted PanResponder as a swipe-down (touch
+          // started off-modal, finger lifted on-modal a few pixels lower),
+          // we'd close the viewer the instant it opens. Snap back instead.
+          if (isFreshMount()) {
+            Animated.spring(dragY, { toValue: 0, useNativeDriver: true, friction: 7 }).start();
+            setPaused(false);
+            return;
+          }
           Animated.timing(dragY, { toValue: 600, duration: 180, useNativeDriver: true })
             .start(() => { dragY.setValue(0); onClose?.(); });
         } else {
@@ -534,8 +543,21 @@ export default function StoryViewer({
     } catch {}
   }, []);
 
+  // Mount debounce — the tap that OPENS the viewer can leak through to the
+  // freshly-mounted tap-zones (Modal mounts synchronously on Android + the
+  // status ring sits at y~120 which overlaps the viewer's tap-zone top:110).
+  // Without a small grace window, the opening touch fires goPrev()/advance()
+  // or, worse, gets reported as a swipe-down (origin tap below the ring then
+  // finger lifts after modal mount → release event lands on PanResponder).
+  // Block all close/nav handlers for 250ms after visible flips to true.
+  const mountAtRef = useRef(0);
+  const isFreshMount = useCallback(() => {
+    return mountAtRef.current > 0 && (Date.now() - mountAtRef.current) < 250;
+  }, []);
+
   useEffect(() => {
     if (visible) {
+      mountAtRef.current = Date.now();
       setIdx(Math.min(Math.max(0, startIdx || 0), Math.max(0, (stories?.length || 1) - 1)));
       setPaused(false);
       setCaughtUp(false);
@@ -544,6 +566,7 @@ export default function StoryViewer({
       replyGraceRef.current = false;
       if (replyGraceTimerRef.current) { clearTimeout(replyGraceTimerRef.current); replyGraceTimerRef.current = null; }
     } else {
+      mountAtRef.current = 0;
       // Modal closed — kill the grace timer so it can't fire against a stale
       // closure after the user already moved on.
       if (replyGraceTimerRef.current) { clearTimeout(replyGraceTimerRef.current); replyGraceTimerRef.current = null; }
@@ -645,11 +668,20 @@ export default function StoryViewer({
 
   useEffect(() => {
     if (visible && (!stories || stories.length === 0)) {
-      const t = setTimeout(() => onClose?.(), 0);
+      // Defer the auto-close so a brief empty render (e.g., parent recomputed
+      // groupIdx mid-state-flush and `items` is momentarily []) doesn't close
+      // the modal the instant it mounts. 350ms covers the mount-grace window
+      // and the followup setStatuses(hookGroups) sync effect in ChatListTab.
+      const t = setTimeout(() => {
+        // Re-check via ref — if a fresh mount is still active or stories
+        // populated in the meantime, the parent will skip the close.
+        if (isFreshMount()) return;
+        onClose?.();
+      }, 350);
       return () => clearTimeout(t);
     }
     return undefined;
-  }, [visible, stories?.length, onClose]);
+  }, [visible, stories?.length, onClose, isFreshMount]);
 
   if (!visible) return null;
   if (!stories.length) return null;
@@ -1385,6 +1417,10 @@ export default function StoryViewer({
         <Pressable
           style={{ position: 'absolute', left: 0, top: 110, bottom: 100, width: '30%' }}
           onPress={() => {
+            // Swallow the opening tap that bled through from the home strip
+            // ring — fires goPrev() at idx 0 (noop) but at higher groupIndex
+            // jumps to the wrong user the instant the modal mounts.
+            if (isFreshMount()) return;
             if (replyFocused) { try { Keyboard.dismiss(); } catch {} return; }
             _haptic('light'); goPrev();
           }}
@@ -1394,6 +1430,10 @@ export default function StoryViewer({
         <Pressable
           style={{ position: 'absolute', right: 0, top: 110, bottom: 100, width: '30%' }}
           onPress={() => {
+            // Same opening-tap swallow as the left zone — at last-item this
+            // triggers `caughtUp` → 1.4s close, which reads as "fechou na
+            // hora" since the user never had time to see the story.
+            if (isFreshMount()) return;
             if (replyFocused) { try { Keyboard.dismiss(); } catch {} return; }
             _haptic('light'); advance();
           }}
@@ -1403,6 +1443,7 @@ export default function StoryViewer({
         <Pressable
           style={{ position: 'absolute', left: '30%', right: '30%', top: 110, bottom: 100 }}
           onPressIn={(e) => {
+            if (isFreshMount()) return;
             if (replyFocused) { try { Keyboard.dismiss(); } catch {} return; }
             setPaused(true);
             // Capture absolute screen position of the touch (pageX/pageY) so

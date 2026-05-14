@@ -154,14 +154,22 @@ function IconClockMini({ size = 12, color = '#666' }) {
 }
 
 // ── Skeleton loader for conversation rows ──
+// 2026-05-13 crash hotfix: align driver with FeedSkeleton (useNativeDriver:true).
+// Animated.Value(`opacity`) was running JS-driven here while the sibling
+// FeedSkeleton in ChatFeedTab ran native. When the home page mounted both
+// tabs cold (Conversas + Feed pre-rendered) some render paths reused the
+// same animated node identity (memoized through React's Animated bridge),
+// surfacing as "JS driven animation on animated node that has been moved
+// to native earlier". Opacity is native-compatible, so true is the right
+// driver — and unblocks the JS thread on cold start.
 function SkeletonRow({ isDark, index }) {
   const opacity = useRef(new Animated.Value(0.3)).current;
   useEffect(() => {
     const anim = Animated.loop(
       Animated.sequence([
         Animated.delay(index * 80),
-        Animated.timing(opacity, { toValue: 0.7, duration: 800, useNativeDriver: false }),
-        Animated.timing(opacity, { toValue: 0.3, duration: 800, useNativeDriver: false }),
+        Animated.timing(opacity, { toValue: 0.7, duration: 800, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.3, duration: 800, useNativeDriver: true }),
       ])
     );
     anim.start();
@@ -205,16 +213,21 @@ function TypingDotsInline({ color }) {
     { opacity: useRef(new Animated.Value(0.3)).current, scale: useRef(new Animated.Value(0.7)).current },
   ];
   useEffect(() => {
+    // 2026-05-13 crash hotfix: opacity + transform.scale are both native-
+    // compatible props, so flipping to useNativeDriver:true here removes any
+    // chance of cross-driver leakage when these dot Values get re-used across
+    // typing-state churn on chat-list rows. Also keeps the typing indicator
+    // off the JS thread under heavy scroll.
     const animate = (d, delay) => Animated.loop(
       Animated.sequence([
         Animated.delay(delay),
         Animated.parallel([
-          Animated.timing(d.opacity, { toValue: 1, duration: 280, useNativeDriver: false }),
-          Animated.spring(d.scale, { toValue: 1.15, tension: 200, friction: 6, useNativeDriver: false }),
+          Animated.timing(d.opacity, { toValue: 1, duration: 280, useNativeDriver: true }),
+          Animated.spring(d.scale, { toValue: 1.15, tension: 200, friction: 6, useNativeDriver: true }),
         ]),
         Animated.parallel([
-          Animated.timing(d.opacity, { toValue: 0.3, duration: 280, useNativeDriver: false }),
-          Animated.spring(d.scale, { toValue: 0.7, tension: 200, friction: 8, useNativeDriver: false }),
+          Animated.timing(d.opacity, { toValue: 0.3, duration: 280, useNativeDriver: true }),
+          Animated.spring(d.scale, { toValue: 0.7, tension: 200, friction: 8, useNativeDriver: true }),
         ]),
         Animated.delay(500 - delay),
       ])

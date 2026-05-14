@@ -1780,7 +1780,26 @@ export default function OneScreen() {
   const realtimeRef = useRef(null); // OneRealtimeSession — OpenAI Realtime WS client (web)
   const emptyListenRef = useRef(0); // consecutive empty transcriptions in voice mode (guard vs mic-stuck-on)
 
+  // [bug-fix #one-ai-1h] Track when the user last sent or received a message
+  // in the current conversation. On re-focus, if >60 min have passed, clear
+  // local state and start fresh — same window as the cold-start auto-restore.
+  // Without this, returning to /one after lunch shows yesterday's thread.
+  const lastActiveAtRef = useRef(Date.now());
+
   useFocusEffect(useCallback(() => {
+    const ONE_HOUR_MS = 3600000;
+    const since = Date.now() - lastActiveAtRef.current;
+    if (since >= ONE_HOUR_MS) {
+      // Reset to a fresh conversation. We don't push a new history fetch —
+      // that's done lazily on first send/auto-restore. Just nuke the in-memory
+      // thread + conversation id so the empty state renders.
+      try {
+        setMessages([]);
+        setConversationId(null);
+        // Updated timestamp so the next focus inside an hour stays put.
+        lastActiveAtRef.current = Date.now();
+      } catch {}
+    }
     return () => {
       try { aiAbortRef.current?.abort?.(); } catch {}
     };
@@ -2149,6 +2168,9 @@ export default function OneScreen() {
     const msg = (text || inputText).trim();
     if (!msg && !attachedImage) return;
     if (loading) return;
+    // [bug-fix #one-ai-1h] Mark activity so the focus-effect 60-min reset
+    // only kicks in after a real idle window.
+    lastActiveAtRef.current = Date.now();
     // /save <label>: <command> — persists a workflow chip instead of
     // sending. Lets power-users build personal macros in one line.
     if (msg.startsWith('/save ') || msg.startsWith('/salvar ')) {

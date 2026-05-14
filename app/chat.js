@@ -1535,6 +1535,9 @@ function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark
 }
 
 // ── Pulse animation for badge ──
+// 2026-05-13 hotfix: drives transform.scale only — native-compatible. Flipping
+// useNativeDriver to true removes any chance of cross-driver leakage with the
+// surrounding TabBarItem animations and frees the JS thread on cold start.
 function PulseBadge({ badge, isDark }) {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const isWeb = Platform.OS === 'web';
@@ -1543,8 +1546,8 @@ function PulseBadge({ badge, isDark }) {
     if (badge > 0) {
       const pulse = Animated.loop(
         Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1.2, duration: 800, useNativeDriver: false }),
-          Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: false }),
+          Animated.timing(pulseAnim, { toValue: 1.2, duration: 800, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
         ])
       );
       pulse.start();

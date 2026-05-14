@@ -383,17 +383,47 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
   // previous `r.data?.sessions` check was always falsy, so polling never
   // populated nor cleared the strip — the hero stayed parked on screen until
   // the user pulled to refresh. Fall back to legacy `sessions` for forward-compat.
+  //
+  // [bug-fix #lives-banner] Two extra client-side filters because the backend
+  // can briefly return stale rows (5-min ghost auto-end window) and lives
+  // hosted by ME shouldn't be advertised in MY feed:
+  //   1. Drop lives where host_email matches the logged-in user (we don't
+  //      tell people about their own broadcast — they're the one driving it).
+  //   2. Drop rows where ended_at is set OR started_at is older than 90 min
+  //      AND viewer_count is 0 (ghost session that backend hasn't auto-ended
+  //      yet). The backend's 5-min ghost sweep handles most of these but the
+  //      window is wide enough to miss some on the very next poll.
   const loadLives = useCallback(async () => {
     try {
       const r = await api.liveList();
       if (r && r.success) {
-        const list = r.data?.lives || r.data?.sessions || [];
-        setActiveLives(Array.isArray(list) ? list : []);
+        const raw = r.data?.lives || r.data?.sessions || [];
+        const myEmail = String(user?.email || '').toLowerCase();
+        const NINETY_MIN_MS = 90 * 60 * 1000;
+        const now = Date.now();
+        const list = (Array.isArray(raw) ? raw : []).filter((l) => {
+          // 1) Hide own lives — host_email comparison is case-insensitive
+          // because backend can echo the canonical mailbox in either case.
+          const host = String(l?.host_email || '').toLowerCase();
+          if (host && myEmail && host === myEmail) return false;
+          // 2) Hide ended sessions explicitly flagged by the server.
+          if (l?.ended_at || l?.status === 'ended') return false;
+          // 3) Hide stale sessions (started >90min ago with 0 viewers).
+          try {
+            const startedAt = new Date(l?.started_at).getTime();
+            if (Number.isFinite(startedAt) && (now - startedAt) > NINETY_MIN_MS) {
+              const vc = Number(l?.viewer_count) || 0;
+              if (vc <= 0) return false;
+            }
+          } catch {}
+          return true;
+        });
+        setActiveLives(list);
       }
     } catch (e) {
       console.warn('Live list error:', e);
     }
-  }, []);
+  }, [user?.email]);
 
   // ── User search with debounce ──
   const handleSearchChange = useCallback((text) => {
