@@ -570,6 +570,7 @@ const SWR_ALLOW = new Set([
   'feed_list', 'feed_following', 'get_followers', 'get_following',
   'follow_suggestions', 'mutual_followers',
   'status_list', 'chat_pending_members',
+  'status_archive_list', 'chat_dnd_get',
   'meet_list', 'calendar_events', 'files_list',
 ]);
 
@@ -2735,6 +2736,13 @@ export async function statusPublish(content, type = 'text', bgColor = '#7C3AED',
   if (type === 'image' || type === 'video') {
     params.media_url = content || '';
     params.content = extraMeta?.caption || '';
+  } else if (type === 'poll') {
+    // Wave 4: poll status. `content` carries the poll question (the
+    // backend also stashes it in chat_user_status.content so chat-list
+    // previews show "📊 Que cor?" without decoding meta). The poll
+    // object travels in extraMeta.poll = { question, options[] }.
+    params.content = (extraMeta?.poll?.question) || content || '';
+    params.poll = extraMeta?.poll || null;
   } else {
     params.content = content;
   }
@@ -2743,6 +2751,14 @@ export async function statusPublish(content, type = 'text', bgColor = '#7C3AED',
     params.music_artist = musicData.artist || '';
     params.music_preview_url = musicData.previewUrl || '';
     params.music_cover_url = musicData.coverUrl || '';
+  }
+  // Forward whitelisted meta keys (caption, stickers, draws, poll already
+  // separated above) so the backend persists them. Skip ones already
+  // sent above or that don't belong in status_create.
+  if (extraMeta && typeof extraMeta === 'object') {
+    for (const k of ['caption_locale', 'caption_translations', 'privacy', 'filter', 'stickers', 'text_overlays', 'draw_paths', 'font_style', 'is_boomerang']) {
+      if (extraMeta[k] !== undefined && params[k] === undefined) params[k] = extraMeta[k];
+    }
   }
   return apiCall('status_create', params, 'POST');
 }
@@ -2830,6 +2846,35 @@ export async function statusDelete(statusId) {
 
 export async function statusViewers(statusId) {
   return apiCall('status_viewers', { status_id: statusId }, 'POST');
+}
+
+// Wave 4: Archive own status — hides it from the home strip + chat list
+// preview but keeps the row in PG so the owner can browse a personal
+// archive later. Mirrors Instagram Archive. `status_unarchive` reverts.
+export async function statusArchive(statusId) {
+  return apiCall('status_archive', { status_id: statusId }, 'POST');
+}
+export async function statusUnarchive(statusId) {
+  return apiCall('status_unarchive', { status_id: statusId }, 'POST');
+}
+export async function statusArchiveList() {
+  return apiCall('status_archive_list', {}, 'POST');
+}
+
+// Wave 4: Do-Not-Disturb schedule. Mutes ALL chat push notifications
+// during a HH:MM..HH:MM window in the user's local timezone. Backend
+// persists per-user; firebase_push.php / push-notify.php read this table
+// before fanning out so the schedule applies system-wide.
+export async function chatDndGet() {
+  return apiCall('chat_dnd_get', {}, 'POST');
+}
+export async function chatDndSet({ enabled, start_time, end_time, tz_offset }) {
+  return apiCall('chat_dnd_set', {
+    enabled: !!enabled,
+    start_time: String(start_time || '22:00'),
+    end_time: String(end_time || '07:00'),
+    tz_offset: Number.isFinite(+tz_offset) ? (+tz_offset | 0) : 0,
+  }, 'POST');
 }
 
 // Status mute/unmute — silenciar status de um contato. Hidden from the

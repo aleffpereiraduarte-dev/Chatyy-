@@ -202,6 +202,44 @@ function SettingsScreenInner() {
     typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'default'
   );
 
+  // Wave 4: Do-Not-Disturb schedule. Pulls chat_user_dnd on mount + on
+  // toggle/save. UI lives in the desktopNotifs section below. Defaults
+  // 22:00 → 07:00 — most common "quiet evening" pattern in product
+  // research. tz_offset is captured client-side once via Date#getTimezoneOffset
+  // (note: JS returns minutes *behind* UTC, so we flip the sign before
+  // sending so the backend can store minutes *east* of UTC).
+  const [dnd, setDnd] = useState({ enabled: false, start_time: '22:00', end_time: '07:00', tz_offset: 0 });
+  const [dndSaving, setDndSaving] = useState(false);
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await api.chatDndGet?.();
+        if (r?.success && r.data) {
+          setDnd({
+            enabled: !!r.data.enabled,
+            start_time: r.data.start_time || '22:00',
+            end_time: r.data.end_time || '07:00',
+            tz_offset: Number.isFinite(+r.data.tz_offset) ? +r.data.tz_offset : 0,
+          });
+        }
+      } catch {}
+    })();
+  }, []);
+  const saveDnd = useCallback(async (patch) => {
+    setDnd(prev => {
+      const next = { ...prev, ...patch };
+      // Capture current tz_offset (minutes east of UTC) on save.
+      const tz = -new Date().getTimezoneOffset();
+      const payload = { ...next, tz_offset: tz };
+      (async () => {
+        setDndSaving(true);
+        try { await api.chatDndSet?.(payload); } catch {}
+        setDndSaving(false);
+      })();
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     loadSettings();
     // Load undo delay + smart compose + notif prefs
@@ -659,6 +697,82 @@ function SettingsScreenInner() {
                   thumbColor={settings.notification_vibration ? colors.primary : '#fff'}
                 />
               </View>
+
+              {/* Wave 4 — Do-Not-Disturb schedule. WhatsApp-grade "quiet
+                  hours" toggle plus HH:MM start/end inputs. Backend mutes
+                  ALL chat push fanout when current local time falls in
+                  the window. TextInput avoids extra deps + keeps web +
+                  native parity. Format is HH:MM so the server validator
+                  rejects anything else before it ever touches PG. */}
+              <View style={[s.settingRow, { borderBottomColor: colors.borderLight, paddingLeft: Spacing.xl }]}>
+                <View style={s.settingInfo}>
+                  <Text style={[s.settingLabel, { color: colors.text }]}>
+                    {t('settings.dndTitle') || 'Não perturbe (horário)'}
+                  </Text>
+                  <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                    {t('settings.dndDesc') || 'Silencia notificações de chat dentro do horário definido.'}
+                  </Text>
+                </View>
+                <Switch
+                  value={dnd.enabled}
+                  onValueChange={(v) => saveDnd({ enabled: v })}
+                  trackColor={{ false: colors.divider, true: colors.primaryLight }}
+                  thumbColor={dnd.enabled ? colors.primary : '#fff'}
+                  disabled={dndSaving}
+                />
+              </View>
+              {dnd.enabled && (
+                <View style={{ flexDirection: 'row', gap: 12, paddingHorizontal: Spacing.xl, paddingBottom: Spacing.md }}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: 4 }]}>
+                      {t('settings.dndStart') || 'Início'}
+                    </Text>
+                    <TextInput
+                      value={dnd.start_time}
+                      onChangeText={(v) => setDnd(prev => ({ ...prev, start_time: v }))}
+                      onBlur={() => {
+                        const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec((dnd.start_time || '').trim());
+                        if (m) saveDnd({ start_time: dnd.start_time.trim() });
+                        else setDnd(prev => ({ ...prev, start_time: '22:00' }));
+                      }}
+                      placeholder="22:00"
+                      placeholderTextColor={colors.textTertiary}
+                      style={{
+                        borderWidth: 1, borderColor: colors.divider, borderRadius: 10,
+                        paddingVertical: 10, paddingHorizontal: 12, color: colors.text,
+                        backgroundColor: colors.surfaceVariant, fontFamily: 'monospace',
+                      }}
+                      keyboardType="numbers-and-punctuation"
+                      maxLength={5}
+                      accessibilityLabel={t('settings.dndStart') || 'Início'}
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: 4 }]}>
+                      {t('settings.dndEnd') || 'Fim'}
+                    </Text>
+                    <TextInput
+                      value={dnd.end_time}
+                      onChangeText={(v) => setDnd(prev => ({ ...prev, end_time: v }))}
+                      onBlur={() => {
+                        const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec((dnd.end_time || '').trim());
+                        if (m) saveDnd({ end_time: dnd.end_time.trim() });
+                        else setDnd(prev => ({ ...prev, end_time: '07:00' }));
+                      }}
+                      placeholder="07:00"
+                      placeholderTextColor={colors.textTertiary}
+                      style={{
+                        borderWidth: 1, borderColor: colors.divider, borderRadius: 10,
+                        paddingVertical: 10, paddingHorizontal: 12, color: colors.text,
+                        backgroundColor: colors.surfaceVariant, fontFamily: 'monospace',
+                      }}
+                      keyboardType="numbers-and-punctuation"
+                      maxLength={5}
+                      accessibilityLabel={t('settings.dndEnd') || 'Fim'}
+                    />
+                  </View>
+                </View>
+              )}
             </>
           )}
         </View>
