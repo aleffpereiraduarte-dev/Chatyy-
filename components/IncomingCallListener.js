@@ -389,6 +389,13 @@ export default function IncomingCallListener() {
 
   const handlingRef = useRef(false);
   const acceptedRef = useRef(false); // Prevents handleDecline from running after accept
+  // Timestamp of last CXAnswerCallAction fulfill on iOS. Used by onEnd handler
+  // to ignore CXEndCallAction races that iOS fires <3s after answer (typically
+  // an audio-session activation race that triggers CallKit's auto-end-on-fail
+  // path). Without this guard, the user taps Accept → call instantly shows
+  // "Ligação encerrada" because the spurious onEnd tears down the WebRTC PC
+  // and sends WS call_end to the caller, who then hangs up.
+  const lastAnswerAtRef = useRef(0);
   // Use refs for handlers so CallKit callbacks always get latest version
   const handleAcceptRef = useRef(null);
   const handleDeclineRef = useRef(null);
@@ -729,6 +736,7 @@ export default function IncomingCallListener() {
           // Mark as accepted immediately to block decline and WS call_invite
           acceptedRef.current = true;
           handlingRef.current = true;
+          lastAnswerAtRef.current = Date.now();
           setCallActive(true, data?.callId || callStateRef.current?.call_id || null);
           stopRingtone();
 
@@ -933,6 +941,22 @@ export default function IncomingCallListener() {
         onEnd: (callUUID, eventData) => {
           console.log('[IncomingCall] CallKit onEnd, acceptedRef=' + acceptedRef.current);
           voipDiag('callkit_native_end', eventData?.callId || '', { wasAccepted: acceptedRef.current });
+
+          // [bug 2026-05-14 ios spurious-end-after-answer]
+          // CallKit fires CXEndCallAction within 0-2s of CXAnswerCallAction.fulfill()
+          // on some iOS audio-session activation races (especially cold-start
+          // from VoIP push or after the phone was idle). Without this guard, the
+          // user sees "Ligação encerrada" instantly after tapping Aceitar
+          // because this handler tears down the WebRTC PC + sends WS call_end
+          // to the caller. If the end arrives <3s after answer, drop it.
+          if (Platform.OS === 'ios' && acceptedRef.current && lastAnswerAtRef.current > 0) {
+            const sinceAnswer = Date.now() - lastAnswerAtRef.current;
+            if (sinceAnswer < 3000) {
+              console.warn('[IncomingCall] iOS spurious onEnd ' + sinceAnswer + 'ms after answer — IGNORING');
+              voipDiag('callkit_spurious_end_ignored', eventData?.callId || '', { sinceAnswer });
+              return;
+            }
+          }
 
           // Decide reason based on whether the call was accepted before this
           // end action. CallKit fires onEnd both for "decline ringing call"
