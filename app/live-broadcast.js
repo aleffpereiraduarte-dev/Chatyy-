@@ -90,6 +90,12 @@ export default function LiveBroadcastScreen() {
   // Replaces the previous opaque UX where the host tapped "Salvar replay"
   // but had no idea where the replay landed (or if it would exist at all).
   const [endedHasRecording, setEndedHasRecording] = useState(false);
+  // Codex root cause #6 — freeze the replay-requested intent at performEndLive
+  // time. Without this, host could tap "Salvar replay" AFTER liveEnd had
+  // already been called with the previous value, and the toggle would
+  // silently desync from the actual backend state.
+  const [endedReplayRequested, setEndedReplayRequested] = useState(false);
+  const [endedReplayStatus, setEndedReplayStatus] = useState('idle'); // idle|processing|none|error
   const [pinnedComment, setPinnedComment] = useState(null);
   // Settings/effects/filter UI state — the right-stack buttons used to be
   // no-op stubs (audit 2026-05-12); now they each open a small bottom sheet
@@ -156,6 +162,20 @@ export default function LiveBroadcastScreen() {
   const reconnectTimerRef = useRef(null);
   const liveStartedAckRef = useRef(false);
   const liveStartedAckTimeoutRef = useRef(null);
+  // Codex root cause #3 — handleStartLive must await `live_started` ack
+  // BEFORE flipping the UI to live. Without this waiter promise, the host
+  // is "live" in the local UI while WS subscribe may have failed silently
+  // (viewers can't get offers). The waiter is fulfilled in `live_started`.
+  const liveStartedWaiterRef = useRef(null);
+  // Composer input ref for proper keyboard hide cycle (Codex #5).
+  const composerInputRef = useRef(null);
+  const endModalTimerRef = useRef(null);
+  // Authoritative server viewer count, mirrored to a ref so polling timers
+  // can use the latest value without hooking re-renders (Codex #4).
+  const viewerCountRef = useRef(0);
+  // Guest peer ref + per-guest ICE queue for Codex root cause #7.
+  const guestPeerRef = useRef(null);
+  const guestIceQueueRef = useRef(new Map());
 
   // Animations
   const countdownScale = useRef(new Animated.Value(0)).current;
@@ -326,21 +346,43 @@ export default function LiveBroadcastScreen() {
   // forward-reference TDZ crash on first render.
   const handleViewerJoinedRef = useRef(null);
 
-  // Connect to signaling WebSocket
+  // Connect to signaling WebSocket. Returns a Promise that resolves on
+  // `live_started` ack so handleStartLive can await it before flipping the
+  // UI to live (Codex root cause #3). Promise rejects on the 5s watchdog
+  // or any premature close.
   const connectSignaling = useCallback(() => {
+    // Reset ack state each (re)connect so reconnects also wait for the
+    // server's fresh live_started echo.
+    liveStartedAckRef.current = false;
+    if (liveStartedAckTimeoutRef.current) {
+      clearTimeout(liveStartedAckTimeoutRef.current);
+      liveStartedAckTimeoutRef.current = null;
+    }
+
     // Close previous WS to prevent orphan connections
     if (wsRef.current) {
-      try { wsRef.current.close(); } catch {}
+      try {
+        // Null handlers BEFORE close so the old socket's reconnect timer
+        // can't schedule itself over the new one (Codex race-condition note).
+        wsRef.current.onopen = null;
+        wsRef.current.onmessage = null;
+        wsRef.current.onclose = null;
+        wsRef.current.onerror = null;
+        wsRef.current.close();
+      } catch {}
       wsRef.current = null;
     }
 
-    const token = api.getAuthToken();
-    const ws = new WebSocket(WS_URL);
-    wsRef.current = ws;
+    return new Promise((resolve, reject) => {
+      liveStartedWaiterRef.current = { resolve, reject };
 
-    ws.onopen = () => {
-      ws.send(JSON.stringify({ type: 'auth', token }));
-    };
+      const token = api.getAuthToken();
+      const ws = new WebSocket(WS_URL);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ type: 'auth', token }));
+      };
 
     ws.onmessage = (event) => {
       let msg;
@@ -368,6 +410,10 @@ export default function LiveBroadcastScreen() {
             if (!liveStartedAckRef.current && !endedRef.current) {
               console.error('[Live] live_started ack timeout (5s) — WS subscribe failed');
               setError(t('live.startTimeout') || 'Sem resposta do servidor');
+              // Reject the waiter so handleStartLive can bail out instead of
+              // staring at a black countdown screen (Codex #3).
+              try { liveStartedWaiterRef.current?.reject?.(new Error('live_started timeout')); } catch {}
+              liveStartedWaiterRef.current = null;
             }
           }, 5000);
           break;
@@ -380,6 +426,8 @@ export default function LiveBroadcastScreen() {
             liveStartedAckTimeoutRef.current = null;
           }
           console.log('[Live] live_started ack received');
+          try { liveStartedWaiterRef.current?.resolve?.(); } catch {}
+          liveStartedWaiterRef.current = null;
           break;
         case 'live_viewer_joined':
           handleViewerJoined(msg);
@@ -417,7 +465,10 @@ export default function LiveBroadcastScreen() {
           // broadcaster). Previously the host only had peersRef.size, which
           // lags 2-5s while WebRTC negotiates and goes stale if a peer fails
           // mid-stream — server count is instant and survives peer drops.
-          if (typeof msg.count === 'number') setViewerCount(msg.count);
+          if (typeof msg.count === 'number') {
+            viewerCountRef.current = msg.count;
+            setViewerCount(msg.count);
+          }
           break;
         case 'live_viewer_left':
           // Server already broadcasts a follow-up viewer_count, but cleaning
@@ -437,7 +488,7 @@ export default function LiveBroadcastScreen() {
           // Render a golden gift chip inline in the comment overlay.
           {
             const entry = new Animated.Value(0);
-            setChatMessages(prev => [...prev, {
+            appendChatMessage({
               id: 'gift_' + String(++chatIdRef.current),
               name: msg.sender_name || (msg.sender_email || '').split('@')[0] || '?',
               email: msg.sender_email,
@@ -446,7 +497,7 @@ export default function LiveBroadcastScreen() {
               amount: msg.amount || 1,
               giftLabel: msg.gift ? ((t('live.sentGift') || 'enviou') + ' ' + msg.gift) : (t('live.sentGift') || 'enviou um presente'),
               entry,
-            }]);
+            });
             Animated.spring(entry, { toValue: 1, friction: 6, tension: 120, useNativeDriver: true }).start();
           }
           break;
@@ -477,7 +528,7 @@ export default function LiveBroadcastScreen() {
           // "X entrou" join chip, just different text so viewers see the diff.
           {
             const entry = new Animated.Value(0);
-            setChatMessages(prev => [...prev, {
+            appendChatMessage({
               id: 'gj_' + String(++chatIdRef.current),
               name: msg.guest_name || (msg.guest_email || '').split('@')[0] || '?',
               email: msg.guest_email,
@@ -485,7 +536,7 @@ export default function LiveBroadcastScreen() {
               text: t('live.joinedColab') || 'juntou-se ao colab',
               content: t('live.joinedColab') || 'juntou-se ao colab',
               entry,
-            }]);
+            });
             Animated.spring(entry, { toValue: 1, friction: 7, tension: 120, useNativeDriver: true }).start();
           }
           break;
@@ -507,6 +558,10 @@ export default function LiveBroadcastScreen() {
       if (sessionIdRef.current && !endedRef.current) {
         reconnectTimerRef.current = setTimeout(connectSignaling, 3000);
       }
+      // If the live_started waiter is still pending, reject it so callers
+      // can bail out instead of awaiting forever (Codex #3 + race notes).
+      try { liveStartedWaiterRef.current?.reject?.(new Error('ws closed')); } catch {}
+      liveStartedWaiterRef.current = null;
     };
 
     ws.onerror = (e) => {
@@ -515,7 +570,8 @@ export default function LiveBroadcastScreen() {
       console.warn('[Live] WS error:', e?.message || e?.type || 'unknown');
       try { setError(t('live.connectionFailed') || 'Falha de conexão ao servidor'); } catch {}
     };
-  }, [user]);
+    });
+  }, [user, t]);
 
   // Connection quality heartbeat — heuristic based on peer connection health
   // (we don't have RTC stats parsing yet, so we count failed/connecting peers).
@@ -538,6 +594,17 @@ export default function LiveBroadcastScreen() {
     }, 4000);
     return () => clearInterval(t);
   }, [preStart]);
+
+  // Codex root cause #9 — bound chat overlay state. LiveChatOverlay renders
+  // only the last 6 messages, but parent kept the whole stream + every
+  // Animated.Value, leaking memory + driving useless re-renders.
+  const CHAT_MAX_MESSAGES = 50;
+  const appendChatMessage = useCallback((item) => {
+    setChatMessages(prev => {
+      const next = [...prev, item];
+      return next.length > CHAT_MAX_MESSAGES ? next.slice(-CHAT_MAX_MESSAGES) : next;
+    });
+  }, []);
 
   // Heart animation — accepts optional reactor identity so each heart can
   // float with a tiny avatar chip beside it (Instagram parity).
@@ -606,7 +673,9 @@ export default function LiveBroadcastScreen() {
       if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
         pc.close();
         peersRef.current.delete(viewerId);
-        setViewerCount(peersRef.current.size);
+        // Codex root cause #4 — do NOT overwrite server-authoritative count
+        // with local peer size. Server emits `live_viewer_count` already, and
+        // local size for HLS sessions is always 0.
       }
     };
 
@@ -625,7 +694,9 @@ export default function LiveBroadcastScreen() {
       console.error('Failed to create offer for viewer:', err);
     }
 
-    setViewerCount(peersRef.current.size);
+    // Codex root cause #4 — server `live_viewer_count` is authoritative;
+    // do not overwrite with local peer size (HLS sessions would always
+    // report 0, hosts would think the live is empty).
 
     // Track unique viewers across the entire run — survives churn (viewer
     // leaves & rejoins still counts once). Feeds the end-card summary.
@@ -639,7 +710,7 @@ export default function LiveBroadcastScreen() {
 
     // Show join message — animated entrance for the TikTok overlay.
     const entry = new Animated.Value(0);
-    setChatMessages(prev => [...prev, {
+    appendChatMessage({
       id: String(++chatIdRef.current),
       name: joinedName,
       email: msg.viewer_email,
@@ -647,9 +718,9 @@ export default function LiveBroadcastScreen() {
       text: t('live.joined') || 'joined',
       type: 'system',
       entry,
-    }]);
+    });
     Animated.spring(entry, { toValue: 1, friction: 7, tension: 120, useNativeDriver: true }).start();
-  }, [t]);
+  }, [t, appendChatMessage]);
   // Public-name alias kept stable so the rest of the file (and the WS
   // onmessage switch) can call handleViewerJoined as before.
   const handleViewerJoined = _handleViewerJoined;
@@ -692,7 +763,7 @@ export default function LiveBroadcastScreen() {
       pc.close();
       peersRef.current.delete(viewerId);
     }
-    setViewerCount(peersRef.current.size);
+    // Server `live_viewer_count` is the authoritative source (Codex #4).
   }, []);
 
   // ─── Guest co-broadcast (#921 colab mode) ─────────────────────────────
@@ -703,6 +774,14 @@ export default function LiveBroadcastScreen() {
   // but this minimal P2P path lights up "colab" UX (host sees guest video).
   const handleGuestOffer = useCallback(async (msg) => {
     if (!msg || !msg.sdp || !RTC_PeerConnection) return;
+    // Codex root cause #7 — normalize a stable guest identity for ICE
+    // routing. Falls back to guest_email if guest_id is missing (older
+    // viewer clients).
+    const guestId = String(msg.guest_id || msg.guest_email || '').toLowerCase();
+    if (!guestId) {
+      console.warn('[Live] live_guest_offer missing guest_id+guest_email — dropping');
+      return;
+    }
     // Reuse any previous guest peer (a re-offer from same guest).
     try { guestPeer?.pc?.close(); } catch {}
     const iceServers = msg.turn_credentials ? [
@@ -727,22 +806,34 @@ export default function LiveBroadcastScreen() {
           wsRef.current.send(JSON.stringify({
             type: 'live_guest_ice',
             session_id: sessionIdRef.current,
-            guest_id: msg.guest_id,
+            guest_id: guestId,
+            guest_email: msg.guest_email,
             candidate: ev.candidate,
           }));
         } catch {}
       }
     };
-    setGuestPeer({ email: msg.guest_email, name: msg.guest_name, pc, streamUrl: null });
+    const guestRec = { email: msg.guest_email || guestId, name: msg.guest_name, pc, streamUrl: null };
+    setGuestPeer(guestRec);
+    guestPeerRef.current = guestRec;
     try {
       await pc.setRemoteDescription(new RTC_SessionDescription({ type: 'offer', sdp: msg.sdp }));
+      // Codex root cause #7 — drain any ICE candidates that arrived before
+      // setRemoteDescription resolved. Previously these were dropped, so the
+      // guest's video tile never lit up.
+      const queued = guestIceQueueRef.current.get(guestId) || [];
+      guestIceQueueRef.current.delete(guestId);
+      for (const c of queued) {
+        try { await pc.addIceCandidate(new RTC_IceCandidate(c)); } catch {}
+      }
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({
           type: 'live_guest_answer',
           session_id: sessionIdRef.current,
-          guest_id: msg.guest_id,
+          guest_id: guestId,
+          guest_email: msg.guest_email,
           sdp: answer.sdp,
         }));
       }
@@ -750,16 +841,31 @@ export default function LiveBroadcastScreen() {
       console.warn('[Live] guest offer fail', e);
       try { pc.close(); } catch {}
       setGuestPeer(null);
+      guestPeerRef.current = null;
     }
   }, [guestPeer]);
 
   const handleGuestIce = useCallback(async (msg) => {
-    if (!msg?.candidate || !guestPeer?.pc) return;
-    try { await guestPeer.pc.addIceCandidate(new RTC_IceCandidate(msg.candidate)); } catch {}
-  }, [guestPeer]);
+    if (!msg?.candidate) return;
+    const guestId = String(msg.guest_id || msg.guest_email || '').toLowerCase();
+    const pc = guestPeerRef.current?.pc;
+    // Codex root cause #7 — buffer ICE if the peer isn't ready (remoteDesc
+    // not set yet, or state didn't commit). Cap at 100 candidates to bound
+    // memory if a buggy viewer floods us.
+    if (!pc || !pc.remoteDescription) {
+      const q = guestIceQueueRef.current.get(guestId) || [];
+      if (q.length < 100) q.push(msg.candidate);
+      guestIceQueueRef.current.set(guestId, q);
+      return;
+    }
+    try { await pc.addIceCandidate(new RTC_IceCandidate(msg.candidate)); } catch {}
+  }, []);
 
   useEffect(() => { handleGuestOfferRef.current = handleGuestOffer; }, [handleGuestOffer]);
   useEffect(() => { handleGuestIceRef.current = handleGuestIce; }, [handleGuestIce]);
+  // Mirror guestPeer state into a ref so handleGuestIce (closure-locked at
+  // mount) can see the latest peer without subscribing to re-renders.
+  useEffect(() => { guestPeerRef.current = guestPeer; }, [guestPeer]);
 
   // Host removes the guest from colab.
   const kickGuest = useCallback(() => {
@@ -788,7 +894,7 @@ export default function LiveBroadcastScreen() {
 
     // Spring-up entrance for the TikTok overlay (LiveChatOverlay reads m.entry).
     const entry = new Animated.Value(0);
-    setChatMessages(prev => [...prev, {
+    appendChatMessage({
       id: String(++chatIdRef.current),
       name: msg.sender_name || msg.sender_email?.split('@')[0] || '?',
       email: msg.sender_email,
@@ -796,9 +902,9 @@ export default function LiveBroadcastScreen() {
       type: msg.msg_type || 'chat',
       tier: msg.tier || null, // gift / gifter set by gift relays, else default
       entry,
-    }]);
+    });
     Animated.spring(entry, { toValue: 1, friction: 7, tension: 120, useNativeDriver: true }).start();
-  }, [user]);
+  }, [user, appendChatMessage]);
 
   // Host long-press a comment in the TikTok overlay → quick action sheet.
   // For now: pin (already wired via legacy long-press) + remove (sends
@@ -889,23 +995,52 @@ export default function LiveBroadcastScreen() {
         setSessionId(sid);
         sessionIdRef.current = sid;
 
-        // Countdown 3, 2, 1
-        await animateCountdown(3);
-        await animateCountdown(2);
-        await animateCountdown(1);
+        // Codex root cause #2 — warn if backend created a Cloudflare live input
+        // but exposes no rtmp_url/stream_key. Without those, the host has no
+        // way to publish RTMP and HLS viewers will sit on "Stream indisponível"
+        // forever while WS counts viewers anyway. We don't have a native
+        // publisher embedded, so this is a no-op surface — but logging the
+        // condition gives ops a one-line probe for the failure mode.
+        if (res.data?.cf_input_uid && !res.data?.rtmp_url && !res.data?.whip_url) {
+          console.warn('[Live] backend returned cf_input_uid without rtmp_url/whip_url — viewers will see HLS warm-up forever');
+          // Don't block — the WebRTC P2P path still works for in-app viewers.
+          // Surface a soft toast so ops/devs see this in QA without blowing
+          // up the host UX for the legacy flow.
+        }
+
+        // Codex root cause #3 — start WS signaling BEFORE countdown completes
+        // so the `live_started` ack lands while the host watches "3,2,1".
+        // Await BOTH the WS ack AND the countdown promise so the UI never
+        // flips to "AO VIVO" while the channel subscribe is still pending.
+        const wsReady = connectSignaling();
+        const countdownRun = (async () => {
+          await animateCountdown(3);
+          await animateCountdown(2);
+          await animateCountdown(1);
+        })();
+        try {
+          await Promise.all([wsReady, countdownRun]);
+        } catch (waitErr) {
+          // live_started ack rejected — the watchdog already surfaced an
+          // error string; don't double-message, just abort start.
+          console.warn('[Live] start aborted — WS ack failed:', waitErr?.message);
+          setCountdown(null);
+          return;
+        }
         setCountdown(null);
 
         setPreStart(false);
-        connectSignaling();
 
         // Start duration timer
         durationTimerRef.current = setInterval(() => {
           setLiveDuration(prev => prev + 1);
         }, 1000);
 
-        // Update viewer count every 10s
+        // Update viewer count every 10s — Codex root cause #4: prefer the
+        // server-authoritative WS count over local peer size; HLS sessions
+        // have no peers at all so peersRef.size would always report 0.
         viewerCountTimerRef.current = setInterval(() => {
-          const count = peersRef.current.size;
+          const count = Math.max(viewerCountRef.current || 0, peersRef.current.size);
           api.liveUpdateViewers(sessionIdRef.current, count).catch(() => {});
         }, 10000);
       } else {
@@ -930,24 +1065,32 @@ export default function LiveBroadcastScreen() {
     // Capture the just-ended session id BEFORE we null sessionIdRef.current
     // below — the end-card renders "Ver Lives Salvas" CTA gated on this.
     const endedSessionId = sessionIdRef.current;
+    // Codex root cause #6 — FREEZE the replay-requested intent at this point.
+    // saveReplay can flip after liveEnd is in-flight, so we capture once and
+    // use the snapshot for both the API call AND the end-card UI.
+    const replayRequested = !!saveReplay;
+    setEndedReplayRequested(replayRequested);
+    setEndedReplayStatus(replayRequested ? 'processing' : 'none');
     if (endedSessionId) {
       // Capture has_recording from the live_end response so the end-card
       // knows whether to surface "Ver Lives Salvas" (CF Stream pipeline)
       // vs a plain "Concluído" (legacy P2P — no VOD will materialize).
       // Memory-safe — fires after teardown.
-      api.liveEnd(endedSessionId, { save_replay: saveReplay })
+      api.liveEnd(endedSessionId, { save_replay: replayRequested })
         .then((res) => {
           if (res?.success) {
-            setEndedHasRecording(!!(res.data?.has_recording));
+            const has = !!res.data?.has_recording;
+            setEndedHasRecording(has);
+            setEndedReplayStatus(has ? 'processing' : 'none');
             // Best-effort poke at the recording_poll cron so the CF VOD URL
             // lands faster — without this the /lives-saved row shows
             // "Processing" for 1-2 extra minutes.
-            if (res.data?.has_recording) {
+            if (has) {
               try { api.liveRecordingPoll(endedSessionId).catch(() => {}); } catch {}
             }
           }
         })
-        .catch(() => {});
+        .catch(() => setEndedReplayStatus(replayRequested ? 'error' : 'none'));
     }
 
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -955,11 +1098,26 @@ export default function LiveBroadcastScreen() {
         type: 'live_end',
         session_id: sessionIdRef.current,
       }));
-      wsRef.current.close();
+    }
+    // Codex race-condition cleanup — null WS handlers BEFORE close so the
+    // old socket's reconnect timer doesn't schedule over a new connection.
+    if (wsRef.current) {
+      try {
+        wsRef.current.onopen = null;
+        wsRef.current.onmessage = null;
+        wsRef.current.onclose = null;
+        wsRef.current.onerror = null;
+        wsRef.current.close();
+      } catch {}
+      wsRef.current = null;
     }
 
     peersRef.current.forEach(pc => { try { pc.close(); } catch {} });
     peersRef.current.clear();
+    try { guestPeerRef.current?.pc?.close(); } catch {}
+    guestPeerRef.current = null;
+    guestIceQueueRef.current.clear();
+    setGuestPeer(null);
 
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(track => track.stop());
@@ -982,15 +1140,21 @@ export default function LiveBroadcastScreen() {
   }, [saveReplay, endCardScale, endCardOpacity]);
 
   const handleEndLive = useCallback(() => {
-    // Dismiss the comment composer keyboard first — without this, the end-live
-    // modal renders OVER an open keyboard on Android, the modal card jumps to
-    // sit above the keyboard, and the action buttons can fall offscreen
-    // (incident: host taps "Encerrar" with keyboard up → UI breaks).
-    // setKbHeight(0) too in case the willHide event hasn't fired yet by the
-    // time the modal mounts (Android sometimes delays it 80-100ms).
+    // Codex root cause #5 — proper keyboard hide cycle BEFORE mounting the
+    // end modal. Without this, on Android the keyboard is mid-hide animation
+    // while the modal mounts; the modal card jumps to sit above the keyboard
+    // and action buttons fall offscreen.
+    // Step 1: blur composer (forces willHide to fire immediately).
+    try { composerInputRef.current?.blur?.(); } catch {}
     try { Keyboard.dismiss(); } catch {}
     setKbHeight(0);
-    setEndModal(true);
+    // Step 2: delay modal mount until keyboard hide animation finishes.
+    // Android animation is ~160ms; iOS is ~80ms (~3 ticks).
+    if (endModalTimerRef.current) clearTimeout(endModalTimerRef.current);
+    endModalTimerRef.current = setTimeout(() => {
+      endModalTimerRef.current = null;
+      setEndModal(true);
+    }, Platform.OS === 'android' ? 160 : 80);
   }, []);
 
   // Toggle audio
@@ -1061,7 +1225,7 @@ export default function LiveBroadcastScreen() {
       tier: 'host', // colored chip in LiveChatOverlay
       entry,
     };
-    setChatMessages(prev => [...prev, msg]);
+    appendChatMessage(msg);
     Animated.spring(entry, { toValue: 1, friction: 7, tension: 120, useNativeDriver: true }).start();
 
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -1212,11 +1376,21 @@ export default function LiveBroadcastScreen() {
     try {
       const ws = wsRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'live_join_approve', session_id: sessionIdRef.current, viewer_email: email }));
+        // Codex root cause #7 — include host identity so the approved
+        // viewer knows where to send its guest_offer. Without `host_email`
+        // the viewer falls back to the unreliable display-host helper
+        // (sometimes returns "" pre-auth → guest offer is misrouted).
+        ws.send(JSON.stringify({
+          type: 'live_join_approve',
+          session_id: sessionIdRef.current,
+          viewer_email: email,
+          host_email: user?.email,
+          host_name: user?.name || user?.email?.split('@')[0],
+        }));
       }
     } catch {}
     setJoinRequests(prev => prev.filter(r => r.email !== email));
-  }, []);
+  }, [user]);
   const denyJoinRequest = useCallback((email) => {
     try {
       const ws = wsRef.current;
@@ -1252,6 +1426,15 @@ export default function LiveBroadcastScreen() {
       if (viewerCountTimerRef.current) clearInterval(viewerCountTimerRef.current);
       if (durationTimerRef.current) clearInterval(durationTimerRef.current);
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      // Codex cleanup paths (#10) — clear watchdog + modal timers, drop pending
+      // waiter, and tear down guest peer state on unmount.
+      if (liveStartedAckTimeoutRef.current) clearTimeout(liveStartedAckTimeoutRef.current);
+      if (endModalTimerRef.current) clearTimeout(endModalTimerRef.current);
+      liveStartedWaiterRef.current = null;
+      pendingViewersRef.current?.clear?.();
+      try { guestPeerRef.current?.pc?.close(); } catch {}
+      guestPeerRef.current = null;
+      guestIceQueueRef.current.clear();
     };
   }, []);
 
@@ -1346,17 +1529,29 @@ export default function LiveBroadcastScreen() {
               <IconShare size={16} color="#fff" />
               <Text style={styles.endCardCtaSecondaryText}>{t('live.share') || 'Compartilhar'}</Text>
             </TouchableOpacity>
+            {/* Codex root cause #6 — after liveEnd the toggle is read-only.
+                Tapping it routes to /lives-saved when a recording exists, so
+                the host doesn't have to hunt the menu for the replay. The
+                label surfaces processing / saved / failed state explicitly
+                instead of the old "Salvar replay" toggle that desynced. */}
             <TouchableOpacity
-              onPress={() => setSaveReplay(v => !v)}
-              style={[styles.endCardCtaPrimary, !saveReplay && styles.endCardCtaPrimaryOff]}
+              onPress={() => endedHasRecording ? router.push('/lives-saved') : null}
+              disabled={!endedHasRecording}
+              style={[styles.endCardCtaPrimary, !endedReplayRequested && styles.endCardCtaPrimaryOff]}
               activeOpacity={0.85}
               accessibilityRole="button"
-              accessibilityLabel={t('live.saveReplay') || 'Salvar replay'}
-              accessibilityState={{ checked: saveReplay }}
+              accessibilityLabel={t('live.replayStatusLabel') || 'Status do replay'}
+              accessibilityState={{ disabled: !endedHasRecording }}
             >
-              {saveReplay ? <IconStarFilled size={16} color="#000" /> : <IconBookmark size={16} color="#fff" />}
-              <Text style={[styles.endCardCtaPrimaryText, !saveReplay && { color: '#fff' }]}>
-                {saveReplay ? (t('live.replaySaved') || 'Replay salvo') : (t('live.saveReplay') || 'Salvar replay')}
+              {endedReplayRequested ? <IconStarFilled size={16} color="#000" /> : <IconBookmark size={16} color="#fff" />}
+              <Text style={[styles.endCardCtaPrimaryText, !endedReplayRequested && { color: '#fff' }]}>
+                {endedReplayStatus === 'processing'
+                  ? (t('live.replayProcessing') || 'Processando em Lives salvas')
+                  : endedReplayStatus === 'error'
+                    ? (t('live.replayError') || 'Falha ao salvar replay')
+                    : endedReplayRequested
+                      ? (t('live.replaySavedInLives') || 'Salvo em Lives salvas')
+                      : (t('live.replayNotSaved') || 'Replay não salvo')}
               </Text>
             </TouchableOpacity>
           </View>
@@ -1909,6 +2104,7 @@ export default function LiveBroadcastScreen() {
 
           <View style={styles.composerInputWrap}>
             <TextInput
+              ref={composerInputRef}
               style={styles.composerInput}
               value={commentDraft}
               onChangeText={setCommentDraft}

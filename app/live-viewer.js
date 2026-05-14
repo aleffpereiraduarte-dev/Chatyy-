@@ -111,6 +111,13 @@ const WS_URL = Platform.OS === 'web' ? 'wss://chatyy.com.br/ws' : 'wss://ws.chat
 const MAX_HEARTS = 20;
 const LIVE_RED = '#dc2626';
 const ACCENT = '#7C3AED';
+// Cloudflare Stream HLS manifests can take 20-60s after the host hits "go live"
+// for the first segment to land — manifest 404 / empty playlist during that
+// window is NOT fatal, just "warm-up in progress". We retry quietly until the
+// player decodes a frame, only surfacing "Stream indisponível" after the full
+// 90s ingest budget elapses.
+const HLS_BOOT_TIMEOUT_MS = 90_000;
+const HLS_RETRY_DELAYS_MS = [800, 1200, 2000, 3000, 5000, 8000];
 
 const HEART_COLORS = ['#ef4444', '#f43f5e', '#ec4899', '#a855f7', '#f97316'];
 
@@ -207,6 +214,7 @@ export default function LiveViewerScreen() {
   // join_request, we open camera/mic + RTCPeerConnection and publish to host.
   const guestPcRef = useRef(null);
   const guestStreamRef = useRef(null);
+  const guestPendingIceRef = useRef([]);
   const [guestPublishing, setGuestPublishing] = useState(false);
   const sessionIdRef = useRef(paramSessionId);
   const chatIdRef = useRef(0);
@@ -220,6 +228,15 @@ export default function LiveViewerScreen() {
   // though each tap still spawns a local heart animation instantly.
   const lastChatSendAtRef = useRef(0);
   const lastReactionSendAtRef = useRef(0);
+  // Tracks liveEnded as a ref so HLS retry timers (which fire from native
+  // listeners outside the React state cycle) can short-circuit without a
+  // re-render hop. Without this, a 404 retry after `live_ended` would race
+  // with the unmount and flip `connected` back to true on a dead session.
+  const liveEndedRef = useRef(false);
+  const hlsRetryAttemptRef = useRef(0);
+  const hlsRetryTimerRef = useRef(null);
+  const joinRetryTimerRef = useRef(null);
+  const joinResetTimerRef = useRef(null);
   // Full-screen container ref — used by react-native-view-shot to snap the
   // live frame + comment overlay (Instagram/TikTok "save snap" parity).
   const screenRef = useRef(null);
@@ -461,14 +478,63 @@ export default function LiveViewerScreen() {
   // indisponível" badge was triggering for streams that DID exist — viewer
   // count was incrementing host-side while viewer was getting bounced out.
   useEffect(() => {
+    liveEndedRef.current = liveEnded;
+  }, [liveEnded]);
+
+  useEffect(() => {
     if (connected || liveEnded) return undefined;
+    // HLS sessions need a longer warm-up budget — CF Stream first-segment is
+    // 20-60s typical after the host starts publishing. WebRTC P2P should
+    // resolve within 30s on any reasonable network.
+    const timeoutMs = streamType === 'cf_hls' ? HLS_BOOT_TIMEOUT_MS : 30000;
     const timer = setTimeout(() => {
       if (!connected && !liveEnded) {
         setError(t('live.streamUnavailable') || 'Stream indisponível — host pode ter saído');
       }
-    }, 30000);
+    }, timeoutMs);
     return () => clearTimeout(timer);
-  }, [connected, liveEnded]);
+  }, [connected, liveEnded, streamType, t]);
+
+  // HLS readiness — only flip `connected` once expo-video reports
+  // `readyToPlay` (manifest 200 + first segment decoded). Without this we
+  // were marking connected based on raw URL set, so viewers saw "espectador"
+  // count increment with no actual playable video.
+  const handleHlsReady = useCallback(() => {
+    if (hlsRetryTimerRef.current) {
+      clearTimeout(hlsRetryTimerRef.current);
+      hlsRetryTimerRef.current = null;
+    }
+    hlsRetryAttemptRef.current = 0;
+    setHlsError(false);
+    setError('');
+    setConnected(true);
+    // Tell the WS that this viewer is now actually watching — backend can
+    // use this to gate the authoritative viewer count for HLS sessions.
+    try {
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          type: 'live_watch_ready',
+          session_id: paramSessionId,
+        }));
+      }
+    } catch {}
+  }, [paramSessionId]);
+
+  const handleHlsError = useCallback(() => {
+    if (liveEndedRef.current) return;
+    // Treat early manifest 404 / empty playlist / "no segments yet" as a
+    // CF Stream warm-up condition, NOT a fatal error. Backoff retry until
+    // the full HLS_BOOT_TIMEOUT_MS budget elapses (effect above flips
+    // `error` then). User sees the connecting overlay the whole time.
+    setHlsError(false);
+    setError('');
+    const attempt = hlsRetryAttemptRef.current++;
+    const delay = HLS_RETRY_DELAYS_MS[Math.min(attempt, HLS_RETRY_DELAYS_MS.length - 1)];
+    if (hlsRetryTimerRef.current) clearTimeout(hlsRetryTimerRef.current);
+    hlsRetryTimerRef.current = setTimeout(() => {
+      setHlsRetryKey(k => k + 1);
+    }, delay);
+  }, []);
 
   // Offer-resync: WhatsApp-grade backstop for the most common stuck-connecting
   // cause — broadcaster's WS handler missed the first `live_viewer_joined`
@@ -562,6 +628,23 @@ export default function LiveViewerScreen() {
             setStreamType('cf_hls');
             setHlsUrl(String(msg.hls_url));
             setHlsError(false);
+            setError('');
+            // Reset retry state — fresh stream, fresh attempt budget.
+            hlsRetryAttemptRef.current = 0;
+            if (hlsRetryTimerRef.current) { clearTimeout(hlsRetryTimerRef.current); hlsRetryTimerRef.current = null; }
+            // Force remount the player on cf_input_uid change.
+            setHlsRetryKey(k => k + 1);
+          } else if (msg.stream_type === 'cf_hls' && msg.cf_input_uid && !msg.hls_url) {
+            // Cloudflare live input exists but no HLS playback URL yet —
+            // backend created the CF Stream input but the broadcaster hasn't
+            // actually published RTMP/WHIP. Surface a friendly diagnostic
+            // instead of leaving the viewer staring at a black "Conectando…"
+            // forever. This catches the #2 silent fail: cf_input_uid set,
+            // but no native RTMP publisher running on the host side.
+            console.warn('[Live] cf_hls session has cf_input_uid but no hls_url — publisher path missing');
+            setStreamType('cf_hls');
+            setHlsError(true);
+            setError(t('live.publisherMissing') || 'Aguardando o host publicar a transmissão...');
           } else if (msg.stream_type === 'webrtc') {
             setStreamType('webrtc');
           }
@@ -668,13 +751,17 @@ export default function LiveViewerScreen() {
                 const pc = new RTC_PeerConnection({ iceServers: iceConfig.iceServers });
                 guestPcRef.current = pc;
                 stream.getTracks().forEach(tr => pc.addTrack(tr, stream));
+                const guestId = String(user?.email || '').toLowerCase();
+                const guestName = user?.name || guestId.split('@')[0];
                 pc.onicecandidate = (ev) => {
                   if (ev.candidate && wsRef.current?.readyState === WebSocket.OPEN) {
                     try {
                       wsRef.current.send(JSON.stringify({
                         type: 'live_guest_ice',
                         session_id: paramSessionId,
-                        host_email: msg.host_email,
+                        host_email: msg.host_email || displayHostEmail,
+                        guest_id: guestId,
+                        guest_email: guestId,
                         candidate: ev.candidate,
                       }));
                     } catch {}
@@ -683,10 +770,18 @@ export default function LiveViewerScreen() {
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
                 if (wsRef.current?.readyState === WebSocket.OPEN) {
+                  // Codex root cause #7 — include guest identity so the host
+                  // can index ICE candidates + answer-routes by a stable key.
+                  // Without these fields, host's handleGuestOffer/handleGuestIce
+                  // would carry `undefined` and ICE candidates queued on the
+                  // viewer side never matched the host's peer map.
                   wsRef.current.send(JSON.stringify({
                     type: 'live_guest_offer',
                     session_id: paramSessionId,
-                    host_email: msg.host_email,
+                    host_email: msg.host_email || displayHostEmail,
+                    guest_id: guestId,
+                    guest_email: guestId,
+                    guest_name: guestName,
                     sdp: offer.sdp,
                   }));
                 }
@@ -709,13 +804,34 @@ export default function LiveViewerScreen() {
             try {
               if (guestPcRef.current && msg.sdp) {
                 await guestPcRef.current.setRemoteDescription(new RTC_SessionDescription({ type: 'answer', sdp: msg.sdp }));
+                // Drain any ICE candidates that arrived while we were still
+                // waiting for the host's answer (Codex root cause #7).
+                const queued = guestPendingIceRef.current || [];
+                guestPendingIceRef.current = [];
+                for (const c of queued) {
+                  try { await guestPcRef.current.addIceCandidate(new RTC_IceCandidate(c)); } catch {}
+                }
               }
             } catch (e) { console.warn('[Live] guest answer fail', e); }
           })();
           break;
         case 'live_guest_ice':
-          if (guestPcRef.current && msg.candidate) {
-            try { guestPcRef.current.addIceCandidate(new RTC_IceCandidate(msg.candidate)); } catch {}
+          // Queue ICE until the host's SDP answer has been applied — without
+          // this, candidates arriving 30-150ms before `setRemoteDescription`
+          // resolves get silently dropped by the WebRTC stack, and the colab
+          // PeerConnection never finds a route → black tile on the host side.
+          if (msg.candidate) {
+            const pc = guestPcRef.current;
+            if (pc && pc.remoteDescription) {
+              try { pc.addIceCandidate(new RTC_IceCandidate(msg.candidate)); } catch {}
+            } else {
+              try {
+                if (!guestPendingIceRef.current) guestPendingIceRef.current = [];
+                if (guestPendingIceRef.current.length < 100) {
+                  guestPendingIceRef.current.push(msg.candidate);
+                }
+              } catch {}
+            }
           }
           break;
         case 'live_guest_removed':
@@ -797,7 +913,11 @@ export default function LiveViewerScreen() {
       guestStreamRef.current = null;
       if (endTimerRef.current) clearTimeout(endTimerRef.current);
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      if (hlsRetryTimerRef.current) { clearTimeout(hlsRetryTimerRef.current); hlsRetryTimerRef.current = null; }
+      if (joinRetryTimerRef.current) { clearInterval(joinRetryTimerRef.current); joinRetryTimerRef.current = null; }
+      if (joinResetTimerRef.current) { clearTimeout(joinResetTimerRef.current); joinResetTimerRef.current = null; }
       iceCandidateQueueRef.current = []; // Clear queued candidates
+      guestPendingIceRef.current = []; // Clear queued guest ICE
     };
   }, [paramSessionId, user, isSelfLive]);
 
@@ -887,6 +1007,17 @@ export default function LiveViewerScreen() {
     } catch {}
   }, []);
 
+  // Codex root cause #9 — chat overlay must be bounded. The overlay renders
+  // only the last 6 messages, but parent kept the entire history + every
+  // Animated.Value, leaking memory + driving useless re-renders.
+  const CHAT_MAX_MESSAGES = 50;
+  const appendChatMessage = useCallback((item) => {
+    setChatMessages(prev => {
+      const next = [...prev, item];
+      return next.length > CHAT_MAX_MESSAGES ? next.slice(-CHAT_MAX_MESSAGES) : next;
+    });
+  }, []);
+
   const handleChatMsg = useCallback((msg) => {
     // WS server's live_chat broadcast does NOT exclude the sender (unlike
     // live_reaction which passes clientId). handleSendChat already inserts
@@ -897,16 +1028,16 @@ export default function LiveViewerScreen() {
     if (myEmail && fromEmail && myEmail === fromEmail) return;
 
     const entry = new Animated.Value(0);
-    setChatMessages(prev => [...prev, {
+    appendChatMessage({
       id: String(++chatIdRef.current),
       name: msg.sender_name || msg.sender_email?.split('@')[0] || '?',
       email: msg.sender_email,
       content: msg.content,
       type: msg.msg_type || 'chat',
       entry,
-    }]);
+    });
     Animated.timing(entry, { toValue: 1, duration: 260, useNativeDriver: true }).start();
-  }, [user]);
+  }, [user, appendChatMessage]);
 
   const handleSendChat = useCallback((text) => {
     // Anti-spam rate limit: 1 comment / 600ms. Backend already enforces
@@ -920,14 +1051,14 @@ export default function LiveViewerScreen() {
     const senderName = user?.name || user?.email?.split('@')[0] || 'You';
     const entry = new Animated.Value(0);
 
-    setChatMessages(prev => [...prev, {
+    appendChatMessage({
       id: String(++chatIdRef.current),
       name: senderName,
       email: user?.email,
       content: text,
       type: 'chat',
       entry,
-    }]);
+    });
     Animated.timing(entry, { toValue: 1, duration: 260, useNativeDriver: true }).start();
 
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -1103,7 +1234,12 @@ export default function LiveViewerScreen() {
       // no-op even if both attempts land.
       setJoinRequested(true);
       try { require('react-native').Vibration.vibrate(8); } catch {}
-      const retry = setInterval(() => {
+      // Codex root cause #8 — store retry timers in refs so unmount can clear
+      // them. Previously these leaked: viewer back-navigates → `setInterval`
+      // still ticks → WS reopened by another screen receives stale
+      // `live_join_request` events.
+      if (joinRetryTimerRef.current) clearInterval(joinRetryTimerRef.current);
+      joinRetryTimerRef.current = setInterval(() => {
         try {
           const ws2 = wsRef.current;
           if (ws2 && ws2.readyState === WebSocket.OPEN && wsAuthedRef.current) {
@@ -1113,14 +1249,21 @@ export default function LiveViewerScreen() {
               viewer_email: user?.email,
               viewer_name: user?.name || (user?.email || '').split('@')[0],
             }));
-            clearInterval(retry);
+            clearInterval(joinRetryTimerRef.current);
+            joinRetryTimerRef.current = null;
           }
         } catch {}
       }, 800);
       // Give up after 8s — if still not connected the live session is
       // probably toast anyway.
-      setTimeout(() => clearInterval(retry), 8000);
-      setTimeout(() => setJoinRequested(false), 60000);
+      setTimeout(() => {
+        if (joinRetryTimerRef.current) {
+          clearInterval(joinRetryTimerRef.current);
+          joinRetryTimerRef.current = null;
+        }
+      }, 8000);
+      if (joinResetTimerRef.current) clearTimeout(joinResetTimerRef.current);
+      joinResetTimerRef.current = setTimeout(() => setJoinRequested(false), 60000);
     }
   }, [paramSessionId, user?.email, user?.name, joinRequested, t]);
 
@@ -1519,13 +1662,13 @@ export default function LiveViewerScreen() {
           // `cloudflarestream.com` CORS+CDN setup). Native uses expo-video.
           Platform.OS === 'web' ? (
             <video
-              key={`hls-${hlsRetryKey}`}
+              key={`hls-${hlsUrl}-${hlsRetryKey}`}
               src={hlsUrl}
               autoPlay
               playsInline
               controls={false}
-              onCanPlay={() => { setConnected(true); setHlsError(false); }}
-              onError={() => setHlsError(true)}
+              onCanPlay={handleHlsReady}
+              onError={handleHlsError}
               style={{
                 position: 'absolute', top: 0, left: 0,
                 width: '100%', height: '100%',
@@ -1534,10 +1677,10 @@ export default function LiveViewerScreen() {
             />
           ) : (
             <LiveHlsNativePlayer
-              key={`hls-${hlsRetryKey}`}
+              key={`hls-${hlsUrl}-${hlsRetryKey}`}
               uri={hlsUrl}
-              onReady={() => { setConnected(true); setHlsError(false); }}
-              onError={() => setHlsError(true)}
+              onReady={handleHlsReady}
+              onError={handleHlsError}
             />
           )
         ) : Platform.OS === 'web' ? (

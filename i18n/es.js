@@ -4015,6 +4015,12 @@ export default {
   'live.joinFeedTitle': 'Quién entró',
   'live.noJoinsYet': 'Nadie ha entrado aún',
   'live.replaySaved': 'Replay guardado',
+  'live.replayProcessing': 'Procesando en Lives guardadas',
+  'live.replaySavedInLives': 'Guardado en Lives guardadas',
+  'live.replayNotSaved': 'Replay no guardado',
+  'live.replayError': 'Error al guardar replay',
+  'live.replayStatusLabel': 'Estado del replay',
+  'live.publisherMissing': 'Esperando que el host publique la transmisión...',
   // Live replay / "Lives guardadas" tab — grabaciones post-live (CF Stream VOD).
   'liveReplay.tab': 'Lives guardadas',
   'liveReplay.viewReplays': 'Ver Lives Guardadas',

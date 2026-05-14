@@ -715,12 +715,14 @@ function CallScreenInner() {
   }, [peerConnected, callId, contactEmail, sendSignaling]);
 
   // Mark call as active so IncomingCallListener doesn't interfere with signaling
+  // Pass callId so the active flag is scoped — concurrent invites for DIFFERENT
+  // call ids stay suppressed, but stale-state cleanup is callId-aware.
   useEffect(() => {
-    setCallActive(true);
+    setCallActive(true, callId);
     return () => {
-      if (!minimizedRef.current) setCallActive(false);
+      if (!minimizedRef.current) setCallActive(false, callId);
     };
-  }, []);
+  }, [callId]);
 
   // ── Group call: join room + peer signaling ──
   useEffect(() => {
@@ -1133,9 +1135,16 @@ function CallScreenInner() {
             const videoTx = transceivers.find(tr => tr.sender && (tr.sender.track?.kind === 'video' || tr.receiver?.track?.kind === 'video' || tr.mid === '1'));
             if (audioTrack && audioTx?.sender && audioTx.sender.track !== audioTrack) {
               try { await audioTx.sender.replaceTrack(audioTrack); } catch {}
+              // Force sendrecv after replaceTrack — Codex GPT-5.5-pro identified
+              // this as the iOS uplink-silent root cause: a pre-existing recvonly
+              // transceiver kept its recvonly direction after replaceTrack, so
+              // the answer SDP advertised recvonly and the audio engine never
+              // bound the mic. Must force BEFORE pre-answer audit runs.
+              try { if ('direction' in audioTx) audioTx.direction = 'sendrecv'; } catch {}
             }
             if (videoTrack && videoTx?.sender && videoTx.sender.track !== videoTrack) {
               try { await videoTx.sender.replaceTrack(videoTrack); } catch {}
+              try { if ('direction' in videoTx) videoTx.direction = 'sendrecv'; } catch {}
             }
             return true;
           } catch {}
@@ -1185,16 +1194,23 @@ function CallScreenInner() {
           const videoTrack = localStream.getVideoTracks()[0];
           const audioTx = transceivers.find(tr => tr.sender && (tr.sender.track?.kind === 'audio' || tr.receiver?.track?.kind === 'audio' || tr.mid === '0'));
           const videoTx = transceivers.find(tr => tr.sender && (tr.sender.track?.kind === 'video' || tr.receiver?.track?.kind === 'video' || tr.mid === '1'));
-          if (audioTrack && audioTx?.sender && audioTx.sender.track !== audioTrack) {
-            try { await audioTx.sender.replaceTrack(audioTrack); console.log('[Call] pre-answer: replaceTrack audio'); } catch {}
-            // Force sendrecv after binding track — replaceTrack alone keeps the
-            // transceiver in whatever direction it was created with (was recvonly,
-            // causing caller to never receive callee audio). #severe-audio-bug
-            try { if ('direction' in audioTx) audioTx.direction = 'sendrecv'; } catch {}
+          if (audioTrack && audioTx?.sender) {
+            if (audioTx.sender.track !== audioTrack) {
+              try { await audioTx.sender.replaceTrack(audioTrack); console.log('[Call] pre-answer: replaceTrack audio'); } catch {}
+            }
+            // ALWAYS force sendrecv before createAnswer — even if track is
+            // already bound. Codex GPT-5.5-pro #iOS-uplink: if waitForLocalTracks
+            // bound the track on an existing recvonly transceiver, this branch
+            // used to skip the direction force (sender.track === audioTrack),
+            // and the answer SDP went out as recvonly. Caller heard nothing
+            // from the callee. Force on EVERY pre-answer pass.
+            try { if ('direction' in audioTx && audioTx.direction !== 'sendrecv') audioTx.direction = 'sendrecv'; } catch {}
           }
-          if (videoTrack && videoTx?.sender && videoTx.sender.track !== videoTrack) {
-            try { await videoTx.sender.replaceTrack(videoTrack); console.log('[Call] pre-answer: replaceTrack video'); } catch {}
-            try { if ('direction' in videoTx) videoTx.direction = 'sendrecv'; } catch {}
+          if (videoTrack && videoTx?.sender) {
+            if (videoTx.sender.track !== videoTrack) {
+              try { await videoTx.sender.replaceTrack(videoTrack); console.log('[Call] pre-answer: replaceTrack video'); } catch {}
+            }
+            try { if ('direction' in videoTx && videoTx.direction !== 'sendrecv') videoTx.direction = 'sendrecv'; } catch {}
           }
           if (audioTrack && !audioMutedRef.current) audioTrack.enabled = true;
           if (videoTrack && videoEnabledRef.current) videoTrack.enabled = true;
@@ -1424,7 +1440,7 @@ function CallScreenInner() {
     // Always clear the global "call active" flag on the explicit end path
     // (codex finding: cleanup didn't always reset it, so IncomingCallListener
     // stayed suppressed and missed the next incoming call until app restart).
-    try { setCallActive(false); } catch {}
+    try { setCallActive(false, callId); } catch {}
     if (Platform.OS === 'web') {
       try { document.getElementById('remoteCallAudio')?.remove(); } catch {}
       try { document.getElementById('remoteCallVideo')?.remove(); } catch {}
@@ -1765,7 +1781,7 @@ function CallScreenInner() {
             if (turnRefreshRef.current) { clearInterval(turnRefreshRef.current); turnRefreshRef.current = null; }
             if (controlsTimerRef.current) { clearTimeout(controlsTimerRef.current); controlsTimerRef.current = null; }
             if (disconnectTimeoutRef.current) { clearTimeout(disconnectTimeoutRef.current); disconnectTimeoutRef.current = null; }
-            setCallActive(false);
+            setCallActive(false, callId);
             if (Platform.OS !== 'web') {
               try {
                 const { setAudioModeAsync } = require('expo-audio');
@@ -1818,7 +1834,7 @@ function CallScreenInner() {
           localStreamRef.current = null;
           try { pcRef.current?.close?.(); } catch {}
           pcRef.current = null;
-          try { setCallActive(false); } catch {}
+          try { setCallActive(false, callId); } catch {}
           try { callKeep.endCall(callId); } catch {}
           // Log the missed/declined call to local history so it shows in
           // the Calls tab even before the chat sync round-trips.

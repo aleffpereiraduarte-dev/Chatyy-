@@ -17,6 +17,7 @@
  * parent owns timeline + WS plumbing.
  */
 
+import { memo, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Animated,
 } from 'react-native';
@@ -37,7 +38,7 @@ function chipForTier(tier) {
   return TIER_DEFAULT;
 }
 
-export default function LiveChatOverlay({
+function LiveChatOverlay({
   messages = [],
   commentHearts = {},
   onPressMessage,
@@ -48,7 +49,11 @@ export default function LiveChatOverlay({
   seeAllLabel = 'Ver todos os comentários',
   hostEmail = null,
 }) {
-  const visible = messages.slice(-6);
+  // Codex root cause #9 — memoize the visible slice so the overlay doesn't
+  // recompute the array on every parent render (chat tick / animation
+  // frame / viewer count). Combined with the parent's bounded array (max
+  // 50) this drops the overlay's RN bridge traffic significantly.
+  const visible = useMemo(() => messages.slice(-6), [messages]);
 
   return (
     <TouchableOpacity
@@ -182,6 +187,12 @@ export default function LiveChatOverlay({
     </TouchableOpacity>
   );
 }
+
+// Codex root cause #9 — memo wrap prevents re-render when parent (Live
+// host/viewer screen) re-renders for unrelated reasons (countdown tick,
+// heart anim, viewer count). With memoization, the overlay only reconciles
+// when `messages` actually changes.
+export default memo(LiveChatOverlay);
 
 const styles = StyleSheet.create({
   overlay: {

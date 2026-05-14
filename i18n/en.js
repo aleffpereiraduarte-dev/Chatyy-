@@ -4018,6 +4018,12 @@ export default {
   'live.joinFeedTitle': 'Who joined',
   'live.noJoinsYet': 'No one has joined yet',
   'live.replaySaved': 'Replay saved',
+  'live.replayProcessing': 'Processing in Saved Lives',
+  'live.replaySavedInLives': 'Saved in Saved Lives',
+  'live.replayNotSaved': 'Replay not saved',
+  'live.replayError': 'Failed to save replay',
+  'live.replayStatusLabel': 'Replay status',
+  'live.publisherMissing': 'Waiting for host to publish stream...',
   // Live replay / "Saved lives" tab — post-broadcast recordings (CF Stream VOD).
   'liveReplay.tab': 'Saved lives',
   'liveReplay.viewReplays': 'View Saved Lives',

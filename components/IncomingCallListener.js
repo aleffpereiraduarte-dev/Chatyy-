@@ -29,6 +29,7 @@ const initAddCallToHistory = (() => {
 // on Android, blocking native incoming call screen).
 const callKeep = {
   endCall: () => {},
+  dismissIncomingCall: () => {},
   addCallKeepListeners: () => () => {},
   addIncomingCallListener: () => () => {},
   consumePendingCall: () => null,
@@ -44,6 +45,7 @@ if (Platform.OS !== 'web') {
   try {
     const ck = require('../services/callkeep');
     if (ck.endCall) callKeep.endCall = ck.endCall;
+    if (ck.dismissIncomingCall) callKeep.dismissIncomingCall = ck.dismissIncomingCall;
     if (ck.addCallKeepListeners) callKeep.addCallKeepListeners = ck.addCallKeepListeners;
     if (ck.addIncomingCallListener) callKeep.addIncomingCallListener = ck.addIncomingCallListener;
     if (ck.consumePendingCall) callKeep.consumePendingCall = ck.consumePendingCall;
@@ -60,10 +62,13 @@ let _triggerIncomingCall = null;
 // Buffer for incoming call data when component isn't mounted yet (cold start from push)
 let _pendingCallTrigger = null;
 export function triggerIncomingCall(data) {
-  // Force-reset _callActive — if a push notification triggers this,
-  // it means there's a real incoming call and any stale _callActive should be cleared
-  _callActive = false;
-  /* legacy _callActiveTimer removed in favor of explicit lifecycle */
+  // Don't force-reset _callActive: a real call already in progress must
+  // suppress further triggers (was a primary contributor to the double-UI
+  // bug — Codex GPT-5.5-pro #842).
+  if (_callActive) {
+    console.log('[IncomingCall] trigger ignored: call already active');
+    return;
+  }
   if (_triggerIncomingCall) {
     _triggerIncomingCall(data);
   } else {
@@ -145,22 +150,51 @@ function _bufferPendingIce(callId, candidate) {
 // the listener and double-show incoming UI mid-call. Lifecycle is the only
 // thing that may flip this back to false.
 let _callActive = false;
+let _activeCallId = null;
 // Callback set by the mounted component so external code (call.js teardown)
 // can reset the internal `acceptedRef` / `handlingRef`. Without this, after a
 // call ends the refs stayed `true` forever and the next incoming `call_invite`
 // hit the "already handling" early-return and never rendered the in-app
 // overlay — symptom: iOS user with app open hears nothing, sees no UI.
 let _resetCallHandlingState = null;
-export function setCallActive(active) {
+export function setCallActive(active, callId = null) {
   const prev = _callActive;
   _callActive = !!active;
+  // Scope active flag to a specific callId so subsequent invites for the
+  // SAME call don't get rejected, but invites for a DIFFERENT call also
+  // don't slip through while the first is live. Codex GPT-5.5-pro #842.
+  if (_callActive && callId) _activeCallId = String(callId);
+  if (!_callActive && (!callId || !_activeCallId || String(callId) === _activeCallId)) {
+    _activeCallId = null;
+  }
   // When transitioning from active → inactive (call ended), clear handling
   // refs so the next incoming call can render its Modal/overlay.
   if (prev && !_callActive && typeof _resetCallHandlingState === 'function') {
     try { _resetCallHandlingState(); } catch {}
   }
 }
-export function isCallActive() { return _callActive; }
+export function isCallActive(callId = null) {
+  if (!_callActive) return false;
+  if (!callId || !_activeCallId) return true;
+  return String(callId) === _activeCallId;
+}
+
+// Dismiss any native Android incoming-call UI (CallRingingService foreground
+// notification, IncomingCallActivity full-screen overlay, CallNotificationService
+// tagged notif). JS owns the UI when AppState=active; this kills races where
+// FCM data-message landed before the foreground guard had AppState=active.
+// Codex GPT-5.5-pro #842 — primary cause of double UI.
+function dismissNativeIncomingUi(callId) {
+  if (Platform.OS !== 'android' || !callId) return;
+  try { callKeep.dismissIncomingCall?.(String(callId)); } catch {}
+  // Legacy native builds do not have dismissIncomingCall; fall back to
+  // endCall which also cancels notification + stops CallRingingService.
+  try { callKeep.endCall?.(String(callId)); } catch {}
+  try {
+    const Notifications = require('expo-notifications');
+    Notifications.dismissAllNotificationsAsync?.();
+  } catch {}
+}
 
 export default function IncomingCallListener() {
   const { colors } = useTheme();
@@ -234,20 +268,24 @@ export default function IncomingCallListener() {
       console.log('[IncomingCall] showCall: no call_id/room_id, ignoring');
       return;
     }
-    console.log('[IncomingCall] showCall: caller=' + (data.caller_email || '?') + ' call_id=' + (data.call_id || data.room_id));
-    // Reset flags for new call
+    const normalizedCallId = String(data.call_id || data.room_id);
+    if (_callActive && (!_activeCallId || _activeCallId !== normalizedCallId)) {
+      console.log('[IncomingCall] showCall ignored: active call in progress (other callId)');
+      return;
+    }
+    console.log('[IncomingCall] showCall: caller=' + (data.caller_email || '?') + ' call_id=' + normalizedCallId);
+    // Reset flags for new ringing call
     acceptedRef.current = false;
     handlingRef.current = false;
-    // Force reset _callActive so the Modal is not blocked
-    _callActive = false;
 
     // Android: trigger native full-screen IncomingCallActivity over keyguard
-    // so the call rings even when phone is locked or app is backgrounded.
-    // iOS uses CallKit via VoIP push (handled by addIncomingCallListener).
-    if (Platform.OS === 'android') {
+    // ONLY when app is not foreground. JS Modal is canonical when foreground;
+    // starting the native UI here while also rendering the Modal is the
+    // primary cause of double UI (Codex #842).
+    if (Platform.OS === 'android' && AppState.currentState !== 'active') {
       try {
         callKeep.displayIncomingCall(
-          data.call_id || data.room_id,
+          normalizedCallId,
           data.caller_name || data.caller_email || 'Chatyy',
           data.caller_email || '',
           data.video !== false,
@@ -256,6 +294,9 @@ export default function IncomingCallListener() {
       } catch (e) {
         console.warn('[IncomingCall] Android displayIncomingCall failed:', e?.message);
       }
+    } else if (Platform.OS === 'android') {
+      // Foreground: JS modal is canonical. Kill any native FCM UI that raced in.
+      dismissNativeIncomingUi(normalizedCallId);
     }
     /* legacy _callActiveTimer removed in favor of explicit lifecycle */
 
@@ -415,11 +456,13 @@ export default function IncomingCallListener() {
           }
           return;
         }
-        // Force reset _callActive — it may be stuck from a previous call that didn't clean up
-        if (_callActive) {
-          console.log('[IncomingCall] call_invite: resetting stale _callActive');
-          _callActive = false;
-          /* legacy _callActiveTimer removed in favor of explicit lifecycle */
+        // If a different call is genuinely active, suppress this invite —
+        // the previous force-reset was a primary contributor to double-UI
+        // and stale-state bugs (Codex GPT-5.5-pro #842). The stale-refs
+        // branch above already handles refs left over from teardown.
+        if (_callActive && !sameCallId) {
+          voipDiag('ws_call_invite_skipped', data?.call_id || '', { reason: 'active_call' });
+          return;
         }
         if ((!data?.room_id && !data?.call_id) || data.caller_email === user.email) {
           voipDiag('ws_call_invite_skipped', data?.call_id || '', { reason: 'self_or_no_id' });
@@ -444,25 +487,16 @@ export default function IncomingCallListener() {
         // When WS call_invite arrives and app is foreground, JS owns the UI —
         // force-dismiss any native ring service / notification that may have
         // slipped through so the user only sees ONE incoming-call screen.
-        try {
-          const appState = AppState.currentState;
-          if (appState === 'active' && Platform.OS === 'android') {
-            const { NativeModules } = require('react-native');
-            // Try both module names. endCall cancels notification + stops
-            // CallRingingService. Retry 3× over 2s to defeat race conditions
-            // where FCM heads-up arrives ~100ms after WS call_invite or
-            // CallNotificationService starts AFTER the first dismiss call.
-            const dismissNative = () => {
-              try { NativeModules?.IncomingCallModule?.dismiss?.(callData.call_id || ''); } catch (_) {}
-              try { NativeModules?.ExpoCallKit?.endCall?.(callData.call_id || ''); } catch (_) {}
-              try { Notifications.dismissAllNotificationsAsync?.(); } catch (_) {}
-            };
-            dismissNative();
-            setTimeout(dismissNative, 250);
-            setTimeout(dismissNative, 800);
-            setTimeout(dismissNative, 1800);
-          }
-        } catch (_) {}
+        // FCM data-message can race the WS call_invite: native ring service
+        // may have shown IncomingCallActivity full-screen BEFORE the foreground
+        // guard had AppState=active. When app is foreground, JS owns the UI —
+        // dismiss the native UI on a retry ladder (defeats FCM-after-WS races).
+        if (Platform.OS === 'android' && AppState.currentState === 'active') {
+          dismissNativeIncomingUi(callData.call_id);
+          setTimeout(() => dismissNativeIncomingUi(callData.call_id), 250);
+          setTimeout(() => dismissNativeIncomingUi(callData.call_id), 800);
+          setTimeout(() => dismissNativeIncomingUi(callData.call_id), 1800);
+        }
         showCall(callData);
       }));
 
@@ -694,7 +728,7 @@ export default function IncomingCallListener() {
           // Mark as accepted immediately to block decline and WS call_invite
           acceptedRef.current = true;
           handlingRef.current = true;
-          setCallActive(true);
+          setCallActive(true, data?.callId || callStateRef.current?.call_id || null);
           stopRingtone();
 
           // [bug 2026-05-14 ios uplink-mic-silent] When user answers via
@@ -971,7 +1005,7 @@ export default function IncomingCallListener() {
             console.log('[IncomingCall] Android: found pending accepted call:', pending.callId);
             acceptedRef.current = true;
             handlingRef.current = true;
-            setCallActive(true);
+            setCallActive(true, pending.callId);
             stopRingtone();
 
             const callId = pending.callId;
