@@ -205,7 +205,10 @@ function ChatHub() {
   const insets = useSafeAreaInsets();
   const isKids = isChildAccount();
   // Valid tabs — anything else (legacy 'config'/'settings' deep links) falls back to 'chats' to avoid a blank page.
-  const VALID_TABS = ['chats','calls','feed','status','reels','apps','learn','tv','channels','communities'];
+  const VALID_TABS = ['chats','calls','feed','status','learn','tv','channels','communities'];
+  // ?tab=reels / ?tab=apps are special — they trigger handleTabPress side-effects
+  // (setPendingReels+goto feed / openAppsDrawer) instead of mapping 1:1 to a
+  // renderable tab. We start on 'chats' and let a useEffect below dispatch them.
   const _initialTab = VALID_TABS.includes(params.tab) ? params.tab : 'chats';
   const [activeTab, setActiveTab] = useState(_initialTab);
   const [mountedTabs, setMountedTabs] = useState(() => new Set(['chats', _initialTab])); // lazy mount: include initial tab to avoid white screen on deep-link
