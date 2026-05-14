@@ -205,7 +205,7 @@ function ChatHub() {
   const insets = useSafeAreaInsets();
   const isKids = isChildAccount();
   // Valid tabs — anything else (legacy 'config'/'settings' deep links) falls back to 'chats' to avoid a blank page.
-  const VALID_TABS = ['chats','calls','feed','status','learn','tv','channels','communities'];
+  const VALID_TABS = ['chats','calls','feed','status','reels','apps','learn','tv','channels','communities'];
   const _initialTab = VALID_TABS.includes(params.tab) ? params.tab : 'chats';
   const [activeTab, setActiveTab] = useState(_initialTab);
   const [mountedTabs, setMountedTabs] = useState(() => new Set(['chats', _initialTab])); // lazy mount: include initial tab to avoid white screen on deep-link
