@@ -17507,7 +17507,12 @@ export default function ChatConversationScreen() {
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      // Android: undefined → KAV passes through, the system's
+      // windowSoftInputMode=adjustResize handles keyboard insets. With
+      // behavior="height" RN sometimes fails to restore container height
+      // when keyboard closes — leaves a phantom ~150px gray strip below
+      // the composer.
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       style={[styles.container, { backgroundColor: isDark ? '#0E0A18' : '#F3EFF8' }]}
       keyboardVerticalOffset={0}
     >
