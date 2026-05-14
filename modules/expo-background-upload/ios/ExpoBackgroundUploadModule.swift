@@ -391,7 +391,18 @@ public class ExpoBackgroundUploadModule: Module {
                 // backed-up library on every background wake-up.
                 let fresh = self.currentFreshUploads()
                 if fresh > 0 && UIApplication.shared.applicationState != .active {
-                    let remaining = max(0, total - uploaded)
+                    // "Ainda faltam Y" precisa refletir o tamanho real da fila
+                    // pendente — não `total - uploaded`. `total` é o catálogo
+                    // INTEIRO de fotos no device, e `uploaded` é só o que essa
+                    // sessão subiu; subtrair ignora todas as fotos que já tavam
+                    // backed-up antes. Resultado: user via "ainda faltam 4900"
+                    // quando só faltavam 12 (reportado 2026-05-14).
+                    // Source-of-truth: backedUpSet em UserDefaults conta tudo
+                    // que já foi subido alguma vez. After this batch finishes,
+                    // o set já contém os uploads recentes (registerBackedUp
+                    // adiciona inline durante o upload).
+                    let totalBackedUp = UserDefaults.standard.stringArray(forKey: "com.onemundo.backedUpAssets")?.count ?? 0
+                    let remaining = max(0, total - totalBackedUp)
                     self.notifyBackupComplete(count: fresh, remaining: remaining)
                 }
             }

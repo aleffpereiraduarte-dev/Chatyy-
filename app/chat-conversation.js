@@ -21397,12 +21397,12 @@ export default function ChatConversationScreen() {
               opacity: headerMenuOpacity,
               transform: [{ scale: headerMenuScale }],
               // Cap the menu height so it can't run off the bottom of the
-              // screen. The 160 reserve covers chat composer (~70px) +
-              // soft-key area on Android. Bug 2026-05-14: on Android com
-              // composer flutuante, panel encostava no input e cortava o
-              // último item "Ativar modo invisível" parcialmente visível
-              // (sem indicar que era scrollable).
-              maxHeight: Dimensions.get('window').height - insets.top - insets.bottom - 160,
+              // screen. The menu starts at top: insets.top + 56 — subtract
+              // the same offset plus a small visual margin. Old reserve of
+              // 160 double-counted the header and stole vertical space the
+              // ScrollView needed, leaving items past the viewport hidden
+              // with no scroll indicator (user reported 2026-05-14).
+              maxHeight: Dimensions.get('window').height - insets.top - 56 - insets.bottom - 40,
               ...Platform.select({
                 ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.12, shadowRadius: 16 },
                 android: { elevation: 14 },
@@ -21410,7 +21410,14 @@ export default function ChatConversationScreen() {
               }),
             }}
           >
-          <Pressable onPress={e => e.stopPropagation()} style={{ flex: 1 }}>
+          {/* Tap-inside guard: blocks the backdrop Pressable from collapsing
+              the modal when the user just wanted to scroll the list. Without
+              `flex:1` here the inner ScrollView never got a measurable
+              parent height on Android, so it rendered its content overflow
+              hidden — user couldn't reach items past the visible region.
+              Now the ScrollView itself owns the height (flex:1 inside the
+              capped Animated.View) and accepts vertical drag gestures. */}
+          <Pressable onPress={e => e.stopPropagation()} style={{ flexShrink: 1 }}>
           {/* Header label — tiny uppercase title for visual context, like
               iOS share sheets. Subtle and small so it doesn't compete. */}
           <Text style={{
@@ -21421,9 +21428,10 @@ export default function ChatConversationScreen() {
             {t('chatConv.moreOptions') || 'Mais opções'}
           </Text>
           <ScrollView
-            showsVerticalScrollIndicator={false}
+            showsVerticalScrollIndicator={true}
             keyboardShouldPersistTaps="handled"
-            bounces={false}
+            nestedScrollEnabled
+            style={{ flexGrow: 0, flexShrink: 1 }}
             contentContainerStyle={{ paddingBottom: 6 }}
           >
             {(() => {
