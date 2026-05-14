@@ -979,6 +979,7 @@ export default {
   'call.ringing': 'Ringing...',
   'call.connecting': 'Connecting...',
   'call.hangup': 'Hang up',
+  'call.slowConnectHint': 'Slow connection, please wait...',
   'call.declined': 'Call declined',
   'call.noAnswer': 'No answer',
   'call.videoCall': 'Video call',

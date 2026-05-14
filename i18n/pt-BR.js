@@ -980,6 +980,7 @@ export default {
   'call.ringing': 'Chamando...',
   'call.connecting': 'Conectando...',
   'call.hangup': 'Desligar',
+  'call.slowConnectHint': 'Conexão lenta, aguardando...',
   'call.declined': 'Chamada recusada',
   'call.noAnswer': 'Sem resposta',
   'call.videoCall': 'Chamada de vídeo',
