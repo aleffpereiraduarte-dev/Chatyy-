@@ -1067,10 +1067,13 @@ export default function PhotosScreen() {
         yearsCards.sort((a, b) => a.yearsAgo - b.yearsAgo);
 
         if (yearsCards.length === 0 && thisWeek?.photos?.length) {
-          // Surface "this week" as a yearsAgo=0 card so empty-state still has
-          // something nostalgic-feeling. Carousel label code already handles
-          // generic "X anos atrás" — for 0 we fall back to client list.
-          setMemoriesData(buildClientFallback());
+          // Surface "Esta semana" como card de memória (yearsAgo=0). Garante
+          // que users que só têm backup recente (sem fotos de anos anteriores)
+          // vejam ALGUMA coisa no carrossel — root cause da queixa "memórias
+          // deveria pegar do backup automaticamente". Antes caía em
+          // buildClientFallback() que dependia de allPhotos local (que pode
+          // estar vazio se device não fez backup ainda mas tem fotos no R2).
+          setMemoriesData([{ yearsAgo: 0, photos: thisWeek.photos }]);
           return;
         }
         setMemoriesData(yearsCards);

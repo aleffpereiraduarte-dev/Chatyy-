@@ -439,6 +439,17 @@ export default function LiveViewerScreen() {
   }, [paramSessionId, hostName, hostEmail]);
   const displayHostName = hostName || resolvedHost.name || (hostEmail || resolvedHost.email || '').split('@')[0] || '';
   const displayHostEmail = hostEmail || resolvedHost.email || '';
+  // Self-live detection — when the current user opens /live-viewer with their
+  // OWN hostEmail (happens when they tap their own profile's live badge while
+  // already broadcasting), the viewer would try to subscribe to their own
+  // WebRTC offer and stall on "Stream indisponível" forever. The host's
+  // outgoing stream isn't viewable on the same WS session. Surface a friendly
+  // bounce-back screen instead and route them home to /live-broadcast.
+  const isSelfLive = !!(
+    user?.email &&
+    displayHostEmail &&
+    String(user.email).toLowerCase() === String(displayHostEmail).toLowerCase()
+  );
 
   // Stream-stuck timeout — if `connected` doesn't go true within 15s of mount,
   // surface a real error instead of leaving the viewer staring at "Conectando..."
@@ -481,6 +492,10 @@ export default function LiveViewerScreen() {
 
   // Connect to signaling and WebRTC
   useEffect(() => {
+    // Self-live short-circuit — don't open a WS or try to negotiate WebRTC
+    // when the user is viewing their own live. The early-return JSX below
+    // renders a "this is your live" bounce-back card instead.
+    if (isSelfLive) return undefined;
     // WebRTC absence is no longer fatal here — sessions that stream via HLS
     // (Cloudflare Stream) don't need a PeerConnection at all. We only bail
     // if WebRTC is missing AND the backend later confirms `stream_type` is
@@ -769,7 +784,7 @@ export default function LiveViewerScreen() {
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       iceCandidateQueueRef.current = []; // Clear queued candidates
     };
-  }, [paramSessionId, user]);
+  }, [paramSessionId, user, isSelfLive]);
 
   const handleOffer = useCallback(async (msg) => {
     if (!msg.sdp) return;
@@ -1401,6 +1416,61 @@ export default function LiveViewerScreen() {
           <Text style={styles.endedDiscoverText}>{t('live.discoverMore') || 'Descobrir mais lives'}</Text>
         </TouchableOpacity>
       </Animated.View>
+    );
+  }
+
+  // Self-live bounce-back — viewer screen for the host's OWN live makes no
+  // sense (host's HLS / WebRTC stream isn't viewable from the same session,
+  // and "Pedir pra entrar" + comment input would echo into the broadcaster
+  // chat). Render a friendly redirect card instead. Reuses the ended-card
+  // visual language (purple wash + ring + primary CTA) so it feels native.
+  if (isSelfLive) {
+    return (
+      <View style={[styles.centered, styles.endedBg]}>
+        <View style={styles.endedWash} pointerEvents="none" />
+        <View style={styles.endedAvatarRing} pointerEvents="none" />
+        <AvatarCircle
+          name={displayHostName || (user?.name || user?.email)}
+          email={displayHostEmail || user?.email}
+          size={96}
+          style={styles.endedAvatar}
+        />
+        <Text style={styles.endedText}>
+          {t('live.thisIsYourLive') || 'Esta é sua live'}
+        </Text>
+        <Text style={styles.endedSub} numberOfLines={3}>
+          {t('live.youCantWatchOwn') || 'Você não pode assistir sua própria transmissão. Volte pro painel do host pra ver os espectadores e o chat.'}
+        </Text>
+        <View style={styles.endedActions}>
+          <TouchableOpacity
+            onPress={() => {
+              try {
+                const sid = paramSessionId ? `?sessionId=${encodeURIComponent(paramSessionId)}` : '';
+                router.replace(`/live-broadcast${sid}`);
+              } catch {
+                try { router.back(); } catch {}
+              }
+            }}
+            style={[styles.endedBtn, styles.endedBtnPrimary]}
+            accessibilityLabel={t('live.backToBroadcast') || 'Voltar ao seu broadcast'}
+            accessibilityRole="button"
+            activeOpacity={0.85}
+          >
+            <Text style={styles.endedBtnText}>
+              {t('live.backToBroadcast') || 'Voltar ao seu broadcast'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => { try { router.back(); } catch {} }}
+            style={[styles.endedBtn, styles.endedBtnGhost]}
+            accessibilityLabel={t('common.back') || 'Voltar'}
+            accessibilityRole="button"
+            activeOpacity={0.85}
+          >
+            <Text style={styles.endedBtnText}>{t('common.back') || 'Voltar'}</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
     );
   }
 

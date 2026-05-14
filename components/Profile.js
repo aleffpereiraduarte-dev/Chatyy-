@@ -1414,16 +1414,26 @@ export default function Profile({
             // Live overrides every other tap intent — viewing a friend's live
             // is the highest-priority action. Routes to /live-viewer with the
             // session id so the WebRTC viewer hooks up immediately.
+            //
+            // Self-live exception: tapping your OWN live badge routes to
+            // /live-broadcast (the host panel) instead of /live-viewer, since
+            // the viewer can't watch its own outgoing stream and would just
+            // see "Stream indisponível".
             if (isLive) {
+              const selfTap = !!actions?.is_self;
               return (
                 <TouchableOpacity
                   onPress={() => {
                     try {
-                      router?.push?.(`/live-viewer?sessionId=${encodeURIComponent(liveSessionId)}&hostEmail=${encodeURIComponent(identity.email)}&hostName=${encodeURIComponent(identity.name || (identity.email || '').split('@')[0])}`);
+                      if (selfTap) {
+                        router?.push?.(`/live-broadcast?sessionId=${encodeURIComponent(liveSessionId)}`);
+                      } else {
+                        router?.push?.(`/live-viewer?sessionId=${encodeURIComponent(liveSessionId)}&hostEmail=${encodeURIComponent(identity.email)}&hostName=${encodeURIComponent(identity.name || (identity.email || '').split('@')[0])}`);
+                      }
                     } catch {}
                   }}
                   activeOpacity={0.85}
-                  accessibilityLabel={t?.('live.watching') || 'Assistir live'}
+                  accessibilityLabel={selfTap ? (t?.('live.backToBroadcast') || 'Voltar ao seu broadcast') : (t?.('live.watching') || 'Assistir live')}
                 >{inner}</TouchableOpacity>
               );
             }

@@ -258,10 +258,17 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
   );
 
   if (online && showStatus) {
+    // Wrapper has explicit width/height/borderRadius first so caller-provided
+    // `style` can override (e.g. add tint), but it can never accidentally turn
+    // the wrapper square: if a caller passes `borderWidth` without
+    // `borderRadius`, the wrapper would otherwise paint a 4-pixel square ring
+    // around a circular avatar (regression seen in IMG_6703 on /live-viewer).
     return (
-      <View style={[{ width: totalSize, height: totalSize, borderRadius: totalSize / 2, alignItems: 'center', justifyContent: 'center', borderWidth: ringWidth, borderColor: ringColor }, style]}>
+      <View style={[{ width: totalSize, height: totalSize, borderRadius: totalSize / 2, alignItems: 'center', justifyContent: 'center', borderWidth: ringWidth, borderColor: ringColor, overflow: 'hidden' }, style, { borderRadius: totalSize / 2 }]}>
         {inner}
-        {/* Bottom-right green dot */}
+        {/* Bottom-right green dot — intentional SQUARE-with-rounded-corners
+            (WhatsApp-style) so it reads as a "dot" but doesn't get cropped by
+            the wrapper's overflow:hidden. */}
         <View style={{
           position: 'absolute',
           right: 0,
@@ -277,7 +284,18 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
     );
   }
 
-  return <View style={style}>{inner}</View>;
+  // ALWAYS force the wrapper to be round + clip overflow. Without this, a
+  // caller passing `style={{ borderWidth: 3, borderColor: ... }}` (e.g.
+  // live-viewer's endedAvatar) would paint a SQUARE ring around the circular
+  // inner avatar, since `inner` is sized + radiused but the wrapper View
+  // wasn't. Putting size/radius LAST guarantees they win even when the caller
+  // passes a conflicting style. (Bug visible in IMG_6703 — square frame
+  // behind the host's circular avatar on /live-viewer "Stream indisponível".)
+  return (
+    <View style={[{ width: size, height: size, overflow: 'hidden' }, style, { width: size, height: size, borderRadius: size / 2 }]}>
+      {inner}
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({

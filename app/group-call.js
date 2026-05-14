@@ -60,12 +60,21 @@ export default function GroupCallScreen() {
   const pillScale = useState(new Animated.Value(1))[0];
 
   useEffect(() => {
+    // Watchdog: se não conseguir token+livekit-room.html em 10s, surface o erro
+    // ao invés de ficar "Conectando..." pra sempre. Antes (round 67) o user
+    // ficava infinito porque o token vinha rápido mas o WebView falhava em
+    // carregar lk.chatyy.com.br (NXDOMAIN) sem feedback nenhum.
+    const watchdog = setTimeout(() => {
+      if (!token) {
+        setErr('Falha ao conectar à sala. Tente novamente.');
+      }
+    }, 12000);
     (async () => {
       try {
         const r = await api.chatLivekitToken(Number(conversation_id) || 0, room || '');
         if (r?.success && r.data?.token) {
           setToken(r.data.token);
-          setLivekitUrl(r.data.url || 'wss://chatyy.com.br:7880');
+          setLivekitUrl(r.data.url || 'wss://livekit.chatyy.com.br');
           setRoomName(r.data.room ?? room ?? '');
           // Best-effort prime of the participant skeleton from the same
           // payload — backend sometimes returns `members` or `participants`.
@@ -91,6 +100,7 @@ export default function GroupCallScreen() {
         router.replace(`/call?callId=${encodeURIComponent(room || '')}&conversationId=${encodeURIComponent(String(conversation_id || ''))}&isVideo=${video === '1' ? '1' : '0'}&groupCall=1&isCaller=1`);
       }
     })();
+    return () => clearTimeout(watchdog);
   }, [conversation_id, room]);
 
   // origin extrai só o host:port — antes mantinha o path do BASE_URL e
@@ -102,7 +112,7 @@ export default function GroupCallScreen() {
   // Mirrors the WebRTC mesh raise-hand surfaced in /call so users get the
   // same primitive whether they fall back to mesh or use the SFU path.
   const pageUrl = token
-    ? `${origin}/livekit-room.html?token=${encodeURIComponent(token)}&url=${encodeURIComponent(livekitUrl || 'wss://chatyy.com.br:7880')}&room=${encodeURIComponent(roomName)}&video=${video === '1' ? '1' : '0'}&features=raisehand,noise`
+    ? `${origin}/livekit-room.html?token=${encodeURIComponent(token)}&url=${encodeURIComponent(livekitUrl || 'wss://livekit.chatyy.com.br')}&room=${encodeURIComponent(roomName)}&video=${video === '1' ? '1' : '0'}&features=raisehand,noise`
     : null;
 
   // Native grid skeleton — only shown while we don't have the live LiveKit

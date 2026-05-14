@@ -1237,13 +1237,23 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
   const liveAoVivo = (t('live.aoVivo') || 'AO VIVO').toUpperCase();
   const openLiveViewer = useCallback((email, sessionId, hostName) => {
     try {
+      // Self-live exception — tapping your own AO VIVO ring on the chat list
+      // routes to /live-broadcast (your host panel) instead of /live-viewer,
+      // since the viewer can't watch its own outgoing stream and would show
+      // "Stream indisponível".
+      const isSelf = email && user?.email && String(email).toLowerCase() === String(user.email).toLowerCase();
+      if (isSelf) {
+        const sid = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : '';
+        router.push(`/live-broadcast${sid}`);
+        return;
+      }
       const params = new URLSearchParams();
       params.set('sessionId', sessionId);
       if (email) params.set('hostEmail', email);
       if (hostName) params.set('hostName', hostName);
       router.push(`/live-viewer?${params.toString()}`);
     } catch {}
-  }, [router]);
+  }, [router, user?.email]);
 
   const myStatusGroup = statuses.find(s => s.email === user?.email);
   const myStatus = myStatusGroup?.items?.length > 0 ? myStatusGroup : null;
