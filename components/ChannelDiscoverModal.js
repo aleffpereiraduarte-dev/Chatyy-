@@ -172,7 +172,7 @@ export default function ChannelDiscoverModal({ visible, onClose, onJoined }) {
 
   const renderChannel = ({ item }) => {
     const subCount = parseInt(item.subscriber_count) || 0;
-    const isMember = item.is_member;
+    const isMember = !!item.is_member;
     const isJoining = joiningId === item.id;
 
     return (

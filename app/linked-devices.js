@@ -203,7 +203,7 @@ export default function LinkedDevicesScreen() {
 
   const renderSession = ({ item }) => {
     const parsed = parseUserAgent(item.user_agent || '');
-    const isCurrent = item.is_current;
+    const isCurrent = !!item.is_current;
     const Icon = /iPhone|Android|Mobile/i.test(parsed.device) ? IconSmartphone : IconMonitor;
     // Each row surfaces: device label, browser/app, IP, last active relative.
     // Falls back to em-dash when the field isn't on the response (don't mint
