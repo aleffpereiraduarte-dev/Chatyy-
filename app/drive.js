@@ -1256,7 +1256,7 @@ function DriveScreenInner() {
 
   // --- File/Folder Item (List View) ---
   const renderListItem = ({ item, index }) => {
-    const isFolder = item.is_folder;
+    const isFolder = !!item.is_folder;
     const itemKey = `${isFolder ? 'f' : 'i'}_${item.id}`;
     const isSelected = selectedItems.has(itemKey);
     const hasShare = item.shared_with?.length > 0;
@@ -1347,7 +1347,7 @@ function DriveScreenInner() {
   // --- File/Folder Item (Grid View) ---
   const [hoveredItem, setHoveredItem] = useState(null);
   const renderGridItem = ({ item, index }) => {
-    const isFolder = item.is_folder;
+    const isFolder = !!item.is_folder;
     const itemKey = `${isFolder ? 'f' : 'i'}_${item.id}`;
     const isSelected = selectedItems.has(itemKey);
     const hasShare = item.shared_with?.length > 0;
