@@ -3,8 +3,13 @@ package expo.modules.callkit
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 
 class CallActionReceiver : BroadcastReceiver() {
+
+  companion object {
+    private const val TAG = "CallActionReceiver"
+  }
 
   override fun onReceive(context: Context, intent: Intent) {
     val callId = intent.getStringExtra("call_id") ?: return
@@ -14,6 +19,16 @@ class CallActionReceiver : BroadcastReceiver() {
       // This avoids Android 12+ restriction where BroadcastReceivers cannot start Activities from background
 
       "ACTION_DECLINE_CALL" -> {
+        // If the call is already in the accept path, swallow the decline. This
+        // path also fires from setDeleteIntent when the foreground notification
+        // is dismissed because the service is stopped during accept — without
+        // this guard, emitCallEnded leaks to JS → onEnd handler sends call_end
+        // to the WS server → caller A sees "call ended" while B is connecting.
+        if (ExpoCallKitModule.isCallAccepting(callId)) {
+          Log.d(TAG, "ACTION_DECLINE_CALL suppressed for callId=$callId (accept in flight)")
+          return
+        }
+
         // Cancel the notification
         CallNotificationService.cancelNotification(context, callId)
 

@@ -6,15 +6,78 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
+import java.net.URL
+import java.util.concurrent.ConcurrentHashMap
 
 object CallNotificationService {
 
   const val CHANNEL_ID = "incoming_calls"
   private const val NOTIFICATION_TAG = "call_notification"
+  private const val TAG = "CallNotificationService"
+
+  // Cache fetched avatar bitmaps por URL pra evitar re-download enquanto a
+  // notification re-renderiza (ringing+chamada). Cap em 8 entries.
+  private val avatarCache = ConcurrentHashMap<String, Bitmap>()
+
+  /**
+   * Baixa o avatar sincronamente (chamado dentro de Thread). Retorna null em
+   * caso de qualquer erro — notification cai no fallback de inicial.
+   */
+  fun fetchAvatarBitmap(urlStr: String): Bitmap? {
+    if (urlStr.isEmpty()) return null
+    avatarCache[urlStr]?.let { return it }
+    return try {
+      val conn = URL(urlStr).openConnection()
+      conn.connectTimeout = 5_000
+      conn.readTimeout = 5_000
+      val bmp = conn.getInputStream().use { BitmapFactory.decodeStream(it) }
+      if (bmp != null) {
+        // Cap cache size
+        if (avatarCache.size >= 8) avatarCache.clear()
+        avatarCache[urlStr] = bmp
+      }
+      bmp
+    } catch (e: Exception) {
+      Log.w(TAG, "fetchAvatarBitmap failed for $urlStr: ${e.message}")
+      null
+    }
+  }
+
+  /**
+   * Dispara o re-build da notification em background com setLargeIcon.
+   * Sem isso o usuário só vê a inicial — o avatar é fetched async no
+   * mesmo NotificationId pra atualizar em ~200-800ms (LAN/WiFi).
+   */
+  private fun refreshNotificationWithAvatar(
+    context: Context,
+    callId: String,
+    callerName: String,
+    callerEmail: String,
+    conversationId: String,
+    hasVideo: Boolean,
+    avatarUrl: String
+  ) {
+    if (avatarUrl.isEmpty()) return
+    Thread {
+      val bmp = fetchAvatarBitmap(avatarUrl) ?: return@Thread
+      try {
+        val notif = buildIncomingCallNotification(
+          context, callId, callerName, callerEmail, conversationId, hasVideo, avatarUrl, bmp
+        )
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.notify(NOTIFICATION_TAG, callId.hashCode(), notif)
+      } catch (e: Exception) {
+        Log.w(TAG, "refreshNotificationWithAvatar failed: ${e.message}")
+      }
+    }.start()
+  }
 
   fun createNotificationChannel(context: Context) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -45,6 +108,12 @@ object CallNotificationService {
   /**
    * Build a Notification object for an incoming call.
    * Used by both CallRingingService (foreground service) and the fallback path.
+   *
+   * `callerAvatarUrl` é a URL HTTPS do avatar do chamador (vem do FCM data
+   * payload `caller_avatar`). Se vier preenchido e `cachedAvatarBitmap` for
+   * null, a notification é construída sem largeIcon e o caller dispara o
+   * download async; quando o bitmap chega, refreshNotificationWithAvatar
+   * re-emite a notification com o mesmo ID, atualizando in-place.
    */
   fun buildIncomingCallNotification(
     context: Context,
@@ -52,7 +121,9 @@ object CallNotificationService {
     callerName: String,
     callerEmail: String,
     conversationId: String,
-    hasVideo: Boolean
+    hasVideo: Boolean,
+    callerAvatarUrl: String = "",
+    cachedAvatarBitmap: Bitmap? = null
   ): Notification {
     val notificationId = callId.hashCode()
 
@@ -63,6 +134,7 @@ object CallNotificationService {
       putExtra("caller_email", callerEmail)
       putExtra("conversation_id", conversationId)
       putExtra("has_video", hasVideo)
+      putExtra("caller_avatar", callerAvatarUrl)
       addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_USER_ACTION)
     }
     val fullScreenPendingIntent = PendingIntent.getActivity(
@@ -81,6 +153,7 @@ object CallNotificationService {
       putExtra("caller_email", callerEmail)
       putExtra("conversation_id", conversationId)
       putExtra("has_video", hasVideo)
+      putExtra("caller_avatar", callerAvatarUrl)
       putExtra("auto_accept", true)
       addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
     }
@@ -112,7 +185,11 @@ object CallNotificationService {
     } catch (_: Exception) { 0 }
     val iconRes = if (smallIconRes != 0) smallIconRes else appIconRes
 
-    return NotificationCompat.Builder(context, CHANNEL_ID)
+    // Tenta usar bitmap já cacheado se o caller não passou (síncrono local).
+    val largeIcon: Bitmap? = cachedAvatarBitmap
+      ?: (if (callerAvatarUrl.isNotEmpty()) avatarCache[callerAvatarUrl] else null)
+
+    val builder = NotificationCompat.Builder(context, CHANNEL_ID)
       .setSmallIcon(iconRes)
       .setContentTitle(callerName)
       .setContentText(callTypeText)
@@ -125,7 +202,12 @@ object CallNotificationService {
       .addAction(0, "Recusar", declinePendingIntent)
       .addAction(0, "Atender", acceptPendingIntent)
       .setDeleteIntent(declinePendingIntent)
-      .build()
+
+    if (largeIcon != null) {
+      builder.setLargeIcon(largeIcon)
+    }
+
+    return builder.build()
   }
 
   /**
@@ -137,13 +219,21 @@ object CallNotificationService {
     callerName: String,
     hasVideo: Boolean,
     callerEmail: String = "",
-    conversationId: String = ""
+    conversationId: String = "",
+    callerAvatarUrl: String = ""
   ) {
     createNotificationChannel(context)
 
-    val notification = buildIncomingCallNotification(context, callId, callerName, callerEmail, conversationId, hasVideo)
+    val notification = buildIncomingCallNotification(
+      context, callId, callerName, callerEmail, conversationId, hasVideo, callerAvatarUrl
+    )
     val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     notificationManager.notify(NOTIFICATION_TAG, callId.hashCode(), notification)
+
+    // Async-update notification with the real avatar bitmap.
+    refreshNotificationWithAvatar(
+      context, callId, callerName, callerEmail, conversationId, hasVideo, callerAvatarUrl
+    )
   }
 
   fun cancelNotification(context: Context, callId: String) {

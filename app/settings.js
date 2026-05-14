@@ -1012,8 +1012,8 @@ function SettingsScreenInner() {
           </View>
         )}
 
-        {/* Security — Biometric Lock (native only) */}
-        {Platform.OS !== 'web' && biometricAvailable && sectionMatches(t('settings.security'), 'biometric', 'face id', 'parental', 'família', 'family', 'segurança') && (
+        {/* Security — Biometric Lock + Parental Controls (native only; biometric items below self-gate on biometricAvailable) */}
+        {Platform.OS !== 'web' && sectionMatches(t('settings.security'), 'biometric', 'face id', 'parental', 'família', 'family', 'segurança') && (
           <View ref={registerSectionRef('security')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
             {/* Família — Apple Family Sharing-style hub */}
             <TouchableOpacity
@@ -1049,20 +1049,22 @@ function SettingsScreenInner() {
               <IconShield size={18} color={colors.primary} style={{ marginRight: 8 }} />
               <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.security')}</Text>
             </View>
-            <View style={[s.settingRow, { borderBottomColor: colors.borderLight, marginTop: Spacing.md }]}>
-              <View style={s.settingInfo}>
-                <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.biometricLock')}</Text>
-                <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                  {t('settings.biometricDesc')}
-                </Text>
+            {biometricAvailable && (
+              <View style={[s.settingRow, { borderBottomColor: colors.borderLight, marginTop: Spacing.md }]}>
+                <View style={s.settingInfo}>
+                  <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.biometricLock')}</Text>
+                  <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                    {t('settings.biometricDesc')}
+                  </Text>
+                </View>
+                <Switch
+                  value={biometricEnabled}
+                  onValueChange={toggleBiometric}
+                  trackColor={{ false: colors.divider, true: colors.primaryLight }}
+                  thumbColor={biometricEnabled ? colors.primary : '#fff'}
+                />
               </View>
-              <Switch
-                value={biometricEnabled}
-                onValueChange={toggleBiometric}
-                trackColor={{ false: colors.divider, true: colors.primaryLight }}
-                thumbColor={biometricEnabled ? colors.primary : '#fff'}
-              />
-            </View>
+            )}
 
             {/* Alterar senha — abre modal com senha atual + nova senha + confirmar */}
             <TouchableOpacity

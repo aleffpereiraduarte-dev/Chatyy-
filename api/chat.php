@@ -5507,6 +5507,12 @@ function handleChatAction($action) {
                     'conversation_id' => (string)$conversationId,
                     'caller_email'    => $user['email'],
                     'caller_name'     => $callerName,
+                    // Avatar URL so native Android IncomingCallActivity and
+                    // iOS CallKit can show the real face (otherwise both
+                    // platforms só renderizam a inicial "?" igual à de
+                    // qualquer outro chamador). Native fetches Bitmap async
+                    // on the receiver side.
+                    'caller_avatar'   => 'https://chatyy.com.br/api/email.php?action=get_avatar&email=' . urlencode($user['email']),
                     'video'           => $video ? '1' : '0',
                     // is_group lets the receiver pick the group-call screen
                     // (LiveKit room) vs the 1:1 mesh path. Without it the
@@ -5736,6 +5742,60 @@ function handleChatAction($action) {
             $stmt = $db->prepare("INSERT INTO chat_messages (conversation_id, sender_email, content, type, created_at) VALUES (:cid, :s, :c, 'call_card', now()::text) RETURNING id");
             $stmt->execute([':cid' => $conversationId, ':s' => $user['email'], ':c' => $content]);
             $msgId = (int)$stmt->fetchColumn();
+
+            // ── Push fanout to every member except the caller ─────────────
+            // Without this, only members with the chat already open see the
+            // call_card via WS. Backgrounded/closed members never hear the
+            // ring. Pattern cloned from chat_call_invite (same call_data
+            // shape so IncomingCallActivity/CallKit renders identically).
+            try {
+                if (!function_exists('fcmSendToUser')) @require_once __DIR__ . '/firebase_push.php';
+                if (!function_exists('sendVoipPushToUser')) @require_once __DIR__ . '/voip_push.php';
+
+                // Pull conversation name (group display) + all members.
+                $convStmt = $db->prepare("SELECT name FROM chat_conversations WHERE id = :id");
+                $convStmt->execute([':id' => $conversationId]);
+                $groupName = (string)($convStmt->fetchColumn() ?: '');
+
+                $memStmt = $db->prepare("SELECT email FROM chat_conversation_members WHERE conversation_id = :cid");
+                $memStmt->execute([':cid' => $conversationId]);
+                $members = array_column($memStmt->fetchAll(PDO::FETCH_ASSOC), 'email');
+
+                $callerName = chatDisplayName($user['email']) ?: $user['email'];
+                if ($groupName === '') $groupName = $callerName;
+                $callTitle = $video ? 'Videochamada em grupo' : 'Chamada em grupo';
+                $callBody  = $callerName . ' está chamando em ' . $groupName;
+                $callData = [
+                    'type'             => 'incoming_group_call',
+                    'category_id'      => 'group_call',
+                    'call_id'          => $callId,
+                    'room_id'          => $callId,
+                    'conversation_id'  => (string)$conversationId,
+                    'caller_email'     => $user['email'],
+                    'caller_name'      => $callerName,
+                    'caller_phone'     => '',
+                    'caller_verified'  => '0',
+                    'group_name'       => $groupName,
+                    'video'            => $video ? '1' : '0',
+                    'is_group'         => '1',
+                    'priority'         => 'high',
+                    'group_key'        => 'call_' . $callId,
+                    'thread_id'        => 'call_' . $callId,
+                ];
+                foreach ($members as $pe) {
+                    if (!is_string($pe) || $pe === '') continue;
+                    if (strcasecmp($pe, $user['email']) === 0) continue;
+                    if (function_exists('sendVoipPushToUser')) {
+                        try { @sendVoipPushToUser($pe, $callData); }
+                        catch (Throwable $e) { error_log('[group_call.voip] ' . $pe . ': ' . $e->getMessage()); }
+                    }
+                    try { fcmSendToUser($pe, $callTitle, $callBody, $callData); }
+                    catch (Throwable $e) { error_log('[group_call.push] ' . $pe . ': ' . $e->getMessage()); }
+                }
+            } catch (Throwable $e) {
+                error_log('[group_call.fanout] ' . $e->getMessage());
+            }
+
             jsonResponse(true, ['id' => $msgId, 'call_id' => $callId, 'room_id' => $callId, 'video' => $video, 'content' => $content], 'Group call started');
             break;
         }
@@ -5783,6 +5843,8 @@ function handleChatAction($action) {
                 'conversation_id' => (string)$conversationId,
                 'caller_email'    => $user['email'],
                 'caller_name'     => $callerName,
+                // Avatar URL pra native render real face em vez da inicial.
+                'caller_avatar'   => 'https://chatyy.com.br/api/email.php?action=get_avatar&email=' . urlencode($user['email']),
                 'video'           => $video ? '1' : '0',
                 'is_group'        => '1',
                 'priority'        => 'high',

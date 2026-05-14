@@ -26,7 +26,35 @@ class ExpoCallKitModule : Module() {
     @Volatile
     var isAppForeground: Boolean = false
 
+    // Track call IDs currently in the accept flow so that the deleteIntent
+    // wired into the foreground call notification (which fires
+    // ACTION_DECLINE_CALL when the notification is auto-dismissed by
+    // stopForeground) does NOT bubble up as a call_end to JS. Without this,
+    // accepting on the native screen propagated stopRinging → service onDestroy
+    // → notification dismissed → deleteIntent → emitCallEnded → JS onEnd
+    // → WS call_end to caller A → A sees "call ended" while B is connecting.
+    private val acceptingCallIds = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    fun markCallAccepting(callId: String) {
+      if (callId.isEmpty()) return
+      acceptingCallIds[callId] = System.currentTimeMillis()
+      Log.d(TAG, "markCallAccepting: callId=$callId")
+    }
+
+    fun isCallAccepting(callId: String): Boolean {
+      if (callId.isEmpty()) return false
+      // Cleanup stale entries (>30s old) so we don't suppress decline forever
+      val now = System.currentTimeMillis()
+      val entries = acceptingCallIds.entries.iterator()
+      while (entries.hasNext()) {
+        val e = entries.next()
+        if (now - e.value > 30_000L) entries.remove()
+      }
+      return acceptingCallIds.containsKey(callId)
+    }
+
     fun emitCallAnswered(callId: String) {
+      markCallAccepting(callId)
       val inst = instance.get()
       if (inst != null) {
         inst.sendEvent("onCallAnswered", mapOf("callId" to callId))
@@ -130,6 +158,12 @@ class ExpoCallKitModule : Module() {
     }
 
     Function("endCall") { callId: String ->
+      // JS calls this both after the user accepts (to dismiss the native UI)
+      // and on real hangup. Mark the call as accepting so the deleteIntent
+      // bound to the foreground call notification doesn't fire decline →
+      // emitCallEnded → JS onEnd → WS call_end (which closes the caller side).
+      // The flag self-expires after 30s so a real later hangup still works.
+      ExpoCallKitModule.markCallAccepting(callId)
       // Cancel the notification and stop the ringing service
       CallNotificationService.cancelNotification(context, callId)
       try {

@@ -43,6 +43,7 @@ class CallRingingService : Service() {
     private var callerEmail: String = ""
     private var callerName: String = ""
     private var conversationId: String = ""
+    private var callerAvatar: String = ""
     private val timeoutRunnable = Runnable {
         val cid = callId
         Log.d(TAG, "Ringing timed out for callId=$cid — broadcasting missed event")
@@ -85,6 +86,7 @@ class CallRingingService : Service() {
         callerName = intent.getStringExtra("caller_name") ?: "Unknown"
         callerEmail = intent.getStringExtra("caller_email") ?: ""
         conversationId = intent.getStringExtra("conversation_id") ?: ""
+        callerAvatar = intent.getStringExtra("caller_avatar") ?: ""
         val hasVideo = intent.getBooleanExtra("has_video", false)
 
         currentCallId.set(safeCallId)
@@ -101,7 +103,8 @@ class CallRingingService : Service() {
             callerName,
             callerEmail,
             conversationId,
-            hasVideo
+            hasVideo,
+            callerAvatar
         )
 
         // Start as foreground with the call notification.
@@ -123,6 +126,27 @@ class CallRingingService : Service() {
                 startForeground(safeCallId.hashCode(), notification)
             }
             Log.d(TAG, "Foreground service started successfully")
+
+            // Async fetch + re-emit notification with real avatar Bitmap so the
+            // heads-up & full-screen renderiza a foto do caller em vez da
+            // inicial colorida. Acontece em background thread; o NotificationId
+            // é o mesmo, então o sistema substitui in-place sem flicker.
+            if (callerAvatar.isNotEmpty()) {
+                Thread {
+                    val bmp = CallNotificationService.fetchAvatarBitmap(callerAvatar) ?: return@Thread
+                    try {
+                        val updated = CallNotificationService.buildIncomingCallNotification(
+                            this@CallRingingService,
+                            safeCallId, callerName, callerEmail, conversationId,
+                            hasVideo, callerAvatar, bmp
+                        )
+                        val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+                        nm.notify("call_notification", safeCallId.hashCode(), updated)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Avatar refresh failed: ${e.message}")
+                    }
+                }.start()
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start foreground", e)
             // Even if foreground fails, try to show the notification directly
@@ -132,7 +156,8 @@ class CallRingingService : Service() {
                 callerName,
                 hasVideo,
                 callerEmail,
-                conversationId
+                conversationId,
+                callerAvatar
             )
             stopSelf()
             return START_NOT_STICKY

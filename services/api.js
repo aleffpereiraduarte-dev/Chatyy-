@@ -4137,6 +4137,13 @@ export async function photoSearchML(query, page = 1, limit = 50) {
   return apiCall('photo_search_ml', { query, page, limit }, 'POST');
 }
 
+// Photo Memories (Google Photos-style "On this day" — DOY ±3 days vs prev years,
+// plus a "this week" bucket of last 7 days). Backend groups by years-ago so the
+// frontend can render "1 ano atrás" / "X anos atrás" cards directly.
+export async function driveMemories() {
+  return apiCall('drive_memories', {}, 'POST');
+}
+
 export async function unifiedSearch(query, limit = 5) {
   return apiCall('unified_search', { query, limit }, 'POST');
 }

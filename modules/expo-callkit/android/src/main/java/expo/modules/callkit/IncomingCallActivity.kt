@@ -5,16 +5,27 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.graphics.Rect
+import android.graphics.RectF
+import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.GradientDrawable
 import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.media.Ringtone
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.WindowManager
@@ -30,8 +41,12 @@ class IncomingCallActivity : AppCompatActivity() {
   private var callId: String? = null
   private var callerName: String? = null
   private var callerEmail: String? = null
+  private var callerAvatar: String? = null
   private var conversationId: String? = null
   private var hasVideo: Boolean = false
+  private var avatarTextView: TextView? = null
+  private var avatarSizePx: Int = 0
+  private val mainHandler = Handler(Looper.getMainLooper())
 
   // Receiver to close this activity when call is handled from notification
   private val closeReceiver = object : BroadcastReceiver() {
@@ -47,6 +62,7 @@ class IncomingCallActivity : AppCompatActivity() {
     callId = intent.getStringExtra("call_id")
     callerName = intent.getStringExtra("caller_name") ?: "Unknown"
     callerEmail = intent.getStringExtra("caller_email") ?: ""
+    callerAvatar = intent.getStringExtra("caller_avatar") ?: ""
     conversationId = intent.getStringExtra("conversation_id") ?: ""
     hasVideo = intent.getBooleanExtra("has_video", false)
     val autoAccept = intent.getBooleanExtra("auto_accept", false)
@@ -123,6 +139,7 @@ class IncomingCallActivity : AppCompatActivity() {
 
     // Avatar circle with initial
     val avatarSize = dpToPx(120)
+    avatarSizePx = avatarSize
     val avatarBg = GradientDrawable().apply {
       shape = GradientDrawable.OVAL
       setColor(Color.parseColor("#16213e"))
@@ -140,7 +157,13 @@ class IncomingCallActivity : AppCompatActivity() {
         bottomMargin = dpToPx(24)
       }
     }
+    avatarTextView = avatarText
     container.addView(avatarText)
+
+    // Async: baixa o avatar real e substitui o background gradiente por um
+    // BitmapDrawable circular. Sem isso o callee só vê inicial+gradiente
+    // (igual pra qualquer chamador). Backend manda caller_avatar no FCM.
+    fetchAndApplyAvatar()
 
     // Caller name
     val nameText = TextView(this).apply {
@@ -325,6 +348,59 @@ class IncomingCallActivity : AppCompatActivity() {
     } catch (_: Exception) {}
   }
 
+  /**
+   * Baixa o avatar do chamador em background thread e aplica como background
+   * circular do TextView avatar (sobrescrevendo o gradiente + a inicial). Sem
+   * isso o callee só vê inicial mesmo quando o backend manda caller_avatar.
+   * Usa o cache global do CallNotificationService pra evitar re-download.
+   */
+  private fun fetchAndApplyAvatar() {
+    val url = callerAvatar ?: ""
+    if (url.isEmpty()) return
+    Thread {
+      val bmp = CallNotificationService.fetchAvatarBitmap(url) ?: return@Thread
+      try {
+        val circular = makeCircularBitmap(bmp, avatarSizePx)
+        mainHandler.post {
+          try {
+            avatarTextView?.let {
+              it.text = "" // remove a inicial, mostra só a foto
+              it.background = BitmapDrawable(resources, circular)
+            }
+          } catch (e: Exception) {
+            Log.w("IncomingCallActivity", "Apply avatar failed: ${e.message}")
+          }
+        }
+      } catch (e: Exception) {
+        Log.w("IncomingCallActivity", "fetchAndApplyAvatar failed: ${e.message}")
+      }
+    }.start()
+  }
+
+  /**
+   * Recorta um Bitmap retangular em um Bitmap circular com diâmetro `size`.
+   */
+  private fun makeCircularBitmap(src: Bitmap, size: Int): Bitmap {
+    val s = if (size <= 0) src.width.coerceAtMost(src.height) else size
+    val output = Bitmap.createBitmap(s, s, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(output)
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    val rect = Rect(0, 0, s, s)
+    val rectF = RectF(rect)
+    canvas.drawARGB(0, 0, 0, 0)
+    canvas.drawOval(rectF, paint)
+    paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
+    // Center-crop source to square s × s
+    val scale = s.toFloat() / src.width.coerceAtMost(src.height).toFloat()
+    val scaledW = (src.width * scale).toInt()
+    val scaledH = (src.height * scale).toInt()
+    val srcScaled = Bitmap.createScaledBitmap(src, scaledW, scaledH, true)
+    val dx = (s - scaledW) / 2
+    val dy = (s - scaledH) / 2
+    canvas.drawBitmap(srcScaled, dx.toFloat(), dy.toFloat(), paint)
+    return output
+  }
+
   private fun onAccept() {
     stopRinging()
 
@@ -396,6 +472,7 @@ class IncomingCallActivity : AppCompatActivity() {
       callId = newIntent.getStringExtra("call_id") ?: callId
       callerName = newIntent.getStringExtra("caller_name") ?: callerName
       callerEmail = newIntent.getStringExtra("caller_email") ?: callerEmail
+      callerAvatar = newIntent.getStringExtra("caller_avatar") ?: callerAvatar
       conversationId = newIntent.getStringExtra("conversation_id") ?: conversationId
       hasVideo = newIntent.getBooleanExtra("has_video", hasVideo)
       onAccept()
@@ -404,6 +481,9 @@ class IncomingCallActivity : AppCompatActivity() {
 
   override fun onDestroy() {
     stopRinging()
+    try {
+      mainHandler.removeCallbacksAndMessages(null)
+    } catch (_: Exception) {}
     try {
       unregisterReceiver(closeReceiver)
     } catch (_: Exception) {}

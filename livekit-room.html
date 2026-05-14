@@ -1,0 +1,773 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+  <meta name="theme-color" content="#0a0a14" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <title>Chatyy · Sala de chamada</title>
+  <!--
+    Standalone LiveKit room page.
+    Loaded inside a react-native-webview by /app/group-call.js.
+    NÃO carrega Expo nem React — fica leve e bootta a chamada em <500ms.
+    Recebe via querystring:
+      token   — LiveKit JWT (chat_livekit_token)
+      url     — wss://livekit.chatyy.com.br (ou fallback do backend)
+      room    — nome da sala (cosmético, mostra no top bar)
+      video   — '0' ou '1' (se 0, começa com câmera off)
+      self_email / identity — opcional, só pra label fallback
+    Postmessage protocol pro RN host:
+      out: {type:'connected'} / {type:'error',error} / {type:'left'}
+      out: {type:'participants',list:[{email,name}]}
+      out: {type:'active_speaker',email}
+      in : {type:'mute'|'unmute'|'leave'|'video_on'|'video_off'}
+  -->
+  <style>
+    :root {
+      --brand: #7C3AED;
+      --brand-soft: rgba(124, 58, 237, 0.18);
+      --bg: #0a0a14;
+      --bg-elev: #14141f;
+      --bg-tile: #1c1c2a;
+      --border: rgba(255, 255, 255, 0.08);
+      --text: #ffffff;
+      --text-dim: rgba(255, 255, 255, 0.65);
+      --danger: #ef4444;
+      --speaker: #ef4444;
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bot: env(safe-area-inset-bottom, 0px);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      height: 100%;
+      width: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+      font-size: 14px;
+      overflow: hidden;
+      overscroll-behavior: none;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+    }
+    button { background: none; border: 0; color: inherit; font: inherit; cursor: pointer; }
+
+    /* ─── Top bar ─────────────────────────────────────────────────────── */
+    .topbar {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      padding: calc(var(--safe-top) + 10px) 16px 10px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      z-index: 30;
+      background: linear-gradient(to bottom, rgba(0,0,0,0.55), rgba(0,0,0,0));
+      pointer-events: none;
+    }
+    .topbar > * { pointer-events: auto; }
+    .room-title {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .room-name {
+      font-size: 15px;
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .room-meta {
+      font-size: 12px;
+      color: var(--text-dim);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .room-meta .dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: #22c55e;
+      box-shadow: 0 0 6px #22c55e;
+    }
+    .room-meta.connecting .dot { background: #f59e0b; box-shadow: 0 0 6px #f59e0b; animation: pulse 1s ease-in-out infinite; }
+    .room-meta.error .dot { background: var(--danger); box-shadow: 0 0 6px var(--danger); }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .top-btn {
+      width: 36px; height: 36px;
+      border-radius: 50%;
+      background: rgba(0,0,0,0.45);
+      display: flex; align-items: center; justify-content: center;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+    .top-btn:active { transform: scale(0.92); }
+
+    /* ─── Grid ────────────────────────────────────────────────────────── */
+    .stage {
+      position: absolute;
+      inset: 0;
+      padding: calc(var(--safe-top) + 64px) 8px calc(var(--safe-bot) + 110px);
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      align-content: start;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    @media (min-width: 720px) {
+      .stage { grid-template-columns: repeat(4, 1fr); }
+    }
+    .tile {
+      position: relative;
+      aspect-ratio: 4 / 3;
+      background: var(--bg-tile);
+      border-radius: 14px;
+      overflow: hidden;
+      border: 3px solid transparent;
+      transition: border-color 0.18s ease;
+    }
+    .tile.speaking { border-color: var(--speaker); box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.35); }
+    .tile.local { background: #131322; }
+    .tile video {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      background: #000;
+    }
+    .tile.local video { transform: scaleX(-1); }
+    .tile .placeholder {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      color: var(--text-dim);
+    }
+    .tile .avatar {
+      width: 56px; height: 56px;
+      border-radius: 50%;
+      background: var(--brand-soft);
+      color: var(--brand);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+    .tile .name-pill {
+      position: absolute;
+      left: 8px; bottom: 8px;
+      right: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      background: rgba(0,0,0,0.55);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 500;
+      max-width: calc(100% - 16px);
+    }
+    .tile .name-pill .label {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .tile .name-pill .muted-icon { color: var(--danger); display: none; }
+    .tile.muted .name-pill .muted-icon { display: inline-flex; }
+    .tile.cam-off video { display: none; }
+
+    /* Empty / connecting overlay */
+    .overlay {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      background: var(--bg);
+      z-index: 40;
+      padding: 24px;
+      text-align: center;
+    }
+    .overlay.hidden { display: none; }
+    .spinner {
+      width: 44px; height: 44px;
+      border-radius: 50%;
+      border: 3px solid rgba(255,255,255,0.12);
+      border-top-color: var(--brand);
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .overlay .msg { color: var(--text-dim); font-size: 14px; max-width: 280px; line-height: 1.4; }
+    .overlay .retry {
+      margin-top: 14px;
+      padding: 10px 18px;
+      border-radius: 999px;
+      background: var(--brand);
+      color: #fff;
+      font-weight: 600;
+      font-size: 14px;
+    }
+    .overlay .retry:active { transform: scale(0.96); }
+
+    /* ─── Bottom controls ─────────────────────────────────────────────── */
+    .controls {
+      position: fixed;
+      left: 0; right: 0;
+      bottom: 0;
+      padding: 16px 16px calc(var(--safe-bot) + 16px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      z-index: 30;
+      background: linear-gradient(to top, rgba(0,0,0,0.65), rgba(0,0,0,0));
+    }
+    .ctl {
+      width: 56px; height: 56px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.12);
+      display: flex; align-items: center; justify-content: center;
+      transition: transform 0.12s ease, background 0.18s ease;
+      color: #fff;
+    }
+    .ctl:active { transform: scale(0.92); }
+    .ctl.off { background: #ffffff; color: #0a0a14; }
+    .ctl.leave { background: var(--danger); width: 64px; height: 64px; }
+    .ctl.leave:active { background: #b91c1c; }
+    .ctl svg { width: 24px; height: 24px; }
+  </style>
+</head>
+<body>
+
+  <!-- Top bar ─────────────────────────────────────────────────────────── -->
+  <div class="topbar">
+    <div class="room-title">
+      <div class="room-name" id="roomName">Chamada</div>
+      <div class="room-meta connecting" id="roomMeta">
+        <span class="dot"></span>
+        <span id="roomMetaText">Conectando…</span>
+      </div>
+    </div>
+    <button class="top-btn" id="btnClose" aria-label="Fechar">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 6 6 18M6 6l12 12"/>
+      </svg>
+    </button>
+  </div>
+
+  <!-- Tile grid ───────────────────────────────────────────────────────── -->
+  <div class="stage" id="stage" aria-live="polite"></div>
+
+  <!-- Bottom controls ─────────────────────────────────────────────────── -->
+  <div class="controls">
+    <button class="ctl" id="btnMic" aria-label="Mute">
+      <!-- mic on -->
+      <svg id="micOn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+        <path d="M12 19v3"/>
+      </svg>
+      <svg id="micOff" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;">
+        <path d="m2 2 20 20"/>
+        <path d="M18.89 13.23A7 7 0 0 0 19 12v-2"/>
+        <path d="M5 10v2a7 7 0 0 0 12 5"/>
+        <path d="M15 9.34V5a3 3 0 0 0-5.68-1.33"/>
+        <path d="M9 9v3a3 3 0 0 0 5.12 2.12"/>
+        <path d="M12 19v3"/>
+      </svg>
+    </button>
+
+    <button class="ctl" id="btnCam" aria-label="Camera">
+      <svg id="camOn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 8.5 16 12l6 3.5v-7z"/>
+        <rect x="2" y="6" width="14" height="12" rx="2"/>
+      </svg>
+      <svg id="camOff" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;">
+        <path d="m2 2 20 20"/>
+        <path d="M22 8.5 16 12l6 3.5v-7z"/>
+        <path d="M16 12V8a2 2 0 0 0-2-2H6"/>
+        <path d="M2 8v8a2 2 0 0 0 2 2h10"/>
+      </svg>
+    </button>
+
+    <button class="ctl leave" id="btnLeave" aria-label="Sair">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.75 2 2 0 0 1 1.7 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91"/>
+        <path d="m22 2-20 20"/>
+      </svg>
+    </button>
+  </div>
+
+  <!-- Connecting / error overlay ─────────────────────────────────────── -->
+  <div class="overlay" id="overlay">
+    <div class="spinner" id="overlaySpinner"></div>
+    <div class="msg" id="overlayMsg">Entrando na sala…</div>
+    <button class="retry" id="overlayRetry" style="display:none;">Tentar de novo</button>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.5.4/dist/livekit-client.umd.min.js"
+          crossorigin="anonymous"
+          referrerpolicy="no-referrer"></script>
+
+  <script>
+  (function () {
+    'use strict';
+
+    // ─── Helpers ─────────────────────────────────────────────────────────
+    const $ = (id) => document.getElementById(id);
+    const qs = new URLSearchParams(location.search);
+    const TOKEN = qs.get('token') || '';
+    const URL_ = qs.get('url') || '';
+    const ROOM_LABEL = qs.get('room') || qs.get('conv_id') || 'Chamada';
+    const START_VIDEO = qs.get('video') !== '0';
+    const SELF_EMAIL = (qs.get('self_email') || qs.get('identity') || '').toLowerCase();
+
+    function postRN(payload) {
+      try {
+        const json = JSON.stringify(payload);
+        if (window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage === 'function') {
+          window.ReactNativeWebView.postMessage(json);
+        } else if (window.parent && window.parent !== window) {
+          window.parent.postMessage(json, '*');
+        }
+      } catch (_) { /* swallow */ }
+    }
+
+    function initialFor(name) {
+      const s = (name || '?').trim();
+      if (!s) return '?';
+      // Pega a primeira letra de cada palavra (máx 2). WhatsApp pattern.
+      const parts = s.split(/\s+/).slice(0, 2);
+      return parts.map(p => p.charAt(0).toUpperCase()).join('') || '?';
+    }
+
+    function displayNameFor(p) {
+      // Prefer participant.name (set via LiveKit metadata or JWT name claim),
+      // fallback pra identity (email) → handle.
+      const n = (p && p.name) || '';
+      if (n) return n;
+      const id = (p && p.identity) || '';
+      if (!id) return '—';
+      return id.includes('@') ? id.split('@')[0] : id;
+    }
+
+    function setMeta(state, text) {
+      const meta = $('roomMeta');
+      meta.classList.remove('connecting', 'error');
+      if (state === 'connecting') meta.classList.add('connecting');
+      else if (state === 'error') meta.classList.add('error');
+      $('roomMetaText').textContent = text;
+    }
+
+    function showOverlay(msg, retry) {
+      $('overlayMsg').textContent = msg;
+      $('overlaySpinner').style.display = retry ? 'none' : '';
+      $('overlayRetry').style.display = retry ? '' : 'none';
+      $('overlay').classList.remove('hidden');
+    }
+    function hideOverlay() { $('overlay').classList.add('hidden'); }
+
+    // ─── Pre-flight ──────────────────────────────────────────────────────
+    if (!window.LivekitClient) {
+      setMeta('error', 'Falha no SDK');
+      showOverlay('Não foi possível carregar o SDK de vídeo. Verifique a conexão.', true);
+      postRN({ type: 'error', error: 'sdk_load_failed' });
+      $('overlayRetry').onclick = () => location.reload();
+      return;
+    }
+    if (!TOKEN || !URL_) {
+      setMeta('error', 'Configuração inválida');
+      showOverlay('Token ou URL ausente. Tente sair e entrar de novo.', true);
+      postRN({ type: 'error', error: 'missing_token_or_url' });
+      $('overlayRetry').onclick = () => postRN({ type: 'left' });
+      return;
+    }
+
+    $('roomName').textContent = ROOM_LABEL;
+
+    // ─── Tile renderer ───────────────────────────────────────────────────
+    const stage = $('stage');
+    const tiles = new Map(); // identity → { el, video, label, mutedIcon }
+
+    function ensureTile(identity, opts) {
+      opts = opts || {};
+      let t = tiles.get(identity);
+      if (t) return t;
+
+      const el = document.createElement('div');
+      el.className = 'tile' + (opts.local ? ' local' : '');
+      el.dataset.identity = identity;
+      el.innerHTML = `
+        <video autoplay playsinline ${opts.local ? 'muted' : ''}></video>
+        <div class="placeholder">
+          <div class="avatar"></div>
+        </div>
+        <div class="name-pill">
+          <span class="label"></span>
+          <span class="muted-icon" aria-label="Sem áudio">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m2 2 20 20"/>
+              <path d="M18.89 13.23A7 7 0 0 0 19 12v-2"/>
+              <path d="M5 10v2a7 7 0 0 0 12 5"/>
+            </svg>
+          </span>
+        </div>
+      `;
+      const video = el.querySelector('video');
+      const label = el.querySelector('.name-pill .label');
+      const avatar = el.querySelector('.avatar');
+      const mutedIcon = el.querySelector('.muted-icon');
+      stage.appendChild(el);
+      const name = opts.name || (identity.includes('@') ? identity.split('@')[0] : identity);
+      label.textContent = name;
+      avatar.textContent = initialFor(name);
+      el.classList.add('cam-off'); // até receber video track
+      t = { el, video, label, avatar, mutedIcon, hasVideo: false };
+      tiles.set(identity, t);
+      return t;
+    }
+
+    function removeTile(identity) {
+      const t = tiles.get(identity);
+      if (!t) return;
+      try { t.video.srcObject = null; } catch (_) {}
+      t.el.remove();
+      tiles.delete(identity);
+    }
+
+    function updateTileName(identity, name) {
+      const t = tiles.get(identity);
+      if (!t) return;
+      t.label.textContent = name;
+      t.avatar.textContent = initialFor(name);
+    }
+
+    function setTileSpeaking(identity, speaking) {
+      const t = tiles.get(identity);
+      if (!t) return;
+      t.el.classList.toggle('speaking', !!speaking);
+    }
+
+    function setTileMuted(identity, muted) {
+      const t = tiles.get(identity);
+      if (!t) return;
+      t.el.classList.toggle('muted', !!muted);
+    }
+
+    function attachTrack(identity, track) {
+      const t = tiles.get(identity); if (!t) return;
+      if (track.kind === 'video') {
+        try { track.attach(t.video); } catch (_) {}
+        t.el.classList.remove('cam-off');
+        t.hasVideo = true;
+      } else if (track.kind === 'audio') {
+        // LiveKit auto-plays attached audio. Create hidden el.
+        const a = document.createElement('audio');
+        a.autoplay = true;
+        a.style.display = 'none';
+        try { track.attach(a); } catch (_) {}
+        document.body.appendChild(a);
+        t._audioEl = a;
+      }
+    }
+    function detachTrack(identity, track) {
+      const t = tiles.get(identity); if (!t) return;
+      if (track.kind === 'video') {
+        try { track.detach(t.video); } catch (_) {}
+        t.video.srcObject = null;
+        t.el.classList.add('cam-off');
+        t.hasVideo = false;
+      } else if (track.kind === 'audio' && t._audioEl) {
+        try { track.detach(t._audioEl); } catch (_) {}
+        t._audioEl.remove();
+        t._audioEl = null;
+      }
+    }
+
+    function broadcastParticipantList(room) {
+      const list = [];
+      // self first
+      const lp = room.localParticipant;
+      if (lp) {
+        list.push({
+          email: (lp.identity || '').toLowerCase(),
+          name: displayNameFor(lp),
+          local: true,
+        });
+      }
+      room.remoteParticipants.forEach(p => {
+        list.push({
+          email: (p.identity || '').toLowerCase(),
+          name: displayNameFor(p),
+        });
+      });
+      postRN({ type: 'participants', list });
+    }
+
+    // ─── Call timer ──────────────────────────────────────────────────────
+    let connectedAt = 0;
+    let timerInt = null;
+    function fmtElapsed(ms) {
+      const s = Math.max(0, Math.floor(ms / 1000));
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const sec = s % 60;
+      const mm = String(m).padStart(2, '0');
+      const ss = String(sec).padStart(2, '0');
+      return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+    }
+    function startTimer() {
+      connectedAt = Date.now();
+      stopTimer();
+      timerInt = setInterval(() => {
+        setMeta('ok', fmtElapsed(Date.now() - connectedAt));
+      }, 1000);
+      setMeta('ok', '00:00');
+    }
+    function stopTimer() {
+      if (timerInt) { clearInterval(timerInt); timerInt = null; }
+    }
+
+    // ─── Connect ─────────────────────────────────────────────────────────
+    const { Room, RoomEvent, Track, DisconnectReason } = window.LivekitClient;
+
+    const room = new Room({
+      adaptiveStream: true,
+      dynacast: true,
+      // RN WebView pode entrar em background; mantém audio playing.
+      stopLocalTrackOnUnpublish: true,
+      publishDefaults: {
+        simulcast: true,
+        videoCodec: 'vp8',
+      },
+    });
+
+    // Local pré-tile, mostra avatar + nome enquanto câmera não publica.
+    const selfIdentity = (SELF_EMAIL || 'me').toLowerCase();
+    ensureTile(selfIdentity, { local: true, name: SELF_EMAIL ? SELF_EMAIL.split('@')[0] : 'Você' });
+
+    // ─── Event handlers ──────────────────────────────────────────────────
+    room
+      .on(RoomEvent.ParticipantConnected, (p) => {
+        ensureTile(p.identity, { name: displayNameFor(p) });
+        broadcastParticipantList(room);
+      })
+      .on(RoomEvent.ParticipantDisconnected, (p) => {
+        removeTile(p.identity);
+        broadcastParticipantList(room);
+      })
+      .on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
+        ensureTile(participant.identity, { name: displayNameFor(participant) });
+        attachTrack(participant.identity, track);
+        if (track.kind === 'audio') setTileMuted(participant.identity, false);
+      })
+      .on(RoomEvent.TrackUnsubscribed, (track, pub, participant) => {
+        detachTrack(participant.identity, track);
+      })
+      .on(RoomEvent.TrackMuted, (pub, participant) => {
+        if (pub.kind === 'audio') setTileMuted(participant.identity, true);
+      })
+      .on(RoomEvent.TrackUnmuted, (pub, participant) => {
+        if (pub.kind === 'audio') setTileMuted(participant.identity, false);
+      })
+      .on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
+        // limpa todos, depois aplica
+        tiles.forEach((t) => t.el.classList.remove('speaking'));
+        let primary = null;
+        speakers.forEach(p => {
+          setTileSpeaking(p.identity, true);
+          if (!primary || (p.audioLevel || 0) > (primary.audioLevel || 0)) primary = p;
+        });
+        if (primary) {
+          postRN({ type: 'active_speaker', email: (primary.identity || '').toLowerCase() });
+        }
+      })
+      .on(RoomEvent.Disconnected, (reason) => {
+        stopTimer();
+        const code = (reason !== undefined) ? String(reason) : 'unknown';
+        // Reasons úteis: CLIENT_INITIATED (saiu), DUPLICATE_IDENTITY (2 tabs),
+        // SERVER_SHUTDOWN, PARTICIPANT_REMOVED, ROOM_DELETED, JOIN_FAILURE.
+        if (reason === DisconnectReason.CLIENT_INITIATED) {
+          postRN({ type: 'left' });
+          return;
+        }
+        setMeta('error', 'Desconectado');
+        showOverlay('Conexão encerrada. Toque pra voltar.', true);
+        postRN({ type: 'error', error: 'disconnected:' + code });
+        $('overlayRetry').onclick = () => postRN({ type: 'left' });
+      })
+      .on(RoomEvent.Reconnecting, () => setMeta('connecting', 'Reconectando…'))
+      .on(RoomEvent.Reconnected, () => {
+        if (connectedAt) setMeta('ok', fmtElapsed(Date.now() - connectedAt));
+        else startTimer();
+      })
+      .on(RoomEvent.MediaDevicesError, (err) => {
+        console.warn('[livekit-room] media devices error', err);
+        // Permissão de câmera/mic negada — atualiza tile local mas não mata
+        // a chamada (user pode estar em audio-only).
+        const t = tiles.get(selfIdentity);
+        if (t) {
+          t.label.textContent = 'Sem câmera/microfone';
+          t.el.classList.add('cam-off');
+        }
+      });
+
+    async function connectAndPublish() {
+      try {
+        setMeta('connecting', 'Conectando…');
+        showOverlay('Entrando na sala…', false);
+
+        await room.connect(URL_, TOKEN, { autoSubscribe: true });
+        hideOverlay();
+        startTimer();
+        postRN({ type: 'connected' });
+
+        // Atualiza tile local pro identity real (JWT identity pode diferir do query param)
+        const lp = room.localParticipant;
+        if (lp && lp.identity && lp.identity.toLowerCase() !== selfIdentity) {
+          // re-key
+          const oldTile = tiles.get(selfIdentity);
+          if (oldTile) {
+            tiles.delete(selfIdentity);
+            oldTile.el.dataset.identity = lp.identity;
+            tiles.set(lp.identity, oldTile);
+            updateTileName(lp.identity, displayNameFor(lp));
+          }
+        }
+
+        // Enable camera + mic. Se browser não tem permissão, falha aqui
+        // mas conexão fica viva (modo viewer).
+        try {
+          await room.localParticipant.setMicrophoneEnabled(true);
+        } catch (e) {
+          console.warn('[livekit-room] mic enable failed', e);
+        }
+        if (START_VIDEO) {
+          try {
+            await room.localParticipant.setCameraEnabled(true);
+          } catch (e) {
+            console.warn('[livekit-room] camera enable failed', e);
+            camOn = false;
+            renderCtl();
+          }
+        } else {
+          camOn = false;
+          renderCtl();
+        }
+
+        // Attach local video preview (mirrored)
+        const localId = lp.identity || selfIdentity;
+        const pubs = lp.videoTrackPublications;
+        if (pubs && pubs.size) {
+          pubs.forEach(pub => {
+            if (pub.track) attachTrack(localId, pub.track);
+          });
+        }
+        // Listen for future track publications
+        lp.on('localTrackPublished', (pub) => {
+          if (pub.track) attachTrack(localId, pub.track);
+        });
+
+        broadcastParticipantList(room);
+      } catch (err) {
+        console.error('[livekit-room] connect failed', err);
+        stopTimer();
+        const msg = (err && err.message) || 'Erro ao conectar';
+        // Heurística: token expired vs network. LiveKit lança InvalidTokenError
+        // quando JWT inválido/expirado.
+        const isAuth = /token|jwt|unauthor|expired/i.test(msg);
+        setMeta('error', isAuth ? 'Sessão expirou' : 'Falha na conexão');
+        showOverlay(isAuth
+          ? 'A sessão expirou. Saia e entre na chamada de novo.'
+          : 'Não conseguimos entrar na sala. Verifique sua conexão.', true);
+        postRN({ type: 'error', error: isAuth ? 'token_expired' : ('connect_failed:' + msg) });
+        $('overlayRetry').onclick = () => postRN({ type: 'left' });
+      }
+    }
+
+    // ─── Controls ────────────────────────────────────────────────────────
+    let micOn = true;
+    let camOn = START_VIDEO;
+
+    function renderCtl() {
+      $('btnMic').classList.toggle('off', !micOn);
+      $('micOn').style.display = micOn ? '' : 'none';
+      $('micOff').style.display = micOn ? 'none' : '';
+      $('btnCam').classList.toggle('off', !camOn);
+      $('camOn').style.display = camOn ? '' : 'none';
+      $('camOff').style.display = camOn ? 'none' : '';
+    }
+    renderCtl();
+
+    async function toggleMic(force) {
+      const next = (typeof force === 'boolean') ? force : !micOn;
+      try {
+        await room.localParticipant.setMicrophoneEnabled(next);
+        micOn = next; renderCtl();
+      } catch (e) { console.warn('mic toggle', e); }
+    }
+    async function toggleCam(force) {
+      const next = (typeof force === 'boolean') ? force : !camOn;
+      try {
+        await room.localParticipant.setCameraEnabled(next);
+        camOn = next; renderCtl();
+      } catch (e) { console.warn('cam toggle', e); }
+    }
+    async function leave() {
+      try { stopTimer(); await room.disconnect(); } catch (_) {}
+      postRN({ type: 'left' });
+    }
+
+    $('btnMic').addEventListener('click', () => toggleMic());
+    $('btnCam').addEventListener('click', () => toggleCam());
+    $('btnLeave').addEventListener('click', leave);
+    $('btnClose').addEventListener('click', leave);
+
+    // ─── Incoming postMessage (RN → page) ────────────────────────────────
+    function handleHostMessage(data) {
+      let msg = data;
+      if (typeof msg === 'string') {
+        try { msg = JSON.parse(msg); } catch (_) { return; }
+      }
+      if (!msg || typeof msg !== 'object') return;
+      switch (msg.type) {
+        case 'mute':      toggleMic(false); break;
+        case 'unmute':    toggleMic(true); break;
+        case 'video_off': toggleCam(false); break;
+        case 'video_on':  toggleCam(true); break;
+        case 'leave':     leave(); break;
+      }
+    }
+    // RN WebView injects via `window.postMessage` (Android) ou
+    // `document.dispatchEvent` (iOS). Cobre os dois.
+    window.addEventListener('message', (e) => handleHostMessage(e.data));
+    document.addEventListener('message', (e) => handleHostMessage(e.data));
+
+    // Page lifecycle: se sai sem clicar leave (back btn nativo), avisa o host.
+    window.addEventListener('pagehide', () => {
+      try { room.disconnect(); } catch (_) {}
+    });
+
+    // Kickoff
+    connectAndPublish();
+  })();
+  </script>
+</body>
+</html>

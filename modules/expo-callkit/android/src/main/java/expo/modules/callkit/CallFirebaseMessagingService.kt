@@ -42,8 +42,13 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
             val callerEmail = data["caller_email"] ?: ""
             val conversationId = data["conversation_id"] ?: ""
             val hasVideo = data["video"] == "1"
+            // Avatar URL ships in the FCM payload (backend adds caller_avatar
+            // pointing to email.php?action=get_avatar). Without it, native
+            // call screen + heads-up render only a "?" initial; with it we
+            // download the bitmap async on the activity side.
+            val callerAvatar = data["caller_avatar"] ?: ""
 
-            Log.d(TAG, "Incoming call from $callerName ($callerEmail) callId=$callId video=$hasVideo")
+            Log.d(TAG, "Incoming call from $callerName ($callerEmail) callId=$callId video=$hasVideo avatar=${callerAvatar.isNotEmpty()}")
 
             // If the app is foreground, JS Modal (IncomingCallListener) handles
             // the call UI via the WS `call_invite` event. Showing the native
@@ -67,6 +72,7 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
                     putExtra("caller_email", callerEmail)
                     putExtra("conversation_id", conversationId)
                     putExtra("has_video", hasVideo)
+                    putExtra("caller_avatar", callerAvatar)
                 }
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -86,7 +92,8 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
                     callerName,
                     hasVideo,
                     callerEmail,
-                    conversationId
+                    conversationId,
+                    callerAvatar
                 )
             }
         } else {

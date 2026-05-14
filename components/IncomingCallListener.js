@@ -533,6 +533,34 @@ export default function IncomingCallListener() {
         }
       }));
 
+      // Multi-device dedupe: server fires call_picked_up_elsewhere to every
+      // other session of the user that just answered. Treat it like
+      // call_dismissed but also force-dismiss the native incoming UI
+      // (Android IncomingCallActivity + iOS CallKit) so a backgrounded
+      // device doesn't keep ringing/showing the full-screen accept overlay.
+      unsubs.push(mailWs.on('call_picked_up_elsewhere', (data) => {
+        if (callRef.current?.call_id === data?.call_id) {
+          console.log('[IncomingCall] call_picked_up_elsewhere:', data.call_id);
+          if (data?.call_id) _pendingIceByCallId.delete(String(data.call_id));
+          callRef.current = null;
+          callStateRef.current = null;
+          stopRingtone();
+          if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+          setCall(null);
+          acceptedRef.current = false;
+          handlingRef.current = false;
+          // Best-effort native dismiss. Both modules ship with the app:
+          // - IncomingCallModule.dismiss (Android full-screen)
+          // - CallKitModule.endCall (iOS CallKit UI)
+          // Wrapped in try/catch so missing native side never crashes JS.
+          try {
+            const { NativeModules } = require('react-native');
+            try { NativeModules?.IncomingCallModule?.dismiss?.(data?.call_id || ''); } catch (_) {}
+            try { NativeModules?.CallKitModule?.endCall?.(data?.call_id || ''); } catch (_) {}
+          } catch (_) {}
+        }
+      }));
+
       // Safety timeout: auto-dismiss call after user accepts on another device (network might be slow)
       // If we receive call_accepted from ANOTHER device on our email, dismiss automatically
       unsubs.push(mailWs.on('call_accepted', (data) => {

@@ -1010,26 +1010,77 @@ export default function PhotosScreen() {
     return cloudPhotos;
   }, [cloudPhotos, devicePhotos]);
 
-  // Memories: photos from same month in previous years (Google Photos "On this day")
-  const memoriesData = useMemo(() => {
-    if (allPhotos.length === 0) return [];
-    try {
-      const now = new Date();
-      const currentMonth = now.getMonth();
-      const currentYear = now.getFullYear();
-      const groups = new Map();
-      allPhotos.forEach(p => {
-        try {
-          const d = new Date(p.created_at || p.uploaded_at || p.modificationTime);
-          if (!isNaN(d.getTime()) && d.getMonth() === currentMonth && d.getFullYear() < currentYear) {
-            const yearsAgo = currentYear - d.getFullYear();
-            if (!groups.has(yearsAgo)) groups.set(yearsAgo, { yearsAgo, photos: [] });
-            groups.get(yearsAgo).photos.push(p);
+  // Memories: TIER 1 — backend-driven "On this day" (DOY ±3 days vs prev years).
+  // Backend: drive_memories returns { buckets: [{ type:'years_ago', years:N, photos:[] },
+  //   { type:'this_week', photos:[] }] }. We adapt that to the legacy shape
+  //   { yearsAgo, photos } the carousel render expects, so lines 2707-2817 don't
+  //   need to change. If backend fails (cold deploy, 500, offline) we fall back to
+  //   the client-side month-of-year heuristic so the strip never goes empty.
+  const [memoriesData, setMemoriesData] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const buildClientFallback = () => {
+      if (!allPhotos || allPhotos.length === 0) return [];
+      try {
+        const now = new Date();
+        const currentMonth = now.getMonth();
+        const currentYear = now.getFullYear();
+        const groups = new Map();
+        allPhotos.forEach(p => {
+          try {
+            const d = new Date(p.created_at || p.uploaded_at || p.modificationTime);
+            if (!isNaN(d.getTime()) && d.getMonth() === currentMonth && d.getFullYear() < currentYear) {
+              const yearsAgo = currentYear - d.getFullYear();
+              if (!groups.has(yearsAgo)) groups.set(yearsAgo, { yearsAgo, photos: [] });
+              groups.get(yearsAgo).photos.push(p);
+            }
+          } catch {}
+        });
+        return Array.from(groups.values()).sort((a, b) => a.yearsAgo - b.yearsAgo);
+      } catch { return []; }
+    };
+
+    (async () => {
+      try {
+        const r = await api.driveMemories();
+        if (cancelled) return;
+        const buckets = r?.success && Array.isArray(r.data?.buckets) ? r.data.buckets : null;
+        if (!buckets || buckets.length === 0) {
+          setMemoriesData(buildClientFallback());
+          return;
+        }
+        // Map to the shape the existing render reads (yearsAgo + photos).
+        // Skip the 'this_week' bucket here — carousel cards are years-ago tiles;
+        // "Esta semana" is shown by the preset card alongside, so we don't want
+        // a duplicate. We still include it as yearsAgo=0 to surface recents
+        // when no prev-year matches exist (e.g. brand-new accounts).
+        const yearsCards = [];
+        const thisWeek = buckets.find(b => b?.type === 'this_week');
+        buckets.forEach(b => {
+          if (!b || !Array.isArray(b.photos) || b.photos.length === 0) return;
+          if (b.type === 'years_ago') {
+            yearsCards.push({ yearsAgo: Number(b.years) || 1, photos: b.photos });
           }
-        } catch {}
-      });
-      return Array.from(groups.values()).sort((a, b) => a.yearsAgo - b.yearsAgo);
-    } catch { return []; }
+        });
+        yearsCards.sort((a, b) => a.yearsAgo - b.yearsAgo);
+
+        if (yearsCards.length === 0 && thisWeek?.photos?.length) {
+          // Surface "this week" as a yearsAgo=0 card so empty-state still has
+          // something nostalgic-feeling. Carousel label code already handles
+          // generic "X anos atrás" — for 0 we fall back to client list.
+          setMemoriesData(buildClientFallback());
+          return;
+        }
+        setMemoriesData(yearsCards);
+      } catch (e) {
+        if (cancelled) return;
+        setMemoriesData(buildClientFallback());
+      }
+    })();
+
+    return () => { cancelled = true; };
   }, [allPhotos]);
 
   // ML search results (from Claude Vision API)
