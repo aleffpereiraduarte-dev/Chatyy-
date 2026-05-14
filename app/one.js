@@ -1838,16 +1838,16 @@ export default function OneScreen() {
       setConversations(convos);
       setCache('one_conversations', res, 7776000000).catch(() => {});
 
-      // Auto-restore if the last conversation message is < 2h old.
-      // Window is per-message: any reply within the window resets the clock.
-      // Past 2h the screen opens fresh — avoids landing on yesterday's
-      // briefing when the user opens One in the morning (window widened
-      // from 60min → 2h 2026-05-14 per user feedback).
+      // Auto-restore if the last conversation message is < 1h old.
+      // Window is per-message: any reply within the hour resets the clock.
+      // Past 1h the screen opens fresh — user complained that after 1h
+      // it was still landing on the old thread (window was briefly 2h,
+      // reverted to 1h 2026-05-14 on direct ask).
       if (autoRestore && convos.length > 0 && !conversationId && messages.length === 0) {
         const last = convos[0]; // most recent
         const lastUpdated = new Date(last.updated_at || last.created_at);
         const msAgo = Date.now() - lastUpdated.getTime();
-        if (msAgo >= 7200000) return; // older than 2h → start fresh
+        if (msAgo >= 3600000) return; // older than 1h → start fresh
         setConversationId(last.id);
         // Show cached messages instantly
         const cachedMsgs = await getCached('one_messages_' + last.id);
