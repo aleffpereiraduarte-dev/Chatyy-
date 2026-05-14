@@ -2,18 +2,21 @@ const { getDefaultConfig } = require('expo/metro-config');
 
 const config = getDefaultConfig(__dirname);
 
-// Fix event-target-shim version conflict between expo (v5) and react-native-webrtc (v6)
-// Alias react-native-webrtc → @stream-io/react-native-webrtc
-// This makes @telnyx/webrtc SDK work on native (it imports react-native-webrtc internally)
+// Alias react-native-webrtc → @livekit/react-native-webrtc (LiveKit fork,
+// drop-in API + bundled patches needed by LiveKit RN SDK). Replaces the
+// previous @stream-io fork — both ship the same native module surface but
+// only one can be installed at a time.
 config.resolver.extraNodeModules = {
   ...config.resolver.extraNodeModules,
-  'react-native-webrtc': require.resolve('@stream-io/react-native-webrtc'),
+  'react-native-webrtc': require.resolve('@livekit/react-native-webrtc'),
 };
 
 // Native-only modules that explode the web bundle and have no browser use
 // (web already has navigator.mediaDevices / RTCPeerConnection built in).
 const WEB_STUBS = new Set([
-  '@stream-io/react-native-webrtc',
+  '@livekit/react-native-webrtc',
+  '@livekit/react-native',
+  'livekit-client',
   'react-native-webrtc',
   '@twilio/voice-sdk',
   '@telnyx/webrtc',
