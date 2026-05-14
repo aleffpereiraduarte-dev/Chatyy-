@@ -39,6 +39,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { Spacing, FontSize, BorderRadius, Shadow } from '../constants/theme';
 import * as api from '../services/api';
 import { safeAlert } from '../services/alerts';
+import { setCache, getCached } from '../services/cache';
 import {
   IconArrowLeft, IconX, IconEdit, IconPlus, IconPlay,
 } from '../components/Icons';
@@ -243,22 +244,45 @@ export default function PhotoNew() {
       }
       const r = await api.feedCreatePost(formData);
       if (r?.success) {
-        // [bug-fix #photos-novo] After publish the user expects Instagram-style
-        // "tap the novo card → open the carousel viewer". Previously we just
-        // bounced back to /photos with a toast and the user had to hunt for
-        // their own post on the feed. Now we route directly to /feed/[id]
-        // which renders the same post in a public-feed viewer (carousel +
-        // caption + actions). The route is auth-aware so logged-in users get
-        // interactive controls.
+        // [bug-fix #photo-new-disappears] User reported "novo eu adiciono
+        // foto e ele some" — they published a post, navigated back to feed/
+        // photos, and couldn't find it. Two root causes:
+        //   1. Backend was NOT broadcasting `feed_new_post` via WS, so the
+        //      ChatFeedTab listener never prepended the post and the next
+        //      poll cycle was up to 60s away (now fixed in email.php).
+        //   2. The local `feed_posts` IndexedDB cache (90-day TTL) holds the
+        //      pre-publish snapshot. Even after focusing the feed tab,
+        //      ChatFeedTab hydrates from that stale cache before the API
+        //      delta lands. Invalidate it here so the next visit forces a
+        //      fresh fetch.
         const postId = r?.data?.post?.id;
+        const newPost = r?.data?.post;
+        try {
+          if (newPost) {
+            const cached = (await getCached('feed_posts').catch(() => null)) || [];
+            const dedup = Array.isArray(cached) ? cached.filter(p => p?.id !== newPost.id) : [];
+            // Prepend optimistically so the timeline shows it the moment the
+            // user navigates back, even if the WS event hasn't arrived yet.
+            const merged = [{ ...newPost, created_at: new Date().toISOString() }, ...dedup].slice(0, 200);
+            await setCache('feed_posts', merged, 7776000000);
+          } else {
+            // No post returned — just drop the cache so the feed re-fetches.
+            await setCache('feed_posts', [], 0).catch(() => {});
+          }
+        } catch {}
+
+        // After publish: navigate to /feed/[id] (Instagram-style standalone
+        // viewer). The route is auth-aware — logged-in viewers see counts +
+        // actions, anonymous viewers see a Sign-in CTA. We replace() instead
+        // of push() so the back-button takes them out of /photo-new (the
+        // staging key is already cleared on mount).
         if (postId) {
-          // replace() instead of push() so the user doesn't bounce back into
-          // /photo-new on back (the staging key is already cleared on mount).
           router.replace(`/feed/${postId}`);
         } else {
-          // Fallback: backend didn't return an id (shouldn't happen, but
-          // safe). Keep the legacy behaviour so we never leave the user
-          // stuck on a spinner.
+          // Fallback: backend didn't return an id (shouldn't happen with the
+          // post-create handler, but defensive). Keep the legacy behaviour
+          // so we never leave the user stuck on a spinner — surface a clear
+          // success message so they don't think it failed.
           safeAlert(
             t('photoNew.published') || 'Publicado',
             t('photoNew.publishedDesc') || 'Sua publicação foi enviada.',
