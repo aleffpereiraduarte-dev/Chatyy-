@@ -4039,6 +4039,7 @@ export default {
   'live.audPrivate': 'Privado',
   'live.whoCanSee': 'Quem pode ver',
   'live.preHint': 'Tudo pronto pra ir ao vivo',
+  'live.preTip': 'Sua câmera ficará visível pros viewers — toque pra começar',
   'live.insights': 'Insights',
   'live.watchingNow': 'Assistindo agora',
   'live.uniqueViewers': 'Únicos',

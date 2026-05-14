@@ -187,6 +187,14 @@ export default function StoryViewer({
   // Image fade-in — kills the white→content pop when expo-image loads. Reset
   // per item via the same idx effect that drives crossfade.
   const imageFade = useRef(new Animated.Value(0)).current;
+  // Reply grace — after the user dismisses the reply keyboard we give them
+  // a few extra seconds before the auto-advance timer can finish the story.
+  // Without this, the user types "thanks", taps send/blur, and the timer
+  // (which was paused while typing) snaps to "advance" in <2s leaving them
+  // no time to read the reaction. Set on blur, cleared by a timer or by the
+  // user manually advancing/closing.
+  const replyGraceRef = useRef(false);
+  const replyGraceTimerRef = useRef(null);
   // Video error overlay — when expo-video / expo-av fail to load (404, codec,
   // network), show a friendly card instead of leaving black screen forever.
   const [videoError, setVideoError] = useState(false);
@@ -532,6 +540,13 @@ export default function StoryViewer({
       setPaused(false);
       setCaughtUp(false);
       caughtUpAnim.setValue(0);
+      // Fresh viewer session — clear any leftover grace from a previous open.
+      replyGraceRef.current = false;
+      if (replyGraceTimerRef.current) { clearTimeout(replyGraceTimerRef.current); replyGraceTimerRef.current = null; }
+    } else {
+      // Modal closed — kill the grace timer so it can't fire against a stale
+      // closure after the user already moved on.
+      if (replyGraceTimerRef.current) { clearTimeout(replyGraceTimerRef.current); replyGraceTimerRef.current = null; }
     }
   }, [visible, startIdx, stories?.length, caughtUpAnim]);
 
@@ -608,11 +623,17 @@ export default function StoryViewer({
     }
     if (cur.type === 'video') return;
     if (paused) return;
+    // Reply grace — if the user just dismissed the reply keyboard we extend
+    // the remaining-time so they can actually read whatever made them reply.
+    // Grace flag is cleared 4s later by the blur handler so a second visit
+    // (next story) is back to normal cadence. Re-using STORY_DURATION_MS as
+    // the base keeps the cadence predictable; we just bump the floor.
+    const duration = replyGraceRef.current ? Math.max(STORY_DURATION_MS, 5000) : STORY_DURATION_MS;
     // Instagram-style ease-out so the bar fills crisp at the start and
     // glides into the seam — feels less mechanical than the linear ramp.
     animRef.current = Animated.timing(progressRef.current, {
       toValue: 1,
-      duration: STORY_DURATION_MS,
+      duration,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: false,
     });
@@ -800,36 +821,80 @@ export default function StoryViewer({
       } catch {}
       return <Image source={{ uri: mediaUrl }} style={{ width: '100%', height: '100%' }} resizeMode="contain" />;
     }
+    // Poster fallback for IMAGE status — backend (#557) ships thumbnail_url
+    // for both photo + video status. Painting a blurred thumb behind the
+    // full image kills the 1-2s black gap users reported while expo-image /
+    // network finished the full payload. Falls back gracefully on older
+    // statuses without thumbnail_url (the wrapper's #0f172a tint reads as
+    // a soft slate, not pitch black).
+    const imagePoster = cur.thumbnail_url
+      ? (cur.thumbnail_url.startsWith('http') ? cur.thumbnail_url : `${BASE_URL}${cur.thumbnail_url}`)
+      : '';
+    const ImagePosterLayer = imagePoster ? (
+      WEB ? (
+        <img
+          src={imagePoster}
+          alt=""
+          style={{
+            position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+            objectFit: 'contain', filter: 'blur(20px)', transform: 'scale(1.08)',
+          }}
+        />
+      ) : (
+        <Image
+          source={{ uri: imagePoster }}
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%' }}
+          resizeMode="contain"
+          blurRadius={20}
+        />
+      )
+    ) : null;
     if (_ExpoImage && !WEB) {
       // Image fade-in: opacity ramps 0 → 1 once expo-image fires onLoad.
       // Native driver makes it free; transition prop alone gives a slight
       // crossfade INSIDE expo-image but doesn't cover the empty-frame gap
-      // before any data has arrived.
+      // before any data has arrived. Poster sits underneath via absolute
+      // positioning so the blurred thumb peeks while the full payload lands.
       return (
-        <Animated.View style={{ flex: 1, opacity: imageFade }}>
-          <_ExpoImage
-            source={{ uri: mediaUrl }}
-            style={{ width: '100%', height: '100%' }}
-            contentFit="contain"
-            cachePolicy="memory-disk"
-            transition={120}
-            onLoad={() => {
-              Animated.timing(imageFade, { toValue: 1, duration: 200, useNativeDriver: true }).start();
-            }}
-          />
-        </Animated.View>
+        <View style={{ flex: 1, backgroundColor: '#0f172a' }}>
+          {ImagePosterLayer}
+          <Animated.View style={{ flex: 1, opacity: imageFade }}>
+            <_ExpoImage
+              source={{ uri: mediaUrl }}
+              style={{ width: '100%', height: '100%' }}
+              contentFit="contain"
+              cachePolicy="memory-disk"
+              transition={120}
+              onLoad={() => {
+                Animated.timing(imageFade, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+              }}
+            />
+          </Animated.View>
+        </View>
       );
     }
     return WEB
-      ? <img src={mediaUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: '#000' }} />
-      : <Image
-          source={{ uri: mediaUrl }}
-          style={{ width: '100%', height: '100%' }}
-          resizeMode="contain"
-          onLoad={() => {
-            Animated.timing(imageFade, { toValue: 1, duration: 200, useNativeDriver: true }).start();
-          }}
-        />;
+      ? (
+        <div style={{ position: 'relative', width: '100%', height: '100%', backgroundColor: '#0f172a' }}>
+          {ImagePosterLayer}
+          <img src={mediaUrl} alt="" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain' }} />
+        </div>
+      )
+      : (
+        <View style={{ flex: 1, backgroundColor: '#0f172a' }}>
+          {ImagePosterLayer}
+          <Animated.View style={{ flex: 1, opacity: imageFade }}>
+            <Image
+              source={{ uri: mediaUrl }}
+              style={{ width: '100%', height: '100%' }}
+              resizeMode="contain"
+              onLoad={() => {
+                Animated.timing(imageFade, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+              }}
+            />
+          </Animated.View>
+        </View>
+      );
   };
 
   // Modern gradient progress bar — animates left-to-right with a soft glow.
@@ -1312,22 +1377,33 @@ export default function StoryViewer({
 
         {/* Tap zones — left/right with subtle haptic on each transition.
             Boundary taps (first/last item) jump to prev/next group when
-            wired by the caller. */}
+            wired by the caller. Disabled while the reply input is focused
+            so reaching for the keyboard doesn't accidentally advance the
+            story (user complained the viewer closed before they could
+            finish typing). Dismisses the keyboard instead — same WhatsApp
+            pattern (tap outside input → keyboard down, story stays). */}
         <Pressable
           style={{ position: 'absolute', left: 0, top: 110, bottom: 100, width: '30%' }}
-          onPress={() => { _haptic('light'); goPrev(); }}
+          onPress={() => {
+            if (replyFocused) { try { Keyboard.dismiss(); } catch {} return; }
+            _haptic('light'); goPrev();
+          }}
           accessibilityLabel={t?.('status.previous') || 'Previous story'}
           accessibilityRole="button"
         />
         <Pressable
           style={{ position: 'absolute', right: 0, top: 110, bottom: 100, width: '30%' }}
-          onPress={() => { _haptic('light'); advance(); }}
+          onPress={() => {
+            if (replyFocused) { try { Keyboard.dismiss(); } catch {} return; }
+            _haptic('light'); advance();
+          }}
           accessibilityLabel={t?.('status.next') || 'Next story'}
           accessibilityRole="button"
         />
         <Pressable
           style={{ position: 'absolute', left: '30%', right: '30%', top: 110, bottom: 100 }}
           onPressIn={(e) => {
+            if (replyFocused) { try { Keyboard.dismiss(); } catch {} return; }
             setPaused(true);
             // Capture absolute screen position of the touch (pageX/pageY) so
             // the ripple paints exactly where the user pressed, not at the
@@ -1569,8 +1645,30 @@ export default function StoryViewer({
                   <TextInput
                     value={replyText}
                     onChangeText={setReplyText}
-                    onFocus={() => { setPaused(true); setReplyFocused(true); }}
-                    onBlur={() => { setReplyFocused(false); setPaused(false); }}
+                    onFocus={() => {
+                      setPaused(true);
+                      setReplyFocused(true);
+                      // Tapping the input itself counts as engagement — clear
+                      // any leftover grace from a previous blur so the cadence
+                      // restarts cleanly when they finish typing.
+                      replyGraceRef.current = false;
+                      if (replyGraceTimerRef.current) { clearTimeout(replyGraceTimerRef.current); replyGraceTimerRef.current = null; }
+                    }}
+                    onBlur={() => {
+                      setReplyFocused(false);
+                      // Hold the grace flag for 4s so the auto-advance timer
+                      // resumes with a minimum 4.5s window even if the user
+                      // had nearly consumed the original 5s before tapping
+                      // reply. Without this, blur → setPaused(false) snaps
+                      // to advance in <1s and the user loses their place.
+                      replyGraceRef.current = true;
+                      if (replyGraceTimerRef.current) clearTimeout(replyGraceTimerRef.current);
+                      replyGraceTimerRef.current = setTimeout(() => {
+                        replyGraceRef.current = false;
+                        replyGraceTimerRef.current = null;
+                      }, 4000);
+                      setPaused(false);
+                    }}
                     placeholder={(t?.('status.replyPlaceholder') || 'Responder para') + ' ' + (ownerName || '...')}
                     placeholderTextColor="rgba(255,255,255,0.7)"
                     style={{ flex: 1, color: '#fff', fontSize: 14, paddingVertical: 10, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}

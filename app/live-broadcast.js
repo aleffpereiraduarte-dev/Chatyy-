@@ -167,6 +167,46 @@ export default function LiveBroadcastScreen() {
     return () => loop.stop();
   }, []);
 
+  // ----- Pre-live polish animations (Instagram-grade) -----
+  // Avatar red ring breath — pulses 0.18→0.6 opacity at 1.4s loop so the host
+  // sees a heartbeat hint around their face ("you're about to go live").
+  const preRingPulse = useRef(new Animated.Value(0)).current;
+  // Go-live button red glow halo — same beat as the avatar ring so the eye
+  // ties hero + CTA together as one "going live" rhythm.
+  const preBtnGlow = useRef(new Animated.Value(0)).current;
+  // Audience pill scale — bumps to 1.05 on selection (spring) so the user
+  // feels the choice land instead of a static color swap.
+  const preAudScale = useRef({
+    public: new Animated.Value(audience === 'public' ? 1.05 : 1),
+    friends: new Animated.Value(audience === 'friends' ? 1.05 : 1),
+    private: new Animated.Value(audience === 'private' ? 1.05 : 1),
+  }).current;
+  useEffect(() => {
+    if (!preStart) return undefined;
+    const ringLoop = Animated.loop(Animated.sequence([
+      Animated.timing(preRingPulse, { toValue: 1, duration: 1400, useNativeDriver: true }),
+      Animated.timing(preRingPulse, { toValue: 0, duration: 1400, useNativeDriver: true }),
+    ]));
+    const glowLoop = Animated.loop(Animated.sequence([
+      Animated.timing(preBtnGlow, { toValue: 1, duration: 1400, useNativeDriver: true }),
+      Animated.timing(preBtnGlow, { toValue: 0, duration: 1400, useNativeDriver: true }),
+    ]));
+    ringLoop.start();
+    glowLoop.start();
+    return () => { ringLoop.stop(); glowLoop.stop(); };
+  }, [preStart, preRingPulse, preBtnGlow]);
+  // Spring the active pill up, the rest back to 1. Native driver = no jank.
+  useEffect(() => {
+    ['public', 'friends', 'private'].forEach((key) => {
+      Animated.spring(preAudScale[key], {
+        toValue: audience === key ? 1.05 : 1,
+        friction: 5,
+        tension: 140,
+        useNativeDriver: true,
+      }).start();
+    });
+  }, [audience, preAudScale]);
+
   // ICE config
   const iceConfig = {
     iceServers: [
@@ -1084,20 +1124,29 @@ export default function LiveBroadcastScreen() {
     return (
       <View style={styles.fullScreen}>
         {renderLocalVideo()}
-        {/* Dark gradient overlay */}
+        {/* Dark gradient overlay — radial brand purple bleed bottom + dim top.
+            Plays nice on top of the camera preview (when granted) and reads
+            beautifully even when the preview is black (no permission yet). */}
         <View style={styles.preOverlay}>
+          {/* Brand purple radial glow at the bottom — pure View w/ huge
+              borderRadius so it works on native (no expo-linear-gradient dep).
+              Adds the "warm" Instagram-Live vibe under the card. */}
+          <View pointerEvents="none" style={styles.preGlowPurple} />
+          <View pointerEvents="none" style={styles.preGlowRed} />
+          {/* Close X — wrapped in a glass circular backdrop for contrast. */}
           <TouchableOpacity
             onPress={() => router.back()}
             style={[styles.closeBtn, { top: insets.top + 16 }]}
             accessibilityLabel="Close"
             accessibilityRole="button"
           >
-            <IconX size={24} color="#fff" />
+            <IconX size={22} color="#fff" />
           </TouchableOpacity>
 
-          {/* Pre-live flip-camera — top-right, mirrors Instagram. Toggles the
+          {/* Pre-live flip-camera — top-left, mirrors Instagram. Toggles the
               facing preference; the actual stream is opened with this value
-              when the host taps "Começar". */}
+              when the host taps "Começar". Uses IconCameraFlip (28px) to
+              match the brand SVG language across call/live surfaces. */}
           <TouchableOpacity
             onPress={() => setPreFacing(f => f === 'user' ? 'environment' : 'user')}
             style={[styles.preFlipBtn, { top: insets.top + 16 }]}
@@ -1105,17 +1154,28 @@ export default function LiveBroadcastScreen() {
             accessibilityRole="button"
             accessibilityLabel={t('live.flipCamera') || 'Flip camera'}
           >
-            <IconCameraFlip size={20} color="#fff" />
+            <IconCameraFlip size={22} color="#fff" />
           </TouchableOpacity>
 
           {/* Hero glass card */}
           <View style={styles.preHero}>
-            <AvatarCircle
-              name={user?.name || user?.email}
-              email={user?.email}
-              size={72}
-              style={styles.preAvatar}
-            />
+            {/* Avatar with breathing red ring — telegraphs the "live" state
+                before the host even taps Começar. NativeDriver opacity loop. */}
+            <View style={styles.preAvatarWrap}>
+              <Animated.View
+                pointerEvents="none"
+                style={[styles.preAvatarPulseRing, {
+                  opacity: preRingPulse.interpolate({ inputRange: [0, 1], outputRange: [0.18, 0.6] }),
+                  transform: [{ scale: preRingPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] }) }],
+                }]}
+              />
+              <AvatarCircle
+                name={user?.name || user?.email}
+                email={user?.email}
+                size={84}
+                style={styles.preAvatar}
+              />
+            </View>
             <Text style={styles.preName} numberOfLines={1}>{user?.name || user?.email?.split('@')[0]}</Text>
             <Text style={styles.preHint}>{t('live.preHint') || 'Tudo pronto pra ir ao vivo'}</Text>
 
@@ -1125,21 +1185,33 @@ export default function LiveBroadcastScreen() {
                 value={titleInput}
                 onChangeText={setTitleInput}
                 placeholder={t('live.enterTitle') || 'Adicione um título à sua live...'}
-                placeholderTextColor="rgba(255,255,255,0.35)"
+                placeholderTextColor="rgba(255,255,255,0.4)"
                 returnKeyType="done"
                 accessibilityLabel={t('live.enterTitle') || 'Live title'}
                 maxLength={100}
               />
               {!titleInput ? (
                 <Animated.View pointerEvents="none" style={[styles.preTitleSparkle, { opacity: placeholderFade }]}>
-                  <IconSparkles size={14} color="rgba(168,85,247,0.85)" />
+                  <IconSparkles size={14} color="rgba(168,85,247,0.9)" />
                 </Animated.View>
-              ) : null}
+              ) : (
+                <TouchableOpacity
+                  onPress={() => setTitleInput('')}
+                  style={styles.preTitleClear}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('common.clear') || 'Clear'}
+                >
+                  <View style={styles.preTitleClearCircle}>
+                    <IconX size={11} color="rgba(255,255,255,0.85)" />
+                  </View>
+                </TouchableOpacity>
+              )}
             </View>
 
             {/* Audience selector — public/friends/private with brand-tinted
                 active state. Sent as `audience` to liveStart so the backend
-                can scope the announce push. */}
+                can scope the announce push. Spring-scaled active pill. */}
             <View style={styles.preAudRow}>
               <Text style={styles.preAudLabel}>{t('live.whoCanSee') || 'Quem pode ver'}</Text>
               <View style={styles.preAudPills}>
@@ -1147,35 +1219,51 @@ export default function LiveBroadcastScreen() {
                   const Icon = opt.Icon;
                   const active = audience === opt.key;
                   return (
-                    <TouchableOpacity
+                    <Animated.View
                       key={opt.key}
-                      onPress={() => setAudience(opt.key)}
-                      style={[styles.preAudPill, active && styles.preAudPillActive]}
-                      activeOpacity={0.85}
-                      accessibilityRole="button"
-                      accessibilityState={{ selected: active }}
-                      accessibilityLabel={opt.label}
+                      style={{ transform: [{ scale: preAudScale[opt.key] }] }}
                     >
-                      <Icon size={14} color={active ? '#fff' : 'rgba(255,255,255,0.75)'} />
-                      <Text style={[styles.preAudPillText, active && { color: '#fff', fontWeight: '800' }]}>
-                        {opt.label}
-                      </Text>
-                    </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => setAudience(opt.key)}
+                        style={[styles.preAudPill, active && styles.preAudPillActive]}
+                        activeOpacity={0.85}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: active }}
+                        accessibilityLabel={opt.label}
+                      >
+                        <Icon size={14} color={active ? '#fff' : 'rgba(255,255,255,0.75)'} />
+                        <Text style={[styles.preAudPillText, active && { color: '#fff', fontWeight: '800' }]}>
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    </Animated.View>
                   );
                 })}
               </View>
             </View>
 
-            <TouchableOpacity
-              onPress={handleStartLive}
-              style={styles.startBtn}
-              activeOpacity={0.85}
-              accessibilityLabel={t('live.goLive') || 'Go Live'}
-              accessibilityRole="button"
-            >
-              <View style={styles.startBtnDot} />
-              <Text style={styles.startBtnText}>{t('live.goLive') || 'Começar'}</Text>
-            </TouchableOpacity>
+            {/* CTA — wrapped in an Animated.View so the red glow loops behind
+                the button (web only via boxShadow). On native, the live dot
+                pulses inside the button instead (same red-heartbeat rhythm). */}
+            <Animated.View style={[styles.startBtnWrap, Platform.OS === 'web' ? {
+              shadowOpacity: preBtnGlow.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0.7] }),
+            } : null]}>
+              <TouchableOpacity
+                onPress={handleStartLive}
+                style={styles.startBtn}
+                activeOpacity={0.9}
+                accessibilityLabel={t('live.goLive') || 'Go Live'}
+                accessibilityRole="button"
+              >
+                <Animated.View style={[styles.startBtnDot, {
+                  transform: [{ scale: preBtnGlow.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1.15] }) }],
+                  opacity: preBtnGlow.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }),
+                }]} />
+                <Text style={styles.startBtnText}>{t('live.goLive') || 'Começar'}</Text>
+              </TouchableOpacity>
+            </Animated.View>
+
+            <Text style={styles.preTip}>{t('live.preTip') || 'Sua câmera ficará visível pros viewers'}</Text>
           </View>
 
           {/* Countdown overlay */}
@@ -2095,68 +2183,115 @@ const styles = StyleSheet.create({
     width: '85%',
     maxWidth: 380,
   },
-  preAvatar: {
-    marginBottom: 16,
+  preAvatarWrap: {
+    width: 96, height: 96,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 14,
+    marginTop: 2,
+  },
+  preAvatarPulseRing: {
+    position: 'absolute',
+    width: 96, height: 96, borderRadius: 48,
     borderWidth: 3,
-    borderColor: 'rgba(255,255,255,0.15)',
+    borderColor: LIVE_RED,
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 0 24px rgba(220,38,38,0.55)',
+    } : {}),
+  },
+  preAvatar: {
+    borderWidth: 3,
+    borderColor: 'rgba(255,255,255,0.22)',
   },
   preName: {
     color: '#fff',
-    fontSize: 20,
-    fontWeight: '700',
-    marginBottom: 24,
-    letterSpacing: 0.3,
+    fontSize: 22,
+    fontWeight: '800',
+    marginBottom: 4,
+    letterSpacing: 0.2,
   },
   titleInput: {
     width: '100%',
-    height: 52,
+    height: 54,
     borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
-    paddingHorizontal: 18,
+    borderColor: 'rgba(255,255,255,0.1)',
+    paddingHorizontal: 38,
     color: '#fff',
     fontSize: 16,
-    marginBottom: 24,
+    fontWeight: '600',
     textAlign: 'center',
     ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+  },
+  preTitleClear: {
+    position: 'absolute',
+    right: 10, top: 0, bottom: 0,
+    justifyContent: 'center',
+  },
+  preTitleClearCircle: {
+    width: 22, height: 22, borderRadius: 11,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  startBtnWrap: {
+    width: '100%',
+    alignItems: 'center',
+    ...(Platform.OS === 'web' ? {
+      shadowColor: LIVE_RED,
+      shadowOffset: { width: 0, height: 0 },
+      shadowRadius: 28,
+    } : {}),
   },
   startBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 40,
+    justifyContent: 'center',
+    height: 60,
+    paddingHorizontal: 44,
     borderRadius: 30,
     backgroundColor: LIVE_RED,
-    gap: 10,
+    gap: 12,
+    minWidth: 220,
     ...(Platform.OS === 'web' ? {
-      boxShadow: `0 4px 20px rgba(220, 38, 38, 0.4), 0 0 40px rgba(220, 38, 38, 0.15)`,
+      boxShadow: '0 8px 26px rgba(220, 38, 38, 0.55), 0 0 48px rgba(220, 38, 38, 0.22)',
     } : {}),
   },
   startBtnDot: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     backgroundColor: '#fff',
   },
   startBtnText: {
     color: '#fff',
     fontSize: 18,
     fontWeight: '800',
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
+  },
+  preTip: {
+    color: 'rgba(255,255,255,0.45)',
+    fontSize: 11,
+    fontWeight: '500',
+    marginTop: 14,
+    textAlign: 'center',
+    letterSpacing: 0.1,
+    maxWidth: 280,
   },
   closeBtn: {
     position: 'absolute',
     right: 20,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.5)',
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    borderColor: 'rgba(255,255,255,0.12)',
+    ...(Platform.OS === 'web' ? {
+      backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
+    } : {}),
   },
 
   // Countdown
@@ -2754,30 +2889,57 @@ const styles = StyleSheet.create({
   },
 
   // ----- Pre-live hero card -----
-  // The old `.preContent` is preserved above; the new `.preHero` wraps it with
-  // a glass card, hint, and audience pill area. Both render w/ AvatarCircle.
+  // Glass card sitting on top of the brand-purple radial glow. The card hosts
+  // avatar + hint + title input + audience pills + CTA + tip line — full
+  // Instagram-Live grade pre-roll surface.
   preHero: {
     width: '88%',
     maxWidth: 400,
     alignItems: 'center',
-    backgroundColor: 'rgba(20,20,32,0.55)',
-    borderRadius: 24,
-    paddingVertical: 22,
-    paddingHorizontal: 20,
+    backgroundColor: 'rgba(20,20,30,0.62)',
+    borderRadius: 26,
+    paddingVertical: 24,
+    paddingHorizontal: 22,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.08)',
+    borderColor: 'rgba(255,255,255,0.12)',
     ...(Platform.OS === 'web' ? {
-      backdropFilter: 'blur(18px)', WebkitBackdropFilter: 'blur(18px)',
-      boxShadow: '0 18px 50px rgba(0,0,0,0.55), 0 0 1px rgba(168,85,247,0.4)',
+      backdropFilter: 'blur(22px) saturate(140%)', WebkitBackdropFilter: 'blur(22px) saturate(140%)',
+      boxShadow: '0 24px 60px rgba(0,0,0,0.6), 0 0 1px rgba(168,85,247,0.55)',
     } : {}),
   },
   preHint: {
-    color: 'rgba(255,255,255,0.6)',
-    fontSize: 12,
-    fontWeight: '600',
-    letterSpacing: 0.2,
-    marginTop: -16,
-    marginBottom: 16,
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 13,
+    fontWeight: '500',
+    fontStyle: 'italic',
+    letterSpacing: 0.1,
+    marginTop: 0,
+    marginBottom: 18,
+  },
+  // Radial brand glows sitting behind the card. We can't do a real radial
+  // gradient w/o expo-linear-gradient, so we fake it with two huge circles —
+  // purple bottom, red top-right — at very low alpha for that "live energy"
+  // ambient lighting (Instagram Live signature).
+  preGlowPurple: {
+    position: 'absolute',
+    width: 520, height: 520,
+    borderRadius: 260,
+    backgroundColor: 'rgba(124,58,237,0.35)',
+    bottom: -200,
+    alignSelf: 'center',
+    ...(Platform.OS === 'web' ? {
+      filter: 'blur(80px)', WebkitFilter: 'blur(80px)',
+    } : { opacity: 0.5 }),
+  },
+  preGlowRed: {
+    position: 'absolute',
+    width: 320, height: 320,
+    borderRadius: 160,
+    backgroundColor: 'rgba(220,38,38,0.22)',
+    top: -100, right: -80,
+    ...(Platform.OS === 'web' ? {
+      filter: 'blur(70px)', WebkitFilter: 'blur(70px)',
+    } : { opacity: 0.45 }),
   },
   preTitleWrap: {
     width: '100%',

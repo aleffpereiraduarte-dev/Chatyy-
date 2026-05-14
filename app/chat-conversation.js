@@ -48,6 +48,7 @@ import {
   IconArchive, IconMessageSquare, IconFilm, IconShare, IconMail, IconUserPlus, IconBookmark,
   IconReceipt, IconPackage,
   IconRotateCw, IconRotateCcw, IconFlipHorizontal, IconFlipVertical, IconCrop, IconPencil, IconUndo,
+  IconLink,
 } from '../components/Icons';
 import * as Clipboard from 'expo-clipboard';
 import { WebView } from 'react-native-webview';
@@ -16844,88 +16845,125 @@ export default function ChatConversationScreen() {
                   }
                 }}
                 style={[styles.replyIndicator, {
-                  backgroundColor: isOwn ? 'rgba(255,255,255,0.12)' : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'),
+                  // Brand purple wash — sutil tint that contrasts against the
+                  // bubble background on BOTH own (lavender) and other (white/
+                  // dark) bubbles. Previous neutral overlays blended with the
+                  // own-bubble fill on light theme so the quote section
+                  // disappeared visually. Wash uses ~8% brand purple per spec.
+                  backgroundColor: isOwn
+                    ? (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(124,58,237,0.10)')
+                    : 'rgba(124,58,237,0.08)',
                   borderLeftColor: replySenderColor,
                 }]}
               >
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-                  <View style={{ flex: 1, marginRight: (msg.reply_to?.type === 'image' || msg.reply_to?.type === 'video') && msg.reply_to?.file_url ? 8 : 0 }}>
+                  <View style={{ flex: 1, maxWidth: '70%', marginRight: (msg.reply_to?.type === 'image' || msg.reply_to?.type === 'video') && msg.reply_to?.file_url ? 8 : 0 }}>
                     <Text style={[styles.replyName, { color: replySenderColor }]} numberOfLines={1}>
                       {replyDisplayName}
                     </Text>
-                    <Text style={[styles.replyText, { color: isOwn ? ownMetaColor : colors.textSecondary }, msg.reply_to?.deleted_at && { fontStyle: 'italic', opacity: 0.7 }]} numberOfLines={2}>
-                      {msg.reply_to?.deleted_at
-                        ? (t('chatConv.deletedMessage') || 'Esta mensagem foi apagada')
-                        // Partial-text quote (Telegram premium): when the
-                        // sender selected only a snippet of the parent
-                        // message, render the snippet inside «curly quotes»
-                        // so it visually reads as an excerpt rather than the
-                        // whole message body.
-                        : msg.reply_quote_text
-                          ? ('“' + msg.reply_quote_text + '”')
-                        // Image / video: when the quoted bubble had a real
-                        // caption (not the URL or filename), show that as
-                        // the preview line; otherwise use a short emoji
-                        // label that pairs with the thumbnail on the right.
-                        // WhatsApp parity.
-                        : msg.reply_to?.type === 'image'    ? (msg.reply_to?.content && !/^https?:\/\//i.test(msg.reply_to?.content) && msg.reply_to?.content !== msg.reply_to?.file_name ? msg.reply_to?.content : ('📷 ' + (t('chat.photo') || 'Foto')))
-                        : msg.reply_to?.type === 'video' ? (msg.reply_to?.content && !/^https?:\/\//i.test(msg.reply_to?.content) && msg.reply_to?.content !== msg.reply_to?.file_name ? msg.reply_to?.content : ('🎥 ' + (t('chat.video') || 'Vídeo')))
-                        : msg.reply_to?.type === 'audio' ? ('🎤 ' + (t('chat.audio') || 'Áudio'))
-                        : msg.reply_to?.type === 'file'  ? ('📄 ' + (msg.reply_to?.file_name || t('chat.file') || 'Arquivo'))
-                        : msg.reply_to?.type === 'gif'     ? ('🎞️ GIF')
-                        : msg.reply_to?.type === 'sticker' ? ('💟 ' + (t('chat.sticker') || 'Figurinha'))
-                        : msg.reply_to?.type === 'location'? ('📍 ' + (t('chatConv.location') || 'Localização'))
-                        : msg.reply_to?.type === 'contact' ? ('👤 ' + (t('chatConv.contact') || 'Contato'))
-                        : msg.reply_to?.type === 'poll'    ? ('📊 ' + (t('chat.poll') || 'Enquete'))
-                        : msg.reply_to?.type === 'call_card' ? ('📞 ' + (t('chat.call') || 'Chamada'))
-                        // status_reply: never dump the raw JSON. Show the
-                        // user's reply text + the underlying status type tag
-                        // so it reads as "Q limdooo · Vídeo" instead of the
-                        // unparsed payload.
-                        : msg.reply_to?.type === 'status_reply' ? (() => {
-                            let sr = msg.reply_to?.status_reply;
-                            if (!sr) { try { sr = JSON.parse(msg.reply_to?.content || '{}'); } catch { sr = {}; } }
-                            const txt = (sr?.reply_text || '').trim();
-                            const stType = sr?.status?.type;
+                    {(() => {
+                      // Build the preview as { icon, label } so non-text
+                      // replies render an inline SVG glyph instead of an
+                      // emoji prefix (project rule: no emoji in UI chrome).
+                      // Falls back to a plain string for pure text/quote
+                      // replies — Text wraps those naturally.
+                      const baseTextStyle = [
+                        styles.replyText,
+                        { color: isOwn ? ownMetaColor : colors.textSecondary },
+                        msg.reply_to?.deleted_at && { fontStyle: 'italic', opacity: 0.7 },
+                      ];
+                      const iconColor = isOwn ? ownMetaColor : (isDark ? '#a78bfa' : '#7C3AED');
+                      const renderIconLabel = (IconCmp, label) => (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                          <IconCmp size={12} color={iconColor} />
+                          <Text style={baseTextStyle} numberOfLines={1} ellipsizeMode="tail">
+                            {label}
+                          </Text>
+                        </View>
+                      );
+                      if (msg.reply_to?.deleted_at) {
+                        return (
+                          <Text style={baseTextStyle} numberOfLines={1} ellipsizeMode="tail">
+                            {t('chatConv.deletedMessage') || 'Esta mensagem foi apagada'}
+                          </Text>
+                        );
+                      }
+                      // Partial-text quote (Telegram premium)
+                      if (msg.reply_quote_text) {
+                        return (
+                          <Text style={baseTextStyle} numberOfLines={1} ellipsizeMode="tail">
+                            {'“' + msg.reply_quote_text + '”'}
+                          </Text>
+                        );
+                      }
+                      // Image: real caption beats type-tag
+                      if (msg.reply_to?.type === 'image') {
+                        const hasCaption = msg.reply_to?.content && !/^https?:\/\//i.test(msg.reply_to?.content) && msg.reply_to?.content !== msg.reply_to?.file_name;
+                        return hasCaption
+                          ? <Text style={baseTextStyle} numberOfLines={1} ellipsizeMode="tail">{msg.reply_to?.content}</Text>
+                          : renderIconLabel(IconImage, t('chat.photo') || 'Foto');
+                      }
+                      if (msg.reply_to?.type === 'video') {
+                        const hasCaption = msg.reply_to?.content && !/^https?:\/\//i.test(msg.reply_to?.content) && msg.reply_to?.content !== msg.reply_to?.file_name;
+                        return hasCaption
+                          ? <Text style={baseTextStyle} numberOfLines={1} ellipsizeMode="tail">{msg.reply_to?.content}</Text>
+                          : renderIconLabel(IconFilm, t('chat.video') || 'Vídeo');
+                      }
+                      if (msg.reply_to?.type === 'audio')    return renderIconLabel(IconMic, t('chat.audio') || 'Áudio');
+                      if (msg.reply_to?.type === 'file')     return renderIconLabel(IconFileText, msg.reply_to?.file_name || t('chat.file') || 'Arquivo');
+                      if (msg.reply_to?.type === 'gif')      return renderIconLabel(IconFilm, 'GIF');
+                      if (msg.reply_to?.type === 'sticker')  return renderIconLabel(IconImage, t('chat.sticker') || 'Figurinha');
+                      if (msg.reply_to?.type === 'location') return renderIconLabel(IconMapPin, t('chatConv.location') || 'Localização');
+                      if (msg.reply_to?.type === 'contact')  return renderIconLabel(IconUser, t('chatConv.contact') || 'Contato');
+                      if (msg.reply_to?.type === 'poll')     return renderIconLabel(IconBarChart, t('chat.poll') || 'Enquete');
+                      if (msg.reply_to?.type === 'call_card') return renderIconLabel(IconPhone, t('chat.call') || 'Chamada');
+                      // status_reply: never dump the raw JSON. Show the
+                      // user's reply text + the underlying status type tag
+                      // so it reads as "Q limdooo · Vídeo" instead of the
+                      // unparsed payload.
+                      if (msg.reply_to?.type === 'status_reply') {
+                        let sr = msg.reply_to?.status_reply;
+                        if (!sr) { try { sr = JSON.parse(msg.reply_to?.content || '{}'); } catch { sr = {}; } }
+                        const txt = (sr?.reply_text || '').trim();
+                        const stType = sr?.status?.type;
+                        const tag = stType === 'image' ? (t('status.typePhoto') || 'Foto')
+                                  : stType === 'video' ? (t('status.typeVideo') || 'Vídeo')
+                                  : (t('status.statusLabel') || 'Status');
+                        const label = txt ? (txt + ' · ' + tag) : tag;
+                        return (
+                          <Text style={baseTextStyle} numberOfLines={1} ellipsizeMode="tail">{label}</Text>
+                        );
+                      }
+                      // Text content fallback. Strip raw URLs that leaked
+                      // from media fields; detect JSON status_reply payloads
+                      // that old clients shipped untyped; show a link icon
+                      // for plain links instead of the bare URL.
+                      const c = String(msg.reply_to?.content || '').trim();
+                      if (!c) {
+                        return <Text style={baseTextStyle} numberOfLines={1} ellipsizeMode="tail">{''}</Text>;
+                      }
+                      if (c.startsWith('{') && c.endsWith('}')) {
+                        try {
+                          const j = JSON.parse(c);
+                          if (j && typeof j === 'object' && j.reply_text !== undefined && j.status && typeof j.status === 'object') {
+                            const txt = (j.reply_text || '').trim();
+                            const stType = j.status.type;
                             const tag = stType === 'image' ? (t('status.typePhoto') || 'Foto')
                                       : stType === 'video' ? (t('status.typeVideo') || 'Vídeo')
                                       : (t('status.statusLabel') || 'Status');
-                            return txt ? (txt + ' · ' + tag) : tag;
-                          })()
-                        // Text messages: never render raw URLs from media
-                        // fields that leaked into content (old bug shipped
-                        // sticker/gif URLs in content). Strip them out.
-                        // If the message has a file_url and content looks like
-                        // an http URL, it's a GIF/sticker that arrived without
-                        // its `type` set — show a generic media pill instead
-                        // of the raw URL.
-                        : (() => {
-                            const c = String(msg.reply_to?.content || '').trim();
-                            if (!c) return '';
-                            // status_reply payloads can leak as plain JSON in
-                            // older clients that didn't normalize the type.
-                            // Detect by shape and surface the reply text +
-                            // type tag instead of the raw JSON.
-                            if (c.startsWith('{') && c.endsWith('}')) {
-                              try {
-                                const j = JSON.parse(c);
-                                if (j && typeof j === 'object' && j.reply_text !== undefined && j.status && typeof j.status === 'object') {
-                                  const txt = (j.reply_text || '').trim();
-                                  const stType = j.status.type;
-                                  const tag = stType === 'image' ? (t('status.typePhoto') || 'Foto')
-                                            : stType === 'video' ? (t('status.typeVideo') || 'Vídeo')
-                                            : (t('status.statusLabel') || 'Status');
-                                  return txt ? (txt + ' · ' + tag) : tag;
-                                }
-                              } catch {}
-                            }
-                            if (/^https?:\/\//i.test(c)) {
-                              if (msg.reply_to?.file_url || /\.(gif|webp)(\?|$)/i.test(c)) return '🎞️ GIF';
-                              return '🔗 ' + (t('chat.link') || 'Link');
-                            }
-                            return c;
-                          })()}
-                    </Text>
+                            const label = txt ? (txt + ' · ' + tag) : tag;
+                            return <Text style={baseTextStyle} numberOfLines={1} ellipsizeMode="tail">{label}</Text>;
+                          }
+                        } catch {}
+                      }
+                      if (/^https?:\/\//i.test(c)) {
+                        if (msg.reply_to?.file_url || /\.(gif|webp)(\?|$)/i.test(c)) {
+                          return renderIconLabel(IconFilm, 'GIF');
+                        }
+                        return renderIconLabel(IconLink, t('chat.link') || 'Link');
+                      }
+                      return <Text style={baseTextStyle} numberOfLines={1} ellipsizeMode="tail">{c}</Text>;
+                    })()}
                   </View>
                   {!msg.reply_to?.deleted_at && (msg.reply_to?.type === 'image' || msg.reply_to?.type === 'video') && msg.reply_to?.file_url && (
                     <View style={{ width: 48, height: 48, borderRadius: 6, overflow: 'hidden', position: 'relative', backgroundColor: 'rgba(0,0,0,0.18)' }}>
@@ -23646,18 +23684,18 @@ const styles = StyleSheet.create({
   msgSenderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 3, marginLeft: 4 },
   msgSender: { fontSize: 13, fontWeight: '700', letterSpacing: -0.15 },
   replyIndicator: {
-    borderLeftWidth: 3, borderRadius: 12,
-    paddingHorizontal: 10, paddingVertical: 8,
+    borderLeftWidth: 3, borderRadius: 4,
+    paddingHorizontal: 8, paddingVertical: 6,
     marginBottom: 6,
     // Natural width — lets the reply preview push the bubble out to
     // accommodate the quoted text + sender name. `alignSelf: 'stretch'`
     // (previous iteration) made it conform to the bubble, which in turn
     // shrank to the reply content ("gg") → illegible truncation.
     // minWidth gives it a baseline so even one-word quotes don't collapse.
-    minWidth: 230,
+    minWidth: 200,
   },
-  replyName: { fontSize: 13.5, fontWeight: '700', letterSpacing: -0.1, marginBottom: 2 },
-  replyText: { fontSize: 13, lineHeight: 17, marginTop: 1, opacity: 0.85 },
+  replyName: { fontSize: 11, fontWeight: '700', letterSpacing: -0.1, marginBottom: 2 },
+  replyText: { fontSize: 12, lineHeight: 16, opacity: 0.78 },
   bubble: {
     borderRadius: 18, paddingHorizontal: 12,
     paddingTop: 7, paddingBottom: 6,
@@ -23677,7 +23715,7 @@ const styles = StyleSheet.create({
       web: { boxShadow: '0 2px 8px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.05)' },
     }),
   },
-  bubbleWithReply: { minWidth: 230 },
+  bubbleWithReply: { minWidth: 200 },
   bubbleOwn: {
     borderTopLeftRadius: 18, borderTopRightRadius: 18,
     borderBottomLeftRadius: 18, borderBottomRightRadius: 5,
