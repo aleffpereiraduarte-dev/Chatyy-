@@ -279,61 +279,42 @@ function withBroadcastPodTarget(config) {
       const marker = `target '${EXT_NAME}' do`;
       if (pod.includes(marker)) return cfg;
 
-      // [2026-05-15 fix] CocoaPods requires extension targets to be NESTED
+      // [2026-05-15 fix v2] CocoaPods requires extension targets NESTED
       // INSIDE the main app target — otherwise: "Unable to find host targets
-      // for ChatyyBroadcastExtension". The main app target name is derived
-      // from CFBundleName which is "Chatyy" (NOT the bundle id). Find it
-      // dynamically by matching `target '<name>' do` at top level — first
-      // match is the main app.
-      const mainTargetRe = /^target ['"]([^'"]+)['"] do\b/m;
-      const m = pod.match(mainTargetRe);
-      if (!m) {
-        console.warn('[with-broadcast-extension] No main app target found in Podfile — skipping nesting, build will likely fail');
-        return cfg;
+      // for ChatyyBroadcastExtension".
+      //
+      // First attempt depth-counted `do/end` parsing — that was unreliable
+      // because Ruby `if/unless/case/def...end` blocks have no `do` but
+      // still emit `end`, throwing depth off. Instead: find the LAST
+      // top-level `end` (column 0) in the Podfile — in Expo's template
+      // that's the main target's closing `end`. Inject before it.
+      const lines = pod.split('\n');
+      let lastTopLevelEndLine = -1;
+      for (let i = 0; i < lines.length; i++) {
+        // Top-level `end` = starts at column 0 (no leading whitespace) and is
+        // exactly `end` or `end ...`. Anything indented is nested.
+        if (/^end\s*$/.test(lines[i])) lastTopLevelEndLine = i;
       }
-      const mainTargetName = m[1];
-
-      // Find the closing `end` of the main target block. Match from the
-      // target line forward, counting nested `do` ... `end` pairs.
-      const targetStart = pod.indexOf(m[0]);
-      let depth = 0;
-      let i = targetStart;
-      let closingEndIdx = -1;
-      const lines = pod.slice(targetStart).split('\n');
-      let lineIdx = 0;
-      let offset = targetStart;
-      for (const line of lines) {
-        const trimmed = line.trim();
-        // Increment depth on `do` blocks (`target ... do`, `pre_install do`, etc.)
-        if (/\bdo\b/.test(trimmed) && !trimmed.startsWith('#')) depth += 1;
-        // Decrement on standalone `end`
-        if (trimmed === 'end' || trimmed.startsWith('end ')) {
-          depth -= 1;
-          if (depth === 0) { closingEndIdx = offset; break; }
-        }
-        offset += line.length + 1; // +1 for newline
-        lineIdx += 1;
-      }
-      if (closingEndIdx === -1) {
-        console.warn('[with-broadcast-extension] Could not locate end of main target — appending at EOF as fallback');
+      if (lastTopLevelEndLine === -1) {
+        console.warn('[with-broadcast-extension] No top-level `end` found — appending at EOF as fallback');
         pod += `\n\ntarget '${EXT_NAME}' do\n  platform :ios, '15.0'\n  pod 'LiveKitClient', '~> 2.0'\nend\n`;
         fs.writeFileSync(podfilePath, pod);
         return cfg;
       }
 
-      // Inject nested target right before the main target's closing `end`.
-      const nested =
-        `\n  # [2026-05-15 #827] Auto-injected nested broadcast extension target.\n` +
-        `  # Inheriting :search_paths so we don't double-link the main app's\n` +
-        `  # heavy pods (Firebase, etc) — extension just needs LiveKit + RTC.\n` +
-        `  target '${EXT_NAME}' do\n` +
-        `    inherit! :search_paths\n` +
-        `    platform :ios, '15.0'\n` +
-        `    pod 'LiveKitClient', '~> 2.0'\n` +
-        `  end\n`;
-      pod = pod.slice(0, closingEndIdx) + nested + pod.slice(closingEndIdx);
-      fs.writeFileSync(podfilePath, pod);
-      console.log(`[with-broadcast-extension] Injected nested ${EXT_NAME} target inside ${mainTargetName}`);
+      const nested = [
+        `  # [2026-05-15 #827] Auto-injected nested broadcast extension target.`,
+        `  # Inheriting :search_paths so we don't double-link the main app's`,
+        `  # heavy pods (Firebase, etc) — extension just needs LiveKit + RTC.`,
+        `  target '${EXT_NAME}' do`,
+        `    inherit! :search_paths`,
+        `    platform :ios, '15.0'`,
+        `    pod 'LiveKitClient', '~> 2.0'`,
+        `  end`,
+      ];
+      lines.splice(lastTopLevelEndLine, 0, ...nested);
+      fs.writeFileSync(podfilePath, lines.join('\n'));
+      console.log(`[with-broadcast-extension] Injected nested ${EXT_NAME} target before line ${lastTopLevelEndLine + 1}`);
       return cfg;
     },
   ]);
