@@ -1780,36 +1780,90 @@ export default function OneScreen() {
   const realtimeRef = useRef(null); // OneRealtimeSession — OpenAI Realtime WS client (web)
   const emptyListenRef = useRef(0); // consecutive empty transcriptions in voice mode (guard vs mic-stuck-on)
 
-  // [bug-fix #one-ai-1h] Track when the user last sent or received a message
-  // in the current conversation. On re-focus, if >60 min have passed, clear
-  // local state and start fresh — same window as the cold-start auto-restore.
-  // Without this, returning to /one after lunch shows yesterday's thread.
+  // [bug-fix #one-ai-2h, 2026-05-15] Auto-fresh conversation after idle window.
+  //
+  // Previous incarnation (#one-ai-1h) only updated `lastActiveAt` on *send*
+  // and only on `useFocusEffect`, so:
+  //   1. AI replies didn't bump the timestamp — if you sent a question, walked
+  //      away while it was streaming, and came back 70min later, focus-effect
+  //      saw the send timestamp (>60min ago) and cleared — but the auto-restore
+  //      gate (`initialLoaded`) had already fired, so the cleared `conversationId`
+  //      was the only signal the next send had. Result: 50/50 whether the send
+  //      attached to the dead convo (server side `conversation_id` was still
+  //      passed in via stale state) or made a new one.
+  //   2. If the user just lurked re-reading the thread, the timestamp never
+  //      bumped, so reset triggered even though the user *was* engaged.
+  //   3. Cached `one_messages_<id>` were never invalidated on reset, so on the
+  //      NEXT visit `loadConversations(true)` re-hydrated old messages from
+  //      cache before realising the convo had aged out.
+  //
+  // Fixes here:
+  //   - Threshold bumped back to **2h** (matches #944 ship note).
+  //   - Single `resetIfStale()` helper used from focus-effect AND from the
+  //     auto-restore path so behaviour is identical.
+  //   - Resets clear `one_messages_<convId>` from cache so a cold reopen
+  //     doesn't flash the old thread for 100ms before the network call.
+  //   - `lastActiveAt` is bumped on EVERY user send AND on every AI response
+  //     receipt — see `handleAIResponse` + `sendMessage`.
+  //   - On reset, AsyncStorage is rewritten with `Date.now()` so the next
+  //     reset only fires after another full idle window.
+  const ONE_RESET_WINDOW_MS = 2 * 60 * 60 * 1000; // 2 hours
   const lastActiveAtRef = useRef(Date.now());
 
+  // Reusable across focus-effect + auto-restore. Returns true if it actually
+  // performed a reset (caller can short-circuit subsequent restore steps).
+  const resetIfStale = useCallback(async () => {
+    try {
+      const key = `oneAi.lastActiveAt.${user?.email || 'anon'}`;
+      const persisted = await getCached(key);
+      const now = Date.now();
+      // No persisted stamp means "first ever open on this device for this
+      // user" — treat as fresh, just plant the stamp.
+      if (typeof persisted !== 'number' || persisted <= 0) {
+        setCache(key, now, 86400000 * 30).catch(() => {});
+        lastActiveAtRef.current = now;
+        return false;
+      }
+      const since = now - persisted;
+      if (since >= ONE_RESET_WINDOW_MS) {
+        // Wipe cached messages for the convo we're about to abandon so the
+        // next mount can't flash them from cache.
+        try {
+          const cid = conversationId;
+          if (cid) setCache('one_messages_' + cid, [], 1).catch(() => {});
+        } catch {}
+        try { aiAbortRef.current?.abort?.(); } catch {}
+        setMessages([]);
+        setConversationId(null);
+        setCache(key, now, 86400000 * 30).catch(() => {});
+        lastActiveAtRef.current = now;
+        return true;
+      }
+      // Within window — restore stamp ref so in-session sends compute idle
+      // correctly even if the user closes/reopens mid-thread.
+      lastActiveAtRef.current = persisted;
+      return false;
+    } catch {
+      return false;
+    }
+  }, [user?.email, conversationId]);
+
+  // Bump persistence on any activity (user send OR AI reply received).
+  // Exposed as a ref-stable callback for safety across closures.
+  const bumpActivity = useCallback(() => {
+    try {
+      lastActiveAtRef.current = Date.now();
+      const key = `oneAi.lastActiveAt.${user?.email || 'anon'}`;
+      setCache(key, Date.now(), 86400000 * 30).catch(() => {});
+    } catch {}
+  }, [user?.email]);
+
   useFocusEffect(useCallback(() => {
-    const ONE_HOUR_MS = 3600000;
-    (async () => {
-      try {
-        // Persist last-active across app kills via AsyncStorage. Per-account
-        // key prevents cache leak between users (memory: account_isolation_login_nuke).
-        const key = `oneAi.lastActiveAt.${user?.email || 'anon'}`;
-        const persisted = await getCached(key);
-        const stamp = (typeof persisted === 'number' && persisted > 0) ? persisted : lastActiveAtRef.current;
-        const since = Date.now() - stamp;
-        if (since >= ONE_HOUR_MS) {
-          setMessages([]);
-          setConversationId(null);
-          setCache(key, Date.now(), 86400000 * 30).catch(() => {});
-          lastActiveAtRef.current = Date.now();
-        } else {
-          lastActiveAtRef.current = stamp;
-        }
-      } catch {}
-    })();
+    resetIfStale();
     return () => {
       try { aiAbortRef.current?.abort?.(); } catch {}
     };
-  }, [user?.email]));
+  }, [resetIfStale]));
 
   const firstName = user?.name?.split(' ')[0] || user?.email?.split('@')[0] || '';
 
@@ -1838,16 +1892,23 @@ export default function OneScreen() {
       setConversations(convos);
       setCache('one_conversations', res, 7776000000).catch(() => {});
 
-      // Auto-restore if the last conversation message is < 1h old.
-      // Window is per-message: any reply within the hour resets the clock.
-      // Past 1h the screen opens fresh — user complained that after 1h
-      // it was still landing on the old thread (window was briefly 2h,
-      // reverted to 1h 2026-05-14 on direct ask).
+      // Auto-restore if the last conversation message is < 2h old (matches
+      // ONE_RESET_WINDOW_MS in the focus-effect above). Two independent gates
+      // would let a "fresh" focus-effect re-hydrate a thread the auto-restore
+      // would have rejected. Keep them in sync.
       if (autoRestore && convos.length > 0 && !conversationId && messages.length === 0) {
         const last = convos[0]; // most recent
         const lastUpdated = new Date(last.updated_at || last.created_at);
         const msAgo = Date.now() - lastUpdated.getTime();
-        if (msAgo >= 3600000) return; // older than 1h → start fresh
+        if (msAgo >= ONE_RESET_WINDOW_MS) {
+          // Server-side convo is stale too — make sure local timestamp matches
+          // so future focuses don't oscillate between "restore" and "reset".
+          try {
+            const key = `oneAi.lastActiveAt.${user?.email || 'anon'}`;
+            setCache(key, Date.now(), 86400000 * 30).catch(() => {});
+          } catch {}
+          return; // older than window → start fresh
+        }
         setConversationId(last.id);
         // Show cached messages instantly
         const cachedMsgs = await getCached('one_messages_' + last.id);
@@ -1872,7 +1933,7 @@ export default function OneScreen() {
     } catch {} finally {
       setInitialLoading(false);
     }
-  }, [conversationId, messages.length, firstName]);
+  }, [conversationId, messages.length, firstName, user?.email]);
 
   useEffect(() => {
     if (!initialLoaded) {
@@ -2035,6 +2096,10 @@ export default function OneScreen() {
 
   // ─── Shared post-response handler (used by both streaming and fallback paths) ───
   const handleAIResponse = useCallback((responseText, actions, aiMsgId) => {
+    // [bug-fix #one-ai-2h] Bump idle timer on every AI reply too — without
+    // this, a long-thinking question (>2h via tools/streaming) would idle out
+    // its own reply by the time it lands.
+    try { bumpActivity(); } catch {}
     // Auto-execute actions from AI. Two shapes come in:
     //   Legacy PHP: { action: 'start_call', phone: '...' }
     //   New Rust one-api: { tool: 'send_email', action: 'send_email', params: {...} }
@@ -2116,7 +2181,7 @@ export default function OneScreen() {
         }
       });
     }
-  }, [locale, router]);
+  }, [locale, router, bumpActivity]);
 
   // ─── Fallback: non-streaming path ────────────────────────────────────────────
   const sendMessageFallback = useCallback(async (msg, currentImage, aiMsgId) => {
@@ -2175,14 +2240,10 @@ export default function OneScreen() {
     const msg = (text || inputText).trim();
     if (!msg && !attachedImage) return;
     if (loading) return;
-    // [bug-fix #one-ai-1h] Mark activity so the focus-effect 60-min reset
+    // [bug-fix #one-ai-2h] Mark activity so the focus-effect idle reset
     // only kicks in after a real idle window. Persisted via AsyncStorage so
     // it survives app kill — without this, refreshing kept stale convo.
-    lastActiveAtRef.current = Date.now();
-    try {
-      const _k = `oneAi.lastActiveAt.${user?.email || 'anon'}`;
-      setCache(_k, Date.now(), 86400000 * 30).catch(() => {});
-    } catch {}
+    bumpActivity();
     // /save <label>: <command> — persists a workflow chip instead of
     // sending. Lets power-users build personal macros in one line.
     if (msg.startsWith('/save ') || msg.startsWith('/salvar ')) {
@@ -2321,7 +2382,7 @@ export default function OneScreen() {
       setLoading(false);
       loadConversations(false);
     }
-  }, [inputText, attachedImage, loading, conversationId, t, firstName, loadConversations, locale, sendMessageFallback, handleAIResponse]);
+  }, [inputText, attachedImage, loading, conversationId, t, firstName, loadConversations, locale, sendMessageFallback, handleAIResponse, bumpActivity]);
   // Wire the ref AFTER sendMessage is defined so the proactive briefing
   // effect up above can trigger a send without causing a TDZ cycle.
   // Deferred to useEffect to avoid TDZ in minified bundle (sendMessage
