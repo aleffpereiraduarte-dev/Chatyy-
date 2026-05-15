@@ -3,7 +3,15 @@ import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, TextInput,
   ActivityIndicator, RefreshControl, Alert, Modal, ScrollView,
   Switch, Platform, Linking, KeyboardAvoidingView, Animated, PanResponder, Easing,
+  Dimensions,
 } from 'react-native';
+
+// Compact header heuristic: narrow phone screens (< 420px) can't fit
+// month/week toggle + "Hoje" + Timezones + Sync + Plus in a single row.
+// User reported "header do calendário quebrando no celular". On narrow
+// screens we collapse the lower-priority controls (view toggle, timezones,
+// sync) — the FAB and "Hoje" stay. Toggle still works via swipe gesture.
+const _CAL_HEADER_COMPACT = Dimensions.get('window').width < 420;
 // FlashList reverted to FlatList
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -2150,38 +2158,43 @@ function CalendarScreenInner() {
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: '#fff' }]}>{t('calendar.title')}</Text>
         <View style={styles.headerRight}>
-          {/* View Toggle */}
-          <View style={[styles.viewToggle, { borderColor: 'rgba(255,255,255,0.35)' }]}>
-            <TouchableOpacity
-              onPress={() => setCalendarView('month')}
-              style={[styles.viewToggleBtn, calendarView === 'month' && { backgroundColor: 'rgba(255,255,255,0.22)' }]}
-            >
-              <Text style={[styles.viewToggleBtnText, { color: '#fff', opacity: calendarView === 'month' ? 1 : 0.75 }]}>
-                {t('calendar.monthView')}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => setCalendarView('week')}
-              style={[styles.viewToggleBtn, calendarView === 'week' && { backgroundColor: 'rgba(255,255,255,0.22)' }]}
-            >
-              <Text style={[styles.viewToggleBtnText, { color: '#fff', opacity: calendarView === 'week' ? 1 : 0.75 }]}>
-                {t('calendar.weekView')}
-              </Text>
-            </TouchableOpacity>
-          </View>
+          {/* View Toggle — full pill on tablet+, dropped on narrow phones
+              (user reported 2026-05-15: too many buttons → header quebrando) */}
+          {!_CAL_HEADER_COMPACT && (
+            <View style={[styles.viewToggle, { borderColor: 'rgba(255,255,255,0.35)' }]}>
+              <TouchableOpacity
+                onPress={() => setCalendarView('month')}
+                style={[styles.viewToggleBtn, calendarView === 'month' && { backgroundColor: 'rgba(255,255,255,0.22)' }]}
+              >
+                <Text style={[styles.viewToggleBtnText, { color: '#fff', opacity: calendarView === 'month' ? 1 : 0.75 }]}>
+                  {t('calendar.monthView')}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setCalendarView('week')}
+                style={[styles.viewToggleBtn, calendarView === 'week' && { backgroundColor: 'rgba(255,255,255,0.22)' }]}
+              >
+                <Text style={[styles.viewToggleBtnText, { color: '#fff', opacity: calendarView === 'week' ? 1 : 0.75 }]}>
+                  {t('calendar.weekView')}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
           <TouchableOpacity onPress={handleToday} style={[styles.todayBtn, { borderColor: 'rgba(255,255,255,0.35)' }]}>
             <Text style={[styles.todayBtnText, { color: '#fff' }]}>{t('calendar.today')}</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => persistShowTz(!showTz)}
-            style={[styles.todayBtn, { borderColor: 'rgba(255,255,255,0.35)', backgroundColor: showTz ? 'rgba(255,255,255,0.22)' : 'transparent' }]}
-            accessibilityLabel={t('calendar.showTz')}
-          >
-            <Text style={[styles.todayBtnText, { color: '#fff', opacity: showTz ? 1 : 0.75 }]}>
-              {t('calendar.timezones')}
-            </Text>
-          </TouchableOpacity>
-          {Platform.OS !== 'web' && ExpoCalendar && (
+          {!_CAL_HEADER_COMPACT && (
+            <TouchableOpacity
+              onPress={() => persistShowTz(!showTz)}
+              style={[styles.todayBtn, { borderColor: 'rgba(255,255,255,0.35)', backgroundColor: showTz ? 'rgba(255,255,255,0.22)' : 'transparent' }]}
+              accessibilityLabel={t('calendar.showTz')}
+            >
+              <Text style={[styles.todayBtnText, { color: '#fff', opacity: showTz ? 1 : 0.75 }]}>
+                {t('calendar.timezones')}
+              </Text>
+            </TouchableOpacity>
+          )}
+          {!_CAL_HEADER_COMPACT && Platform.OS !== 'web' && ExpoCalendar && (
             <TouchableOpacity
               onPress={handleSyncDeviceCalendar}
               disabled={syncingDevice}

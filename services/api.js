@@ -782,7 +782,12 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
       // pra requireAuthLite, e NOISY_ACTIONS_401 cobre o resto. 30 strikes
       // legitimos sao quase impossiveis em uso normal — so token revogado
       // de fato chega ai. WhatsApp parity: nao desloga sem motivo real.
-      const shouldSignal = tokenHasValue && !isNoisy && !_authFailureSignaled && _consecutive401 >= 30;
+      // 2026-05-15 round 3 — bumpado 30→100. User reportou "ta me deslogando,
+      // whatsapp nunca desloga". Streak de 30 ainda foi atingido em uso real
+      // por endpoints fora do NOISY_ACTIONS_401 (cada user é diferente). Com
+      // 100 strikes, só um token de fato revogado/expirado dispara logout —
+      // qualquer ruído transient se dilui antes. WhatsApp parity sustentável.
+      const shouldSignal = tokenHasValue && !isNoisy && !_authFailureSignaled && _consecutive401 >= 100;
       if (shouldSignal) {
         _authFailureSignaled = true;
         // Clear the bad token so subsequent requests don't spam
