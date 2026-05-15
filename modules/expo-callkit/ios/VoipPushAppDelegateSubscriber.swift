@@ -29,7 +29,7 @@ import AVFoundation
 private let kAppGroupId = "group.com.onemundo.mail"
 private let kPendingCallKey = "pendingVoipCall"
 
-public class VoipPushAppDelegateSubscriber: NSObject, ExpoAppDelegateSubscriber {
+public class VoipPushAppDelegateSubscriber: ExpoAppDelegateSubscriber {
 
     // PushKit registry and stub CallKit provider live for the lifetime of the
     // app (created in didFinishLaunching). ExpoCallKitModule observes via
