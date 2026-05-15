@@ -209,7 +209,19 @@ class MailWebSocket {
 
   connect(token) {
     if (this.destroyed) return;
-    this.token = token;
+    // WhatsApp-grade token refresh: always prefer the freshest token from
+    // the API layer over whatever caller passed in. After a sliding
+    // renewal, the in-memory bearer can be newer than the one we hold,
+    // and reconnecting with a stale token wastes a roundtrip + may trip
+    // the WS auth_error streak. Falls back to the argument if api isn't
+    // ready yet (very cold start).
+    let liveToken = token;
+    try {
+      const apiMod = require('./api');
+      const fresh = apiMod.getAuthToken?.();
+      if (fresh && typeof fresh === 'string' && fresh.length > 0) liveToken = fresh;
+    } catch {}
+    this.token = liveToken;
 
     // Re-add visibility listener if it was removed by disconnect()
     if (this._visibilityHandlerRemoved && this._visibilityHandler && Platform.OS === 'web' && typeof document !== 'undefined') {
@@ -595,6 +607,7 @@ class MailWebSocket {
         if (!this.destroyed) {
           this.reconnectAttempt = Math.max(this.reconnectAttempt, 3); // Start with longer delay
           let hasToken = false;
+          let inGrace = false;
           try {
             const apiMod = require('./api');
             // Active refresh path: if the API layer exposes a refreshToken()
@@ -610,6 +623,13 @@ class MailWebSocket {
               hasToken = true;
               if (freshToken !== this.token) this.token = freshToken;
             }
+            // WhatsApp-grade refusal: if the token has been confirmed alive
+            // via HTTP in the last 90 days, the WS auth_error is almost
+            // certainly an edge hub state mismatch — keep reconnecting
+            // forever instead of giving up after 8 strikes. The HTTP path
+            // shares the same grace gate, so a truly revoked token still
+            // logs out eventually via api.js.
+            try { inGrace = !!apiMod.isTokenWithinGracePeriod?.(); } catch {}
           } catch {}
           if (hasToken) {
             this._authFailStreak = (this._authFailStreak || 0) + 1;
@@ -619,7 +639,19 @@ class MailWebSocket {
             // edge just needed a moment. Same logic as services/api.js
             // _consecutive401: only sustained streaks indicate revoked tokens;
             // pairs are almost always transient.
-            if (this._authFailStreak >= 8) {
+            //
+            // 2026-05-15: within the 90-day grace, NEVER give up — just
+            // keep reconnecting with exponential backoff. WhatsApp parity:
+            // a live token never gets the user kicked, no matter what
+            // the WS hub says.
+            if (this._authFailStreak >= 8 && !inGrace) {
+              try {
+                const apiMod = require('./api');
+                apiMod.recordLogoutAttempt?.('ws_auth_streak', {
+                  source: 'websocket',
+                  streak: this._authFailStreak,
+                });
+              } catch {}
               try {
                 if (typeof globalThis !== 'undefined') {
                   globalThis.__chatyy_authFailure = Date.now();
