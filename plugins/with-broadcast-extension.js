@@ -279,58 +279,35 @@ function withBroadcastPodTarget(config) {
       const marker = `target '${EXT_NAME}' do`;
       if (pod.includes(marker)) return cfg;
 
-      // [2026-05-15 fix v3] CocoaPods requires extension targets NESTED
+      // [2026-05-15 fix v4] CocoaPods requires extension targets NESTED
       // INSIDE the main app target — otherwise: "Unable to find host targets
       // for ChatyyBroadcastExtension".
       //
-      // v2 took the LAST top-level `end` — but the Expo template has a
-      // `post_install do |installer| ... end` block AFTER `target 'Chatyy'
-      // do ... end`, so the last top-level `end` was post_install's, not
-      // the main target's. The nested block landed OUTSIDE the main target.
+      // v3 tried do/end depth counting from `target 'Chatyy' do` forward —
+      // but it didn't account for Ruby's `if/unless/case/def/begin` block
+      // openers that close with `end` WITHOUT a preceding `do`. The Expo
+      // template has `if ENV[...] == '1' ... else ... end` inside the
+      // main target, so depth zeroed at the inner if-block's `end` and the
+      // nested target landed inside the else clause (syntax error).
       //
-      // v3 strategy: locate the `target '<MainAppName>' do` line directly,
-      // then walk forward with do/end depth counting (ignoring inline `do`
-      // keywords like `if/unless/while...end`) until depth returns to 0 —
-      // that's the closing `end` of the main target. Insert before it.
+      // v4 strategy: the Expo template only has 2 top-level `end` lines
+      // (column 0, no leading whitespace) — one early in the file (some
+      // outer block) and one at the very end (closing `target 'Chatyy'`).
+      // Insert before the LAST top-level `end`. Robust against inner
+      // if/case/def/etc blocks because their `end`s are always indented.
       const lines = pod.split('\n');
-
-      // Find main app target. Expo always uses `target '<displayName>' do`
-      // where displayName matches CFBundleName. Search for any line that
-      // starts a target and is NOT our extension.
-      let mainTargetLine = -1;
-      let mainTargetName = '';
-      for (let i = 0; i < lines.length; i++) {
-        const m = lines[i].match(/^\s*target ['"]([^'"]+)['"] do\b/);
-        if (m && m[1] !== EXT_NAME) {
-          mainTargetLine = i;
-          mainTargetName = m[1];
-          break; // first target is the main app
-        }
-      }
-      if (mainTargetLine === -1) {
-        console.warn('[with-broadcast-extension] No main target found — skipping (run prebuild first)');
-        return cfg;
-      }
-
-      // Walk forward, tracking do/end balance. Skip inline `end` words
-      // and only count `do` at end-of-line or before optional |args|.
-      let depth = 1;
       let mainTargetEndLine = -1;
-      for (let i = mainTargetLine + 1; i < lines.length; i++) {
-        const line = lines[i];
-        // Each `do` that opens a block (block syntax: `... do` or `... do |x|`)
-        const doMatches = line.match(/\bdo\b(\s*\|[^|]*\|)?\s*$/);
-        if (doMatches) depth++;
-        // Each `end` that closes a block (standalone or with comment)
-        if (/^\s*end\b/.test(line)) {
-          depth--;
-          if (depth === 0) { mainTargetEndLine = i; break; }
-        }
+      for (let i = 0; i < lines.length; i++) {
+        // Top-level `end` = column 0, exactly `end` (optional trailing space).
+        if (/^end\s*$/.test(lines[i])) mainTargetEndLine = i;
       }
       if (mainTargetEndLine === -1) {
-        console.warn(`[with-broadcast-extension] Could not find closing 'end' of target '${mainTargetName}' — skipping`);
+        console.warn('[with-broadcast-extension] No top-level `end` found — appending at EOF as fallback');
+        pod += `\n\ntarget '${EXT_NAME}' do\n  platform :ios, '15.0'\n  pod 'LiveKitClient', '~> 2.0'\nend\n`;
+        fs.writeFileSync(podfilePath, pod);
         return cfg;
       }
+      const mainTargetName = 'Chatyy (last top-level end @ line ' + (mainTargetEndLine + 1) + ')';
 
       const nested = [
         `  # [2026-05-15 #827] Auto-injected nested broadcast extension target.`,
