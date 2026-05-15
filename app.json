@@ -274,7 +274,6 @@
       ],
       "./plugins/fix-jitpack",
       "./plugins/voip-push",
-      "./plugins/with-broadcast-extension.js",
       "expo-asset",
       [
         "expo-local-authentication",

@@ -56,7 +56,11 @@ jobs:
           [ -z "${{ secrets.IOS_DIST_CERT_PASSWORD }}" ] && missing+=("IOS_DIST_CERT_PASSWORD")
           [ -z "${{ secrets.IOS_PROFILE_MAIN_BASE64 }}" ] && missing+=("IOS_PROFILE_MAIN_BASE64")
           [ -z "${{ secrets.IOS_PROFILE_SHAREEXT_BASE64 }}" ] && missing+=("IOS_PROFILE_SHAREEXT_BASE64")
-          [ -z "${{ secrets.IOS_PROFILE_BROADCAST_BASE64 }}" ] && missing+=("IOS_PROFILE_BROADCAST_BASE64")
+          # IOS_PROFILE_BROADCAST_BASE64 is optional — only required when the
+          # broadcast extension plugin is active in app.json. The plugin is
+          # currently OFF (user needs to create profile on Apple Dev portal
+          # first); when present, the install + signing steps below detect
+          # the secret and wire it in automatically.
           if [ ${#missing[@]} -gt 0 ]; then
             echo "::error::Missing GitHub Secrets: ${missing[*]}"
             exit 1
@@ -125,20 +129,27 @@ jobs:
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           echo "$MAIN_B64" | base64 -d > ~/Library/MobileDevice/Provisioning\ Profiles/$MAIN_PROFILE_UUID.mobileprovision
           echo "$SHAREEXT_B64" | base64 -d > ~/Library/MobileDevice/Provisioning\ Profiles/$SHAREEXT_PROFILE_UUID.mobileprovision
-          # Broadcast profile UUID is read from the decoded mobileprovision
-          # since we don't pin it as a hardcoded env (each user generates
-          # their own profile and we just read the UUID Apple assigned).
-          TMP_BROADCAST=$(mktemp)
-          echo "$BROADCAST_B64" | base64 -d > "$TMP_BROADCAST"
-          BROADCAST_UUID=$(security cms -D -i "$TMP_BROADCAST" 2>/dev/null | plutil -extract UUID raw -)
-          if [ -z "$BROADCAST_UUID" ]; then
-            echo "::error::Could not extract UUID from IOS_PROFILE_BROADCAST_BASE64"
-            exit 1
+          # Broadcast profile is OPTIONAL — only installed if secret is set
+          # and the broadcast plugin is active in app.json. If absent, the
+          # build proceeds without the broadcast extension target (screen
+          # share via system picker is unavailable but app otherwise works).
+          if [ -n "$BROADCAST_B64" ]; then
+            TMP_BROADCAST=$(mktemp)
+            echo "$BROADCAST_B64" | base64 -d > "$TMP_BROADCAST"
+            BROADCAST_UUID=$(security cms -D -i "$TMP_BROADCAST" 2>/dev/null | plutil -extract UUID raw - || echo "")
+            if [ -n "$BROADCAST_UUID" ]; then
+              cp "$TMP_BROADCAST" ~/Library/MobileDevice/Provisioning\ Profiles/$BROADCAST_UUID.mobileprovision
+              echo "broadcast_uuid=$BROADCAST_UUID" >> $GITHUB_OUTPUT
+              echo "Installed broadcast profile UUID: $BROADCAST_UUID"
+            else
+              echo "::warning::IOS_PROFILE_BROADCAST_BASE64 present but UUID extraction failed — skipping"
+              echo "broadcast_uuid=" >> $GITHUB_OUTPUT
+            fi
+            rm -f "$TMP_BROADCAST"
+          else
+            echo "::notice::IOS_PROFILE_BROADCAST_BASE64 not set — broadcast extension disabled"
+            echo "broadcast_uuid=" >> $GITHUB_OUTPUT
           fi
-          cp "$TMP_BROADCAST" ~/Library/MobileDevice/Provisioning\ Profiles/$BROADCAST_UUID.mobileprovision
-          rm -f "$TMP_BROADCAST"
-          echo "broadcast_uuid=$BROADCAST_UUID" >> $GITHUB_OUTPUT
-          echo "Installed broadcast profile UUID: $BROADCAST_UUID"
           ls -la ~/Library/MobileDevice/Provisioning\ Profiles/
 
       - name: Bump build number
@@ -175,7 +186,9 @@ jobs:
         # with CODE_SIGN_STYLE=Automatic. Our CI is Manual signing across
         # all targets. Force Manual + inject the broadcast profile UUID
         # extracted from the .mobileprovision in the "Install provisioning
-        # profiles" step.
+        # profiles" step. Skipped when broadcast_uuid is empty (plugin off
+        # or secret missing).
+        if: steps.profiles.outputs.broadcast_uuid != ''
         env:
           BROADCAST_UUID: ${{ steps.profiles.outputs.broadcast_uuid }}
         run: node scripts/patch-broadcast-signing.js
@@ -212,8 +225,18 @@ jobs:
             archive
 
       - name: Export IPA
+        env:
+          BROADCAST_UUID: ${{ steps.profiles.outputs.broadcast_uuid }}
         run: |
           set -x
+          # Conditionally include the broadcast bundle id in ExportOptions
+          # only when the broadcast extension is wired (plugin active +
+          # secret present + UUID extracted).
+          if [ -n "$BROADCAST_UUID" ]; then
+            BROADCAST_PROFILE_ENTRY="<key>$BROADCAST_BUNDLE_ID</key><string>$BROADCAST_UUID</string>"
+          else
+            BROADCAST_PROFILE_ENTRY=""
+          fi
           cat > /tmp/ExportOptions.plist <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -227,7 +250,7 @@ jobs:
             <dict>
               <key>$MAIN_BUNDLE_ID</key><string>$MAIN_PROFILE_UUID</string>
               <key>$SHAREEXT_BUNDLE_ID</key><string>$SHAREEXT_PROFILE_UUID</string>
-              <key>$BROADCAST_BUNDLE_ID</key><string>${{ steps.profiles.outputs.broadcast_uuid }}</string>
+              ${BROADCAST_PROFILE_ENTRY}
             </dict>
             <key>uploadBitcode</key><false/>
             <key>uploadSymbols</key><true/>
