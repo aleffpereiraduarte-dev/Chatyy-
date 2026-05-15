@@ -234,12 +234,33 @@ function withBroadcastTarget(config) {
       target.uuid
     );
 
-    // Embed the extension into the main app's bundle
+    // Embed the extension into the main app's bundle.
+    // [2026-05-15 fix] CANNOT use getFirstTarget() — if expo-share-intent
+    // ran first, its ShareExtension target may be first. Extensions can't
+    // embed other extensions, so CocoaPods then errors "Unable to find
+    // host target". Find the Chatyy app target explicitly via PRODUCT_TYPE.
+    let mainAppTargetUuid = null;
+    const nativeTargets = project.pbxNativeTargetSection() || {};
+    for (const key of Object.keys(nativeTargets)) {
+      const t = nativeTargets[key];
+      if (t && typeof t === 'object' && t.productType === '"com.apple.product-type.application"') {
+        mainAppTargetUuid = key.replace(/_comment$/, '');
+        // Strip the _comment suffix to get raw UUID, then verify it's not a comment entry
+        if (!/^[A-F0-9]+$/i.test(mainAppTargetUuid)) continue;
+        break;
+      }
+    }
+    if (!mainAppTargetUuid) {
+      console.warn('[with-broadcast-extension] No app-type target found — falling back to getFirstTarget');
+      mainAppTargetUuid = project.getFirstTarget().uuid;
+    } else {
+      console.log(`[with-broadcast-extension] Embedding broadcast into app target UUID ${mainAppTargetUuid}`);
+    }
     project.addBuildPhase(
       [],
       'PBXCopyFilesBuildPhase',
       'Embed App Extensions',
-      project.getFirstTarget().uuid,
+      mainAppTargetUuid,
       'app_extension'
     );
 
