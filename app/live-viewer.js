@@ -897,6 +897,29 @@ export default function LiveViewerScreen() {
             });
           }
           break;
+        case 'live_gift': {
+          // Viewer-side gift animation. Mirrors the broadcast handler:
+          // pop LiveGiftAnimation in the center (queued if another is
+          // already running), bump the leaderboard refresh key. The
+          // chat-overlay golden chip is handled separately via the
+          // appendChatMessage path the broadcast version uses; here we
+          // skip the chip (less visual noise on the viewer side — the
+          // center overlay already screams loud enough).
+          const giftEvent = {
+            key: 'g_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+            sender_email: msg.sender_email,
+            sender_name: msg.sender_name,
+            sender_avatar: msg.sender_avatar,
+            gift_type: msg.gift_type || msg.gift,
+            diamonds: msg.diamonds || msg.amount || 1,
+          };
+          setActiveGiftAnim(prev => {
+            if (prev) { pendingGiftsRef.current.push(giftEvent); return prev; }
+            return giftEvent;
+          });
+          setGiftRefreshKey(k => k + 1);
+          break;
+        }
         case 'live_join_approve':
           // Targeted via viewer_email filter — server fans out to the channel.
           if (msg.viewer_email && user?.email && msg.viewer_email.toLowerCase() === user.email.toLowerCase()) {
@@ -1845,6 +1868,31 @@ export default function LiveViewerScreen() {
     setGiftPickerVisible(false);
   }, [paramSessionId, spawnHeart]);
 
+  // Paid-style virtual gifts (rose / heart / star / crown / fire / rocket).
+  // No real payment — diamonds are virtual. The backend writes to
+  // chat_live_gifts and fans out `live_gift` on the WS channel so the host
+  // + all viewers (including the sender) see LiveGiftAnimation simultaneously.
+  const sendVirtualGift = useCallback(async (gift) => {
+    setGiftPickerVisible(false);
+    if (!paramSessionId || !gift?.type) return;
+    try {
+      await api.liveSendGift(paramSessionId, gift.type);
+      // No local animation here — server broadcasts on `live_<session_id>`
+      // and the same socket we're subscribed to delivers it back to us,
+      // so the LiveGiftAnimation handler renders it just like for everyone
+      // else. (Avoids the double-pop "ghost" gift on the sender's screen.)
+    } catch (e) {
+      showToast?.(t('live.giftSendFailed') || 'Falha ao enviar presente');
+    }
+  }, [paramSessionId, showToast, t]);
+
+  // Top-gifters refresh trigger + center-screen animation queue (mirrors
+  // the same machinery used in live-broadcast.js; viewer + host see the
+  // same overlay so an incoming gift feels equally loud on both sides).
+  const [giftRefreshKey, setGiftRefreshKey] = useState(0);
+  const [activeGiftAnim, setActiveGiftAnim] = useState(null);
+  const pendingGiftsRef = useRef([]);
+
   // "Saiu da live" overlay shown when the broadcaster ends the stream.
   // "Salvar live" tap → bookmark the recorded replay in the viewer's
   // /lives-saved tab. Optimistic toggle (instant feedback); rollback on
@@ -2185,6 +2233,53 @@ export default function LiveViewerScreen() {
         onClose={() => router.back()}
       />
 
+      {/* Top gifters (right side, just below the topbar). Same component
+          used on the host side so the leaderboard is consistent across
+          POVs. Tap → full-screen leaderboard modal. */}
+      {paramSessionId ? (
+        <View
+          pointerEvents="box-none"
+          style={{
+            position: 'absolute',
+            top: insets.top + 56,
+            right: 12,
+            zIndex: 25,
+          }}
+        >
+          <LiveTopGifters
+            sessionId={paramSessionId}
+            refreshKey={giftRefreshKey}
+            i18n={{
+              topGifters: t('live.topGifters') || 'Top gifters',
+              noGiftersYet: t('live.noGiftersYet') || 'Ninguém enviou presentes ainda',
+              noGiftersHint: t('live.noGiftersHint') || 'Seja o primeiro a apoiar este criador!',
+            }}
+          />
+        </View>
+      ) : null}
+
+      {/* Center-screen gift animation overlay — pops in when a live_gift
+          WS event arrives (including ones the sender just emitted). */}
+      {activeGiftAnim ? (
+        <LiveGiftAnimation
+          key={activeGiftAnim.key}
+          gift={activeGiftAnim}
+          onComplete={() => {
+            const next = pendingGiftsRef.current.shift();
+            setActiveGiftAnim(next || null);
+          }}
+          i18n={{
+            sentGift: t('live.sentGift') || 'enviou',
+            gift_rose: t('live.gift_rose') || 'Rosa',
+            gift_heart: t('live.gift_heart') || 'Coração',
+            gift_star: t('live.gift_star') || 'Estrela',
+            gift_crown: t('live.gift_crown') || 'Coroa',
+            gift_fire: t('live.gift_fire') || 'Fogo',
+            gift_rocket: t('live.gift_rocket') || 'Foguete',
+          }}
+        />
+      ) : null}
+
       {/* System chip stack (joins/leaves) — left-bottom floating column.
           Replaces the old inline "X entrou" rows in the chat overlay. */}
       <LiveSystemChipStack
@@ -2441,6 +2536,7 @@ export default function LiveViewerScreen() {
             onSubmit={sendComment}
             onHeartTap={handleHeartTap}
             onHeartLongPress={handleHeartLongPress}
+            onGiftPress={() => setGiftPickerVisible(true)}
             onFocus={() => setInputFocused(true)}
             onBlur={() => setInputFocused(false)}
             focused={inputFocused}
@@ -2450,6 +2546,7 @@ export default function LiveViewerScreen() {
               comment: t('live.placeholderComment') || 'Comment',
               send: t('live.sendMessage') || 'Send',
               like: t('live.like') || 'Curtir',
+              gift: t('live.sendGift') || 'Enviar presente',
             }}
           />
         ) : null}
@@ -2475,41 +2572,25 @@ export default function LiveViewerScreen() {
         </Animated.View>
       ) : null}
 
-      {/* Free gift picker — tap an emoji to send it to the stream. Floats
-          up across everyone's screen via the same live_reaction WS the
-          heart button uses. */}
-      <Modal
+      {/* Virtual-gift picker — 6 typed gifts (rose/heart/star/crown/fire/
+          rocket) with SVG glyphs. Tap → POST chat_live_send_gift → backend
+          writes chat_live_gifts row + broadcasts `live_gift` WS event so
+          every client renders LiveGiftAnimation in sync. */}
+      <LiveGiftPicker
         visible={giftPickerVisible}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setGiftPickerVisible(false)}
-      >
-        <Pressable style={styles.giftSheetBackdrop} onPress={() => setGiftPickerVisible(false)}>
-          <Pressable style={styles.giftSheet} onPress={(e) => e.stopPropagation?.()}>
-            <View style={styles.giftSheetHandle} />
-            <Text style={styles.giftSheetTitle}>
-              {t('live.sendGift') || 'Enviar presente'}
-            </Text>
-            <Text style={styles.giftSheetSubtitle}>
-              {t('live.giftSubtitle') || 'Toque pra enviar — vai aparecer pra todo mundo na live'}
-            </Text>
-            <View style={styles.giftGrid}>
-              {FREE_GIFTS.map((g) => (
-                <TouchableOpacity
-                  key={g}
-                  onPress={() => sendGift(g)}
-                  activeOpacity={0.6}
-                  style={styles.giftCell}
-                  accessibilityLabel={g}
-                  accessibilityRole="button"
-                >
-                  <Text style={styles.giftEmoji}>{g}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
+        onClose={() => setGiftPickerVisible(false)}
+        onSelect={sendVirtualGift}
+        i18n={{
+          sendGift: t('live.sendGift') || 'Enviar presente',
+          giftSubtitle: t('live.giftSubtitle') || 'Toque para enviar e aparecer para todos',
+          gift_rose: t('live.gift_rose') || 'Rosa',
+          gift_heart: t('live.gift_heart') || 'Coração',
+          gift_star: t('live.gift_star') || 'Estrela',
+          gift_crown: t('live.gift_crown') || 'Coroa',
+          gift_fire: t('live.gift_fire') || 'Fogo',
+          gift_rocket: t('live.gift_rocket') || 'Foguete',
+        }}
+      />
 
       {/* Viewers list sheet — Instagram-style "who's watching".
           Recent joiners on top, capped at 100 to keep render cheap. */}

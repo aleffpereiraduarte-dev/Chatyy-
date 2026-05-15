@@ -17,6 +17,7 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, Animated,
 } from 'react-native';
 import { IconSend, IconHeart, IconSmile } from '../Icons';
+import { IconGiftBox } from '../LiveGiftPicker';
 
 const LIVE_RED = '#dc2626';
 const ACCENT = '#7C3AED';
@@ -27,6 +28,7 @@ const LiveCommentInput = forwardRef(function LiveCommentInput({
   onSubmit,
   onHeartTap,
   onHeartLongPress,
+  onGiftPress,
   onFocus,
   onBlur,
   focused = false,
@@ -108,6 +110,20 @@ const LiveCommentInput = forwardRef(function LiveCommentInput({
           </TouchableOpacity>
         )}
       </View>
+      {/* Gift button outside the pill, sits next to it on the right side
+          of the bar. Only shown when onGiftPress is provided so the host
+          (broadcast) doesn't accidentally get a "send gift to myself" UI. */}
+      {onGiftPress ? (
+        <TouchableOpacity
+          onPress={onGiftPress}
+          style={styles.giftBtn}
+          activeOpacity={0.75}
+          accessibilityRole="button"
+          accessibilityLabel={a11yLabels.gift || 'Send gift'}
+        >
+          <IconGiftBox size={22} color="#fff" />
+        </TouchableOpacity>
+      ) : null}
     </Animated.View>
   );
 });
@@ -168,5 +184,20 @@ const styles = StyleSheet.create({
   heartPill: {
     backgroundColor: LIVE_RED,
     ...(Platform.OS === 'web' ? { boxShadow: '0 2px 10px rgba(220,38,38,0.55)' } : {}),
+  },
+  giftBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    marginLeft: 8,
+    backgroundColor: 'rgba(251,191,36,0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(251,191,36,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...(Platform.OS === 'web' ? {
+      backdropFilter: 'blur(10px)',
+      WebkitBackdropFilter: 'blur(10px)',
+    } : {}),
   },
 });
