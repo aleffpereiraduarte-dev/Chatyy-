@@ -620,6 +620,16 @@ export default function IncomingCallListener() {
           setCall(null);
           acceptedRef.current = false;
           handlingRef.current = false;
+          // [bug 2026-05-14 caller-drops-on-answer]
+          // The endCall below triggers iOS CXEndCallAction on the call this
+          // device already answered, which fires our onEnd handler — which
+          // would then send WS call_end {reason:'hangup'} to the CALLER,
+          // tearing the call down right after answer. Mark this callId as
+          // "we just sent end" so the dedup window at line ~974 suppresses
+          // that spurious onEnd echo before it can hit the wire.
+          if (data?.call_id) {
+            callEndSentRef.current[String(data.call_id)] = Date.now();
+          }
           // Best-effort native dismiss. The Expo modules-API names are
           // `ExpoCallKit.endCall` (both platforms — Android also broadcasts
           // CLOSE_CALL_ACTIVITY to drop the full-screen overlay, iOS calls

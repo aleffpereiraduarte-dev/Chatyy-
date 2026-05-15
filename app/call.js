@@ -327,6 +327,12 @@ function CallScreenInner() {
   const recordingStartTimeRef = useRef(null);
   const endedRef = useRef(false);
   const minimizedRef = useRef(false);
+  // Timestamp of the last ParticipantConnected for the 1:1 peer. Used by
+  // ParticipantDisconnected to suppress teardown when the peer leaves
+  // within ~3s of joining — that's the post-CallKit-answer WS reconnect
+  // race where the callee briefly drops the LiveKit session while
+  // re-establishing the signaling socket, NOT a real hangup.
+  const peerJoinedAtRef = useRef(0);
   const handleEndCallRef = useRef(null);
 
   // Mute toggle UI shake when peer is on hold.
@@ -656,7 +662,21 @@ function CallScreenInner() {
       // hangup flow, don't fire another teardown.
       if (endedRef.current) return;
       if (reason === DisconnectReason.CLIENT_INITIATED) return;
-      // For any other reason (network, server kicked, etc.), end the call UI.
+      // [bug 2026-05-14 caller-drops-on-answer]
+      // If the peer NEVER connected (peerConnected still false), this is a
+      // setup-phase disconnect (token expired, room full, network blip) — NOT
+      // a real hangup. Sending WS call_end here would derruba the call before
+      // the callee finished joining the room → user reports "atendi e
+      // encerrou na hora". Surface the error to the UI instead and stay
+      // silent on WS so the callee can still join via LiveKit's own retry.
+      if (!peerConnected) {
+        console.warn('[Call] LiveKit Disconnected BEFORE peer joined — NOT firing handleEndCall (setup-phase)');
+        try { setErrorMsg(t('call.connectionFailed') || 'Não foi possível conectar.'); } catch {}
+        try { setConnectionFailed(true); } catch {}
+        return;
+      }
+      // For any other reason (network, server kicked, etc.) after the peer
+      // had connected, end the call UI as a normal hangup.
       try { handleEndCallRef.current && handleEndCallRef.current(); } catch {}
     });
 
@@ -664,6 +684,7 @@ function CallScreenInner() {
       if (endedRef.current) return;
       console.log('[Call] Participant connected:', participant.identity);
       setPeerConnected(true);
+      peerJoinedAtRef.current = Date.now();
       setRemoteParticipant(participant);
       _refreshRemoteTracks(participant);
       _updateGroupPeer(participant.identity, { participant, name: participant.name || participant.identity });
@@ -679,8 +700,19 @@ function CallScreenInner() {
       if (remaining.length === 0) {
         setRemoteParticipant(null);
         _refreshRemoteTracks(null);
-        if (!isGroupCall && !endedRef.current) {
+        // [bug 2026-05-14 caller-drops-on-answer]
+        // Grace window: don't teardown if peer just joined (<3s ago).
+        // After CallKit answer the callee forces a clean WS reconnect,
+        // which kicks the prior LiveKit publisher and they re-join
+        // within 1-2s. Firing handleEndCall here would tear down the
+        // call before that rejoin completes and the caller would send
+        // WS call_end {reason:'hangup'} → both sides die instantly.
+        const sinceJoin = Date.now() - (peerJoinedAtRef.current || 0);
+        const inGrace = peerJoinedAtRef.current > 0 && sinceJoin < 3000;
+        if (!isGroupCall && !endedRef.current && !inGrace) {
           try { handleEndCallRef.current && handleEndCallRef.current(); } catch {}
+        } else if (inGrace) {
+          console.warn('[Call] ParticipantDisconnected ' + sinceJoin + 'ms after join — IN GRACE, suppressing teardown');
         }
       } else {
         // Switch the 1:1 display to the next remote if our current one left.
