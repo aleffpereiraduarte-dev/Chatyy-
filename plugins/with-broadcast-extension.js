@@ -369,6 +369,9 @@ function withBroadcastPodTarget(config) {
         return cfg;
       }
       console.log(`[with-broadcast-extension] target 'Chatyy' do @ line ${chatyyLine + 1}, close end @ line ${mainTargetEndLine + 1}`);
+      // [debug v7] Dump first 90 lines of Podfile (after our injection) so
+      // we can see the actual nesting structure in CI logs.
+      console.log('[with-broadcast-extension] === Podfile dump (after injection) ===');
       if (mainTargetEndLine === -1) {
         console.warn('[with-broadcast-extension] No top-level `end` found — appending at EOF as fallback');
         pod += `\n\ntarget '${EXT_NAME}' do\n  platform :ios, '15.0'\n  pod 'LiveKitClient', '~> 2.0'\nend\n`;
@@ -390,6 +393,11 @@ function withBroadcastPodTarget(config) {
       lines.splice(mainTargetEndLine, 0, ...nested);
       fs.writeFileSync(podfilePath, lines.join('\n'));
       console.log(`[with-broadcast-extension] Injected nested ${EXT_NAME} target inside '${mainTargetName}' (before line ${mainTargetEndLine + 1})`);
+      // [debug v7] Print full Podfile post-injection
+      const finalPod = fs.readFileSync(podfilePath, 'utf8');
+      console.log('[with-broadcast-extension] ============== Podfile DUMP ==============');
+      console.log(finalPod);
+      console.log('[with-broadcast-extension] ============== END DUMP ==============');
       return cfg;
     },
   ]);
