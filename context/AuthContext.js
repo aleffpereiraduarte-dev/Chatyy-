@@ -440,6 +440,20 @@ export function AuthProvider({ children }) {
           }
         }
 
+        // WhatsApp-grade refusal: even if checkAuth came back rejected,
+        // if the token has been confirmed alive in the last 90 days,
+        // treat it as a transient edge glitch (Redis blip, opcache miss,
+        // sliding-renewal write skew) and hydrate from offline cache.
+        // The next API roundtrip will either succeed (proving the
+        // rejection was bogus) or trigger the 100-strike counter, which
+        // ALSO consults the 90-day grace and refuses to logout. Only
+        // a *truly* aged-out token actually kicks the user.
+        if (serverRejectedAuth && api.isTokenWithinGracePeriod?.()) {
+          try { api.recordLogoutAttempt?.('refused_within_grace', { source: 'checkauth_cold_start' }); } catch {}
+          console.warn('[auth] checkAuth rejected on cold start but token <90d old — keeping session');
+          if (await hydrateOffline()) return;
+        }
+
         // Final fallback: try offline cache before kicking to login.
         // This rescues users who don't have an in-memory password (most
         // returning users after an app restart) — but ONLY if we don't
@@ -454,6 +468,7 @@ export function AuthProvider({ children }) {
         // localStorage.removeItem is synchronous — safe to do here before
         // any React effect fires.
         if (serverRejectedAuth && Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+          try { api.recordLogoutAttempt?.('cold_start_server_rejected', { source: 'web_boot' }); } catch {}
           try {
             localStorage.removeItem('mail_token');
             localStorage.removeItem('mail_active_account');
@@ -800,7 +815,11 @@ export function AuthProvider({ children }) {
     return r;
   }, [loadAccounts, registerPushAfterAuth]);
 
-  const doLogout = useCallback(async () => {
+  const doLogout = useCallback(async (reason = 'explicit') => {
+    // Audit trail — every logout path records its reason so support can
+    // post-mortem "why did Carol get kicked out?". WhatsApp-grade: an
+    // unexplained logout is a bug we want to see.
+    try { await api.recordLogoutAttempt?.(reason, { source: 'doLogout' }); } catch {}
     // Stop child location tracking
     _childRestrictions = null;
     if (_locationInterval) { clearInterval(_locationInterval); _locationInterval = null; }
@@ -991,7 +1010,7 @@ export function AuthProvider({ children }) {
     loadAccounts();
     // If removing the active account, logout
     if (user?.email === email) {
-      doLogout();
+      doLogout('remove_account');
     }
   }, [user, doLogout, loadAccounts]);
 
@@ -1009,9 +1028,25 @@ export function AuthProvider({ children }) {
     const handleAuthFailure = () => {
       if (Date.now() - _handled < 1500) return; // debounce duplicate fires
       _handled = Date.now();
+      // WhatsApp-grade refusal: if the token has been confirmed alive in
+      // the last 90 days, the 401 signal almost certainly came from an
+      // edge hiccup, not a true revocation. Refuse to logout, reset the
+      // api-side flag, and let the user keep their session — the next
+      // healthy API call will reconverge them.
+      try {
+        if (api.isTokenWithinGracePeriod?.()) {
+          api.recordLogoutAttempt?.('refused_within_grace', {
+            source: 'authcontext_signal',
+          });
+          api.resetAuthFailureSignal?.();
+          console.warn('[auth] Auth-failure signal received but token <90d old — refusing logout');
+          return;
+        }
+      } catch {}
       console.warn('[auth] Token rejected — forcing logout');
       try { api.resetAuthFailureSignal?.(); } catch {}
-      doLogout();
+      try { api.recordLogoutAttempt?.('signal_from_api', { source: 'authcontext_signal' }); } catch {}
+      doLogout('signal_from_api');
     };
     let removeListener = () => {};
     try {
