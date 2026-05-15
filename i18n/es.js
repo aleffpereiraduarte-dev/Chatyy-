@@ -3863,6 +3863,8 @@ export default {
   'live.noActiveLives': 'Ningun live ahora',
   'live.liveEnded': 'El live termino',
   'live.chat': 'Chat en vivo',
+  'live.chatFailed': 'Mensaje no enviado',
+  'live.cohostApproveFailed': 'No se pudo aprobar ahora. Inténtalo de nuevo.',
   'live.sendMessage': 'Enviar mensaje...',
   'live.joined': 'entro',
   'live.entered': 'entró a la live',
@@ -5753,6 +5755,8 @@ export default {
   'chat.findFriendsHint': 'Buscamos quién ya está en Chatyy por el número guardado',
   'chat.findFriendsCta': 'Ver ahora',
   'chat.findFriendsSyncing': 'Sincronizando...',
+  'chat.e2eeFailedTitle': 'Cifrado fallido',
+  'chat.e2eeFailedBody': 'No se pudo cifrar el mensaje. Pide a tu contacto que abra el app para publicar su clave, o inténtalo de nuevo en un momento.',
 
   // Forgot password — paso 6 (buscar email por teléfono/nombre)
   'forgot.titleNoEmail': '¿Olvidaste el email?',

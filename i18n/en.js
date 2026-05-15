@@ -3866,6 +3866,8 @@ export default {
   'live.noActiveLives': 'No lives right now',
   'live.liveEnded': 'Live has ended',
   'live.chat': 'Live chat',
+  'live.chatFailed': 'Message not sent',
+  'live.cohostApproveFailed': 'Could not approve right now. Try again.',
   'live.sendMessage': 'Send a message...',
   'live.joined': 'joined',
   'live.entered': 'joined the live',
@@ -5752,6 +5754,8 @@ export default {
   'chat.findFriendsHint': "We'll match contacts already on Chatyy by their phone number",
   'chat.findFriendsCta': 'See now',
   'chat.findFriendsSyncing': 'Syncing...',
+  'chat.e2eeFailedTitle': 'Encryption failed',
+  'chat.e2eeFailedBody': 'Could not encrypt the message. Ask your contact to open the app so their key is published, or try again in a moment.',
 
   // Forgot password — step 6 (find email by phone/name)
   'forgot.titleNoEmail': 'Forgot your email?',
