@@ -225,8 +225,20 @@ function CallScreenInner() {
   const isVideoCall = isVideoParam === '1' || isVideoParam === 'true';
 
   // Null safety for peer display.
+  // [bug 2026-05-15 #978-2] When answered via Android lock-screen native UI,
+  // the FCM payload sometimes only has caller_email (no caller_name), and
+  // IncomingCallActivity.kt defaults callerName to "Unknown" before persisting
+  // it. JS then displayed "Unknown" / "Contato desconhecido" instead of
+  // falling through to the email local part. Treat those sentinels as
+  // invalid so we always show the cleanest available label.
   const _safePeerName = (() => {
-    if (contactName && typeof contactName === 'string' && contactName.trim()) return contactName.trim();
+    const isInvalidName = (s) => {
+      if (!s || typeof s !== 'string') return true;
+      const t = s.trim().toLowerCase();
+      if (!t) return true;
+      return t === 'unknown' || t === 'desconhecido' || t === 'contato desconhecido' || t === 'unknown peer';
+    };
+    if (!isInvalidName(contactName)) return contactName.trim();
     if (typeof contactEmail === 'string' && contactEmail.includes('@')) {
       const local = contactEmail.split('@')[0];
       if (local) return local;
@@ -637,6 +649,19 @@ function CallScreenInner() {
         // The RN AudioSession instance manages playAndRecord / voiceChat
         // category automatically. We just call startAudioSession.
         await LK_AudioSession.startAudioSession();
+        // [bug 2026-05-15 #978-1 ios-speaker-stuck-after-lockscreen-answer]
+        // When the user answers via the iOS lock-screen CallKit native UI,
+        // AVAudioSession defaults to either `.speaker` or whatever it last
+        // routed to (in our case, often speaker from a previous video call).
+        // For audio calls, force earpiece on mount so the user doesn't end
+        // up in viva-voz unintentionally. Video calls default to speaker
+        // which is also explicitly set so the route is deterministic.
+        try {
+          const initialRoute = isVideoCall ? 'speaker' : 'earpiece';
+          await LK_AudioSession.selectAudioOutput?.(initialRoute);
+        } catch (eRoute) {
+          console.warn('[Call] initial selectAudioOutput err:', eRoute?.message);
+        }
       } catch (e) {
         console.warn('[Call] LK AudioSession.startAudioSession failed:', e?.message);
       }
