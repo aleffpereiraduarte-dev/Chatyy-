@@ -38,8 +38,16 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
 
         if (type == "incoming_call") {
             val callId = data["call_id"] ?: data["room_id"] ?: return
-            val callerName = data["caller_name"] ?: "Unknown"
             val callerEmail = data["caller_email"] ?: ""
+            // [bug 2026-05-15 #978-2 root-fix] Previously defaulted to literal
+            // "Unknown" when the FCM payload lacked caller_name — that string
+            // then leaked all the way through IncomingCallActivity → JS and
+            // surfaced as "Contato desconhecido". Fall back to the email's
+            // local-part instead so the lock-screen UI shows something
+            // recognizable even when the backend omits the display name.
+            val callerName = data["caller_name"]?.takeIf { it.isNotBlank() }
+                ?: callerEmail.substringBefore('@').takeIf { it.isNotBlank() }
+                ?: "Chamada"
             val conversationId = data["conversation_id"] ?: ""
             val hasVideo = data["video"] == "1"
             // Avatar URL ships in the FCM payload (backend adds caller_avatar

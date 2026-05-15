@@ -83,8 +83,12 @@ class CallRingingService : Service() {
             return START_NOT_STICKY
         }
         callId = safeCallId
-        callerName = intent.getStringExtra("caller_name") ?: "Unknown"
         callerEmail = intent.getStringExtra("caller_email") ?: ""
+        // [#978-2] Same email-fallback as CallFirebaseMessagingService so the
+        // ringing notification + heads-up overlay never display "Unknown".
+        callerName = intent.getStringExtra("caller_name")?.takeIf { it.isNotBlank() }
+            ?: callerEmail.substringBefore('@').takeIf { it.isNotBlank() }
+            ?: "Chamada"
         conversationId = intent.getStringExtra("conversation_id") ?: ""
         callerAvatar = intent.getStringExtra("caller_avatar") ?: ""
         val hasVideo = intent.getBooleanExtra("has_video", false)
