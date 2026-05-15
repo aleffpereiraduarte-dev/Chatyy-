@@ -950,7 +950,13 @@ export default function PhotosScreen() {
         if (NativeUpload?.scanLibrary && totalOnDevice > 0) {
           NativeUpload.scanLibrary().then((res) => {
             if (res?.totalPending !== undefined) {
-              setPendingCount(Math.max(0, res.totalPending));
+              // Bug 2026-05-15: scanLibrary read phantom UserDefaults assets
+              // and reported pending >> device total (user saw "Faltam 18k
+              // fotos" with only 12k on device). Cap by device-vs-server
+              // truth so we never overstate.
+              const nativePending = Math.max(0, res.totalPending);
+              const truthCap = Math.max(0, totalOnDevice - estimatedBackedUp);
+              setPendingCount(Math.min(nativePending, truthCap));
             }
           }).catch(() => {});
         }

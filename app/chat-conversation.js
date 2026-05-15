@@ -4204,7 +4204,7 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior="padding"
         style={previewStyles.container}
       >
         {/* Header */}
@@ -20337,7 +20337,7 @@ export default function ChatConversationScreen() {
       {!!playlistEditor && (
         <Modal visible transparent animationType="slide" onRequestClose={() => setPlaylistEditor(null)}>
           <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            behavior="padding"
             style={{ flex: 1 }}
             keyboardVerticalOffset={0}
           >
