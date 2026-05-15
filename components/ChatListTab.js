@@ -1306,6 +1306,13 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
   }, [livesByEmail, user?.email]);
 
   const [statusViewerEmail, setStatusViewerEmail] = useState(null);
+  // [bug #982] Snapshot the items shown to the viewer when it opens. If the
+  // background `statuses` poll re-fetches and the target user is filtered out
+  // (privacy block, 24h TTL, server-side hide), the live items.length flips
+  // to 0 and `visible` would collapse → modal closes mid-watch ("ele some").
+  // The snapshot persists so the user can finish the stories they opened.
+  const [statusViewerLockedItems, setStatusViewerLockedItems] = useState(null);
+  const [statusViewerLockedGroup, setStatusViewerLockedGroup] = useState(null);
   const [statusViewersFor, setStatusViewersFor] = useState(null); // item being inspected for viewer list
   const [statusViewersList, setStatusViewersList] = useState([]);
   const [statusViewersLoading, setStatusViewersLoading] = useState(false);
@@ -1327,6 +1334,22 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
   const openStatus = (email) => {
     setStatusViewIdx(0);
     setStatusViewerEmail(email || null);
+    // Snapshot the matched group/items NOW so a subsequent refetch can't
+    // empty them and force-close the viewer.
+    if (email) {
+      const lc = String(email).toLowerCase();
+      const g = statuses.find(s => String(s.email || '').toLowerCase() === lc);
+      if (g) {
+        setStatusViewerLockedGroup(g);
+        setStatusViewerLockedItems(g.items || []);
+      } else {
+        setStatusViewerLockedGroup(null);
+        setStatusViewerLockedItems(null);
+      }
+    } else {
+      setStatusViewerLockedGroup(null);
+      setStatusViewerLockedItems(null);
+    }
   };
 
   // Prefetch the next few status items' images as soon as a viewer opens
@@ -1335,7 +1358,8 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
   // browser already caches fetched URLs).
   useEffect(() => {
     if (!statusViewerEmail) return;
-    const group = statuses.find(s => s.email === statusViewerEmail);
+    const _sve = String(statusViewerEmail).toLowerCase();
+    const group = statuses.find(s => String(s.email || '').toLowerCase() === _sve);
     const items = group?.items || [];
     const upcoming = items.slice(statusViewIdx, statusViewIdx + 3);
     const urls = upcoming
@@ -1703,9 +1727,23 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
           Same UX (Instagram-like fullscreen story) + viewers sheet, but the
           single component is also used by Profile and (next) ChatStatusTab. */}
       {(() => {
-        const groupIdx = Math.max(0, statuses.findIndex(s => s.email === statusViewerEmail));
-        const group = statuses[groupIdx];
-        const items = group?.items || [];
+        // [2026-05-15 bug #982] Email comparison must be case-insensitive.
+        // Server canonicalizes addresses to lowercase, but `openStatus(email)`
+        // can be invoked with the original-case email from a click target
+        // (e.g. when suporte@boraum opens duarte@CHATYY.com.br from another
+        // surface). A strict !== match returned -1, so `groupIdx = 0` fell
+        // back to a DIFFERENT user's group (or own, which has 0 items when
+        // the viewer hasn't posted today). Result: modal flashed and closed
+        // ("ele some") because items.length was 0.
+        const _sve = String(statusViewerEmail || '').toLowerCase();
+        const _idx = statuses.findIndex(s => String(s.email || '').toLowerCase() === _sve);
+        const liveGroup = _idx >= 0 ? statuses[_idx] : null;
+        // Prefer the live group if present (fresh items including any newly
+        // posted), fall back to the locked snapshot captured at openStatus
+        // time so a refetch that filters duarte out can't close the viewer.
+        const group = liveGroup || statusViewerLockedGroup;
+        const groupIdx = _idx >= 0 ? _idx : 0;
+        const items = (liveGroup?.items?.length ? liveGroup.items : statusViewerLockedItems) || [];
         const isOwn = !!group && (group.email || '').toLowerCase() === (user?.email || '').toLowerCase();
         return (
           <StoryViewer
@@ -1727,13 +1765,13 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
               const prev = statuses[groupIdx - 1];
               if (prev?.email) { setStatusViewerEmail(prev.email); setStatusViewIdx(0); }
             }}
-            onClose={() => { setStatusViewerEmail(null); setStatusViewIdx(0); }}
+            onClose={() => { setStatusViewerEmail(null); setStatusViewIdx(0); setStatusViewerLockedGroup(null); setStatusViewerLockedItems(null); }}
             onMarkViewed={(itemId) => { try { markStatusViewed(itemId); } catch {} }}
             onDelete={async (statusId) => {
               try { await api.statusDelete?.(statusId); } catch {}
               try { removeStatusFromCache(statusId); } catch {}
               const remaining = (items || []).filter(it => it.id !== statusId);
-              if (remaining.length === 0) { setStatusViewerEmail(null); setStatusViewIdx(0); }
+              if (remaining.length === 0) { setStatusViewerEmail(null); setStatusViewIdx(0); setStatusViewerLockedGroup(null); setStatusViewerLockedItems(null); }
               else { setStatusViewIdx(i => Math.min(i || 0, remaining.length - 1)); }
             }}
             onAddMore={() => {
