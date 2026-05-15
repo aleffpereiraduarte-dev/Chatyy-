@@ -14,7 +14,7 @@
  *      the repo for human reference / diffing only — the plugin does not
  *      depend on them at prebuild time.
  *   2. Adds a new PBXNativeTarget of type appex (com.apple.product-type.app-extension).
- *   3. Sets the bundle id to com.onemundo.mail.broadcast and inherits team
+ *   3. Sets the bundle id to com.onemundo.mail.broadcastupload and inherits team
  *      from the main target so EAS signing picks it up automatically.
  *   4. Adds the App Group entitlement (group.com.onemundo.mail) to the main
  *      app so it can read frames the extension wrote. The extension target
@@ -39,7 +39,7 @@ const path = require('path');
 const { withXcodeProject, withEntitlementsPlist, withDangerousMod } = require('expo/config-plugins');
 
 const EXT_NAME = 'ChatyyBroadcastExtension';
-const EXT_BUNDLE_ID = 'com.onemundo.mail.broadcast';
+const EXT_BUNDLE_ID = 'com.onemundo.mail.broadcastupload';
 const APP_GROUP = 'group.com.onemundo.mail';
 
 // =====================================================================
@@ -104,7 +104,7 @@ const INFO_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
 //
 // Host-side requirements (see app/call.js):
 //   - `Room` ctor must receive iosScreenSharePreferences = {
-//       broadcastBundleId: 'com.onemundo.mail.broadcast',
+//       broadcastBundleId: 'com.onemundo.mail.broadcastupload',
 //       useBroadcastExtension: true,
 //     }
 //   - App Group entitlement `group.com.onemundo.mail` must be on BOTH the

@@ -41,7 +41,7 @@ import UIKit
 public class ExpoScreenShareModule: Module {
 
     // Must match the extension bundle ID configured in the Xcode target.
-    private static let extensionBundleId = "com.onemundo.mail.broadcast"
+    private static let extensionBundleId = "com.onemundo.mail.broadcastupload"
     private static let appGroupId = "group.com.onemundo.mail"
 
     private static let frameNotificationName = "com.onemundo.mail.screenshare.frame"

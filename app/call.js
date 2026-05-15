@@ -769,7 +769,7 @@ function CallScreenInner() {
       // publishing screen frames into THIS room. broadcastBundleId must match
       // the bundle id set in plugins/with-broadcast-extension.js.
       iosScreenSharePreferences: {
-        broadcastBundleId: 'com.onemundo.mail.broadcast',
+        broadcastBundleId: 'com.onemundo.mail.broadcastupload',
         useBroadcastExtension: true,
       },
     };
