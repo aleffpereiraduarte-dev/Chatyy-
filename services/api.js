@@ -205,61 +205,262 @@ export function getAuthHeaders() {
   return h;
 }
 
-// Token & credential persistence — works on BOTH web and mobile
+// Token & credential persistence — works on BOTH web and mobile.
+//
+// WhatsApp-grade redundancy (2026-05-15): the token is mirrored to
+// BOTH SecureStore (canonical) AND AsyncStorage (fallback). On hydrate
+// we read both — whichever has a value wins, and we re-sync the other
+// so they reconverge. Reason: Carol-style "logged out after a week"
+// almost always traces to SecureStore returning null on cold boot
+// (keychain ACL mismatch, OS reset of keychain after passcode change,
+// iCloud Keychain conflict on Restore From iCloud Backup, ...). A
+// duplicate AsyncStorage copy means the user keeps their session even
+// when keychain forgets. Auto-logout never fires while EITHER copy is
+// present and fresh (≤90 days). Also persists a `mail_token_meta` blob
+// with `last_auth_ok_at` + `created_at` so the 401 handler can refuse
+// logout when the token is demonstrably alive.
+const TOKEN_META_KEY = 'mail_token_meta';     // AsyncStorage
+const TOKEN_FALLBACK_KEY = 'mail_token_fb';   // AsyncStorage redundant copy
+const TOKEN_GRACE_DAYS = 90;                   // WhatsApp parity: refuse logout for fresh tokens
+const TOKEN_GRACE_MS = TOKEN_GRACE_DAYS * 24 * 60 * 60 * 1000;
+
+let _tokenMeta = { last_auth_ok_at: 0, created_at: 0, email: '' };
+
+async function _readAsyncStorage(key) {
+  try {
+    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+    return await AsyncStorage.getItem(key);
+  } catch { return null; }
+}
+async function _writeAsyncStorage(key, value) {
+  try {
+    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+    if (value == null) await AsyncStorage.removeItem(key);
+    else await AsyncStorage.setItem(key, value);
+  } catch {}
+}
+
+async function _loadTokenMeta() {
+  try {
+    let raw = null;
+    if (Platform.OS === 'web') {
+      raw = (typeof localStorage !== 'undefined') ? localStorage.getItem(TOKEN_META_KEY) : null;
+    } else {
+      raw = await _readAsyncStorage(TOKEN_META_KEY);
+    }
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        _tokenMeta = {
+          last_auth_ok_at: Number(parsed.last_auth_ok_at || 0),
+          created_at: Number(parsed.created_at || 0),
+          email: String(parsed.email || ''),
+        };
+      }
+    }
+  } catch {}
+}
+async function _saveTokenMeta() {
+  try {
+    const raw = JSON.stringify(_tokenMeta);
+    if (Platform.OS === 'web') {
+      if (typeof localStorage !== 'undefined') localStorage.setItem(TOKEN_META_KEY, raw);
+    } else {
+      await _writeAsyncStorage(TOKEN_META_KEY, raw);
+    }
+  } catch {}
+}
+
+// Read the token's age (ms since last server-confirmed auth-OK). Used by
+// the 401 handler / WS auth_error path to refuse logout when the token
+// has been working recently. Returns Infinity when no meta has been
+// recorded yet (treat as old → don't refuse).
+function _tokenLastOkAgeMs() {
+  const ts = _tokenMeta.last_auth_ok_at || _tokenMeta.created_at || 0;
+  if (!ts) return Infinity;
+  return Date.now() - ts;
+}
+
+// Public: refuse logout if token is fresh? Exposed so AuthContext and
+// websocket.js can both consult the same WhatsApp-grade gate.
+export function isTokenWithinGracePeriod() {
+  if (!authToken) return false;
+  return _tokenLastOkAgeMs() < TOKEN_GRACE_MS;
+}
+export function getTokenMeta() { return { ..._tokenMeta }; }
+
+// Bump the success timestamp. Called from _apiCallImpl on any non-401
+// response — proves the network + token are alive. Cheap (in-memory),
+// throttled disk write (max once per 5 min).
+let _lastMetaPersist = 0;
+function _noteAuthOk() {
+  _tokenMeta.last_auth_ok_at = Date.now();
+  const now = Date.now();
+  if (now - _lastMetaPersist > 5 * 60 * 1000) {
+    _lastMetaPersist = now;
+    _saveTokenMeta().catch(() => {});
+  }
+}
+
+// Audit trail: every logout path (explicit, auto, token-rejected) records
+// {ts, reason, source} into AsyncStorage so we can post-mortem why Carol
+// got kicked. Capped at 20 entries, oldest first.
+const LOGOUT_AUDIT_KEY = 'mail_logout_audit_v1';
+export async function recordLogoutAttempt(reason, extra = {}) {
+  try {
+    const entry = {
+      ts: Date.now(),
+      reason: String(reason || 'unknown'),
+      email: String(_tokenMeta.email || ''),
+      had_token: !!authToken,
+      last_ok_age_ms: _tokenLastOkAgeMs() === Infinity ? null : _tokenLastOkAgeMs(),
+      ...extra,
+    };
+    let prior = [];
+    if (Platform.OS === 'web') {
+      try { prior = JSON.parse(localStorage.getItem(LOGOUT_AUDIT_KEY) || '[]') || []; } catch {}
+    } else {
+      const raw = await _readAsyncStorage(LOGOUT_AUDIT_KEY);
+      try { prior = raw ? JSON.parse(raw) : []; } catch {}
+    }
+    if (!Array.isArray(prior)) prior = [];
+    prior.push(entry);
+    if (prior.length > 20) prior = prior.slice(-20);
+    const out = JSON.stringify(prior);
+    if (Platform.OS === 'web') {
+      try { localStorage.setItem(LOGOUT_AUDIT_KEY, out); } catch {}
+    } else {
+      await _writeAsyncStorage(LOGOUT_AUDIT_KEY, out);
+    }
+    try { console.warn('[auth] logout audit:', entry.reason, JSON.stringify(entry)); } catch {}
+  } catch {}
+}
+export async function getLogoutAudit() {
+  try {
+    let raw = null;
+    if (Platform.OS === 'web') {
+      raw = (typeof localStorage !== 'undefined') ? localStorage.getItem(LOGOUT_AUDIT_KEY) : null;
+    } else {
+      raw = await _readAsyncStorage(LOGOUT_AUDIT_KEY);
+    }
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
 async function getStoredToken() {
+  // Read from BOTH stores. Prefer the canonical store, but fall back to
+  // the AsyncStorage mirror if it's missing. Whoever wins re-writes the
+  // loser so they reconverge — WhatsApp-grade redundancy.
+  let primary = null;
+  let fallback = null;
   try {
     if (Platform.OS === 'web') {
-      return typeof localStorage !== 'undefined' ? localStorage.getItem('mail_token') : null;
-    }
-    const SecureStore = require('expo-secure-store');
-    const token = await SecureStore.getItemAsync('mail_token');
-    // One-time migration: existing tokens were stored with the default
-    // accessibility (WHEN_UNLOCKED) so they can't be read on a locked
-    // device — which is exactly when CallKit needs the token to wake
-    // the WS for an incoming call. Re-write with
-    // AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY so the next locked-screen
-    // answer can actually hydrate auth. Idempotent: the write is cheap
-    // and the keychain ACL just updates in place.
-    if (token && Platform.OS === 'ios' && !_tokenAccessMigrated) {
-      _tokenAccessMigrated = true;
+      primary = typeof localStorage !== 'undefined' ? localStorage.getItem('mail_token') : null;
+      // Web has no AsyncStorage; we use sessionStorage as the secondary.
+      try { fallback = (typeof sessionStorage !== 'undefined') ? sessionStorage.getItem(TOKEN_FALLBACK_KEY) : null; } catch {}
+    } else {
       try {
-        await SecureStore.setItemAsync('mail_token', token, {
-          keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY,
-        });
-      } catch {}
+        const SecureStore = require('expo-secure-store');
+        primary = await SecureStore.getItemAsync('mail_token');
+        // One-time migration: existing tokens were stored with the default
+        // accessibility (WHEN_UNLOCKED) so they can't be read on a locked
+        // device — which is exactly when CallKit needs the token to wake
+        // the WS for an incoming call. Re-write with
+        // AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY so the next locked-screen
+        // answer can actually hydrate auth. Idempotent: the write is cheap
+        // and the keychain ACL just updates in place.
+        if (primary && Platform.OS === 'ios' && !_tokenAccessMigrated) {
+          _tokenAccessMigrated = true;
+          try {
+            await SecureStore.setItemAsync('mail_token', primary, {
+              keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY,
+            });
+          } catch {}
+        }
+      } catch { primary = null; }
+      fallback = await _readAsyncStorage(TOKEN_FALLBACK_KEY);
     }
-    return token;
-  } catch { return null; }
+  } catch {}
+
+  const token = primary || fallback || null;
+  // Reconverge: if one store lost the token but the other has it, copy back.
+  if (token) {
+    try {
+      if (Platform.OS === 'web') {
+        if (!primary && typeof localStorage !== 'undefined') localStorage.setItem('mail_token', token);
+        if (!fallback && typeof sessionStorage !== 'undefined') sessionStorage.setItem(TOKEN_FALLBACK_KEY, token);
+      } else {
+        if (!primary) {
+          try {
+            const SecureStore = require('expo-secure-store');
+            await SecureStore.setItemAsync('mail_token', token, {
+              keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY,
+            });
+          } catch {}
+        }
+        if (!fallback) await _writeAsyncStorage(TOKEN_FALLBACK_KEY, token);
+      }
+    } catch {}
+  }
+
+  // Hydrate meta as well so the 90-day grace check works on cold start.
+  await _loadTokenMeta();
+
+  return token;
 }
 let _tokenAccessMigrated = false;
 
 async function storeToken(token) {
+  // Write to BOTH stores so a future keychain hiccup can't lose the
+  // session. This is the WhatsApp-grade fix for "Carol logged out after
+  // a week" — even if SecureStore returns null on cold boot (keychain
+  // ACL mismatch, OS-level reset, iCloud Restore conflict), the
+  // AsyncStorage mirror keeps the user signed in.
   try {
     if (Platform.OS === 'web') {
       if (typeof localStorage !== 'undefined') {
         if (token) localStorage.setItem('mail_token', token);
         else localStorage.removeItem('mail_token');
       }
-      return;
-    }
-    const SecureStore = require('expo-secure-store');
-    if (token) {
-      // iOS: AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY lets the keychain entry
-      // be read while the screen is locked (provided the device was
-      // unlocked at least once since boot). Without this the default
-      // accessibility is WHEN_UNLOCKED and SecureStore.getItemAsync
-      // returns null on a locked phone — which is exactly the state
-      // we're in when CallKit wakes the app from a VoIP push and the
-      // user accepts the call from the lock screen. Result: no token,
-      // no WS reconnect, the call screen lands without an SDP offer
-      // and the user sees the "answer failed" black screen.
-      await SecureStore.setItemAsync('mail_token', token, {
-        keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY,
-      });
+      try {
+        if (typeof sessionStorage !== 'undefined') {
+          if (token) sessionStorage.setItem(TOKEN_FALLBACK_KEY, token);
+          else sessionStorage.removeItem(TOKEN_FALLBACK_KEY);
+        }
+      } catch {}
     } else {
-      await SecureStore.deleteItemAsync('mail_token');
+      try {
+        const SecureStore = require('expo-secure-store');
+        if (token) {
+          // iOS: AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY lets the keychain entry
+          // be read while the screen is locked (provided the device was
+          // unlocked at least once since boot). Without this the default
+          // accessibility is WHEN_UNLOCKED and SecureStore.getItemAsync
+          // returns null on a locked phone — which is exactly the state
+          // we're in when CallKit wakes the app from a VoIP push and the
+          // user accepts the call from the lock screen. Result: no token,
+          // no WS reconnect, the call screen lands without an SDP offer
+          // and the user sees the "answer failed" black screen.
+          await SecureStore.setItemAsync('mail_token', token, {
+            keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY,
+          });
+        } else {
+          await SecureStore.deleteItemAsync('mail_token');
+        }
+      } catch {}
+      // Redundant AsyncStorage mirror — survives SecureStore loss.
+      try { await _writeAsyncStorage(TOKEN_FALLBACK_KEY, token || null); } catch {}
     }
   } catch {}
+
+  // Bump meta: a freshly-stored token means we just did a successful
+  // login/refresh/restore. Mark `created_at` once, refresh `last_auth_ok_at`.
+  if (token) {
+    if (!_tokenMeta.created_at) _tokenMeta.created_at = Date.now();
+    _tokenMeta.last_auth_ok_at = Date.now();
+    _saveTokenMeta().catch(() => {});
+  }
+
   // Mirror the new token into UserDefaults so the iOS BGTaskScheduler photo
   // backup handler — which runs without JS — has a fresh token waiting.
   try {
@@ -457,13 +658,35 @@ export function getToken() { return authToken; }
 if (Platform.OS === 'web') {
   try {
     if (typeof localStorage !== 'undefined') {
-      const stored = localStorage.getItem('mail_token');
+      let stored = localStorage.getItem('mail_token');
+      // Web fallback: sessionStorage mirror. If the primary lost the token
+      // (e.g. user cleared site data on one origin), the sessionStorage
+      // copy can keep them logged in for the current tab.
+      if (!stored && typeof sessionStorage !== 'undefined') {
+        try { stored = sessionStorage.getItem(TOKEN_FALLBACK_KEY); } catch {}
+        if (stored) { try { localStorage.setItem('mail_token', stored); } catch {} }
+      }
       if (stored) authToken = stored;
       localStorage.removeItem('mail_creds');
       const accts = getStoredAccounts();
       if (accts.some(a => a.password)) {
         storeAccounts(accts.map(({ password, ...rest }) => rest));
       }
+      // Load meta synchronously on web so isTokenWithinGracePeriod() works
+      // immediately for any caller that lands before the async tick.
+      try {
+        const raw = localStorage.getItem(TOKEN_META_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') {
+            _tokenMeta = {
+              last_auth_ok_at: Number(parsed.last_auth_ok_at || 0),
+              created_at: Number(parsed.created_at || 0),
+              email: String(parsed.email || ''),
+            };
+          }
+        }
+      } catch {}
     }
   } catch {}
   _tokenReadyResolve();
@@ -473,6 +696,7 @@ if (Platform.OS === 'web') {
     try {
       const stored = await getStoredToken();
       if (stored) authToken = stored;
+      // getStoredToken already loaded meta; nothing else to do here.
     } finally {
       _tokenReadyResolve();
     }
@@ -690,7 +914,15 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
   // Reset the consecutive-401 counter on any non-401 response — even errors
   // count, since they prove the network/host is alive. This way only a
   // *streak* of true 401s (token actually invalid) trips the logout signal.
-  if (result.status !== 401) _consecutive401 = 0;
+  if (result.status !== 401) {
+    _consecutive401 = 0;
+    // 2xx with a bearer attached → token is demonstrably alive. Bump the
+    // "last auth OK" timestamp so the 90-day grace check (used by the 401
+    // refusal path) sees a fresh value. Throttled disk write inside.
+    if (authToken && result.status >= 200 && result.status < 300) {
+      try { _noteAuthOk(); } catch {}
+    }
+  }
 
   // Auto-relogin: if server returns 401 and we have in-memory credentials, try to re-authenticate
   // BUT don't block - if relogin takes too long, return the 401 result
@@ -787,12 +1019,49 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
       // por endpoints fora do NOISY_ACTIONS_401 (cada user é diferente). Com
       // 100 strikes, só um token de fato revogado/expirado dispara logout —
       // qualquer ruído transient se dilui antes. WhatsApp parity sustentável.
-      const shouldSignal = tokenHasValue && !isNoisy && !_authFailureSignaled && _consecutive401 >= 100;
+      let shouldSignal = tokenHasValue && !isNoisy && !_authFailureSignaled && _consecutive401 >= 100;
+
+      // WhatsApp-grade refusal: even after 100 strikes, if this token has
+      // been confirmed alive (any 2xx) within the last 90 days, REFUSE to
+      // logout. Truly revoked tokens never come back successful, so this
+      // grace window can only protect a token that has been recently used.
+      // Carol-style "logged out for no reason" almost always traces to a
+      // brief edge auth glitch that ran the strike counter up — we now
+      // simply ignore it instead of nuking her session.
+      if (shouldSignal) {
+        const ageMs = _tokenLastOkAgeMs();
+        if (ageMs !== Infinity && ageMs < TOKEN_GRACE_MS) {
+          shouldSignal = false;
+          // Reset the counter so the grace window has effect — otherwise
+          // every subsequent 401 keeps re-evaluating against the same
+          // (now disregarded) 100-strike threshold.
+          _consecutive401 = 0;
+          try {
+            recordLogoutAttempt('refused_within_grace', {
+              source: 'api_401_streak',
+              age_ms: ageMs,
+              action,
+              grace_days: TOKEN_GRACE_DAYS,
+            });
+          } catch {}
+          try { console.warn('[auth] 401 streak hit but token <90d old — refusing logout'); } catch {}
+        }
+      }
+
       if (shouldSignal) {
         _authFailureSignaled = true;
+        try {
+          recordLogoutAttempt('api_401_streak', {
+            source: 'api',
+            consecutive: _consecutive401,
+            action,
+          });
+        } catch {}
         // Clear the bad token so subsequent requests don't spam
         authToken = '';
         try { if (Platform.OS === 'web' && typeof localStorage !== 'undefined') localStorage.removeItem('mail_token'); } catch {}
+        try { if (Platform.OS === 'web' && typeof sessionStorage !== 'undefined') sessionStorage.removeItem(TOKEN_FALLBACK_KEY); } catch {}
+        try { _writeAsyncStorage(TOKEN_FALLBACK_KEY, null); } catch {}
         try {
           const SecureStore = require('expo-secure-store');
           SecureStore.deleteItemAsync('bio_token').catch(() => {});
@@ -889,6 +1158,14 @@ export async function login(email, password) {
     const token = r?.data?.token || r?.token;
     if (token) {
       authToken = token;
+      // Stamp the meta with the freshly-issued token's owner so the
+      // 90-day grace check in the 401 handler always has a known email.
+      _tokenMeta = {
+        last_auth_ok_at: Date.now(),
+        created_at: Date.now(),
+        email: (r.data?.email || email || '').toLowerCase(),
+      };
+      _saveTokenMeta().catch(() => {});
       await storeToken(token);
     }
     // Save device trust token (prevents re-verification on same device)
@@ -954,7 +1231,13 @@ export function clearAuthToken() {
   sessionCookie = '';
   csrfToken = '';
   savedCredentials = null;
+  // Reset meta so the next account starts with a clean slate. Audit
+  // entry is written by AuthContext / 401 handler before this call.
+  _tokenMeta = { last_auth_ok_at: 0, created_at: 0, email: '' };
+  _saveTokenMeta().catch(() => {});
   storeToken(null).catch(() => {});
+  // Belt-and-suspenders: also nuke the AsyncStorage fallback explicitly.
+  try { _writeAsyncStorage(TOKEN_FALLBACK_KEY, null); } catch {}
   // Drop the SWR persistence so the next user doesn't see cached API
   // responses from the account that just logged out.
   try { _swrCache.clear(); } catch {}
@@ -974,7 +1257,10 @@ export async function clearAuthTokenAsync() {
   sessionCookie = '';
   csrfToken = '';
   savedCredentials = null;
+  _tokenMeta = { last_auth_ok_at: 0, created_at: 0, email: '' };
+  try { await _saveTokenMeta(); } catch {}
   try { await storeToken(null); } catch {}
+  try { await _writeAsyncStorage(TOKEN_FALLBACK_KEY, null); } catch {}
   try { _swrCache.clear(); } catch {}
   try { if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(_SWR_PERSIST_KEY); } catch {}
 }
@@ -1781,6 +2067,16 @@ export function getAuthToken() {
 
 export function setAuthTokenDirect(token) {
   authToken = token;
+  // Reset meta so the 90-day grace clock starts fresh from this point.
+  // The next successful 2xx will refresh last_auth_ok_at.
+  if (token) {
+    _tokenMeta = {
+      last_auth_ok_at: Date.now(),
+      created_at: _tokenMeta.created_at || Date.now(),
+      email: _tokenMeta.email || '',
+    };
+    _saveTokenMeta().catch(() => {});
+  }
   storeToken(token);
 }
 
