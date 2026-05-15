@@ -597,18 +597,27 @@ function CallScreenInner() {
     // [bug 2026-05-15 livekit-server-side-diag]
     // Native rebuild of build 490 linked @livekit/react-native but user still
     // reports "Não foi possível conectar". Need to capture EXACTLY where
-    // connectToRoom is failing without device console access. POST every
-    // step to /api/email.php?action=push_diag so we can read it on prod.
+    // connectToRoom is failing without device console access. push_diag in
+    // email.php expects { step, platform, info, anon_id } — anything else is
+    // dropped. Pack the structured payload into `info` as compact text.
     const _diag = (event, extra) => {
       try {
         const api = require('../services/api');
+        let info = `lk_${isCaller ? 'caller' : 'callee'} cid=${String(callId).slice(-8)}`;
+        if (extra && typeof extra === 'object') {
+          for (const k of Object.keys(extra)) {
+            const v = extra[k];
+            if (v == null) continue;
+            const s = (typeof v === 'string') ? v : JSON.stringify(v);
+            info += ` ${k}=${s.length > 120 ? s.slice(0, 120) + '...' : s}`;
+          }
+        }
         api.apiCall?.('push_diag', {
-          tag: 'livekit_call',
-          event,
-          call_id: callId,
-          is_caller: !!isCaller,
+          step: `lk_${event}`.slice(0, 40),
           platform: Platform.OS,
-          ...(extra || {}),
+          info: info.slice(0, 500),
+          anon_id: `call-${String(callId).slice(-12)}`,
+          ts: new Date().toISOString(),
         }, 'POST').catch(() => {});
       } catch {}
     };
