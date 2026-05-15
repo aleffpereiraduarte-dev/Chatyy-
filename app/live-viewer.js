@@ -241,6 +241,7 @@ export default function LiveViewerScreen() {
   // live frame + comment overlay (Instagram/TikTok "save snap" parity).
   const screenRef = useRef(null);
   const inputRef = useRef(null);
+  const chatSheetScrollRef = useRef(null);
   // Toast for screenshot save feedback (no library — just an Animated.Value).
   const [toast, setToast] = useState('');
   const toastAnim = useRef(new Animated.Value(0)).current;
@@ -1318,6 +1319,7 @@ export default function LiveViewerScreen() {
       lastCommentTapRef.current[msg.id] = 0;
       fireCommentHeart(msg.id);
       spawnHeart();
+      try { require('react-native').Vibration.vibrate([0, 12, 8, 18]); } catch {}
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         try {
           wsRef.current.send(JSON.stringify({
@@ -2087,7 +2089,12 @@ export default function LiveViewerScreen() {
                 {t('live.sayHello') || 'Diga oi...'}
               </Text>
             ) : (
-              <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 8 }}>
+              <ScrollView
+                ref={chatSheetScrollRef}
+                onContentSizeChange={() => chatSheetScrollRef.current?.scrollToEnd?.({ animated: true })}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingBottom: 8 }}
+              >
                 {chatMessages.map((m) => (
                   <View key={m.id} style={{ flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 8, paddingHorizontal: 4, gap: 10 }}>
                     <AvatarCircle name={m.name} email={m.email} size={32} />

@@ -2346,7 +2346,13 @@ export default function LiveBroadcastScreen() {
             zIndex: 30,
           }}
         >
-          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#facc15' }} />
+          <Animated.View
+            style={{
+              width: 8, height: 8, borderRadius: 4, backgroundColor: '#facc15',
+              transform: [{ scale: livePulse }],
+              shadowColor: '#facc15', shadowOpacity: 0.8, shadowRadius: 6,
+            }}
+          />
           <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>
             {joinRequests.length} {t('live.colabRequest') || 'pra colab'}
           </Text>

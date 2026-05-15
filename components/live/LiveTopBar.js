@@ -52,6 +52,8 @@ export default function LiveTopBar({
 }) {
   // Pulsing dot for LIVE pill — Animated.loop, runs while mounted.
   const dotPulse = useRef(new Animated.Value(1)).current;
+  // Avatar breath — subtle 1→1.05 loop so the host "feels alive" (IG-style).
+  const avatarBreath = useRef(new Animated.Value(1)).current;
   // Viewer-count bump animation when count changes.
   const viewerScale = useRef(new Animated.Value(1)).current;
   const plusOneAnim = useRef(new Animated.Value(0)).current;
@@ -65,8 +67,15 @@ export default function LiveTopBar({
       ])
     );
     loop.start();
-    return () => loop.stop();
-  }, [dotPulse]);
+    const breath = Animated.loop(
+      Animated.sequence([
+        Animated.timing(avatarBreath, { toValue: 1.06, duration: 900, useNativeDriver: true }),
+        Animated.timing(avatarBreath, { toValue: 1, duration: 900, useNativeDriver: true }),
+      ])
+    );
+    breath.start();
+    return () => { loop.stop(); breath.stop(); };
+  }, [dotPulse, avatarBreath]);
 
   useEffect(() => {
     const prev = prevCountRef.current;
@@ -101,8 +110,10 @@ export default function LiveTopBar({
         style={styles.hostBlock}
         accessibilityRole="button"
       >
-        <View style={styles.avatarRing} pointerEvents="none" />
-        <AvatarCircle name={hostName} email={hostEmail} size={32} />
+        <Animated.View style={[styles.avatarWrap, { transform: [{ scale: avatarBreath }] }]}>
+          <View style={styles.avatarRing} pointerEvents="none" />
+          <AvatarCircle name={hostName} email={hostEmail} size={32} />
+        </Animated.View>
       </TouchableOpacity>
 
       <View style={styles.midBlock} pointerEvents="box-none">
@@ -191,6 +202,10 @@ const styles = StyleSheet.create({
     width: 36, height: 36,
     alignItems: 'center', justifyContent: 'center',
     position: 'relative',
+  },
+  avatarWrap: {
+    width: 36, height: 36,
+    alignItems: 'center', justifyContent: 'center',
   },
   avatarRing: {
     position: 'absolute',
