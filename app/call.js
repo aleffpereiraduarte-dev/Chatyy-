@@ -1574,6 +1574,24 @@ function CallScreenInner() {
       resetControlsTimer();
       return;
     }
+    // [bug 2026-05-15 #978-4 video-toggle-silent-fail]
+    // Previously setCameraEnabled errors were only logged via console.warn,
+    // user saw nothing and assumed the toggle was broken. Now surface failures
+    // (iOS Settings camera-denied, LK room not connected, hardware busy) via
+    // a toast/alert AND reset the local state so the icon doesn't appear
+    // stuck "trying to turn on". Also fail-fast if roomRef is null (race
+    // window before connectToRoom resolves).
+    if (!r || !r.localParticipant) {
+      try {
+        const { Alert } = require('react-native');
+        Alert.alert(
+          t('call.videoErrorTitle') || 'Câmera indisponível',
+          t('call.videoNotReady') || 'A ligação ainda está conectando — espere um instante e tente de novo.',
+        );
+      } catch {}
+      resetControlsTimer();
+      return;
+    }
     try {
       await r.localParticipant.setCameraEnabled(true);
       setVideoEnabled(true);
@@ -1582,7 +1600,31 @@ function CallScreenInner() {
       if (camPub?.videoTrack) setLocalVideoTrack(camPub.videoTrack);
       sendData({ type: 'video_toggle', enabled: true });
     } catch (e) {
-      console.warn('[Call] setCameraEnabled true err:', e?.message);
+      const msg = String(e?.message || e || '');
+      console.warn('[Call] setCameraEnabled true err:', msg);
+      try {
+        const { Alert, Linking } = require('react-native');
+        // iOS Settings-denied surfaces "NotAllowedError" or "Permission" in
+        // the error string. Offer to open Settings so user can re-enable.
+        if (/denied|not\s*allowed|permission/i.test(msg) && Platform.OS === 'ios') {
+          Alert.alert(
+            t('call.cameraDeniedTitle') || 'Câmera não permitida',
+            t('call.cameraDeniedIos') || 'O acesso à câmera foi negado. Abra Configurações → Chatyy e ative a Câmera para usar vídeo.',
+            [
+              { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+              { text: t('common.openSettings') || 'Abrir Configurações', onPress: () => { try { Linking.openSettings(); } catch {} } },
+            ]
+          );
+        } else {
+          Alert.alert(
+            t('call.videoErrorTitle') || 'Câmera indisponível',
+            (t('call.videoErrorBody') || 'Não foi possível ligar a câmera.') + (msg ? ' (' + msg.slice(0, 80) + ')' : ''),
+          );
+        }
+      } catch {}
+      // Reset state so the icon stops showing "trying"
+      setVideoEnabled(false);
+      videoEnabledRef.current = false;
     }
     resetControlsTimer();
   }, [videoEnabled, peerConnected, isVideoCall, sendData, resetControlsTimer, t]);
