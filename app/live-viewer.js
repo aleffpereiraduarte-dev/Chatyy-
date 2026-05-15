@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Animated,
-  Dimensions, Share, Modal, Pressable, ScrollView,
+  Dimensions, Share, Modal, Pressable, ScrollView, Keyboard,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -170,6 +170,28 @@ export default function LiveViewerScreen() {
   const insets = useSafeAreaInsets();
 
   const [connected, setConnected] = useState(false);
+  // Bug #978-4 fix — Android keyboard covers the comment input.
+  //
+  // Root cause: bottomArea uses position:absolute,bottom:0. On Android the
+  // windowSoftInputMode + abs-pos combo means the keyboard slides UP over
+  // the input instead of pushing it up — user types blind. iOS doesn't have
+  // this issue because keyboardWillShow + safe-area handles the inset.
+  //
+  // Fix: track the keyboard height and add it to bottomArea's paddingBottom
+  // on Android only (iOS keyboard avoidance already works via the input's
+  // own focus path). On hide, the padding collapses back.
+  const [kbHeight, setKbHeight] = useState(0);
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+    const onShow = (e) => {
+      const h = e?.endCoordinates?.height || 0;
+      setKbHeight(h);
+    };
+    const onHide = () => setKbHeight(0);
+    const s = Keyboard.addListener('keyboardDidShow', onShow);
+    const h = Keyboard.addListener('keyboardDidHide', onHide);
+    return () => { try { s.remove(); } catch {} try { h.remove(); } catch {} };
+  }, []);
   // Stream-type branch: backend tells us via `live_session_info` whether this
   // session streams via Cloudflare Stream HLS (`cf_hls`) or legacy WebRTC P2P
   // (`webrtc`). Default `webrtc` so a backend that hasn't shipped the new
@@ -2215,7 +2237,7 @@ export default function LiveViewerScreen() {
       {/* Bottom: pinned + comments + join pill + input (round 62 redesign).
           All UI pieces extracted into dedicated components. Pure layout glue
           here — state lives in the screen, components are presentational. */}
-      <View style={[styles.bottomArea, { paddingBottom: insets.bottom + 10 }]} pointerEvents="box-none">
+      <View style={[styles.bottomArea, { paddingBottom: insets.bottom + 10 + (Platform.OS === 'android' ? kbHeight : 0) }]} pointerEvents="box-none">
         {/* Bottom dark blend — gradient on web, layered scrim on native. */}
         <View style={styles.bottomGradient} pointerEvents="none" />
         {Platform.OS !== 'web' ? (
