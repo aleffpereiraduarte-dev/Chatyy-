@@ -792,6 +792,22 @@ export function IconStop({ size, color, style }) {
   return <I size={size} color={color} style={style}><Rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></I>;
 }
 
+// Gift box icon — outlined, matches the IconHeart/IconShare stroke style.
+// Used by the live composer "send gift" button (LiveCommentInput) so the
+// linter can resolve it from the canonical Icons import (vs LiveGiftPicker
+// which also exports a copy for use inside the picker grid sheet).
+export function IconGiftBox({ size, color, style }) {
+  return (
+    <I size={size} color={color} style={style}>
+      <Rect x="3" y="8" width="18" height="13" rx="2" ry="2"/>
+      <Line x1="3" y1="12" x2="21" y2="12"/>
+      <Line x1="12" y1="8" x2="12" y2="21"/>
+      <Path d="M8 8c-1.5 0-3-1-3-2.5S6.5 3 8 3s4 2 4 5"/>
+      <Path d="M16 8c1.5 0 3-1 3-2.5S17.5 3 16 3s-4 2-4 5"/>
+    </I>
+  );
+}
+
 export function IconSmile({ size, color, style }) {
   return <I size={size} color={color} style={style}><Circle cx="12" cy="12" r="10"/><Path d="M8 14s1.5 2 4 2 4-2 4-2"/><Line x1="9" y1="9" x2="9.01" y2="9"/><Line x1="15" y1="9" x2="15.01" y2="9"/></I>;
 }

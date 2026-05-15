@@ -1157,6 +1157,26 @@ const _saveNativeConversations = (convs) => {
       lastMessageAt: c.last_message_at || c.updated_at || '',
     }));
     Intents.setShareExtensionConversations(snapshot);
+    // BUG #3: donate INSendMessageIntent for the top recents so the iOS
+    // share sheet "Suggested" row populates with avatars even when the user
+    // hasn't sent a message in this session. Apple Intelligence ranks
+    // suggestions by frequency-of-donation; a single donate-after-send
+    // misses cold-starters (first open of the app) and devices that
+    // upgraded over from a build that never donated. We donate the top 8
+    // direct conversations (the suggestions row only shows ~5–8 anyway)
+    // and skip groups (INSendMessageIntent surfaces best for 1:1).
+    try {
+      const directs = snapshot.filter(c => c.type !== 'group').slice(0, 8);
+      directs.forEach(c => {
+        if (!c.id || !c.email) return;
+        Intents.donateRecipient({
+          conversationId: String(c.id),
+          name: c.name || c.email,
+          email: c.email,
+          avatarUri: c.avatarUrl || '',
+        });
+      });
+    } catch {}
   } catch {}
 };
 

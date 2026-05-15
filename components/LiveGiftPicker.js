@@ -91,17 +91,11 @@ export function GiftGlyph({ type, size = 36, color }) {
   }
 }
 
-// Compact gift icon for the composer button (closed state).
-export function IconGiftBox({ size = 22, color = '#fff' }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" stroke={color} fill="none" strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
-      <Rect x="3" y="8" width="18" height="13" rx="2" />
-      <Path d="M3 12h18M12 8v13" />
-      <Path d="M8 8c-1.5 0-3-1-3-2.5S6.5 3 8 3s4 2 4 5" />
-      <Path d="M16 8c1.5 0 3-1 3-2.5S17.5 3 16 3s-4 2-4 5" />
-    </Svg>
-  );
-}
+// IconGiftBox is exported from components/Icons.js (canonical Icons module
+// — the predeploy linter requires icon names used in JSX to resolve from
+// there). Re-export here so callers that imported it from this module
+// during development still resolve. New callers should import from Icons.
+export { IconGiftBox } from './Icons';
 
 export default function LiveGiftPicker({
   visible,

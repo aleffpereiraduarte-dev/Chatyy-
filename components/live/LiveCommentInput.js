@@ -16,8 +16,7 @@ import { useRef, useEffect, forwardRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, Platform, Animated,
 } from 'react-native';
-import { IconSend, IconHeart, IconSmile } from '../Icons';
-import { IconGiftBox } from '../LiveGiftPicker';
+import { IconSend, IconHeart, IconSmile, IconGiftBox } from '../Icons';
 
 const LIVE_RED = '#dc2626';
 const ACCENT = '#7C3AED';
