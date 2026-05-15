@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, memo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Animated,
   Dimensions, Share, Modal, Pressable, ScrollView, Keyboard,
 } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
@@ -25,6 +26,9 @@ import LiveChatOverlay from '../components/live/LiveChatOverlay';
 import LiveCommentInput from '../components/live/LiveCommentInput';
 import LiveJoinPill from '../components/live/LiveJoinPill';
 import LiveConnectingOverlay from '../components/live/LiveConnectingOverlay';
+import LiveTopGifters from '../components/LiveTopGifters';
+import LiveGiftAnimation from '../components/LiveGiftAnimation';
+import LiveGiftPicker, { IconGiftBox } from '../components/LiveGiftPicker';
 
 // Humanize big counts the way Instagram/TikTok do: 999 → 999, 1.2K, 12.4K, 1.2M.
 // We localize the decimal separator from the user locale where possible.
@@ -148,7 +152,41 @@ const ACCENT = '#7C3AED';
 const HLS_BOOT_TIMEOUT_MS = 90_000;
 const HLS_RETRY_DELAYS_MS = [800, 1200, 2000, 3000, 5000, 8000];
 
-const HEART_COLORS = ['#ef4444', '#f43f5e', '#ec4899', '#a855f7', '#f97316'];
+// Brand palette — hot pinks + magentas + danger red. Mirrors the host-side
+// live-broadcast palette so remote reactions render in the same color the
+// viewer chose at tap-time (no drift across screens).
+const HEART_COLORS = ['#ff4d6d', '#ff7eb9', '#ff006e', '#c70039', '#ef4444'];
+
+// Memoized row for the expanded chat sheet (FlashList renderItem). Pulled to
+// module scope so React.memo can short-circuit on prop equality — without
+// this every parent re-render (heart anim, viewer tick) re-rendered every
+// row in the sheet. With 100+ messages on screen this was a measurable hit.
+const SheetCommentRow = memo(function SheetCommentRow({ item }) {
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        paddingVertical: 8,
+        paddingHorizontal: 4,
+        gap: 10,
+      }}
+    >
+      <AvatarCircle name={item.name} email={item.email} size={32} />
+      <View style={{ flex: 1 }}>
+        <Text
+          style={{ color: 'rgba(255,255,255,0.85)', fontWeight: '700', fontSize: 13 }}
+          numberOfLines={1}
+        >
+          {item.name}
+        </Text>
+        <Text style={{ color: '#fff', fontSize: 14, lineHeight: 18 }}>{item.content}</Text>
+      </View>
+    </View>
+  );
+});
+
+const sheetCommentKey = (item, idx) => String(item?.id ?? `m-${idx}`);
 
 export default function LiveViewerScreen() {
   const params = useLocalSearchParams();
@@ -301,6 +339,11 @@ export default function LiveViewerScreen() {
   const screenRef = useRef(null);
   const inputRef = useRef(null);
   const chatSheetScrollRef = useRef(null);
+  // Auto-scroll only when the user is parked near the bottom. If they've
+  // scrolled UP to read older comments, new messages no longer hijack their
+  // position (WhatsApp/Slack parity). Threshold: 80px from bottom.
+  const chatSheetStickToBottomRef = useRef(true);
+  const chatSheetUserScrolledRef = useRef(false);
   // Toast for screenshot save feedback (no library — just an Animated.Value).
   const [toast, setToast] = useState('');
   const toastAnim = useRef(new Animated.Value(0)).current;
@@ -838,8 +881,21 @@ export default function LiveViewerScreen() {
           // Prefer emoji (from gift picker). Heart button also sends
           // emoji:'❤️' which we treat as the default heart animation
           // (no emoji text) for visual consistency with taps.
-          if (msg.emoji && msg.emoji !== '❤️') spawnHeart(msg.emoji);
-          else spawnHeart(msg.x);
+          //
+          // Remote tap-spam: msg.x is normalized 0..1 (sender's screen
+          // fraction). We map it back to local pixels so the column
+          // shows up on the same side of the screen the sender tapped.
+          if (msg.emoji && msg.emoji !== '❤️') {
+            spawnHeart(msg.emoji);
+          } else {
+            const xPx = (typeof msg.x === 'number' && isFinite(msg.x))
+              ? Math.max(8, Math.min(SCREEN_W - 8, msg.x * SCREEN_W))
+              : undefined;
+            spawnHeart({
+              x: xPx,
+              color: (typeof msg.color === 'string') ? msg.color : null,
+            });
+          }
           break;
         case 'live_join_approve':
           // Targeted via viewer_email filter — server fans out to the channel.
@@ -1327,16 +1383,35 @@ export default function LiveViewerScreen() {
   //   • spawn jitter around the bottom-right rail (the heart button)
   //   • duration 1.6-2.6s so column never feels mechanical
   // If an emoji is passed (gift picker) we render that with larger size (~30).
-  const spawnHeart = useCallback((emojiOrX) => {
+  //
+  // Accepts either:
+  //   • a string  → emoji (gift picker)
+  //   • a number  → absolute X spawn point (px) for backwards compat
+  //   • an object → { x, y, color, emoji } for tap-spam (Periscope/TikTok)
+  // Color is randomized from HEART_COLORS unless explicitly passed (remote
+  // reactions from other viewers carry the sender's chosen color).
+  const spawnHeart = useCallback((arg) => {
     const id = ++heartIdRef.current;
-    const isEmoji = typeof emojiOrX === 'string';
+    const isEmoji = typeof arg === 'string';
+    const isObj = arg && typeof arg === 'object' && !Array.isArray(arg);
     // Spawn near the right rail / heart button — the visual origin of taps.
     const baseX = SCREEN_W - 56 + (Math.random() - 0.5) * 24;
-    const x = (isEmoji ? null : (typeof emojiOrX === 'number' ? emojiOrX : null)) || baseX;
-    const y = SCREEN_H * 0.62 + (Math.random() - 0.5) * 30;
+    let x;
+    let y;
+    let colorOverride = null;
+    if (isObj) {
+      x = (typeof arg.x === 'number' && isFinite(arg.x)) ? arg.x : baseX;
+      y = (typeof arg.y === 'number' && isFinite(arg.y)) ? arg.y : (SCREEN_H * 0.62);
+      if (typeof arg.color === 'string' && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(arg.color)) {
+        colorOverride = arg.color;
+      }
+    } else {
+      x = (isEmoji ? null : (typeof arg === 'number' ? arg : null)) || baseX;
+      y = SCREEN_H * 0.62 + (Math.random() - 0.5) * 30;
+    }
     const anim = new Animated.Value(0);
-    const color = HEART_COLORS[Math.floor(Math.random() * HEART_COLORS.length)];
-    const emoji = isEmoji ? emojiOrX : null;
+    const color = colorOverride || HEART_COLORS[Math.floor(Math.random() * HEART_COLORS.length)];
+    const emoji = isEmoji ? arg : (isObj && typeof arg.emoji === 'string' ? arg.emoji : null);
     // Per-heart random params — keeps the column from looking like a clone army.
     const size = isEmoji ? 30 : (14 + Math.floor(Math.random() * 9));   // 14-22 px
     const drift = (Math.random() - 0.5) * 110;                          // horizontal sway
@@ -1372,24 +1447,61 @@ export default function LiveViewerScreen() {
   }, [heartScale]);
 
   const handleHeartTap = useCallback(() => {
-    spawnHeart();
+    // Right-rail tap: spawn locally with a randomized brand color, then
+    // throttle the WS broadcast to 300ms (Periscope-style tap-spam cap)
+    // so long-presses don't flood the wire. Local hearts stay unthrottled
+    // for satisfying instant feedback even when WS coalesces.
+    const color = HEART_COLORS[Math.floor(Math.random() * HEART_COLORS.length)];
+    spawnHeart({ color });
     popHeartButton();
 
-    // Local heart spawns every tap, but the WS reaction is coalesced @ 200ms
-    // (5/s cap). Long-press / rapid-tap still feels rich locally, but the
-    // server doesn't see a packet storm. Other viewers see ~5 hearts/sec
-    // float per fan, which matches Instagram/TikTok's perceived density.
     const now = Date.now();
-    if (now - lastReactionSendAtRef.current < 200) return;
+    if (now - lastReactionSendAtRef.current < 300) return;
     lastReactionSendAtRef.current = now;
     if (wsRef.current?.readyState === WebSocket.OPEN) {
+      // Spawn point sits on the right rail — normalize so receivers can
+      // place the heart at the same horizontal fraction of their screen
+      // (TikTok/Instagram parity — taps from a wide tablet still land on
+      // the right side of a narrow phone).
+      const xNorm = Math.max(0, Math.min(1, (SCREEN_W - 56) / SCREEN_W));
       wsRef.current.send(JSON.stringify({
         type: 'live_reaction',
         session_id: paramSessionId,
         emoji: '❤️',
+        x: xNorm,
+        color,
       }));
     }
   }, [paramSessionId, user, spawnHeart, popHeartButton]);
+
+  // Tap-spam (Periscope/TikTok). Viewer taps anywhere on the video stage,
+  // we spawn a heart at the tap point and broadcast a `live_reaction` with
+  // the normalized x so other viewers see the same horizontal column.
+  //
+  // Local display: unthrottled (every tap = 1 heart, even at 10/s)
+  // WS broadcast: throttled to 300ms (≈3/s wire cap)
+  //
+  // Decoupling local from wire is what makes the "stream of love" feel
+  // generous on the tapper's screen without nuking the channel for everyone
+  // else. Other viewers see the throttled rate but the local viewer feels
+  // every tap land.
+  const handleStageHeartSpam = useCallback((tapX, tapY) => {
+    const color = HEART_COLORS[Math.floor(Math.random() * HEART_COLORS.length)];
+    spawnHeart({ x: tapX, y: tapY, color });
+    const now = Date.now();
+    if (now - lastReactionSendAtRef.current < 300) return;
+    lastReactionSendAtRef.current = now;
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      const xNorm = Math.max(0, Math.min(1, tapX / SCREEN_W));
+      wsRef.current.send(JSON.stringify({
+        type: 'live_reaction',
+        session_id: paramSessionId,
+        emoji: '❤️',
+        x: xNorm,
+        color,
+      }));
+    }
+  }, [paramSessionId, spawnHeart]);
 
   // Central particle burst on double-tap. Spawns 8 hearts in a radial pattern
   // from screen center so it reads like an Instagram-style "love bomb."
@@ -1413,17 +1525,29 @@ export default function LiveViewerScreen() {
 
   // Double-tap detection on the video stage — second tap inside 280ms fires
   // both a "love bomb" burst and a normal heart so the broadcaster also sees
-  // a reaction land.
-  const handleStageTap = useCallback(() => {
+  // a reaction land. Single tap spawns a single tap-spam heart at the tap
+  // point (Periscope/TikTok pattern — anywhere on screen rains hearts).
+  const handleStageTap = useCallback((e) => {
     const now = Date.now();
+    // Pull tap coords off the synthetic event. Pressable.onPress passes
+    // nativeEvent.locationX/Y on native; on web the touch event uses
+    // pageX/clientX. We fall back to screen-center if neither is present.
+    const ne = e?.nativeEvent || {};
+    const tapX = (typeof ne.locationX === 'number' ? ne.locationX :
+                  typeof ne.pageX === 'number' ? ne.pageX :
+                  SCREEN_W / 2);
+    const tapY = (typeof ne.locationY === 'number' ? ne.locationY :
+                  typeof ne.pageY === 'number' ? ne.pageY :
+                  SCREEN_H * 0.5);
     if (now - lastTapRef.current < 280) {
       lastTapRef.current = 0;
       spawnBurst();
-      handleHeartTap();
+      handleStageHeartSpam(tapX, tapY);
     } else {
       lastTapRef.current = now;
+      handleStageHeartSpam(tapX, tapY);
     }
-  }, [spawnBurst, handleHeartTap]);
+  }, [spawnBurst, handleStageHeartSpam]);
 
   const toggleFollow = useCallback(() => {
     // Optimistic flip — backend follow API already exists per chat profile.
@@ -2282,7 +2406,13 @@ export default function LiveViewerScreen() {
             messages={chatMessages}
             commentHearts={commentHearts}
             onPressMessage={handleReplyToComment}
-            onOpenSheet={() => setChatSheetOpen(true)}
+            onOpenSheet={() => {
+              // Reset stick-to-bottom so first open lands at the latest message;
+              // user can then scroll up to read history without auto-snaps.
+              chatSheetStickToBottomRef.current = true;
+              chatSheetUserScrolledRef.current = false;
+              setChatSheetOpen(true);
+            }}
             hasMore={chatMessages.length > 5}
             seeAllLabel={t('live.seeAllComments') || 'Ver todos os comentários'}
           />
@@ -2458,22 +2588,41 @@ export default function LiveViewerScreen() {
                 {t('live.sayHello') || 'Diga oi...'}
               </Text>
             ) : (
-              <ScrollView
-                ref={chatSheetScrollRef}
-                onContentSizeChange={() => chatSheetScrollRef.current?.scrollToEnd?.({ animated: true })}
-                showsVerticalScrollIndicator={false}
-                contentContainerStyle={{ paddingBottom: 8 }}
-              >
-                {chatMessages.map((m) => (
-                  <View key={m.id} style={{ flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 8, paddingHorizontal: 4, gap: 10 }}>
-                    <AvatarCircle name={m.name} email={m.email} size={32} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ color: 'rgba(255,255,255,0.85)', fontWeight: '700', fontSize: 13 }} numberOfLines={1}>{m.name}</Text>
-                      <Text style={{ color: '#fff', fontSize: 14, lineHeight: 18 }}>{m.content}</Text>
-                    </View>
-                  </View>
-                ))}
-              </ScrollView>
+              <View style={{ flex: 1, minHeight: 200 }}>
+                <FlashList
+                  ref={chatSheetScrollRef}
+                  data={chatMessages}
+                  keyExtractor={sheetCommentKey}
+                  renderItem={({ item }) => <SheetCommentRow item={item} />}
+                  contentContainerStyle={{ paddingBottom: 8 }}
+                  showsVerticalScrollIndicator={false}
+                  // FlashList v2: maintainVisibleContentPosition handles the
+                  // "auto-scroll only if user is parked at bottom" behavior
+                  // natively. autoscrollToBottomThreshold=80 means: when a
+                  // new message lands AND the user is within 80px of the
+                  // bottom, snap them down. If they've scrolled up to read
+                  // older comments, leave their viewport alone.
+                  maintainVisibleContentPosition={{
+                    autoscrollToBottomThreshold: 80,
+                    startRenderingFromBottom: true,
+                    animateAutoScrollToBottom: true,
+                  }}
+                  onScroll={(ev) => {
+                    // Mirror the v2 native behavior into refs so other parts
+                    // of the screen (composer focus, manual scrollToEnd
+                    // triggers) can read whether the user is parked at the
+                    // bottom or paged up reading older comments.
+                    const { contentOffset, contentSize, layoutMeasurement } = ev.nativeEvent;
+                    const distFromBottom = (contentSize.height - layoutMeasurement.height) - contentOffset.y;
+                    chatSheetStickToBottomRef.current = distFromBottom <= 80;
+                    chatSheetUserScrolledRef.current = true;
+                  }}
+                  scrollEventThrottle={16}
+                  // Draw distance shapes recycler windows. 400dp is the v2
+                  // default; explicit so future tuning is obvious.
+                  drawDistance={400}
+                />
+              </View>
             )}
           </Pressable>
         </Pressable>

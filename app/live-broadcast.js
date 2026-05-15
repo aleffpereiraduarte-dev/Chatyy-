@@ -13,6 +13,9 @@ import LiveChatOverlay from '../components/live/LiveChatOverlay';
 import AvatarCircle from '../components/AvatarCircle';
 import { IconX, IconCameraFlip, IconMic, IconMicOff, IconVideo, IconVideoOff, IconHeart, IconShare, IconSend, IconSettings, IconUserPlus, IconSparkles, IconFilter, IconPin, IconStar, IconStarFilled, IconGlobe, IconLock, IconUsers, IconEye, IconStop, IconCheck, IconBookmark } from '../components/Icons';
 import { useTheme } from '../context/ThemeContext';
+import AnimatedViewerCount from '../components/AnimatedViewerCount';
+import LiveTopGifters from '../components/LiveTopGifters';
+import LiveGiftAnimation from '../components/LiveGiftAnimation';
 
 // Cross-platform WebRTC — same pattern as call.js
 let RTC_PeerConnection, RTC_SessionDescription, RTC_IceCandidate, getUserMediaFn, NativeRTCView;
@@ -38,6 +41,11 @@ const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const WS_URL = Platform.OS === 'web' ? 'wss://chatyy.com.br/ws' : 'wss://ws.chatyy.com.br/ws';
 const LIVE_RED = '#dc2626';
 const MAX_HEARTS = 20;
+// Brand-tinted heart palette — must mirror live-viewer's HEART_COLORS so the
+// color the viewer picks at tap-time renders identically on the host screen.
+// Brand spec: hot pinks + magentas + danger red (no orange/gold — gold is
+// reserved for the gift chip).
+const HEART_COLORS = ['#ff4d6d', '#ff7eb9', '#ff006e', '#c70039', '#ef4444'];
 
 export default function LiveBroadcastScreen() {
   const params = useLocalSearchParams();
@@ -191,6 +199,14 @@ export default function LiveBroadcastScreen() {
   const countdownOpacity = useRef(new Animated.Value(0)).current;
   const prevViewerCount = useRef(0);
   const viewerBounce = useRef(new Animated.Value(1)).current;
+  // Top-gifters refresh trigger — bump on every live_gift event so the
+  // LiveTopGifters component refetches (also has 30s self-poll fallback).
+  const [giftRefreshKey, setGiftRefreshKey] = useState(0);
+  // Active gift animation overlay (center-screen card). One at a time —
+  // overlapping animations would clutter; subsequent gifts queue via
+  // pendingGiftsRef and drain after the current one completes.
+  const [activeGiftAnim, setActiveGiftAnim] = useState(null);
+  const pendingGiftsRef = useRef([]);
   // Pre-live title placeholder fade — soft sin-wave loop so the input invites
   // the host to type a title even when empty (Instagram Live parity).
   const placeholderFade = useRef(new Animated.Value(1)).current;
@@ -466,7 +482,15 @@ export default function LiveBroadcastScreen() {
             // Pass the reactor identity so the heart can float with a tiny
             // avatar chip (Instagram parity) — instantly readable "quem
             // curtiu" without needing a separate toast.
-            spawnHeart({ name: msg.reactor_name || msg.reactor_email?.split('@')[0], email: msg.reactor_email });
+            // Tap-spam adds: msg.x (normalized 0..1) for column placement,
+            // msg.color (hex) for per-viewer brand tint. Falls back to the
+            // legacy right-rail spawn when the sender didn't include them.
+            spawnHeart({
+              name: msg.reactor_name || msg.name || msg.reactor_email?.split('@')[0] || msg.email?.split('@')[0],
+              email: msg.reactor_email || msg.email,
+              x: (typeof msg.x === 'number' && isFinite(msg.x)) ? msg.x : null,
+              color: (typeof msg.color === 'string') ? msg.color : null,
+            });
           }
           break;
         case 'live_viewer_count':
@@ -494,7 +518,10 @@ export default function LiveBroadcastScreen() {
           }
           break;
         case 'live_gift':
-          // Render a golden gift chip inline in the comment overlay.
+          // Render a golden gift chip inline in the comment overlay AND
+          // trigger the center-screen LiveGiftAnimation overlay. Bump the
+          // top-gifters refresh key so the leaderboard rolls up in near-
+          // real-time (component will refetch /chat_live_top_gifters).
           {
             const entry = new Animated.Value(0);
             appendChatMessage({
@@ -502,12 +529,30 @@ export default function LiveBroadcastScreen() {
               name: msg.sender_name || (msg.sender_email || '').split('@')[0] || '?',
               email: msg.sender_email,
               type: 'gift',
-              gift: msg.gift,
-              amount: msg.amount || 1,
-              giftLabel: msg.gift ? ((t('live.sentGift') || 'enviou') + ' ' + msg.gift) : (t('live.sentGift') || 'enviou um presente'),
+              gift: msg.gift_type || msg.gift,
+              amount: msg.diamonds || msg.amount || 1,
+              giftLabel: (msg.gift_type || msg.gift) ? ((t('live.sentGift') || 'enviou') + ' ' + (msg.gift_type || msg.gift)) : (t('live.sentGift') || 'enviou um presente'),
               entry,
             });
             Animated.spring(entry, { toValue: 1, friction: 6, tension: 120, useNativeDriver: true }).start();
+
+            const giftEvent = {
+              key: 'g_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+              sender_email: msg.sender_email,
+              sender_name: msg.sender_name,
+              sender_avatar: msg.sender_avatar,
+              gift_type: msg.gift_type || msg.gift,
+              diamonds: msg.diamonds || msg.amount || 1,
+            };
+            // Queue if another animation is running so they don't overlap.
+            setActiveGiftAnim(prev => {
+              if (prev) {
+                pendingGiftsRef.current.push(giftEvent);
+                return prev;
+              }
+              return giftEvent;
+            });
+            setGiftRefreshKey(k => k + 1);
           }
           break;
         case 'live_guest_offer':
@@ -623,23 +668,43 @@ export default function LiveBroadcastScreen() {
   }, []);
 
   // Heart animation — accepts optional reactor identity so each heart can
-  // float with a tiny avatar chip beside it (Instagram parity).
+  // float with a tiny avatar chip beside it (Instagram parity). Tap-spam
+  // path additionally carries `x` (0..1 normalized to viewer's screen) and
+  // `color` (hex) so the host sees hearts in the same horizontal column +
+  // brand tint the viewer chose.
   const spawnHeart = useCallback((reactor = null) => {
     setTotalLikes(c => c + 1);
     const id = ++heartIdRef.current;
-    const x = SCREEN_W - 60 + (Math.random() - 0.5) * 40;
+    // Map remote normalized X back to local pixels. Fallback: legacy
+    // right-rail spawn so hearts from clients that don't pass x still land
+    // somewhere visible.
+    const hasX = reactor && typeof reactor.x === 'number' && isFinite(reactor.x);
+    const x = hasX
+      ? Math.max(8, Math.min(SCREEN_W - 8, reactor.x * SCREEN_W))
+      : (SCREEN_W - 60 + (Math.random() - 0.5) * 40);
     const y = SCREEN_H * 0.55;
     const anim = new Animated.Value(0);
+    // Per-heart color — viewer's choice if they sent one, otherwise pick
+    // randomly from the brand palette so consecutive taps from the host's
+    // own self-tap don't all clone-stamp the same red.
+    const color = (reactor && typeof reactor.color === 'string' && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(reactor.color))
+      ? reactor.color
+      : HEART_COLORS[Math.floor(Math.random() * HEART_COLORS.length)];
+    // Random horizontal drift cached on the heart object so the render
+    // reads a stable value (instead of re-randomizing every frame via
+    // `Math.random()` inside the interpolation, which is what the old
+    // code did and produced jittery non-deterministic trails).
+    const drift = (Math.random() - 0.5) * 80;
 
     setHearts(prev => {
-      const next = [...prev, { id, x, y, anim, reactor }];
+      const next = [...prev, { id, x, y, anim, reactor, color, drift }];
       if (next.length > MAX_HEARTS) return next.slice(-MAX_HEARTS);
       return next;
     });
 
     Animated.timing(anim, {
       toValue: 1,
-      duration: 2000,
+      duration: 1800 + Math.floor(Math.random() * 400),
       useNativeDriver: true,
     }).start(() => {
       setHearts(prev => prev.filter(h => h.id !== id));
@@ -1439,11 +1504,18 @@ export default function LiveBroadcastScreen() {
   // Self-tap heart — instant feedback for the host without waiting for a viewer
   // reaction; also broadcasts so viewers see the heart float.
   const handleSelfHeart = useCallback(() => {
-    spawnHeart();
+    const color = HEART_COLORS[Math.floor(Math.random() * HEART_COLORS.length)];
+    spawnHeart({ color });
     if (wsRef.current?.readyState === WebSocket.OPEN) {
+      // Spawn anchor on the host's right rail — viewers see the heart on
+      // their right edge too because we send a normalized x near 1.0.
+      const xNorm = Math.max(0, Math.min(1, (SCREEN_W - 60) / SCREEN_W));
       wsRef.current.send(JSON.stringify({
         type: 'live_reaction',
         session_id: sessionIdRef.current,
+        emoji: '❤️',
+        x: xNorm,
+        color,
       }));
     }
   }, [spawnHeart]);
@@ -2195,9 +2267,11 @@ export default function LiveBroadcastScreen() {
             </View>
             <View style={styles.viewerPill}>
               <View style={styles.viewerDot} />
-              <Animated.Text style={[styles.viewerCountText, { transform: [{ scale: viewerBounce }] }]}>
-                {formatViewerCount(viewerCount)}
-              </Animated.Text>
+              {/* AnimatedViewerCount drives the smooth 0→N tween + small
+                  pulse on increase. Replaces the static Animated.Text that
+                  was only bouncing via viewerBounce; formatCount inside
+                  the component handles the "k"/"M" formatting. */}
+              <AnimatedViewerCount count={viewerCount} style={styles.viewerCountText} />
               <Text style={styles.viewerWatchText}>{t('live.watching') || 'assistindo'}</Text>
             </View>
           </View>
@@ -2228,6 +2302,57 @@ export default function LiveBroadcastScreen() {
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* Top gifters — stacked avatars top-right under the topbar. Sits
+          below the close/end-live button + above the chat overlay. Bumps
+          its internal refreshKey whenever a live_gift WS event lands so
+          the leaderboard stays current without polling-only lag. */}
+      {sessionId ? (
+        <View
+          pointerEvents="box-none"
+          style={{
+            position: 'absolute',
+            top: insets.top + 64,
+            right: 12,
+            zIndex: 25,
+          }}
+        >
+          <LiveTopGifters
+            sessionId={sessionId}
+            refreshKey={giftRefreshKey}
+            i18n={{
+              topGifters: t('live.topGifters') || 'Top gifters',
+              noGiftersYet: t('live.noGiftersYet') || 'Ninguém enviou presentes ainda',
+              noGiftersHint: t('live.noGiftersHint') || 'Os apoiadores aparecem aqui',
+            }}
+          />
+        </View>
+      ) : null}
+
+      {/* Gift animation overlay — center-screen card that pops in when
+          a `live_gift` WS event arrives. Uses a key derived from the
+          incoming event so React mounts a fresh animation each time. */}
+      {activeGiftAnim ? (
+        <LiveGiftAnimation
+          key={activeGiftAnim.key}
+          gift={activeGiftAnim}
+          onComplete={() => {
+            // Drain queue: if more gifts arrived during the last animation,
+            // play the oldest next; otherwise clear the overlay.
+            const next = pendingGiftsRef.current.shift();
+            setActiveGiftAnim(next || null);
+          }}
+          i18n={{
+            sentGift: t('live.sentGift') || 'enviou',
+            gift_rose: t('live.gift_rose') || 'Rosa',
+            gift_heart: t('live.gift_heart') || 'Coração',
+            gift_star: t('live.gift_star') || 'Estrela',
+            gift_crown: t('live.gift_crown') || 'Coroa',
+            gift_fire: t('live.gift_fire') || 'Fogo',
+            gift_rocket: t('live.gift_rocket') || 'Foguete',
+          }}
+        />
+      ) : null}
 
       {/* Title */}
       {titleInput ? (
@@ -2383,10 +2508,14 @@ export default function LiveBroadcastScreen() {
           avatar (when known) drifts up with it so the host instantly sees
           "quem curtiu". Random drift on X axis keeps the trail organic. */}
       {hearts.map(h => {
+        // Reuse stable drift cached on the heart object (set at spawn). The
+        // old code re-randomized inside interpolate, which produced jitter
+        // on every render frame the parent re-rendered.
         const translateY = h.anim.interpolate({ inputRange: [0, 1], outputRange: [0, -260] });
-        const scale = h.anim.interpolate({ inputRange: [0, 0.2, 0.8, 1], outputRange: [0.3, 1.3, 1, 0.6] });
+        const scale = h.anim.interpolate({ inputRange: [0, 0.15, 0.5, 0.85, 1], outputRange: [0.5, 1.2, 1.05, 0.95, 0.8] });
         const opacity = h.anim.interpolate({ inputRange: [0, 0.1, 0.8, 1], outputRange: [0, 1, 1, 0] });
-        const translateX = h.anim.interpolate({ inputRange: [0, 1], outputRange: [0, (Math.random() - 0.5) * 80] });
+        const translateX = h.anim.interpolate({ inputRange: [0, 1], outputRange: [0, h.drift || 0] });
+        const rotate = h.anim.interpolate({ inputRange: [0, 0.5, 1], outputRange: ['0deg', '12deg', '-8deg'] });
 
         return (
           <Animated.View
@@ -2394,12 +2523,12 @@ export default function LiveBroadcastScreen() {
             style={[styles.heart, {
               left: h.x - 14,
               top: h.y - 14,
-              transform: [{ translateY }, { translateX }, { scale }],
+              transform: [{ translateY }, { translateX }, { scale }, { rotate }],
               opacity,
             }]}
             pointerEvents="none"
           >
-            <IconHeart size={28} color={LIVE_RED} />
+            <IconHeart size={28} color={h.color || LIVE_RED} />
             {h.reactor?.email ? (
               <View style={styles.heartAvatarChip}>
                 <AvatarCircle name={h.reactor.name} email={h.reactor.email} size={18} />

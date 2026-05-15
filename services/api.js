@@ -5283,7 +5283,34 @@ export async function liveEndCf(sessionId, opts = {}) {
 export async function liveList() { return apiCall('live_list', {}, 'POST'); }
 export async function liveUpdateViewers(sessionId, count) { return apiCall('live_update_viewers', { session_id: sessionId, viewer_count: count }, 'POST'); }
 export async function liveSendChat(sessionId, content) { return apiCall('live_send_chat', { session_id: sessionId, content }, 'POST'); }
+// Floating-heart reaction. Frontend prefers WebSocket (sub-100ms latency) so
+// this REST fallback is only hit when the socket is closed/auth-pending —
+// keeps tap-spam reactions landing on other viewers even during reconnects.
+// Server clamps to 5/sec per-user-per-live independent of the client throttle.
+export async function liveReaction(sessionId, x = null, color = null, emoji = null) {
+  const payload = { session_id: sessionId };
+  if (typeof x === 'number') payload.x = Math.max(0, Math.min(1, x));
+  if (typeof color === 'string') payload.color = color;
+  if (typeof emoji === 'string' && emoji) payload.emoji = emoji;
+  return apiCall('chat_live_reaction', payload, 'POST');
+}
 export async function liveChatHistory(sessionId, limit = 50) { return apiCall('live_chat_history', { session_id: sessionId, limit }, 'POST'); }
+
+// Top gifters leaderboard for a live session. Returns up to `limit` gifters
+// ordered by total_diamonds desc. Used by LiveTopGifters (top-right stacked
+// avatars + full leaderboard modal on tap).
+export async function liveTopGifters(sessionId, limit = 50) {
+  return apiCall('chat_live_top_gifters', { session_id: sessionId, limit }, 'POST');
+}
+
+// Send a virtual gift to a live session. Backend writes to chat_live_gifts +
+// broadcasts a `live_gift` WS event so all viewers + host see the animation.
+// No real money — diamonds are virtual / ungated at this stage. `giftType`
+// must match a row in the server-side GIFT_CATALOG (rose, heart, star, crown,
+// fire, rocket).
+export async function liveSendGift(sessionId, giftType) {
+  return apiCall('chat_live_send_gift', { session_id: sessionId, gift_type: giftType }, 'POST');
+}
 
 // Live replay / recording endpoints. CF Stream auto-records every push
 // session as a VOD; the backend polls live_inputs/{uid}/videos and stamps

@@ -21,6 +21,7 @@ import { memo, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Animated,
 } from 'react-native';
+import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
 import AvatarCircle from '../AvatarCircle';
 import { IconHeart, IconStar, IconUserPlus } from '../Icons';
 
@@ -37,6 +38,167 @@ function chipForTier(tier) {
   if (tier === 'guest' || tier === 'cohost') return TIER_GUEST;
   return TIER_DEFAULT;
 }
+
+// SVG-backed top fade so messages "exit" softly at the top of the column
+// instead of getting hard-cropped by the parent's mask. We use SVG because
+// expo-linear-gradient isn't in the dep tree; react-native-svg is already
+// imported across the app and renders identically on iOS + Android + web.
+// The fade is positioned absolutely and pointerEvents='none' so it never
+// eats taps on the rows underneath.
+const TopFadeGradient = memo(function TopFadeGradient({ width = 280, height = 56 }) {
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        position: 'absolute', top: -4, left: 0, right: 0, height,
+      }}
+    >
+      <Svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+        <Defs>
+          <SvgLinearGradient id="liveChatTopFade" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor="#000" stopOpacity="0.85" />
+            <Stop offset="0.55" stopColor="#000" stopOpacity="0.35" />
+            <Stop offset="1" stopColor="#000" stopOpacity="0" />
+          </SvgLinearGradient>
+        </Defs>
+        <Rect x="0" y="0" width={width} height={height} fill="url(#liveChatTopFade)" />
+      </Svg>
+    </View>
+  );
+});
+
+// CommentRow — memoized so the row only re-reconciles when its own props
+// change (entry anim value, content, tier). Without this every parent
+// render (countdown tick, viewer count, heart anim) rebuilt all rows.
+const CommentRow = memo(function CommentRow({
+  m, stackAlpha, isHostView, onPressMessage, onLongPressHost,
+  hostEmail, commentHearts,
+}) {
+  const entry = m.entry;
+  const opacity = entry
+    ? entry.interpolate({ inputRange: [0, 1], outputRange: [0, stackAlpha] })
+    : stackAlpha;
+  const translateY = entry
+    ? entry.interpolate({ inputRange: [0, 1], outputRange: [14, 0] })
+    : 0;
+  const scale = entry
+    ? entry.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] })
+    : 1;
+
+  const tier = m.tier || (hostEmail && (m.email || '').toLowerCase() === hostEmail.toLowerCase() ? 'host' : 'default');
+  const chipBg = chipForTier(tier);
+  const heartAnim = commentHearts[m.id];
+
+  return (
+    <Animated.View style={{ opacity, transform: [{ translateY }, { scale }] }}>
+      <TouchableOpacity
+        onPress={(e) => { e.stopPropagation?.(); onPressMessage?.(m); }}
+        onLongPress={isHostView ? () => onLongPressHost?.(m) : undefined}
+        delayLongPress={350}
+        activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityLabel={`Reply to ${m.name}`}
+        style={styles.row}
+      >
+        <AvatarCircle name={m.name} email={m.email} size={26} />
+        <View style={styles.body}>
+          <View style={[styles.nameChip, { backgroundColor: chipBg }]}>
+            <Text style={styles.name} numberOfLines={1}>{m.name}</Text>
+            {tier === 'host' ? <Text style={styles.tierBadge}>HOST</Text> : null}
+            {tier === 'gift' ? <Text style={styles.tierBadge}>★</Text> : null}
+            {(tier === 'guest' || tier === 'cohost') ? <Text style={styles.tierBadge}>COLAB</Text> : null}
+          </View>
+          <Text style={styles.text} numberOfLines={3}>{m.content}</Text>
+        </View>
+        {heartAnim ? (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.heartChip,
+              {
+                opacity: heartAnim,
+                transform: [
+                  { scale: heartAnim.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] }) },
+                  { translateY: heartAnim.interpolate({ inputRange: [0, 1], outputRange: [10, -4] }) },
+                ],
+              },
+            ]}
+          >
+            <IconHeart size={14} color="#fff" />
+          </Animated.View>
+        ) : null}
+      </TouchableOpacity>
+    </Animated.View>
+  );
+});
+
+const SystemRow = memo(function SystemRow({ m, stackAlpha }) {
+  const entry = m.entry;
+  const opacity = entry
+    ? entry.interpolate({ inputRange: [0, 1], outputRange: [0, stackAlpha] })
+    : stackAlpha;
+  const translateY = entry
+    ? entry.interpolate({ inputRange: [0, 1], outputRange: [14, 0] })
+    : 0;
+  const scale = entry
+    ? entry.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] })
+    : 1;
+  return (
+    <Animated.View
+      style={[styles.systemRow, { opacity, transform: [{ translateY }, { scale }] }]}
+      pointerEvents="none"
+    >
+      <View style={styles.systemPill}>
+        {m.email ? (
+          <View style={styles.systemAvatarWrap}>
+            <AvatarCircle name={m.name} email={m.email} size={16} />
+          </View>
+        ) : (
+          <IconUserPlus size={11} color="#fff" />
+        )}
+        <Text style={styles.systemText} numberOfLines={1}>
+          <Text style={styles.systemName}>{m.name}</Text>
+          <Text>{` ${m.text || m.content || ''}`}</Text>
+        </Text>
+      </View>
+    </Animated.View>
+  );
+});
+
+const GiftRow = memo(function GiftRow({ m, stackAlpha }) {
+  const entry = m.entry;
+  const opacity = entry
+    ? entry.interpolate({ inputRange: [0, 1], outputRange: [0, stackAlpha] })
+    : stackAlpha;
+  const translateY = entry
+    ? entry.interpolate({ inputRange: [0, 1], outputRange: [14, 0] })
+    : 0;
+  const scale = entry
+    ? entry.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] })
+    : 1;
+  return (
+    <Animated.View
+      style={[styles.giftRow, { opacity, transform: [{ translateY }, { scale }] }]}
+      pointerEvents="none"
+    >
+      <View style={styles.giftPill}>
+        <View style={styles.giftAvatar}>
+          <AvatarCircle name={m.name} email={m.email} size={20} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.giftName} numberOfLines={1}>{m.name}</Text>
+          <Text style={styles.giftText} numberOfLines={1}>
+            {m.giftLabel || (m.gift ? `enviou ${m.gift}` : 'enviou um presente')}
+          </Text>
+        </View>
+        <View style={styles.giftAmount}>
+          <IconStar size={12} color="#fff" />
+          <Text style={styles.giftAmountText}>{m.amount || 1}</Text>
+        </View>
+      </View>
+    </Animated.View>
+  );
+});
 
 function LiveChatOverlay({
   messages = [],
@@ -63,6 +225,12 @@ function LiveChatOverlay({
       accessibilityLabel="Chat ao vivo"
       accessibilityRole="button"
     >
+      {/* Native top-fade gradient — softens the column's upper edge so old
+          messages "exit" instead of clipping. Web already has a mask
+          (WebkitMaskImage in styles.overlay); this SVG overlays it for
+          parity on iOS/Android (no expo-linear-gradient dep needed). */}
+      {Platform.OS !== 'web' ? <TopFadeGradient /> : null}
+
       {hasMore ? (
         <View style={styles.seeAllChip} pointerEvents="none">
           <Text style={styles.seeAllText}>{seeAllLabel}</Text>
@@ -72,116 +240,24 @@ function LiveChatOverlay({
       {visible.map((m, idx) => {
         // Older comments fade softer; stack alpha 0.45 → 1 from top.
         const stackAlpha = 0.45 + (idx / Math.max(visible.length - 1, 1)) * 0.55;
-        const entry = m.entry;
-        const opacity = entry
-          ? entry.interpolate({ inputRange: [0, 1], outputRange: [0, stackAlpha] })
-          : stackAlpha;
-        const translateY = entry
-          ? entry.interpolate({ inputRange: [0, 1], outputRange: [14, 0] })
-          : 0;
-        const scale = entry
-          ? entry.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1] })
-          : 1;
 
-        // System chip (e.g. "@maria entrou")
         if (m.isSystem || m.type === 'system') {
-          return (
-            <Animated.View
-              key={m.id}
-              style={[styles.systemRow, { opacity, transform: [{ translateY }, { scale }] }]}
-              pointerEvents="none"
-            >
-              <View style={styles.systemPill}>
-                {m.email ? (
-                  <View style={styles.systemAvatarWrap}>
-                    <AvatarCircle name={m.name} email={m.email} size={16} />
-                  </View>
-                ) : (
-                  <IconUserPlus size={11} color="#fff" />
-                )}
-                <Text style={styles.systemText} numberOfLines={1}>
-                  <Text style={styles.systemName}>{m.name}</Text>
-                  <Text>{` ${m.text || m.content || ''}`}</Text>
-                </Text>
-              </View>
-            </Animated.View>
-          );
+          return <SystemRow key={m.id} m={m} stackAlpha={stackAlpha} />;
         }
-
-        // Gift chip — golden, with sparkle + amount
         if (m.type === 'gift' || m.gift) {
-          return (
-            <Animated.View
-              key={m.id}
-              style={[styles.giftRow, { opacity, transform: [{ translateY }, { scale }] }]}
-              pointerEvents="none"
-            >
-              <View style={styles.giftPill}>
-                <View style={styles.giftAvatar}>
-                  <AvatarCircle name={m.name} email={m.email} size={20} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.giftName} numberOfLines={1}>{m.name}</Text>
-                  <Text style={styles.giftText} numberOfLines={1}>
-                    {m.giftLabel || (m.gift ? `enviou ${m.gift}` : 'enviou um presente')}
-                  </Text>
-                </View>
-                <View style={styles.giftAmount}>
-                  <IconStar size={12} color="#fff" />
-                  <Text style={styles.giftAmountText}>{m.amount || 1}</Text>
-                </View>
-              </View>
-            </Animated.View>
-          );
+          return <GiftRow key={m.id} m={m} stackAlpha={stackAlpha} />;
         }
-
-        const tier = m.tier || (hostEmail && (m.email || '').toLowerCase() === hostEmail.toLowerCase() ? 'host' : 'default');
-        const chipBg = chipForTier(tier);
-        const heartAnim = commentHearts[m.id];
-
         return (
-          <Animated.View
+          <CommentRow
             key={m.id}
-            style={{ opacity, transform: [{ translateY }, { scale }] }}
-          >
-            <TouchableOpacity
-              onPress={(e) => { e.stopPropagation?.(); onPressMessage?.(m); }}
-              onLongPress={isHostView ? () => onLongPressHost?.(m) : undefined}
-              delayLongPress={350}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel={`Reply to ${m.name}`}
-              style={styles.row}
-            >
-              <AvatarCircle name={m.name} email={m.email} size={26} />
-              <View style={styles.body}>
-                <View style={[styles.nameChip, { backgroundColor: chipBg }]}>
-                  <Text style={styles.name} numberOfLines={1}>{m.name}</Text>
-                  {tier === 'host' ? <Text style={styles.tierBadge}>HOST</Text> : null}
-                  {tier === 'gift' ? <Text style={styles.tierBadge}>★</Text> : null}
-                  {(tier === 'guest' || tier === 'cohost') ? <Text style={styles.tierBadge}>COLAB</Text> : null}
-                </View>
-                <Text style={styles.text} numberOfLines={3}>{m.content}</Text>
-              </View>
-              {heartAnim ? (
-                <Animated.View
-                  pointerEvents="none"
-                  style={[
-                    styles.heartChip,
-                    {
-                      opacity: heartAnim,
-                      transform: [
-                        { scale: heartAnim.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] }) },
-                        { translateY: heartAnim.interpolate({ inputRange: [0, 1], outputRange: [10, -4] }) },
-                      ],
-                    },
-                  ]}
-                >
-                  <IconHeart size={14} color="#fff" />
-                </Animated.View>
-              ) : null}
-            </TouchableOpacity>
-          </Animated.View>
+            m={m}
+            stackAlpha={stackAlpha}
+            isHostView={isHostView}
+            onPressMessage={onPressMessage}
+            onLongPressHost={onLongPressHost}
+            hostEmail={hostEmail}
+            commentHearts={commentHearts}
+          />
         );
       })}
     </TouchableOpacity>

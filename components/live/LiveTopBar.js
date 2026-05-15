@@ -22,6 +22,7 @@ import {
 } from 'react-native';
 import AvatarCircle from '../AvatarCircle';
 import { IconX, IconShare, IconMoreVert, IconEye } from '../Icons';
+import AnimatedViewerCount from '../AnimatedViewerCount';
 
 const LIVE_RED = '#dc2626';
 
@@ -132,7 +133,9 @@ export default function LiveTopBar({
               accessibilityLabel={viewersListLabel}
             >
               <IconEye size={11} color="rgba(255,255,255,0.9)" />
-              <Text style={styles.viewerChipText}>{humanizeCount(viewerCount)}</Text>
+              {/* AnimatedViewerCount = smooth tween + "k"/"M" formatter +
+                  pulse on increase. Replaces the static humanizeCount text. */}
+              <AnimatedViewerCount count={viewerCount} style={styles.viewerChipText} />
             </TouchableOpacity>
             <Animated.View
               pointerEvents="none"
