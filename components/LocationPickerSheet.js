@@ -1,0 +1,247 @@
+// LocationPickerSheet — WhatsApp-style bottom sheet for sharing GPS.
+//
+// Why this exists
+// ---------------
+// User reported that the old flow (tap → fetchGPS → send) was a black box:
+// if GPS took 12s+ they saw nothing, and the only feedback on failure was a
+// generic "Não foi possível obter a localização" alert AFTER the timeout.
+//
+// WhatsApp's pattern is to open a sheet FIRST: user sees a spinner while
+// GPS resolves, then a small preview map + the address, with one explicit
+// "Enviar localização atual" CTA. That's what we mirror here.
+//
+// We don't have `react-native-maps` (would require a native rebuild) so we
+// use the Google Maps Static API image to render a non-interactive preview.
+// Good enough for share-confirmation UX; live tracking (the green-bubble
+// flow) still goes through its own existing code path.
+//
+// Props
+// -----
+//   visible    boolean
+//   onClose    () => void
+//   onSend     ({ latitude, longitude, address }) => void
+//   colors     ThemeContext colors
+//   t          i18n t() function
+
+import React, { useEffect, useState, useRef } from 'react';
+import {
+  View, Text, TouchableOpacity, Modal, Pressable, ActivityIndicator,
+  Image, Platform, KeyboardAvoidingView,
+} from 'react-native';
+import { IconMapPin, IconX } from './Icons';
+
+const GOOGLE_STATIC = 'https://maps.googleapis.com/maps/api/staticmap';
+
+export default function LocationPickerSheet({ visible, onClose, onSend, colors, t }) {
+  const [loading, setLoading] = useState(true);
+  const [coords, setCoords] = useState(null); // { latitude, longitude, accuracy }
+  const [address, setAddress] = useState('');
+  const [error, setError] = useState(null);
+  const [sending, setSending] = useState(false);
+  const cancelRef = useRef(false);
+
+  useEffect(() => {
+    if (!visible) return;
+    let active = true;
+    cancelRef.current = false;
+    setLoading(true);
+    setError(null);
+    setCoords(null);
+    setAddress('');
+
+    (async () => {
+      try {
+        const Location = require('expo-location');
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (!active || cancelRef.current) return;
+        if (status !== 'granted') {
+          setError(t?.('chatConv.locationPermission') || 'Permita o acesso à localização nas configurações.');
+          setLoading(false);
+          return;
+        }
+
+        // 1) Try cached last-known position first — instant.
+        try {
+          const cached = await Location.getLastKnownPositionAsync({ maxAge: 60000, requiredAccuracy: 200 });
+          if (!active || cancelRef.current) return;
+          if (cached?.coords) {
+            setCoords(cached.coords);
+            // We still attempt a fresh read below for accuracy, but the user
+            // already sees a preview.
+          }
+        } catch {}
+
+        // 2) Fresh fix with timeout (Balanced ~5s typical).
+        const withTimeout = (p, ms) => Promise.race([
+          p,
+          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms)),
+        ]);
+        let fresh = null;
+        try {
+          fresh = await withTimeout(
+            Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+            10000,
+          );
+        } catch {
+          try {
+            fresh = await withTimeout(
+              Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }),
+              12000,
+            );
+          } catch {}
+        }
+        if (!active || cancelRef.current) return;
+        if (fresh?.coords) setCoords(fresh.coords);
+        else if (!coords) {
+          // Both failed and we have no cache either.
+          setError(t?.('chatConv.locationUnavailable') || 'Não foi possível obter sua localização. Verifique se o GPS está ligado.');
+          setLoading(false);
+          return;
+        }
+
+        // 3) Best-effort reverse geocode (don't block on it).
+        const target = fresh?.coords || coords;
+        if (target) {
+          try {
+            const places = await Location.reverseGeocodeAsync({
+              latitude: target.latitude,
+              longitude: target.longitude,
+            });
+            if (active && !cancelRef.current && places?.[0]) {
+              const p = places[0];
+              const line = [p.street, p.streetNumber].filter(Boolean).join(', ');
+              const sub = [p.district || p.subregion, p.city, p.region].filter(Boolean).join(' · ');
+              setAddress([line, sub].filter(Boolean).join(' — '));
+            }
+          } catch {}
+        }
+
+        setLoading(false);
+      } catch (e) {
+        if (!active || cancelRef.current) return;
+        setError(String(e?.message || e));
+        setLoading(false);
+      }
+    })();
+
+    return () => { active = false; cancelRef.current = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+
+  const handleSend = () => {
+    if (!coords || sending) return;
+    setSending(true);
+    onSend?.({
+      latitude: coords.latitude,
+      longitude: coords.longitude,
+      address: address || '',
+    });
+    // Parent closes the sheet; we keep `sending` true to lock the button.
+  };
+
+  const mapUrl = coords
+    ? `${GOOGLE_STATIC}?center=${coords.latitude},${coords.longitude}&zoom=16&size=640x320&scale=2&maptype=roadmap&markers=color:red%7C${coords.latitude},${coords.longitude}`
+    : null;
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView
+        behavior="padding"
+        style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }}
+      >
+        <Pressable style={{ flex: 1 }} onPress={onClose} />
+        <View style={{
+          backgroundColor: colors.surface,
+          borderTopLeftRadius: 24, borderTopRightRadius: 24,
+          paddingHorizontal: 18, paddingTop: 16, paddingBottom: 28,
+        }}>
+          {/* Drag handle */}
+          <View style={{ alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, marginBottom: 14 }} />
+
+          {/* Header */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
+            <IconMapPin size={20} color={colors.primary} style={{ marginRight: 8 }} />
+            <Text style={{ flex: 1, fontSize: 18, fontWeight: '700', color: colors.text }}>
+              {t?.('chatConv.locationShare') || 'Compartilhar localização'}
+            </Text>
+            <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+              <IconX size={22} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Body: loading / error / preview */}
+          {loading && !coords && (
+            <View style={{ height: 200, alignItems: 'center', justifyContent: 'center' }}>
+              <ActivityIndicator size="large" color={colors.primary} />
+              <Text style={{ marginTop: 12, color: colors.textSecondary, fontSize: 14 }}>
+                {t?.('chatConv.locationFetching') || 'Buscando sua localização…'}
+              </Text>
+            </View>
+          )}
+
+          {error && !coords && (
+            <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+              <Text style={{ fontSize: 14, color: '#ef4444', textAlign: 'center', marginBottom: 16, lineHeight: 20 }}>
+                {error}
+              </Text>
+              <TouchableOpacity
+                onPress={onClose}
+                style={{ paddingHorizontal: 20, paddingVertical: 12, borderRadius: 24, backgroundColor: colors.border + '40' }}
+              >
+                <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>
+                  {t?.('common.close') || 'Fechar'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {coords && (
+            <>
+              {/* Map preview */}
+              <View style={{ borderRadius: 14, overflow: 'hidden', backgroundColor: colors.border + '20', marginBottom: 14 }}>
+                {mapUrl ? (
+                  <Image
+                    source={{ uri: mapUrl }}
+                    style={{ width: '100%', height: 180 }}
+                    resizeMode="cover"
+                  />
+                ) : null}
+              </View>
+
+              {/* Address line */}
+              <Text style={{ fontSize: 14, color: colors.text, marginBottom: 4, fontWeight: '600' }} numberOfLines={2}>
+                {address || (t?.('chatConv.locationCurrent') || 'Sua localização atual')}
+              </Text>
+              <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 18 }}>
+                {coords.latitude.toFixed(5)}, {coords.longitude.toFixed(5)}
+                {coords.accuracy ? ` · ±${Math.round(coords.accuracy)}m` : ''}
+                {loading ? ` · ${t?.('chatConv.locationRefining') || 'refinando…'}` : ''}
+              </Text>
+
+              {/* Send button */}
+              <TouchableOpacity
+                onPress={handleSend}
+                disabled={sending}
+                style={{
+                  backgroundColor: colors.primary,
+                  borderRadius: 26,
+                  paddingVertical: 14,
+                  alignItems: 'center',
+                  opacity: sending ? 0.6 : 1,
+                  flexDirection: 'row', justifyContent: 'center', gap: 8,
+                }}
+              >
+                <IconMapPin size={18} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
+                  {sending
+                    ? (t?.('common.sending') || 'Enviando…')
+                    : (t?.('chatConv.locationSend') || 'Enviar localização atual')}
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}

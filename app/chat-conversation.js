@@ -68,6 +68,7 @@ import MessageBubbleEffect from '../components/MessageBubbleEffect';
 import MediaGallery from '../components/MediaGallery';
 import FormatToolbar from '../components/FormatToolbar';
 import RichTextOverlay from '../components/RichTextOverlay';
+import LocationPickerSheet from '../components/LocationPickerSheet';
 import ChatNotificationSettingsSheet from '../components/ChatNotificationSettingsSheet';
 import { getCachedUri, preCacheUrls, cacheMedia, saveMediaPermanent, saveConversationMedia, initSyncCache } from '../services/mediaCache';
 const ExpoImage = Image;
@@ -3234,7 +3235,7 @@ function PollCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior="padding"
       style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)' }}
       keyboardVerticalOffset={0}
     >
@@ -3371,7 +3372,7 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior="padding"
       style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }}
       keyboardVerticalOffset={0}
     >
@@ -3553,7 +3554,7 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated })
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior="padding"
       style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' }}
       keyboardVerticalOffset={0}
     >
@@ -10511,7 +10512,7 @@ export default function ChatConversationScreen() {
       case 'gallery':      return handleGallery();
       case 'file':         return handleAttachFile();
       case 'audio':        return handlePickAudioFile();
-      case 'location':     return handleShareLocation();
+      case 'location':     return setShowLocationPickerSheet(true);
       case 'liveLocation': return handleShareLiveLocation();
       case 'contact':      return handleShareContact();
       case 'poll':         return setShowPollCreator(true);
@@ -11234,7 +11235,8 @@ export default function ChatConversationScreen() {
   };
 
   const sharingLocationRef = useRef(false);
-  const handleShareLocation = async () => {
+  const [showLocationPickerSheet, setShowLocationPickerSheet] = useState(false);
+  const handleShareLocation = async (preset) => {
     // Anti-duplicate guard: ignore if already sending
     if (sharingLocationRef.current) return;
     sharingLocationRef.current = true;
@@ -11246,8 +11248,16 @@ export default function ChatConversationScreen() {
     // tap on the location action.
     try {
       let latitude, longitude;
-
-      if (Platform.OS === 'web') {
+      // [bug 2026-05-15 location-blackbox-ux]
+      // When the LocationPickerSheet already resolved coords + address,
+      // we get them as `preset` and skip the in-handler GPS dance entirely.
+      // That keeps the send sub-second and avoids the second fetch the
+      // user would otherwise pay for after confirming in the sheet.
+      const presetAddress = preset?.address || null;
+      if (preset && typeof preset.latitude === 'number' && typeof preset.longitude === 'number') {
+        latitude = preset.latitude;
+        longitude = preset.longitude;
+      } else if (Platform.OS === 'web') {
         if (!navigator?.geolocation) {
           safeAlert('Error', t('chatConv.locationError') || 'Geolocation not available');
           return;
@@ -11334,7 +11344,7 @@ export default function ChatConversationScreen() {
 
       // Send IMMEDIATELY without waiting for reverse geocoding (do that in parallel/background)
       const optimisticLabel = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
-      const content = JSON.stringify({ latitude, longitude, label: optimisticLabel, address: '' });
+      const content = JSON.stringify({ latitude, longitude, label: presetAddress || optimisticLabel, address: presetAddress || '' });
       const locMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
       const locTempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
@@ -19872,6 +19882,17 @@ export default function ChatConversationScreen() {
         isDark={isDark}
       />
       <MessageScreenEffect ref={screenEffectRef} />
+
+      <LocationPickerSheet
+        visible={showLocationPickerSheet}
+        onClose={() => setShowLocationPickerSheet(false)}
+        onSend={(loc) => {
+          setShowLocationPickerSheet(false);
+          handleShareLocation(loc);
+        }}
+        colors={colors}
+        t={t}
+      />
 
       {/* AI Leak / Tone Warnings */}
       {chatLeakWarning && (
