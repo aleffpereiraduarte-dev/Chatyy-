@@ -57,6 +57,35 @@ if (Platform.OS === 'web') {
   }
 }
 
+// LiveKit — lazy-loaded only when cohost flow kicks in. Cost is roughly
+// the same as call.js's eager import, but the viewer screen opens far more
+// often than the cohost path triggers, so we keep it out of the cold-start
+// path. Both modules are already in the JS bundle (call.js drags them in)
+// so the require resolves synchronously off the Metro cache.
+let _LK_Room, _LK_RoomEvent, _LK_VideoView, _LK_registered = false;
+function loadLiveKit() {
+  if (_LK_Room) return { Room: _LK_Room, RoomEvent: _LK_RoomEvent, VideoView: _LK_VideoView };
+  try {
+    const lkc = require('livekit-client');
+    _LK_Room = lkc.Room;
+    _LK_RoomEvent = lkc.RoomEvent;
+  } catch (e) {
+    console.warn('[Live] livekit-client load failed:', e?.message);
+    return null;
+  }
+  if (Platform.OS !== 'web' && !_LK_registered) {
+    try {
+      const lkrn = require('@livekit/react-native');
+      lkrn.registerGlobals?.();
+      _LK_VideoView = lkrn.VideoView;
+      _LK_registered = true;
+    } catch (e) {
+      console.warn('[Live] @livekit/react-native load failed:', e?.message);
+    }
+  }
+  return { Room: _LK_Room, RoomEvent: _LK_RoomEvent, VideoView: _LK_VideoView };
+}
+
 // Native HLS player — lazy require expo-video so web bundles don't pull native
 // surface area we can't use. expo-video ships with the rest of the app (SDK
 // 55+) and is already used by status/reels/chat media. iOS + Android both
@@ -216,6 +245,14 @@ export default function LiveViewerScreen() {
   const guestStreamRef = useRef(null);
   const guestPendingIceRef = useRef([]);
   const [guestPublishing, setGuestPublishing] = useState(false);
+  // TikTok-style cohost (LiveKit). When host approves us, backend pushes
+  // `live_cohost_approved` and we connect to the LK room as a publisher.
+  // Distinct from legacy guestPublishing path (raw P2P) — they can coexist
+  // during the rollout window.
+  const cohostRoomRef = useRef(null);
+  const cohostLocalTrackRef = useRef(null); // CameraTrack for VideoView
+  const [cohostPublishing, setCohostPublishing] = useState(false);
+  const [cohostConnecting, setCohostConnecting] = useState(false);
   const sessionIdRef = useRef(paramSessionId);
   const chatIdRef = useRef(0);
   const heartIdRef = useRef(0);
@@ -850,6 +887,27 @@ export default function LiveViewerScreen() {
             setJoinRequested(false);
           }
           break;
+        case 'live_cohost_approved':
+          // Backend approved us as a TikTok-style cohost. Spin up the LK
+          // publisher path immediately (no further user action needed).
+          // Server fans the event out to `chat_user_{viewer_email}`, so
+          // anyone receiving this message IS the approved viewer.
+          //
+          // GATED until Stage 3 (host LK subscribe) is shipped. Without
+          // the host subscribing to the LK room, the cohost would publish
+          // into an empty room — viewers + host would only see the
+          // cohost video via the legacy `live_join_approve` P2P path
+          // anyway. Set `globalThis.__chatyy_cohost_lk` = true to opt-in
+          // for testing. The dual-path race (LK vs P2P both grabbing
+          // getUserMedia) is the reason we don't auto-enable yet.
+          if (globalThis.__chatyy_cohost_lk) {
+            (async () => {
+              try { await joinCohost(); } catch (e) { console.warn('[Live] joinCohost failed:', e?.message); }
+            })();
+          } else {
+            console.log('[Live] cohost approval received, LK path gated (set globalThis.__chatyy_cohost_lk=true to enable)');
+          }
+          break;
         case 'live_ended':
           setLiveEnded(true);
           endTimerRef.current = setTimeout(() => { if (alive) router.back(); }, 4000);
@@ -919,8 +977,96 @@ export default function LiveViewerScreen() {
       if (joinResetTimerRef.current) { clearTimeout(joinResetTimerRef.current); joinResetTimerRef.current = null; }
       iceCandidateQueueRef.current = []; // Clear queued candidates
       guestPendingIceRef.current = []; // Clear queued guest ICE
+      // TikTok cohost LK teardown
+      try {
+        const room = cohostRoomRef.current;
+        if (room) { room.disconnect().catch(() => {}); }
+      } catch {}
+      cohostRoomRef.current = null;
+      cohostLocalTrackRef.current = null;
     };
   }, [paramSessionId, user, isSelfLive]);
+
+  // TikTok-style cohost — host approved us → connect to LK room as publisher.
+  // Camera + mic only; no screen share. We bail loudly via Alert if anything
+  // upstream (token mint, LK module, getUserMedia) fails so the viewer knows
+  // why they didn't go live.
+  const joinCohost = useCallback(async () => {
+    if (cohostRoomRef.current) return; // already publishing
+    if (!paramSessionId) return;
+    setCohostConnecting(true);
+    let lk;
+    try {
+      lk = loadLiveKit();
+      if (!lk?.Room) throw new Error('LiveKit module unavailable');
+    } catch (e) {
+      setCohostConnecting(false);
+      try { require('react-native').Alert.alert(t('live.aoVivo') || 'AO VIVO', t('live.cohostUnavailable') || 'Colab indisponível neste device'); } catch {}
+      return;
+    }
+    let tokenInfo;
+    try {
+      tokenInfo = await api.liveCohostToken(paramSessionId);
+    } catch (e) {
+      console.warn('[Live] cohost token fetch failed:', e?.message);
+    }
+    if (!tokenInfo?.token || !tokenInfo?.url) {
+      setCohostConnecting(false);
+      try { require('react-native').Alert.alert(t('live.aoVivo') || 'AO VIVO', t('live.cohostTokenFailed') || 'Token de colab indisponível'); } catch {}
+      return;
+    }
+    const room = new lk.Room({
+      adaptiveStream: true,
+      dynacast: true,
+      videoCaptureDefaults: {
+        facingMode: 'user',
+        resolution: { width: 640, height: 1136, frameRate: 24 },
+      },
+      publishDefaults: {
+        videoSimulcastLayers: [
+          { width: 320, height: 568, encoding: { maxBitrate: 200_000, maxFramerate: 15 } },
+          { width: 640, height: 1136, encoding: { maxBitrate: 700_000, maxFramerate: 24 } },
+        ],
+      },
+    });
+    cohostRoomRef.current = room;
+    room.on(lk.RoomEvent.Disconnected, () => {
+      cohostRoomRef.current = null;
+      cohostLocalTrackRef.current = null;
+      setCohostPublishing(false);
+      setCohostConnecting(false);
+    });
+    try {
+      await room.connect(tokenInfo.url, tokenInfo.token);
+      await room.localParticipant.setMicrophoneEnabled(true);
+      await room.localParticipant.setCameraEnabled(true);
+      // Grab the local camera track so we can render the preview pip.
+      try {
+        const pubs = Array.from(room.localParticipant.videoTrackPublications?.values?.() || []);
+        const cameraPub = pubs.find(p => p.source === 'camera' || p.kind === 'video') || pubs[0];
+        if (cameraPub?.track) cohostLocalTrackRef.current = cameraPub.track;
+      } catch {}
+      setCohostPublishing(true);
+      setCohostConnecting(false);
+    } catch (e) {
+      console.warn('[Live] cohost room.connect failed:', e?.message);
+      try { room.disconnect(); } catch {}
+      cohostRoomRef.current = null;
+      setCohostConnecting(false);
+      try { require('react-native').Alert.alert(t('live.aoVivo') || 'AO VIVO', t('live.cohostConnectFailed') || 'Falha ao conectar ao colab'); } catch {}
+    }
+  }, [paramSessionId, t]);
+
+  const leaveCohost = useCallback(() => {
+    const room = cohostRoomRef.current;
+    cohostRoomRef.current = null;
+    cohostLocalTrackRef.current = null;
+    setCohostPublishing(false);
+    setCohostConnecting(false);
+    if (room) {
+      try { room.disconnect(); } catch {}
+    }
+  }, []);
 
   const handleOffer = useCallback(async (msg) => {
     if (!msg.sdp) return;
@@ -1811,6 +1957,93 @@ export default function LiveViewerScreen() {
           share: t('live.share') || 'Compartilhar',
         }}
       />
+
+      {/* Cohost self-preview — TikTok-style PiP showing the viewer's own
+          camera while they're publishing into the host's live room. Wrapped
+          in a thin "AO VIVO" badge so the user sees they're broadcasting,
+          plus a leave button. Top-left position so it doesn't overlap with
+          the right rail (likes/chat) or the bottom comment input. */}
+      {(cohostPublishing || cohostConnecting) ? (
+        <View
+          pointerEvents="box-none"
+          style={{
+            position: 'absolute',
+            top: insets.top + 80,
+            left: 12,
+            width: 92,
+            zIndex: 60,
+          }}
+        >
+          <View style={{
+            width: 92,
+            height: 124,
+            borderRadius: 14,
+            overflow: 'hidden',
+            backgroundColor: '#000',
+            borderWidth: 2,
+            borderColor: LIVE_RED,
+          }}>
+            {(() => {
+              const lk = _LK_VideoView ? { VideoView: _LK_VideoView } : loadLiveKit() || {};
+              const VV = lk.VideoView;
+              const track = cohostLocalTrackRef.current;
+              if (VV && track && cohostPublishing) {
+                return <VV style={StyleSheet.absoluteFill} videoTrack={track} mirror />;
+              }
+              return (
+                <View style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
+                  <Text style={{ color: '#fff', fontSize: 11 }}>{t('live.connecting') || 'Conectando…'}</Text>
+                </View>
+              );
+            })()}
+            <View style={{
+              position: 'absolute',
+              top: 4,
+              left: 4,
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: LIVE_RED,
+              borderRadius: 4,
+              paddingHorizontal: 4,
+              paddingVertical: 1,
+            }}>
+              <View style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: '#fff', marginRight: 3 }} />
+              <Text style={{ color: '#fff', fontSize: 8, fontWeight: '900', letterSpacing: 0.4 }}>
+                {t('live.aoVivo') || 'AO VIVO'}
+              </Text>
+            </View>
+          </View>
+          <Text style={{
+            color: '#fff',
+            fontSize: 10,
+            fontWeight: '700',
+            textAlign: 'center',
+            marginTop: 4,
+            textShadowColor: 'rgba(0,0,0,0.6)',
+            textShadowRadius: 2,
+          }}>
+            {t('live.youAreLive') || 'Você está ao vivo'}
+          </Text>
+          <TouchableOpacity
+            onPress={leaveCohost}
+            activeOpacity={0.7}
+            style={{
+              marginTop: 6,
+              alignSelf: 'center',
+              backgroundColor: 'rgba(0,0,0,0.6)',
+              paddingHorizontal: 10,
+              paddingVertical: 4,
+              borderRadius: 12,
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.25)',
+            }}
+          >
+            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600' }}>
+              {t('live.leaveCohost') || 'Sair'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
 
       {/* Central love-bomb particles (double-tap). Spawn from screen middle
           and ride a radial vector outward — fade and shrink over ~900ms. */}
