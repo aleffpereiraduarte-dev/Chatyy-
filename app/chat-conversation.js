@@ -19437,7 +19437,19 @@ export default function ChatConversationScreen() {
             <TextInput
               ref={inputRef}
               style={{
-                width: '100%', fontSize: 15, color: 'transparent',
+                width: '100%', fontSize: 15,
+                // [bug 2026-05-14 android-font-strange-while-typing]
+                // RichTextOverlay paints text on top, so iOS/web make the
+                // input text transparent. On Android the glyph metrics of
+                // RN's <TextInput> (uses fontFamily 'normal' / Roboto) DON'T
+                // match those of <Text> in the overlay — caret + selection
+                // float on the correct chars but the painted glyphs land at
+                // different x positions, making typed text look "weird" /
+                // misaligned. Until we ship a fontFamily-pinned overlay,
+                // Android renders the TextInput's own glyphs (overlay still
+                // mounts but only paints markers / formatted spans because
+                // we wrap the whole render with Platform.OS !== 'android').
+                color: Platform.OS === 'android' ? (isDark ? '#e5e7eb' : '#111') : 'transparent',
                 minHeight: 40, maxHeight: 120,
                 paddingHorizontal: 4,
                 paddingTop: Platform.OS === 'ios' ? 10 : 8,
@@ -19564,18 +19576,24 @@ export default function ChatConversationScreen() {
                 caret + selection from the input below "stick" to the styled
                 spans the user sees. pointerEvents:none in the overlay lets
                 taps pass through to the input. */}
-            <RichTextOverlay
-              text={inputText}
-              style={{
-                fontSize: 15,
-                color: colors.text,
-                paddingHorizontal: 4,
-                paddingTop: Platform.OS === 'ios' ? 10 : 8,
-                paddingBottom: Platform.OS === 'ios' ? 10 : 8,
-                lineHeight: undefined,
-              }}
-              colors={colors}
-            />
+            {/* Android skipped: see TextInput note above — RN glyph metrics
+                differ between <TextInput> (system font/Roboto) and <Text>
+                (sans-serif), so painting the overlay produced a "weird"
+                shifted glyph effect while typing. */}
+            {Platform.OS !== 'android' && (
+              <RichTextOverlay
+                text={inputText}
+                style={{
+                  fontSize: 15,
+                  color: colors.text,
+                  paddingHorizontal: 4,
+                  paddingTop: Platform.OS === 'ios' ? 10 : 8,
+                  paddingBottom: Platform.OS === 'ios' ? 10 : 8,
+                  lineHeight: undefined,
+                }}
+                colors={colors}
+              />
+            )}
             </View>
 
             {/* Format button - only when typing */}
