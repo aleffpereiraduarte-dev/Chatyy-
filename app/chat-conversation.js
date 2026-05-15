@@ -39,7 +39,7 @@ import * as Haptics from 'expo-haptics';
 import {
   IconArrowLeft, IconSend, IconUsers, IconMoreVert, IconVideo, IconPhone, IconPhoneOff,
   IconX, IconEdit, IconTrash, IconReply, IconPaperclip, IconImage, IconFileText,
-  IconCheck, IconCheckCircle, IconMic, IconPlay, IconPause, IconStop,
+  IconCheck, IconCheckCircle, IconMic, IconPlay, IconPause, IconStop, IconVideoNote,
   IconCamera, IconMapPin, IconSmile, IconNavigation, IconUser, IconPlus,
   IconThumbsUp, IconHeart, IconLaughFace, IconSurpriseFace, IconSadFace, IconPrayHands,
   IconClock, IconAlertTriangle, IconLock, IconForward, IconChevronDown, IconWifiOff,
@@ -11356,6 +11356,68 @@ export default function ChatConversationScreen() {
     }
   };
 
+  // ───────────────────────────────────────────────────────────────
+  // Chat 2026 — Video Note send. Mirrors handleSendAudio (optimistic
+  // bubble + chatUploadFile with msgType='video_note'). The renderer
+  // already supports the 'video_note' type (see VideoNotePlayer + the
+  // case 'video_note' branch in renderMessage), so we just have to land
+  // the row with the right type.
+  // ───────────────────────────────────────────────────────────────
+  const handleSendVideoNote = async (file) => {
+    if (!file?.uri) return;
+    setShowVideoNoteRecorder(false);
+    setUploading(true);
+    try { if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
+    const tempId = `tmp_vnote_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const clientId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    const optimisticMsg = {
+      id: tempId,
+      sender_email: user?.email,
+      sender_name: '',
+      content: '',
+      type: 'video_note',
+      file_url: file.uri,
+      _localUri: file.uri,
+      file_name: file.name,
+      duration: file.duration || 0,
+      created_at: new Date().toISOString(),
+      _pending: true,
+      _uploading: true,
+      _client_id: clientId,
+    };
+    setMessages(prev => [...prev, optimisticMsg]);
+    setUploadProgress(prev => ({ ...prev, [tempId]: 0 }));
+    requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
+    try {
+      const r = await api.chatUploadFile(
+        conversationId,
+        { uri: file.uri, name: file.name, type: file.type || 'video/mp4' },
+        '',
+        false,
+        (progress) => {
+          if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(progress * 100) }));
+        },
+        'video_note',
+      );
+      if (r?.success && r.data) {
+        const msg = r.data.message || r.data;
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...msg, _pending: false } : m));
+        try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, msg, tempId, getMemberEmails()); } catch {}
+      } else {
+        // Mark optimistic bubble as failed; user can long-press → retry.
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _uploading: false } : m));
+        safeAlert(t('common.error') || 'Error', r?.message || t('chatConv.sendFailed') || 'Failed to send');
+      }
+    } catch (e) {
+      setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _uploading: false } : m));
+    } finally {
+      if (mountedRef.current) {
+        setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
+        setUploading(false);
+      }
+    }
+  };
+
   const sharingLocationRef = useRef(false);
   const [showLocationPickerSheet, setShowLocationPickerSheet] = useState(false);
   const handleShareLocation = async (preset) => {
@@ -17856,6 +17918,24 @@ export default function ChatConversationScreen() {
             ) : null}
           </TouchableOpacity>
         ) : null}
+        {/* Chat 2026 — AI Summarize unread (>=5 incoming). Distinct from
+            the existing chatAi.summarize menu entry because this one is
+            front-and-center as a single tap on the header, and runs over
+            real unread context (not the open AI chooser sheet). */}
+        {(initialUnreadCountRef.current >= 5) && (
+          <TouchableOpacity
+            onPress={() => setShowSummarizeModal(true)}
+            style={[styles.headerBtn, { flexDirection: 'row', alignItems: 'center', gap: 4 }]}
+            accessibilityLabel={t('chatConv.summarize') || 'Summarize unread'}
+            accessibilityRole="button"
+            hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+          >
+            <IconSparkles size={15} color="rgba(255,255,255,0.95)" />
+            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
+              {initialUnreadCountRef.current > 99 ? '99+' : String(initialUnreadCountRef.current)}
+            </Text>
+          </TouchableOpacity>
+        )}
         {/* Busca direta no header — antes ficava enterrada no menu 3-pontos.
             Um tap abre a barra de busca com auto-focus. */}
         <TouchableOpacity
@@ -19345,6 +19425,30 @@ export default function ChatConversationScreen() {
           </View>
         ) : (
         <>
+        {/* Chat 2026 — OpenAI-direct Smart Replies chip bar. Renders ONLY
+            when:
+              - composer is empty (no in-progress draft)
+              - not replying / editing / recording
+              - last incoming message is text + within 5min (the existing
+                smartReplySuggestions memo already enforces that window)
+            Tap inserts into the composer (does NOT auto-send), letting
+            the user tweak before hitting Send.
+            The older string-keyword block below is the fallback that
+            renders inline when the AI hasn't responded yet — both render
+            at most one at a time because the memo gates both. */}
+        {!inputText && !replyTo && !editingMsg && !isRecording && smartReplySuggestions && SmartRepliesBar ? (
+          <SmartRepliesBar
+            conversationId={conversationId}
+            lastIncomingId={smartReplySuggestions.id}
+            onPick={(text) => {
+              try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+              setInputText(text);
+              setTimeout(() => inputRef.current?.focus?.(), 80);
+            }}
+            colors={colors}
+            t={t}
+          />
+        ) : null}
         {/* Smart quick reply suggestions */}
         {(() => {
           if (inputText || replyTo || editingMsg || isRecording) return null;
@@ -19950,26 +20054,47 @@ export default function ChatConversationScreen() {
               )}
             </Animated.View>
           ) : (
-            <TouchableOpacity
-              onPress={() => {
-                setIsRecording(true);
-                // Switch from "typing" → "recording" presence: cancel any
-                // pending typing-stop timer and tell peers we stopped typing
-                // so they don't see a stale indicator under the mic UI.
-                if (typingStopTimerRef.current) { clearTimeout(typingStopTimerRef.current); typingStopTimerRef.current = null; }
-                typingLastSentAt.current = 0;
-                try {
-                  const mailWs = require('../services/websocket').default;
-                  mailWs.sendStoppedTyping?.(conversationId);
-                  mailWs.sendTyping(conversationId, true);
-                } catch {}
-              }}
-              style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center', alignSelf: 'flex-end', marginLeft: 6, ...(Platform.OS === 'web' ? { cursor: 'pointer', boxShadow: '0 4px 14px rgba(124,58,237,0.35)' } : {}), ...Platform.select({ ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.35, shadowRadius: 8 }, android: { elevation: 5 }, default: {} }) }}
-              accessibilityLabel={t('chatConv.recordAudio') || 'Record audio'}
-              accessibilityRole="button"
-            >
-              <IconMic size={22} color="#fff" />
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-end' }}>
+              {/* Chat 2026 — round video note trigger. Hidden on web (no
+                  expo-camera) and on channels for non-admins (chat is
+                  already gated above so we just check the native flag). */}
+              {Platform.OS !== 'web' && VideoNoteRecorder ? (
+                <TouchableOpacity
+                  onPress={() => setShowVideoNoteRecorder(true)}
+                  style={{
+                    width: 44, height: 44, borderRadius: 22,
+                    backgroundColor: 'rgba(124,58,237,0.12)',
+                    alignItems: 'center', justifyContent: 'center',
+                    marginLeft: 6,
+                  }}
+                  accessibilityLabel={t('videoNote.button') || 'Video note'}
+                  accessibilityRole="button"
+                  hitSlop={8}
+                >
+                  <IconVideoNote size={20} color="#7C3AED" />
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity
+                onPress={() => {
+                  setIsRecording(true);
+                  // Switch from "typing" → "recording" presence: cancel any
+                  // pending typing-stop timer and tell peers we stopped typing
+                  // so they don't see a stale indicator under the mic UI.
+                  if (typingStopTimerRef.current) { clearTimeout(typingStopTimerRef.current); typingStopTimerRef.current = null; }
+                  typingLastSentAt.current = 0;
+                  try {
+                    const mailWs = require('../services/websocket').default;
+                    mailWs.sendStoppedTyping?.(conversationId);
+                    mailWs.sendTyping(conversationId, true);
+                  } catch {}
+                }}
+                style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center', marginLeft: 6, ...(Platform.OS === 'web' ? { cursor: 'pointer', boxShadow: '0 4px 14px rgba(124,58,237,0.35)' } : {}), ...Platform.select({ ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.35, shadowRadius: 8 }, android: { elevation: 5 }, default: {} }) }}
+                accessibilityLabel={t('chatConv.recordAudio') || 'Record audio'}
+                accessibilityRole="button"
+              >
+                <IconMic size={22} color="#fff" />
+              </TouchableOpacity>
+            </View>
           )}
           </SendButtonAnim>
         </View>
@@ -19981,6 +20106,40 @@ export default function ChatConversationScreen() {
       <ScheduleToast visible={!!scheduleToast} message={scheduleToast} colors={colors} />
       <CustomScheduleModal visible={showCustomSchedule} onClose={() => setShowCustomSchedule(false)} customDate={customScheduleDate} setCustomDate={setCustomScheduleDate} onSchedule={(iso) => { handleScheduleMessage(iso); setCustomScheduleDate(''); }} colors={colors} t={t} />
       <ScheduledMessagesModal visible={showScheduledMessages} onClose={() => setShowScheduledMessages(false)} messages={scheduledMessages} onCancel={handleCancelScheduled} colors={colors} t={t} />
+
+      {/* Chat 2026 — Video Note recorder modal. Mounted at component root
+          so it can render over the entire chat surface (not clipped by the
+          composer). Visibility is toggled by the round-video button in the
+          composer. */}
+      {VideoNoteRecorder && (
+        <VideoNoteRecorder
+          visible={showVideoNoteRecorder}
+          onClose={() => setShowVideoNoteRecorder(false)}
+          onComplete={handleSendVideoNote}
+          colors={colors}
+          t={t}
+        />
+      )}
+
+      {/* Chat 2026 — AI Summarize unread modal. Lazy-mount so the heavy
+          ScrollView/bullets don't reconcile when invisible. */}
+      {AISummarizeModal && showSummarizeModal && (
+        <AISummarizeModal
+          visible
+          conversationId={conversationId}
+          sinceMessageId={firstUnreadIdRef.current || 0}
+          onClose={() => setShowSummarizeModal(false)}
+          onMarkRead={() => {
+            try {
+              const lastId = messages.length ? messages[messages.length - 1].id : 0;
+              if (lastId) api.chatRead?.(conversationId, lastId).catch(() => {});
+            } catch {}
+            firstUnreadIdRef.current = null;
+          }}
+          colors={colors}
+          t={t}
+        />
+      )}
 
       {/* Auto-translate locale picker — Telegram parity. Lets user choose
           the language to auto-translate inbound messages into. Empty = off. */}

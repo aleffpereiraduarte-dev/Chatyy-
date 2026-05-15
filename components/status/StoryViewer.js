@@ -75,6 +75,30 @@ function _extractLinkSticker(item) {
 // smuggle a tracking pixel through this surface.
 let _isAllowedGifUrl = (() => true);
 try { _isAllowedGifUrl = require('../../hooks/useStatuses').isAllowedGifUrl || _isAllowedGifUrl; } catch {}
+// Walk a status item and collect every interactive sticker that needs a
+// tappable surface in the viewer (slider, poll, question, mention,
+// countdown). Returns the raw sticker objects with x/y intact so the
+// renderer below can place them in the same spot as the composer.
+function _extractInteractiveStickers(item) {
+  if (!item) return [];
+  const lists = [];
+  if (Array.isArray(item.stickers)) lists.push(item.stickers);
+  if (Array.isArray(item.meta?.stickers)) lists.push(item.meta.stickers);
+  const out = [];
+  const seen = new Set();
+  const interactiveTypes = new Set(['slider', 'question', 'mention', 'countdown', 'poll', 'quiz']);
+  for (const list of lists) {
+    for (const s of list) {
+      if (!s || !s.type || !interactiveTypes.has(s.type)) continue;
+      const key = `${s.type}:${s.id || ''}:${s.x || 0}:${s.y || 0}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(s);
+    }
+  }
+  return out;
+}
+
 function _extractGifStickers(item) {
   if (!item) return [];
   const lists = [];
@@ -101,6 +125,105 @@ function _extractGifStickers(item) {
     }
   }
   return out;
+}
+
+// Slider sticker (viewer) — Instagram-style "emoji slider". Lets the
+// viewer drag an emoji along a 0-100 track, then sends the value to the
+// backend. After submission we show the running average as a marker on
+// the track. Disabled on own stories (publisher already has it via the
+// composer preview). One submission per (status, sticker) — backend
+// upserts so re-dragging just overwrites.
+function SliderStickerView({ sticker, statusId, ownStatus, alreadyVoted, onVoted, t }) {
+  const [value, setValue] = useState(50);
+  const [submitted, setSubmitted] = useState(!!alreadyVoted);
+  const [avg, setAvg] = useState(typeof sticker?.avg_value === 'number' ? sticker.avg_value : null);
+  const [trackWidth, setTrackWidth] = useState(220);
+  const startValueRef = useRef(50);
+
+  const emoji = sticker?.emoji || '🔥';
+  const question = sticker?.question || (t ? t('status.sliderDefaultQuestion') : 'Qual o seu nível?');
+  const stickerId = String(sticker?.id || '');
+
+  const pan = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => !submitted && !ownStatus,
+    onMoveShouldSetPanResponder: () => !submitted && !ownStatus,
+    onPanResponderGrant: () => {
+      startValueRef.current = value;
+    },
+    onPanResponderMove: (_, g) => {
+      const tw = trackWidth || 220;
+      const next = Math.max(0, Math.min(100, Math.round(startValueRef.current + (g.dx / tw) * 100)));
+      setValue(next);
+    },
+    onPanResponderRelease: async () => {
+      try {
+        if (_Haptics) _Haptics.impactAsync(_Haptics.ImpactFeedbackStyle.Medium);
+      } catch {}
+      setSubmitted(true);
+      try {
+        const r = await api.statusSliderVote(statusId, value, stickerId);
+        if (r?.success && typeof r?.data?.avg_value === 'number') {
+          setAvg(r.data.avg_value);
+        }
+        try { onVoted?.(value); } catch {}
+      } catch {}
+    },
+  })).current;
+
+  return (
+    <View style={{
+      backgroundColor: 'rgba(15,23,42,0.92)', borderRadius: 18,
+      paddingTop: 14, paddingBottom: 22, paddingHorizontal: 16, width: 260,
+    }}>
+      <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700', textAlign: 'center', marginBottom: 14 }}>
+        {question}
+      </Text>
+      <View
+        onLayout={(e) => setTrackWidth(e.nativeEvent.layout.width)}
+        style={{ height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.18)', position: 'relative' }}
+      >
+        <View style={{
+          position: 'absolute', left: 0, top: 0, bottom: 0,
+          width: `${value}%`,
+          borderRadius: 4, backgroundColor: '#F59E0B',
+        }} />
+        <View
+          {...pan.panHandlers}
+          style={{
+            position: 'absolute',
+            top: -22,
+            left: `${value}%`,
+            transform: [{ translateX: -20 }],
+            padding: 4,
+          }}
+        >
+          <Text style={{ fontSize: 36 }}>{emoji}</Text>
+        </View>
+        {submitted && avg !== null ? (
+          <View style={{
+            position: 'absolute',
+            top: 12,
+            left: `${avg}%`,
+            transform: [{ translateX: -10 }],
+            alignItems: 'center',
+          }}>
+            <View style={{ width: 2, height: 12, backgroundColor: 'rgba(255,255,255,0.7)' }} />
+            <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 10, fontWeight: '700', marginTop: 2 }}>{Math.round(avg)}</Text>
+          </View>
+        ) : null}
+      </View>
+      {!ownStatus && !submitted ? (
+        <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11, textAlign: 'center', marginTop: 14 }}>
+          {t ? t('status.sliderDragHint') : 'Arraste para responder'}
+        </Text>
+      ) : null}
+      {submitted && !ownStatus ? (
+        <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11, textAlign: 'center', marginTop: 14 }}>
+          {t ? t('status.sliderYourAnswer') : 'Sua resposta'}: {value}{avg !== null ? `  ·  ${t ? t('status.sliderAverage') : 'média'} ${Math.round(avg)}` : ''}
+        </Text>
+      ) : null}
+    </View>
+  );
 }
 
 // Format "h ago / d ago" — same logic ChatListTab used inline. PG returns
@@ -230,6 +353,10 @@ export default function StoryViewer({
   // when paused goes false (or when the user releases).
   const [rippleAt, setRippleAt] = useState(null); // { x, y } in screen coords
   const rippleAnim = useRef(new Animated.Value(0)).current;
+  // Last single-tap timestamp on the center zone — used to detect the
+  // double-tap pair that fires the "❤️" reaction. Reset to 0 after each
+  // successful pair so a slow third tap can't accidentally chain.
+  const lastTapRef = useRef(0);
   useEffect(() => {
     if (rippleAt) {
       rippleAnim.setValue(0);
@@ -701,6 +828,11 @@ export default function StoryViewer({
   // path extraction as link stickers; allow-list validated so a malicious
   // publisher can't smuggle a tracking pixel through.
   const gifStickers = _extractGifStickers(cur);
+  // Interactive stickers (slider/question/mention/countdown) — these get a
+  // tappable overlay rendered at the publisher's chosen (x, y). Poll/quiz
+  // already render via a dedicated viewer surface so we filter them out
+  // here to avoid double-painting them on the media canvas.
+  const interactiveStickers = _extractInteractiveStickers(cur).filter(s => s.type !== 'poll' && s.type !== 'quiz');
 
   // Caption: text status uses `content` AS the caption-rendered-as-big-text
   // (handled in renderMedia below). Image/video status uses `content` as
@@ -1322,6 +1454,36 @@ export default function StoryViewer({
           </View>
         ) : null}
 
+        {/* Interactive stickers — slider (and future: mention/countdown live
+            renders). Painted at the publisher's (x, y). zIndex 6 so they
+            sit above the media + gif overlays but below the chrome. The
+            tap surface itself manages submission state internally. */}
+        {interactiveStickers.length > 0 ? (
+          <View
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 6 }}
+            pointerEvents="box-none"
+          >
+            {interactiveStickers.map((s, si) => {
+              if (s.type === 'slider') {
+                return (
+                  <View
+                    key={`slider-${s.id || si}`}
+                    style={{ position: 'absolute', left: Number(s.x) || 0, top: Number(s.y) || 0 }}
+                  >
+                    <SliderStickerView
+                      sticker={s}
+                      statusId={cur?.id}
+                      ownStatus={!!isSelf}
+                      t={t}
+                    />
+                  </View>
+                );
+              }
+              return null;
+            })}
+          </View>
+        ) : null}
+
         {/* Link sticker — Instagram-style "Saiba mais" pill, bottom-center.
             Tap forwards to the URL via Linking.openURL (Android opens
             default browser, iOS uses Safari, web opens new tab). zIndex 7
@@ -1459,6 +1621,50 @@ export default function StoryViewer({
                 // re-mounts the View and re-triggers the entry animation.
                 setTimeout(() => setRippleAt(null), 400);
               }
+            } catch {}
+          }}
+          onPress={(e) => {
+            if (isFreshMount() || replyFocused) return;
+            // Double-tap → fire a "❤️" reaction + a single flying heart
+            // burst. Mirrors Instagram/TikTok double-tap-like UX without
+            // disrupting the existing tap-hold-to-pause + tap-to-advance
+            // behaviors (those are handled by onPressIn/onPressOut + the
+            // left/right zones). 280ms window is the sweet spot between
+            // "two intentional taps" and "two slow scrolls".
+            const now = Date.now();
+            const last = lastTapRef.current || 0;
+            lastTapRef.current = now;
+            if (now - last > 280) return;
+            lastTapRef.current = 0; // consume — next pair starts fresh
+            try {
+              const x = e?.nativeEvent?.pageX;
+              const y = e?.nativeEvent?.pageY;
+              const burstId = `dt-${now}`;
+              const burst = Array.from({ length: 4 }).map((_, i) => ({
+                id: `${burstId}-${i}`,
+                emoji: '❤️',
+                dx: (Math.random() - 0.5) * 100,
+                size: 30 + Math.random() * 22,
+                delay: i * 50,
+                anim: new Animated.Value(0),
+                originX: Number.isFinite(x) ? x : null,
+                originY: Number.isFinite(y) ? y : null,
+              }));
+              setHearts(prev => [...prev, ...burst]);
+              burst.forEach(h => {
+                Animated.timing(h.anim, {
+                  toValue: 1, duration: 1200, delay: h.delay,
+                  easing: Easing.out(Easing.quad),
+                  useNativeDriver: true,
+                }).start();
+              });
+              setTimeout(() => {
+                setHearts(prev => prev.filter(p => !burst.find(b => b.id === p.id)));
+              }, 1500);
+              _haptic('medium');
+              setReactPop('❤️');
+              setTimeout(() => setReactPop(null), 900);
+              try { onReact?.(cur, '❤️'); } catch {}
             } catch {}
           }}
           onPressOut={() => setPaused(false)}

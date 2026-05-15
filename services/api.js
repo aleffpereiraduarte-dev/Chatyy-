@@ -3133,6 +3133,8 @@ export async function statusPublish(content, type = 'text', bgColor = '#7C3AED',
     for (const k of ['caption_locale', 'caption_translations', 'privacy', 'filter', 'stickers', 'text_overlays', 'draw_paths', 'font_style', 'is_boomerang']) {
       if (extraMeta[k] !== undefined && params[k] === undefined) params[k] = extraMeta[k];
     }
+    // cross_post_feed — server creates a feed_posts row with same media when true.
+    if (extraMeta.cross_post_feed === true) params.cross_post_feed = true;
   }
   return apiCall('status_create', params, 'POST');
 }

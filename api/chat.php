@@ -89,10 +89,10 @@ function _chatMaybeTranscribeForPush(int $msgId, string $fileUrl): string {
     }
 
     $cfile = new CURLFile($localPath, mime_content_type($localPath) ?: 'audio/mpeg', basename($localPath));
-    $ch = curl_init('https://api.groq.com/openai/v1/audio/transcriptions');
+    $ch = curl_init('https://api.openai.com/v1/audio/transcriptions');
     curl_setopt_array($ch, [
         CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => ['file' => $cfile, 'model' => 'whisper-large-v3-turbo'],
+        CURLOPT_POSTFIELDS => ['file' => $cfile, 'model' => 'whisper-1'],
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_HTTPHEADER => ["Authorization: Bearer {$apiKey}"],
         CURLOPT_TIMEOUT => 4,
@@ -176,10 +176,10 @@ function _voicemailTranscribeAsync(int $voicemailId): string {
     }
 
     $cfile = new CURLFile($tmp, mime_content_type($tmp) ?: 'audio/m4a', basename($tmp));
-    $ch = curl_init('https://api.groq.com/openai/v1/audio/transcriptions');
+    $ch = curl_init('https://api.openai.com/v1/audio/transcriptions');
     curl_setopt_array($ch, [
         CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => ['file' => $cfile, 'model' => 'whisper-large-v3-turbo'],
+        CURLOPT_POSTFIELDS => ['file' => $cfile, 'model' => 'whisper-1'],
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_HTTPHEADER => ["Authorization: Bearer {$apiKey}"],
         CURLOPT_TIMEOUT => 30,
@@ -214,15 +214,17 @@ function _voicemailTranscribeAsync(int $voicemailId): string {
 }
 
 /**
- * Load GROQ_API_KEY from env or /etc/mail-api.env. Cached after first hit.
+ * Load OPENAI_API_KEY from env or /etc/mail-api.env. Cached after first hit.
+ * 2026-05-13: Migrated from Groq to OpenAI direct (whisper-1). Function name
+ * preserved for backward compat with callers in this file.
  */
 function _chatLoadGroqKey(): string {
     static $cached = null;
     if ($cached !== null) return $cached;
-    $key = getenv('GROQ_API_KEY') ?: '';
+    $key = getenv('OPENAI_API_KEY') ?: '';
     if (empty($key) && file_exists('/etc/mail-api.env')) {
         foreach (@file('/etc/mail-api.env') ?: [] as $_line) {
-            if (strpos($_line, 'GROQ_API_KEY=') === 0) { $key = trim(substr($_line, 13)); break; }
+            if (strpos($_line, 'OPENAI_API_KEY=') === 0) { $key = trim(substr($_line, 15)); break; }
         }
     }
     return $cached = $key;
@@ -301,6 +303,16 @@ function chatSendPushToMembers($db, $conversationId, $messageId, $senderEmail, $
                 $voicePreview = '🎤 ' . mb_substr($tx, 0, 140);
             }
         }
+        // Helper: extract a field from a JSON content blob (meetup/playlist
+        // store {"title":..., "datetime":..., "location":...} in content).
+        // Returns trimmed value or empty string.
+        $jsonField = function (string $raw, string $field): string {
+            $d = json_decode($raw, true);
+            if (!is_array($d)) return '';
+            $v = $d[$field] ?? '';
+            if (!is_string($v) && !is_numeric($v)) return '';
+            return trim((string)$v);
+        };
         $preview = match($msg['type']) {
             'image'   => '📷 Foto',
             'video'   => '🎥 Vídeo',
@@ -310,8 +322,11 @@ function chatSendPushToMembers($db, $conversationId, $messageId, $senderEmail, $
             'gif'     => '🎞️ GIF',
             'file'    => '📎 ' . ($msg['file_name'] ?: 'Arquivo'),
             'location'=> '📍 Localização',
+            'live_location' => '📍 Localização ao vivo',
             'contact' => '👤 Contato',
-            'poll'    => '📊 Enquete',
+            'poll'    => '📊 Enquete: ' . (mb_substr($jsonField($rawContent, 'question'), 0, 100) ?: 'nova enquete'),
+            'meetup'  => '📅 Encontro: ' . (mb_substr($jsonField($rawContent, 'title'), 0, 100) ?: 'marcado'),
+            'playlist'=> '🎵 Playlist: ' . (mb_substr($jsonField($rawContent, 'playlist_name'), 0, 100) ?: 'nova'),
             default   => $isEncryptedBlob ? '🔒 Nova mensagem' : mb_substr($rawContent, 0, 140),
         };
         // Title already carries "Sender · Group", so body is just the preview
@@ -934,6 +949,30 @@ function chatDisplayName($email) {
 }
 
 /**
+ * Return verified caller identity (E.164 phone + verified flag) for an email.
+ * Reads /var/mail/vhosts/{domain}/{user}/profile/data.json. Used to embed
+ * `caller_phone` + `caller_verified` in call push payloads so the receiver
+ * device can show "Verified by Chatyy" + the real outgoing phone number.
+ */
+function chatCallerIdentity($email) {
+    static $cache = [];
+    if (isset($cache[$email])) return $cache[$email];
+    $domain = substr(strrchr($email, '@'), 1);
+    $local = strstr($email, '@', true);
+    $path = "/var/mail/vhosts/{$domain}/{$local}/profile/data.json";
+    $phone = '';
+    $verified = false;
+    if (is_readable($path)) {
+        $j = json_decode(@file_get_contents($path), true);
+        if (is_array($j)) {
+            $phone = isset($j['verified_phone']) && is_string($j['verified_phone']) ? $j['verified_phone'] : '';
+            $verified = !empty($j['telnyx_caller_id_verified']);
+        }
+    }
+    return $cache[$email] = ['phone' => $phone, 'verified' => $verified];
+}
+
+/**
  * Touch conversation updated_at timestamp (for sorting by last activity).
  */
 function touchConversation($db, $conversationId) {
@@ -1250,9 +1289,37 @@ function handleChatAction($action) {
             @$db->exec("ALTER TABLE chat_live_sessions ADD COLUMN IF NOT EXISTS rtmps_key TEXT");
             @$db->exec("ALTER TABLE chat_live_sessions ADD COLUMN IF NOT EXISTS hls_url TEXT");
             @$db->exec("ALTER TABLE chat_live_sessions ADD COLUMN IF NOT EXISTS dash_url TEXT");
+            // (8) Recording/replay columns. CF Stream auto-records every
+            //     RTMP session as a VOD (mode=automatic on live_input).
+            //     `live_end_cf` doesn't know the VOD uid yet (CF takes 30s-2min
+            //     to finalize), so we poll the live_inputs/{uid}/videos endpoint
+            //     in `live_recording_poll` and stamp these columns when ready.
+            //     `save_replay` is host's choice when ending the live; if FALSE
+            //     we'll DELETE the VOD via CF API instead of exposing it.
+            @$db->exec("ALTER TABLE chat_live_sessions ADD COLUMN IF NOT EXISTS recording_url TEXT");
+            @$db->exec("ALTER TABLE chat_live_sessions ADD COLUMN IF NOT EXISTS recording_mp4 TEXT");
+            @$db->exec("ALTER TABLE chat_live_sessions ADD COLUMN IF NOT EXISTS recording_duration INTEGER");
+            @$db->exec("ALTER TABLE chat_live_sessions ADD COLUMN IF NOT EXISTS recording_ready BOOLEAN DEFAULT FALSE");
+            @$db->exec("ALTER TABLE chat_live_sessions ADD COLUMN IF NOT EXISTS recording_video_uid TEXT");
+            @$db->exec("ALTER TABLE chat_live_sessions ADD COLUMN IF NOT EXISTS recording_thumbnail TEXT");
+            @$db->exec("ALTER TABLE chat_live_sessions ADD COLUMN IF NOT EXISTS save_replay BOOLEAN DEFAULT TRUE");
+            @$db->exec("ALTER TABLE chat_live_sessions ADD COLUMN IF NOT EXISTS saved_count INTEGER DEFAULT 0");
             @$db->exec("CREATE INDEX IF NOT EXISTS idx_chat_live_sessions_host ON chat_live_sessions(host_email)");
             @$db->exec("CREATE INDEX IF NOT EXISTS idx_chat_live_sessions_status ON chat_live_sessions(status)");
             @$db->exec("CREATE INDEX IF NOT EXISTS idx_chat_live_sessions_cf_uid ON chat_live_sessions(cf_input_uid)");
+            @$db->exec("CREATE INDEX IF NOT EXISTS idx_chat_live_sessions_recording_ready ON chat_live_sessions (recording_ready, ended_at) WHERE recording_ready = FALSE");
+            // (8b) Replays saved by viewers — separate from the host's owned
+            //      sessions. UNIQUE(user_email, session_id) makes save_replay
+            //      idempotent (tap multiple times = no dupes).
+            @$db->exec("CREATE TABLE IF NOT EXISTS chat_live_replays_saved (
+                id SERIAL PRIMARY KEY,
+                user_email TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                saved_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                UNIQUE(user_email, session_id)
+            )");
+            @$db->exec("CREATE INDEX IF NOT EXISTS idx_chat_live_replays_user ON chat_live_replays_saved (user_email, saved_at DESC)");
+            @$db->exec("CREATE INDEX IF NOT EXISTS idx_chat_live_replays_session ON chat_live_replays_saved (session_id)");
         } catch (\Throwable $e) { error_log('[chat.schema] ' . $e->getMessage()); }
         $_migrated = true;
     }
@@ -2723,16 +2790,15 @@ function handleChatAction($action) {
                             }
                         }
                     }
-                    // Persist the Whisper transcript across reloads / device
-                    // switches. Without this, the chat UI re-fetched messages
-                    // (WS reconnect, app foreground) and clobbered the
-                    // locally-set msg.transcript, so the user saw the bubble
-                    // open then disappear ("abre depois fecha").
-                    $__txCache = "/var/www/mail/data/transcribe-cache/msg_{$msg['id']}.txt";
-                    if (is_file($__txCache)) {
-                        $__tx = trim((string)@file_get_contents($__txCache));
-                        if ($__tx !== '') $msg['transcript'] = $__tx;
-                    }
+                    // ON-DEMAND ONLY: transcript stays out of chat_get_messages
+                    // intentionally. The server cache exists for instant lookup
+                    // when the user explicitly taps "Transcrever" (frontend
+                    // calls chat_transcribe_audio which reads the cache), but
+                    // we do NOT auto-inject it into the bubble — Whisper is
+                    // expensive and the user wants transcription opt-in per
+                    // message. Frontend persists the user-revealed state in
+                    // AsyncStorage so the transcript stays visible across
+                    // reloads for the user who actually tapped it.
                 }
                 // Delivery/read state for the sender's own msgs — prevents
                 // the multi-device tick desync ("desktop=1v, phone=vv") when
@@ -5497,6 +5563,7 @@ function handleChatAction($action) {
                     @require_once __DIR__ . '/voip_push.php';
                 }
                 $callerName = chatDisplayName($user['email']) ?: $user['email'];
+                $ci = chatCallerIdentity($user['email']);
                 $callTitle = $video ? 'Videochamada Chatyy' : 'Chamada Chatyy';
                 $callBody = $callerName . ' está chamando…';
                 $callData = [
@@ -5507,12 +5574,8 @@ function handleChatAction($action) {
                     'conversation_id' => (string)$conversationId,
                     'caller_email'    => $user['email'],
                     'caller_name'     => $callerName,
-                    // Avatar URL so native Android IncomingCallActivity and
-                    // iOS CallKit can show the real face (otherwise both
-                    // platforms só renderizam a inicial "?" igual à de
-                    // qualquer outro chamador). Native fetches Bitmap async
-                    // on the receiver side.
-                    'caller_avatar'   => 'https://chatyy.com.br/api/email.php?action=get_avatar&email=' . urlencode($user['email']),
+                    'caller_phone'    => $ci['phone'],
+                    'caller_verified' => $ci['verified'] ? '1' : '0',
                     'video'           => $video ? '1' : '0',
                     // is_group lets the receiver pick the group-call screen
                     // (LiveKit room) vs the 1:1 mesh path. Without it the
@@ -5671,7 +5734,7 @@ function handleChatAction($action) {
             // LiveKit JWT: HS256, 6h expiry, video grant with publish+subscribe
             $apiKey = getenv('LIVEKIT_API_KEY') ?: '';
             $apiSecret = getenv('LIVEKIT_API_SECRET') ?: '';
-            $livekitHost = getenv('LIVEKIT_HOST') ?: 'wss://chatyy.com.br:7880';
+            $livekitHost = getenv('LIVEKIT_HOST') ?: 'wss://livekit.chatyy.com.br';
             if (!$apiKey || !$apiSecret) {
                 // Read from env file as fallback
                 if (file_exists('/etc/mail-api.env')) {
@@ -5680,7 +5743,7 @@ function handleChatAction($action) {
                         [$k, $v] = array_pad(explode('=', $line, 2), 2, '');
                         if ($k === 'LIVEKIT_API_KEY' && !$apiKey) $apiKey = trim($v);
                         if ($k === 'LIVEKIT_API_SECRET' && !$apiSecret) $apiSecret = trim($v);
-                        if ($k === 'LIVEKIT_HOST' && !$roomOverride) $livekitHost = trim($v);
+                        if ($k === 'LIVEKIT_HOST' && !getenv('LIVEKIT_HOST')) $livekitHost = trim($v);
                     }
                 }
             }
@@ -5711,13 +5774,352 @@ function handleChatAction($action) {
             $sig = hash_hmac('sha256', "{$headerB}.{$payloadB}", $apiSecret, true);
             $token = "{$headerB}.{$payloadB}." . $b64($sig);
 
+            // ICE servers — LiveKit's built-in TURN is disabled, so we need to
+            // hand the client our coturn relay. Without TURN, strict NAT (CGN
+            // cellular) clients can't traverse UDP 50000-50100 → ICE fails →
+            // ParticipantDisconnected ~10s after join → caller tears down →
+            // both ends see "Não foi possível conectar". coturn is in
+            // use-auth-secret mode (rfc5766-turn-server REST API): the
+            // username is `<unix_ts>:<email>` and password is base64 of
+            // HMAC-SHA1(shared_secret, username).
+            // Google's public STUN — first line of defense for NAT discovery.
+            // Always include these as host-candidate fallback even if our own
+            // STUN is reachable. WhatsApp/Signal do the same.
+            $iceServers = [
+                ['urls' => [
+                    'stun:stun.l.google.com:19302',
+                    'stun:stun1.l.google.com:19302',
+                    'stun:stun2.l.google.com:19302',
+                ]],
+            ];
+            $turnSecret = getenv('COTURN_SECRET') ?: '';
+            if (!$turnSecret && file_exists('/etc/turnserver.conf')) {
+                foreach (file('/etc/turnserver.conf', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+                    if (preg_match('/^\s*static-auth-secret\s*=\s*(\S+)/', $line, $m)) {
+                        $turnSecret = $m[1];
+                        break;
+                    }
+                }
+            }
+            if ($turnSecret) {
+                $turnExpiry = $now + 21600; // 6h, match JWT
+                $turnUsername = $turnExpiry . ':' . $user['email'];
+                $turnPassword = base64_encode(hash_hmac('sha1', $turnUsername, $turnSecret, true));
+                $turnHost = getenv('TURN_HOST') ?: 'turn.chatyy.com.br';
+                $turnPort = (int)(getenv('TURN_PORT') ?: 3478);
+                // TCP first: CGN cellular blocks UDP 3478 frequently. TCP
+                // mimics web traffic and traverses more reliably. UDP is the
+                // performance optimum but TCP is the survival path.
+                $iceServers[] = ['urls' => ['stun:' . $turnHost . ':' . $turnPort]];
+                $iceServers[] = [
+                    'urls' => [
+                        'turn:' . $turnHost . ':' . $turnPort . '?transport=tcp',
+                        'turn:' . $turnHost . ':' . $turnPort . '?transport=udp',
+                    ],
+                    'username' => $turnUsername,
+                    'credential' => $turnPassword,
+                ];
+            }
+
             jsonResponse(true, [
                 'token' => $token,
                 'url' => $livekitHost,
                 'room' => $room,
                 'identity' => $user['email'],
                 'expires_at' => $now + 21600,
+                'iceServers' => $iceServers,
             ]);
+            break;
+        }
+
+        // ============================================================
+        // chat_live_reaction — Server-side path for floating-heart reactions.
+        // Frontend usually fires reactions directly over WebSocket (lower
+        // latency), but a REST fallback is useful when the WS hiccups so the
+        // viewer's tap-spam still lands on every other viewer's screen.
+        //
+        // Payload: { live_id|session_id, x: 0..1, color: '#hex' }
+        // Side effect: broadcasts a `live_reaction` event over the live_<id>
+        // WS channel so all subscribers (host + viewers) spawn a heart.
+        //
+        // Rate-limit: 5/s per user per live room (matches the WS-side cap).
+        // ============================================================
+        case 'chat_live_reaction': {
+            $user = requireChatAuth();
+            $sessionId = trim((string)($input['session_id'] ?? $input['live_id'] ?? ''));
+            $x = $input['x'] ?? null;
+            $color = trim((string)($input['color'] ?? ''));
+            $emoji = trim((string)($input['emoji'] ?? ''));
+            if ($sessionId === '') jsonResponse(false, null, 'session_id required', 400);
+            // Validate x — must be a finite number in [0, 1]. We accept strings
+            // for forgiveness (some clients JSON-stringify floats).
+            $xNorm = null;
+            if (is_numeric($x)) {
+                $xf = (float)$x;
+                if ($xf >= 0.0 && $xf <= 1.0) $xNorm = $xf;
+            }
+            // Validate color — short hex (#abc) or full hex (#abcdef). Reject
+            // anything else so we never broadcast a CSS-injection payload to a
+            // client that might trust the value.
+            $colorNorm = null;
+            if ($color !== '' && preg_match('/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/', $color)) {
+                $colorNorm = $color;
+            }
+            if ($xNorm === null && $emoji === '') {
+                jsonResponse(false, null, 'x (0..1) or emoji required', 400);
+            }
+            // Per-user/per-live rate limit — 5 reactions/sec absolute cap.
+            // Client throttles to 300ms (≈3/sec) so we accept that with
+            // headroom; abuse cases get short-circuited here.
+            $rateFile = '/tmp/live_react_rate_' . md5($user['email'] . '|' . $sessionId);
+            $rates = [];
+            if (file_exists($rateFile)) {
+                $raw = @file_get_contents($rateFile);
+                $d = $raw ? json_decode($raw, true) : null;
+                if (is_array($d)) $rates = array_values(array_filter($d, fn($t) => is_numeric($t) && $t > microtime(true) - 1));
+            }
+            if (count($rates) >= 5) jsonResponse(false, null, 'Too many reactions', 429);
+            $rates[] = microtime(true);
+            @file_put_contents($rateFile, json_encode($rates), LOCK_EX);
+
+            // Broadcast on the live channel so every subscribed client (host +
+            // viewers) renders the heart in real time. Channel name matches
+            // the WS server's live channel convention (`live_<session_id>`).
+            try {
+                $wsKey = getenv('MAIL_WS_KEY') ?: '';
+                if ($wsKey) {
+                    $payload = [
+                        'session_id'     => $sessionId,
+                        'email'          => $user['email'],
+                        'name'           => $user['name'] ?? explode('@', $user['email'])[0],
+                        'reactor_email'  => $user['email'],
+                        'reactor_name'   => $user['name'] ?? explode('@', $user['email'])[0],
+                        'x'              => $xNorm,
+                        'color'          => $colorNorm,
+                        'emoji'          => $emoji !== '' ? $emoji : null,
+                    ];
+                    $body = json_encode([
+                        'channel' => 'live_' . $sessionId,
+                        'event'   => 'live_reaction',
+                        'data'    => $payload,
+                    ], JSON_UNESCAPED_UNICODE);
+                    $cu = curl_init('http://127.0.0.1:8081/broadcast');
+                    curl_setopt_array($cu, [
+                        CURLOPT_POST            => true,
+                        CURLOPT_POSTFIELDS      => $body,
+                        CURLOPT_HTTPHEADER      => ['Content-Type: application/json', 'X-API-Key: ' . $wsKey],
+                        CURLOPT_RETURNTRANSFER  => true,
+                        CURLOPT_TIMEOUT_MS      => 1500,
+                        CURLOPT_CONNECTTIMEOUT_MS => 500,
+                    ]);
+                    curl_exec($cu); curl_close($cu);
+                }
+            } catch (\Throwable $e) { error_log('[chat_live_reaction.ws] ' . $e->getMessage()); }
+
+            jsonResponse(true, ['sent' => true, 'x' => $xNorm, 'color' => $colorNorm]);
+            break;
+        }
+
+        // ============================================================
+        // chat_live_cohost_approve — Host approves a viewer to become co-host.
+        // Inserts an auth row so the viewer can later request a publisher
+        // token for the live session's LiveKit room. Idempotent.
+        // ============================================================
+        case 'chat_live_cohost_approve': {
+            $user = requireChatAuth();
+            $sessionId = trim((string)($input['session_id'] ?? ''));
+            $viewerEmail = strtolower(trim((string)($input['viewer_email'] ?? '')));
+            if ($sessionId === '' || $viewerEmail === '') {
+                jsonResponse(false, null, 'session_id and viewer_email required', 400);
+            }
+            // Only the host of the session can approve cohosts.
+            $sStmt = $db->prepare("SELECT host_email FROM chat_live_sessions WHERE id = :id");
+            $sStmt->execute([':id' => $sessionId]);
+            $session = $sStmt->fetch();
+            if (!$session) jsonResponse(false, null, 'Live session not found', 404);
+            if (strcasecmp((string)$session['host_email'], $user['email']) !== 0) {
+                jsonResponse(false, null, 'Only the host can approve cohosts', 403);
+            }
+            try {
+                $db->exec("CREATE TABLE IF NOT EXISTS chat_live_cohosts (
+                    session_id TEXT NOT NULL,
+                    viewer_email TEXT NOT NULL,
+                    approved_by TEXT NOT NULL,
+                    approved_at TEXT NOT NULL DEFAULT now()::text,
+                    revoked_at TEXT DEFAULT NULL,
+                    PRIMARY KEY (session_id, viewer_email)
+                )");
+                $db->exec("CREATE INDEX IF NOT EXISTS idx_chat_live_cohosts_session ON chat_live_cohosts(session_id)");
+            } catch (Throwable $e) { /* table may already exist */ }
+            $ins = $db->prepare("
+                INSERT INTO chat_live_cohosts (session_id, viewer_email, approved_by, approved_at, revoked_at)
+                VALUES (:s, :v, :h, now()::text, NULL)
+                ON CONFLICT (session_id, viewer_email)
+                DO UPDATE SET approved_at = now()::text, revoked_at = NULL, approved_by = EXCLUDED.approved_by
+            ");
+            $ins->execute([':s' => $sessionId, ':v' => $viewerEmail, ':h' => $user['email']]);
+
+            // WS push to the cohost viewer so their client knows to request a
+            // publisher token + join the room. Targeted to their per-user
+            // channel (chat_user_{email}) since they may not be in a chat
+            // conversation channel for this live session.
+            try {
+                $wsKey = getenv('MAIL_WS_KEY') ?: '';
+                if ($wsKey) {
+                    $payload = [
+                        'session_id'   => $sessionId,
+                        'viewer_email' => $viewerEmail,
+                        'host_email'   => $user['email'],
+                        'via_livekit'  => true,
+                    ];
+                    $body = json_encode([
+                        'channel' => 'chat_user_' . $viewerEmail,
+                        'event'   => 'live_cohost_approved',
+                        'data'    => $payload,
+                    ], JSON_UNESCAPED_UNICODE);
+                    $cu = curl_init('http://127.0.0.1:8081/broadcast');
+                    curl_setopt_array($cu, [CURLOPT_POST => true, CURLOPT_POSTFIELDS => $body, CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'X-API-Key: ' . $wsKey], CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT_MS => 1500, CURLOPT_CONNECTTIMEOUT_MS => 500]);
+                    curl_exec($cu); curl_close($cu);
+                }
+            } catch (\Throwable $e) { error_log('[live_cohost_approve.ws] ' . $e->getMessage()); }
+            jsonResponse(true, ['session_id' => $sessionId, 'viewer_email' => $viewerEmail], 'Cohost approved');
+            break;
+        }
+
+        // ============================================================
+        // chat_live_cohost_token — Cohost requests a publisher token for
+        // the live session's LiveKit room. Verifies the host already
+        // approved this viewer (via chat_live_cohost_approve).
+        // ============================================================
+        case 'chat_live_cohost_token': {
+            $user = requireChatAuth();
+            $sessionId = trim((string)($input['session_id'] ?? ''));
+            if ($sessionId === '') jsonResponse(false, null, 'session_id required', 400);
+
+            $authStmt = $db->prepare("SELECT approved_at, revoked_at FROM chat_live_cohosts WHERE session_id = :s AND LOWER(viewer_email) = LOWER(:e)");
+            $authStmt->execute([':s' => $sessionId, ':e' => $user['email']]);
+            $auth = $authStmt->fetch();
+            if (!$auth) jsonResponse(false, null, 'Not approved as cohost for this session', 403);
+            if (!empty($auth['revoked_at'])) jsonResponse(false, null, 'Cohost authorization was revoked', 403);
+
+            // Same mint pattern as chat_livekit_token but pinned to the live
+            // session room. Identity = user email so the LK SFU + UI can
+            // dedup the participant if they were already subscribed.
+            $room = 'live_' . $sessionId;
+            $apiKey = getenv('LIVEKIT_API_KEY') ?: '';
+            $apiSecret = getenv('LIVEKIT_API_SECRET') ?: '';
+            $livekitHost = getenv('LIVEKIT_HOST') ?: 'wss://livekit.chatyy.com.br';
+            if ((!$apiKey || !$apiSecret) && file_exists('/etc/mail-api.env')) {
+                foreach (file('/etc/mail-api.env', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+                    if (strpos($line, '#') === 0) continue;
+                    [$k, $v] = array_pad(explode('=', $line, 2), 2, '');
+                    if ($k === 'LIVEKIT_API_KEY' && !$apiKey) $apiKey = trim($v);
+                    if ($k === 'LIVEKIT_API_SECRET' && !$apiSecret) $apiSecret = trim($v);
+                    if ($k === 'LIVEKIT_HOST' && !getenv('LIVEKIT_HOST')) $livekitHost = trim($v);
+                }
+            }
+            if (!$apiKey || !$apiSecret) jsonResponse(false, null, 'LiveKit not configured', 500);
+
+            $now = time();
+            $payload = [
+                'iss' => $apiKey,
+                'sub' => $user['email'],
+                'iat' => $now,
+                'nbf' => $now - 10,
+                'exp' => $now + 7200, // 2h — cohost sessions are short
+                'name' => $user['name'] ?? explode('@', $user['email'])[0],
+                'video' => [
+                    'room' => $room,
+                    'roomJoin' => true,
+                    'canPublish' => true,
+                    'canSubscribe' => true,
+                    'canPublishData' => true,
+                ],
+            ];
+            $b64 = fn($s) => rtrim(strtr(base64_encode($s), '+/', '-_'), '=');
+            $headerB = $b64(json_encode(['alg' => 'HS256', 'typ' => 'JWT'], JSON_UNESCAPED_SLASHES));
+            $payloadB = $b64(json_encode($payload, JSON_UNESCAPED_SLASHES));
+            $sig = hash_hmac('sha256', "{$headerB}.{$payloadB}", $apiSecret, true);
+            $token = "{$headerB}.{$payloadB}." . $b64($sig);
+
+            jsonResponse(true, [
+                'token'      => $token,
+                'url'        => $livekitHost,
+                'room'       => $room,
+                'identity'   => $user['email'],
+                'expires_at' => $now + 7200,
+            ], 'Cohost token issued');
+            break;
+        }
+
+        // chat_live_host_lk_token — Host requests a subscribe-only LK token
+        // for THEIR OWN live session. Use case: host wants to subscribe to
+        // cohosts publishing into `live_{session_id}` without re-publishing
+        // their own raw-WebRTC stream into LK. Stage 3 of #929. The host
+        // identity is suffixed with `-host` so LK doesn't dedup the host
+        // and a cohost participant if they happen to be the same user (rare
+        // but possible during self-cohost testing).
+        case 'chat_live_host_lk_token': {
+            $user = requireChatAuth();
+            $sessionId = trim((string)($input['session_id'] ?? ''));
+            if ($sessionId === '') jsonResponse(false, null, 'session_id required', 400);
+
+            $sessStmt = $db->prepare("SELECT host_email FROM chat_live_sessions WHERE session_id = :s");
+            $sessStmt->execute([':s' => $sessionId]);
+            $hostEmail = $sessStmt->fetchColumn();
+            if (!$hostEmail) jsonResponse(false, null, 'Session not found', 404);
+            if (strcasecmp($hostEmail, $user['email']) !== 0) {
+                jsonResponse(false, null, 'Not the host of this session', 403);
+            }
+
+            $room = 'live_' . $sessionId;
+            $apiKey = getenv('LIVEKIT_API_KEY') ?: '';
+            $apiSecret = getenv('LIVEKIT_API_SECRET') ?: '';
+            $livekitHost = getenv('LIVEKIT_HOST') ?: 'wss://livekit.chatyy.com.br';
+            if ((!$apiKey || !$apiSecret) && file_exists('/etc/mail-api.env')) {
+                foreach (file('/etc/mail-api.env', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+                    if (strpos($line, '#') === 0) continue;
+                    [$k, $v] = array_pad(explode('=', $line, 2), 2, '');
+                    if ($k === 'LIVEKIT_API_KEY' && !$apiKey) $apiKey = trim($v);
+                    if ($k === 'LIVEKIT_API_SECRET' && !$apiSecret) $apiSecret = trim($v);
+                    if ($k === 'LIVEKIT_HOST' && !getenv('LIVEKIT_HOST')) $livekitHost = trim($v);
+                }
+            }
+            if (!$apiKey || !$apiSecret) jsonResponse(false, null, 'LiveKit not configured', 500);
+
+            $identity = $user['email'] . '-host';
+            $now = time();
+            $payload = [
+                'iss' => $apiKey,
+                'sub' => $identity,
+                'iat' => $now,
+                'nbf' => $now - 10,
+                'exp' => $now + 7200,
+                'name' => ($user['name'] ?? explode('@', $user['email'])[0]) . ' (host)',
+                'video' => [
+                    'room' => $room,
+                    'roomJoin' => true,
+                    // Subscribe-only — host's primary publish path stays on
+                    // legacy WebRTC for now. Stage 4 may flip canPublish=true
+                    // if we migrate the broadcaster to LK publishing too.
+                    'canPublish' => false,
+                    'canSubscribe' => true,
+                    'canPublishData' => true,
+                ],
+            ];
+            $b64 = fn($s) => rtrim(strtr(base64_encode($s), '+/', '-_'), '=');
+            $headerB = $b64(json_encode(['alg' => 'HS256', 'typ' => 'JWT'], JSON_UNESCAPED_SLASHES));
+            $payloadB = $b64(json_encode($payload, JSON_UNESCAPED_SLASHES));
+            $sig = hash_hmac('sha256', "{$headerB}.{$payloadB}", $apiSecret, true);
+            $token = "{$headerB}.{$payloadB}." . $b64($sig);
+
+            jsonResponse(true, [
+                'token'      => $token,
+                'url'        => $livekitHost,
+                'room'       => $room,
+                'identity'   => $identity,
+                'expires_at' => $now + 7200,
+            ], 'Host LK token issued');
             break;
         }
 
@@ -5762,6 +6164,7 @@ function handleChatAction($action) {
                 $members = array_column($memStmt->fetchAll(PDO::FETCH_ASSOC), 'email');
 
                 $callerName = chatDisplayName($user['email']) ?: $user['email'];
+                $ci = chatCallerIdentity($user['email']);
                 if ($groupName === '') $groupName = $callerName;
                 $callTitle = $video ? 'Videochamada em grupo' : 'Chamada em grupo';
                 $callBody  = $callerName . ' está chamando em ' . $groupName;
@@ -5773,8 +6176,8 @@ function handleChatAction($action) {
                     'conversation_id'  => (string)$conversationId,
                     'caller_email'     => $user['email'],
                     'caller_name'      => $callerName,
-                    'caller_phone'     => '',
-                    'caller_verified'  => '0',
+                    'caller_phone'     => $ci['phone'],
+                    'caller_verified'  => $ci['verified'] ? '1' : '0',
                     'group_name'       => $groupName,
                     'video'            => $video ? '1' : '0',
                     'is_group'         => '1',
@@ -5833,6 +6236,7 @@ function handleChatAction($action) {
             if (!function_exists('fcmSendToUser')) @require_once __DIR__ . '/firebase_push.php';
             if (!function_exists('sendVoipPushToUser')) @require_once __DIR__ . '/voip_push.php';
             $callerName = chatDisplayName($user['email']) ?: $user['email'];
+            $ci = chatCallerIdentity($user['email']);
             $callTitle = $video ? 'Videochamada Chatyy' : 'Chamada Chatyy';
             $callBody = $callerName . ' está chamando para entrar na chamada…';
             $callData = [
@@ -5843,8 +6247,8 @@ function handleChatAction($action) {
                 'conversation_id' => (string)$conversationId,
                 'caller_email'    => $user['email'],
                 'caller_name'     => $callerName,
-                // Avatar URL pra native render real face em vez da inicial.
-                'caller_avatar'   => 'https://chatyy.com.br/api/email.php?action=get_avatar&email=' . urlencode($user['email']),
+                'caller_phone'    => $ci['phone'],
+                'caller_verified' => $ci['verified'] ? '1' : '0',
                 'video'           => $video ? '1' : '0',
                 'is_group'        => '1',
                 'priority'        => 'high',
@@ -5884,8 +6288,45 @@ function handleChatAction($action) {
                 jsonResponse(false, null, 'Content or media required', 400);
             }
 
-            if (!in_array($type, ['text', 'image', 'video'])) {
+            // Wave 4: 'poll' status type. Poll metadata travels in $input['poll']
+            // (validated below) so the wire format stays compatible — we keep
+            // the same chat_user_status row shape and the viewer renders the
+            // poll UI when type === 'poll'.
+            if (!in_array($type, ['text', 'image', 'video', 'poll'])) {
                 $type = 'text';
+            }
+            // For poll-type status, validate + normalize the poll payload.
+            // Min 2 / max 6 options, max 80 chars each, max 200 char question.
+            if ($type === 'poll') {
+                $pollIn = $input['poll'] ?? null;
+                if (!is_array($pollIn)) {
+                    jsonResponse(false, null, 'poll required for type=poll', 400);
+                }
+                $pq = trim((string)($pollIn['question'] ?? ''));
+                $popts = $pollIn['options'] ?? [];
+                if ($pq === '' || mb_strlen($pq) > 200) {
+                    jsonResponse(false, null, 'poll.question 1-200 chars required', 400);
+                }
+                if (!is_array($popts) || count($popts) < 2 || count($popts) > 6) {
+                    jsonResponse(false, null, 'poll.options must be 2-6 entries', 400);
+                }
+                $cleanOpts = [];
+                foreach ($popts as $opt) {
+                    $s = trim((string)$opt);
+                    if ($s === '') continue;
+                    if (mb_strlen($s) > 80) $s = mb_substr($s, 0, 80);
+                    $cleanOpts[] = $s;
+                }
+                if (count($cleanOpts) < 2) {
+                    jsonResponse(false, null, 'poll needs at least 2 non-empty options', 400);
+                }
+                // Stash the cleaned poll back into $input so the meta loop
+                // below picks it up and persists it in chat_user_status.meta.
+                $input['poll'] = ['question' => $pq, 'options' => $cleanOpts];
+                // content carries the question so existing previews
+                // (chat list, share strip) show something sensible without
+                // the viewer having to decode meta.
+                if ($content === '') $content = $pq;
             }
 
             // Expires in 24 hours
@@ -5902,7 +6343,7 @@ function handleChatAction($action) {
             // caption_translations[locale] = string and is cached on the row.
             $metaIn = $input;
             $metaOut = [];
-            foreach (['is_boomerang','font_style','privacy','filter','stickers','text_overlays','draw_paths','caption','caption_locale','caption_translations'] as $k) {
+            foreach (['is_boomerang','font_style','privacy','filter','stickers','text_overlays','draw_paths','caption','caption_locale','caption_translations','poll'] as $k) {
                 if (array_key_exists($k, $metaIn) && $metaIn[$k] !== null && $metaIn[$k] !== '') {
                     $metaOut[$k] = $metaIn[$k];
                 }
@@ -5977,6 +6418,41 @@ function handleChatAction($action) {
                 _broadcastToOwnDevices($user['email'], 'status_new', $payload);
             } catch (Throwable $e) { error_log('[status_publish.ws] ' . $e->getMessage()); }
 
+            // Optional cross-post to Feed. The client passes
+            // `cross_post_feed: true` when the user checked the "Postar
+            // também no Feed" box in the publish modal. We reuse the same
+            // media_url so no second upload is needed. Failure is logged
+            // but the status itself stays — cross-post is best-effort.
+            $__crossPostedFeedId = null;
+            if (!empty($input['cross_post_feed']) && ($type === 'image' || $type === 'video')) {
+                try {
+                    @$db->exec("CREATE TABLE IF NOT EXISTS feed_posts (
+                        id BIGSERIAL PRIMARY KEY,
+                        author_email TEXT NOT NULL,
+                        caption TEXT,
+                        media_url TEXT,
+                        media_type TEXT,
+                        thumbnail_url TEXT,
+                        like_count INTEGER NOT NULL DEFAULT 0,
+                        comment_count INTEGER NOT NULL DEFAULT 0,
+                        view_count INTEGER NOT NULL DEFAULT 0,
+                        created_at TEXT NOT NULL DEFAULT (now() AT TIME ZONE 'UTC')::text
+                    )");
+                    $caption = (string)($metaOut['caption'] ?? $content);
+                    $fpIns = $db->prepare("INSERT INTO feed_posts (author_email, caption, media_url, media_type, thumbnail_url) VALUES (:e, :c, :m, :t, :th) RETURNING id");
+                    $fpIns->execute([
+                        ':e' => $user['email'],
+                        ':c' => $caption,
+                        ':m' => $mediaUrl,
+                        ':t' => $type,
+                        ':th' => $__newThumbUrl,
+                    ]);
+                    $__crossPostedFeedId = (int)$fpIns->fetchColumn();
+                } catch (Throwable $e) {
+                    error_log('[status_create.cross_post] ' . $e->getMessage());
+                }
+            }
+
             jsonResponse(true, [
                 'id'            => $statusId,
                 'email'         => $user['email'],
@@ -5988,6 +6464,7 @@ function handleChatAction($action) {
                 'background'    => $background,
                 'expires_at'    => $expiresAt,
                 'views'         => 0,
+                'feed_post_id'  => $__crossPostedFeedId,
             ], 'Status created');
             break;
         }
@@ -6288,7 +6765,13 @@ function handleChatAction($action) {
         case 'status_list': {
             $user = requireChatAuth();
 
-            // Clean up expired statuses first
+            // Clean up expired statuses first. Skip rows whose owner archived
+            // them so the home strip never re-surfaces archived items even if
+            // the cron hasn't reaped them yet. Archive column is created
+            // lazily by status_archive on first call, so this CREATE/ALTER is
+            // here to keep status_list resilient if status_archive was never
+            // invoked on this DB.
+            try { @$db->exec("ALTER TABLE chat_user_status ADD COLUMN IF NOT EXISTS archived_at TEXT"); } catch (Throwable $_) {}
             try { $db->exec("DELETE FROM chat_user_status WHERE expires_at < now()::text"); } catch (Throwable $e) {}
             // Load mute set so we can hide muted contacts' status from the top row.
             $__mutedSet = [];
@@ -6312,6 +6795,7 @@ function handleChatAction($action) {
                     (SELECT COUNT(*) FROM chat_status_views sv WHERE sv.status_id = su.id AND LOWER(sv.viewer_email) = LOWER(:viewer)) as viewed
                 FROM chat_user_status su
                 WHERE su.expires_at > now()::text
+                  AND su.archived_at IS NULL
                   AND (LOWER(su.email) = LOWER(:email) OR LOWER(su.email) IN (
                     SELECT DISTINCT LOWER(cm2.email) FROM chat_conversation_members cm1
                     JOIN chat_conversation_members cm2 ON cm2.conversation_id = cm1.conversation_id
@@ -6408,6 +6892,38 @@ function handleChatAction($action) {
                     $__decoded = is_string($s['subtitles']) ? json_decode($s['subtitles'], true) : $s['subtitles'];
                     if (is_array($__decoded)) $__subs = $__decoded;
                 }
+                // Wave 4: poll status enrichment. If this row is a poll, attach
+                // aggregate counts + the current viewer's own vote so the UI can
+                // paint filled bars + the selected option on first render.
+                $__poll = null;
+                if (($s['type'] ?? '') === 'poll' && !empty($meta['poll']) && is_array($meta['poll'])) {
+                    $__poll = $meta['poll'];
+                    $__optCnt = count($__poll['options'] ?? []);
+                    $__counts = array_fill(0, $__optCnt, 0);
+                    $__myVote = null;
+                    try {
+                        @$db->exec("CREATE TABLE IF NOT EXISTS chat_status_poll_votes (
+                            status_id BIGINT NOT NULL,
+                            voter_email TEXT NOT NULL,
+                            option_index INTEGER NOT NULL,
+                            voted_at TEXT NOT NULL DEFAULT (now() AT TIME ZONE 'UTC')::text,
+                            PRIMARY KEY (status_id, voter_email)
+                        )");
+                        $__pc = $db->prepare("SELECT option_index, COUNT(*) AS c FROM chat_status_poll_votes WHERE status_id = :sid GROUP BY option_index");
+                        $__pc->execute([':sid' => (int)$s['id']]);
+                        foreach ($__pc->fetchAll(PDO::FETCH_ASSOC) as $__pr) {
+                            $__i = (int)$__pr['option_index'];
+                            if ($__i >= 0 && $__i < $__optCnt) $__counts[$__i] = (int)$__pr['c'];
+                        }
+                        $__mv = $db->prepare("SELECT option_index FROM chat_status_poll_votes WHERE status_id = :sid AND LOWER(voter_email) = LOWER(:me)");
+                        $__mv->execute([':sid' => (int)$s['id'], ':me' => $user['email']]);
+                        $__r = $__mv->fetch(PDO::FETCH_ASSOC);
+                        if ($__r) $__myVote = (int)$__r['option_index'];
+                    } catch (Throwable $_) {}
+                    $__poll['counts'] = $__counts;
+                    $__poll['total_votes'] = array_sum($__counts);
+                    $__poll['my_vote'] = $__myVote;
+                }
                 $grouped[$email]['statuses'][] = [
                     'id'            => (int)$s['id'],
                     'content'       => $s['content'],
@@ -6423,6 +6939,7 @@ function handleChatAction($action) {
                     'meta'          => $meta,
                     'is_boomerang'  => !empty($meta['is_boomerang']),
                     'subtitles'     => $__subs,
+                    'poll'          => $__poll,
                 ];
             }
 
@@ -6765,6 +7282,575 @@ function handleChatAction($action) {
 
             $db->prepare("DELETE FROM chat_user_status WHERE id = :id")->execute([':id' => $statusId]);
             jsonResponse(true, null, 'Status deleted');
+            break;
+        }
+
+        // ============================================================
+        // status_archive / status_unarchive — Wave 4. Hide an own expired
+        // status from the home strip without deleting it so the owner can
+        // still browse the full history (mirrors Instagram Archive). Adds
+        // chat_user_status.archived_at on first call. Frontend already
+        // tolerates missing endpoint (ChatStatusTab tracks a local Set);
+        // wiring it makes the archive survive cold starts + multi-device.
+        // status_archive_list — return the owner's archived statuses.
+        // ============================================================
+        case 'status_archive':
+        case 'status_unarchive': {
+            $user = requireChatAuth();
+            $statusId = (int)($input['status_id'] ?? 0);
+            if (!$statusId) jsonResponse(false, null, 'status_id required', 400);
+
+            try { @$db->exec("ALTER TABLE chat_user_status ADD COLUMN IF NOT EXISTS archived_at TEXT"); } catch (Throwable $_) {}
+
+            $own = $db->prepare("SELECT email FROM chat_user_status WHERE id = :id");
+            $own->execute([':id' => $statusId]);
+            $row = $own->fetch(PDO::FETCH_ASSOC);
+            if (!$row) jsonResponse(false, null, 'Status not found', 404);
+            if (strtolower($row['email']) !== strtolower($user['email'])) {
+                jsonResponse(false, null, 'Forbidden', 403);
+            }
+
+            if ($action === 'status_archive') {
+                $db->prepare("UPDATE chat_user_status SET archived_at = (now() AT TIME ZONE 'UTC')::text WHERE id = :id")
+                   ->execute([':id' => $statusId]);
+            } else {
+                $db->prepare("UPDATE chat_user_status SET archived_at = NULL WHERE id = :id")
+                   ->execute([':id' => $statusId]);
+            }
+            jsonResponse(true, ['status_id' => $statusId, 'archived' => $action === 'status_archive']);
+            break;
+        }
+
+        case 'status_archive_list': {
+            $user = requireChatAuth();
+            try { @$db->exec("ALTER TABLE chat_user_status ADD COLUMN IF NOT EXISTS archived_at TEXT"); } catch (Throwable $_) {}
+            $stmt = $db->prepare("
+                SELECT id, content, type, media_url, bg_color AS background, created_at, expires_at, archived_at, meta
+                FROM chat_user_status
+                WHERE LOWER(email) = LOWER(:e) AND archived_at IS NOT NULL
+                ORDER BY archived_at DESC
+                LIMIT 200
+            ");
+            $stmt->execute([':e' => $user['email']]);
+            $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            foreach ($rows as &$r) {
+                if (!empty($r['meta']) && is_string($r['meta'])) {
+                    $decoded = json_decode($r['meta'], true);
+                    if (is_array($decoded)) $r['meta'] = $decoded;
+                }
+            }
+            jsonResponse(true, ['items' => $rows]);
+            break;
+        }
+
+        // ============================================================
+        // status_poll_vote — Wave 4. Cast a vote on a poll-type status.
+        // Status polls reuse chat_user_status.meta JSONB (carries `poll`
+        // object with `question` + `options[]`). Votes land in a new
+        // chat_status_poll_votes table with the same shape as
+        // chat_poll_votes (PRIMARY KEY status_id+voter_email so each viewer
+        // can only pick one option). Response returns aggregate counts so
+        // the viewer animates filling bars right after the tap.
+        // ============================================================
+        case 'status_poll_vote': {
+            $user = requireChatAuth();
+            $statusId = (int)($input['status_id'] ?? 0);
+            $optionIdx = (int)($input['option_index'] ?? -1);
+            if (!$statusId || $optionIdx < 0) jsonResponse(false, null, 'status_id + option_index required', 400);
+
+            try {
+                @$db->exec("CREATE TABLE IF NOT EXISTS chat_status_poll_votes (
+                    status_id BIGINT NOT NULL,
+                    voter_email TEXT NOT NULL,
+                    option_index INTEGER NOT NULL,
+                    voted_at TEXT NOT NULL DEFAULT (now() AT TIME ZONE 'UTC')::text,
+                    PRIMARY KEY (status_id, voter_email)
+                )");
+            } catch (Throwable $_) {}
+
+            // Confirm the status exists, isn't expired, and is a poll.
+            $st = $db->prepare("SELECT email, type, expires_at, meta FROM chat_user_status WHERE id = :id");
+            $st->execute([':id' => $statusId]);
+            $row = $st->fetch(PDO::FETCH_ASSOC);
+            if (!$row) jsonResponse(false, null, 'Status not found', 404);
+            if (!empty($row['expires_at']) && strtotime((string)$row['expires_at']) < time()) {
+                jsonResponse(false, null, 'Status expired', 410);
+            }
+            $meta = [];
+            if (!empty($row['meta'])) {
+                $decoded = is_string($row['meta']) ? json_decode($row['meta'], true) : $row['meta'];
+                if (is_array($decoded)) $meta = $decoded;
+            }
+            $poll = $meta['poll'] ?? null;
+            if (!is_array($poll) || empty($poll['options']) || !is_array($poll['options'])) {
+                jsonResponse(false, null, 'Status is not a poll', 400);
+            }
+            $optCount = count($poll['options']);
+            if ($optionIdx >= $optCount) jsonResponse(false, null, 'option_index out of range', 400);
+
+            // Upsert: each viewer can change their pick; PK keeps it to one.
+            try {
+                $db->prepare("
+                    INSERT INTO chat_status_poll_votes (status_id, voter_email, option_index, voted_at)
+                    VALUES (:sid, :ve, :oi, (now() AT TIME ZONE 'UTC')::text)
+                    ON CONFLICT (status_id, voter_email) DO UPDATE
+                    SET option_index = EXCLUDED.option_index, voted_at = EXCLUDED.voted_at
+                ")->execute([':sid' => $statusId, ':ve' => strtolower($user['email']), ':oi' => $optionIdx]);
+            } catch (Throwable $e) {
+                error_log('[status_poll_vote] ' . $e->getMessage());
+                jsonResponse(false, null, 'Vote failed', 500);
+            }
+
+            // Aggregate counts so the client can paint instantly.
+            $agg = $db->prepare("SELECT option_index, COUNT(*) AS c FROM chat_status_poll_votes WHERE status_id = :sid GROUP BY option_index");
+            $agg->execute([':sid' => $statusId]);
+            $counts = array_fill(0, $optCount, 0);
+            foreach ($agg->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                $i = (int)$r['option_index'];
+                if ($i >= 0 && $i < $optCount) $counts[$i] = (int)$r['c'];
+            }
+            $total = array_sum($counts);
+
+            // WS notify owner so the status author sees the vote tick up
+            // without manual refresh. Mirrors the status_view broadcast.
+            try {
+                _broadcastToOwnDevices((string)$row['email'], 'status_poll_vote', [
+                    'status_id' => $statusId,
+                    'voter_email' => strtolower($user['email']),
+                    'option_index' => $optionIdx,
+                    'counts' => $counts,
+                    'total_votes' => $total,
+                ]);
+            } catch (Throwable $_) {}
+
+            jsonResponse(true, [
+                'status_id' => $statusId,
+                'option_index' => $optionIdx,
+                'counts' => $counts,
+                'total_votes' => $total,
+            ]);
+            break;
+        }
+
+        // ============================================================
+        // status_slider_vote — Records a slider sticker response (0-100).
+        // Schema: chat_status_slider_votes(status_id, voter_email, value,
+        // voted_at). Value is normalized to 0-100 (int). Returns running
+        // average + total responses so the viewer can paint the live bar.
+        // Owner gets WS event 'status_slider_vote' on each new vote.
+        // ============================================================
+        case 'status_slider_vote': {
+            $user = requireChatAuth();
+            $statusId = (int)($input['status_id'] ?? 0);
+            $value = (int)($input['value'] ?? -1);
+            $stickerId = (string)($input['sticker_id'] ?? '');
+            if (!$statusId || $value < 0 || $value > 100) {
+                jsonResponse(false, null, 'status_id + value (0-100) required', 400);
+            }
+            try {
+                @$db->exec("CREATE TABLE IF NOT EXISTS chat_status_slider_votes (
+                    status_id BIGINT NOT NULL,
+                    sticker_id TEXT NOT NULL DEFAULT '',
+                    voter_email TEXT NOT NULL,
+                    value INTEGER NOT NULL,
+                    voted_at TEXT NOT NULL DEFAULT (now() AT TIME ZONE 'UTC')::text,
+                    PRIMARY KEY (status_id, sticker_id, voter_email)
+                )");
+            } catch (Throwable $_) {}
+
+            $st = $db->prepare("SELECT email, expires_at FROM chat_user_status WHERE id = :id");
+            $st->execute([':id' => $statusId]);
+            $row = $st->fetch(PDO::FETCH_ASSOC);
+            if (!$row) jsonResponse(false, null, 'Status not found', 404);
+            if (!empty($row['expires_at']) && strtotime((string)$row['expires_at']) < time()) {
+                jsonResponse(false, null, 'Status expired', 410);
+            }
+
+            try {
+                $db->prepare("
+                    INSERT INTO chat_status_slider_votes (status_id, sticker_id, voter_email, value, voted_at)
+                    VALUES (:sid, :stk, :ve, :v, (now() AT TIME ZONE 'UTC')::text)
+                    ON CONFLICT (status_id, sticker_id, voter_email) DO UPDATE
+                    SET value = EXCLUDED.value, voted_at = EXCLUDED.voted_at
+                ")->execute([':sid' => $statusId, ':stk' => $stickerId, ':ve' => strtolower($user['email']), ':v' => $value]);
+            } catch (Throwable $e) {
+                error_log('[status_slider_vote] ' . $e->getMessage());
+                jsonResponse(false, null, 'Vote failed', 500);
+            }
+
+            $agg = $db->prepare("SELECT AVG(value)::float AS avg_value, COUNT(*) AS total FROM chat_status_slider_votes WHERE status_id = :sid AND sticker_id = :stk");
+            $agg->execute([':sid' => $statusId, ':stk' => $stickerId]);
+            $a = $agg->fetch(PDO::FETCH_ASSOC) ?: ['avg_value' => 0, 'total' => 0];
+            $avgValue = (float)($a['avg_value'] ?? 0);
+            $totalVotes = (int)($a['total'] ?? 0);
+
+            try {
+                _broadcastToOwnDevices((string)$row['email'], 'status_slider_vote', [
+                    'status_id' => $statusId,
+                    'sticker_id' => $stickerId,
+                    'voter_email' => strtolower($user['email']),
+                    'value' => $value,
+                    'avg_value' => $avgValue,
+                    'total_votes' => $totalVotes,
+                ]);
+            } catch (Throwable $_) {}
+
+            jsonResponse(true, [
+                'status_id' => $statusId,
+                'sticker_id' => $stickerId,
+                'value' => $value,
+                'avg_value' => $avgValue,
+                'total_votes' => $totalVotes,
+            ]);
+            break;
+        }
+
+        // ============================================================
+        // status_question_answer — Stores a viewer's text answer to a
+        // Question sticker. Schema: chat_status_question_answers(status_id,
+        // sticker_id, responder_email, answer, created_at). Owner gets WS
+        // event so they can see answers stream in via "Respostas" inbox.
+        // ============================================================
+        case 'status_question_answer': {
+            $user = requireChatAuth();
+            $statusId = (int)($input['status_id'] ?? 0);
+            $answer = trim((string)($input['answer'] ?? ''));
+            $stickerId = (string)($input['sticker_id'] ?? '');
+            if (!$statusId || $answer === '') {
+                jsonResponse(false, null, 'status_id + answer required', 400);
+            }
+            if (mb_strlen($answer) > 280) $answer = mb_substr($answer, 0, 280);
+
+            try {
+                @$db->exec("CREATE TABLE IF NOT EXISTS chat_status_question_answers (
+                    id BIGSERIAL PRIMARY KEY,
+                    status_id BIGINT NOT NULL,
+                    sticker_id TEXT NOT NULL DEFAULT '',
+                    responder_email TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (now() AT TIME ZONE 'UTC')::text
+                );
+                CREATE INDEX IF NOT EXISTS chat_status_qa_status_idx ON chat_status_question_answers(status_id);");
+            } catch (Throwable $_) {}
+
+            $st = $db->prepare("SELECT email, expires_at FROM chat_user_status WHERE id = :id");
+            $st->execute([':id' => $statusId]);
+            $row = $st->fetch(PDO::FETCH_ASSOC);
+            if (!$row) jsonResponse(false, null, 'Status not found', 404);
+            if (!empty($row['expires_at']) && strtotime((string)$row['expires_at']) < time()) {
+                jsonResponse(false, null, 'Status expired', 410);
+            }
+
+            try {
+                $db->prepare("
+                    INSERT INTO chat_status_question_answers (status_id, sticker_id, responder_email, answer)
+                    VALUES (:sid, :stk, :re, :a)
+                ")->execute([
+                    ':sid' => $statusId,
+                    ':stk' => $stickerId,
+                    ':re'  => strtolower($user['email']),
+                    ':a'   => $answer,
+                ]);
+            } catch (Throwable $e) {
+                error_log('[status_question_answer] ' . $e->getMessage());
+                jsonResponse(false, null, 'Answer failed', 500);
+            }
+
+            try {
+                _broadcastToOwnDevices((string)$row['email'], 'status_question_answer', [
+                    'status_id' => $statusId,
+                    'sticker_id' => $stickerId,
+                    'responder_email' => strtolower($user['email']),
+                    'responder_name' => $user['name'] ?? '',
+                    'answer' => $answer,
+                ]);
+            } catch (Throwable $_) {}
+
+            jsonResponse(true, ['status_id' => $statusId, 'answer' => $answer]);
+            break;
+        }
+
+        // ============================================================
+        // status_question_list — Lists answers received for a question
+        // sticker. Owner-only. Returns the answers grouped per sticker.
+        // ============================================================
+        case 'status_question_list': {
+            $user = requireChatAuth();
+            $statusId = (int)($input['status_id'] ?? 0);
+            if (!$statusId) jsonResponse(false, null, 'status_id required', 400);
+
+            $own = $db->prepare("SELECT email FROM chat_user_status WHERE id = :id");
+            $own->execute([':id' => $statusId]);
+            $owner = $own->fetchColumn();
+            if (!$owner) jsonResponse(false, null, 'Status not found', 404);
+            if (strtolower((string)$owner) !== strtolower($user['email'])) {
+                jsonResponse(false, null, 'Forbidden', 403);
+            }
+
+            try {
+                @$db->exec("CREATE TABLE IF NOT EXISTS chat_status_question_answers (
+                    id BIGSERIAL PRIMARY KEY,
+                    status_id BIGINT NOT NULL,
+                    sticker_id TEXT NOT NULL DEFAULT '',
+                    responder_email TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT (now() AT TIME ZONE 'UTC')::text
+                )");
+            } catch (Throwable $_) {}
+
+            $q = $db->prepare("SELECT id, sticker_id, responder_email, answer, created_at FROM chat_status_question_answers WHERE status_id = :sid ORDER BY created_at DESC LIMIT 200");
+            $q->execute([':sid' => $statusId]);
+            jsonResponse(true, ['answers' => $q->fetchAll(PDO::FETCH_ASSOC)]);
+            break;
+        }
+
+        // ============================================================
+        // chat_status_music_search — Server-side proxy for the music
+        // sticker picker. Tries Deezer first (no auth needed for /search),
+        // falls back to a curated static list when Deezer is unreachable
+        // (CORS-free since this is server-side). Returns the normalized
+        // shape: { id, title, artist, artwork_url, preview_url, duration }.
+        // ============================================================
+        case 'chat_status_music_search': {
+            requireChatAuth();
+            $q = trim((string)($input['q'] ?? $input['query'] ?? ''));
+            $limit = max(1, min(50, (int)($input['limit'] ?? 25)));
+            $tab = (string)($input['tab'] ?? 'foryou'); // 'foryou' | 'search' | 'saved'
+
+            $tracks = [];
+            // For 'search' tab with a non-empty query, hit Deezer.
+            if ($tab === 'search' && $q !== '') {
+                $url = 'https://api.deezer.com/search?q=' . urlencode($q) . '&limit=' . $limit . '&output=json';
+                $ch = curl_init($url);
+                curl_setopt_array($ch, [
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_TIMEOUT => 8,
+                    CURLOPT_CONNECTTIMEOUT => 4,
+                    CURLOPT_USERAGENT => 'ChatyyMusicSearch/1.0',
+                ]);
+                $resp = curl_exec($ch);
+                $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                curl_close($ch);
+                if ($resp && $code === 200) {
+                    $data = json_decode($resp, true);
+                    if (is_array($data) && !empty($data['data']) && is_array($data['data'])) {
+                        foreach ($data['data'] as $t) {
+                            if (empty($t['preview'])) continue;
+                            $tracks[] = [
+                                'id' => 'dz_' . (int)$t['id'],
+                                'title' => (string)($t['title_short'] ?? $t['title'] ?? ''),
+                                'artist' => (string)($t['artist']['name'] ?? ''),
+                                'artwork_url' => (string)($t['album']['cover_medium'] ?? $t['album']['cover'] ?? ''),
+                                'preview_url' => (string)$t['preview'],
+                                'duration' => (int)($t['duration'] ?? 30),
+                                'source' => 'deezer',
+                            ];
+                        }
+                    }
+                }
+            }
+
+            // Curated fallback list (BR + global popular preview URLs from
+            // Deezer's public preview CDN). Returned for 'foryou' tab or
+            // when Deezer fails on 'search'. These are 30s legal previews.
+            if (empty($tracks) && ($tab === 'foryou' || ($tab === 'search' && $q === ''))) {
+                $curated = [
+                    ['dz_curated_1', 'Flowers', 'Miley Cyrus'],
+                    ['dz_curated_2', 'As It Was', 'Harry Styles'],
+                    ['dz_curated_3', 'Anti-Hero', 'Taylor Swift'],
+                    ['dz_curated_4', 'Calm Down', 'Rema'],
+                    ['dz_curated_5', 'Unholy', 'Sam Smith'],
+                    ['dz_curated_6', 'Erro Gostoso', 'Simone Mendes'],
+                    ['dz_curated_7', 'Leão', 'Marília Mendonça'],
+                    ['dz_curated_8', 'Pipoco', 'Ana Castela'],
+                    ['dz_curated_9', 'Imagine', 'John Lennon'],
+                    ['dz_curated_10', 'Levitating', 'Dua Lipa'],
+                ];
+                foreach ($curated as $c) {
+                    $tracks[] = [
+                        'id' => $c[0],
+                        'title' => $c[1],
+                        'artist' => $c[2],
+                        'artwork_url' => '',
+                        'preview_url' => '',
+                        'duration' => 30,
+                        'source' => 'curated',
+                    ];
+                }
+            }
+
+            // Saved tab: per-user list of saved tracks (lazy table).
+            if ($tab === 'saved') {
+                try {
+                    $user = requireChatAuth();
+                    @$db->exec("CREATE TABLE IF NOT EXISTS chat_status_music_saved (
+                        owner_email TEXT NOT NULL,
+                        track_id TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        artist TEXT NOT NULL,
+                        artwork_url TEXT,
+                        preview_url TEXT,
+                        duration INTEGER NOT NULL DEFAULT 30,
+                        saved_at TEXT NOT NULL DEFAULT (now() AT TIME ZONE 'UTC')::text,
+                        PRIMARY KEY (owner_email, track_id)
+                    )");
+                    $st = $db->prepare("SELECT track_id AS id, title, artist, artwork_url, preview_url, duration FROM chat_status_music_saved WHERE LOWER(owner_email) = LOWER(:e) ORDER BY saved_at DESC LIMIT :l");
+                    $st->bindValue(':e', strtolower($user['email']));
+                    $st->bindValue(':l', $limit, PDO::PARAM_INT);
+                    $st->execute();
+                    $tracks = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+                } catch (Throwable $e) {
+                    error_log('[chat_status_music_search saved] ' . $e->getMessage());
+                }
+            }
+
+            jsonResponse(true, ['tracks' => $tracks, 'tab' => $tab, 'query' => $q]);
+            break;
+        }
+
+        // ============================================================
+        // chat_status_music_save / chat_status_music_unsave — Per-user
+        // "Saved" tab for the music sticker picker. Lazy CREATE matches
+        // chat_status_music_search above.
+        // ============================================================
+        case 'chat_status_music_save': {
+            $user = requireChatAuth();
+            $trackId = trim((string)($input['track_id'] ?? ''));
+            if ($trackId === '') jsonResponse(false, null, 'track_id required', 400);
+            try {
+                @$db->exec("CREATE TABLE IF NOT EXISTS chat_status_music_saved (
+                    owner_email TEXT NOT NULL,
+                    track_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    artist TEXT NOT NULL,
+                    artwork_url TEXT,
+                    preview_url TEXT,
+                    duration INTEGER NOT NULL DEFAULT 30,
+                    saved_at TEXT NOT NULL DEFAULT (now() AT TIME ZONE 'UTC')::text,
+                    PRIMARY KEY (owner_email, track_id)
+                )");
+                $db->prepare("INSERT INTO chat_status_music_saved (owner_email, track_id, title, artist, artwork_url, preview_url, duration) VALUES (:e, :t, :tt, :a, :art, :p, :d) ON CONFLICT (owner_email, track_id) DO NOTHING")
+                  ->execute([
+                      ':e' => strtolower($user['email']),
+                      ':t' => $trackId,
+                      ':tt' => (string)($input['title'] ?? ''),
+                      ':a' => (string)($input['artist'] ?? ''),
+                      ':art' => (string)($input['artwork_url'] ?? ''),
+                      ':p' => (string)($input['preview_url'] ?? ''),
+                      ':d' => (int)($input['duration'] ?? 30),
+                  ]);
+            } catch (Throwable $e) {
+                error_log('[chat_status_music_save] ' . $e->getMessage());
+                jsonResponse(false, null, 'Save failed', 500);
+            }
+            jsonResponse(true, ['saved' => true]);
+            break;
+        }
+        case 'chat_status_music_unsave': {
+            $user = requireChatAuth();
+            $trackId = trim((string)($input['track_id'] ?? ''));
+            if ($trackId === '') jsonResponse(false, null, 'track_id required', 400);
+            try {
+                $db->prepare("DELETE FROM chat_status_music_saved WHERE LOWER(owner_email) = LOWER(:e) AND track_id = :t")
+                  ->execute([':e' => strtolower($user['email']), ':t' => $trackId]);
+            } catch (Throwable $_) {}
+            jsonResponse(true, ['saved' => false]);
+            break;
+        }
+
+        // ============================================================
+        // chat_dnd_get / chat_dnd_set — Wave 4. Do-Not-Disturb schedule.
+        // Mutes ALL chat push notifications during a user-defined window
+        // (e.g. 22:00–07:00). Backend persists to chat_user_dnd; the actual
+        // mute is enforced in firebase_push.php / push-notify.php by reading
+        // this table before fanning out (those workers already short-circuit
+        // when mute settings say so — we just feed them new data). Times are
+        // stored as "HH:MM" strings in the user's local timezone (`tz_offset`
+        // minutes, like JS getTimezoneOffset but inverted: minutes EAST of
+        // UTC). Defaults: disabled, 22:00–07:00, tz_offset=0 (UTC).
+        // ============================================================
+        case 'chat_dnd_get': {
+            $user = requireChatAuth();
+            try {
+                @$db->exec("CREATE TABLE IF NOT EXISTS chat_user_dnd (
+                    email TEXT PRIMARY KEY,
+                    enabled SMALLINT NOT NULL DEFAULT 0,
+                    start_time TEXT NOT NULL DEFAULT '22:00',
+                    end_time TEXT NOT NULL DEFAULT '07:00',
+                    tz_offset INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT
+                )");
+                $st = $db->prepare("SELECT enabled, start_time, end_time, tz_offset FROM chat_user_dnd WHERE LOWER(email) = LOWER(:e)");
+                $st->execute([':e' => $user['email']]);
+                $row = $st->fetch(PDO::FETCH_ASSOC);
+                if (!$row) {
+                    $row = ['enabled' => 0, 'start_time' => '22:00', 'end_time' => '07:00', 'tz_offset' => 0];
+                }
+                jsonResponse(true, [
+                    'enabled' => (bool)$row['enabled'],
+                    'start_time' => (string)$row['start_time'],
+                    'end_time' => (string)$row['end_time'],
+                    'tz_offset' => (int)$row['tz_offset'],
+                ]);
+            } catch (Throwable $e) {
+                error_log('[chat_dnd_get] ' . $e->getMessage());
+                jsonResponse(false, null, 'Failed', 500);
+            }
+            break;
+        }
+        case 'chat_dnd_set': {
+            $user = requireChatAuth();
+            $enabled = !empty($input['enabled']) ? 1 : 0;
+            $start = trim((string)($input['start_time'] ?? '22:00'));
+            $end   = trim((string)($input['end_time']   ?? '07:00'));
+            $tz    = (int)($input['tz_offset'] ?? 0);
+
+            // Validate HH:MM. Reject anything else so the workers never
+            // hit a malformed string when computing the current window.
+            if (!preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $start)) {
+                jsonResponse(false, null, 'start_time must be HH:MM', 400);
+            }
+            if (!preg_match('/^([01]\d|2[0-3]):[0-5]\d$/', $end)) {
+                jsonResponse(false, null, 'end_time must be HH:MM', 400);
+            }
+            // Clamp tz_offset to ±14h (real-world max is +14:00 at Kiribati).
+            if ($tz < -14 * 60 || $tz > 14 * 60) $tz = 0;
+
+            try {
+                @$db->exec("CREATE TABLE IF NOT EXISTS chat_user_dnd (
+                    email TEXT PRIMARY KEY,
+                    enabled SMALLINT NOT NULL DEFAULT 0,
+                    start_time TEXT NOT NULL DEFAULT '22:00',
+                    end_time TEXT NOT NULL DEFAULT '07:00',
+                    tz_offset INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT
+                )");
+                $db->prepare("
+                    INSERT INTO chat_user_dnd (email, enabled, start_time, end_time, tz_offset, updated_at)
+                    VALUES (:e, :en, :s, :n, :tz, (now() AT TIME ZONE 'UTC')::text)
+                    ON CONFLICT (email) DO UPDATE
+                    SET enabled = EXCLUDED.enabled,
+                        start_time = EXCLUDED.start_time,
+                        end_time = EXCLUDED.end_time,
+                        tz_offset = EXCLUDED.tz_offset,
+                        updated_at = EXCLUDED.updated_at
+                ")->execute([
+                    ':e' => $user['email'],
+                    ':en' => $enabled,
+                    ':s' => $start,
+                    ':n' => $end,
+                    ':tz' => $tz,
+                ]);
+                jsonResponse(true, [
+                    'enabled' => (bool)$enabled,
+                    'start_time' => $start,
+                    'end_time' => $end,
+                    'tz_offset' => $tz,
+                ]);
+            } catch (Throwable $e) {
+                error_log('[chat_dnd_set] ' . $e->getMessage());
+                jsonResponse(false, null, 'Failed', 500);
+            }
             break;
         }
 
@@ -7448,6 +8534,36 @@ function handleChatAction($action) {
                     $flat[$e] = ($s === 'yes') ? 'going' : (($s === 'no') ? 'not_going' : 'maybe');
                 }
             }
+            // WS broadcast — recipients need live aggregate so the meetup card
+            // updates without manual refresh. Use the same direct-fanout shape
+            // as the ephemeral-send path (chat_meetup_rsvp doesn't fit
+            // broadcastChatMessage since it's not a new chat row).
+            try {
+                $wsKey = getenv('MAIL_WS_KEY') ?: '';
+                if ($wsKey) {
+                    $convId = (int)$msg['conversation_id'];
+                    $peersStmt = $db->prepare("SELECT email FROM chat_conversation_members WHERE conversation_id = :cid");
+                    $peersStmt->execute([':cid' => $convId]);
+                    $allEmails = array_column($peersStmt->fetchAll(\PDO::FETCH_ASSOC), 'email');
+                    $payload = [
+                        'message_id'      => $msgId,
+                        'conversation_id' => $convId,
+                        'rsvps'           => $rsvps,
+                        'rsvp'            => $flat,
+                        'responder'       => $user['email'],
+                        'status'          => $status,
+                    ];
+                    $channels = ["chat_{$convId}"];
+                    foreach ($allEmails as $em) $channels[] = "chat_user_" . strtolower($em);
+                    foreach ($channels as $ch) {
+                        $body = json_encode(['channel' => $ch, 'event' => 'meetup_rsvp_update', 'data' => $payload], JSON_UNESCAPED_UNICODE);
+                        $cu = curl_init('http://127.0.0.1:8081/broadcast');
+                        curl_setopt_array($cu, [CURLOPT_POST => true, CURLOPT_POSTFIELDS => $body, CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'X-API-Key: ' . $wsKey], CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT_MS => 1500, CURLOPT_CONNECTTIMEOUT_MS => 500]);
+                        curl_exec($cu); curl_close($cu);
+                    }
+                }
+            } catch (\Throwable $e) { error_log('[chat_meetup_rsvp.ws] ' . $e->getMessage()); }
+
             jsonResponse(true, ['message_id' => $msgId, 'rsvps' => $rsvps, 'rsvp' => $flat, 'my_rsvp' => $mine], 'RSVP saved');
             break;
         }
@@ -11233,10 +12349,10 @@ function handleChatAction($action) {
             }
 
             $cfile = new CURLFile($localPath, mime_content_type($localPath) ?: 'audio/mpeg', basename($localPath));
-            $ch = curl_init('https://api.groq.com/openai/v1/audio/transcriptions');
+            $ch = curl_init('https://api.openai.com/v1/audio/transcriptions');
             curl_setopt_array($ch, [
                 CURLOPT_POST => true,
-                CURLOPT_POSTFIELDS => ['file' => $cfile, 'model' => 'whisper-large-v3-turbo'],
+                CURLOPT_POSTFIELDS => ['file' => $cfile, 'model' => 'whisper-1'],
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_HTTPHEADER => ["Authorization: Bearer {$apiKey}"],
                 CURLOPT_TIMEOUT => 120,
@@ -14594,6 +15710,11 @@ function handleChatAction($action) {
             $sessionId = trim((string)($input['session_id'] ?? $input['id'] ?? ''));
             if ($sessionId === '') jsonResponse(false, null, 'session_id required', 400);
 
+            // Host's replay opt-in. Default TRUE — most hosts want their live
+            // saved for shareable replay. Frontend sends false explicitly when
+            // host unchecks the "Save replay" toggle in the end-modal.
+            $saveReplay = !isset($input['save_replay']) ? true : (bool)$input['save_replay'];
+
             // Load + ownership check. Only host can end. Pull cf_input_uid
             // so we can release the CF resource.
             $sel = $db->prepare("SELECT host_email, status, cf_input_uid FROM chat_live_sessions WHERE id = :id");
@@ -14608,9 +15729,19 @@ function handleChatAction($action) {
                 $db->prepare("
                     UPDATE chat_live_sessions
                        SET status = 'ended',
-                           ended_at = to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS')
+                           ended_at = to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS'),
+                           save_replay = :sr
                      WHERE id = :id
-                ")->execute([':id' => $sessionId]);
+                ")->execute([':id' => $sessionId, ':sr' => $saveReplay ? 't' : 'f']);
+                // Bug #978-6: stamp replay expiry on the saved session so the
+                // recordings list + future cleanup cron know when to GC.
+                if ($saveReplay) {
+                    $db->prepare("
+                        UPDATE chat_live_sessions
+                           SET replay_expires_at = NOW() + INTERVAL '7 days'
+                         WHERE id = :id AND replay_expires_at IS NULL
+                    ")->execute([':id' => $sessionId]);
+                }
             } catch (\Throwable $e) {
                 error_log('[live_cf.end.persist] ' . $e->getMessage());
             }
@@ -14843,6 +15974,709 @@ function handleChatAction($action) {
             }
 
             jsonResponse(true, ['sessions' => $sessions, 'lives' => $sessions]);
+            break;
+        }
+
+        // ============================================================
+        // Live recording / replay endpoints — CF Stream VOD pipeline.
+        // CF auto-records every push session (mode=automatic). Once the host
+        // ends, a VOD appears under /live_inputs/{uid}/videos within 30s-2min.
+        // We expose it as a replay (HLS) + downloadable MP4. Viewers can
+        // tap "Salvar live" to bookmark a replay (chat_live_replays_saved).
+        // ============================================================
+
+        case 'live_recording_poll': {
+            // Called by the host's live-broadcast screen on a timer after
+            // ending, and by anyone opening /lives-saved (rolling tail). Also
+            // safe to call from a cron. Walks ended sessions w/ ready=FALSE
+            // and bumps in-flight recordings. Idempotent — re-polls finalize
+            // missed sessions next minute.
+            $user = requireChatAuth();
+            // Optional single-session focus (faster end-of-live UX).
+            $focusId = trim((string)($input['session_id'] ?? ''));
+
+            $cfAccountId = getenv('CF_ACCOUNT_ID') ?: '';
+            $cfApiKey    = getenv('CF_API_KEY')    ?: '';
+            $cfEmail     = getenv('CF_EMAIL')      ?: '';
+            if (($cfAccountId === '' || $cfApiKey === '' || $cfEmail === '') && file_exists('/etc/mail-api.env')) {
+                foreach (@file('/etc/mail-api.env') ?: [] as $_line) {
+                    if ($cfAccountId === '' && strpos($_line, 'CF_ACCOUNT_ID=') === 0) $cfAccountId = trim(substr($_line, 14));
+                    if ($cfApiKey    === '' && strpos($_line, 'CF_API_KEY=')    === 0) $cfApiKey    = trim(substr($_line, 11));
+                    if ($cfEmail     === '' && strpos($_line, 'CF_EMAIL=')      === 0) $cfEmail     = trim(substr($_line, 9));
+                }
+            }
+            if ($cfAccountId === '' || $cfApiKey === '' || $cfEmail === '') {
+                jsonResponse(false, null, 'live_cf_not_configured', 500);
+            }
+
+            if ($focusId !== '') {
+                $sel = $db->prepare("SELECT id, host_email, cf_input_uid, recording_ready, save_replay
+                                       FROM chat_live_sessions
+                                      WHERE id = :id AND ended_at IS NOT NULL");
+                $sel->execute([':id' => $focusId]);
+            } else {
+                // Rolling tail — any session ended in last 24h that isn't
+                // marked ready yet. Cap 20 per call so we don't go wild.
+                $sel = $db->prepare("SELECT id, host_email, cf_input_uid, recording_ready, save_replay
+                                       FROM chat_live_sessions
+                                      WHERE recording_ready = FALSE
+                                        AND ended_at IS NOT NULL
+                                        AND cf_input_uid IS NOT NULL
+                                        AND cf_input_uid <> ''
+                                        AND ended_at::timestamptz > NOW() - INTERVAL '24 hours'
+                                      ORDER BY ended_at DESC
+                                      LIMIT 20");
+                $sel->execute();
+            }
+            $sessions = $sel->fetchAll(\PDO::FETCH_ASSOC);
+
+            $updated = [];
+            foreach ($sessions as $s) {
+                $cfUid = (string)($s['cf_input_uid'] ?? '');
+                if ($cfUid === '') continue;
+
+                $ch = curl_init();
+                curl_setopt_array($ch, [
+                    CURLOPT_URL => "https://api.cloudflare.com/client/v4/accounts/{$cfAccountId}/stream/live_inputs/{$cfUid}/videos",
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_HTTPHEADER => [
+                        "X-Auth-Email: {$cfEmail}",
+                        "X-Auth-Key: {$cfApiKey}",
+                    ],
+                    CURLOPT_TIMEOUT => 8,
+                ]);
+                $raw  = curl_exec($ch);
+                $http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                curl_close($ch);
+                if ($http < 200 || $http >= 300 || $raw === false) {
+                    error_log('[live.poll] cf_videos_failed http=' . $http . ' uid=' . $cfUid);
+                    continue;
+                }
+                $resp = json_decode((string)$raw, true);
+                $videos = is_array($resp['result'] ?? null) ? $resp['result'] : [];
+
+                // Pick the longest VOD whose state is 'ready'. live-inprogress
+                // means CF still finalizing — skip, retry next poll.
+                $best = null;
+                foreach ($videos as $v) {
+                    $state = (string)($v['status']['state'] ?? '');
+                    if ($state !== 'ready') continue;
+                    $dur = (float)($v['duration'] ?? 0);
+                    if (!$best || $dur > (float)($best['duration'] ?? 0)) $best = $v;
+                }
+                if (!$best) continue;
+
+                $videoUid = (string)($best['uid'] ?? '');
+                if ($videoUid === '') continue;
+
+                $duration = (int)round((float)($best['duration'] ?? 0));
+                $thumb    = (string)($best['thumbnail'] ?? '');
+                $hlsUrl   = "https://customer-{$cfAccountId}.cloudflarestream.com/{$videoUid}/manifest/video.m3u8";
+                $mp4Url   = "https://customer-{$cfAccountId}.cloudflarestream.com/{$videoUid}/downloads/default.mp4";
+
+                // Host chose NOT to save replay → destroy the VOD on CF.
+                // (Don't keep storage bills for opted-out lives.) We still
+                // set recording_ready=TRUE so we don't keep polling.
+                if (!$s['save_replay']) {
+                    $cu = curl_init();
+                    curl_setopt_array($cu, [
+                        CURLOPT_URL => "https://api.cloudflare.com/client/v4/accounts/{$cfAccountId}/stream/{$videoUid}",
+                        CURLOPT_CUSTOMREQUEST => 'DELETE',
+                        CURLOPT_RETURNTRANSFER => true,
+                        CURLOPT_HTTPHEADER => ["X-Auth-Email: {$cfEmail}", "X-Auth-Key: {$cfApiKey}"],
+                        CURLOPT_TIMEOUT => 5,
+                    ]);
+                    curl_exec($cu);
+                    curl_close($cu);
+                    try {
+                        $db->prepare("UPDATE chat_live_sessions
+                                         SET recording_ready = TRUE,
+                                             recording_duration = :d
+                                       WHERE id = :id")
+                           ->execute([':d' => $duration, ':id' => $s['id']]);
+                    } catch (\Throwable $e) { error_log('[live.poll.persist_nosave] ' . $e->getMessage()); }
+                    $updated[] = ['session_id' => $s['id'], 'discarded' => true];
+                    continue;
+                }
+
+                // Enable MP4 download. Best-effort — CF returns 200 with state
+                // 'inprogress'/'ready'; either way the URL above works once
+                // they finish (next viewer hit might 404 briefly). Without
+                // this POST, /downloads/default.mp4 returns 404.
+                $cdl = curl_init();
+                curl_setopt_array($cdl, [
+                    CURLOPT_URL => "https://api.cloudflare.com/client/v4/accounts/{$cfAccountId}/stream/{$videoUid}/downloads",
+                    CURLOPT_POST => true,
+                    CURLOPT_POSTFIELDS => '{}',
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_HTTPHEADER => [
+                        "X-Auth-Email: {$cfEmail}",
+                        "X-Auth-Key: {$cfApiKey}",
+                        "Content-Type: application/json",
+                    ],
+                    CURLOPT_TIMEOUT => 6,
+                ]);
+                curl_exec($cdl);
+                curl_close($cdl);
+
+                try {
+                    $db->prepare("
+                        UPDATE chat_live_sessions
+                           SET recording_ready = TRUE,
+                               recording_url = :hls,
+                               recording_mp4 = :mp4,
+                               recording_duration = :d,
+                               recording_video_uid = :vu,
+                               recording_thumbnail = :th
+                         WHERE id = :id
+                    ")->execute([
+                        ':hls' => $hlsUrl,
+                        ':mp4' => $mp4Url,
+                        ':d'   => $duration,
+                        ':vu'  => $videoUid,
+                        ':th'  => $thumb,
+                        ':id'  => $s['id'],
+                    ]);
+                } catch (\Throwable $e) {
+                    error_log('[live.poll.persist] ' . $e->getMessage());
+                    continue;
+                }
+
+                $updated[] = [
+                    'session_id'    => $s['id'],
+                    'host_email'    => $s['host_email'],
+                    'recording_url' => $hlsUrl,
+                    'recording_mp4' => $mp4Url,
+                    'duration'      => $duration,
+                    'thumbnail'     => $thumb,
+                ];
+
+                // Notify host on the live_<id> channel so the broadcast
+                // screen end-card can transition from "Processing…" to
+                // "Replay ready" without polling.
+                try {
+                    $wsKey = getenv('MAIL_WS_KEY') ?: '';
+                    if ($wsKey === '' && file_exists('/etc/mail-api.env')) {
+                        foreach (@file('/etc/mail-api.env') ?: [] as $_line) {
+                            if (strpos($_line, 'MAIL_WS_KEY=') === 0) { $wsKey = trim(substr($_line, 12)); break; }
+                        }
+                    }
+                    if ($wsKey !== '') {
+                        $payload = json_encode([
+                            'channel' => 'live_' . $s['id'],
+                            'event'   => 'live_recording_ready',
+                            'data'    => [
+                                'session_id'    => $s['id'],
+                                'recording_url' => $hlsUrl,
+                                'recording_mp4' => $mp4Url,
+                                'duration'      => $duration,
+                                'thumbnail'     => $thumb,
+                            ],
+                        ]);
+                        foreach (['http://127.0.0.1:8081/broadcast', 'http://127.0.0.1:8084/broadcast'] as $endpoint) {
+                            $cu = curl_init($endpoint);
+                            curl_setopt_array($cu, [
+                                CURLOPT_POST => true,
+                                CURLOPT_POSTFIELDS => $payload,
+                                CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'X-API-Key: ' . $wsKey],
+                                CURLOPT_RETURNTRANSFER => true,
+                                CURLOPT_TIMEOUT_MS => 500,
+                                CURLOPT_CONNECTTIMEOUT_MS => 200,
+                            ]);
+                            curl_exec($cu);
+                            curl_close($cu);
+                        }
+                    }
+                } catch (\Throwable $e) { error_log('[live.poll.ws] ' . $e->getMessage()); }
+            }
+
+            jsonResponse(true, ['updated' => $updated, 'checked' => count($sessions)]);
+            break;
+        }
+
+        case 'live_recordings_list': {
+            // Lives gravadas que esse user pode acessar:
+            //   1) Lives das quais ele é host (com recording_ready=TRUE)
+            //   2) Replays que ele explicitamente salvou (chat_live_replays_saved)
+            // Retorna ordenado por mais recente.
+            $user = requireChatAuth();
+            $limit  = max(1, min(200, (int)($input['limit']  ?? $_GET['limit']  ?? 50)));
+            $offset = max(0, (int)($input['offset'] ?? $_GET['offset'] ?? 0));
+
+            try {
+                // UNION: hosted lives + saved replays. saved_at fallback
+                // for hosted = ended_at. saved_by_me / is_host flags help
+                // frontend show right buttons (delete vs unsave).
+                $stmt = $db->prepare("
+                    SELECT s.id, s.host_email, s.host_name, s.title, s.thumbnail_url,
+                           s.started_at, s.ended_at, s.recording_url, s.recording_mp4,
+                           s.recording_duration, s.recording_thumbnail, s.saved_count,
+                           TRUE AS is_host,
+                           FALSE AS saved_by_me,
+                           s.ended_at AS sort_key
+                      FROM chat_live_sessions s
+                     WHERE LOWER(s.host_email) = LOWER(:me)
+                       AND s.recording_ready = TRUE
+                       AND s.recording_url IS NOT NULL
+                       AND s.recording_url <> ''
+                       AND (s.replay_expires_at IS NULL OR s.replay_expires_at > NOW())
+                    UNION ALL
+                    SELECT s.id, s.host_email, s.host_name, s.title, s.thumbnail_url,
+                           s.started_at, s.ended_at, s.recording_url, s.recording_mp4,
+                           s.recording_duration, s.recording_thumbnail, s.saved_count,
+                           FALSE AS is_host,
+                           TRUE AS saved_by_me,
+                           to_char(r.saved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS') AS sort_key
+                      FROM chat_live_replays_saved r
+                      JOIN chat_live_sessions s ON s.id = r.session_id
+                     WHERE LOWER(r.user_email) = LOWER(:me2)
+                       AND s.recording_ready = TRUE
+                       AND s.recording_url IS NOT NULL
+                       AND s.recording_url <> ''
+                       AND (s.replay_expires_at IS NULL OR s.replay_expires_at > NOW())
+                       AND LOWER(s.host_email) <> LOWER(:me3)
+                     ORDER BY sort_key DESC
+                     LIMIT :lim OFFSET :off
+                ");
+                $stmt->bindValue(':me', $user['email']);
+                $stmt->bindValue(':me2', $user['email']);
+                $stmt->bindValue(':me3', $user['email']);
+                $stmt->bindValue(':lim', $limit, \PDO::PARAM_INT);
+                $stmt->bindValue(':off', $offset, \PDO::PARAM_INT);
+                $stmt->execute();
+                $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+            } catch (\Throwable $e) {
+                error_log('[live_recordings_list] ' . $e->getMessage());
+                $rows = [];
+            }
+
+            $recordings = [];
+            foreach ($rows as $rrow) {
+                $recordings[] = [
+                    'session_id'     => $rrow['id'],
+                    'id'             => $rrow['id'],
+                    'host_email'     => $rrow['host_email'],
+                    'host_name'      => $rrow['host_name'],
+                    'title'          => $rrow['title'],
+                    'thumbnail_url'  => $rrow['recording_thumbnail'] ?: ($rrow['thumbnail_url'] ?? ''),
+                    'started_at'     => $rrow['started_at'],
+                    'ended_at'       => $rrow['ended_at'],
+                    'recording_url'  => $rrow['recording_url'],
+                    'recording_mp4'  => $rrow['recording_mp4'],
+                    'duration'       => (int)($rrow['recording_duration'] ?? 0),
+                    'saved_count'    => (int)($rrow['saved_count'] ?? 0),
+                    'is_host'        => !empty($rrow['is_host']),
+                    'saved_by_me'    => !empty($rrow['saved_by_me']),
+                ];
+            }
+            jsonResponse(true, ['recordings' => $recordings, 'count' => count($recordings)]);
+            break;
+        }
+
+        case 'live_save_replay': {
+            // Viewer-side bookmark: stash the session_id in
+            // chat_live_replays_saved so it shows up in /lives-saved next
+            // time. Idempotent — UNIQUE(user_email, session_id) means tap
+            // multiple times = no dupes (ON CONFLICT DO NOTHING).
+            $user = requireChatAuth();
+            $sessionId = trim((string)($input['session_id'] ?? $input['id'] ?? ''));
+            if ($sessionId === '') jsonResponse(false, null, 'session_id required', 400);
+
+            // Pull cf_input_uid too so we can flag P2P sessions (no replay
+            // ever materializes for them — see live_end in email.php).
+            $sel = $db->prepare("SELECT host_email, recording_ready, recording_url, cf_input_uid FROM chat_live_sessions WHERE id = :id");
+            $sel->execute([':id' => $sessionId]);
+            $row = $sel->fetch(\PDO::FETCH_ASSOC);
+            if (!$row) jsonResponse(false, null, 'Session not found', 404);
+
+            // Block self-save: user is already the host (recording shows up
+            // automatically). Frontend should hide the "Save" button in
+            // that case but enforce here too.
+            if (strcasecmp($row['host_email'], $user['email']) === 0) {
+                jsonResponse(false, null, 'You are the host — already saved', 400);
+            }
+
+            $hasPipeline = !empty($row['cf_input_uid']);
+
+            try {
+                $ins = $db->prepare("
+                    INSERT INTO chat_live_replays_saved (user_email, session_id)
+                    VALUES (:e, :s)
+                    ON CONFLICT (user_email, session_id) DO NOTHING
+                ");
+                $ins->execute([':e' => $user['email'], ':s' => $sessionId]);
+
+                // Bump saved_count on the parent session for analytics — the
+                // host sees how many viewers saved their replay.
+                $db->prepare("UPDATE chat_live_sessions SET saved_count = saved_count + 1 WHERE id = :id")
+                   ->execute([':id' => $sessionId]);
+            } catch (\Throwable $e) {
+                error_log('[live_save_replay] ' . $e->getMessage());
+                jsonResponse(false, null, 'save_failed', 500);
+            }
+
+            jsonResponse(true, [
+                'session_id' => $sessionId,
+                'saved' => true,
+                'recording_ready' => !empty($row['recording_ready']),
+                // P2P (legacy WebRTC) sessions don't produce a VOD. Frontend
+                // should still save the bookmark (for analytics + future
+                // replay if pipeline switches) but show "Replay processing"
+                // helper text only when has_recording_pipeline is true.
+                'has_recording_pipeline' => $hasPipeline,
+            ]);
+            break;
+        }
+
+        case 'live_unsave_replay': {
+            // Viewer unsave — removes the bookmark from chat_live_replays_saved.
+            // Does NOT touch the underlying CF Stream VOD (other viewers may
+            // still have it bookmarked; the host's deletion is the only thing
+            // that should remove the underlying media).
+            $user = requireChatAuth();
+            $sessionId = trim((string)($input['session_id'] ?? $input['id'] ?? ''));
+            if ($sessionId === '') jsonResponse(false, null, 'session_id required', 400);
+
+            try {
+                $del = $db->prepare("DELETE FROM chat_live_replays_saved WHERE LOWER(user_email) = LOWER(:e) AND session_id = :s");
+                $del->execute([':e' => $user['email'], ':s' => $sessionId]);
+                $affected = $del->rowCount();
+                if ($affected > 0) {
+                    $db->prepare("UPDATE chat_live_sessions SET saved_count = GREATEST(0, saved_count - 1) WHERE id = :id")
+                       ->execute([':id' => $sessionId]);
+                }
+            } catch (\Throwable $e) {
+                error_log('[live_unsave_replay] ' . $e->getMessage());
+            }
+            jsonResponse(true, ['session_id' => $sessionId, 'unsaved' => true]);
+            break;
+        }
+
+        case 'live_recording_get': {
+            // Single-recording fetch for the watch page (HLS) or share link.
+            // Auth: host OR replay was saved by the caller. Reject anyone
+            // else so private/friends-only lives aren't enumerable.
+            $user = requireChatAuth();
+            $sessionId = trim((string)($input['session_id'] ?? $input['id'] ?? ''));
+            if ($sessionId === '') jsonResponse(false, null, 'session_id required', 400);
+
+            $sel = $db->prepare("
+                SELECT id, host_email, host_name, title, thumbnail_url,
+                       started_at, ended_at, recording_url, recording_mp4,
+                       recording_duration, recording_thumbnail, recording_ready,
+                       saved_count
+                  FROM chat_live_sessions
+                 WHERE id = :id
+            ");
+            $sel->execute([':id' => $sessionId]);
+            $row = $sel->fetch(\PDO::FETCH_ASSOC);
+            if (!$row) jsonResponse(false, null, 'Recording not found', 404);
+
+            $isHost = strcasecmp($row['host_email'], $user['email']) === 0;
+            $savedByMe = false;
+            if (!$isHost) {
+                $chk = $db->prepare("SELECT 1 FROM chat_live_replays_saved WHERE LOWER(user_email) = LOWER(:e) AND session_id = :s LIMIT 1");
+                $chk->execute([':e' => $user['email'], ':s' => $sessionId]);
+                $savedByMe = (bool)$chk->fetchColumn();
+            }
+            // Allow open watch — anyone with the link can view. This
+            // matches Instagram/TikTok shared-replay behavior. Private/
+            // friends-only enforcement can layer on later via audience col.
+            // (Frontend hides the unsave button when !savedByMe && !isHost.)
+
+            jsonResponse(true, [
+                'session_id'    => $row['id'],
+                'host_email'    => $row['host_email'],
+                'host_name'     => $row['host_name'],
+                'title'         => $row['title'],
+                'thumbnail_url' => $row['recording_thumbnail'] ?: ($row['thumbnail_url'] ?? ''),
+                'started_at'    => $row['started_at'],
+                'ended_at'      => $row['ended_at'],
+                'recording_url' => $row['recording_url'],
+                'recording_mp4' => $row['recording_mp4'],
+                'duration'      => (int)($row['recording_duration'] ?? 0),
+                'recording_ready' => !empty($row['recording_ready']),
+                'saved_count'   => (int)($row['saved_count'] ?? 0),
+                'is_host'       => $isHost,
+                'saved_by_me'   => $savedByMe,
+            ]);
+            break;
+        }
+
+        case 'live_recording_delete': {
+            // Host-only nuke. Drops the CF Stream video (releases storage
+            // billing), wipes the URLs locally, and cascades the bookmarks
+            // table so no viewer sees a 404 placeholder. Soft delete by
+            // clearing recording_url; the session row itself stays so
+            // existing analytics / push payloads referencing the id keep
+            // resolving to host_name + title.
+            $user = requireChatAuth();
+            $sessionId = trim((string)($input['session_id'] ?? $input['id'] ?? ''));
+            if ($sessionId === '') jsonResponse(false, null, 'session_id required', 400);
+
+            $sel = $db->prepare("SELECT host_email, recording_video_uid FROM chat_live_sessions WHERE id = :id");
+            $sel->execute([':id' => $sessionId]);
+            $row = $sel->fetch(\PDO::FETCH_ASSOC);
+            if (!$row) jsonResponse(false, null, 'Recording not found', 404);
+            if (strcasecmp($row['host_email'], $user['email']) !== 0) {
+                jsonResponse(false, null, 'Only the host can delete this replay', 403);
+            }
+
+            // CF DELETE — best-effort. If CF returns 404 it's already gone.
+            $videoUid = (string)($row['recording_video_uid'] ?? '');
+            if ($videoUid !== '') {
+                $cfAccountId = getenv('CF_ACCOUNT_ID') ?: '';
+                $cfApiKey    = getenv('CF_API_KEY')    ?: '';
+                $cfEmail     = getenv('CF_EMAIL')      ?: '';
+                if (($cfAccountId === '' || $cfApiKey === '' || $cfEmail === '') && file_exists('/etc/mail-api.env')) {
+                    foreach (@file('/etc/mail-api.env') ?: [] as $_line) {
+                        if ($cfAccountId === '' && strpos($_line, 'CF_ACCOUNT_ID=') === 0) $cfAccountId = trim(substr($_line, 14));
+                        if ($cfApiKey    === '' && strpos($_line, 'CF_API_KEY=')    === 0) $cfApiKey    = trim(substr($_line, 11));
+                        if ($cfEmail     === '' && strpos($_line, 'CF_EMAIL=')      === 0) $cfEmail     = trim(substr($_line, 9));
+                    }
+                }
+                if ($cfAccountId !== '' && $cfApiKey !== '' && $cfEmail !== '') {
+                    $ch = curl_init();
+                    curl_setopt_array($ch, [
+                        CURLOPT_URL => "https://api.cloudflare.com/client/v4/accounts/{$cfAccountId}/stream/{$videoUid}",
+                        CURLOPT_CUSTOMREQUEST => 'DELETE',
+                        CURLOPT_RETURNTRANSFER => true,
+                        CURLOPT_HTTPHEADER => ["X-Auth-Email: {$cfEmail}", "X-Auth-Key: {$cfApiKey}"],
+                        CURLOPT_TIMEOUT => 5,
+                    ]);
+                    curl_exec($ch);
+                    curl_close($ch);
+                }
+            }
+
+            try {
+                $db->prepare("
+                    UPDATE chat_live_sessions
+                       SET recording_url = NULL,
+                           recording_mp4 = NULL,
+                           recording_video_uid = NULL,
+                           recording_ready = FALSE,
+                           saved_count = 0
+                     WHERE id = :id
+                ")->execute([':id' => $sessionId]);
+
+                $db->prepare("DELETE FROM chat_live_replays_saved WHERE session_id = :id")
+                   ->execute([':id' => $sessionId]);
+            } catch (\Throwable $e) {
+                error_log('[live_recording_delete.persist] ' . $e->getMessage());
+                jsonResponse(false, null, 'delete_failed', 500);
+            }
+
+            jsonResponse(true, ['session_id' => $sessionId, 'deleted' => true]);
+            break;
+        }
+
+
+        // ============================================================
+        // chat_live_top_gifters — Leaderboard of top gifters for a live.
+        // Returns up to `limit` rows (default 50) ordered by total_diamonds
+        // desc. Used by the LiveTopGifters component (stacked avatars in
+        // top-right of live screen + full-screen modal on tap). Anyone
+        // authenticated can read — the leaderboard is a public artifact of
+        // the live itself.
+        // ============================================================
+        case 'chat_live_top_gifters': {
+            $user = requireChatAuth();
+            $sessionId = trim((string)($input['session_id'] ?? ''));
+            $limit = max(1, min(100, (int)($input['limit'] ?? 50)));
+            if ($sessionId === '') jsonResponse(false, null, 'session_id required', 400);
+
+            // Lazy-create the gifts table. Mirrors the pattern used by
+            // live_start_cf for chat_live_sessions/replays_saved so a fresh
+            // env doesn't need a separate migration step.
+            try {
+                @$db->exec("CREATE TABLE IF NOT EXISTS chat_live_gifts (
+                    id SERIAL PRIMARY KEY,
+                    live_id TEXT NOT NULL,
+                    sender_email TEXT NOT NULL,
+                    gift_type TEXT NOT NULL,
+                    diamonds INT NOT NULL DEFAULT 1,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )");
+                @$db->exec("CREATE INDEX IF NOT EXISTS idx_chat_live_gifts_live_sender ON chat_live_gifts (live_id, sender_email)");
+                @$db->exec("CREATE INDEX IF NOT EXISTS idx_chat_live_gifts_live_created ON chat_live_gifts (live_id, created_at DESC)");
+            } catch (\Throwable $e) { error_log('[live.gifts.schema] ' . $e->getMessage()); }
+
+            try {
+                // Aggregate diamonds per sender. JOIN to accounts for display
+                // name; LEFT JOIN so senders without a profile still show.
+                $stmt = $db->prepare("
+                    SELECT g.sender_email AS email,
+                           SPLIT_PART(g.sender_email, '@', 1) AS fallback_name,
+                           SUM(g.diamonds) AS total_diamonds,
+                           COUNT(*) AS gift_count
+                      FROM chat_live_gifts g
+                     WHERE g.live_id = :s
+                     GROUP BY g.sender_email
+                     ORDER BY total_diamonds DESC
+                     LIMIT :lim
+                ");
+                $stmt->bindValue(':s', $sessionId);
+                $stmt->bindValue(':lim', $limit, \PDO::PARAM_INT);
+                $stmt->execute();
+                $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+                $gifters = [];
+                foreach ($rows as $r) {
+                    $name = function_exists('chatDisplayName') ? chatDisplayName($r['email']) : '';
+                    if (!$name) $name = $r['fallback_name'];
+                    $gifters[] = [
+                        'email'           => $r['email'],
+                        'name'            => $name,
+                        'avatar_url'      => '/api/email.php?action=get_avatar&email=' . urlencode($r['email']),
+                        'total_diamonds'  => (int)$r['total_diamonds'],
+                        'gift_count'      => (int)$r['gift_count'],
+                    ];
+                }
+                jsonResponse(true, ['gifters' => $gifters, 'session_id' => $sessionId]);
+            } catch (\Throwable $e) {
+                error_log('[chat_live_top_gifters] ' . $e->getMessage());
+                jsonResponse(false, null, 'fetch_failed', 500);
+            }
+            break;
+        }
+
+        // ============================================================
+        // chat_live_send_gift — Viewer sends a virtual gift to a live.
+        // Inserts a row in chat_live_gifts (clamped to a server-side
+        // catalog to stop client-side diamond inflation), then broadcasts
+        // a `live_gift` WS event on `live_<session_id>` so everyone in
+        // the room sees the animation. No money — diamonds are virtual.
+        // ============================================================
+        case 'chat_live_send_gift': {
+            $user = requireChatAuth();
+            $sessionId = trim((string)($input['session_id'] ?? ''));
+            $giftType = strtolower(trim((string)($input['gift_type'] ?? '')));
+            if ($sessionId === '' || $giftType === '') {
+                jsonResponse(false, null, 'session_id and gift_type required', 400);
+            }
+
+            // Server-side catalog — clamps client values so a tampered
+            // client can't credit themselves with 9999 diamonds for a
+            // "rose". Keep in sync with components/LiveGiftPicker.js
+            // (GIFT_CATALOG). If the type isn't here, reject.
+            $catalog = [
+                'rose'   => 1,
+                'heart'  => 5,
+                'star'   => 10,
+                'crown'  => 25,
+                'fire'   => 50,
+                'rocket' => 100,
+            ];
+            if (!isset($catalog[$giftType])) {
+                jsonResponse(false, null, 'Unknown gift_type', 400);
+            }
+            $diamonds = (int)$catalog[$giftType];
+
+            // Make sure the session exists + is still live. Allow gifts to
+            // sessions in either status 'live' or 'ended' (last ~30s grace
+            // window — chat keeps trickling in after stream end). For now
+            // we only block if the session doesn't exist at all.
+            $sStmt = $db->prepare("SELECT id, host_email FROM chat_live_sessions WHERE id = :id");
+            $sStmt->execute([':id' => $sessionId]);
+            $session = $sStmt->fetch(\PDO::FETCH_ASSOC);
+            if (!$session) jsonResponse(false, null, 'Live session not found', 404);
+
+            // Lazy-create the table (same as top_gifters reader).
+            try {
+                @$db->exec("CREATE TABLE IF NOT EXISTS chat_live_gifts (
+                    id SERIAL PRIMARY KEY,
+                    live_id TEXT NOT NULL,
+                    sender_email TEXT NOT NULL,
+                    gift_type TEXT NOT NULL,
+                    diamonds INT NOT NULL DEFAULT 1,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )");
+                @$db->exec("CREATE INDEX IF NOT EXISTS idx_chat_live_gifts_live_sender ON chat_live_gifts (live_id, sender_email)");
+                @$db->exec("CREATE INDEX IF NOT EXISTS idx_chat_live_gifts_live_created ON chat_live_gifts (live_id, created_at DESC)");
+            } catch (\Throwable $e) { error_log('[live.gifts.schema.send] ' . $e->getMessage()); }
+
+            // Soft per-user rate-limit — 20 gifts / 60s per session. Stops
+            // tap-spam but lets legit hype-stacking through.
+            $rateFile = '/tmp/live_gift_rate_' . md5($user['email'] . '|' . $sessionId);
+            $now = microtime(true);
+            $rates = [];
+            if (file_exists($rateFile)) {
+                $raw = @file_get_contents($rateFile);
+                $d = $raw ? json_decode($raw, true) : null;
+                if (is_array($d)) {
+                    $rates = array_values(array_filter($d, fn($t) => is_numeric($t) && $t > $now - 60));
+                }
+            }
+            if (count($rates) >= 20) {
+                jsonResponse(false, null, 'Slow down — too many gifts', 429);
+            }
+            $rates[] = $now;
+            @file_put_contents($rateFile, json_encode($rates), LOCK_EX);
+
+            // Persist the gift.
+            try {
+                $ins = $db->prepare("
+                    INSERT INTO chat_live_gifts (live_id, sender_email, gift_type, diamonds)
+                    VALUES (:s, :e, :g, :d)
+                    RETURNING id, created_at
+                ");
+                $ins->bindValue(':s', $sessionId);
+                $ins->bindValue(':e', $user['email']);
+                $ins->bindValue(':g', $giftType);
+                $ins->bindValue(':d', $diamonds, \PDO::PARAM_INT);
+                $ins->execute();
+                $row = $ins->fetch(\PDO::FETCH_ASSOC);
+                $giftId = (int)($row['id'] ?? 0);
+            } catch (\Throwable $e) {
+                error_log('[chat_live_send_gift.insert] ' . $e->getMessage());
+                jsonResponse(false, null, 'send_failed', 500);
+            }
+
+            // Broadcast the live_gift WS event on the live channel so the
+            // host + every other viewer renders the LiveGiftAnimation
+            // overlay. Sender's own client also receives it (their socket
+            // is subscribed too), which doubles as a "delivery confirmed"
+            // signal — they see the same animation everyone else does.
+            try {
+                $wsKey = getenv('MAIL_WS_KEY') ?: '';
+                if ($wsKey) {
+                    $senderName = $user['name'] ?? explode('@', $user['email'])[0];
+                    $payload = [
+                        'session_id'    => $sessionId,
+                        'sender_email'  => $user['email'],
+                        'sender_name'   => $senderName,
+                        'sender_avatar' => '/api/email.php?action=get_avatar&email=' . urlencode($user['email']),
+                        'gift_type'     => $giftType,
+                        'gift'          => $giftType, // legacy alias for live-broadcast.js chat overlay chip
+                        'diamonds'      => $diamonds,
+                        'amount'        => $diamonds, // legacy alias
+                    ];
+                    $body = json_encode([
+                        'channel' => 'live_' . $sessionId,
+                        'event'   => 'live_gift',
+                        'data'    => $payload,
+                    ], JSON_UNESCAPED_UNICODE);
+                    foreach (['http://127.0.0.1:8081/broadcast', 'http://127.0.0.1:8084/broadcast'] as $endpoint) {
+                        $cu = curl_init($endpoint);
+                        curl_setopt_array($cu, [
+                            CURLOPT_POST            => true,
+                            CURLOPT_POSTFIELDS      => $body,
+                            CURLOPT_HTTPHEADER      => ['Content-Type: application/json', 'X-API-Key: ' . $wsKey],
+                            CURLOPT_RETURNTRANSFER  => true,
+                            CURLOPT_TIMEOUT_MS      => 1500,
+                            CURLOPT_CONNECTTIMEOUT_MS => 500,
+                        ]);
+                        curl_exec($cu); curl_close($cu);
+                    }
+                }
+            } catch (\Throwable $e) { error_log('[chat_live_send_gift.ws] ' . $e->getMessage()); }
+
+            jsonResponse(true, [
+                'sent'      => true,
+                'gift_id'   => $giftId,
+                'gift_type' => $giftType,
+                'diamonds'  => $diamonds,
+            ]);
             break;
         }
 

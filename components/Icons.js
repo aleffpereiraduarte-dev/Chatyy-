@@ -205,6 +205,18 @@ export function IconFilm({ size, color, style }) {
   return <I size={size} color={color} style={style}><Rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><Line x1="7" y1="2" x2="7" y2="22"/><Line x1="17" y1="2" x2="17" y2="22"/><Line x1="2" y1="12" x2="22" y2="12"/><Line x1="2" y1="7" x2="7" y2="7"/><Line x1="2" y1="17" x2="7" y2="17"/><Line x1="17" y1="17" x2="22" y2="17"/><Line x1="17" y1="7" x2="22" y2="7"/></I>;
 }
 
+// Round-video-note icon (Telegram/iMessage video-note button). A circle
+// with a play triangle inside — distinguishes "round short video note"
+// from the rectangular IconVideo (call) and IconFilm (gallery).
+export function IconVideoNote({ size, color, style }) {
+  return (
+    <I size={size} color={color} style={style}>
+      <Circle cx="12" cy="12" r="9"/>
+      <Path d="M10 8.5l5.5 3.5L10 15.5z" fill={color || 'currentColor'} strokeWidth={0}/>
+    </I>
+  );
+}
+
 export function IconPaperclip({ size, color, style }) {
   return <I size={size} color={color} style={style}><Path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></I>;
 }
@@ -918,4 +930,17 @@ export function IconUsersSmall({ size, color, style }) {
 }
 export function IconHashtag({ size, color, style }) {
   return <I size={size} color={color} style={style}><Line x1="4" y1="9" x2="20" y2="9"/><Line x1="4" y1="15" x2="20" y2="15"/><Line x1="10" y1="3" x2="8" y2="21"/><Line x1="16" y1="3" x2="14" y2="21"/></I>;
+}
+
+// Sliders icon — used for the Status interactive Slider sticker tray entry.
+// Mirrors lucide's "sliders-horizontal": three horizontal rails with a knob
+// on each, so users immediately read it as "drag bar".
+export function IconSliders({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Line x1="4" y1="6" x2="20" y2="6"/><Line x1="4" y1="12" x2="20" y2="12"/><Line x1="4" y1="18" x2="20" y2="18"/><Circle cx="9" cy="6" r="2"/><Circle cx="15" cy="12" r="2"/><Circle cx="11" cy="18" r="2"/></I>;
+}
+
+// Feed/repost icon — used by the "Postar também no Feed" toggle in the
+// status publish modal so the icon hints at "broadcast to Feed".
+export function IconFeedShare({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Polyline points="17 1 21 5 17 9"/><Path d="M3 11V9a4 4 0 0 1 4-4h14"/><Polyline points="7 23 3 19 7 15"/><Path d="M21 13v2a4 4 0 0 1-4 4H3"/></I>;
 }

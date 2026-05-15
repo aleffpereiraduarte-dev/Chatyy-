@@ -9,7 +9,7 @@ import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
 import StatusCamera from './StatusCamera';
 import BrandFab from './BrandFab';
-import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconRotateCw, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin, IconLink, IconArrowRight, IconArchive } from './Icons';
+import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconRotateCw, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin, IconLink, IconArrowRight, IconArchive, IconSliders, IconFeedShare, IconCheck, IconCheckbox, IconCheckboxChecked } from './Icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as api from '../services/api';
 import * as Haptics from 'expo-haptics';
@@ -367,6 +367,38 @@ function DraggableSticker({ sticker, onMove, onRemove }) {
         ))}
       </View>
     );
+    // Slider sticker — Instagram-style "emoji slider". Composer paints a
+    // static preview at 50% with the chosen emoji riding on the track. The
+    // live drag interaction happens inside StoryViewer (viewer-only), so
+    // here we just sketch the look.
+    if (sticker.type === 'slider') {
+      const emoji = sticker.emoji || '🔥';
+      const pct = Math.max(0, Math.min(100, Number(sticker.preview) || 50));
+      return (
+        <View style={{
+          backgroundColor: 'rgba(15,23,42,0.92)', borderRadius: 18,
+          paddingTop: 14, paddingBottom: 18, paddingHorizontal: 16, width: 240,
+        }}>
+          <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700', textAlign: 'center', marginBottom: 12 }}>
+            {sticker.question || 'Qual o seu nível?'}
+          </Text>
+          <View style={{ height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.18)', position: 'relative' }}>
+            <View style={{
+              position: 'absolute', left: 0, top: 0, bottom: 0,
+              width: `${pct}%`,
+              borderRadius: 4,
+              backgroundColor: '#F59E0B',
+            }} />
+            <Text style={{
+              position: 'absolute', top: -14,
+              left: `${pct}%`,
+              transform: [{ translateX: -16 }],
+              fontSize: 30,
+            }}>{emoji}</Text>
+          </View>
+        </View>
+      );
+    }
     // GIF sticker — composer preview. Renders as an animated WebP/GIF via
     // expo-image on native (which supports animated formats) or <img> on web.
     // Width/height come from the GIF metadata so the dragged frame is sized
@@ -1026,7 +1058,11 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   // Multi-photo "carousel" picker — holds an array of photoFile objects so
   // we can publish all of them as one story sequence via status_carousel_publish.
   const [carouselPhotos, setCarouselPhotos] = useState([]); // [{ uri, name, type }]
-  const [statusPrivacy, setStatusPrivacy] = useState('all'); // 'all' | 'contacts' | 'except'
+  const [statusPrivacy, setStatusPrivacy] = useState('all'); // 'all' | 'contacts' | 'close_friends' | 'except'
+  // Cross-post to Feed — when true the publish flow passes cross_post_feed=true
+  // so the backend duplicates the media into the public Feed. Only meaningful
+  // for image/video status; the toggle is hidden for text/poll modes.
+  const [crossPostFeed, setCrossPostFeed] = useState(false);
   const [photoUri, setPhotoUri] = useState(null);
   const [photoFile, setPhotoFile] = useState(null);
   const [photoFilter, setPhotoFilter] = useState('normal');
@@ -1818,6 +1854,9 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       })) : undefined,
       text_overlays: textOverlays.length > 0 ? textOverlays.map(to => ({ text: to.text, x: Math.round(to.x), y: Math.round(to.y), color: to.color })) : undefined,
       draw_paths: drawPaths.length > 0 ? drawPaths.map(p => ({ color: p.color, points: p.points.map(pt => ({ x: Math.round(pt.x), y: Math.round(pt.y) })) })) : undefined,
+      // Cross-post to Feed — only forwarded for image/video modes (backend
+      // ignores it for text/poll). Toggle defaults to off; user opts in.
+      cross_post_feed: (crossPostFeed && (creatorMode === 'photo' || creatorMode === 'video')) ? true : undefined,
     };
 
     setPublishing(true);
@@ -1830,7 +1869,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
           const statusType = creatorMode === 'video' ? 'video' : 'image';
           const r = await api.statusPublish(content, statusType, '#000000', musicData, extraMeta);
           if (r?.success) {
-            setCreatorVisible(false); setMusicPickerVisible(false); setSelectedMusic(null); loadStatuses();
+            setCreatorVisible(false); setMusicPickerVisible(false); setSelectedMusic(null); setCrossPostFeed(false); loadStatuses();
             // Success haptic — without this, users tap "publish" and aren't sure
             // the post landed since the modal close + list reload have a brief gap.
             if (Platform.OS !== 'web') {
@@ -1869,7 +1908,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     } finally {
       setPublishing(false);
     }
-  }, [textContent, textBgColor, creatorMode, photoFile, publishing, loadStatuses, selectedMusic, textFontStyle, statusPrivacy]);
+  }, [textContent, textBgColor, creatorMode, photoFile, publishing, loadStatuses, selectedMusic, textFontStyle, statusPrivacy, crossPostFeed]);
 
   // Multi-photo carousel publisher — uploads each picked image (up to 10)
   // in parallel, then calls status_carousel_publish to register them as one
@@ -3933,17 +3972,18 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                     <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: '700', marginBottom: 8, letterSpacing: 0.5 }}>INTERATIVOS</Text>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
                       {[
-                        { key: 'poll', Icon: IconBarChart, label: 'Enquete' },
-                        { key: 'question', Icon: IconHelpCircle, label: 'Pergunta' },
-                        { key: 'countdown', Icon: IconClock, label: 'Contagem' },
-                        { key: 'mention', Icon: IconAtSign, label: 'Menção' },
-                        { key: 'quiz', Icon: IconAward, label: 'Quiz' },
-                        { key: 'location', Icon: IconMapPin, label: 'Local' },
-                        { key: 'link', Icon: IconLink, label: 'Link' },
+                        { key: 'poll', Icon: IconBarChart, label: t?.('status.stickerPoll') || 'Enquete' },
+                        { key: 'question', Icon: IconHelpCircle, label: t?.('status.stickerQuestion') || 'Pergunta' },
+                        { key: 'slider', Icon: IconSliders, label: t?.('status.stickerSlider') || 'Slider' },
+                        { key: 'countdown', Icon: IconClock, label: t?.('status.stickerCountdown') || 'Contagem' },
+                        { key: 'mention', Icon: IconAtSign, label: t?.('status.stickerMention') || 'Menção' },
+                        { key: 'quiz', Icon: IconAward, label: t?.('status.stickerQuiz') || 'Quiz' },
+                        { key: 'location', Icon: IconMapPin, label: t?.('status.stickerLocation') || 'Local' },
+                        { key: 'link', Icon: IconLink, label: t?.('status.stickerLink') || 'Link' },
                         // 'gif' opens an inline GifPickerPanel modal (reuses the
                         // chat composer's GIF picker). Uses IconSearch as a
                         // generic stand-in since there's no IconGif in Icons.js.
-                        { key: 'gif', Icon: IconSearch, label: 'GIF' },
+                        { key: 'gif', Icon: IconSearch, label: t?.('status.stickerGif') || 'GIF' },
                       ].map(s => (
                         <TouchableOpacity key={s.key} onPress={() => {
                           if (s.key === 'link') {
@@ -3979,6 +4019,11 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                             setStickers(prev => [...prev, { id: Date.now(), type: 'mention', x: 80, y: 250, username: user?.name || user?.email?.split('@')[0] || 'amigo' }]);
                           } else if (s.key === 'quiz') {
                             setStickers(prev => [...prev, { id: Date.now(), type: 'quiz', x: 40, y: 180, question: 'Qual a resposta?', options: ['A', 'B', 'C'], correct: 0 }]);
+                          } else if (s.key === 'slider') {
+                            // Slider sticker. `emoji` is the indicator that
+                            // rides the track in the viewer; `preview` is
+                            // just the composer thumbnail position (50 = mid).
+                            setStickers(prev => [...prev, { id: Date.now(), type: 'slider', x: 40, y: 200, question: t?.('status.sliderDefaultQuestion') || 'Quão concorda?', emoji: '🔥', preview: 50 }]);
                           } else if (s.key === 'location') {
                             setStickers(prev => [...prev, { id: Date.now(), emoji: '📍', x: 100 + Math.random() * 80, y: 150 + Math.random() * 150 }]);
                           }
@@ -4102,6 +4147,32 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                   <IconX size={18} color="rgba(255,255,255,0.7)" />
                 </TouchableOpacity>
               </View>
+            )}
+
+            {/* Cross-post-to-Feed toggle — only meaningful for media stories.
+                Keeps the publish flow single-tap (default off); user has to
+                consciously opt in so a normally-private story doesn't leak
+                into the public Feed accidentally. */}
+            {(creatorMode === 'photo' || creatorMode === 'video') && (
+              <TouchableOpacity
+                onPress={() => setCrossPostFeed(v => !v)}
+                style={{
+                  flexDirection: 'row', alignItems: 'center', gap: 10,
+                  paddingVertical: 10, paddingHorizontal: 14,
+                  backgroundColor: 'rgba(255,255,255,0.06)',
+                  borderRadius: 12, marginHorizontal: 12, marginTop: 6,
+                }}
+                activeOpacity={0.7}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: crossPostFeed }}
+                accessibilityLabel={t?.('status.crossPostFeed') || 'Postar também no Feed'}
+              >
+                {crossPostFeed ? <IconCheckboxChecked size={20} color="#7C3AED" /> : <IconCheckbox size={20} color="rgba(255,255,255,0.5)" />}
+                <IconFeedShare size={16} color="rgba(255,255,255,0.85)" />
+                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600', flex: 1 }}>
+                  {t?.('status.crossPostFeed') || 'Postar também no Feed'}
+                </Text>
+              </TouchableOpacity>
             )}
 
             <View style={styles.creatorFooter}>
