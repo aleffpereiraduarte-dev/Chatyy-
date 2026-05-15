@@ -38,9 +38,13 @@ jobs:
       KEYCHAIN_PASS: ci-build-pass
       MAIN_PROFILE_UUID: 480ef27d-fe7a-4986-af2e-57c75bf3e0d7
       SHAREEXT_PROFILE_UUID: d302e18b-f58a-43b8-8b1f-9bf4b2d05194
+      # [2026-05-15 #827] BROADCAST_PROFILE_UUID lido do conteúdo decoded
+      # do secret IOS_PROFILE_BROADCAST_BASE64 em runtime (UUID dentro do
+      # .mobileprovision). Bundle id: com.onemundo.mail.broadcast.
       TEAM_ID: XN9XN27QCE
       MAIN_BUNDLE_ID: com.onemundo.mail
       SHAREEXT_BUNDLE_ID: com.onemundo.mail.share-extension
+      BROADCAST_BUNDLE_ID: com.onemundo.mail.broadcast
       APP_NAME: Chatyy
 
     steps:
@@ -52,6 +56,7 @@ jobs:
           [ -z "${{ secrets.IOS_DIST_CERT_PASSWORD }}" ] && missing+=("IOS_DIST_CERT_PASSWORD")
           [ -z "${{ secrets.IOS_PROFILE_MAIN_BASE64 }}" ] && missing+=("IOS_PROFILE_MAIN_BASE64")
           [ -z "${{ secrets.IOS_PROFILE_SHAREEXT_BASE64 }}" ] && missing+=("IOS_PROFILE_SHAREEXT_BASE64")
+          [ -z "${{ secrets.IOS_PROFILE_BROADCAST_BASE64 }}" ] && missing+=("IOS_PROFILE_BROADCAST_BASE64")
           if [ ${#missing[@]} -gt 0 ]; then
             echo "::error::Missing GitHub Secrets: ${missing[*]}"
             exit 1
@@ -111,13 +116,29 @@ jobs:
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
       - name: Install provisioning profiles
+        id: profiles
         env:
           MAIN_B64: ${{ secrets.IOS_PROFILE_MAIN_BASE64 }}
           SHAREEXT_B64: ${{ secrets.IOS_PROFILE_SHAREEXT_BASE64 }}
+          BROADCAST_B64: ${{ secrets.IOS_PROFILE_BROADCAST_BASE64 }}
         run: |
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           echo "$MAIN_B64" | base64 -d > ~/Library/MobileDevice/Provisioning\ Profiles/$MAIN_PROFILE_UUID.mobileprovision
           echo "$SHAREEXT_B64" | base64 -d > ~/Library/MobileDevice/Provisioning\ Profiles/$SHAREEXT_PROFILE_UUID.mobileprovision
+          # Broadcast profile UUID is read from the decoded mobileprovision
+          # since we don't pin it as a hardcoded env (each user generates
+          # their own profile and we just read the UUID Apple assigned).
+          TMP_BROADCAST=$(mktemp)
+          echo "$BROADCAST_B64" | base64 -d > "$TMP_BROADCAST"
+          BROADCAST_UUID=$(security cms -D -i "$TMP_BROADCAST" 2>/dev/null | plutil -extract UUID raw -)
+          if [ -z "$BROADCAST_UUID" ]; then
+            echo "::error::Could not extract UUID from IOS_PROFILE_BROADCAST_BASE64"
+            exit 1
+          fi
+          cp "$TMP_BROADCAST" ~/Library/MobileDevice/Provisioning\ Profiles/$BROADCAST_UUID.mobileprovision
+          rm -f "$TMP_BROADCAST"
+          echo "broadcast_uuid=$BROADCAST_UUID" >> $GITHUB_OUTPUT
+          echo "Installed broadcast profile UUID: $BROADCAST_UUID"
           ls -la ~/Library/MobileDevice/Provisioning\ Profiles/
 
       - name: Bump build number
@@ -148,6 +169,16 @@ jobs:
         # inline HEREDOCs — that caused 0.75s silent failures on macOS
         # self-hosted under certain shell configurations).
         run: node scripts/patch-shareext-signing.js
+
+      - name: Patch BroadcastExtension signing in pbxproj
+        # The with-broadcast-extension Expo plugin generates the appex target
+        # with CODE_SIGN_STYLE=Automatic. Our CI is Manual signing across
+        # all targets. Force Manual + inject the broadcast profile UUID
+        # extracted from the .mobileprovision in the "Install provisioning
+        # profiles" step.
+        env:
+          BROADCAST_UUID: ${{ steps.profiles.outputs.broadcast_uuid }}
+        run: node scripts/patch-broadcast-signing.js
 
       - name: Install Pods
         env:
@@ -196,6 +227,7 @@ jobs:
             <dict>
               <key>$MAIN_BUNDLE_ID</key><string>$MAIN_PROFILE_UUID</string>
               <key>$SHAREEXT_BUNDLE_ID</key><string>$SHAREEXT_PROFILE_UUID</string>
+              <key>$BROADCAST_BUNDLE_ID</key><string>${{ steps.profiles.outputs.broadcast_uuid }}</string>
             </dict>
             <key>uploadBitcode</key><false/>
             <key>uploadSymbols</key><true/>

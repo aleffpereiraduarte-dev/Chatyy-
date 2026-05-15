@@ -691,6 +691,16 @@ function CallScreenInner() {
           { width: 1280, height: 720, encoding: { maxBitrate: 1_500_000, maxFramerate: 30 } },
         ],
       },
+      // [2026-05-15 #827] iOS broadcast extension wiring. When the user taps
+      // "Compartilhar tela", LiveKit's setScreenShareEnabled(true) opens the
+      // system RPSystemBroadcastPickerView, the user picks Chatyy, and the
+      // ChatyyBroadcastExtension (SampleHandler extends LKSampleHandler) starts
+      // publishing screen frames into THIS room. broadcastBundleId must match
+      // the bundle id set in plugins/with-broadcast-extension.js.
+      iosScreenSharePreferences: {
+        broadcastBundleId: 'com.onemundo.mail.broadcast',
+        useBroadcastExtension: true,
+      },
     };
     if (Array.isArray(iceServers) && iceServers.length > 0) {
       roomOpts.rtcConfig = { iceServers, iceTransportPolicy: 'all' };

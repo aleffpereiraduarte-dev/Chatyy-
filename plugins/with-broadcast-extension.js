@@ -93,192 +93,49 @@ const INFO_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
 </plist>
 `;
 
+// [2026-05-15 refactor #827] Migrated from custom RPBroadcastSampleHandler +
+// App-Group-file IPC to LKSampleHandler (LiveKit-provided base class). The old
+// path captured CMSampleBuffer → JPEG → App Group disk → Darwin notification
+// → host reads frame, but those frames never reached the WebRTC video sender
+// because LiveKit's `setScreenShareEnabled(true)` expects a broadcast
+// extension whose handler is built on top of LKSampleHandler. Now LiveKit
+// owns the entire pipeline: extension publishes a new VideoTrack via the
+// "broadcast room" mechanism, host subscribes inside the active Room.
+//
+// Host-side requirements (see app/call.js):
+//   - `Room` ctor must receive iosScreenSharePreferences = {
+//       broadcastBundleId: 'com.onemundo.mail.broadcast',
+//       useBroadcastExtension: true,
+//     }
+//   - App Group entitlement `group.com.onemundo.mail` must be on BOTH the
+//     main app AND this extension (this plugin sets both — see
+//     withMainAppGroup + ENTITLEMENTS_PLIST below).
+//
+// No more App-Group-file IPC, no manual JPEG encode, no CFNotification
+// polling. LKSampleHandler internally pumps CMSampleBuffers through
+// LiveKit's broadcast room → renders on every subscriber peer in the call.
 const SAMPLE_HANDLER_SWIFT = `//
 //  SampleHandler.swift
 //  ChatyyBroadcastExtension
 //
-//  ReplayKit Broadcast Upload Extension. iOS spawns this process when the
-//  user confirms the system broadcast picker. We receive raw screen frames
-//  (CMSampleBuffer) here, downscale them to 720p, JPEG-encode at ~50% and
-//  drop the bytes into an App Group shared container so the main Chatyy app
-//  can pick them up and push them into the active WebRTC video sender.
-//
-//  WHY THIS ARCHITECTURE (and not a TCP socket / Unix domain socket):
-//   - Broadcast Extensions are SEVERELY memory-capped (~50MB total RSS).
-//     Anything over and iOS kills the extension with NO callback — Apple's
-//     docs explicitly warn against framework imports beyond ReplayKit + the
-//     bare-minimum CoreVideo/CoreMedia.
-//   - Extensions are sandboxed and cannot open arbitrary TCP/UDP sockets.
-//     Local-only sockets technically work but break in the simulator and
-//     under "Low Data Mode" — App Group files don't.
-//   - CFNotification (Darwin notify) is the documented IPC for App Group
-//     extensions <-> host. We post a notification per frame; the host reads
-//     the latest jpeg from the shared container.
-//
-//  FRAME RATE: ~15 fps (skipFrameCounter). Screen share doesn't need 30fps
-//  and capping protects the RAM ceiling. Cap also de-noises the WebRTC
-//  encoder so bandwidth stays under 1.2Mbps.
-//
-//  RESOLUTION: longest-edge clamped to 1280px. iPad Pro is ~2732px native;
-//  raw frames at native res = ~22MB each = instant OOM.
+//  LiveKit-aware broadcast upload extension. Inherits from LKSampleHandler
+//  so the captured screen frames are published directly into the LiveKit
+//  room via the SDK's internal broadcast pipeline — no custom IPC needed.
 //
 
 import ReplayKit
-import CoreImage
-import CoreVideo
-import CoreMedia
-import ImageIO
-import MobileCoreServices
+import LiveKit
 
-class SampleHandler: RPBroadcastSampleHandler {
+class SampleHandler: LKSampleHandler {
+    // Enable logging in TestFlight so we can grep the device console for
+    // "[LiveKit][SampleHandler]" while debugging screen-share failures on
+    // real devices. Has zero runtime cost in Release otherwise.
+    override var enableLogging: Bool { true }
 
-    // App Group identifier — must match the entitlement + main app entitlement.
-    // Already in use by ShareExtension (memory #511) so re-using the same group
-    // avoids needing a new provisioning profile entry.
-    private static let appGroupId = "${APP_GROUP}"
-
-    // Notification name the main app listens for. Darwin notifications are
-    // process-global, no payload — the host reads the latest frame from disk.
-    private static let frameNotificationName = "com.onemundo.mail.screenshare.frame"
-    private static let stateNotificationName = "com.onemundo.mail.screenshare.state"
-
-    // Filename inside the App Group container. We double-buffer (.a / .b)
-    // so the main app reading the file never races against us writing it
-    // mid-frame. Each frame post alternates which file is "fresh".
-    private static let frameFileA = "screenshare-frame-a.jpg"
-    private static let frameFileB = "screenshare-frame-b.jpg"
-    private static let statePtrFile = "screenshare-state.txt"
-
-    private var ciContext: CIContext?
-    private var sharedContainerURL: URL?
-    private var frameCounter: UInt64 = 0
-    private var useBufferA = true
-
-    // Skip every N frames to cap the rate. RPScreenRecorder delivers at the
-    // device refresh rate (60–120Hz on modern iPhones) so skipping 3 of every
-    // 4 gives ~15–30fps depending on device.
-    private var skipFrameCounter = 0
-    private let frameSkipRatio = 3
-
-    // Cache the JPEG-encode CFDictionary so we don't re-alloc per frame.
-    private lazy var jpegProperties: CFDictionary = {
-        let dict: [CFString: Any] = [
-            kCGImageDestinationLossyCompressionQuality: 0.5
-        ]
-        return dict as CFDictionary
-    }()
-
-    override init() {
-        super.init()
-        // CIContext for fast GPU-backed downscale. Software fallback is too
-        // slow at 60Hz and would blow the CPU budget.
-        self.ciContext = CIContext(options: [.useSoftwareRenderer: false])
-        self.sharedContainerURL = FileManager.default
-            .containerURL(forSecurityApplicationGroupIdentifier: SampleHandler.appGroupId)
-    }
-
-    override func broadcastStarted(withSetupInfo setupInfo: [String: NSObject]?) {
-        // User confirmed picker → ReplayKit started capturing. Notify main app
-        // so it can hot-swap the WebRTC sender's track.
-        writeState("started")
-        postState()
-    }
-
-    override func broadcastPaused() {
-        writeState("paused")
-        postState()
-    }
-
-    override func broadcastResumed() {
-        writeState("started")
-        postState()
-    }
-
-    override func broadcastFinished() {
-        writeState("finished")
-        postState()
-    }
-
-    override func processSampleBuffer(_ sampleBuffer: CMSampleBuffer,
-                                       with sampleBufferType: RPSampleBufferType) {
-        // We only care about video frames. Audio (sampleBufferType == .audioApp)
-        // could be piped too but iOS clamps that to ringer/media audio only —
-        // and most call apps don't share device audio with the peer anyway.
-        // Microphone capture continues from the main app's WebRTC pipeline.
-        guard sampleBufferType == .video else { return }
-
-        // Rate-cap.
-        skipFrameCounter += 1
-        if skipFrameCounter % (frameSkipRatio + 1) != 0 {
-            return
-        }
-
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        guard let containerURL = sharedContainerURL else { return }
-        guard let context = ciContext else { return }
-
-        // Downscale on GPU before encoding to JPEG. Going from native 2732px to
-        // 1280px shrinks the JPEG ~5×, which both honors our 50MB ceiling and
-        // saves the main app a CPU resize step before handing to RTCVideoSource.
-        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-        let srcW = ciImage.extent.width
-        let srcH = ciImage.extent.height
-        let longEdge: CGFloat = 1280
-        let scale: CGFloat = min(1.0, longEdge / max(srcW, srcH))
-        let scaled = scale < 1.0
-            ? ciImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-            : ciImage
-
-        // Encode to JPEG. CGImageDestination is the fastest path that doesn't
-        // require UIKit (which is banned in broadcast extensions).
-        guard let cgImage = context.createCGImage(scaled, from: scaled.extent) else { return }
-        let data = NSMutableData()
-        guard let dest = CGImageDestinationCreateWithData(data, kUTTypeJPEG, 1, nil) else { return }
-        CGImageDestinationAddImage(dest, cgImage, jpegProperties)
-        guard CGImageDestinationFinalize(dest) else { return }
-
-        // Double-buffer write — alternate file each frame so the reader never
-        // sees a half-written JPEG. Pointer file tells the reader which one is
-        // fresh.
-        let targetName = useBufferA ? SampleHandler.frameFileA : SampleHandler.frameFileB
-        let targetURL = containerURL.appendingPathComponent(targetName)
-        let ptrURL = containerURL.appendingPathComponent(SampleHandler.statePtrFile)
-
-        do {
-            try data.write(to: targetURL, options: .atomic)
-            let ptr = useBufferA ? "a" : "b"
-            try ptr.write(to: ptrURL, atomically: true, encoding: .utf8)
-        } catch {
-            // Disk write failed — likely container full or revoked. Bail this
-            // frame, the extension keeps running.
-            return
-        }
-
-        useBufferA.toggle()
-        frameCounter &+= 1
-
-        // Post Darwin notification so main app's CFNotification observer fires.
-        CFNotificationCenterPostNotification(
-            CFNotificationCenterGetDarwinNotifyCenter(),
-            CFNotificationName(SampleHandler.frameNotificationName as CFString),
-            nil, nil, true
-        )
-    }
-
-    // Helper — writes the broadcast lifecycle state to a known file so the
-    // main app can read it even if it was cold-started after broadcast began.
-    private func writeState(_ state: String) {
-        guard let url = sharedContainerURL?.appendingPathComponent("screenshare-broadcast-state.txt") else { return }
-        try? state.write(to: url, atomically: true, encoding: .utf8)
-    }
-
-    private func postState() {
-        CFNotificationCenterPostNotification(
-            CFNotificationCenterGetDarwinNotifyCenter(),
-            CFNotificationName(SampleHandler.stateNotificationName as CFString),
-            nil, nil, true
-        )
-    }
+    // Small jitter buffer (in ms). LK defaults to 0 which can cause encoder
+    // hiccups on cellular when the screen recorder bursts frames. 50ms is
+    // imperceptible to the viewer and smooths bursts without adding lag.
+    override var broadcastDelayMillis: Int { 50 }
 }
 `;
 
@@ -406,9 +263,38 @@ function withBroadcastTarget(config) {
   });
 }
 
+// [2026-05-15 #827] Append broadcast target to Podfile so LiveKitClient
+// gets linked into the extension. expo prebuild regenerates Podfile from
+// scratch every build, so a static edit in /ios/Podfile would be wiped —
+// we must inject the snippet at prebuild time. Idempotent: skip if the
+// target string is already present (handles repeated prebuilds in the
+// same build folder).
+function withBroadcastPodTarget(config) {
+  return withDangerousMod(config, [
+    'ios',
+    async (cfg) => {
+      const podfilePath = path.join(cfg.modRequest.platformProjectRoot, 'Podfile');
+      if (!fs.existsSync(podfilePath)) return cfg;
+      let pod = fs.readFileSync(podfilePath, 'utf8');
+      const marker = `target '${EXT_NAME}' do`;
+      if (pod.includes(marker)) return cfg;
+      pod += `\n\n# [2026-05-15 #827] Auto-injected by plugins/with-broadcast-extension.js.\n` +
+             `# Links LiveKitClient into the broadcast extension target so\n` +
+             `# SampleHandler.swift (extends LKSampleHandler) compiles.\n` +
+             `target '${EXT_NAME}' do\n` +
+             `  platform :ios, '15.0'\n` +
+             `  pod 'LiveKitClient', '~> 2.0'\n` +
+             `end\n`;
+      fs.writeFileSync(podfilePath, pod);
+      return cfg;
+    },
+  ]);
+}
+
 module.exports = function withBroadcastExtension(config) {
   config = withBroadcastExtensionFiles(config);
   config = withMainAppGroup(config);
   config = withBroadcastTarget(config);
+  config = withBroadcastPodTarget(config);
   return config;
 };
