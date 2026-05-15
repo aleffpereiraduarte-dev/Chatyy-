@@ -10729,7 +10729,13 @@ export default function ChatConversationScreen() {
         type: asset.type === 'video' ? 'video/mp4' : 'image/jpeg',
         size: asset.fileSize || asset.size || 0,
       };
-      setMediaPreview({ visible: true, files: [file] });
+      // Same iOS PHPicker dismiss race as handleGallery — defer the
+      // MediaPreview modal mount until the camera picker has fully torn down.
+      if (Platform.OS === 'ios') {
+        setTimeout(() => setMediaPreview({ visible: true, files: [file] }), 350);
+      } else {
+        setMediaPreview({ visible: true, files: [file] });
+      }
     } catch (e) {
       console.warn('Camera error:', e);
     }
@@ -10829,7 +10835,18 @@ export default function ChatConversationScreen() {
         });
         if (!proceed) return;
       }
-      setMediaPreview({ visible: true, files: builtFiles });
+      // [bug 2026-05-15] User: "escolho fotos mas não vai pro preview".
+      // iOS PHPicker dismiss animation runs async even after the
+      // launchImageLibraryAsync promise resolves — if we present <Modal>
+      // (MediaPreview) immediately, UIKit silently drops the presentation
+      // because the previous picker is still mid-dismiss. Same root cause
+      // as the AttachmentMenu modal-over-modal bug. Defer 350ms so iOS
+      // has time to fully tear down the picker before we mount our modal.
+      if (Platform.OS === 'ios') {
+        setTimeout(() => setMediaPreview({ visible: true, files: builtFiles }), 350);
+      } else {
+        setMediaPreview({ visible: true, files: builtFiles });
+      }
       return;
     } catch (e) {
       console.warn('[Gallery] error:', e);
