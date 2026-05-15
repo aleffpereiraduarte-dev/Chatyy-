@@ -925,20 +925,24 @@ export default function IncomingCallListener() {
               voipDiag('accept_sent', callId, { email });
             }
 
-            // Check if we have SDP (from WS reconnect delivering pending offer)
-            if (acceptSent && _pendingOfferSdp) {
-              console.log('[IncomingCall] Have SDP + accepted sent, navigating');
-              voipDiag('have_sdp_navigating', callId, { attempts });
+            // [bug 2026-05-15 livekit-native-answer-not-sync]
+            // LiveKit does NOT use SDP-over-WS (no `_pendingOfferSdp` event).
+            // The peer-to-peer SDP negotiation happens INSIDE the LiveKit
+            // room after both clients call r.connect(). So waiting for
+            // `_pendingOfferSdp` here blocks navigation forever and the
+            // user sits on the native CallKit/IncomingCallActivity screen
+            // doing nothing — that's the "native answer não funciona" bug.
+            // As soon as WS `call_accepted` is sent, just navigate.
+            if (acceptSent) {
+              console.log('[IncomingCall] LiveKit: accept sent, navigating immediately');
+              voipDiag('lk_accept_sent_navigating', callId, { attempts });
               doNavigate();
               return;
             }
 
-            // Keep polling for up to 30s — 10s was racing real network
-            // delays on cellular cold-start (token decrypt + WS handshake +
-            // server round-trip). The screen now navigates with whatever
-            // we've got and the call screen handles late SDP via its own
-            // event listener, so a long wait here is purely about giving
-            // the WS more chances to reconnect before we declare timeout.
+            // Keep polling for up to 30s — token decrypt + WS handshake +
+            // server round-trip can be slow on cellular cold-start. Once
+            // `acceptSent` flips true the block above navigates.
             if (attempts < 60) {
               if (attempts === 1 || attempts === 5 || attempts === 15 || attempts === 30) {
                 voipDiag('poll_tick', callId, { attempts, wsConnected: !!mailWs.isConnected, acceptSent, hasSDP: !!_pendingOfferSdp });
