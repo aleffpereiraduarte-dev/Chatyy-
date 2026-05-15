@@ -223,6 +223,15 @@ function CallScreenInner() {
 
   const isCaller = isCallerParam === '1' || isCallerParam === 'true';
   const isVideoCall = isVideoParam === '1' || isVideoParam === 'true';
+  // [bug 2026-05-15 #977-followup] Flag set by IncomingCallListener
+  // handleAndroidPendingCall when the user accepted via the native heads-up
+  // notification while the app was minimized/dead. Used below to suppress
+  // phantom WS call_end events that arrive in the 5s mount window — caller
+  // side may emit call_end from its 30s ring timeout, network blip retry,
+  // or multi-device race, and the unguarded `unsubEnd` handler was eating
+  // the freshly-accepted call → "Chamada encerrada" + home navigation.
+  const autoAccepted = params.autoAccepted === '1' || params.autoAccepted === 'true';
+  const mountTimeRef = useRef(Date.now());
 
   // Null safety for peer display.
   // [bug 2026-05-15 #978-2] When answered via Android lock-screen native UI,
@@ -1285,6 +1294,27 @@ function CallScreenInner() {
 
       unsubEnd = mailWs.on('call_end', (data) => {
         if (callAcceptedRef.current && data?.reason === 'declined') return;
+        // [bug 2026-05-15 #977-followup phantom-decline-via-WS]
+        // The native-side persisted-accept guard (Fixes A+B+C in #977) only
+        // covers ExpoCallKit's onCallEnded channel. The WS `call_end`
+        // broadcast is a SEPARATE path — when the user accepts via Android
+        // heads-up while the app was dead, JS takes 6-10s to mount /call.
+        // During that window the caller can ship `call_end` (30s ring
+        // timeout, transient network blip retry, multi-device race) and
+        // server fans it back to BOTH parties — including the freshly-
+        // mounted /call which sees `data.call_id === callId` and ends the
+        // call before LiveKit even finishes connecting. Guard: when entering
+        // via `autoAccepted=1` on Android, ignore inbound `call_end` for the
+        // first 5s. Real peer-hangups happen >> 5s after accept; phantoms
+        // ALL land sub-5s.
+        if (autoAccepted && Platform.OS === 'android' && data?.call_id === callId) {
+          const sinceMount = Date.now() - mountTimeRef.current;
+          if (sinceMount < 5000) {
+            console.warn('[Call] Android phantom WS call_end suppressed (' + sinceMount + 'ms after mount, autoAccepted)');
+            try { _diag?.('phantom_ws_call_end_suppressed', { sinceMount, reason: data?.reason || '' }); } catch {}
+            return;
+          }
+        }
         if (data?.call_id === callId && mounted && !endedRef.current) {
           // Peer hung up. Run full teardown.
           handleEndCall();
