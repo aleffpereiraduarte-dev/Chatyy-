@@ -4,12 +4,35 @@ import PushKit
 import AVFoundation
 import Network
 
+// [bug 2026-05-15 cold-start-voip-drop] PKPushRegistry is OWNED by
+// AppDelegate (created in didFinishLaunchingWithOptions). This module
+// consumes pending calls handed off via App Group UserDefaults + a
+// NotificationCenter event so the JS Modal/navigation can resume the call
+// once the RN bundle is up. See ios/OneMundoMail/AppDelegate.swift.
+//
+// Key changes vs. the prior implementation:
+//   1. NO PKPushRegistry creation here (moved to AppDelegate).
+//   2. NO AVAudioSession pre-arm at module load (Spotify focus theft fix).
+//   3. reportNewIncomingCall is the FIRST thing on the push handler path
+//      (when AppDelegate forwards a synthesized push), so the same-run-loop
+//      Apple deadline is never violated.
+//   4. CallKit is always reported — we don't auto-end CallKit when app is
+//      foreground anymore; CallKit is the source of truth and the JS Modal
+//      simply layers above it. Removing the auto-end fixes the "1st call
+//      drop" issue on cold start.
+//   5. We forward `provider:didActivate` to JS via `onCallKitAudioActivated`
+//      so /call (LiveKit) can wait for CallKit to own the audio session
+//      before calling `Room.connect` (avoids competing audio-session paths).
+//   6. CXEndCallAction does NOT manually deactivate the audio session;
+//      CallKit calls didDeactivate automatically.
+
+private let kAppGroupId = "group.com.onemundo.mail"
+private let kPendingCallKey = "pendingVoipCall"
+
 public class ExpoCallKitModule: Module {
   private var provider: CXProvider?
   private var callController: CXCallController?
-  private var voipRegistry: PKPushRegistry?
   private var providerDelegate: ProviderDelegate?
-  private var voipDelegate: VoipPushDelegate?
 
   /// Network reachability monitor — emits onNetworkChange events to JS so
   /// the call screen can show "Reconnecting..." when Wi-Fi drops, etc.
@@ -17,6 +40,8 @@ public class ExpoCallKitModule: Module {
   private var pathMonitor: NWPathMonitor?
   private var lastNetworkStatus: String = ""
   private var audioInterruptionObserver: Any?
+  private var voipTokenObserver: Any?
+  private var pendingCallObserver: Any?
 
   // Serial queue for thread-safe access to activeCalls, callPayloads, pendingEvents
   private let stateQueue = DispatchQueue(label: "com.onemundo.callkit.state")
@@ -43,7 +68,18 @@ public class ExpoCallKitModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ExpoCallKit")
 
-    Events("onCallAnswered", "onCallEnded", "onVoipTokenReceived", "onIncomingCall", "onAudioInterruption", "onNetworkChange")
+    Events(
+      "onCallAnswered",
+      "onCallEnded",
+      "onVoipTokenReceived",
+      "onIncomingCall",
+      "onAudioInterruption",
+      "onNetworkChange",
+      // [bug 2026-05-15 #9] Bridged to JS so /call can wait for CallKit to
+      // own the AVAudioSession before calling Room.connect on LiveKit.
+      "onCallKitAudioActivated",
+      "onCallKitAudioDeactivated"
+    )
 
     // Auto-initialize on module load (skip CallKit in China per Apple requirement)
     OnCreate {
@@ -60,25 +96,18 @@ public class ExpoCallKitModule: Module {
       }
       DispatchQueue.main.async {
         self.setupProvider()
-        self.setupVoipPush()
         self.setupNetworkMonitor()
-        // [bug 2026-05-14] Pre-arm AVAudioSession with .playAndRecord +
-        // .voiceChat at module load so when CallKit activates the session
-        // post-answer, the mic input route is already wired. Without this
-        // pre-arm, the session inherits .ambient/.solo from a prior
-        // expo-audio call, and CXAnswerCallAction → fulfill() → didActivate
-        // races with JS PC setup — by the time addTrack runs, the audio
-        // unit has no input attached and uplink mic is silent.
-        // setActive(false) keeps it inactive until CallKit owns it.
-        do {
-          let session = AVAudioSession.sharedInstance()
-          try session.setCategory(.playAndRecord, mode: .voiceChat,
-            options: [.allowBluetooth, .allowBluetoothA2DP, .duckOthers])
-          print("[ExpoCallKit] AVAudioSession pre-armed for voiceChat (mic capture ready)")
-        } catch {
-          print("[ExpoCallKit] AVAudioSession pre-arm failed: \(error)")
-        }
-        print("[ExpoCallKit] Auto-initialized on module create")
+        self.installAppDelegateBridges()
+        self.flushVoipTokenFromAppGroup()
+        self.adoptPendingCallsFromAppGroup()
+        // [bug 2026-05-15 #4] Removed AVAudioSession pre-arm.
+        // Pre-arming with .playAndRecord/.voiceChat at module load stole
+        // audio focus from Spotify/Music every app launch (user complaint:
+        // "abro o app e minha música pausa"). The real uplink-mic-silent
+        // fix is the RTCAudioSession forwarding inside provider:didActivate
+        // (see ProviderDelegate below) — that runs after CallKit owns the
+        // session so the WebRTC audio unit sees the active mic input.
+        print("[ExpoCallKit] Auto-initialized on module create (no audio pre-arm)")
       }
     }
 
@@ -88,6 +117,10 @@ public class ExpoCallKitModule: Module {
         self.jsListenersReady = true
       }
       self.flushPendingEvents()
+      // Re-adopt pending calls every time JS attaches: covers the case
+      // where the AppDelegate posted the NotificationCenter event before
+      // OnCreate ran, and the only fallback is the UserDefaults queue.
+      self.adoptPendingCallsFromAppGroup()
     }
 
     AsyncFunction("setup") { () -> Void in
@@ -95,11 +128,9 @@ public class ExpoCallKitModule: Module {
       if self.provider == nil {
         if Thread.isMainThread {
           self.setupProvider()
-          self.setupVoipPush()
         } else {
           DispatchQueue.main.sync {
             self.setupProvider()
-            self.setupVoipPush()
           }
         }
       }
@@ -137,14 +168,16 @@ public class ExpoCallKitModule: Module {
     }
 
     Function("registerVoipPush") { () -> Void in
-      DispatchQueue.main.async {
-        self.setupVoipPush()
-      }
+      // PKPushRegistry is owned by AppDelegate (created in
+      // didFinishLaunchingWithOptions). This function exists only for JS
+      // API parity; it surfaces any cached token from the App Group.
+      self.flushVoipTokenFromAppGroup()
     }
 
     Function("getVoipToken") { () -> String? in
-      if let cachedToken = self.voipRegistry?.pushToken(for: .voIP) {
-        return cachedToken.map { String(format: "%02x", $0) }.joined()
+      if let ud = UserDefaults(suiteName: kAppGroupId),
+         let token = ud.string(forKey: "voipToken") {
+        return token
       }
       return nil
     }
@@ -164,15 +197,20 @@ public class ExpoCallKitModule: Module {
 
     Function("getDiagnostics") { () -> [String: Any] in
       let callCount = self.stateQueue.sync { self.activeCalls.count }
+      let hasToken: Bool = {
+        if let ud = UserDefaults(suiteName: kAppGroupId) {
+          return ud.string(forKey: "voipToken") != nil
+        }
+        return false
+      }()
       return [
         "providerReady": self.provider != nil,
         "callControllerReady": self.callController != nil,
-        "voipRegistryReady": self.voipRegistry != nil,
-        "voipDelegateReady": self.voipDelegate != nil,
         "providerDelegateReady": self.providerDelegate != nil,
-        "hasVoipToken": self.voipRegistry?.pushToken(for: .voIP) != nil,
+        "hasVoipToken": hasToken,
         "activeCalls": callCount,
-        "isMainThread": Thread.isMainThread
+        "isMainThread": Thread.isMainThread,
+        "registryOwner": "AppDelegate"
       ]
     }
   }
@@ -202,6 +240,88 @@ public class ExpoCallKitModule: Module {
       self?.handleAudioInterruption(notification)
     }
     print("[ExpoCallKit] CXProvider configured")
+  }
+
+  /// Install observers that bridge AppDelegate's early PushKit/CallKit
+  /// signals into this module so JS sees them once it's ready.
+  private func installAppDelegateBridges() {
+    if voipTokenObserver == nil {
+      voipTokenObserver = NotificationCenter.default.addObserver(
+        forName: Notification.Name("ExpoCallKitVoipTokenUpdated"),
+        object: nil,
+        queue: .main
+      ) { [weak self] note in
+        guard let token = note.userInfo?["token"] as? String else { return }
+        self?.voipTokenReceived(token: token)
+      }
+    }
+    if pendingCallObserver == nil {
+      pendingCallObserver = NotificationCenter.default.addObserver(
+        forName: Notification.Name("ExpoCallKitPendingVoipCall"),
+        object: nil,
+        queue: .main
+      ) { [weak self] note in
+        self?.adoptPendingCall(from: note.userInfo ?? [:])
+      }
+    }
+  }
+
+  private func flushVoipTokenFromAppGroup() {
+    guard let ud = UserDefaults(suiteName: kAppGroupId),
+          let token = ud.string(forKey: "voipToken") else { return }
+    voipTokenReceived(token: token)
+  }
+
+  /// Drain the App Group pending-call queue, adopting each call so CallKit
+  /// answer/end actions route through this module and JS sees onIncomingCall.
+  private func adoptPendingCallsFromAppGroup() {
+    guard let ud = UserDefaults(suiteName: kAppGroupId) else { return }
+    guard let raw = ud.array(forKey: kPendingCallKey) as? [[String: Any]],
+          !raw.isEmpty else { return }
+    ud.removeObject(forKey: kPendingCallKey)
+    print("[ExpoCallKit] Adopting \(raw.count) pending call(s) from AppDelegate")
+    for entry in raw {
+      adoptPendingCall(from: entry)
+    }
+    // Also check if AppDelegate already answered/ended via the stub provider
+    // while RN was loading — replay onCallAnswered / onCallEnded as needed.
+    if let acceptUUID = ud.string(forKey: "pendingAcceptUUID"),
+       let uuid = UUID(uuidString: acceptUUID) {
+      print("[ExpoCallKit] AppDelegate accepted UUID \(acceptUUID) before RN ready — replaying")
+      callAnswered(uuid: uuid)
+      ud.removeObject(forKey: "pendingAcceptUUID")
+    }
+    if let endUUID = ud.string(forKey: "pendingEndUUID"),
+       let uuid = UUID(uuidString: endUUID) {
+      print("[ExpoCallKit] AppDelegate ended UUID \(endUUID) before RN ready — replaying")
+      callEnded(uuid: uuid)
+      ud.removeObject(forKey: "pendingEndUUID")
+    }
+  }
+
+  /// Adopt a single pending call entry: register its UUID in `activeCalls`,
+  /// stash the payload, and emit onIncomingCall to JS so the in-app Modal
+  /// can render alongside the CallKit native UI.
+  private func adoptPendingCall(from entry: [AnyHashable: Any]) {
+    guard let callId = entry["callId"] as? String,
+          let uuidStr = entry["uuid"] as? String,
+          let uuid = UUID(uuidString: uuidStr) else { return }
+    let callerName = (entry["callerName"] as? String) ?? "Unknown"
+    let hasVideo = (entry["hasVideo"] as? Bool) ?? false
+    let payload = (entry["payload"] as? [String: Any]) ?? [:]
+
+    stateQueue.sync {
+      activeCalls[callId] = uuid
+      callPayloads[callId] = payload
+    }
+    print("[ExpoCallKit] Adopted call \(callId) uuid=\(uuid.uuidString)")
+    safeSendEvent("onIncomingCall", [
+      "callId": callId,
+      "callerName": callerName,
+      "callerEmail": (payload["caller_email"] as? String) ?? "",
+      "conversationId": (payload["conversation_id"] as? String) ?? "",
+      "hasVideo": hasVideo
+    ])
   }
 
   private func setupNetworkMonitor() {
@@ -244,6 +364,12 @@ public class ExpoCallKitModule: Module {
     if let obs = audioInterruptionObserver {
       NotificationCenter.default.removeObserver(obs)
     }
+    if let obs = voipTokenObserver {
+      NotificationCenter.default.removeObserver(obs)
+    }
+    if let obs = pendingCallObserver {
+      NotificationCenter.default.removeObserver(obs)
+    }
     pathMonitor?.cancel()
   }
 
@@ -267,37 +393,6 @@ public class ExpoCallKitModule: Module {
       safeSendEvent("onAudioInterruption", ["state": "ended", "shouldResume": shouldResume])
     @unknown default:
       break
-    }
-  }
-
-  private func setupVoipPush() {
-    guard voipRegistry == nil else {
-      print("[ExpoCallKit] VoIP registry already exists, checking cached token...")
-      // Check for cached token even if registry exists
-      if let cachedToken = voipRegistry?.pushToken(for: .voIP) {
-        let token = cachedToken.map { String(format: "%02x", $0) }.joined()
-        print("[ExpoCallKit] Found cached VoIP token: \(token.prefix(8))...")
-        voipTokenReceived(token: token)
-      }
-      return
-    }
-    print("[ExpoCallKit] Setting up PKPushRegistry on thread: \(Thread.isMainThread ? "main" : "background")")
-    voipDelegate = VoipPushDelegate(module: self)
-    voipRegistry = PKPushRegistry(queue: DispatchQueue.main)
-    voipRegistry?.delegate = voipDelegate
-    voipRegistry?.desiredPushTypes = [.voIP]
-    print("[ExpoCallKit] PKPushRegistry configured, waiting for token...")
-
-    // Also check for cached token immediately after setup
-    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-      guard let self = self else { return }
-      if let cachedToken = self.voipRegistry?.pushToken(for: .voIP) {
-        let token = cachedToken.map { String(format: "%02x", $0) }.joined()
-        print("[ExpoCallKit] Found cached VoIP token (delayed check): \(token.prefix(8))...")
-        self.voipTokenReceived(token: token)
-      } else {
-        print("[ExpoCallKit] No VoIP token after 2s - check provisioning profile has Push Notifications capability")
-      }
     }
   }
 
@@ -436,94 +531,12 @@ public class ExpoCallKitModule: Module {
     safeSendEvent("onVoipTokenReceived", ["token": token])
   }
 
-  func voipPushReceived(payload: [AnyHashable: Any], completion: @escaping () -> Void) {
-    let callId = (payload["call_id"] as? String) ?? UUID().uuidString
-    let callerName = (payload["caller_name"] as? String) ?? (payload["caller_email"] as? String) ?? "Unknown"
-    let hasVideo = (payload["video"] as? String) == "1" || (payload["call_type"] as? String) == "video"
+  func notifyAudioActivated() {
+    safeSendEvent("onCallKitAudioActivated", [:])
+  }
 
-    print("[ExpoCallKit] VoIP push received - reporting to CallKit BEFORE completion")
-
-    guard let provider = self.provider else {
-      print("[ExpoCallKit] ERROR: provider is nil, cannot report call")
-      completion()
-      return
-    }
-
-    // Dedup by callId — duplicate VoIP pushes for the same call (carrier
-    // retries, app warm/cold paths, etc.) used to overwrite activeCalls
-    // with a fresh UUID and trigger a SECOND CallKit incoming-call screen,
-    // breaking end/answer mapping. Reuse the existing UUID if the same
-    // callId was already reported.
-    var uuid: UUID! = nil
-    var alreadyReported = false
-    stateQueue.sync {
-      if let existing = activeCalls[callId] {
-        uuid = existing
-        alreadyReported = true
-        // Refresh payload in case the new push has richer fields
-        callPayloads[callId] = payload
-      } else {
-        uuid = UUID()
-        activeCalls[callId] = uuid
-        callPayloads[callId] = payload
-      }
-    }
-    if alreadyReported {
-      print("[ExpoCallKit] Duplicate VoIP push for \(callId) — reusing UUID, skipping reportNewIncomingCall")
-      completion()
-      return
-    }
-
-    let update = CXCallUpdate()
-    update.remoteHandle = CXHandle(type: .generic, value: callerName)
-    update.localizedCallerName = callerName
-    update.hasVideo = hasVideo
-    update.supportsGrouping = false
-    update.supportsUngrouping = false
-    update.supportsHolding = true
-    update.supportsDTMF = false
-
-    // Report to CallKit SYNCHRONOUSLY before calling completion
-    provider.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
-      if let error = error {
-        print("[ExpoCallKit] Failed to report incoming call: \(error.localizedDescription)")
-        // Clean up orphaned payload on failure
-        self?.stateQueue.sync {
-          self?.callPayloads.removeValue(forKey: callId)
-          self?.activeCalls.removeValue(forKey: callId)
-        }
-      } else {
-        print("[ExpoCallKit] Successfully reported incoming call to CallKit")
-
-        // If app is in FOREGROUND, immediately end CallKit call
-        // The in-app Modal (via WS) will handle the call instead
-        DispatchQueue.main.async { [weak self] in
-          guard let self = self else { return }
-          let appState = UIApplication.shared.applicationState
-          if appState == .active {
-            print("[ExpoCallKit] App in foreground - ending CallKit, WS Modal will handle")
-            let endAction = CXEndCallAction(call: uuid)
-            let transaction = CXTransaction(action: endAction)
-            self.callController?.request(transaction) { _ in }
-            self.stateQueue.sync {
-              self.activeCalls.removeValue(forKey: callId)
-              self.callPayloads.removeValue(forKey: callId)
-            }
-          } else {
-            print("[ExpoCallKit] App in background - CallKit will show native call screen")
-            self.safeSendEvent("onIncomingCall", [
-              "callId": callId,
-              "callerName": callerName,
-              "callerEmail": payload["caller_email"] as? String ?? "",
-              "conversationId": payload["conversation_id"] as? String ?? "",
-              "hasVideo": hasVideo
-            ])
-          }
-        }
-      }
-      // ONLY call completion AFTER CallKit has been notified
-      completion()
-    }
+  func notifyAudioDeactivated() {
+    safeSendEvent("onCallKitAudioDeactivated", [:])
   }
 }
 
@@ -559,10 +572,15 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     // tela bloqueada só fica no viva voz"). The JS side (/call) explicitly
     // toggles speaker for video calls via `setSpeakerEnabled(true)` once
     // mounted, so the native default should be earpiece (WhatsApp pattern).
+    //
+    // [bug 2026-05-15 #10] `.allowBluetooth` is deprecated since iOS 8.
+    // `.allowBluetoothA2DP` covers media playback over BT; `.allowBluetoothHFP`
+    // covers hands-free profile (in-call). Same set is used in didActivate
+    // and CXSetHeldCallAction.resume for consistency.
     do {
       try audioSession.setCategory(
         .playAndRecord, mode: .voiceChat,
-        options: [.allowBluetooth, .allowBluetoothA2DP, .allowBluetoothHFP]
+        options: [.allowBluetoothA2DP, .allowBluetoothHFP]
       )
     } catch {
       print("[ExpoCallKit] Audio category set failed (non-fatal): \(error)")
@@ -573,15 +591,12 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
 
   func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
     module?.callEnded(uuid: action.callUUID)
-    // Deactivate audio session when call ends so other apps (Spotify, Music)
-    // can reclaim the audio session. Without this, audio stays "stolen".
-    do {
-      let session = AVAudioSession.sharedInstance()
-      try session.setCategory(.ambient, mode: .default, options: [])
-      try session.setActive(false, options: [.notifyOthersOnDeactivation])
-    } catch {
-      print("[ExpoCallKit] Audio session deactivation failed: \(error)")
-    }
+    // [bug 2026-05-15 #12] Do NOT manually setActive(false) here.
+    // CallKit fires didDeactivate automatically after action.fulfill();
+    // calling setActive ourselves races with WebRTC engine teardown and
+    // the system's deactivation flow, which on some devices caused a
+    // brief audio glitch when ending a call back-to-back. Let CallKit
+    // own the deactivation lifecycle.
     action.fulfill()
   }
 
@@ -603,9 +618,10 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     } else {
       // Call resumed from hold — reactivate audio
       do {
+        // [bug 2026-05-15 #10] aligned BT options with didActivate.
         try session.setCategory(
           .playAndRecord, mode: .voiceChat,
-          options: [.allowBluetooth, .allowBluetoothA2DP, .allowBluetoothHFP]
+          options: [.allowBluetoothA2DP, .allowBluetoothHFP]
         )
         try session.setActive(true)
         try session.overrideOutputAudioPort(.none)
@@ -643,7 +659,11 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
       try audioSession.setCategory(
         .playAndRecord,
         mode: .voiceChat,
-        options: [.allowBluetooth, .allowBluetoothA2DP, .allowBluetoothHFP, .duckOthers]
+        // [bug 2026-05-15 #10] removed `.allowBluetooth` (deprecated). The
+        // A2DP + HFP options give us bluetooth headset support across modern
+        // iOS without the deprecation warning that breaks the build on newer
+        // Xcode toolchains.
+        options: [.allowBluetoothA2DP, .allowBluetoothHFP, .duckOthers]
       )
       try audioSession.setActive(true, options: [])
       // [bug 2026-05-15 #981] Force default routing (earpiece / Bluetooth /
@@ -684,9 +704,20 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
           if rtcSession.responds(to: setActiveSel) {
             rtcSession.perform(setActiveSel, with: NSNumber(value: true))
           }
+          // [bug 2026-05-15 #11] Flip manual-audio gate ON so WebRTC engine
+          // can finally start VPIO. AppDelegate sets useManualAudio=true and
+          // isAudioEnabled=false at launch; CallKit didActivate is the
+          // canonical place to flip it true.
+          let setEnabledSel = NSSelectorFromString("setIsAudioEnabled:")
+          if rtcSession.responds(to: setEnabledSel) {
+            rtcSession.perform(setEnabledSel, with: NSNumber(value: true))
+          }
         }
       }
     }
+    // [bug 2026-05-15 #9] Bridge to JS so /call can wait for CallKit to own
+    // the audio session before triggering LiveKit Room.connect.
+    module?.notifyAudioActivated()
   }
   func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
     print("[ExpoCallKit] Audio session deactivated")
@@ -695,69 +726,22 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     } catch {
       print("[ExpoCallKit] Failed to deactivate AVAudioSession: \(error)")
     }
-  }
-}
-
-// MARK: - PushKit Delegate
-private class VoipPushDelegate: NSObject, PKPushRegistryDelegate {
-  weak var module: ExpoCallKitModule?
-
-  init(module: ExpoCallKitModule) {
-    self.module = module
-    super.init()
-  }
-
-  func pushRegistry(_ registry: PKPushRegistry, didUpdate pushCredentials: PKPushCredentials, for type: PKPushType) {
-    guard type == .voIP else { return }
-    let token = pushCredentials.token.map { String(format: "%02x", $0) }.joined()
-    print("[ExpoCallKit] VoIP token received: \(token.prefix(8))...")
-    module?.voipTokenReceived(token: token)
-  }
-
-  func pushRegistry(_ registry: PKPushRegistry, didReceiveIncomingPushWith payload: PKPushPayload, for type: PKPushType, completion: @escaping () -> Void) {
-    guard type == .voIP else {
-      completion()
-      return
-    }
-    print("[ExpoCallKit] VoIP push received")
-
-    guard let module = self.module else {
-      // Module is nil (deallocated). Per Apple docs, we MUST report a call to
-      // CallKit before calling completion(), otherwise iOS will terminate
-      // the app and stop delivering VoIP pushes permanently.
-      print("[ExpoCallKit] WARNING: module is nil — reporting dummy call to satisfy Apple requirement")
-      let config = CXProviderConfiguration(localizedName: "Chatyy")
-      config.supportsVideo = true
-      let tempProvider = CXProvider(configuration: config)
-      let uuid = UUID()
-      let update = CXCallUpdate()
-      let callerName = (payload.dictionaryPayload["caller_name"] as? String) ?? "Unknown"
-      update.remoteHandle = CXHandle(type: .generic, value: callerName)
-      update.localizedCallerName = callerName
-      update.hasVideo = false
-
-      tempProvider.reportNewIncomingCall(with: uuid, update: update) { error in
-        if let error = error {
-          print("[ExpoCallKit] Dummy call report failed: \(error.localizedDescription)")
-        } else {
-          // Immediately end the dummy call since we can't handle it
-          tempProvider.reportCall(with: uuid, endedAt: nil, reason: .failed)
+    // [bug 2026-05-15 #11] Manual-audio gate OFF — stops WebRTC VPIO so the
+    // audio unit doesn't keep tickling the system session after CallKit
+    // releases it.
+    let RTCAudioSessionClass: AnyClass? = NSClassFromString("RTCAudioSession")
+    if let cls = RTCAudioSessionClass {
+      let sel = NSSelectorFromString("sharedInstance")
+      if (cls as AnyObject).responds(to: sel) {
+        let rtcSessionUnmanaged = (cls as AnyObject).perform(sel)
+        if let rtcSession = rtcSessionUnmanaged?.takeUnretainedValue() as? NSObject {
+          let setEnabledSel = NSSelectorFromString("setIsAudioEnabled:")
+          if rtcSession.responds(to: setEnabledSel) {
+            rtcSession.perform(setEnabledSel, with: NSNumber(value: false))
+          }
         }
-        completion()
       }
-      return
     }
-
-    // Pass completion to module - it MUST call completion AFTER reporting to CallKit
-    module.voipPushReceived(payload: payload.dictionaryPayload, completion: completion)
-  }
-
-  func pushRegistry(_ registry: PKPushRegistry, didInvalidatePushTokenFor type: PKPushType) {
-    print("[ExpoCallKit] VoIP token invalidated — requesting new one")
-    // Re-arm the registry so iOS issues a new token. WhatsApp does this so
-    // missed-call rate stays low across token rotations (~weekly).
-    DispatchQueue.main.async {
-      registry.desiredPushTypes = [.voIP]
-    }
+    module?.notifyAudioDeactivated()
   }
 }

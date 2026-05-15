@@ -760,7 +760,21 @@ export default function IncomingCallListener() {
     if (Platform.OS === 'ios' || Platform.OS === 'android') {
       // Listen for VoIP push incoming call event
       // ALWAYS populate callStateRef (needed for accept handler)
-      // In FOREGROUND: also dismiss CallKit, let WS Modal handle
+      // [bug 2026-05-15 #5] Removed the foreground endCall path. Apple's
+      // PushKit contract is "always report to CallKit, always honor the
+      // user's CallKit answer/decline action" — auto-ending CallKit when
+      // app is foreground caused two well-known regressions:
+      //   1) On the FIRST call after install / cold-start, the JS Modal
+      //      may not be mounted yet (cleanupIncomingCall runs before the
+      //      Modal listener); the call dies on both paths and the user
+      //      sees "missed call".
+      //   2) On Android the app sometimes reports `appState === 'active'`
+      //      while IncomingCallActivity is on top (50-500ms race), which
+      //      ended the call before the user could even tap Accept.
+      // Strategy now: leave CallKit alive, let the JS Modal sit ABOVE the
+      // native CallKit screen when foreground (CallKit shows once the JS
+      // Modal is dismissed via user action), and rely on CallKit as the
+      // single source of truth for accept/decline.
       cleanupIncomingCall = callKeep.addIncomingCallListener((data) => {
         console.log('[IncomingCall] CallKit onIncomingCall, callId=' + data.callId);
         // Only populate callStateRef if WS hasn't already set it with richer data
@@ -778,13 +792,6 @@ export default function IncomingCallListener() {
           console.log('[IncomingCall] onIncomingCall: populated callStateRef (no WS data yet)');
         } else {
           console.log('[IncomingCall] onIncomingCall: WS already populated callStateRef, keeping it');
-        }
-        // If app is truly in foreground (active), dismiss CallKit — WS Modal handles it
-        const appState = AppState.currentState;
-        console.log('[IncomingCall] onIncomingCall appState=' + appState);
-        if (appState === 'active') {
-          console.log('[IncomingCall] App in foreground — dismissing CallKit, Modal will handle');
-          callKeep.endCall(data.callId);
         }
       });
 
@@ -806,36 +813,24 @@ export default function IncomingCallListener() {
           setCallActive(true, data?.callId || callStateRef.current?.call_id || null);
           stopRingtone();
 
-          // [bug 2026-05-14 ios uplink-mic-silent] When user answers via
-          // native CallKit, AVAudioSession is owned by CallKit and activated
-          // BEFORE JS runs getUserMedia. The WebRTC C++ engine inspects
-          // RTCAudioSession at addTrack time and configures the VPIO audio
-          // unit accordingly — without an active mic input on the session,
-          // it allocates output-only and uplink is silent. Pre-fire the
-          // audio session activation HERE (before router.push) so by the
-          // time call.js creates the PC and runs addTrack, the session has
-          // input wired. Mirror what call.js does for outgoing calls.
-          if (Platform.OS === 'ios') {
-            try {
-              const ExpoAudioSession = require('../modules/expo-audio-session').default;
-              const isVideoCall = (callStateRef.current?.video || data?.hasVideo);
-              if (isVideoCall) {
-                ExpoAudioSession.activateForVideoCall?.();
-              } else {
-                ExpoAudioSession.activateForCall?.(false);
-              }
-              console.log('[IncomingCall] iOS: pre-armed AVAudioSession for native answer (uplink mic)');
-            } catch (e) {
-              console.warn('[IncomingCall] iOS audio pre-arm failed:', e?.message);
-            }
-            try {
-              const { RTCAudioSession } = require('@livekit/react-native-webrtc');
-              RTCAudioSession.audioSessionDidActivate?.();
-              RTCAudioSession.audioSessionSetActive?.(true);
-            } catch (e) {
-              console.warn('[IncomingCall] iOS RTCAudioSession activate failed:', e?.message);
-            }
-          }
+          // [bug 2026-05-15 #6] Removed JS-side audio pre-arming on iOS.
+          // The previous block called ExpoAudioSession.activateForVideoCall
+          // / activateForCall (which do setCategory + setActive) plus the
+          // react-native-webrtc RTCAudioSession.audioSessionDidActivate
+          // path — both racing CallKit's own provider:didActivate that
+          // fires after action.fulfill(). Three competing audio-session
+          // owners in a 200-800ms window produced the "answered but no
+          // audio" / "call drops immediately" bugs.
+          //
+          // The native CallKit path now owns the AVAudioSession lifecycle:
+          //   - AppDelegate.swift   pre-arms useManualAudio=true
+          //   - ExpoCallKitModule's provider:didActivate forwards to
+          //     RTCAudioSession (audioSessionDidActivate + setIsActive +
+          //     setIsAudioEnabled=true) so WebRTC engine sees the active
+          //     session before addTrack runs.
+          //   - LiveKit-side: app/_layout.js calls registerGlobals with
+          //     autoConfigureAudioSession=false; /call gates Room.connect
+          //     on the onCallKitAudioActivated event for callee path.
 
           // Android: dismiss IncomingCallActivity now that user accepted from
           // the native screen. Without this, the full-screen Activity lingers

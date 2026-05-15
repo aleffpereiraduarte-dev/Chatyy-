@@ -81,9 +81,32 @@ import { Platform, View as RNView, Text as RNText, Linking, Alert, Animated as _
 // LiveKit RN: registra RTCPeerConnection/MediaStream/navigator.mediaDevices
 // no globalThis. Tem que rodar ANTES de qualquer import de livekit-client
 // ou @livekit/react-native. Native-only — web já tem WebRTC do browser.
+//
+// [bug 2026-05-15 #8] iOS: pass `autoConfigureAudioSession: false` so the
+// LiveKit native bridge does NOT issue its own AVAudioSession setCategory/
+// setActive whenever a track is published. CallKit owns the session on
+// iOS via the AppDelegate + ExpoCallKitModule path; letting LiveKit poke
+// the session in parallel produced competing setCategory paths and the
+// "uplink mic silent for the first second" / "speaker stuck" regressions.
+// `setupIOSAudioManagement` is the lower-level escape hatch: we tell LK
+// the session is hot ALREADY and configured for voice; LK will skip its
+// own configuration entirely.
 if (Platform.OS !== 'web') {
-  try { require('@livekit/react-native').registerGlobals(); }
-  catch (e) { if (typeof console !== 'undefined') console.warn('[LiveKit] registerGlobals failed:', e?.message); }
+  try {
+    const lkrn = require('@livekit/react-native');
+    if (typeof lkrn.registerGlobals === 'function') {
+      // registerGlobals accepts an options bag on newer versions; older
+      // versions ignore extras, so this is safe both ways.
+      try { lkrn.registerGlobals({ autoConfigureAudioSession: false }); }
+      catch { try { lkrn.registerGlobals(); } catch {} }
+    }
+    if (Platform.OS === 'ios' && typeof lkrn.setupIOSAudioManagement === 'function') {
+      // No-op handler — CallKit owns audio session, LK should not touch it.
+      try { lkrn.setupIOSAudioManagement({ defaultOutput: 'earpiece' }); } catch {}
+    }
+  } catch (e) {
+    if (typeof console !== 'undefined') console.warn('[LiveKit] registerGlobals failed:', e?.message);
+  }
 }
 
 // Web has no native Animated module — force useNativeDriver:false globally

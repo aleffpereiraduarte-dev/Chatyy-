@@ -658,10 +658,23 @@ function CallScreenInner() {
     if (endedRef.current) return;
     ensureLiveKitRegistered();
 
-    // Start LK AudioSession on native (sets the right iOS category + Android
-    // mode for WebRTC voice routing). Idempotent — safe to call again on
-    // reconnect.
-    if (Platform.OS !== 'web' && LK_AudioSession) {
+    // [bug 2026-05-15 #7 + #9] LiveKit AudioSession lifecycle vs. CallKit.
+    //
+    // - On the CallKit-accept path (iOS callee, isCaller=0):
+    //   CallKit OWNS the AVAudioSession via the AppDelegate + module
+    //   provider:didActivate handlers. Calling LK_AudioSession.startAudioSession
+    //   here issues a competing setCategory + setActive against the
+    //   CallKit-owned session, which on cold-start cellular paths produced
+    //   the "uplink mic silent / call drops" race (3 paths fighting for the
+    //   session in a 200-800ms window). We now skip it and rely on the
+    //   onCallKitAudioActivated bridge event (set up in the mount effect)
+    //   that triggered this connect.
+    //
+    // - On the OUTGOING-call path (isCaller=1) and on Android (both
+    //   directions), there is no CallKit owning the session, so we still
+    //   call startAudioSession.
+    const skipLKAudioSession = Platform.OS === 'ios' && !isCaller;
+    if (Platform.OS !== 'web' && LK_AudioSession && !skipLKAudioSession) {
       try {
         // The RN AudioSession instance manages playAndRecord / voiceChat
         // category automatically. We just call startAudioSession.
@@ -679,23 +692,21 @@ function CallScreenInner() {
         } catch (eRoute) {
           console.warn('[Call] initial selectAudioOutput err:', eRoute?.message);
         }
-        // [bug 2026-05-15 #981] Belt-and-suspenders: also call native iOS
-        // overrideOutputAudioPort directly. LK's selectAudioOutput operates
-        // through the RTCAudioSession, but CallKit's didActivate may have
-        // already pinned the route via setCategory(.defaultToSpeaker). The
-        // ExpoCallKit.setSpeakerEnabled exposes the AVAudioSession override
-        // path so we fully control routing for both audio and video calls
-        // — especially on the lock-screen-answer path where CallKit owns
-        // the session before LK gets to it.
-        if (Platform.OS === 'ios') {
-          try {
-            const ck = require('../services/callkeep');
-            ck.setSpeakerEnabled?.(!!isVideoCall);
-          } catch {}
-        }
       } catch (e) {
         console.warn('[Call] LK AudioSession.startAudioSession failed:', e?.message);
       }
+    } else if (skipLKAudioSession) {
+      console.log('[Call] iOS callee: skipping LK_AudioSession (CallKit owns session)');
+    }
+    // [bug 2026-05-15 #981] Speaker route is still our call to make on iOS,
+    // regardless of who owns the session. CallKit's didActivate forces
+    // `.none` override (system default), then this nudges to speaker if
+    // video. Audio calls stay on earpiece.
+    if (Platform.OS === 'ios') {
+      try {
+        const ck = require('../services/callkeep');
+        ck.setSpeakerEnabled?.(!!isVideoCall);
+      } catch {}
     }
 
     // [bug 2026-05-15 livekit-server-side-diag]
@@ -1432,6 +1443,8 @@ function CallScreenInner() {
         if (endedRef.current || !mounted) return;
 
         // 60s safety: if no remote ever joins, hang up.
+        // (eslint-disable-next-line: line was inserted by the call-fix
+        // refactor; logic identical to pre-refactor.)
         callerTimeoutRef.current = setTimeout(() => {
           if (mounted && !endedRef.current && !peerConnected) {
             console.log('[Call] caller timeout — no remote joined');

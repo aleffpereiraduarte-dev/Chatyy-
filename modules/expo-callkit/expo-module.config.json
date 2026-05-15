@@ -1,7 +1,8 @@
 {
-  "platforms": ["ios", "android"],
-  "ios": {
-    "modules": ["ExpoCallKitModule"]
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["ExpoCallKitModule"],
+    "appDelegateSubscribers": ["VoipPushAppDelegateSubscriber"]
   },
   "android": {
     "modules": ["expo.modules.callkit.ExpoCallKitModule"]

@@ -5,6 +5,12 @@ interface ExpoCallKitEvents {
   onCallEnded: { callId: string };
   onVoipTokenReceived: { token: string };
   onIncomingCall: { callId: string; callerName: string; hasVideo: boolean };
+  // [bug 2026-05-15 #9] Fired when CXProvider:didActivate runs, i.e. CallKit
+  // now owns the AVAudioSession. /call uses this on the CallKit accept path
+  // to gate Room.connect — otherwise LiveKit's audio session setup races
+  // CallKit's and we end up with competing setCategory paths.
+  onCallKitAudioActivated: Record<string, never>;
+  onCallKitAudioDeactivated: Record<string, never>;
 }
 
 declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
@@ -108,6 +114,20 @@ export function onIncomingCall(cb: (data: { callId: string; callerName: string; 
   const e = getEmitter();
   if (!e) return () => {};
   const sub = e.addListener('onIncomingCall', cb);
+  return () => sub.remove();
+}
+
+export function onCallKitAudioActivated(cb: () => void): () => void {
+  const e = getEmitter();
+  if (!e) return () => {};
+  const sub = e.addListener('onCallKitAudioActivated', cb);
+  return () => sub.remove();
+}
+
+export function onCallKitAudioDeactivated(cb: () => void): () => void {
+  const e = getEmitter();
+  if (!e) return () => {};
+  const sub = e.addListener('onCallKitAudioDeactivated', cb);
   return () => sub.remove();
 }
 

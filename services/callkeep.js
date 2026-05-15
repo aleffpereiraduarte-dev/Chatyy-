@@ -343,5 +343,29 @@ function generateUUID() {
   });
 }
 
+/**
+ * [bug 2026-05-15 #9] iOS-only: listen for CallKit's didActivate so /call can
+ * gate LiveKit Room.connect on the CallKit accept path. Without this gate the
+ * RN-side audio session setup and CallKit's setCategory race each other in a
+ * 200-800ms window post-answer and the call can drop or come up mute.
+ */
+export function onCallKitAudioActivated(cb) {
+  if (!loadModule()) return () => {};
+  try {
+    return ExpoCallKit.onCallKitAudioActivated?.(cb) || (() => {});
+  } catch {
+    return () => {};
+  }
+}
+
+export function onCallKitAudioDeactivated(cb) {
+  if (!loadModule()) return () => {};
+  try {
+    return ExpoCallKit.onCallKitAudioDeactivated?.(cb) || (() => {});
+  } catch {
+    return () => {};
+  }
+}
+
 export const CallKeeper = null;
 export const isSetup = false;
