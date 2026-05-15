@@ -609,6 +609,64 @@ export default function LiveViewerScreen() {
     return () => { clearInterval(burst); clearInterval(slow); };
   }, [connected, liveEnded, paramSessionId, streamType]);
 
+  // Bug #978-7 fix — HTTP fallback poll for session-ended state.
+  //
+  // Root cause: viewer only learns the live ended via the `live_ended` WS
+  // event. If the viewer's WS is mid-reconnect (or never authed) at the
+  // moment the host ends, the event is dropped and the viewer is stuck on
+  // the "Conectando à live de X..." overlay until the 30s stream-stuck
+  // timer fires (and even then it only changes the message — viewer still
+  // sees the connecting card).
+  //
+  // Fix: while not-yet-connected, every 8s ask the backend whether this
+  // session is still in the active live list. If it's gone (or status !=
+  // 'live'), flip `liveEnded` so the "Live encerrada" view renders.
+  useEffect(() => {
+    if (connected || liveEnded) return undefined;
+    if (!paramSessionId) return undefined;
+    let alive = true;
+    let consecutiveMissing = 0;
+    const checkSession = async () => {
+      if (!alive || connected || liveEnded) return;
+      try {
+        const res = await api.liveList();
+        if (!alive) return;
+        const sessions = Array.isArray(res?.sessions)
+          ? res.sessions
+          : (Array.isArray(res) ? res : []);
+        // Match by id OR session_id (backend field varies between shapes).
+        const sidStr = String(paramSessionId);
+        const found = sessions.some(s => {
+          const id1 = s?.id != null ? String(s.id) : '';
+          const id2 = s?.session_id != null ? String(s.session_id) : '';
+          return id1 === sidStr || id2 === sidStr;
+        });
+        if (!found) {
+          // Two-strike rule: need 2 consecutive misses before declaring
+          // ended. liveList auto-expires stale sessions, but a transient
+          // backend hiccup shouldn't yank a viewer mid-stream.
+          consecutiveMissing += 1;
+          if (consecutiveMissing >= 2) {
+            setLiveEnded(true);
+          }
+        } else {
+          consecutiveMissing = 0;
+        }
+      } catch {
+        // Network blip — ignore, try again on next tick.
+      }
+    };
+    // Wait 8s before first poll so the WS race (auth → live_join → offer)
+    // has a chance to complete on normal networks. Then every 8s after.
+    const firstTimer = setTimeout(checkSession, 8000);
+    const interval = setInterval(checkSession, 8000);
+    return () => {
+      alive = false;
+      clearTimeout(firstTimer);
+      clearInterval(interval);
+    };
+  }, [connected, liveEnded, paramSessionId]);
+
   // Connect to signaling and WebRTC
   useEffect(() => {
     // Self-live short-circuit — don't open a WS or try to negotiate WebRTC
