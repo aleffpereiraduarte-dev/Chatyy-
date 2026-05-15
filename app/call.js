@@ -1321,7 +1321,13 @@ function CallScreenInner() {
         // ALL land sub-5s.
         if (autoAccepted && Platform.OS === 'android' && data?.call_id === callId) {
           const sinceMount = Date.now() - mountTimeRef.current;
-          if (sinceMount < 5000) {
+          // [2026-05-15] Bumped 5s → 20s because IncomingCallListener now
+          // navigates here IMMEDIATELY (no longer blocks on WS reconnect).
+          // call_accepted may take 10-15s to relay over WS on a cold-start
+          // accept. During that window the caller can still ship its 30s
+          // ring-timeout call_end, which used to slip past the old 5s
+          // guard and abort the freshly-accepted call.
+          if (sinceMount < 20000) {
             console.warn('[Call] Android phantom WS call_end suppressed (' + sinceMount + 'ms after mount, autoAccepted)');
             try { _diag?.('phantom_ws_call_end_suppressed', { sinceMount, reason: data?.reason || '' }); } catch {}
             return;

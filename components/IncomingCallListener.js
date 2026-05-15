@@ -1155,17 +1155,21 @@ export default function IncomingCallListener() {
             setCall(null);
             if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
 
-            // Force a clean WS reconnect — same as the iOS path. Without
-            // this, an accept that lands while the socket is dead (Android
-            // background killed it) sits forever waiting for `isConnected`
-            // and the user gets a "missed call" even though they tapped
-            // Atender. Killing + reconnecting forces auth + re-delivery of
-            // the pending offer.
+            // [2026-05-15 black-screen fix] Navigate to /call IMMEDIATELY.
+            // The previous flow waited for WS reconnect + token hydration
+            // before pushing — that took 6–26s on cold start, during which
+            // the user stared at a black screen ("Tela preta só quando
+            // atendo no push da ligação"). It also caused "atende e
+            // desliga": the caller's 30s ring timeout could fire before JS
+            // mounted /call, and the phantom-call_end guard (5s window)
+            // didn't cover the 10-15s WS-connect delay.
             //
-            // Token retry: cold-start from native answer wakes JS before
-            // AsyncStorage / SecureStore are hydrated. mailWs.token can be
-            // null for the first 1-3s. Without retry, the WS never connects
-            // and the call hangs at "Conectando...".
+            // New flow: push the route now so the user sees the call UI
+            // immediately. WS auth + call_accepted relay happens in the
+            // background; /call's connectToRoom will join LiveKit as soon
+            // as WS is up.
+            router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&autoAccepted=1`);
+
             (async () => {
               const mailWs = require('../services/websocket').default;
               let wsToken = null;
@@ -1186,14 +1190,12 @@ export default function IncomingCallListener() {
                 mailWs.reconnectAttempt = 0;
                 if (wsToken && typeof mailWs.connect === 'function') mailWs.connect(wsToken);
               } catch {}
-              let navigated = false;
               let acceptSent = false;
               let attempts = 0;
-
-              const poll = () => {
+              const trySend = () => {
                 attempts++;
-                if (navigated) return;
-                if (mailWs.isConnected && !acceptSent) {
+                if (acceptSent) return;
+                if (mailWs.isConnected) {
                   console.log('[IncomingCall] Android pending: WS connected, sending call_accepted to ' + callerEmail);
                   mailWs._send({
                     type: 'call_accepted',
@@ -1202,21 +1204,11 @@ export default function IncomingCallListener() {
                     target_email: callerEmail,
                   });
                   acceptSent = true;
-                }
-                if (acceptSent && !navigated) {
-                  navigated = true;
-                  router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&autoAccepted=1`);
                   return;
                 }
-                if (attempts < 30) {
-                  setTimeout(poll, 500);
-                } else if (!navigated) {
-                  navigated = true;
-                  console.log('[IncomingCall] Android pending: timeout, navigating anyway');
-                  router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&autoAccepted=1`);
-                }
+                if (attempts < 60) setTimeout(trySend, 500);
               };
-              poll();
+              trySend();
             })();
             return true;
           }
