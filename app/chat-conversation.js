@@ -19890,6 +19890,10 @@ export default function ChatConversationScreen() {
           setShowLocationPickerSheet(false);
           handleShareLocation(loc);
         }}
+        onLiveStart={(durationSec) => {
+          setShowLocationPickerSheet(false);
+          startLiveLocation(durationSec);
+        }}
         colors={colors}
         t={t}
       />

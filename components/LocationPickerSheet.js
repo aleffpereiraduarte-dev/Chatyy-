@@ -32,7 +32,13 @@ import { IconMapPin, IconX } from './Icons';
 
 const GOOGLE_STATIC = 'https://maps.googleapis.com/maps/api/staticmap';
 
-export default function LocationPickerSheet({ visible, onClose, onSend, colors, t }) {
+const LIVE_DURATIONS = [
+  { key: '15m', label: '15 min', seconds: 15 * 60 },
+  { key: '1h',  label: '1 hora', seconds: 60 * 60 },
+  { key: '8h',  label: '8 horas', seconds: 8 * 60 * 60 },
+];
+
+export default function LocationPickerSheet({ visible, onClose, onSend, onLiveStart, colors, t }) {
   const [loading, setLoading] = useState(true);
   const [coords, setCoords] = useState(null); // { latitude, longitude, accuracy }
   const [address, setAddress] = useState('');
@@ -238,6 +244,43 @@ export default function LocationPickerSheet({ visible, onClose, onSend, colors, 
                     : (t?.('chatConv.locationSend') || 'Enviar localização atual')}
                 </Text>
               </TouchableOpacity>
+
+              {/* Live location chips (WhatsApp-style: pin updates in real time
+                  until the selected duration expires) */}
+              {onLiveStart && (
+                <View style={{ marginTop: 18 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textSecondary, marginBottom: 8, letterSpacing: 0.5 }}>
+                    {(t?.('chatConv.liveLocation') || 'COMPARTILHAR AO VIVO').toUpperCase()}
+                  </Text>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    {LIVE_DURATIONS.map(d => (
+                      <TouchableOpacity
+                        key={d.key}
+                        onPress={() => {
+                          if (sending) return;
+                          setSending(true);
+                          onLiveStart?.(d.seconds);
+                        }}
+                        disabled={sending}
+                        style={{
+                          flex: 1,
+                          paddingVertical: 12,
+                          borderRadius: 22,
+                          borderWidth: 1,
+                          borderColor: colors.primary + '50',
+                          backgroundColor: colors.primary + '10',
+                          alignItems: 'center',
+                          opacity: sending ? 0.5 : 1,
+                        }}
+                      >
+                        <Text style={{ color: colors.primary, fontSize: 14, fontWeight: '700' }}>
+                          {d.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )}
             </>
           )}
         </View>
