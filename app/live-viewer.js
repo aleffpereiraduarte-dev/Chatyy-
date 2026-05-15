@@ -1396,20 +1396,38 @@ export default function LiveViewerScreen() {
   // every WS message to all subs of `live_${session_id}` so the host
   // receives it without server changes.
   //
-  // Before: the entire send was wrapped in `try { if(ws.OPEN) send() } catch`
-  // — if the WS was reconnecting (or paramSessionId fell through a stale
-  // closure) NOTHING happened: no toast, no state flip, no error. User taps
-  // "Pedir pra entrar", button stays unchanged → "não funciona". Fix: surface
-  // a visible toast on every code-path and flip optimistic state so the user
-  // always gets feedback, even when the WS is mid-reconnect (the host's
-  // requests inbox is already tolerant of duplicates by email).
+  // Bug #978-3 fix — "Pedir pra entrar" doesn't work.
+  //
+  // Two root causes ganged up:
+  //   a) The button only flipped its label to "Pedido enviado" — no visible
+  //      toast confirming the send. If the user happened to be looking at
+  //      the video (not the button) when they tapped, they had zero signal
+  //      that the request landed and assumed "não funciona".
+  //   b) The retry loop fires only once at 800ms cadence then gives up at 8s.
+  //      On cold-launch with slow WS handshake we miss the window — the
+  //      "sent" flag never flips, so the user sits with a "Pedido enviado"
+  //      label that never actually went out. Host inbox stays empty.
+  //
+  // Fix:
+  //   - Show a clear toast on every path ("Pedido enviado" on success;
+  //     "Enviando..." while retrying; "Falha — tente de novo" on giveup).
+  //   - Bump the giveup window to 15s and tighten the retry cadence to 500ms
+  //     so the first chance after WS auth lands grabs it.
+  //   - If we give up without sending, REVERT joinRequested so the user can
+  //     tap again (currently we left it stuck at "Pedido enviado" forever).
+  //   - Defer `showToast` invocation via a ref because it's defined later in
+  //     this file (closes the TDZ).
   const [joinRequested, setJoinRequested] = useState(false);
+  const showToastRef = useRef(null);
   const requestToJoin = useCallback(() => {
     if (joinRequested) return;
     if (!paramSessionId || !user?.email) {
       try { require('react-native').Alert.alert(t('live.aoVivo') || 'AO VIVO', t('live.requestSendFailed') || 'Não foi possível enviar o pedido — tente de novo'); } catch {}
       return;
     }
+    const fireToast = (text) => {
+      try { showToastRef.current?.(text); } catch {}
+    };
     let sent = false;
     try {
       const ws = wsRef.current;
@@ -1431,19 +1449,22 @@ export default function LiveViewerScreen() {
       // Optimistic flip + a tiny haptic so the user feels the tap landed.
       setJoinRequested(true);
       try { require('react-native').Vibration.vibrate(8); } catch {}
+      fireToast(t('live.requestSent') || 'Pedido enviado ao host');
       setTimeout(() => setJoinRequested(false), 60000); // allow re-request after 1 min
     } else {
       // WS reconnecting — flip state anyway so the user sees the tap took
-      // effect, and queue a single retry once the socket reopens. The host's
+      // effect, and queue a retry once the socket reopens. The host's
       // join-requests Set already dedupes by email so a stale duplicate is a
       // no-op even if both attempts land.
       setJoinRequested(true);
       try { require('react-native').Vibration.vibrate(8); } catch {}
+      fireToast(t('live.requestSending') || 'Enviando pedido…');
       // Codex root cause #8 — store retry timers in refs so unmount can clear
       // them. Previously these leaked: viewer back-navigates → `setInterval`
       // still ticks → WS reopened by another screen receives stale
       // `live_join_request` events.
       if (joinRetryTimerRef.current) clearInterval(joinRetryTimerRef.current);
+      let didSend = false;
       joinRetryTimerRef.current = setInterval(() => {
         try {
           const ws2 = wsRef.current;
@@ -1454,19 +1475,25 @@ export default function LiveViewerScreen() {
               viewer_email: user?.email,
               viewer_name: user?.name || (user?.email || '').split('@')[0],
             }));
+            didSend = true;
             clearInterval(joinRetryTimerRef.current);
             joinRetryTimerRef.current = null;
+            fireToast(t('live.requestSent') || 'Pedido enviado ao host');
           }
         } catch {}
-      }, 800);
-      // Give up after 8s — if still not connected the live session is
-      // probably toast anyway.
+      }, 500);
+      // Give up after 15s — if still not connected the live session is
+      // probably toast anyway. Revert button so user can retry.
       setTimeout(() => {
         if (joinRetryTimerRef.current) {
           clearInterval(joinRetryTimerRef.current);
           joinRetryTimerRef.current = null;
         }
-      }, 8000);
+        if (!didSend) {
+          setJoinRequested(false);
+          fireToast(t('live.requestSendFailed') || 'Falha ao enviar — tente de novo');
+        }
+      }, 15000);
       if (joinResetTimerRef.current) clearTimeout(joinResetTimerRef.current);
       joinResetTimerRef.current = setTimeout(() => setJoinRequested(false), 60000);
     }
@@ -1564,6 +1591,12 @@ export default function LiveViewerScreen() {
       Animated.timing(toastAnim, { toValue: 0, duration: 240, useNativeDriver: true }),
     ]).start(() => setToast(''));
   }, [toastAnim]);
+  // Bind showToast into the forward ref so requestToJoin (declared earlier in
+  // source order, before showToast) can surface confirmation toasts without
+  // hitting a temporal-dead-zone reference. See bug #978-3 fix above.
+  useEffect(() => {
+    showToastRef.current = showToast;
+  }, [showToast]);
 
   const handleScreenshot = useCallback(async () => {
     if (Platform.OS === 'web') {
