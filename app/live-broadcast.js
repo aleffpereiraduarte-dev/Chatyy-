@@ -2254,7 +2254,31 @@ export default function LiveBroadcastScreen() {
           <IconFilter size={18} color={activeFilter !== 'none' ? '#facc15' : '#fff'} />
         </TouchableOpacity>
         <TouchableOpacity
-          onPress={() => setSaveReplay(v => !v)}
+          // Bug #978-6 — surface a clear confirmation when toggling. Before
+          // the only feedback was the icon swap (Star ↔ StarFilled) which the
+          // host often missed if they were watching the video. Now we fire a
+          // ToastAndroid / Alert with the new state so the choice registers,
+          // and we note the 7-day TTL so the host knows what to expect.
+          onPress={() => {
+            setSaveReplay(v => {
+              const next = !v;
+              try {
+                const { ToastAndroid, Alert } = require('react-native');
+                const msg = next
+                  ? (t('live.saveReplayOn') || 'Replay será salvo por 7 dias')
+                  : (t('live.saveReplayOff') || 'Replay não será salvo');
+                if (Platform.OS === 'android' && ToastAndroid?.show) {
+                  ToastAndroid.show(msg, ToastAndroid.SHORT);
+                } else if (Platform.OS === 'ios' && Alert?.alert) {
+                  // iOS gets a tiny non-blocking note via the existing system
+                  // chip stack? Fall back to Alert for now — at least it's
+                  // unambiguous.
+                  Alert.alert(t('live.saveReplay') || 'Salvar replay', msg);
+                }
+              } catch {}
+              return next;
+            });
+          }}
           style={[styles.rightBtn, saveReplay && { backgroundColor: 'rgba(250,204,21,0.4)' }]}
           activeOpacity={0.7}
           accessibilityLabel={t('live.saveReplay') || 'Save replay'}
