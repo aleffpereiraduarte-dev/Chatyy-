@@ -773,6 +773,10 @@ export default function Profile({
   const [activeTab, setActiveTab] = useState('posts');
   const [viewer, setViewer] = useState({ open: false, startIdx: 0, list: 'posts' });
   const [storyViewer, setStoryViewer] = useState({ open: false, startIdx: 0 });
+  // [feat-10] Highlight viewer state — separate from storyViewer so opening a
+  // highlight doesn't clobber the live-stories starting index. items[] mirrors
+  // the shape StoryViewer expects (id, media_url, type, bg_color, ...).
+  const [highlightViewer, setHighlightViewer] = useState({ open: false, items: [], title: '', startIdx: 0, highlightId: null });
   // autoOpenStory path: chat status_reply tap routes here with the intent to
   // pop the story viewer open if the original status is still live (within
   // 24h). Fire once when stories load. Ref guard so swiping back/forward
@@ -890,6 +894,35 @@ export default function Profile({
         setNicknameValue(n);
       } catch {}
     })();
+  }, [identity?.email]);
+
+  // [feat-10, 2026-05-15] Story highlights — fetch persisted highlights from
+  // chat_status_highlights and merge into data.highlights. The render row
+  // was already wired but `data.highlights` was never populated, so on
+  // refresh users saw only the "+ Novo" tile (highlights they just created
+  // in-session disappeared the next time they opened the profile). Backend
+  // endpoint `status_highlight_list` is in chat.php since the previous push.
+  useEffect(() => {
+    if (!identity?.email) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await api.statusHighlightList?.(identity.email);
+        if (cancelled) return;
+        const list = r?.data?.highlights || r?.highlights || [];
+        if (!Array.isArray(list)) return;
+        // Normalize shape — cover_url is what the row renderer expects.
+        const normalized = list.map((h) => ({
+          id: h.id,
+          title: h.name || h.title || '',
+          cover_url: h.cover_url || '',
+          status_ids: Array.isArray(h.status_ids) ? h.status_ids : [],
+          count: h.count || (Array.isArray(h.status_ids) ? h.status_ids.length : 0),
+        }));
+        setData((prev) => (prev ? { ...prev, highlights: normalized } : prev));
+      } catch {}
+    })();
+    return () => { cancelled = true; };
   }, [identity?.email]);
 
   // Live detection — Instagram parity. When the profile owner is currently
@@ -1297,8 +1330,51 @@ export default function Profile({
         )}
         {highlights.map(h => {
           const cover = h.cover_url ? resolveMedia(h.cover_url) : null;
+          // [feat-10] Tap → resolve items via status_highlight_items + open
+          // the existing StoryViewer. Long-press (self) → delete with
+          // confirmation. Mirrors Instagram's interaction grammar.
+          const openHighlight = async () => {
+            try {
+              const r = await api.statusHighlightItems?.(h.id);
+              const items = r?.data?.items || r?.items || [];
+              if (!Array.isArray(items) || items.length === 0) {
+                Alert.alert(
+                  t?.('profile.highlightEmpty') || 'Destaque vazio',
+                  t?.('profile.highlightExpiredAll') || 'Esses status já não existem mais.'
+                );
+                return;
+              }
+              setHighlightViewer({ open: true, items, title: h.title || '', startIdx: 0, highlightId: h.id });
+            } catch (e) {
+              Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Falhou');
+            }
+          };
+          const promptDelete = () => {
+            if (!isSelf) return;
+            Alert.alert(
+              t?.('profile.deleteHighlightTitle') || 'Apagar destaque?',
+              t?.('profile.deleteHighlightHint') || 'Os status originais não são afetados.',
+              [
+                { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+                { text: t?.('common.delete') || 'Apagar', style: 'destructive', onPress: async () => {
+                  try {
+                    await api.statusHighlightDelete?.(h.id);
+                    setData(prev => prev ? { ...prev, highlights: (prev.highlights || []).filter(x => x.id !== h.id) } : prev);
+                  } catch {}
+                }},
+              ]
+            );
+          };
           return (
-            <TouchableOpacity key={h.id} activeOpacity={0.85} style={{ alignItems: 'center', width: SIZE + 8 }}>
+            <TouchableOpacity
+              key={h.id}
+              activeOpacity={0.85}
+              style={{ alignItems: 'center', width: SIZE + 8 }}
+              onPress={openHighlight}
+              onLongPress={promptDelete}
+              delayLongPress={350}
+              accessibilityLabel={(t?.('profile.openHighlight') || 'Abrir destaque') + ' ' + (h.title || '')}
+            >
               <View style={{
                 width: RING, height: RING, borderRadius: RING / 2,
                 borderWidth: 1.5, borderColor: borderTone,
@@ -2072,6 +2148,32 @@ export default function Profile({
     />
   );
 
+  // [feat-10] Highlight viewer — same StoryViewer component, but driven by
+  // items resolved via status_highlight_items (which side-steps the 24h
+  // expires_at filter so destacados continuam acessíveis para sempre).
+  const highlightViewerNode = (
+    <StoryViewer
+      visible={highlightViewer.open}
+      stories={highlightViewer.items}
+      startIdx={highlightViewer.startIdx}
+      ownerName={(highlightViewer.title || (identity?.name || ''))}
+      ownerEmail={identity?.email || ''}
+      onClose={() => setHighlightViewer({ open: false, items: [], title: '', startIdx: 0, highlightId: null })}
+      isSelf={!!actions?.is_self}
+      t={t}
+      onReply={async (story, text) => {
+        try {
+          const email = identity?.email;
+          if (!email) return;
+          await api.apiCall?.('status_reply', { status_id: story?.id, to_email: email, content: text }, 'POST');
+        } catch {}
+      }}
+      onReact={async (story, emoji) => {
+        try { await api.apiCall?.('status_react', { status_id: story?.id, emoji }, 'POST'); } catch {}
+      }}
+    />
+  );
+
   const menuNode = !actions.is_self && identity ? (
     <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
       <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }} onPress={() => setMenuOpen(false)}>
@@ -2302,6 +2404,7 @@ export default function Profile({
         </ScrollView>
         {viewerNode}
         {storyViewerNode}
+        {highlightViewerNode}
         {editNode}
         {settingsNode}
         {followersNode}
@@ -2324,6 +2427,7 @@ export default function Profile({
     extras={<>
       {viewerNode}
       {storyViewerNode}
+      {highlightViewerNode}
       {editNode}
       {settingsNode}
       {followersNode}

@@ -6927,6 +6927,72 @@ function handleChatAction($action) {
             break;
         }
 
+        // ────────────────────────────────────────────────────────────
+        // status_highlight_items — resolve a highlight's `status_ids` JSONB
+        // to the actual status rows (media_url, type, bg_color, meta).
+        // Skips the expires_at filter so destacados continue rendering after
+        // the 24h window — that's the whole point of saving them.
+        //
+        // Privacy: any caller that can fetch the owner's profile can see the
+        // highlight (highlights are public-on-profile, same surface as the
+        // user's avatar + handle). No follower-only gating at this layer.
+        // ────────────────────────────────────────────────────────────
+        case 'status_highlight_items': {
+            $user = requireChatAuth();
+            $highlightId = (int)($input['highlight_id'] ?? 0);
+            if (!$highlightId) jsonResponse(false, null, 'highlight_id required', 400);
+            try {
+                $st = $db->prepare("SELECT id, owner_email, name, status_ids FROM chat_status_highlights WHERE id = :id");
+                $st->execute([':id' => $highlightId]);
+                $row = $st->fetch(PDO::FETCH_ASSOC);
+                if (!$row) jsonResponse(false, null, 'Highlight not found', 404);
+
+                $ids = json_decode($row['status_ids'] ?: '[]', true);
+                if (!is_array($ids)) $ids = [];
+                $ids = array_values(array_filter(array_map('intval', $ids)));
+                if (empty($ids)) {
+                    jsonResponse(true, ['items' => [], 'highlight_id' => $highlightId, 'name' => $row['name'] ?? '']);
+                    break;
+                }
+
+                $placeholders = implode(',', array_fill(0, count($ids), '?'));
+                $sql = "SELECT id, email, content, type, media_url, bg_color, created_at, expires_at, meta
+                        FROM chat_user_status
+                        WHERE id IN ($placeholders) AND LOWER(email) = LOWER(?)";
+                $params = array_merge($ids, [$row['owner_email']]);
+                $q = $db->prepare($sql);
+                $q->execute($params);
+                $rowsRaw = $q->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+                // Preserve curated order — important so the viewer plays the
+                // highlight in the sequence the owner chose, not by recency.
+                $byId = [];
+                foreach ($rowsRaw as $r) { $byId[(int)$r['id']] = $r; }
+                $items = [];
+                foreach ($ids as $sid) {
+                    if (!isset($byId[$sid])) continue;
+                    $r = $byId[$sid];
+                    if (!empty($r['meta']) && is_string($r['meta'])) {
+                        $decoded = json_decode($r['meta'], true);
+                        if (is_array($decoded)) $r['meta'] = $decoded;
+                    }
+                    $r['id'] = (int)$r['id'];
+                    // Parity with status_list response shape.
+                    $r['background'] = $r['bg_color'] ?? null;
+                    $items[] = $r;
+                }
+                jsonResponse(true, [
+                    'items' => $items,
+                    'highlight_id' => $highlightId,
+                    'name' => $row['name'] ?? '',
+                ]);
+            } catch (Throwable $e) {
+                error_log('[status_highlight_items] ' . $e->getMessage());
+                jsonResponse(false, null, 'Load failed', 500);
+            }
+            break;
+        }
+
         // ============================================================
         // status_mute / status_unmute — silenciar status de um contato.
         // Stored in chat_status_mutes table (auto-created idempotent).

@@ -4854,6 +4854,12 @@ export async function statusHighlightAddStatus(highlightId, statusId) {
 export async function statusHighlightDelete(highlightId) {
   return apiCall('status_highlight_delete', { highlight_id: highlightId }, 'POST');
 }
+// Resolve a highlight's curated status ids → full status rows (media_url, type,
+// bg_color, meta, ...). Skips the 24h expires_at filter so highlights persist
+// after the source statuses age out. See chat.php case 'status_highlight_items'.
+export async function statusHighlightItems(highlightId) {
+  return apiCall('status_highlight_items', { highlight_id: highlightId }, 'POST');
+}
 
 // Voice comment on a feed post — multipart upload of an audio blob/uri.
 // Returns { success, data: { id, audio_url, ... } } same shape as feedComment.
