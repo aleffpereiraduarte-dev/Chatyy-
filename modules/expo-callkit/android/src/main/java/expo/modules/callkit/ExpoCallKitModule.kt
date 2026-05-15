@@ -53,6 +53,57 @@ class ExpoCallKitModule : Module() {
       return acceptingCallIds.containsKey(callId)
     }
 
+    // [2026-05-15 #977 cold-start phantom decline]
+    // The in-memory `acceptingCallIds` HashMap doesn't survive a process
+    // kill. FCM cold-start scenarios can recycle the JVM mid-accept (e.g.,
+    // Android tears down the FCM-spawned process once the service stops),
+    // leaving the new process with an empty map → any phantom decline that
+    // fires AFTER cold-start (notification cleared by system, retry intent
+    // delivered, etc.) gets through the guard and emits onCallEnded → JS
+    // ships WS call_end → caller hangs up. Persist the accept timestamp
+    // to SharedPreferences so the guard survives process death. Cleanup
+    // expired entries opportunistically on each read.
+    private const val KEY_ACCEPTED_CALLS = "accepted_call_ids"
+    private const val ACCEPT_TTL_MS = 60_000L
+
+    fun persistCallAccepting(context: Context, callId: String) {
+      if (callId.isEmpty()) return
+      try {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val raw = prefs.getString(KEY_ACCEPTED_CALLS, "{}") ?: "{}"
+        val obj = try { org.json.JSONObject(raw) } catch (_: Exception) { org.json.JSONObject() }
+        val now = System.currentTimeMillis()
+        // Cleanup stale
+        val keys = obj.keys()
+        val toRemove = mutableListOf<String>()
+        while (keys.hasNext()) {
+          val k = keys.next()
+          if (now - obj.optLong(k, 0L) > ACCEPT_TTL_MS) toRemove.add(k)
+        }
+        toRemove.forEach { obj.remove(it) }
+        obj.put(callId, now)
+        prefs.edit().putString(KEY_ACCEPTED_CALLS, obj.toString()).apply()
+        Log.d(TAG, "persistCallAccepting: callId=$callId (TTL=${ACCEPT_TTL_MS}ms)")
+      } catch (e: Exception) {
+        Log.w(TAG, "persistCallAccepting failed: ${e.message}")
+      }
+    }
+
+    fun isCallAcceptingPersisted(context: Context, callId: String): Boolean {
+      if (callId.isEmpty()) return false
+      try {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val raw = prefs.getString(KEY_ACCEPTED_CALLS, null) ?: return false
+        val obj = org.json.JSONObject(raw)
+        val ts = obj.optLong(callId, 0L)
+        if (ts == 0L) return false
+        return (System.currentTimeMillis() - ts) <= ACCEPT_TTL_MS
+      } catch (e: Exception) {
+        Log.w(TAG, "isCallAcceptingPersisted failed: ${e.message}")
+        return false
+      }
+    }
+
     fun emitCallAnswered(callId: String) {
       markCallAccepting(callId)
       val inst = instance.get()
@@ -272,6 +323,15 @@ class ExpoCallKitModule : Module() {
         }
       }
       null as Map<String, Any>?
+    }
+
+    // [2026-05-15 #977] JS-side belt-and-suspenders. IncomingCallListener
+    // calls this from the onCallEnded handler — if the callId is in our
+    // persisted accept set (within 60s TTL), the end is almost certainly a
+    // phantom from the cold-start cancelNotification race and JS must NOT
+    // ship a WS call_end (which would echo back and end the real call).
+    Function("isAcceptingPersisted") { callId: String ->
+      isCallAcceptingPersisted(context, callId)
     }
 
     Function("getDiagnostics") {

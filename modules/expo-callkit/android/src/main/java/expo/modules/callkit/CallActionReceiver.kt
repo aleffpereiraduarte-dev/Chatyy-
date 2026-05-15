@@ -24,7 +24,16 @@ class CallActionReceiver : BroadcastReceiver() {
         // is dismissed because the service is stopped during accept — without
         // this guard, emitCallEnded leaks to JS → onEnd handler sends call_end
         // to the WS server → caller A sees "call ended" while B is connecting.
-        if (ExpoCallKitModule.isCallAccepting(callId)) {
+        //
+        // [2026-05-15 #977] Check BOTH the in-memory set AND the persisted
+        // SharedPreferences flag. The in-memory set survives module re-init
+        // but not full process death — FCM cold-start scenarios kill the JVM
+        // mid-accept (the FCM service is one-shot, Android reaps the process
+        // ~5s after stopSelf), and the phantom decline that fires after the
+        // reborn process has an EMPTY HashMap → guard bypassed. The persisted
+        // flag survives any number of process kills within the 60s TTL.
+        if (ExpoCallKitModule.isCallAccepting(callId) ||
+            ExpoCallKitModule.isCallAcceptingPersisted(context, callId)) {
           Log.d(TAG, "ACTION_DECLINE_CALL suppressed for callId=$callId (accept in flight)")
           return
         }

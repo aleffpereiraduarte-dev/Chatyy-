@@ -201,7 +201,21 @@ object CallNotificationService {
       .setFullScreenIntent(fullScreenPendingIntent, true)
       .addAction(0, "Recusar", declinePendingIntent)
       .addAction(0, "Atender", acceptPendingIntent)
-      .setDeleteIntent(declinePendingIntent)
+      // [2026-05-15 #977 cold-start phantom decline]
+      // Used to be `.setDeleteIntent(declinePendingIntent)` — intended to
+      // catch user-swipe dismissals, but `setOngoing(true)` already
+      // prevents user swipes. On accept, IncomingCallActivity.onAccept
+      // calls cancelNotification + stopRingingService, which tears down
+      // the foreground service. Android then fires deleteIntent as a
+      // side-effect of clearing the foreground notification, which
+      // routed into the decline path and shipped a phantom WS call_end
+      // to the caller. The phantom round-tripped and ended the call
+      // right after /call mounted (user saw "Chamada encerrada" + home).
+      // The `acceptingCallIds` HashMap guard didn't help because the FCM
+      // process is often killed and reborn during cold-start accept,
+      // wiping the in-memory set. Removing this is safe: the only
+      // user-initiated decline paths are the Recusar action above and
+      // IncomingCallActivity.onDecline (the red button).
 
     if (largeIcon != null) {
       builder.setLargeIcon(largeIcon)

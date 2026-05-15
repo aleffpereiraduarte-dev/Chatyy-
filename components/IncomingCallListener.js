@@ -1030,6 +1030,29 @@ export default function IncomingCallListener() {
               return;
             }
           }
+          // [2026-05-15 #977 cold-start phantom decline guard]
+          // Android cold-start accept flow: IncomingCallActivity.onAccept fires
+          // emitCallAnswered → JS may be in mid-mount, RN bridge not ready.
+          // Native then tears down the foreground notification (cancelNotification
+          // + stopRingingService), which CAN deliver a phantom deleteIntent →
+          // ACTION_DECLINE_CALL → emitCallEnded. Native fixes A+B handle most
+          // of this (removed setDeleteIntent + persisted SharedPreferences
+          // accept flag), but if a stale legacy build still triggers it OR a
+          // newly-cleared notification fires deleteIntent before the persisted
+          // flag is observed, this JS guard catches it. We peek (not consume)
+          // the pending call via isCallAcceptingPersisted — non-destructive,
+          // so handleAndroidPendingCall at +1s still finds the data.
+          if (Platform.OS === 'android' && eventData?.callId) {
+            try {
+              const ExpoCallKit = require('../modules/expo-callkit');
+              const persistedAccept = ExpoCallKit.isAcceptingPersisted?.(eventData.callId);
+              if (persistedAccept) {
+                console.warn('[IncomingCall] Android: ignoring onCallEnded — persisted accept matches', eventData.callId);
+                voipDiag('android_phantom_end_ignored', eventData.callId, { source: 'persisted_accept' });
+                return;
+              }
+            } catch {}
+          }
 
           // Dedup: WS-server log shows 8x call_end spam per call (4 from each
           // side fired within 3s). Don't send WS call_end if we just sent one

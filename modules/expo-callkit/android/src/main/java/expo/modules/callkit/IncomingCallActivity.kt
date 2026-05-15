@@ -417,6 +417,13 @@ class IncomingCallActivity : AppCompatActivity() {
       this, callId ?: "", callerName ?: "", callerEmail ?: "", conversationId ?: "", hasVideo
     )
 
+    // [2026-05-15 #977] Persist accept flag too, BEFORE cancelNotification +
+    // stopRingingService. CallActionReceiver checks this on every deleteIntent
+    // delivery, including ones that fire after process death (FCM cold-start
+    // kill). Without persistence, the in-memory acceptingCallIds map is empty
+    // in the reborn process and the phantom decline gets through.
+    ExpoCallKitModule.persistCallAccepting(this, callId ?: "")
+
     // Try to send event to JS (may fail if app is dead)
     ExpoCallKitModule.emitCallAnswered(callId ?: "")
 
