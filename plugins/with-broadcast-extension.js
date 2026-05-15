@@ -296,11 +296,58 @@ function withBroadcastPodTarget(config) {
       // Insert before the LAST top-level `end`. Robust against inner
       // if/case/def/etc blocks because their `end`s are always indented.
       const lines = pod.split('\n');
-      let mainTargetEndLine = -1;
+
+      // [2026-05-15 fix v5] Strategy: locate `target 'Chatyy' do` SPECIFICALLY,
+      // then find the matching close `end`. The CI Podfile has TWO top-level
+      // targets — expo-share-intent injects `target 'ShareExtension' do` AT
+      // TOP LEVEL alongside `target 'Chatyy' do`. v4's "last top-level end"
+      // pulled ShareExtension's close, putting our nested target inside
+      // ShareExtension. CocoaPods then can't find a host for the broadcast
+      // ext because it's nested in the wrong app target.
+      //
+      // To find the close of `target 'Chatyy' do`, count ALL block openers
+      // (do/if/unless/case/def/class/module/begin/while/until) at any line
+      // start (not modifier-position) and decrement on `end`. Robust against
+      // post_install blocks AND if/else internals.
+      let chatyyLine = -1;
       for (let i = 0; i < lines.length; i++) {
-        // Top-level `end` = column 0, exactly `end` (optional trailing space).
-        if (/^end\s*$/.test(lines[i])) mainTargetEndLine = i;
+        if (/^\s*target\s+['"]Chatyy['"]\s+do\b/.test(lines[i])) {
+          chatyyLine = i;
+          break;
+        }
       }
+      if (chatyyLine === -1) {
+        console.warn('[with-broadcast-extension] No `target "Chatyy" do` found — skipping');
+        return cfg;
+      }
+
+      // Count balance from chatyyLine forward. Block opener = `do`, `if`,
+      // `unless`, `case`, `def`, `class`, `module`, `begin`, `while`, `until`,
+      // `for` AT START OF LINE (after whitespace). NOT as modifier suffix.
+      let depth = 1;
+      let mainTargetEndLine = -1;
+      for (let i = chatyyLine + 1; i < lines.length; i++) {
+        const line = lines[i];
+        // Strip leading whitespace for keyword detection
+        const stripped = line.replace(/^\s+/, '');
+        // Opener `do` at end of line (block syntax)
+        if (/\bdo\b(\s*\|[^|]*\|)?\s*$/.test(line)) depth++;
+        // Opener keywords at line start (statement, not modifier)
+        else if (/^(if|unless|case|def|class|module|begin|while|until|for)\b/.test(stripped)
+                 && !/\b(if|unless|while|until)\s+\w+\s*[<>=!]/.test(line)) {
+          depth++;
+        }
+        // Closer
+        if (/^end\b/.test(stripped)) {
+          depth--;
+          if (depth === 0) { mainTargetEndLine = i; break; }
+        }
+      }
+      if (mainTargetEndLine === -1) {
+        console.warn('[with-broadcast-extension] Could not match close end of target Chatyy — skipping');
+        return cfg;
+      }
+      console.log(`[with-broadcast-extension] target 'Chatyy' do @ line ${chatyyLine + 1}, close end @ line ${mainTargetEndLine + 1}`);
       if (mainTargetEndLine === -1) {
         console.warn('[with-broadcast-extension] No top-level `end` found — appending at EOF as fallback');
         pod += `\n\ntarget '${EXT_NAME}' do\n  platform :ios, '15.0'\n  pod 'LiveKitClient', '~> 2.0'\nend\n`;
