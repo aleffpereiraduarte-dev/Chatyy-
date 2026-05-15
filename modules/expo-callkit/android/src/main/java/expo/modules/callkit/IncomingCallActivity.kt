@@ -60,11 +60,12 @@ class IncomingCallActivity : AppCompatActivity() {
     super.onCreate(savedInstanceState)
 
     callId = intent.getStringExtra("call_id")
-    callerEmail = intent.getStringExtra("caller_email") ?: ""
+    val emailExtra = intent.getStringExtra("caller_email") ?: ""
+    callerEmail = emailExtra
     // [#978-2] Email-local-part fallback so JS never receives the literal
     // "Unknown" sentinel (which it then displayed as "Contato desconhecido").
     callerName = intent.getStringExtra("caller_name")?.takeIf { it.isNotBlank() }
-      ?: callerEmail.substringBefore('@').takeIf { it.isNotBlank() }
+      ?: emailExtra.substringBefore('@').takeIf { it.isNotBlank() }
       ?: "Chamada"
     callerAvatar = intent.getStringExtra("caller_avatar") ?: ""
     conversationId = intent.getStringExtra("conversation_id") ?: ""
