@@ -445,6 +445,11 @@ class IncomingCallActivity : AppCompatActivity() {
       launchIntent.putExtra("caller_email", callerEmail)
       launchIntent.putExtra("conversation_id", conversationId)
       launchIntent.putExtra("has_video", hasVideo)
+      // [bug 2026-05-15 #981] Signal MainActivity to apply SHOW_WHEN_LOCKED +
+      // requestDismissKeyguard. Lets the user see /call ABOVE the keyguard so
+      // the audio path connects + end-call works without forcing unlock.
+      launchIntent.putExtra("from_call_accept", true)
+      launchIntent.putExtra("accept_call_id", callId)
       startActivity(launchIntent)
     }
 

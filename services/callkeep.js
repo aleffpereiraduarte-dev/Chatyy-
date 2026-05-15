@@ -219,6 +219,17 @@ export function notifyAppReady() {
   } catch {}
 }
 
+// [bug 2026-05-15 #981] Toggle iOS speaker mode at runtime. Native default
+// is earpiece (audio call); /call calls this with true on mount when the
+// call is video, or on the user's "speaker" button press. No-op on Android
+// (Android speaker is managed via in-call manager / AudioManager).
+export function setSpeakerEnabled(enabled) {
+  if (!loadModule()) return;
+  try {
+    ExpoCallKit.setSpeakerEnabled?.(!!enabled);
+  } catch {}
+}
+
 export function reportConnected(callId) {
   // Not needed - CallKit handles via answer action
 }

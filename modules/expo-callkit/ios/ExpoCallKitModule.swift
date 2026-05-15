@@ -149,6 +149,19 @@ public class ExpoCallKitModule: Module {
       return nil
     }
 
+    // [bug 2026-05-15 #981] JS-side speaker toggle for video calls.
+    // Native default is earpiece (audio-call WhatsApp pattern); /call calls
+    // this with true on mount when the call is video, or on the user's
+    // explicit "speaker" button press.
+    Function("setSpeakerEnabled") { (enabled: Bool) -> Void in
+      let session = AVAudioSession.sharedInstance()
+      do {
+        try session.overrideOutputAudioPort(enabled ? .speaker : .none)
+      } catch {
+        print("[ExpoCallKit] setSpeakerEnabled(\(enabled)) failed: \(error)")
+      }
+    }
+
     Function("getDiagnostics") { () -> [String: Any] in
       let callCount = self.stateQueue.sync { self.activeCalls.count }
       return [
@@ -540,11 +553,18 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     // — that handler (already implemented below) is where the actual
     // activation happens. This is the "answer fails on cold start" bug.
     let audioSession = AVAudioSession.sharedInstance()
+    // [bug 2026-05-15 #981 lock-screen viva-voz] Removed `.defaultToSpeaker`.
+    // When CallKit answers from the lock screen, this option forced every
+    // audio call to route to the loudspeaker (user complaint: "atendo com
+    // tela bloqueada só fica no viva voz"). The JS side (/call) explicitly
+    // toggles speaker for video calls via `setSpeakerEnabled(true)` once
+    // mounted, so the native default should be earpiece (WhatsApp pattern).
     do {
-      try audioSession.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
+      try audioSession.setCategory(
+        .playAndRecord, mode: .voiceChat,
+        options: [.allowBluetooth, .allowBluetoothA2DP, .allowBluetoothHFP]
+      )
     } catch {
-      // Even setCategory failure shouldn't block the answer — log and continue.
-      // CallKit's didActivate will retry the configuration anyway.
       print("[ExpoCallKit] Audio category set failed (non-fatal): \(error)")
     }
     module?.callAnswered(uuid: action.callUUID)
@@ -583,8 +603,12 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     } else {
       // Call resumed from hold — reactivate audio
       do {
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetoothHFP])
+        try session.setCategory(
+          .playAndRecord, mode: .voiceChat,
+          options: [.allowBluetooth, .allowBluetoothA2DP, .allowBluetoothHFP]
+        )
         try session.setActive(true)
+        try session.overrideOutputAudioPort(.none)
       } catch {
         print("[ExpoCallKit] Resume audio activation failed: \(error)")
         action.fail()
@@ -619,9 +643,15 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
       try audioSession.setCategory(
         .playAndRecord,
         mode: .voiceChat,
-        options: [.allowBluetooth, .allowBluetoothA2DP, .duckOthers]
+        options: [.allowBluetooth, .allowBluetoothA2DP, .allowBluetoothHFP, .duckOthers]
       )
       try audioSession.setActive(true, options: [])
+      // [bug 2026-05-15 #981] Force default routing (earpiece / Bluetooth /
+      // headset — whatever the system picks). Without this, a previous
+      // setCategory(.defaultToSpeaker) leaves the route override pinned to
+      // speaker even after we drop the option. `.none` is the canonical
+      // LiveKit/WhatsApp workaround.
+      try audioSession.overrideOutputAudioPort(.none)
     } catch {
       print("[ExpoCallKit] Failed to configure AVAudioSession: \(error)")
     }

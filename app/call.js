@@ -679,6 +679,20 @@ function CallScreenInner() {
         } catch (eRoute) {
           console.warn('[Call] initial selectAudioOutput err:', eRoute?.message);
         }
+        // [bug 2026-05-15 #981] Belt-and-suspenders: also call native iOS
+        // overrideOutputAudioPort directly. LK's selectAudioOutput operates
+        // through the RTCAudioSession, but CallKit's didActivate may have
+        // already pinned the route via setCategory(.defaultToSpeaker). The
+        // ExpoCallKit.setSpeakerEnabled exposes the AVAudioSession override
+        // path so we fully control routing for both audio and video calls
+        // — especially on the lock-screen-answer path where CallKit owns
+        // the session before LK gets to it.
+        if (Platform.OS === 'ios') {
+          try {
+            const ck = require('../services/callkeep');
+            ck.setSpeakerEnabled?.(!!isVideoCall);
+          } catch {}
+        }
       } catch (e) {
         console.warn('[Call] LK AudioSession.startAudioSession failed:', e?.message);
       }
