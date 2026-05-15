@@ -4,7 +4,7 @@
 // in the buildSettings it generates, but our CI uses Manual signing across
 // all targets (the main app + ShareExtension are already Manual). Leaving
 // Broadcast on Automatic causes xcodebuild to fail with
-// "No profiles for 'com.onemundo.mail.broadcastupload' were found" because
+// "No profiles for 'com.onemundo.mail.broadcast' were found" because
 // Automatic looks for an Xcode-managed profile in the keychain that doesn't
 // exist on the GitHub Actions runner.
 //
