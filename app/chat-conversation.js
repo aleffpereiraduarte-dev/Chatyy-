@@ -2870,8 +2870,11 @@ window.addEventListener('message', function(e){var d=e&&e.data; if(d&&d.type==='
   // We keep `gmapsHtml` + `gKeylessEmbed` ready behind a feature flag so
   // re-enabling billing is a one-line revert.
   const gKeylessEmbed = `<!DOCTYPE html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/><style>html,body{margin:0;padding:0;width:100%;height:100%;background:#000}iframe{border:0;width:100%;height:100%;display:block}</style></head><body><iframe loading="lazy" allowfullscreen referrerpolicy="no-referrer-when-downgrade" src="https://maps.google.com/maps?q=${numLat},${numLng}&z=17&output=embed"></iframe></body></html>`;
-  // Google Maps JS API ativo (key validada HTTP 200 em 2026-05-13). Leaflet fica como fallback se _gKey vazio.
-  const USE_GMAPS_JS = true;
+  // [bug 2026-05-15] User screenshots mostram "This page can't load Google
+  // Maps correctly" + "For development purposes only" watermark — key foi
+  // re-rejeitada (billing flap ou quota). Voltar pro Leaflet/OSM até GCP
+  // confirmar billing estável. Leaflet tem mesma UX, sem key, sem rejeição.
+  const USE_GMAPS_JS = false;
   const html = USE_GMAPS_JS && gmapsHtml ? gmapsHtml : leafletHtml;
 
   return (
@@ -3103,8 +3106,11 @@ function AttachmentMenu({ visible, onClose, onPick, colors }) {
   const items = [
     { key: 'gallery', icon: IconImage, label: t('chatConv.gallery') || 'Galeria', color: '#8b5cf6' },
     { key: 'file', icon: IconFileText, label: t('chatConv.file') || 'Arquivo', color: '#3b82f6' },
+    // [2026-05-15] "Localização" agora abre LocationPickerSheet que já tem
+    // chips 15min/1h/8h pra share ao vivo — botão "Loc. ao vivo" separado
+    // virou dedup. User: "se dentro da localizacao ja tem opcao de
+    // compartilhar ao vivo podemos tirar dos modulos".
     { key: 'location', icon: IconMapPin, label: t('chatConv.location') || 'Localização', color: '#10b981' },
-    { key: 'liveLocation', icon: IconNavigation, label: t('chatConv.liveLocation') || 'Loc. ao vivo', color: '#059669' },
     { key: 'contact', icon: IconUser, label: t('chatConv.contact') || 'Contato', color: '#06b6d4' },
     { key: 'poll', icon: IconBarChart, label: t('chat.poll') || 'Enquete', color: '#f59e0b' },
     { key: 'meetup', icon: IconMapPin, label: t('chatConv.meetup') || 'Encontro', color: '#ec4899' },
