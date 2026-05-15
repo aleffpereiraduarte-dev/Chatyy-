@@ -31,7 +31,36 @@ import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Dimensions,
   Animated, Easing, StatusBar, PanResponder, AppState,
   Modal, Pressable, ScrollView, ActivityIndicator,
+  PermissionsAndroid,
 } from 'react-native';
+
+// [2026-05-15 #976] Android needs explicit runtime CAMERA permission grant.
+// LiveKit's setCameraEnabled() does NOT trigger the system permission prompt
+// — it just calls getUserMedia, which silently throws if CAMERA isn't
+// granted yet. For audio calls upgraded to video mid-call, the user never
+// got prompted at start, so the camera fails to turn on with no UI feedback.
+// requestAndroidCameraPermission() asks once; subsequent calls are no-ops
+// since Android caches the grant.
+async function requestAndroidCameraPermission() {
+  if (Platform.OS !== 'android') return true;
+  try {
+    const status = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.CAMERA);
+    if (status) return true;
+    const result = await PermissionsAndroid.request(
+      PermissionsAndroid.PERMISSIONS.CAMERA,
+      {
+        title: 'Permitir câmera',
+        message: 'O Chatyy precisa da câmera para você aparecer na chamada.',
+        buttonPositive: 'Permitir',
+        buttonNegative: 'Cancelar',
+      }
+    );
+    return result === PermissionsAndroid.RESULTS.GRANTED;
+  } catch (e) {
+    console.warn('[Call] requestAndroidCameraPermission err:', e?.message);
+    return false;
+  }
+}
 import { IconSmile, IconSparkles } from '../components/Icons';
 import Svg, { Path as SvgPath, Circle as SvgCircleHand, Line as SvgLine } from 'react-native-svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -906,16 +935,28 @@ function CallScreenInner() {
       console.warn('[Call] setMicrophoneEnabled err:', e?.message);
     }
     if (isVideoCall) {
-      try {
-        await r.localParticipant.setCameraEnabled(true);
-        const camPub = r.localParticipant.getTrackPublication(Track.Source.Camera);
-        if (camPub?.videoTrack) setLocalVideoTrack(camPub.videoTrack);
-      } catch (e) {
-        console.warn('[Call] setCameraEnabled err:', e?.message);
-        // Fallback: audio-only if camera failed.
+      // [2026-05-15 #976] Same camera-permission gate as handleToggleVideo.
+      // For video calls that start with isVideo=1 (caller initiated video,
+      // or receiver accepted video call), Android still needs runtime CAMERA
+      // grant. LK getUserMedia silently fails without it.
+      const camGranted = await requestAndroidCameraPermission();
+      if (!camGranted) {
+        console.warn('[Call] CAMERA permission denied on Android — falling back to audio-only');
         setVideoEnabled(false);
         videoEnabledRef.current = false;
-        try { setErrorMsg(t('call.videoUnavailable') || 'Câmera indisponível — usando só áudio'); } catch {}
+        try { setErrorMsg(t('call.cameraDeniedBody') || 'Câmera não permitida — só áudio'); } catch {}
+      } else {
+        try {
+          await r.localParticipant.setCameraEnabled(true);
+          const camPub = r.localParticipant.getTrackPublication(Track.Source.Camera);
+          if (camPub?.videoTrack) setLocalVideoTrack(camPub.videoTrack);
+        } catch (e) {
+          console.warn('[Call] setCameraEnabled err:', e?.message);
+          // Fallback: audio-only if camera failed.
+          setVideoEnabled(false);
+          videoEnabledRef.current = false;
+          try { setErrorMsg(t('call.videoUnavailable') || 'Câmera indisponível — usando só áudio'); } catch {}
+        }
       }
     }
   }, [callId, contactEmail, conversationId, isVideoCall, isGroupCall, fetchLivekitToken, t, _refreshRemoteTracks, _updateGroupPeer, _removeGroupPeer]);
@@ -1492,6 +1533,22 @@ function CallScreenInner() {
     // Peer accepted (or this is already a video call) — flip our cam on.
     videoUpgradeRequestedRef.current = false;
     if (videoUpgradeTimeoutRef.current) { clearTimeout(videoUpgradeTimeoutRef.current); videoUpgradeTimeoutRef.current = null; }
+    // [2026-05-15 #976] Pre-request CAMERA on Android. If call started as
+    // audio-only, the permission was never asked → setCameraEnabled silently
+    // fails (LK getUserMedia throws). Without this, user toggles video and
+    // nothing happens. Returns true on iOS (handled by Info.plist usage).
+    const camGranted = await requestAndroidCameraPermission();
+    if (!camGranted) {
+      try {
+        const { Alert } = require('react-native');
+        Alert.alert(
+          t('call.cameraDeniedTitle') || 'Câmera não permitida',
+          t('call.cameraDeniedBody') || 'Você precisa permitir a câmera nas configurações do Android pra usar vídeo.',
+        );
+      } catch {}
+      resetControlsTimer();
+      return;
+    }
     try {
       await r.localParticipant.setCameraEnabled(true);
       setVideoEnabled(true);
@@ -1503,7 +1560,7 @@ function CallScreenInner() {
       console.warn('[Call] setCameraEnabled true err:', e?.message);
     }
     resetControlsTimer();
-  }, [videoEnabled, peerConnected, isVideoCall, sendData, resetControlsTimer]);
+  }, [videoEnabled, peerConnected, isVideoCall, sendData, resetControlsTimer, t]);
 
   const handleFlipCamera = useCallback(async () => {
     const r = roomRef.current;
