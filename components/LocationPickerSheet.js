@@ -26,7 +26,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, Modal, Pressable, ActivityIndicator,
-  Image, Platform, KeyboardAvoidingView,
+  Image, Platform, KeyboardAvoidingView, TextInput,
 } from 'react-native';
 import { IconMapPin, IconX } from './Icons';
 
@@ -44,7 +44,25 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
   const [address, setAddress] = useState('');
   const [error, setError] = useState(null);
   const [sending, setSending] = useState(false);
+  // WhatsApp-style live-share confirmation: after the user taps a duration
+  // chip we DON'T immediately start broadcasting. We swap the sheet body
+  // for a confirmation view (map preview + selected duration + privacy
+  // note + big primary "Compartilhar ao vivo" CTA). Set back to null to
+  // return to the chips. Caption is optional and gets passed to onLiveStart
+  // so the parent can include it in the live-location WS payload.
+  const [liveConfirm, setLiveConfirm] = useState(null); // { seconds, label }
+  const [liveCaption, setLiveCaption] = useState('');
   const cancelRef = useRef(false);
+
+  // Reset confirm step + caption when sheet closes/reopens so a previous
+  // selection doesn't bleed into the next session.
+  useEffect(() => {
+    if (!visible) {
+      setLiveConfirm(null);
+      setLiveCaption('');
+      setSending(false);
+    }
+  }, [visible]);
 
   useEffect(() => {
     if (!visible) return;
@@ -66,11 +84,19 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
           return;
         }
 
+        // Track the best coords we've obtained in this run via local var
+        // (not React state) so the stale-closure problem doesn't fire a
+        // false "não foi possível obter localização" when the cache hit
+        // worked but the fresh fix failed. The `coords` state still drives
+        // the UI; this is purely for control-flow decisions in this effect.
+        let bestCoords = null;
+
         // 1) Try cached last-known position first — instant.
         try {
           const cached = await Location.getLastKnownPositionAsync({ maxAge: 60000, requiredAccuracy: 200 });
           if (!active || cancelRef.current) return;
           if (cached?.coords) {
+            bestCoords = cached.coords;
             setCoords(cached.coords);
             // We still attempt a fresh read below for accuracy, but the user
             // already sees a preview.
@@ -97,16 +123,18 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
           } catch {}
         }
         if (!active || cancelRef.current) return;
-        if (fresh?.coords) setCoords(fresh.coords);
-        else if (!coords) {
-          // Both failed and we have no cache either.
+        if (fresh?.coords) {
+          bestCoords = fresh.coords;
+          setCoords(fresh.coords);
+        } else if (!bestCoords) {
+          // Both fresh attempts failed AND we have no cache either.
           setError(t?.('chatConv.locationUnavailable') || 'Não foi possível obter sua localização. Verifique se o GPS está ligado.');
           setLoading(false);
           return;
         }
 
         // 3) Best-effort reverse geocode (don't block on it).
-        const target = fresh?.coords || coords;
+        const target = fresh?.coords || bestCoords;
         if (target) {
           try {
             const places = await Location.reverseGeocodeAsync({
@@ -201,7 +229,7 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
             </View>
           )}
 
-          {coords && (
+          {coords && !liveConfirm && (
             <>
               {/* Map preview */}
               <View style={{ borderRadius: 14, overflow: 'hidden', backgroundColor: colors.border + '20', marginBottom: 14 }}>
@@ -245,8 +273,10 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                 </Text>
               </TouchableOpacity>
 
-              {/* Live location chips (WhatsApp-style: pin updates in real time
-                  until the selected duration expires) */}
+              {/* Live location chips — picking a duration jumps to the
+                  confirm step instead of starting broadcast immediately
+                  (WhatsApp parity: avoids accidental "I just shared my
+                  live location with 2 hours of tracking" taps). */}
               {onLiveStart && (
                 <View style={{ marginTop: 18 }}>
                   <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textSecondary, marginBottom: 8, letterSpacing: 0.5 }}>
@@ -258,8 +288,7 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                         key={d.key}
                         onPress={() => {
                           if (sending) return;
-                          setSending(true);
-                          onLiveStart?.(d.seconds);
+                          setLiveConfirm({ seconds: d.seconds, label: d.label });
                         }}
                         disabled={sending}
                         style={{
@@ -281,6 +310,137 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                   </View>
                 </View>
               )}
+            </>
+          )}
+
+          {/* Live-share confirmation step — WhatsApp-grade screen the user
+              sees BEFORE we actually start broadcasting. Map preview at the
+              top + selected duration row (tap to switch) + optional caption
+              input + privacy reminder + big primary "Compartilhar ao vivo"
+              CTA. Back arrow returns to the chips. */}
+          {coords && liveConfirm && (
+            <>
+              <View style={{ borderRadius: 14, overflow: 'hidden', backgroundColor: colors.border + '20', marginBottom: 14 }}>
+                {mapUrl ? (
+                  <Image
+                    source={{ uri: mapUrl }}
+                    style={{ width: '100%', height: 160 }}
+                    resizeMode="cover"
+                  />
+                ) : null}
+              </View>
+
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14, gap: 8 }}>
+                <View style={{
+                  width: 36, height: 36, borderRadius: 18,
+                  backgroundColor: colors.primary + '15',
+                  alignItems: 'center', justifyContent: 'center',
+                }}>
+                  <IconMapPin size={18} color={colors.primary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }} numberOfLines={1}>
+                    {address || (t?.('chatConv.locationCurrent') || 'Sua localização atual')}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
+                    {t?.('chatConv.liveDurationLabel') || 'Atualizando por'}: {liveConfirm.label}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Duration switcher — pre-selected pill highlighted */}
+              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+                {LIVE_DURATIONS.map(d => {
+                  const active = d.seconds === liveConfirm.seconds;
+                  return (
+                    <TouchableOpacity
+                      key={d.key}
+                      onPress={() => setLiveConfirm({ seconds: d.seconds, label: d.label })}
+                      disabled={sending}
+                      style={{
+                        flex: 1,
+                        paddingVertical: 10,
+                        borderRadius: 18,
+                        borderWidth: 1.5,
+                        borderColor: active ? colors.primary : colors.border + '60',
+                        backgroundColor: active ? colors.primary + '15' : 'transparent',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <Text style={{ color: active ? colors.primary : colors.textSecondary, fontSize: 13, fontWeight: '700' }}>
+                        {d.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Optional caption — parent decides whether to use it (most
+                  chat callers ignore it; group chats render it under the
+                  bubble). */}
+              <TextInput
+                value={liveCaption}
+                onChangeText={setLiveCaption}
+                placeholder={t?.('chatConv.liveCommentPlaceholder') || 'Adicionar comentário (opcional)'}
+                placeholderTextColor={colors.textSecondary}
+                maxLength={120}
+                style={{
+                  backgroundColor: colors.border + '20',
+                  borderRadius: 14,
+                  paddingHorizontal: 14,
+                  paddingVertical: 10,
+                  fontSize: 14,
+                  color: colors.text,
+                  marginBottom: 12,
+                }}
+              />
+
+              {/* Privacy reminder — WhatsApp does this and it actually
+                  helps adoption since users worry about who sees their
+                  pin. */}
+              <Text style={{ fontSize: 11, color: colors.textSecondary, lineHeight: 16, marginBottom: 16 }}>
+                {t?.('chatConv.livePrivacyNote') || 'Apenas pessoas desta conversa veem sua localização. Você pode parar a qualquer momento.'}
+              </Text>
+
+              {/* Primary CTA + secondary back */}
+              <TouchableOpacity
+                onPress={() => {
+                  if (sending) return;
+                  setSending(true);
+                  onLiveStart?.(liveConfirm.seconds, {
+                    caption: liveCaption.trim() || null,
+                    latitude: coords.latitude,
+                    longitude: coords.longitude,
+                    address: address || null,
+                  });
+                }}
+                disabled={sending}
+                style={{
+                  backgroundColor: colors.primary,
+                  borderRadius: 26,
+                  paddingVertical: 14,
+                  alignItems: 'center',
+                  opacity: sending ? 0.6 : 1,
+                  flexDirection: 'row', justifyContent: 'center', gap: 8,
+                  marginBottom: 8,
+                }}
+              >
+                <IconMapPin size={18} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
+                  {sending
+                    ? (t?.('common.sending') || 'Enviando…')
+                    : (t?.('chatConv.liveShareConfirm') || 'Compartilhar ao vivo')}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setLiveConfirm(null)}
+                disabled={sending}
+                style={{ paddingVertical: 10, alignItems: 'center' }}
+              >
+                <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '600' }}>
+                  {t?.('common.back') || 'Voltar'}
+                </Text>
+              </TouchableOpacity>
             </>
           )}
         </View>

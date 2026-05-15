@@ -748,6 +748,21 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
       'get_settings', 'update_settings',
       'contacts_list', 'contacts_save', 'contacts_delete',
       'notes_list', 'notes_create', 'notes_update', 'notes_delete',
+      // 2026-05-15 round 3 — user complained "ta me deslogando, whatsapp
+      // nunca desloga". Adding high-volume chat/live/status endpoints that
+      // can return transient 401 during sliding-token renewal, pgbouncer
+      // hiccups, or WS auth flapping. WhatsApp parity: ONLY a truly revoked
+      // token should logout, never edge timeouts on read-paths.
+      'chat_list_conversations', 'chat_get_messages', 'chat_messages',
+      'chat_typing_set', 'chat_typing', 'chat_read_receipt',
+      'chat_unread_count', 'chat_starred_list', 'chat_pinned_list',
+      'chat_user_privacy', 'chat_user_conv_settings',
+      'live_session_info', 'live_session_list', 'live_status',
+      'status_list', 'status_view',
+      'feed_list', 'feed_likes', 'feed_comments',
+      'reels_list', 'reels_view',
+      'get_avatar', 'get_avatar_initials',
+      'send_health', 'send_ping',
     ]);
     try {
       const tokenHasValue = typeof authToken === 'string' && authToken.length > 0;

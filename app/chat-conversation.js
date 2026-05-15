@@ -8832,6 +8832,13 @@ export default function ChatConversationScreen() {
       // Meetup RSVP updates: when another member votes yes/no/maybe on a
       // meetup card, the backend fans out the new aggregate so we can splice
       // it into the local bubble without a refetch. Mirrors poll_vote flow.
+      //
+      // [bug 2026-05-15 meetup-rsvp-vanishes]
+      // Meetup state is dual-tracked: meetup data lives BOTH as msg.meetup
+      // (used by native bubble + WS) AND inside msg.content JSON (used by
+      // the renderMeetup path in this file). Updating only msg.meetup made
+      // the rendered card read stale `meetup.rsvp` from msg.content and the
+      // vote appeared to "disappear" right after firing. Patch BOTH places.
       const onWsMeetupRsvp = (payload) => {
         if (!mountedRef.current) return;
         const data = payload?.data || payload || {};
@@ -8843,7 +8850,17 @@ export default function ChatConversationScreen() {
           const meetup = { ...(row.meetup || {}) };
           meetup.rsvps = data.rsvps || meetup.rsvps;
           meetup.rsvp = data.rsvp || meetup.rsvp;
-          return { ...row, meetup };
+          // Mirror into msg.content JSON so renderMeetup sees the fresh
+          // rsvp map. If parse fails (legacy/malformed), leave content
+          // alone — meetup field stays as fallback.
+          let content = row.content;
+          try {
+            const parsed = JSON.parse(row.content);
+            if (data.rsvp) parsed.rsvp = data.rsvp;
+            if (data.rsvps) parsed.rsvps = data.rsvps;
+            content = JSON.stringify(parsed);
+          } catch {}
+          return { ...row, meetup, content };
         }));
       };
       wsUnsubs.push(mailWs.on('meetup_rsvp_update', onWsMeetupRsvp));
@@ -11501,7 +11518,7 @@ export default function ChatConversationScreen() {
     }
   };
 
-  const startLiveLocation = async (durationSec) => {
+  const startLiveLocation = async (durationSec, preset) => {
     // Guard against starting a second session — the old interval/timeout
     // would be cleared but the server-side session would orphan.
     if (liveLocIntervalRef.current) {
@@ -11518,7 +11535,17 @@ export default function ChatConversationScreen() {
       // is the natural per-session guard.
       let latitude, longitude;
 
-      if (Platform.OS === 'web') {
+      // [bug 2026-05-15 liveloc-double-fetch]
+      // LocationPickerSheet ALREADY resolved coords (the user saw the
+      // preview map before tapping the duration chip). Re-fetching them
+      // here makes the user pay GPS twice — and if the second fetch is
+      // flaky (common indoors / on weak signal) the whole flow dies on
+      // "Não foi possível obter a localização" even though the FIRST
+      // fetch succeeded. Trust the preset coords and skip the dance.
+      if (preset && typeof preset.latitude === 'number' && typeof preset.longitude === 'number') {
+        latitude = preset.latitude;
+        longitude = preset.longitude;
+      } else if (Platform.OS === 'web') {
         if (!navigator?.geolocation) {
           safeAlert('Error', t('chatConv.locationError') || 'Geolocation not available');
           return;
@@ -18411,7 +18438,21 @@ export default function ChatConversationScreen() {
             api.chatMeetupRsvp(messageId, status)
               .then(async (r) => {
                 if (r?.success && r.data) {
-                  setMessages(prev => prev.map(m => String(m.id) === String(messageId) ? { ...m, meetup: { ...(m.meetup || {}), ...r.data } } : m));
+                  // [bug 2026-05-15] Mirror into msg.content JSON so the
+                  // renderMeetup path (which reads parsed content, not the
+                  // .meetup field) picks up the new rsvp map. Otherwise the
+                  // vote shows briefly then "disappears" on next render.
+                  setMessages(prev => prev.map(m => {
+                    if (String(m.id) !== String(messageId)) return m;
+                    let content = m.content;
+                    try {
+                      const parsed = JSON.parse(m.content);
+                      if (r.data.rsvp) parsed.rsvp = r.data.rsvp;
+                      if (r.data.rsvps) parsed.rsvps = r.data.rsvps;
+                      content = JSON.stringify(parsed);
+                    } catch {}
+                    return { ...m, meetup: { ...(m.meetup || {}), ...r.data }, content };
+                  }));
                 }
               })
               .catch(() => {})
@@ -19945,9 +19986,9 @@ export default function ChatConversationScreen() {
           setShowLocationPickerSheet(false);
           handleShareLocation(loc);
         }}
-        onLiveStart={(durationSec) => {
+        onLiveStart={(durationSec, opts) => {
           setShowLocationPickerSheet(false);
-          startLiveLocation(durationSec);
+          startLiveLocation(durationSec, opts || null);
         }}
         colors={colors}
         t={t}
