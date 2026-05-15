@@ -923,6 +923,16 @@ export default function ChatNewScreen() {
         return;
       }
     } catch {}
+    // Group invite QR — WhatsApp-style. Backend invite URL is
+    // `https://chatyy.com.br/j/<token>` (32-hex). Route the token through
+    // the existing /j/[token] deep-link handler, which calls
+    // chat_group_join_via_link and pushes the conversation.
+    const groupInvite = /chatyy\.com\.br\/j\/([a-f0-9]{32})/i.exec(data);
+    if (groupInvite) {
+      setShowQrModal(false);
+      try { router.push(`/j/${groupInvite[1]}`); } catch {}
+      return;
+    }
     // If not a valid Chatyy QR, check if it's just an email
     if (data.includes('@') && !data.includes(' ')) {
       setShowQrModal(false);

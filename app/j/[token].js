@@ -27,8 +27,12 @@ export default function GroupJoinScreen() {
     (async () => {
       try {
         const r = await api.apiCall('chat_group_join_via_link', { token }, 'POST');
-        if (r?.success && r.data?.id) {
-          router.replace({ pathname: '/chat-conversation', params: { id: String(r.data.id), name: r.data.name || 'Grupo' } });
+        // Backend returns `conversation_id` (not `id`). Older code read
+        // r.data.id and silently failed — every invite link landed on the
+        // error screen. Accept both shapes for forward-compat.
+        const convId = r?.data?.conversation_id || r?.data?.id;
+        if (r?.success && convId) {
+          router.replace({ pathname: '/chat-conversation', params: { id: String(convId), name: r.data.name || 'Grupo' } });
           return;
         }
         setErr(r?.message || t?.('chat.inviteFailed') || 'Falha ao entrar no grupo');
