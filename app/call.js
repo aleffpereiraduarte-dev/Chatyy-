@@ -222,7 +222,15 @@ function CallScreenInner() {
   const insets = useSafeAreaInsets();
 
   const isCaller = isCallerParam === '1' || isCallerParam === 'true';
-  const isVideoCall = isVideoParam === '1' || isVideoParam === 'true';
+  const initialVideoCall = isVideoParam === '1' || isVideoParam === 'true';
+  // [bug 2026-05-15 #978-4] Audio→video upgrade was visually broken because
+  // `isVideoCall` came from URL param and stayed false forever after an
+  // audio call accepted a video upgrade. Both `showRemoteVideo` and the
+  // <LK_VideoView> guard hardcoded `isVideoCall`, so peer's published
+  // video track never rendered for either side. Replace with stateful
+  // flag bumped to true on the first video_request accept (caller and
+  // peer paths both call setIsVideoCall(true) below).
+  const [isVideoCall, setIsVideoCall] = useState(initialVideoCall);
   // [bug 2026-05-15 #977-followup] Flag set by IncomingCallListener
   // handleAndroidPendingCall when the user accepted via the native heads-up
   // notification while the app was minimized/dead. Used below to suppress
@@ -1068,6 +1076,10 @@ function CallScreenInner() {
             clearInterval(videoUpgradeCountdownRef.current);
             videoUpgradeCountdownRef.current = null;
           }
+          // [#978-4] flip call into video mode so showRemoteVideo + the
+          // <LK_VideoView> guard at line 2040 stop short-circuiting on the
+          // initial audio-only param.
+          setIsVideoCall(true);
           try { handleToggleVideo(); } catch {}
         }
         break;
@@ -2261,6 +2273,10 @@ function CallScreenInner() {
                     sendData({ type: 'video_request', action: 'accepted' });
                     setPendingVideoRequest(null);
                     videoUpgradeRequestedRef.current = true;
+                    // [#978-4] flip to video mode on peer accept too,
+                    // so the remote video element renders when caller's
+                    // camera frames arrive.
+                    setIsVideoCall(true);
                     if (!videoEnabled) handleToggleVideo();
                   }}
                 >
