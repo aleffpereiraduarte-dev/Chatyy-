@@ -3305,6 +3305,8 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
   const [addressSuggestions, setAddressSuggestions] = useState([]);
   const [searchingAddress, setSearchingAddress] = useState(false);
   const [pickedCoords, setPickedCoords] = useState(null); // { lat, lng }
+  const [pickedHasHouseNumber, setPickedHasHouseNumber] = useState(false);
+  const [houseNumber, setHouseNumber] = useState('');
   const addrDebounceRef = useRef(null);
 
   // Nominatim autocomplete (free OpenStreetMap geocoding)
@@ -3334,8 +3336,15 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
   }, [location, pickedCoords]);
 
   const pickAddress = (item) => {
+    // Nominatim returns `address.house_number` only when the query already
+    // includes a number. Most users type just "Rua X, Cidade" so we surface
+    // a follow-up "Número" field to capture the house number explicitly —
+    // otherwise the meetup ends up with a vague street-only location.
+    const hn = item?.address?.house_number;
     setLocation(item.display_name);
     setPickedCoords({ lat: parseFloat(item.lat), lng: parseFloat(item.lon) });
+    setPickedHasHouseNumber(!!hn);
+    setHouseNumber(hn ? String(hn) : '');
     setAddressSuggestions([]);
   };
 
@@ -3343,10 +3352,23 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
     if (!title.trim() || !dateText.trim()) return;
     setSending(true);
     try {
-      // Pass coords as part of location string if picked: "address|lat,lng"
+      // Inject the manually-entered house number into the address line if the
+      // picked suggestion didn't already include one (Nominatim drops it when
+      // user searches by street name only).
+      let addressLine = location.trim();
+      const hn = houseNumber.trim();
+      if (pickedCoords && !pickedHasHouseNumber && hn) {
+        // Splice the number right after the street name (first comma).
+        const comma = addressLine.indexOf(',');
+        if (comma > 0) {
+          addressLine = `${addressLine.slice(0, comma)}, ${hn}${addressLine.slice(comma)}`;
+        } else {
+          addressLine = `${addressLine}, ${hn}`;
+        }
+      }
       const locStr = pickedCoords
-        ? `${location.trim()}|${pickedCoords.lat},${pickedCoords.lng}`
-        : location.trim();
+        ? `${addressLine}|${pickedCoords.lat},${pickedCoords.lng}`
+        : addressLine;
       const r = await api.chatCreateMeetup(conversationId, title.trim(), dateText.trim(), locStr, description.trim());
       if (r?.success && r.data) {
         const msg = r.data.message || r.data;
@@ -3430,10 +3452,24 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
                     <IconMapPin size={14} color={colors.textSecondary} style={{ marginTop: 1 }} />
                     <Text style={{ flex: 1, fontSize: 13, color: colors.text, lineHeight: 18 }} numberOfLines={2}>
                       {s.display_name}
+                      {s.address?.house_number ? ` · nº ${s.address.house_number}` : ''}
                     </Text>
                   </TouchableOpacity>
                 ))}
               </ScrollView>
+            </View>
+          )}
+          {pickedCoords && !pickedHasHouseNumber && (
+            <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: colors.border, borderRadius: 10, backgroundColor: colors.background, paddingHorizontal: 10 }}>
+              <Text style={{ color: colors.textSecondary, fontWeight: '600', fontSize: 13, marginRight: 8 }}>Nº</Text>
+              <TextInput
+                style={{ flex: 1, padding: 10, fontSize: 15, color: colors.text, paddingLeft: 0 }}
+                placeholder="Número da casa/apto"
+                placeholderTextColor={colors.textTertiary}
+                value={houseNumber}
+                onChangeText={setHouseNumber}
+                keyboardType="number-pad"
+              />
             </View>
           )}
         </View>
@@ -8792,6 +8828,25 @@ export default function ChatConversationScreen() {
         }));
       };
       wsUnsubs.push(mailWs.on('poll_vote', onWsPollVote));
+
+      // Meetup RSVP updates: when another member votes yes/no/maybe on a
+      // meetup card, the backend fans out the new aggregate so we can splice
+      // it into the local bubble without a refetch. Mirrors poll_vote flow.
+      const onWsMeetupRsvp = (payload) => {
+        if (!mountedRef.current) return;
+        const data = payload?.data || payload || {};
+        if (!data || String(data.conversation_id) !== String(conversationId)) return;
+        const msgId = data.message_id;
+        if (!msgId) return;
+        setMessages(prev => prev.map(row => {
+          if (String(row.id) !== String(msgId)) return row;
+          const meetup = { ...(row.meetup || {}) };
+          meetup.rsvps = data.rsvps || meetup.rsvps;
+          meetup.rsvp = data.rsvp || meetup.rsvp;
+          return { ...row, meetup };
+        }));
+      };
+      wsUnsubs.push(mailWs.on('meetup_rsvp_update', onWsMeetupRsvp));
 
       const onWsReaction = (payload) => {
         if (!mountedRef.current) return;
