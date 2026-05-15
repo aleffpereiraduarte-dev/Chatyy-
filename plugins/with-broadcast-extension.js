@@ -279,26 +279,56 @@ function withBroadcastPodTarget(config) {
       const marker = `target '${EXT_NAME}' do`;
       if (pod.includes(marker)) return cfg;
 
-      // [2026-05-15 fix v2] CocoaPods requires extension targets NESTED
+      // [2026-05-15 fix v3] CocoaPods requires extension targets NESTED
       // INSIDE the main app target — otherwise: "Unable to find host targets
       // for ChatyyBroadcastExtension".
       //
-      // First attempt depth-counted `do/end` parsing — that was unreliable
-      // because Ruby `if/unless/case/def...end` blocks have no `do` but
-      // still emit `end`, throwing depth off. Instead: find the LAST
-      // top-level `end` (column 0) in the Podfile — in Expo's template
-      // that's the main target's closing `end`. Inject before it.
+      // v2 took the LAST top-level `end` — but the Expo template has a
+      // `post_install do |installer| ... end` block AFTER `target 'Chatyy'
+      // do ... end`, so the last top-level `end` was post_install's, not
+      // the main target's. The nested block landed OUTSIDE the main target.
+      //
+      // v3 strategy: locate the `target '<MainAppName>' do` line directly,
+      // then walk forward with do/end depth counting (ignoring inline `do`
+      // keywords like `if/unless/while...end`) until depth returns to 0 —
+      // that's the closing `end` of the main target. Insert before it.
       const lines = pod.split('\n');
-      let lastTopLevelEndLine = -1;
+
+      // Find main app target. Expo always uses `target '<displayName>' do`
+      // where displayName matches CFBundleName. Search for any line that
+      // starts a target and is NOT our extension.
+      let mainTargetLine = -1;
+      let mainTargetName = '';
       for (let i = 0; i < lines.length; i++) {
-        // Top-level `end` = starts at column 0 (no leading whitespace) and is
-        // exactly `end` or `end ...`. Anything indented is nested.
-        if (/^end\s*$/.test(lines[i])) lastTopLevelEndLine = i;
+        const m = lines[i].match(/^\s*target ['"]([^'"]+)['"] do\b/);
+        if (m && m[1] !== EXT_NAME) {
+          mainTargetLine = i;
+          mainTargetName = m[1];
+          break; // first target is the main app
+        }
       }
-      if (lastTopLevelEndLine === -1) {
-        console.warn('[with-broadcast-extension] No top-level `end` found — appending at EOF as fallback');
-        pod += `\n\ntarget '${EXT_NAME}' do\n  platform :ios, '15.0'\n  pod 'LiveKitClient', '~> 2.0'\nend\n`;
-        fs.writeFileSync(podfilePath, pod);
+      if (mainTargetLine === -1) {
+        console.warn('[with-broadcast-extension] No main target found — skipping (run prebuild first)');
+        return cfg;
+      }
+
+      // Walk forward, tracking do/end balance. Skip inline `end` words
+      // and only count `do` at end-of-line or before optional |args|.
+      let depth = 1;
+      let mainTargetEndLine = -1;
+      for (let i = mainTargetLine + 1; i < lines.length; i++) {
+        const line = lines[i];
+        // Each `do` that opens a block (block syntax: `... do` or `... do |x|`)
+        const doMatches = line.match(/\bdo\b(\s*\|[^|]*\|)?\s*$/);
+        if (doMatches) depth++;
+        // Each `end` that closes a block (standalone or with comment)
+        if (/^\s*end\b/.test(line)) {
+          depth--;
+          if (depth === 0) { mainTargetEndLine = i; break; }
+        }
+      }
+      if (mainTargetEndLine === -1) {
+        console.warn(`[with-broadcast-extension] Could not find closing 'end' of target '${mainTargetName}' — skipping`);
         return cfg;
       }
 
@@ -312,9 +342,9 @@ function withBroadcastPodTarget(config) {
         `    pod 'LiveKitClient', '~> 2.0'`,
         `  end`,
       ];
-      lines.splice(lastTopLevelEndLine, 0, ...nested);
+      lines.splice(mainTargetEndLine, 0, ...nested);
       fs.writeFileSync(podfilePath, lines.join('\n'));
-      console.log(`[with-broadcast-extension] Injected nested ${EXT_NAME} target before line ${lastTopLevelEndLine + 1}`);
+      console.log(`[with-broadcast-extension] Injected nested ${EXT_NAME} target inside '${mainTargetName}' (before line ${mainTargetEndLine + 1})`);
       return cfg;
     },
   ]);
