@@ -1396,6 +1396,18 @@ export default function LiveBroadcastScreen() {
         }));
       }
     } catch {}
+    // TikTok-style cohost path: also persist the approval in PG +
+    // broadcast `live_cohost_approved` via WS so the viewer's client can
+    // request a LiveKit publisher token and join the SFU room. The legacy
+    // P2P path above stays in place for backwards-compat until viewers
+    // upgrade past the cohost wire-up OTA.
+    try {
+      const api = require('../services/api');
+      const sid = sessionIdRef.current;
+      if (sid && api?.liveCohostApprove) {
+        api.liveCohostApprove(sid, email).catch(() => {});
+      }
+    } catch {}
     setJoinRequests(prev => prev.filter(r => r.email !== email));
   }, [user]);
   const denyJoinRequest = useCallback((email) => {

@@ -5910,6 +5910,19 @@ export async function chatLivekitToken(conversationId, room = '') {
   return apiCall('chat_livekit_token', { conversation_id: conversationId, room }, 'POST');
 }
 
+// ─── Live broadcast cohost (TikTok-style) ───
+// Host calls this to approve a viewer as cohost. Backend inserts auth row
+// and pushes `live_cohost_approved` via WS to the viewer's channel.
+export async function liveCohostApprove(sessionId, viewerEmail) {
+  return apiCall('chat_live_cohost_approve', { session_id: sessionId, viewer_email: viewerEmail }, 'POST');
+}
+// Viewer (after receiving live_cohost_approved) calls this to get a
+// LiveKit publisher token for the live session's room. Backend verifies
+// the approve row exists for this user.
+export async function liveCohostToken(sessionId) {
+  return apiCall('chat_live_cohost_token', { session_id: sessionId }, 'POST');
+}
+
 // ─── Telnyx Verified Number (caller ID PSTN) ───
 export async function voipVerifiedNumberRequest() {
   return apiCall('voip_verified_number_request', {}, 'POST');
