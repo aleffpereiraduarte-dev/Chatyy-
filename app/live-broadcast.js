@@ -1192,39 +1192,125 @@ export default function LiveBroadcastScreen() {
   }, [videoOff]);
 
   // Flip camera
+  //
+  // Bug #978-5 root cause: the previous handler stopped/removed the old video
+  // track BEFORE awaiting `getUserMedia`. On native, if the second
+  // `getUserMedia` rejected (permission, hardware busy, double-tap race), we
+  // were left with a half-mutated localStreamRef (track stopped, removed) and
+  // peer senders pointing at a dead track — host's preview froze AND viewers
+  // saw a frozen frame. On native with @livekit/react-native-webrtc, the
+  // safer/idiomatic path is `videoTrack._switchCamera()` (toggles front/back
+  // in-place without re-running getUserMedia, no track replacement needed —
+  // so peer senders + preview keep working). Web has no `_switchCamera`, so
+  // we keep the getUserMedia path but: (1) await the new stream BEFORE
+  // touching the old track, (2) double-tap guard via in-flight ref,
+  // (3) try/catch every mutation step + revert facingRef on failure,
+  // (4) surface a toast so user knows the flip failed instead of staring
+  // at the same view.
+  const flipInFlightRef = useRef(false);
   const handleFlipCamera = useCallback(async () => {
-    if (!localStreamRef.current) return;
+    // Guard against double-taps + missing stream (pre-live or after end).
+    if (flipInFlightRef.current) return;
+    const stream = localStreamRef.current;
+    if (!stream) return;
+    flipInFlightRef.current = true;
 
-    const newFacing = facingRef.current === 'user' ? 'environment' : 'user';
-    facingRef.current = newFacing;
+    const prevFacing = facingRef.current;
+    const newFacing = prevFacing === 'user' ? 'environment' : 'user';
 
     try {
-      const oldVideoTrack = localStreamRef.current.getVideoTracks()[0];
-      if (oldVideoTrack) oldVideoTrack.stop();
+      // Native fast-path: `_switchCamera` toggles the existing track's
+      // hardware source without dropping/replacing the MediaStreamTrack.
+      // Peer senders + local preview keep their reference, so there's no
+      // tear-down race. Skip this path on web (function doesn't exist).
+      if (Platform.OS !== 'web') {
+        let oldVideoTrack = null;
+        try { oldVideoTrack = stream.getVideoTracks?.()[0] || null; } catch {}
+        if (oldVideoTrack && typeof oldVideoTrack._switchCamera === 'function') {
+          try {
+            oldVideoTrack._switchCamera();
+            facingRef.current = newFacing;
+            // Refresh local preview URL so the mirror flag picks up. Some
+            // platforms keep the same toURL — that's fine, mirror is the
+            // only visible change there.
+            try {
+              if (stream.toURL) setLocalStreamUrl(stream.toURL());
+            } catch {}
+            return; // success — done.
+          } catch (errSwitch) {
+            // Fall through to the getUserMedia path below.
+            console.warn('[Live] _switchCamera failed, fallback to gUM:', errSwitch?.message);
+          }
+        }
+      }
 
+      // Web (or native fallback) path: acquire NEW track first, only then
+      // touch the old one. This is the critical ordering — if `getUserMedia`
+      // rejects we still have a working stream.
+      if (!getUserMediaFn) {
+        throw new Error('getUserMedia unavailable');
+      }
       const newStream = await getUserMediaFn({
         video: { facingMode: newFacing },
         audio: false,
       });
-      const newVideoTrack = newStream.getVideoTracks()[0];
-
-      localStreamRef.current.removeTrack(oldVideoTrack);
-      localStreamRef.current.addTrack(newVideoTrack);
-
-      peersRef.current.forEach(pc => {
-        const sender = pc.getSenders().find(s => s.track?.kind === 'video');
-        if (sender) sender.replaceTrack(newVideoTrack);
-      });
-
-      if (Platform.OS === 'web' && localVideoRef.current) {
-        localVideoRef.current.srcObject = localStreamRef.current;
-      } else if (localStreamRef.current?.toURL) {
-        setLocalStreamUrl(localStreamRef.current.toURL());
+      const newVideoTrack = newStream?.getVideoTracks?.()[0] || null;
+      if (!newVideoTrack) {
+        // No track produced — bail out (revert facing). Don't touch old.
+        try { newStream?.getTracks?.().forEach(t => t.stop()); } catch {}
+        throw new Error('no video track from getUserMedia');
       }
+
+      // Now safe to commit. Stop + remove old, add new, replace on peers.
+      let oldVideoTrack = null;
+      try { oldVideoTrack = stream.getVideoTracks?.()[0] || null; } catch {}
+      try { if (oldVideoTrack) oldVideoTrack.stop(); } catch {}
+      try { if (oldVideoTrack) stream.removeTrack(oldVideoTrack); } catch {}
+      try { stream.addTrack(newVideoTrack); } catch (e) {
+        console.warn('[Live] addTrack failed:', e?.message);
+      }
+
+      // Replace on every active peer connection. Wrap each in try so one
+      // failing peer doesn't abort the others.
+      try {
+        peersRef.current.forEach(pc => {
+          try {
+            const sender = pc.getSenders?.().find(s => s.track?.kind === 'video');
+            if (sender) sender.replaceTrack(newVideoTrack).catch(() => {});
+          } catch {}
+        });
+      } catch {}
+
+      // Commit facing ref AFTER the swap so the mirror flag flips with the
+      // visible change.
+      facingRef.current = newFacing;
+
+      // Refresh preview surface.
+      try {
+        if (Platform.OS === 'web' && localVideoRef.current) {
+          localVideoRef.current.srcObject = stream;
+        } else if (stream?.toURL) {
+          setLocalStreamUrl(stream.toURL());
+        }
+      } catch {}
     } catch (err) {
-      console.error('Failed to flip camera:', err);
+      console.error('[Live] Failed to flip camera:', err?.message || err);
+      // Revert facing ref so the next tap retries the SAME direction (instead
+      // of skipping to the opposite — would confuse the user).
+      facingRef.current = prevFacing;
+      try {
+        const { ToastAndroid, Alert } = require('react-native');
+        const message = (t && t('live.flipCameraFailed')) || 'Não foi possível trocar a câmera';
+        if (Platform.OS === 'android' && ToastAndroid?.show) {
+          ToastAndroid.show(message, ToastAndroid.SHORT);
+        } else if (Platform.OS === 'ios' && Alert?.alert) {
+          Alert.alert(message);
+        }
+      } catch {}
+    } finally {
+      flipInFlightRef.current = false;
     }
-  }, []);
+  }, [t]);
 
   // Send chat message
   const handleSendChat = useCallback((text) => {
