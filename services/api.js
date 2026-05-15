@@ -2731,6 +2731,24 @@ export async function chatSmartReply(conversationId, lastMessage = '') {
   return apiCall('chat_smart_reply', { conversation_id: conversationId, last_message: lastMessage }, 'POST');
 }
 
+// chat_ai_suggest_replies — newer Gmail/iMessage-style 3-chip suggestions.
+// Backend uses OpenAI gpt-4o-mini directly + caches the result for 60s per
+// (conversation_id, last_msg_id) so the chip bar can re-render without
+// re-charging the OpenAI bill on typing/presence WS noise.
+export async function chatAiSuggestReplies(conversationId) {
+  return apiCall('chat_ai_suggest_replies', { conversation_id: conversationId }, 'POST');
+}
+
+// chat_ai_summarize — summarize the last N unread messages via gpt-4o-mini.
+// since_message_id=0 means "use server-side unread count". Returns:
+//   { summary_text, message_count, participants[] }
+export async function chatAiSummarize(conversationId, sinceMessageId = 0) {
+  return apiCall('chat_ai_summarize', {
+    conversation_id: conversationId,
+    since_message_id: sinceMessageId,
+  }, 'POST');
+}
+
 // Jump-to-date: find the first message in the conversation at/after the
 // given ISO date, so the client can scrollToItem on that id.
 export async function chatMessagesByDate(conversationId, date) {
@@ -2983,7 +3001,33 @@ export async function chatCreateCallLink(callType = 'video') { return apiCall('c
 export async function chatJoinCallLink(linkId) { return apiCall('chat_join_call_link', { link_id: linkId }); }
 // Status stickers
 export async function statusPollVote(statusId, optionIndex) { return apiCall('status_poll_vote', { status_id: statusId, option_index: optionIndex }, 'POST'); }
-export async function statusQuestionAnswer(statusId, answer) { return apiCall('status_question_answer', { status_id: statusId, answer }, 'POST'); }
+export async function statusQuestionAnswer(statusId, answer, stickerId = '') { return apiCall('status_question_answer', { status_id: statusId, answer, sticker_id: stickerId }, 'POST'); }
+// Slider sticker — value is normalized 0-100. Returns running avg.
+export async function statusSliderVote(statusId, value, stickerId = '') {
+  return apiCall('status_slider_vote', { status_id: statusId, value: Math.max(0, Math.min(100, Math.round(value))), sticker_id: stickerId }, 'POST');
+}
+// Owner-only: list answers to question stickers on a status.
+export async function statusQuestionList(statusId) {
+  return apiCall('status_question_list', { status_id: statusId }, 'POST');
+}
+// Music sticker library — tab: 'foryou' | 'search' | 'saved'.
+// On 'search' the server hits Deezer; falls back to curated list.
+export async function chatStatusMusicSearch(query = '', tab = 'foryou', limit = 25) {
+  return apiCall('chat_status_music_search', { q: query, tab, limit }, 'POST');
+}
+export async function chatStatusMusicSave(track) {
+  return apiCall('chat_status_music_save', {
+    track_id: track.id,
+    title: track.title || '',
+    artist: track.artist || '',
+    artwork_url: track.artwork_url || track.coverUrl || '',
+    preview_url: track.preview_url || track.previewUrl || '',
+    duration: track.duration || 30,
+  }, 'POST');
+}
+export async function chatStatusMusicUnsave(trackId) {
+  return apiCall('chat_status_music_unsave', { track_id: trackId }, 'POST');
+}
 // Snap Map
 export async function updateLocation(latitude, longitude) { return apiCall('update_location', { latitude, longitude }, 'POST'); }
 export async function getFriendsLocations() { return apiCall('get_friends_locations', {}); }

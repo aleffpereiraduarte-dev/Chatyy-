@@ -77,6 +77,11 @@ import { userScopedKey } from '../services/cache';
 import * as SmartCache from '../services/smartChatCache';
 import useIsMounted from '../hooks/useIsMounted';
 import SyncBar from '../components/SyncBar';
+// Chat 2026 features (top-3): video notes recorder, AI summarize, smart replies.
+// Lazy-required inside the file when needed to keep the initial parse fast.
+let VideoNoteRecorder = null; try { VideoNoteRecorder = require('../components/chat/VideoNoteRecorder').default; } catch {}
+let AISummarizeModal = null; try { AISummarizeModal = require('../components/chat/AISummarizeModal').default; } catch {}
+let SmartRepliesBar = null; try { SmartRepliesBar = require('../components/chat/SmartRepliesBar').default; } catch {}
 // LocationMessage and ContactMessage removed — inline rendering used instead
 let ChatBubbleSkeleton = null; try { ChatBubbleSkeleton = require('../components/SkeletonLoader').ChatBubbleSkeleton; } catch {}
 
@@ -6473,6 +6478,12 @@ export default function ChatConversationScreen() {
   const [showPlaylistCreator, setShowPlaylistCreator] = useState(false);
   const [playlistEditor, setPlaylistEditor] = useState(null); // { messageId, playlist }
   const [isRecording, setIsRecording] = useState(false);
+  // Chat 2026 — round-video-note recorder (Telegram-style). Lives in its
+  // own component so the composer doesn't gain another 400 LoC.
+  const [showVideoNoteRecorder, setShowVideoNoteRecorder] = useState(false);
+  // Chat 2026 — AI summarize unread modal. Triggered from the header pill
+  // when unread_count is >= 5.
+  const [showSummarizeModal, setShowSummarizeModal] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({}); // { [tempId]: 0-100 }
   // Download progress for remote media bubbles (WhatsApp-style ring while the

@@ -346,10 +346,18 @@ export default function PhotosScreen() {
   const autoStartedRef = useRef(false);
   const backupRefreshTimerRef = useRef(null);
   const backupWsUnsubRef = useRef(null);
+  // Retry-schedule state moved off the function object — static props leak
+  // across renders, can't be cleared on unmount, and were resetting when a
+  // manual tap re-entered startBackup, defeating the 20-cap. Component-scoped
+  // refs let the unmount cleanup actually clear the pending setTimeout.
+  const backupRetryTimerRef = useRef(null);
+  const backupRetryCountRef = useRef(0);
+  const backupZeroStreakRef = useRef(0);
   // Helper to clean up backup refresh timer + WS listener together
   const cleanupBackupRefresh = useCallback(() => {
     if (backupRefreshTimerRef.current) { clearInterval(backupRefreshTimerRef.current); backupRefreshTimerRef.current = null; }
     if (backupWsUnsubRef.current) { backupWsUnsubRef.current(); backupWsUnsubRef.current = null; }
+    if (backupRetryTimerRef.current) { clearTimeout(backupRetryTimerRef.current); backupRetryTimerRef.current = null; }
   }, []);
   const isMountedRef = useIsMounted();
   const autoLoadTimerRef = useRef(null);
@@ -491,6 +499,24 @@ export default function PhotosScreen() {
   // GAP 9 — surface backup failures in a banner
   const [backupErrorCount, setBackupErrorCount] = useState(0);
   const [backupErrorVisible, setBackupErrorVisible] = useState(false);
+  // v3 migration wiped @chatyy_backup/backed_up_map and stashed the previous
+  // map at `_v2_backup` for recovery. We expose a button to restore it when
+  // present — without this, users hit by the wipe had no way to get their
+  // dedup state back and were forced to re-upload thousands of photos.
+  const [hasV2Snapshot, setHasV2Snapshot] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const bs = require('../services/backup/backupStorage');
+        if (bs.hasV2Snapshot) {
+          const has = await bs.hasV2Snapshot();
+          if (!cancelled) setHasV2Snapshot(!!has);
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, []);
   const loadStorageInfo = useCallback(async () => {
     const userToken = user?.email || '';
     try {
@@ -1361,24 +1387,46 @@ export default function PhotosScreen() {
     setBackupProgress({ current: 0, total: 0 });
     uploadSpeedRef.current = { bytes: 0, startTime: Date.now(), lastSpeed: 0 };
 
-    // Watchdog: if backup makes no progress for 3 min, assume the native
-    // session hung (common symptoms: iCloud photo stuck fetching, server
-    // returning 502s in a loop, background task expired mid-upload). Cancel
-    // all native tasks and reset JS state so the user can retry immediately.
+    // Watchdog: if backup makes no progress for 3 min, the native session
+    // might be hung. But cancelAll() unconditionally is dangerous — native
+    // tasks can still be uploading even when JS sees no progress callbacks
+    // (URLSession.background fires onComplete in batches). Before cancelling
+    // we ask the native module how many uploads are actually active. If any
+    // are still in flight, extend the timeout (up to 5min hard cap) instead
+    // of killing them. Only if 0 active OR >5min total stale do we force-
+    // cancel and re-queue.
     let lastProgressAt = Date.now();
     let lastProgressCount = 0;
+    let watchdogStartedAt = Date.now();
     if (backupWatchdogRef.current) clearInterval(backupWatchdogRef.current);
-    backupWatchdogRef.current = setInterval(() => {
-      const stale = Date.now() - lastProgressAt > 3 * 60 * 1000;
-      if (stale) {
-        try { (Platform.OS==='ios'?require('../modules/expo-background-upload').default:null)?.cancelAll?.(); } catch {}
-        backupAbortRef.current = true;
-        backupInFlightRef.current = false;
-        cleanupBackupRefresh();
-        clearInterval(backupWatchdogRef.current);
-        backupWatchdogRef.current = null;
-        setBackupStatus('paused');
+    backupWatchdogRef.current = setInterval(async () => {
+      const stalledMs = Date.now() - lastProgressAt;
+      if (stalledMs <= 3 * 60 * 1000) return;
+      // Check native module first — if uploads are still active, don't kill them
+      let nativeActive = -1;
+      try {
+        const NU = (Platform.OS==='ios'?require('../modules/expo-background-upload').default:null);
+        if (NU?.getActiveCount) nativeActive = await NU.getActiveCount();
+      } catch {}
+      const hardStale = stalledMs > 5 * 60 * 1000;
+      if (nativeActive > 0 && !hardStale) {
+        // Native is still working — JS just lost the progress stream.
+        // Reset the JS-side counter so we don't keep alarming.
+        lastProgressAt = Date.now();
+        api.apiCall('drive_backup_debug', {
+          msg: 'watchdog_yield_to_native',
+          data: `nativeActive=${nativeActive} stalledMs=${stalledMs}`,
+        }, 'POST').catch(() => {});
+        return;
       }
+      // Either 0 active OR >5min stale even with active — truly hung.
+      try { (Platform.OS==='ios'?require('../modules/expo-background-upload').default:null)?.cancelAll?.(); } catch {}
+      backupAbortRef.current = true;
+      backupInFlightRef.current = false;
+      cleanupBackupRefresh();
+      clearInterval(backupWatchdogRef.current);
+      backupWatchdogRef.current = null;
+      setBackupStatus('paused');
     }, 30000);
 
     // Live refresh: WS real-time backup progress + 30s fallback polling
@@ -1433,7 +1481,15 @@ export default function PhotosScreen() {
             lastProgressAt = Date.now();
             lastProgressCount = current;
           }
-          setBackupProgress({ current: totalUploaded + current, total: 43000 }); // estimate
+          // Real device total drives the progress bar — was hardcoded 43000
+          // which made the % meaningless on libraries of any other size. Fall
+          // back to current backed-up total + still-pending so the bar
+          // monotonically grows toward 100%.
+          const realTotal = deviceTotalCount
+            || (total > 0 ? total : 0)
+            || (((backedUpTotal || 0) + (current || 0)) || 0)
+            || 1;
+          setBackupProgress({ current: totalUploaded + current, total: realTotal });
         });
 
         const uploaded = result?.uploaded || result?.completedFiles || 0;
@@ -1472,20 +1528,21 @@ export default function PhotosScreen() {
           if (pendingNow <= 0) break;
           // Track consecutive zero rounds and bail after a few so we
           // don't hot-spin forever when native is permanently stuck.
-          if (!startBackup._zeroStreak) startBackup._zeroStreak = 0;
-          startBackup._zeroStreak += 1;
-          if (startBackup._zeroStreak >= 5) {
-            startBackup._zeroStreak = 0;
+          // Counter is component-scoped (ref) so it can't leak across
+          // mounts and can't be silently reset by a manual re-tap.
+          backupZeroStreakRef.current += 1;
+          if (backupZeroStreakRef.current >= 5) {
+            backupZeroStreakRef.current = 0;
             break;
           }
           // Exponential-ish backoff between retries so we don't hammer
           // iOS while it's throttling us: 2s, 4s, 8s, 15s, 25s.
           const waits = [2000, 4000, 8000, 15000, 25000];
-          await new Promise(r => setTimeout(r, waits[startBackup._zeroStreak - 1] || 25000));
+          await new Promise(r => setTimeout(r, waits[backupZeroStreakRef.current - 1] || 25000));
           continue;
         }
         // Good round — reset the zero-streak and pause briefly before next.
-        startBackup._zeroStreak = 0;
+        backupZeroStreakRef.current = 0;
         await new Promise(r => setTimeout(r, 2000));
       }
 
@@ -1574,6 +1631,7 @@ export default function PhotosScreen() {
           cleanupBackupRefresh();
           setBackupStatus('complete');
           setLastBackupDate(new Date().toISOString());
+          backupRetryCountRef.current = 0;
         } else {
           // Device still has pending photos — KEEP the status as
           // 'backing_up' (banner stays visible) and schedule the next
@@ -1582,25 +1640,27 @@ export default function PhotosScreen() {
           // cap at 20 re-schedulings so a broken session eventually
           // releases the lock and a fresh tap of "Backup agora" can
           // try from scratch.
-          if (!startBackup._retrySchedule) startBackup._retrySchedule = 0;
-          startBackup._retrySchedule += 1;
+          //
+          // Counter lives on a component ref (was a static prop on the
+          // function — which leaked across mounts and got reset on any
+          // manual tap, defeating the cap entirely). The timeout handle is
+          // tracked on backupRetryTimerRef so unmount/cleanup can cancel it
+          // (previous version: handle was thrown away → ghost re-entries
+          // after the user navigated off the screen).
+          backupRetryCountRef.current += 1;
           setBackupStatus('backing_up');
-          if (startBackup._retrySchedule < 20) {
-            setTimeout(() => {
-              if (!backupAbortRef.current && backupInFlightRef.current) {
-                startBackup._retrySchedule = 0;
-                // force-unlock + relaunch
-                backupInFlightRef.current = false;
-                startBackup();
-              } else if (!backupAbortRef.current) {
-                backupInFlightRef.current = false;
-                startBackup._retrySchedule = 0;
-                startBackup();
-              }
+          if (backupRetryCountRef.current < 20) {
+            if (backupRetryTimerRef.current) clearTimeout(backupRetryTimerRef.current);
+            backupRetryTimerRef.current = setTimeout(() => {
+              backupRetryTimerRef.current = null;
+              if (backupAbortRef.current) return;
+              // force-unlock + relaunch
+              backupInFlightRef.current = false;
+              startBackup();
             }, 45000); // 45s wait before the next attempt
           } else {
             // Give up for this session — user can tap Reparar.
-            startBackup._retrySchedule = 0;
+            backupRetryCountRef.current = 0;
             clearInterval(refreshTimer);
             cleanupBackupRefresh();
             setBackupStatus('needs_backup');
@@ -3628,6 +3688,48 @@ export default function PhotosScreen() {
                 <IconRefresh size={20} color="#b91c1c" />
                 <Text style={[s.actionBtnText, { color: '#b91c1c' }]}>Reparar backup</Text>
               </TouchableOpacity>
+
+              {/* v3 migration restore — only shown when a v2 snapshot exists.
+                  The v3 migration wiped the backed-up map and saved the old
+                  map at `_v2_backup`. Without this UI surface there was no
+                  way for the user to recover from the wipe. */}
+              {hasV2Snapshot && (
+                <TouchableOpacity
+                  style={[s.actionBtn, { borderBottomWidth: 1, borderBottomColor: colors.border }]}
+                  onPress={() => {
+                    safeAlert(
+                      'Restaurar mapa anterior',
+                      'Carrega o mapa de fotos backupeadas anterior à migração. Pode evitar re-uploads.',
+                      [
+                        { text: t('common.cancel'), style: 'cancel' },
+                        {
+                          text: 'Restaurar',
+                          onPress: async () => {
+                            try {
+                              const bs = require('../services/backup/backupStorage');
+                              const n = await bs.restoreV2Snapshot();
+                              if (n > 0) {
+                                safeAlert('', `${n} fotos marcadas como já backupeadas.`);
+                                setHasV2Snapshot(false);
+                              } else if (n === 0) {
+                                safeAlert('', 'Mapa anterior vazio — nada a restaurar.');
+                              } else {
+                                safeAlert('', 'Nenhum mapa anterior encontrado.');
+                              }
+                            } catch (e) {
+                              safeAlert('Erro', e?.message || 'falhou');
+                            }
+                          },
+                        },
+                      ]
+                    );
+                  }}
+                  disabled={Platform.OS === 'web'}
+                >
+                  <IconRefresh size={20} color={colors.primary} />
+                  <Text style={[s.actionBtnText, { color: colors.primary }]}>Restaurar mapa anterior</Text>
+                </TouchableOpacity>
+              )}
 
               <TouchableOpacity
                 style={s.actionBtn}

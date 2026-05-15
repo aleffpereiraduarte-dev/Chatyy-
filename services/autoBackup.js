@@ -48,6 +48,15 @@ let appStateSubscription = null;
 let initialized = false;
 let lastAppStateBackupTime = 0;
 let _stopFlag = false;
+// Tracks whether startNativeBackup is in flight. The JS `lockState` only
+// covers code paths that go through acquireLock/releaseLock; the AppState
+// background handler used to call startNativeBackup directly without taking
+// the lock, so two native sessions could run simultaneously (every photo
+// uploaded twice, R2 bills double, server saw duplicate filenames). We
+// gate every entry point on this flag.
+let _nativeIsRunning = false;
+function nativeRunningSet(v) { _nativeIsRunning = !!v; }
+function isNativeRunning() { return _nativeIsRunning; }
 
 // Lock with timestamp + auto-expiry. Bare string lock left stuck whenever a
 // JS error escaped the upload loop — every subsequent backup attempt was
@@ -367,17 +376,42 @@ export async function startForegroundBackup(onProgress) {
 
       // Mirror native onComplete events back into JS backedUpIds map so the
       // JS engine fallback (and any UI code that reads from it) stays in sync.
-      const completeSub = NativeUpload.addListener('onComplete', async (event) => {
+      //
+      // Previously this read+serialize+write the entire map on EVERY native
+      // completion event. With 40k photos and a growing map, each write was
+      // O(n) JSON.stringify so the run cost was O(n²) — ~3 minutes of pure
+      // AsyncStorage IO across the session, and the writes blocked the
+      // JS thread enough to starve the progress callback. Now we accumulate
+      // IDs in `_pendingMarks` and flush in a debounced batch every 1s.
+      let _pendingMarks = [];
+      let _flushTimer = null;
+      const _flushPendingMarks = async () => {
+        const batch = _pendingMarks;
+        _pendingMarks = [];
+        _flushTimer = null;
+        if (batch.length === 0) return;
+        try {
+          const map = await getBackedUpMap();
+          const now = Date.now();
+          let changed = 0;
+          for (const id of batch) {
+            if (!map[id]) { map[id] = now; changed++; }
+          }
+          if (changed > 0) await saveBackedUpMap(map);
+        } catch {}
+      };
+      const completeSub = NativeUpload.addListener('onComplete', (event) => {
         if (event?.success && event?.assetId) {
-          try {
-            const map = await getBackedUpMap();
-            if (!map[event.assetId]) {
-              map[event.assetId] = Date.now();
-              await saveBackedUpMap(map);
-            }
-          } catch {}
+          _pendingMarks.push(event.assetId);
+          if (!_flushTimer) {
+            _flushTimer = setTimeout(_flushPendingMarks, 1000);
+          }
         }
       });
+      // Stash the flusher on the sub so the outer cleanup can drain residual
+      // marks before the listener detaches (otherwise the last <1s of
+      // completions never make it into the map).
+      completeSub._drain = _flushPendingMarks;
 
       // Fully-native path: startNativeBackup (Swift) fetches the WHOLE
       // PHAsset library with no JS pagination, uses URLSessionConfiguration
@@ -421,7 +455,19 @@ export async function startForegroundBackup(onProgress) {
             backupDebug('native.pass.loop.enter', { userEmail });
           } catch {}
           while (spins++ < 30 && !_stopFlag) {
-            const r = await NativeUpload.startNativeBackup(serverUrl, authToken, userEmail);
+            if (isNativeRunning()) {
+              // Another entry point (AppState bg handler, BG task) is already
+              // driving a native pass — yield instead of stacking calls.
+              console.log('[backup] foreground loop: native already running, breaking');
+              break;
+            }
+            nativeRunningSet(true);
+            let r;
+            try {
+              r = await NativeUpload.startNativeBackup(serverUrl, authToken, userEmail);
+            } finally {
+              nativeRunningSet(false);
+            }
             const passUploaded = r?.uploaded || 0;
             const passTotal = r?.total || 0;
             const stopped = !!r?.stopped;
@@ -446,6 +492,9 @@ export async function startForegroundBackup(onProgress) {
           done = lastTotal;
           console.log(`[backup] native backup session total: uploaded=${uploaded} total=${done} spins=${spins - 1}`);
           progressSub?.remove?.();
+          // Drain any pending batched writes before detaching the listener,
+          // otherwise the last burst of completions is lost.
+          try { await completeSub?._drain?.(); } catch {}
           completeSub?.remove?.();
           if (uploaded > 0) await setLastSync(new Date().toISOString());
           releaseLock();
@@ -530,6 +579,7 @@ export async function startForegroundBackup(onProgress) {
       }
 
       progressSub?.remove();
+      try { await completeSub?._drain?.(); } catch {}
       completeSub?.remove();
 
       if (uploaded > 0) await setLastSync(new Date().toISOString());
@@ -684,7 +734,11 @@ function setupAppStateListener() {
       // JS task will get suspended in ~5s anyway.
       try {
         persistBackupCreds();
-        if (isLocked()) {
+        // _nativeIsRunning is the authoritative "JS already launched a
+        // startNativeBackup that hasn't returned yet" flag. isLocked() only
+        // catches the JS lockState which the bg handler bypassed before,
+        // letting two native passes race. Check BOTH.
+        if (isLocked() || isNativeRunning()) {
           console.log('[backup] backgrounded with active native session — letting it continue');
           return;
         }
@@ -693,8 +747,8 @@ function setupAppStateListener() {
         // No active session — kick off one native pass so the bg-time window
         // (30s–4min via beginBackgroundTask) gets used to upload something
         // before iOS suspends the JS runtime. startNativeBackup acquires its
-        // own state lock natively, so this is safe even if a future
-        // foreground call collides.
+        // own state lock natively, but the JS-side _nativeIsRunning flag
+        // prevents a foreground entry from launching a parallel call.
         console.log('[backup] backgrounded with no active session — firing one native pass');
         const serverUrl = api.BASE_URL;
         const authToken = api.getAuthToken?.() || '';
@@ -702,11 +756,17 @@ function setupAppStateListener() {
         if (!authToken || !userEmail) return;
         if (typeof NativeUpload.startNativeBackup === 'function') {
           // Fire-and-forget — we can't await here because the JS event loop
-          // is about to get suspended. The native side handles its own
-          // lifecycle via beginBackgroundTask.
-          NativeUpload.startNativeBackup(serverUrl, authToken, userEmail).catch((e) => {
-            console.warn('[backup] background-fire startNativeBackup error:', e?.message);
-          });
+          // is about to get suspended. Mark the running flag so any
+          // foreground entry that races a wake-up sees it. We DON'T await,
+          // but we set + clear via .then/.catch so the flag eventually
+          // releases when the native side returns.
+          nativeRunningSet(true);
+          NativeUpload.startNativeBackup(serverUrl, authToken, userEmail)
+            .then(() => { nativeRunningSet(false); })
+            .catch((e) => {
+              nativeRunningSet(false);
+              console.warn('[backup] background-fire startNativeBackup error:', e?.message);
+            });
         }
       } catch (e) {
         console.warn('[backup] Background handler error:', e?.message);
@@ -846,6 +906,13 @@ export async function onBackupSettingChanged(enabled) {
 
 /**
  * Get the count of pending (not yet backed up) photos.
+ *
+ * Was using `first: 200` which truncated the calculation: a 40k-photo library
+ * still returned at most 200 even when zero were backed up, so the UI showed
+ * "200 pending" forever. We now use the cheap `totalCount` from MediaLibrary
+ * (PHAsset count is in-memory, ~1ms) minus the size of the backed-up map.
+ * That's an upper bound (the map may contain stale IDs for deleted assets)
+ * but it never under-reports the real pending count.
  */
 export async function getPendingCount() {
   if (Platform.OS === 'web') return 0;
@@ -854,11 +921,15 @@ export async function getPendingCount() {
     const { status } = await ML.getPermissionsAsync();
     if (status !== 'granted') return 0;
     const backedUpIds = await getBackedUpMap();
-    const assets = await ML.getAssetsAsync({
+    // `first: 1` is enough — we only need totalCount, not the asset list.
+    const probe = await ML.getAssetsAsync({
       mediaType: [ML.MediaType.photo, ML.MediaType.video],
-      first: 200, sortBy: [ML.SortBy.creationTime],
+      first: 1,
+      sortBy: [ML.SortBy.creationTime],
     });
-    return (assets?.assets || []).filter(a => !backedUpIds[a.id]).length;
+    const deviceTotal = probe?.totalCount || 0;
+    const backedUpSize = Object.keys(backedUpIds || {}).length;
+    return Math.max(0, deviceTotal - backedUpSize);
   } catch (e) {
     console.warn('[AutoBackup] Error getting pending count:', e.message);
     return 0;
@@ -867,10 +938,36 @@ export async function getPendingCount() {
 
 /**
  * Get the total number of backed up photos.
+ *
+ * Local AsyncStorage map is unreliable as authority — it can accumulate
+ * phantom IDs (asset marked locally before server confirmed, never cleaned
+ * up). The server's `drive_backup_count` is the actual row count in
+ * drive_files for this user and is the only trustworthy source. We cache
+ * the server response for 30s so the UI can call this on every render
+ * without flooding the backend.
  */
+let _serverCountCache = { value: 0, ts: 0 };
+const SERVER_COUNT_CACHE_MS = 30 * 1000;
 export async function getBackedUpCount() {
-  const ids = await getBackedUpMap();
-  return Object.keys(ids).length;
+  const now = Date.now();
+  if (_serverCountCache.ts && now - _serverCountCache.ts < SERVER_COUNT_CACHE_MS) {
+    return _serverCountCache.value;
+  }
+  try {
+    const r = await api.apiCall('drive_backup_count');
+    const serverCount = r?.data?.count || r?.data?.total || 0;
+    if (serverCount > 0) {
+      _serverCountCache = { value: serverCount, ts: now };
+      return serverCount;
+    }
+  } catch {}
+  // Server unreachable — fall back to the local map (still better than 0).
+  try {
+    const ids = await getBackedUpMap();
+    return Object.keys(ids).length;
+  } catch {
+    return _serverCountCache.value || 0;
+  }
 }
 
 /**

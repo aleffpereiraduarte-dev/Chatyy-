@@ -264,6 +264,41 @@ export async function saveUploadSessions(sessions) {
   await AsyncStorage.setItem(KEYS.UPLOAD_SESSIONS, JSON.stringify(sessions));
 }
 
+// ─── v2 → v3 migration restore ──────────────────────────────
+/**
+ * Returns true if a v2 backup snapshot exists (the v3 migration saved the
+ * pre-wipe map at `_v2_backup` so the user could recover from the ghost-
+ * count fix gone wrong). Used to decide whether to show the Restore button.
+ */
+export async function hasV2Snapshot() {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.BACKED_UP_MAP + '_v2_backup');
+    if (!raw) return false;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0;
+  } catch { return false; }
+}
+
+/**
+ * Restore the v2 snapshot into the current backed-up map. Used from the
+ * "Restaurar mapa anterior" button in Settings → Backup. Returns the number
+ * of asset IDs merged back in, or -1 if no snapshot existed.
+ */
+export async function restoreV2Snapshot() {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.BACKED_UP_MAP + '_v2_backup');
+    if (!raw) return -1;
+    const v2map = JSON.parse(raw) || {};
+    if (Object.keys(v2map).length === 0) return 0;
+    // Merge with the current map (the user may have backed up new photos
+    // since the wipe; we don't want to overwrite those timestamps).
+    const current = await getBackedUpMap();
+    const merged = { ...v2map, ...current };
+    await saveBackedUpMap(merged);
+    return Object.keys(v2map).length;
+  } catch { return -1; }
+}
+
 // ─── Full Reset ─────────────────────────────────────────────
 export async function resetAllBackupState() {
   _cachedMap = {};

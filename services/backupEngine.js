@@ -74,7 +74,14 @@ const CIRCUIT_BREAKER_THRESHOLD = 5;   // after 5 consecutive failures, pause
 const CIRCUIT_BREAKER_PAUSE_MS = 10000; // 10s pause when tripped
 const MULTIPART_THRESHOLD = 30 * 1024 * 1024; // 30MB → use multipart streaming
 const MULTIPART_CHUNK_SIZE = 24 * 1024 * 1024; // 24MB chunks — fewer round-trips
-const MULTIPART_PART_CONCURRENCY = 6;  // 6 parts in parallel (was 12 — same overload issue)
+// iOS jetsam limit is ~200MB for most app categories. Each in-flight part holds:
+//   • the base64 string (1.33× chunk size = ~32MB for a 24MB chunk)
+//   • the Uint8Array view (24MB)
+//   • the underlying ArrayBuffer the network stack copies for the PUT body (24MB)
+// At 6× parallel that was hitting ~480MB peak before GC — way above jetsam.
+// Drop to 2 on iOS so peak stays well under 160MB. Android keeps the higher
+// concurrency because Android JVM heap is far more forgiving (~512MB-1GB).
+const MULTIPART_PART_CONCURRENCY = Platform.OS === 'ios' ? 2 : 6;
 const UPLOAD_TIMEOUT_MS = 60000;       // 60s per photo upload
 const VIDEO_TIMEOUT_MS = 1800000;      // 30min per video upload
 const RETRY_MAX = 4;                   // max retries per photo
@@ -488,6 +495,15 @@ export class BackupEngine {
       return (a.size || 0) - (b.size || 0); // smaller first within class
     });
 
+    // Capture the active user email at queue-build time. If a multi-account
+    // user logs into a different account mid-backup, api.getSavedEmail()
+    // returns the NEW account but the queued photos belong to the OLD one
+    // — uploading them under the new account would mis-attribute thousands
+    // of photos. Each item carries the email it was queued for; the upload
+    // worker refuses to ship if api.getSavedEmail() no longer matches.
+    const queueEmail = (this._userEmail || api.getSavedEmail?.() || '');
+    this._queueEmail = queueEmail;
+
     this.queue = sorted.map((entry, idx) => ({
       id: entry.asset.id,
       asset: entry.asset,
@@ -498,6 +514,7 @@ export class BackupEngine {
       priority: idx,
       retries: 0,
       status: 'pending', // pending | uploading | completed | failed
+      _queuedForEmail: queueEmail,
     }));
 
     this.stats.totalFiles = this.queue.length;
@@ -879,6 +896,26 @@ export class BackupEngine {
   // ─── Upload a single item ──────────────────────────────
   async _uploadItem(item, ImageManipulator, quality) {
     _bdbg('upload.item.enter', { id: item.asset?.id, file: item.filename, size: item.size });
+    // Refuse to upload if the active account changed since the queue was
+    // built. Without this, multi-account users who switched logins mid-
+    // backup had thousands of photos uploaded under the wrong account
+    // (auth token + email come from api.getSavedEmail() at upload time).
+    // _queuedForEmail is set in buildQueue.
+    if (item._queuedForEmail) {
+      const currentEmail = (api.getSavedEmail && api.getSavedEmail()) || '';
+      if (currentEmail && currentEmail !== item._queuedForEmail) {
+        _bdbg('upload.account_mismatch_skip', {
+          queued: item._queuedForEmail,
+          current: currentEmail,
+          file: item.filename,
+        });
+        // Throw so the worker counts it as failed (queued IDs from the
+        // previous account stay un-marked, won't pollute the new account's
+        // backed-up map). The user will need to re-trigger backup under the
+        // correct account; the lock is released by start() either way.
+        throw new Error('account_switched_during_backup');
+      }
+    }
     const _t0 = Date.now();
     const ext = getExt(item.filename);
     const isVideo = item.asset.mediaType === 'video' || isVideoExt(ext);
