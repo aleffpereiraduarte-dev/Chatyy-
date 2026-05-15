@@ -155,7 +155,12 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
     }
 
     private func preselectFromIntentIfNeeded() {
-        guard let intent = extensionContext?.intent as? INSendMessageIntent else { return }
+        // NSExtensionContext.intent surface is iOS 14+. The app's
+        // deployment target (LSMinimumSystemVersion in Info.plist) is 12.0
+        // so we have to guard the read or older devices won't link.
+        guard #available(iOS 14.0, *),
+              let intent = extensionContext?.intent as? INSendMessageIntent
+        else { return }
         // 1) Direct conversation match by conversationIdentifier (the value
         //    we set in donateRecipient, which is the chat conv ID).
         if let convId = intent.conversationIdentifier, !convId.isEmpty {
@@ -169,7 +174,10 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
         //    drifted but the email is still around.
         if let recipients = intent.recipients {
             for person in recipients {
-                let handleValue = person.personHandle?.value?.lowercased() ?? ""
+                // INPersonHandle.value is non-optional String on iOS 10+,
+                // but be defensive: an INPerson missing a handle is
+                // useless for routing.
+                let handleValue = (person.personHandle?.value ?? "").lowercased()
                 if handleValue.isEmpty { continue }
                 if let match = allConversations.first(where: {
                     $0.email.lowercased() == handleValue
@@ -180,8 +188,8 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
                 // 3) Last-resort: surface as a virtual conversation so
                 //    the share still completes even if the recipient is no
                 //    longer in our top-30 recents cache.
-                let name = person.displayName.isEmpty
-                    ? handleValue : person.displayName
+                let dn = person.displayName
+                let name = dn.isEmpty ? handleValue : dn
                 let id = SpecialRowID.virtualPrefix + handleValue
                 let conv = ShareConversation(id: id, name: name, email: handleValue,
                                              avatarUrl: "", type: "direct")
@@ -1043,22 +1051,18 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
         let total = selectedIds.count * payloads.count
         showSending(total: total)
 
-        // BUG #1: keep the extension alive long enough for the request to
-        // finish. App extensions cannot call UIApplication.shared (it's
-        // unavailable on this target), but ProcessInfo provides an
-        // equivalent "performExpiringActivity" hook that asks the system
-        // for a slice of background time. We hold an OperationQueue-style
-        // semaphore inside it; the system extends our runtime up to ~30s
-        // until we signal done. Without this the system can suspend us
-        // the moment the sheet dismisses, URLSession kills the task, and
-        // the spinner spins forever from the user's perspective.
-        let keepAliveSem = DispatchSemaphore(value: 0)
-        ProcessInfo.processInfo.performExpiringActivity(withReason: "chatyy.shareext.upload") { expired in
-            if expired { return }
-            // Block this background thread until uploads complete (or the
-            // system signals expiration by re-invoking with expired=true).
-            _ = keepAliveSem.wait(timeout: .now() + 90)
-        }
+        // BUG #1: in an app extension we have no UIApplication-style
+        // beginBackgroundTask. The reliable way to keep the URL session
+        // alive long enough for the user to see the result is to
+        // 1) keep the session strongly referenced (we do — module-level
+        //    `_sharedShareExtSession`), and
+        // 2) NEVER call `extensionContext.completeRequest` until the
+        //    DispatchGroup notifies. The system gives ShareExtensions a
+        //    generous post-dismiss grace period as long as they have not
+        //    declared themselves "done". We hold off completion in
+        //    `group.notify` below so the system keeps us scheduled.
+        // The 60s `timeoutIntervalForRequest` ensures we are GUARANTEED
+        // to return a result instead of hanging forever.
 
         var done = 0
         var anyFailure = false
@@ -1168,8 +1172,6 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
         }
 
         group.notify(queue: .main) { [weak self] in
-            // Release the background-time slice held above.
-            keepAliveSem.signal()
             self?.hideSending()
             if anyFailure {
                 self?.showError(lastErr ?? "Falha em alguns envios")
