@@ -552,8 +552,9 @@ function CallScreenInner() {
       const data = res?.data || res;
       const token = data?.token;
       const url = data?.url || data?.livekitUrl || 'wss://livekit.chatyy.com.br';
+      const iceServers = Array.isArray(data?.iceServers) ? data.iceServers : [];
       if (!token) throw new Error('No token returned');
-      return { token, url, room };
+      return { token, url, room, iceServers };
     } catch (e) {
       console.error('[Call] fetchLivekitToken err:', e?.message);
       throw e;
@@ -593,9 +594,9 @@ function CallScreenInner() {
       }
     }
 
-    let token, url, room;
+    let token, url, room, iceServers;
     try {
-      ({ token, url, room } = await fetchLivekitToken());
+      ({ token, url, room, iceServers } = await fetchLivekitToken());
     } catch (e) {
       setErrorMsg(t('call.connectionFailed') || 'Não foi possível conectar.');
       setConnectionFailed(true);
@@ -603,7 +604,16 @@ function CallScreenInner() {
     }
     if (endedRef.current) return;
 
-    const r = new Room({
+    // [bug 2026-05-14 livekit-no-turn]
+    // LiveKit server is running with `turn.enabled: false` so its built-in
+    // TURN never gets added to the iceServers the server hands back via WS.
+    // Without an explicit relay, clients behind strict NAT (CGN cellular,
+    // corporate firewall) can't punch UDP 50000-50100 → media never flows →
+    // ParticipantDisconnected ~10s after the LiveKit signaling join → caller
+    // sends WS call_end → both ends die. Backend now mints coturn HMAC
+    // credentials and ships them in `data.iceServers`; we forward them via
+    // `rtcConfig` so peerConnection's ICE has a real relay candidate.
+    const roomOpts = {
       adaptiveStream: true,
       dynacast: true,
       audioCaptureDefaults: {
@@ -622,7 +632,11 @@ function CallScreenInner() {
           { width: 1280, height: 720, encoding: { maxBitrate: 1_500_000, maxFramerate: 30 } },
         ],
       },
-    });
+    };
+    if (Array.isArray(iceServers) && iceServers.length > 0) {
+      roomOpts.rtcConfig = { iceServers, iceTransportPolicy: 'all' };
+    }
+    const r = new Room(roomOpts);
 
     // RoomEvent handlers
     r.on(RoomEvent.Connected, () => {
@@ -701,14 +715,20 @@ function CallScreenInner() {
         setRemoteParticipant(null);
         _refreshRemoteTracks(null);
         // [bug 2026-05-14 caller-drops-on-answer]
-        // Grace window: don't teardown if peer just joined (<3s ago).
-        // After CallKit answer the callee forces a clean WS reconnect,
-        // which kicks the prior LiveKit publisher and they re-join
-        // within 1-2s. Firing handleEndCall here would tear down the
-        // call before that rejoin completes and the caller would send
-        // WS call_end {reason:'hangup'} → both sides die instantly.
+        // Grace window: don't teardown if peer just joined (<15s ago).
+        // Two causes for a fast ParticipantDisconnected:
+        //   (1) After CallKit answer the callee forces a clean WS reconnect,
+        //       which kicks the prior LiveKit publisher and they re-join
+        //       within 1-2s.
+        //   (2) ICE-negotiation timeout on strict NAT (CGN). LiveKit
+        //       publishes presence as soon as signaling completes (~0.5s)
+        //       but media may need up to ~10s to traverse. If ICE fails
+        //       LiveKit drops the participant. 15s covers both.
+        // Firing handleEndCall here would tear down the call before that
+        // rejoin/ice-retry completes and the caller would send WS call_end
+        // {reason:'hangup'} → both sides die instantly.
         const sinceJoin = Date.now() - (peerJoinedAtRef.current || 0);
-        const inGrace = peerJoinedAtRef.current > 0 && sinceJoin < 3000;
+        const inGrace = peerJoinedAtRef.current > 0 && sinceJoin < 15000;
         if (!isGroupCall && !endedRef.current && !inGrace) {
           try { handleEndCallRef.current && handleEndCallRef.current(); } catch {}
         } else if (inGrace) {
