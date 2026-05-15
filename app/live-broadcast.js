@@ -2836,9 +2836,15 @@ export default function LiveBroadcastScreen() {
           viewers (current + unique-during-run), reactions, and the join feed
           (who came in, in order). Read-only, host-only. */}
       {insightsOpen ? (
-        <View style={liveSheetStyles.backdrop}>
+        // Bug #978-1 fix — "quem tá assistindo" view shouldn't block the live.
+        // The shared liveSheetStyles.backdrop uses rgba(0,0,0,0.5) which fully
+        // darkens the broadcast underneath. For the Insights/viewers sheet the
+        // host wants to keep filming while glancing at the list — so we drop
+        // the alpha to 0.18 (just enough to make sheet copy readable). The
+        // sheet itself stays opaque so text is sharp.
+        <View style={[liveSheetStyles.backdrop, { backgroundColor: 'rgba(0,0,0,0.18)' }]}>
           <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setInsightsOpen(false)} />
-          <View style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16, maxHeight: '75%' }]}>
+          <View style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16, maxHeight: '55%' }]}>
             <View style={liveSheetStyles.grabber} />
             <Text style={liveSheetStyles.title}>{t('live.insights') || 'Insights'}</Text>
 
