@@ -31,6 +31,7 @@ import { useAuth } from '../context/AuthContext';
 import AvatarCircle from './AvatarCircle';
 import StoryRingAvatar from './status/StoryRingAvatar';
 import StoryViewer from './status/StoryViewer';
+import StatusCamera from './StatusCamera';
 import ProfilePostViewer from './ProfilePostViewer';
 import ProfileEditSheet from './ProfileEditSheet';
 import ProfileSettingsSheet from './ProfileSettingsSheet';
@@ -777,6 +778,17 @@ export default function Profile({
   // highlight doesn't clobber the live-stories starting index. items[] mirrors
   // the shape StoryViewer expects (id, media_url, type, bg_color, ...).
   const [highlightViewer, setHighlightViewer] = useState({ open: false, items: [], title: '', startIdx: 0, highlightId: null });
+  // [feat-11] Avatar tap action sheet + StatusCamera visibility. The avatar
+  // is the single, most-tapped surface on the profile and was overloaded:
+  //   - with stories → view stories
+  //   - without stories → silently jumps into ImagePicker, publishes a status
+  //     (user had no way to edit/crop/filter, no way to change avatar from same
+  //     spot, no way to just "see" their own avatar)
+  // The action sheet disambiguates: status creator (with filters), profile
+  // photo edit, view photo full-screen, cancel.
+  const [avatarActionOpen, setAvatarActionOpen] = useState(false);
+  const [statusCameraOpen, setStatusCameraOpen] = useState(false);
+  const [statusPublishing, setStatusPublishing] = useState(false);
   // autoOpenStory path: chat status_reply tap routes here with the intent to
   // pop the story viewer open if the original status is still live (within
   // 24h). Fire once when stories load. Ref guard so swiping back/forward
@@ -1551,63 +1563,51 @@ export default function Profile({
                 >{inner}</TouchableOpacity>
               );
             }
-            // No stories → tapping the avatar should still feel responsive:
-            //   - Self viewing own profile → open picker to publish a new story
-            //     (Instagram pattern: tap avatar with "+" badge)
-            //   - Viewing someone else → no-op (preserves WhatsApp behaviour)
+            // [feat-11, 2026-05-15] Avatar tap behaviour:
+            //   Self, no stories          → open action sheet (status creator /
+            //                                edit avatar / view avatar)
+            //   Self, has stories         → tap views stories; long-press opens
+            //                                the same action sheet (the "+" badge
+            //                                is hidden behind the ring so we still
+            //                                need a way to publish a new story)
+            //   Other user, has stories   → tap views their stories
+            //   Other user, no stories    → tap shows the photo viewer (was a
+            //                                no-op before; users expected to see
+            //                                the photo full-size at least)
+            // Previous behaviour silently jumped into ImagePicker and published
+            // without preview/crop/filter — user complaint resolved here.
             if (!hasStories) {
               if (actions?.is_self) {
                 return (
                   <TouchableOpacity
-                    onPress={() => {
-                      try {
-                        if (Platform.OS === 'web') {
-                          const input = typeof document !== 'undefined' ? document.createElement('input') : null;
-                          if (!input) return;
-                          input.type = 'file';
-                          input.accept = 'image/*,video/*';
-                          input.onchange = async (e) => {
-                            const f = e.target.files?.[0];
-                            if (!f) return;
-                            try {
-                              const uploadR = await api.statusUpload?.({ blob: f, name: f.name, type: f.type });
-                              if (uploadR?.success && uploadR.data?.url) {
-                                const statusType = (f.type || '').startsWith('video') ? 'video' : 'image';
-                                await api.statusPublish?.(uploadR.data.url, statusType, '#000000', null, {});
-                              }
-                            } catch (err) { console.warn('[avatar.tap.publish.web]', err?.message); }
-                          };
-                          input.click();
-                        } else {
-                          (async () => {
-                            try {
-                              const ImagePicker = require('expo-image-picker');
-                              const perm = await ImagePicker.requestMediaLibraryPermissionsAsync?.();
-                              if (!perm?.granted) return;
-                              const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images', 'videos'], quality: 0.85 });
-                              if (result?.canceled || !result?.assets?.[0]) return;
-                              const a = result.assets[0];
-                              const file = { uri: a.uri, name: a.fileName || (a.type === 'video' ? 'status.mp4' : 'status.jpg'), type: a.mimeType || (a.type === 'video' ? 'video/mp4' : 'image/jpeg') };
-                              const uploadR = await api.statusUpload?.(file);
-                              if (uploadR?.success && uploadR.data?.url) {
-                                const statusType = a.type === 'video' ? 'video' : 'image';
-                                await api.statusPublish?.(uploadR.data.url, statusType, '#000000', null, {});
-                              }
-                            } catch (err) { console.warn('[avatar.tap.publish.native]', err?.message); }
-                          })();
-                        }
-                      } catch (err) { console.warn('[avatar.tap]', err?.message); }
-                    }}
+                    onPress={() => setAvatarActionOpen(true)}
                     activeOpacity={0.85}
-                    accessibilityLabel={t?.('profile.addStory') || 'Adicionar status'}
+                    accessibilityLabel={t?.('profile.avatarActions') || 'Opções da foto'}
                   >{inner}</TouchableOpacity>
                 );
               }
-              return inner;
+              // Other user, no stories → at least open the photo viewer.
+              return (
+                <TouchableOpacity
+                  onPress={() => {
+                    // Lightweight: open ProfilePostViewer would be wrong (no posts),
+                    // so we open story viewer with a synthetic single-item list.
+                    try {
+                      const url = identity?.avatar_url || (identity?.email ? api.getAvatarUrlForEmail?.(identity.email) : '');
+                      if (!url) return;
+                      setStoryViewer({ open: true, startIdx: 0 });
+                    } catch {}
+                  }}
+                  activeOpacity={0.85}
+                  accessibilityLabel={t?.('profile.viewPhoto') || 'Ver foto'}
+                >{inner}</TouchableOpacity>
+              );
             }
             return (
               <TouchableOpacity
                 onPress={() => setStoryViewer({ open: true, startIdx: 0 })}
+                onLongPress={actions?.is_self ? () => setAvatarActionOpen(true) : undefined}
+                delayLongPress={350}
                 activeOpacity={0.85}
                 accessibilityLabel={t?.('profile.viewStories') || 'Ver status'}
               >{inner}</TouchableOpacity>
@@ -2355,6 +2355,178 @@ export default function Profile({
     />
   ) : null;
 
+  // [feat-11] Avatar action sheet — Instagram-style bottom sheet that
+  // surfaces three distinct intents the tap used to overload:
+  //   1) "Adicionar ao status" → opens StatusCamera (filters, stickers,
+  //                              capture+gallery, all crop/edit affordances)
+  //   2) "Mudar foto de perfil" → opens ProfileEditSheet which has the
+  //                               avatar-edit row (existing path)
+  //   3) "Ver foto" → opens story viewer pointing at a synthetic avatar item
+  const handleAvatarCameraCapture = useCallback(async (capture) => {
+    setStatusCameraOpen(false);
+    if (!capture?.uri) return;
+    setStatusPublishing(true);
+    try {
+      let uploadUri = capture.uri;
+      let uploadType = capture.type === 'video' ? 'video/mp4' : 'image/jpeg';
+      let uploadName = capture.type === 'video' ? 'status.mp4' : 'status.jpg';
+
+      // Match ChatStatusTab's compression: ~150KB on a 4MB HEIC means
+      // upload finishes before the user closes the app on cellular.
+      if (capture.type === 'photo' && Platform.OS !== 'web') {
+        try {
+          const ImageManipulator = require('expo-image-manipulator');
+          const out = await ImageManipulator.manipulateAsync(
+            capture.uri,
+            [{ resize: { width: 1200 } }],
+            { compress: 0.82, format: ImageManipulator.SaveFormat.JPEG }
+          );
+          if (out?.uri) uploadUri = out.uri;
+        } catch (e) { /* fall through to original on manipulator failure */ }
+      }
+
+      const file = { uri: uploadUri, name: uploadName, type: uploadType };
+      const uploadR = await api.statusUpload?.(file);
+      if (uploadR?.success && uploadR.data?.url) {
+        const statusType = capture.type === 'video' ? 'video' : 'image';
+        const extraMeta = capture.isBoomerang ? { is_boomerang: true } : {};
+        const r = await api.statusPublish?.(uploadR.data.url, statusType, '#000000', null, extraMeta);
+        if (r?.success) {
+          // Re-fetch the profile so the new story appears in the row + ring.
+          setData(prev => prev);
+          invalidateProfileCache(fetchKey);
+          setRetryCounter(c => c + 1);
+        } else {
+          Alert.alert(t?.('common.error') || 'Erro', r?.message || t?.('status.publishFailed') || 'Não foi possível publicar.');
+        }
+      } else {
+        Alert.alert(t?.('common.error') || 'Erro', uploadR?.message || t?.('status.uploadFailed') || 'Falha no upload.');
+      }
+    } catch (e) {
+      Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Falhou');
+    } finally {
+      setStatusPublishing(false);
+    }
+  }, [fetchKey, t]);
+
+  const avatarActionNode = actions?.is_self ? (
+    <Modal visible={avatarActionOpen} transparent animationType="fade" onRequestClose={() => setAvatarActionOpen(false)}>
+      <Pressable
+        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }}
+        onPress={() => setAvatarActionOpen(false)}
+      >
+        <Pressable
+          onPress={(e) => e.stopPropagation?.()}
+          style={{
+            backgroundColor: colors?.background || '#fff',
+            borderTopLeftRadius: 18, borderTopRightRadius: 18,
+            paddingBottom: Platform.OS === 'ios' ? 30 : 14,
+            paddingTop: 8,
+          }}
+        >
+          <View style={{ alignItems: 'center', paddingTop: 6, paddingBottom: 10 }}>
+            <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: isDark ? '#333' : '#ddd' }} />
+          </View>
+          {[
+            {
+              key: 'addStatus',
+              label: t?.('profile.avatarAddStatus') || 'Adicionar ao status',
+              hint: t?.('profile.avatarAddStatusHint') || 'Câmera + filtros, stickers e texto',
+              icon: <IconPlus size={20} color={colors?.text} />,
+              onPress: () => { setAvatarActionOpen(false); setStatusCameraOpen(true); },
+            },
+            {
+              key: 'editPhoto',
+              label: t?.('profile.avatarEditPhoto') || 'Mudar foto de perfil',
+              hint: t?.('profile.avatarEditPhotoHint') || 'Atualizar foto, nome, bio',
+              icon: <IconEdit size={20} color={colors?.text} />,
+              onPress: () => { setAvatarActionOpen(false); setEditOpen(true); },
+            },
+            {
+              key: 'viewPhoto',
+              label: t?.('profile.avatarView') || 'Ver foto',
+              hint: t?.('profile.avatarViewHint') || 'Em tela cheia',
+              icon: <IconGrid size={20} color={colors?.text} />,
+              onPress: () => {
+                setAvatarActionOpen(false);
+                // Open story viewer on existing stories if any; otherwise
+                // synth an item from the avatar url so user sees the photo.
+                if ((stories?.length || 0) > 0) {
+                  setStoryViewer({ open: true, startIdx: 0 });
+                } else {
+                  const url = identity?.avatar_url || (identity?.email ? api.getAvatarUrlForEmail?.(identity.email) : '');
+                  if (url) {
+                    setHighlightViewer({
+                      open: true,
+                      title: identity?.name || '',
+                      items: [{ id: -1, type: 'image', media_url: url, created_at: new Date().toISOString() }],
+                      startIdx: 0,
+                      highlightId: null,
+                    });
+                  }
+                }
+              },
+            },
+          ].map((row) => (
+            <TouchableOpacity
+              key={row.key}
+              onPress={row.onPress}
+              activeOpacity={0.7}
+              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 14 }}
+            >
+              <View style={{ width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+                {row.icon}
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 15, color: colors?.text, fontWeight: '600' }}>{row.label}</Text>
+                {!!row.hint && <Text style={{ fontSize: 12, color: isDark ? '#888' : '#999', marginTop: 2 }}>{row.hint}</Text>}
+              </View>
+            </TouchableOpacity>
+          ))}
+          <TouchableOpacity
+            onPress={() => setAvatarActionOpen(false)}
+            activeOpacity={0.7}
+            style={{ marginTop: 6, paddingVertical: 14, alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}
+          >
+            <Text style={{ fontSize: 15, color: colors?.text, fontWeight: '600' }}>{t?.('common.cancel') || 'Cancelar'}</Text>
+          </TouchableOpacity>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  ) : null;
+
+  const statusCameraNode = actions?.is_self ? (
+    <StatusCamera
+      visible={statusCameraOpen}
+      onClose={() => setStatusCameraOpen(false)}
+      onCapture={handleAvatarCameraCapture}
+      t={t}
+    />
+  ) : null;
+
+  // Tiny non-blocking "Publicando…" overlay while the captured status is
+  // being compressed + uploaded + published. Pinned to the bottom so it
+  // doesn't cover the profile content.
+  const publishingToastNode = statusPublishing ? (
+    <View pointerEvents="none" style={{
+      position: 'absolute', left: 16, right: 16, bottom: 24, zIndex: 9999,
+      paddingVertical: 12, paddingHorizontal: 16,
+      borderRadius: 24,
+      backgroundColor: isDark ? 'rgba(20,20,20,0.94)' : 'rgba(255,255,255,0.96)',
+      flexDirection: 'row', alignItems: 'center', gap: 12,
+      ...Platform.select({
+        ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.18, shadowRadius: 8 },
+        android: { elevation: 6 },
+        web: { boxShadow: '0 4px 12px rgba(0,0,0,0.18)' },
+      }),
+    }}>
+      <ActivityIndicator size="small" color="#7C3AED" />
+      <Text style={{ fontSize: 14, color: colors?.text, fontWeight: '500' }}>
+        {t?.('status.publishing') || 'Publicando…'}
+      </Text>
+    </View>
+  ) : null;
+
   // Followers / Following list sheet — opened when the Stat row taps on
   // "Seguidores" or "Seguindo". Instagram pattern: two tabs in one sheet.
   const followersNode = identity ? (
@@ -2406,6 +2578,9 @@ export default function Profile({
         {storyViewerNode}
         {highlightViewerNode}
         {editNode}
+        {avatarActionNode}
+        {statusCameraNode}
+        {publishingToastNode}
         {settingsNode}
         {followersNode}
         {menuNode}
@@ -2429,6 +2604,9 @@ export default function Profile({
       {storyViewerNode}
       {highlightViewerNode}
       {editNode}
+      {avatarActionNode}
+      {statusCameraNode}
+      {publishingToastNode}
       {settingsNode}
       {followersNode}
       {menuNode}
