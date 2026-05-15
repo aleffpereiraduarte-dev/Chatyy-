@@ -1934,7 +1934,17 @@ export default function ParentalScreen() {
   const pendingCount = pendingRequests.length;
   const pendingChildNames = useMemo(() => {
     const names = new Set();
-    pendingRequests.forEach(r => { if (r?.child_name) names.add(r.child_name); });
+    // Backend may omit `child_name` for older accounts — fall back to the
+    // email local-part so the banner never reads as a raw email address.
+    pendingRequests.forEach(r => {
+      const nm = (r?.child_name || '').trim();
+      if (nm) { names.add(nm); return; }
+      const em = (r?.child_email || '').trim();
+      if (em) {
+        const local = em.includes('@') ? em.split('@')[0] : em;
+        if (local) names.add(local.charAt(0).toUpperCase() + local.slice(1));
+      }
+    });
     return Array.from(names);
   }, [pendingRequests]);
 

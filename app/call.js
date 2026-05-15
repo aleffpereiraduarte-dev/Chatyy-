@@ -543,6 +543,25 @@ function CallScreenInner() {
   // ───── Fetch LiveKit JWT ─────
   const fetchLivekitToken = useCallback(async () => {
     const room = `call_${callId}`;
+    // Fast-path: IncomingCallListener pre-fetched the token when the call
+    // invite arrived. If it's fresh (<30s old, same call_id) consume it and
+    // skip the network round-trip. Saves 200-700ms on weak networks.
+    try {
+      const cached = globalThis.__chatyy_prefetched_lk_token;
+      if (cached
+          && String(cached.call_id) === String(callId)
+          && cached.token
+          && (Date.now() - (cached.ts || 0) < 30000)) {
+        // One-shot: clear so a stale cache from an aborted call doesn't bleed.
+        try { globalThis.__chatyy_prefetched_lk_token = null; } catch {}
+        return {
+          token: cached.token,
+          url: cached.url || 'wss://livekit.chatyy.com.br',
+          room: cached.room || room,
+          iceServers: Array.isArray(cached.iceServers) ? cached.iceServers : [],
+        };
+      }
+    } catch {}
     try {
       const api = require('../services/api');
       // chatLivekitToken accepts a conversation_id and an optional room override.

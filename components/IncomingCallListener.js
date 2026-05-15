@@ -491,6 +491,29 @@ export default function IncomingCallListener() {
         };
         callRef.current = callData;
         voipDiag('ws_call_invite_show_modal', callData.call_id);
+        // Fast-path: pre-fetch LiveKit JWT in background so when the user
+        // accepts, app/call.js can skip the network round-trip (saves
+        // 200-700ms of "Conectando..." on slow links). Stash by call_id in a
+        // module-global the screen reads on mount.
+        try {
+          const api = require('../services/api');
+          const convId = Number(callData.conversation_id) || 0;
+          const room = `call_${callData.call_id}`;
+          api.chatLivekitToken?.(convId, room).then(res => {
+            const d = res?.data || res;
+            if (d?.token) {
+              try { globalThis.__chatyy_prefetched_lk_token = {
+                call_id: callData.call_id,
+                token: d.token,
+                url: d.url || d.livekitUrl || 'wss://livekit.chatyy.com.br',
+                room,
+                iceServers: Array.isArray(d.iceServers) ? d.iceServers : [],
+                ts: Date.now(),
+              }; } catch {}
+              voipDiag('lk_token_prefetched', callData.call_id);
+            }
+          }).catch(() => {});
+        } catch {}
         // [bug #842 regression 2026-05-14] FCM data message can race the WS
         // call_invite: FCM may have already fired CallRingingService showing
         // the native IncomingCallActivity full-screen overlay BEFORE our
