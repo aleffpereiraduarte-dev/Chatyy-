@@ -10148,9 +10148,25 @@ export default function ChatConversationScreen() {
         try { encrypted = e2eService.createEnvelope(text, currentEmail, e2eKeys); } catch {}
       }
       if (!encrypted || typeof encrypted !== 'string' || encrypted === text) {
+        // [bug 2026-05-15 #980 e2ee-silent-fail] Previously just marked
+        // bubble _failed without telling the user WHY. They'd retry 3-4×
+        // expecting a network fix, but the real problem was missing E2EE
+        // bundles (peer hasn't published one yet, or local key store is
+        // corrupt). Surface a one-shot Alert so user understands this isn't
+        // a network issue — the recipient needs to open the app once so
+        // the bundle gets published, or contact support.
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: 'encryption_failed' } : m));
         removePendingMessage(conversationId, tempId).catch(() => {});
         setSending(false);
+        try {
+          const { Alert: A } = require('react-native');
+          if (A?.alert) {
+            A.alert(
+              t('chat.e2eeFailedTitle') || 'Falha na criptografia',
+              t('chat.e2eeFailedBody') || 'Não foi possível criptografar a mensagem. Peça pro contato abrir o app pra publicar a chave dele, ou tente novamente em alguns instantes.',
+            );
+          }
+        } catch {}
         return;
       }
       contentToSend = encrypted;

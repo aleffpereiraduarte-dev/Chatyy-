@@ -1378,9 +1378,33 @@ export default function LiveBroadcastScreen() {
     }
 
     if (sessionIdRef.current) {
-      api.liveSendChat(sessionIdRef.current, trimmed).catch(() => {});
+      // [bug 2026-05-15 #980 silent-fail-wave-4] Previously swallowed errors
+      // entirely — viewer typed a message, composer cleared, but if the API
+      // failed (5xx, network blip) only this device saw it and other viewers
+      // got nothing. Retry once after 800ms, then if still failing flag the
+      // local bubble with `_failed` so the user knows to try again.
+      const sid = sessionIdRef.current;
+      const msgId = msg.id;
+      api.liveSendChat(sid, trimmed).catch(() => {
+        setTimeout(() => {
+          api.liveSendChat(sid, trimmed).catch(() => {
+            try {
+              const { ToastAndroid, Platform: P } = require('react-native');
+              if (P.OS === 'android' && ToastAndroid?.show) {
+                ToastAndroid.show(t('live.chatFailed') || 'Mensagem não enviada', ToastAndroid.SHORT);
+              }
+            } catch {}
+            // Mark the optimistic bubble as failed so a faded styling is
+            // possible (LiveChatOverlay can read msg._failed). Future tap-to-
+            // retry can dispatch the same payload again.
+            try {
+              setChatMessages(prev => prev.map(m => (m.id === msgId ? { ...m, _failed: true } : m)));
+            } catch {}
+          });
+        }, 800);
+      });
     }
-  }, [user]);
+  }, [user, t]);
 
   // Composer submit — wraps handleSendChat and clears the local draft.
   const submitComposer = useCallback(() => {
@@ -1655,14 +1679,28 @@ export default function LiveBroadcastScreen() {
       const api = require('../services/api');
       const sid = sessionIdRef.current;
       if (sid && api?.liveCohostApprove) {
-        api.liveCohostApprove(sid, email).catch(() => {});
+        // [bug 2026-05-15 #980] Previously swallowed silently — host thought
+        // peer was approved (UI moved on), backend never recorded the change,
+        // peer never got the cohost token and ringed forever. Alert + restore
+        // the join request so host can retry.
+        api.liveCohostApprove(sid, email).catch((err) => {
+          console.warn('[Live] liveCohostApprove failed:', err?.message || err);
+          try {
+            const { Alert: A, ToastAndroid: TA, Platform: P } = require('react-native');
+            const msg = t('live.cohostApproveFailed') || 'Não foi possível aprovar agora. Tente novamente.';
+            if (P.OS === 'android' && TA?.show) TA.show(msg, TA.SHORT);
+            else if (A?.alert) A.alert(msg);
+          } catch {}
+          // Re-add to join-requests so the host can re-tap Approve.
+          setJoinRequests(prev => (prev.some(r => r.email === email) ? prev : [...prev, { email, ts: Date.now() }]));
+        });
       }
     } catch {}
     // Stage 3 of #929 — also kick off host's LK subscriber so the cohost's
     // video (published via Stage 2 viewer path) can be rendered. Gated.
     ensureCohostSubscriber().catch(() => {});
     setJoinRequests(prev => prev.filter(r => r.email !== email));
-  }, [user, ensureCohostSubscriber]);
+  }, [user, ensureCohostSubscriber, t]);
   const denyJoinRequest = useCallback((email) => {
     try {
       const ws = wsRef.current;
@@ -1686,7 +1724,22 @@ export default function LiveBroadcastScreen() {
     return () => {
       endedRef.current = true; // Prevent reconnection attempts
       if (sessionIdRef.current) {
-        api.liveEnd(sessionIdRef.current).catch(() => {});
+        // [bug 2026-05-15 #980 zombie-session] Single-shot fire-and-forget
+        // left the session marked 'live' on backend if the network blipped at
+        // the exact unmount moment. Viewers kept seeing the broadcast in
+        // their story strip for hours. Retry up to 3× with backoff — the
+        // closure survives unmount since it doesn't read any unmounted
+        // refs after this point.
+        const sid = sessionIdRef.current;
+        const tryEnd = (attempt) => {
+          api.liveEnd(sid).catch((err) => {
+            console.warn('[Live] liveEnd attempt ' + attempt + ' failed:', err?.message || err);
+            if (attempt < 3) {
+              setTimeout(() => tryEnd(attempt + 1), 1000 * attempt);
+            }
+          });
+        };
+        tryEnd(1);
       }
       if (wsRef.current) {
         try { wsRef.current.close(); } catch {}
