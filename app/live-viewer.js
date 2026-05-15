@@ -2348,8 +2348,12 @@ export default function LiveViewerScreen() {
         transparent
         onRequestClose={() => setShowViewersList(false)}
       >
-        <Pressable style={styles.viewersListBackdrop} onPress={() => setShowViewersList(false)}>
-          <Pressable style={styles.viewersListSheet} onPress={(e) => e.stopPropagation()}>
+        {/* Bug #978-1 — viewer list shouldn't fully block the broadcast.
+            Override the default dark backdrop with a lighter alpha so the
+            live stream stays visible behind the bottom sheet. The sheet
+            itself stays opaque for readability. */}
+        <Pressable style={[styles.viewersListBackdrop, { backgroundColor: 'rgba(0,0,0,0.18)' }]} onPress={() => setShowViewersList(false)}>
+          <Pressable style={[styles.viewersListSheet, { maxHeight: '55%' }]} onPress={(e) => e.stopPropagation()}>
             <View style={styles.viewersListHandle} />
             <View style={styles.viewersListHeader}>
               <Text style={styles.viewersListTitle}>
