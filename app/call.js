@@ -690,8 +690,13 @@ function CallScreenInner() {
         return;
       }
       // For any other reason (network, server kicked, etc.) after the peer
-      // had connected, end the call UI as a normal hangup.
-      try { handleEndCallRef.current && handleEndCallRef.current(); } catch {}
+      // had connected, surface "Reconectando..." instead of tearing down.
+      // [bug 2026-05-14 caller-drops-on-answer]
+      // Auto-teardown here was firing on ICE renegotiation timeouts and
+      // killing healthy calls. Only the explicit WS call_end OR the user's
+      // End button should terminate.
+      console.warn('[Call] LiveKit Disconnected after peer joined — showing Reconnecting');
+      setReconnecting(true);
     });
 
     r.on(RoomEvent.ParticipantConnected, (participant) => {
@@ -715,24 +720,16 @@ function CallScreenInner() {
         setRemoteParticipant(null);
         _refreshRemoteTracks(null);
         // [bug 2026-05-14 caller-drops-on-answer]
-        // Grace window: don't teardown if peer just joined (<15s ago).
-        // Two causes for a fast ParticipantDisconnected:
-        //   (1) After CallKit answer the callee forces a clean WS reconnect,
-        //       which kicks the prior LiveKit publisher and they re-join
-        //       within 1-2s.
-        //   (2) ICE-negotiation timeout on strict NAT (CGN). LiveKit
-        //       publishes presence as soon as signaling completes (~0.5s)
-        //       but media may need up to ~10s to traverse. If ICE fails
-        //       LiveKit drops the participant. 15s covers both.
-        // Firing handleEndCall here would tear down the call before that
-        // rejoin/ice-retry completes and the caller would send WS call_end
-        // {reason:'hangup'} → both sides die instantly.
-        const sinceJoin = Date.now() - (peerJoinedAtRef.current || 0);
-        const inGrace = peerJoinedAtRef.current > 0 && sinceJoin < 15000;
-        if (!isGroupCall && !endedRef.current && !inGrace) {
-          try { handleEndCallRef.current && handleEndCallRef.current(); } catch {}
-        } else if (inGrace) {
-          console.warn('[Call] ParticipantDisconnected ' + sinceJoin + 'ms after join — IN GRACE, suppressing teardown');
+        // NEVER auto-teardown from ParticipantDisconnected — this fires too
+        // aggressively when ICE re-negotiation happens on strict NAT (CGN
+        // cellular). LiveKit will keep re-trying signaling and the peer
+        // will rejoin once media path stabilizes. Surface "Reconectando..."
+        // instead so the user sees the in-flight state. Real hangup comes
+        // via WS call_end {reason:'hangup'} from the peer OR the user
+        // pressing the End button.
+        if (!isGroupCall && !endedRef.current) {
+          console.warn('[Call] ParticipantDisconnected — showing Reconnecting, NOT tearing down');
+          setReconnecting(true);
         }
       } else {
         // Switch the 1:1 display to the next remote if our current one left.
