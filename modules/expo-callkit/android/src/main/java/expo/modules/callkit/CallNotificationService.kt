@@ -12,9 +12,10 @@ import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.os.Build
 import android.util.Log
+import androidx.collection.LruCache
 import androidx.core.app.NotificationCompat
+import java.net.HttpURLConnection
 import java.net.URL
-import java.util.concurrent.ConcurrentHashMap
 
 object CallNotificationService {
 
@@ -24,7 +25,13 @@ object CallNotificationService {
 
   // Cache fetched avatar bitmaps por URL pra evitar re-download enquanto a
   // notification re-renderiza (ringing+chamada). Cap em 8 entries.
-  private val avatarCache = ConcurrentHashMap<String, Bitmap>()
+  //
+  // [2026-05-15] LruCache (synchronized internally) replaces
+  // ConcurrentHashMap+clear(): LRU eviction is natural — accessing an entry
+  // promotes it; once size > 8 the least-recently-used bitmap is dropped
+  // without a stop-the-world clear() that would also discard the bitmap
+  // we're literally about to render in the active call.
+  private val avatarCache = LruCache<String, Bitmap>(8)
 
   /**
    * Baixa o avatar sincronamente (chamado dentro de Thread). Retorna null em
@@ -32,21 +39,29 @@ object CallNotificationService {
    */
   fun fetchAvatarBitmap(urlStr: String): Bitmap? {
     if (urlStr.isEmpty()) return null
-    avatarCache[urlStr]?.let { return it }
+    avatarCache.get(urlStr)?.let { return it }
+    // [2026-05-15] HttpURLConnection (was openConnection() returning a raw
+    // URLConnection) with explicit, shorter timeouts. The previous 5s/5s
+    // combined could stall up to 10s on flaky cell — and on a phone call
+    // notification we want to fail fast and fall back to the initial.
+    var conn: HttpURLConnection? = null
     return try {
-      val conn = URL(urlStr).openConnection()
-      conn.connectTimeout = 5_000
-      conn.readTimeout = 5_000
-      val bmp = conn.getInputStream().use { BitmapFactory.decodeStream(it) }
+      conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+        connectTimeout = 3_000
+        readTimeout = 4_000
+        instanceFollowRedirects = true
+        requestMethod = "GET"
+      }
+      val bmp = conn.inputStream.use { BitmapFactory.decodeStream(it) }
       if (bmp != null) {
-        // Cap cache size
-        if (avatarCache.size >= 8) avatarCache.clear()
-        avatarCache[urlStr] = bmp
+        avatarCache.put(urlStr, bmp)
       }
       bmp
     } catch (e: Exception) {
       Log.w(TAG, "fetchAvatarBitmap failed for $urlStr: ${e.message}")
       null
+    } finally {
+      try { conn?.disconnect() } catch (_: Exception) {}
     }
   }
 
@@ -187,7 +202,7 @@ object CallNotificationService {
 
     // Tenta usar bitmap já cacheado se o caller não passou (síncrono local).
     val largeIcon: Bitmap? = cachedAvatarBitmap
-      ?: (if (callerAvatarUrl.isNotEmpty()) avatarCache[callerAvatarUrl] else null)
+      ?: (if (callerAvatarUrl.isNotEmpty()) avatarCache.get(callerAvatarUrl) else null)
 
     val builder = NotificationCompat.Builder(context, CHANNEL_ID)
       .setSmallIcon(iconRes)
@@ -198,9 +213,27 @@ object CallNotificationService {
       .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
       .setOngoing(true)
       .setAutoCancel(false)
-      .setFullScreenIntent(fullScreenPendingIntent, true)
       .addAction(0, "Recusar", declinePendingIntent)
       .addAction(0, "Atender", acceptPendingIntent)
+
+    // [2026-05-15] Gate setFullScreenIntent behind canUseFullScreenIntent()
+    // on Android 14+ (API 34). When the user has revoked the FSI permission
+    // (Settings → Apps → permissions → Full screen notifications), the
+    // builder still appears to accept the call but the system silently
+    // drops the FSI hint AND can throw SecurityException in some OEM
+    // builds. Falling back to a regular heads-up notification still rings
+    // and offers Accept/Decline buttons — losing only the immersive
+    // full-screen UI.
+    if (Build.VERSION.SDK_INT >= 34) {
+      val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+      if (nm.canUseFullScreenIntent()) {
+        builder.setFullScreenIntent(fullScreenPendingIntent, true)
+      } else {
+        Log.w(TAG, "USE_FULL_SCREEN_INTENT denied; falling back to heads-up only")
+      }
+    } else {
+      builder.setFullScreenIntent(fullScreenPendingIntent, true)
+    }
       // [2026-05-15 #977 cold-start phantom decline]
       // Used to be `.setDeleteIntent(declinePendingIntent)` — intended to
       // catch user-swipe dismissals, but `setOngoing(true)` already

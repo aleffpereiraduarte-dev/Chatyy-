@@ -23,6 +23,10 @@ dependencies {
   implementation project(':expo-modules-core')
   implementation 'androidx.core:core-ktx:1.13.1'
   implementation 'androidx.appcompat:appcompat:1.7.0'
+  // [2026-05-15] androidx.collection.LruCache used by CallNotificationService
+  // for the avatar bitmap cache. Pulled transitively by core-ktx but
+  // declared explicitly to make the dep visible and pin behavior.
+  implementation 'androidx.collection:collection:1.4.0'
   implementation platform('com.google.firebase:firebase-bom:33.7.0')
   implementation 'com.google.firebase:firebase-messaging'
 }

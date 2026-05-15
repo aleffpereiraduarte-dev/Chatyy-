@@ -35,8 +35,21 @@ class CallRingingService : Service() {
         private const val TAG = "CallRingingService"
         private const val RINGING_TIMEOUT_MS = 60_000L // 60 seconds
 
-        // Track the currently ringing call so we can stop from outside (thread-safe)
+        // Track the currently ringing call so we can stop from outside (thread-safe).
+        // Mirrors the last call set as primary — kept for backward compat with
+        // ExpoCallKitModule.getDiagnostics().ringingServiceActive (consumer checks
+        // != null only). For the actual set of active rings we now use ringingCallIds.
         val currentCallId = AtomicReference<String?>(null)
+
+        // [2026-05-15] Track ALL ringing callIds, not just the most recent.
+        // Previously each onStartCommand did `currentCallId.set(callId)`,
+        // which wiped the prior call when a 2nd FCM arrived back-to-back.
+        // The 2nd call would then proceed but any external code reading
+        // currentCallId saw only the latest. Now we keep a Set so the
+        // diagnostics + outside-stop helpers can reason about concurrent
+        // rings (rare but possible: two devices, two incoming calls).
+        val ringingCallIds: MutableSet<String> =
+            java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
     }
 
     private var callId: String? = null
@@ -93,9 +106,16 @@ class CallRingingService : Service() {
         callerAvatar = intent.getStringExtra("caller_avatar") ?: ""
         val hasVideo = intent.getBooleanExtra("has_video", false)
 
-        currentCallId.set(safeCallId)
+        // [2026-05-15] Add to the Set FIRST (allows concurrent rings to be
+        // reasoned about), then use compareAndSet on currentCallId so we
+        // only stamp the "primary" reference if it was empty. If another
+        // ring is already primary, we still ring (the FGS notification has
+        // a unique id == callId.hashCode()), we just don't overwrite the
+        // outside-visible pointer.
+        ringingCallIds.add(safeCallId)
+        currentCallId.compareAndSet(null, safeCallId)
 
-        Log.d(TAG, "Starting ringing for callId=$safeCallId, caller=$callerName")
+        Log.d(TAG, "Starting ringing for callId=$safeCallId, caller=$callerName, ringing=${ringingCallIds.size}")
 
         // Create the notification channel (idempotent)
         CallNotificationService.createNotificationChannel(this)
@@ -175,8 +195,16 @@ class CallRingingService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
-        currentCallId.set(null)
-        Log.d(TAG, "Ringing service destroyed for callId=$callId")
+        val cid = callId
+        if (cid != null) {
+            ringingCallIds.remove(cid)
+            // Only clear the "primary" pointer if we were it — otherwise
+            // another concurrent ring is still the active primary.
+            currentCallId.compareAndSet(cid, null)
+        } else {
+            currentCallId.set(null)
+        }
+        Log.d(TAG, "Ringing service destroyed for callId=$cid, remaining=${ringingCallIds.size}")
         super.onDestroy()
     }
 

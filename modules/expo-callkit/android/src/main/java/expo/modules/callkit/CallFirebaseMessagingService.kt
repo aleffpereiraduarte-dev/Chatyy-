@@ -90,10 +90,34 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
                 }
 
                 Log.d(TAG, "Started CallRingingService for callId=$callId")
-            } catch (e: Exception) {
-                // Fallback: if foreground service fails (e.g., ForegroundServiceStartNotAllowedException
-                // on Android 12+ when priority was downgraded), show notification directly
-                Log.e(TAG, "Failed to start foreground service, falling back to direct notification", e)
+            } catch (e: Throwable) {
+                // [2026-05-15] Explicit branches for the two failure modes we
+                // can actually observe in the wild on Android 12+/14+:
+                //   - ForegroundServiceStartNotAllowedException (API 31+):
+                //     FCM was delivered as a normal-priority push (no
+                //     high-priority budget left, or the message itself was
+                //     downgraded), so we can't start a FGS from background.
+                //     Direct heads-up notification still works.
+                //   - SecurityException: USE_FULL_SCREEN_INTENT was revoked
+                //     by the user (Android 14+ runtime grant) — the system
+                //     refuses to honor setFullScreenIntent. We still post
+                //     the notification; it will surface as heads-up only.
+                // Note: we avoid a literal `is ForegroundServiceStartNotAllowedException`
+                // pattern because the class doesn't exist on API < 31 and
+                // some ART verifiers reject the bytecode at class-load time.
+                // Comparing the simple name is the safe portable check.
+                val cls = e.javaClass.simpleName
+                when {
+                    Build.VERSION.SDK_INT >= 31 && cls == "ForegroundServiceStartNotAllowedException" -> {
+                        Log.w(TAG, "FGS not allowed (background start blocked), falling back to direct notification", e)
+                    }
+                    e is SecurityException -> {
+                        Log.w(TAG, "SecurityException starting FGS — likely USE_FULL_SCREEN_INTENT denied or FGS type policy", e)
+                    }
+                    else -> {
+                        Log.e(TAG, "Failed to start foreground service, falling back to direct notification", e)
+                    }
+                }
                 CallNotificationService.showIncomingCallNotification(
                     applicationContext,
                     callId,
@@ -195,8 +219,16 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
             val procs = am.runningAppProcesses ?: return false
             val myPkg = applicationContext.packageName
             for (p in procs) {
-                if (p.processName == myPkg
-                    && p.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND) {
+                if (p.processName != myPkg) continue
+                // [2026-05-15] Accept IMPORTANCE_VISIBLE (200) as foreground
+                // too. Previously we only matched IMPORTANCE_FOREGROUND (100),
+                // missing the case where the app is in Recents / behind a
+                // system dialog — still interactive enough for the JS Modal
+                // (IncomingCallListener) to render the in-app call sheet
+                // correctly, so showing the native IncomingCallActivity on
+                // top creates the same dual-UI bug we saw 2026-05-12. Lower
+                // importance value == higher priority in Android's scale.
+                if (p.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE) {
                     return true
                 }
             }

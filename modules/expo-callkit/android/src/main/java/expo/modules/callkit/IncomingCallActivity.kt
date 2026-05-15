@@ -303,17 +303,15 @@ class IncomingCallActivity : AppCompatActivity() {
   }
 
   private fun startRinging() {
-    // Play ringtone
-    try {
-      val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-      ringtone = RingtoneManager.getRingtone(this, ringtoneUri)
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-        ringtone?.isLooping = true
-      }
-      ringtone?.play()
-    } catch (e: Exception) {
-      // Ringtone may not be available
-    }
+    // [2026-05-15 #fix-6] Removed the activity-side RingtoneManager playback.
+    // The NotificationChannel "incoming_calls" (CallNotificationService.kt:87)
+    // already configures setSound(defaultRingtoneUri, USAGE_NOTIFICATION_RINGTONE)
+    // at IMPORTANCE_HIGH, so the OS is already ringing as soon as the
+    // foreground notification posts — playing a second Ringtone here
+    // produced a 1-2s audible double-ring (channel sound + Ringtone) at
+    // call start before audio focus settled. The channel is the single
+    // owner of the ringtone audio path; vibration stays here because the
+    // activity needs a tighter on/off cadence than the channel pattern.
 
     // Vibrate
     try {
@@ -460,9 +458,16 @@ class IncomingCallActivity : AppCompatActivity() {
     // The existing closeReceiver finishes us when that broadcast fires; we also
     // arm an 8s safety timeout so a JS crash can't strand the overlay forever.
     buildConnectingOverlay()
+    // [2026-05-15] Bumped 8s → 15s. Cold-start with a stale OTA bundle on
+    // mid-range Android devices (Hermes warmup + JS parse + route mount)
+    // can hit 9-12s on the first call after install/update. The
+    // closeReceiver fires the happy-path dismiss the instant JS calls
+    // notifyAppReady(), so this only bites when JS crashes — and waiting
+    // a few extra seconds for the overlay is far better than dropping
+    // back to launcher mid-connect.
     mainHandler.postDelayed({
       try { finishAndRemoveTask() } catch (_: Exception) {}
-    }, 8000)
+    }, 15000)
   }
 
   /**
@@ -574,6 +579,20 @@ class IncomingCallActivity : AppCompatActivity() {
   override fun onNewIntent(newIntent: Intent?) {
     super.onNewIntent(newIntent)
     if (newIntent?.getBooleanExtra("auto_accept", false) == true) {
+      // [2026-05-15] singleInstance launchMode means a 2nd incoming call's
+      // "Atender" notification action would route through THIS activity's
+      // onNewIntent, silently overwriting callId/callerName/etc. — i.e. we'd
+      // dispatch onAccept() but with the call we just ACCEPTED on the same
+      // screen still bound to the buttons. If the new intent is for a
+      // different callId, ignore it; a separate IncomingCallActivity / FGS
+      // is already (or will be) handling that 2nd call and we don't want to
+      // hijack the in-flight accept.
+      val newCallId = newIntent.getStringExtra("call_id") ?: ""
+      val currentId = callId ?: ""
+      if (newCallId.isNotEmpty() && currentId.isNotEmpty() && newCallId != currentId) {
+        Log.w("IncomingCallActivity", "onNewIntent callId mismatch — ignoring (current=$currentId new=$newCallId)")
+        return
+      }
       // Update call data from the new intent
       callId = newIntent.getStringExtra("call_id") ?: callId
       callerName = newIntent.getStringExtra("caller_name") ?: callerName

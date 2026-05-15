@@ -82,7 +82,14 @@ class ExpoCallKitModule : Module() {
         }
         toRemove.forEach { obj.remove(it) }
         obj.put(callId, now)
-        prefs.edit().putString(KEY_ACCEPTED_CALLS, obj.toString()).apply()
+        // [2026-05-15] Use commit() (synchronous) instead of apply() (async).
+        // apply() returns before the disk write completes — when
+        // CallActionReceiver reads isCallAcceptingPersisted() a few ms later
+        // (deleteIntent fires basically the moment we cancelNotification),
+        // the read can race with the in-flight write and see the old empty
+        // value → phantom decline gets through. The ~5ms commit() penalty
+        // is worth the correctness on cold-start accept.
+        prefs.edit().putString(KEY_ACCEPTED_CALLS, obj.toString()).commit()
         Log.d(TAG, "persistCallAccepting: callId=$callId (TTL=${ACCEPT_TTL_MS}ms)")
       } catch (e: Exception) {
         Log.w(TAG, "persistCallAccepting failed: ${e.message}")
@@ -135,7 +142,10 @@ class ExpoCallKitModule : Module() {
         put("hasVideo", hasVideo)
         put("timestamp", System.currentTimeMillis())
       }
-      prefs.edit().putString(KEY_PENDING_CALL, data.toString()).apply()
+      // [2026-05-15] commit() (sync) — JS reads this on cold-start launch and
+      // we cannot afford a race where the read fires before the disk write
+      // settled. ~5ms is acceptable; this only runs once per accept.
+      prefs.edit().putString(KEY_PENDING_CALL, data.toString()).commit()
       Log.d(TAG, "Saved pending accepted call: $callId callerEmail=$callerEmail")
     }
   }
