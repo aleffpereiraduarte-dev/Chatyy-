@@ -594,15 +594,46 @@ function CallScreenInner() {
       }
     }
 
+    // [bug 2026-05-15 livekit-server-side-diag]
+    // Native rebuild of build 490 linked @livekit/react-native but user still
+    // reports "Não foi possível conectar". Need to capture EXACTLY where
+    // connectToRoom is failing without device console access. POST every
+    // step to /api/email.php?action=push_diag so we can read it on prod.
+    const _diag = (event, extra) => {
+      try {
+        const api = require('../services/api');
+        api.apiCall?.('push_diag', {
+          tag: 'livekit_call',
+          event,
+          call_id: callId,
+          is_caller: !!isCaller,
+          platform: Platform.OS,
+          ...(extra || {}),
+        }, 'POST').catch(() => {});
+      } catch {}
+    };
+    _diag('connectToRoom_start');
+
     let token, url, room, iceServers;
     try {
       ({ token, url, room, iceServers } = await fetchLivekitToken());
+      _diag('token_ok', { url, room, ice_count: iceServers?.length || 0 });
     } catch (e) {
+      _diag('token_err', { msg: String(e?.message || e), stack: String(e?.stack || '').slice(0, 500) });
       setErrorMsg(t('call.connectionFailed') || 'Não foi possível conectar.');
       setConnectionFailed(true);
       return;
     }
-    if (endedRef.current) return;
+    if (endedRef.current) { _diag('ended_before_room'); return; }
+    // Sanity check on the LiveKit module — if the native module didn't link,
+    // `Room` is undefined and `new Room(...)` throws a confusing
+    // "undefined is not a constructor" instead of a clear "module missing".
+    if (typeof Room !== 'function') {
+      _diag('room_ctor_undefined', { roomType: typeof Room, hasLkNative: !!LK_AudioSession });
+      setErrorMsg('LiveKit native module not linked');
+      setConnectionFailed(true);
+      return;
+    }
 
     // [bug 2026-05-14 livekit-no-turn]
     // LiveKit server is running with `turn.enabled: false` so its built-in
@@ -636,11 +667,21 @@ function CallScreenInner() {
     if (Array.isArray(iceServers) && iceServers.length > 0) {
       roomOpts.rtcConfig = { iceServers, iceTransportPolicy: 'all' };
     }
-    const r = new Room(roomOpts);
+    let r;
+    try {
+      r = new Room(roomOpts);
+      _diag('room_ctor_ok');
+    } catch (e) {
+      _diag('room_ctor_err', { msg: String(e?.message || e), stack: String(e?.stack || '').slice(0, 500) });
+      setErrorMsg(String(e?.message || 'Room ctor failed'));
+      setConnectionFailed(true);
+      return;
+    }
 
     // RoomEvent handlers
     r.on(RoomEvent.Connected, () => {
       if (endedRef.current) return;
+      _diag('event_room_connected', { remotes: r.remoteParticipants?.size || 0 });
       console.log('[Call] LiveKit Connected to room', room);
       setReconnecting(false);
       setConnectionFailed(false);
@@ -803,9 +844,12 @@ function CallScreenInner() {
       }
     });
 
+    _diag('connect_start', { url });
     try {
       await r.connect(url, token);
+      _diag('connect_ok');
     } catch (e) {
+      _diag('connect_err', { msg: String(e?.message || e), stack: String(e?.stack || '').slice(0, 500), url });
       console.error('[Call] LiveKit connect err:', e?.message);
       if (endedRef.current) return;
       setErrorMsg(t('call.connectionFailed') || 'Não foi possível conectar.');
