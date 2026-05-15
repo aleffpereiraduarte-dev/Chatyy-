@@ -177,6 +177,15 @@ export default function LiveBroadcastScreen() {
   const guestPeerRef = useRef(null);
   const guestIceQueueRef = useRef(new Map());
 
+  // Stage 3 of #929 — host subscribes to LK room `live_{sessionId}` so
+  // any approved cohort publishing into it can be rendered alongside the
+  // host's primary stream. We don't republish here (host's own camera
+  // stays on raw WebRTC for back-compat with viewers that aren't on the
+  // LK path yet). Subscribe-only token from `chat_live_host_lk_token`.
+  const cohostRoomRef = useRef(null); // livekit-client Room
+  const [cohostParticipants, setCohostParticipants] = useState([]); // [{ identity, name, videoTrack }]
+  const cohostConnectingRef = useRef(false);
+
   // Animations
   const countdownScale = useRef(new Animated.Value(0)).current;
   const countdownOpacity = useRef(new Animated.Value(0)).current;
@@ -1374,6 +1383,122 @@ export default function LiveBroadcastScreen() {
     setInviteOpen(false);
   }, [titleInput]);
 
+  // Lazy-load LiveKit only when the cohost subscriber actually needs to
+  // connect — same pattern as live-viewer.js. Keeps the cold-start path
+  // free of livekit-client cost for hosts who never approve a cohost.
+  const _loadLK = useCallback(() => {
+    try {
+      const lkc = require('livekit-client');
+      let VideoView = null;
+      if (Platform.OS !== 'web') {
+        try {
+          const lkrn = require('@livekit/react-native');
+          lkrn.registerGlobals?.();
+          VideoView = lkrn.VideoView;
+        } catch (e) {
+          console.warn('[Live] @livekit/react-native load failed:', e?.message);
+        }
+      }
+      return { Room: lkc.Room, RoomEvent: lkc.RoomEvent, VideoView };
+    } catch (e) {
+      console.warn('[Live] livekit-client load failed:', e?.message);
+      return null;
+    }
+  }, []);
+
+  // Host-side LK subscribe to render cohost video/audio published into
+  // `live_{sessionId}`. Called the first time a cohost gets approved.
+  // Idempotent: if already connecting/connected, no-op.
+  const ensureCohostSubscriber = useCallback(async () => {
+    // Gated behind the same flag as live-viewer's join. Until viewers ship
+    // the LK publish path widely, the host has nothing to subscribe to.
+    if (!globalThis.__chatyy_cohost_lk) return;
+    if (cohostRoomRef.current) return;
+    if (cohostConnectingRef.current) return;
+    cohostConnectingRef.current = true;
+    try {
+      const lk = _loadLK();
+      if (!lk?.Room) return;
+      const sid = sessionIdRef.current;
+      if (!sid) return;
+      let info;
+      try {
+        info = await api.liveHostLkToken(sid);
+      } catch (e) {
+        console.warn('[Live] host LK token fetch failed:', e?.message);
+      }
+      const tokenInfo = info?.data || info;
+      if (!tokenInfo?.token || !tokenInfo?.url) {
+        console.warn('[Live] host LK token returned empty payload');
+        return;
+      }
+      const room = new lk.Room({ adaptiveStream: true, dynacast: true });
+      cohostRoomRef.current = room;
+
+      // Track participants and their video tracks so we can render a PiP
+      // for each cohost. Stage 4 will replace this list-based render with
+      // a proper multi-cam grid component.
+      const upsert = (participant, videoTrack) => {
+        setCohostParticipants(prev => {
+          const idx = prev.findIndex(p => p.identity === participant.identity);
+          const entry = {
+            identity: participant.identity,
+            name: participant.name || participant.identity,
+            videoTrack: videoTrack || null,
+          };
+          if (idx === -1) return [...prev, entry];
+          const copy = prev.slice();
+          copy[idx] = { ...copy[idx], ...entry };
+          return copy;
+        });
+      };
+      const remove = (identity) => {
+        setCohostParticipants(prev => prev.filter(p => p.identity !== identity));
+      };
+
+      room.on(lk.RoomEvent.ParticipantConnected, (p) => upsert(p, null));
+      room.on(lk.RoomEvent.ParticipantDisconnected, (p) => remove(p.identity));
+      room.on(lk.RoomEvent.TrackSubscribed, (track, _pub, participant) => {
+        if (track.kind === 'video') upsert(participant, track);
+      });
+      room.on(lk.RoomEvent.TrackUnsubscribed, (track, _pub, participant) => {
+        if (track.kind === 'video') upsert(participant, null);
+      });
+      room.on(lk.RoomEvent.Disconnected, () => {
+        cohostRoomRef.current = null;
+        setCohostParticipants([]);
+      });
+
+      await room.connect(tokenInfo.url, tokenInfo.token);
+
+      // Snapshot existing participants in case we connected after they
+      // were already publishing.
+      try {
+        const others = Array.from(room.remoteParticipants?.values?.() || []);
+        for (const p of others) {
+          const pubs = Array.from(p.videoTrackPublications?.values?.() || []);
+          const sub = pubs.find(pp => pp.track) || pubs[0];
+          upsert(p, sub?.track || null);
+        }
+      } catch {}
+    } catch (e) {
+      console.warn('[Live] cohost subscriber connect failed:', e?.message);
+      try { cohostRoomRef.current?.disconnect(); } catch {}
+      cohostRoomRef.current = null;
+    } finally {
+      cohostConnectingRef.current = false;
+    }
+  }, [_loadLK]);
+
+  // Teardown cohort subscriber when the broadcast ends (the broadcast's
+  // unmount/end-of-life effect calls this).
+  const teardownCohostSubscriber = useCallback(() => {
+    const room = cohostRoomRef.current;
+    cohostRoomRef.current = null;
+    setCohostParticipants([]);
+    if (room) { try { room.disconnect(); } catch {} }
+  }, []);
+
   // Approve / deny a viewer's join request. Approve sends a WS ack — the
   // viewer's `live_join_approved` handler kicks off a separate guest WebRTC
   // negotiation (deferred to native rebuild). For now, the approve path
@@ -1408,8 +1533,11 @@ export default function LiveBroadcastScreen() {
         api.liveCohostApprove(sid, email).catch(() => {});
       }
     } catch {}
+    // Stage 3 of #929 — also kick off host's LK subscriber so the cohost's
+    // video (published via Stage 2 viewer path) can be rendered. Gated.
+    ensureCohostSubscriber().catch(() => {});
     setJoinRequests(prev => prev.filter(r => r.email !== email));
-  }, [user]);
+  }, [user, ensureCohostSubscriber]);
   const denyJoinRequest = useCallback((email) => {
     try {
       const ws = wsRef.current;
@@ -1454,6 +1582,9 @@ export default function LiveBroadcastScreen() {
       try { guestPeerRef.current?.pc?.close(); } catch {}
       guestPeerRef.current = null;
       guestIceQueueRef.current.clear();
+      // Stage 3 cohort LK teardown — disconnect subscriber Room if active.
+      try { cohostRoomRef.current?.disconnect(); } catch {}
+      cohostRoomRef.current = null;
     };
   }, []);
 
@@ -2369,6 +2500,67 @@ export default function LiveBroadcastScreen() {
             {joinRequests.length} {t('live.colabRequest') || 'pra colab'}
           </Text>
         </TouchableOpacity>
+      ) : null}
+
+      {/* Stage 3 of #929 — cohost PiP stack. Each approved cohost publishing
+          into the LK room appears as a 96×128 PiP on the right side. Stage 4
+          will replace this with a proper grid that re-layouts the host's
+          stream alongside cohosts (1+1, 2+1, 3+1). For now it overlays. */}
+      {cohostParticipants.length > 0 ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            right: 8,
+            top: insets.top + 110,
+            zIndex: 25,
+            gap: 8,
+          }}
+        >
+          {cohostParticipants.slice(0, 3).map((p) => {
+            // Lazy resolve VideoView from livekit react-native at render
+            // time so the import is gated to the actually-attached track.
+            let VV = null;
+            try {
+              if (Platform.OS !== 'web') {
+                VV = require('@livekit/react-native').VideoView;
+              }
+            } catch {}
+            return (
+              <View
+                key={p.identity}
+                style={{
+                  width: 96,
+                  height: 128,
+                  borderRadius: 12,
+                  overflow: 'hidden',
+                  backgroundColor: '#000',
+                  borderWidth: 2,
+                  borderColor: LIVE_RED,
+                }}
+              >
+                {VV && p.videoTrack ? (
+                  <VV style={StyleSheet.absoluteFill} videoTrack={p.videoTrack} />
+                ) : (
+                  <View style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
+                    <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600' }} numberOfLines={1}>
+                      {p.name || (t('live.connecting') || 'Conectando…')}
+                    </Text>
+                  </View>
+                )}
+                <View style={{
+                  position: 'absolute', bottom: 4, left: 4, right: 4,
+                  backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 4,
+                  paddingHorizontal: 4, paddingVertical: 2,
+                }}>
+                  <Text style={{ color: '#fff', fontSize: 9, fontWeight: '700' }} numberOfLines={1}>
+                    {p.name?.split('@')[0] || p.identity?.split('@')[0]}
+                  </Text>
+                </View>
+              </View>
+            );
+          })}
+        </View>
       ) : null}
 
       {/* Requests sheet — list of viewers who tapped "Pedir pra entrar". Host

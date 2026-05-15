@@ -5943,6 +5943,14 @@ export async function liveCohostToken(sessionId) {
   return apiCall('chat_live_cohost_token', { session_id: sessionId }, 'POST');
 }
 
+// Stage 3 of #929 — host of a live session requests a subscribe-only LK
+// token so they can render cohost video tracks alongside their own
+// (still-via-raw-WebRTC) primary stream. Backend checks chat_live_sessions
+// ownership before minting.
+export async function liveHostLkToken(sessionId) {
+  return apiCall('chat_live_host_lk_token', { session_id: sessionId }, 'POST');
+}
+
 // ─── Telnyx Verified Number (caller ID PSTN) ───
 export async function voipVerifiedNumberRequest() {
   return apiCall('voip_verified_number_request', {}, 'POST');
