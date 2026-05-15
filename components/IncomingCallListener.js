@@ -196,6 +196,26 @@ function dismissNativeIncomingUi(callId) {
   } catch {}
 }
 
+// [bug 2026-05-15 native-call-disconnect-before-answer]
+// AppState.currentState lags 50–500ms behind reality when IncomingCallActivity
+// launches via fullScreenIntent over the keyguard — RN's app-state listener
+// still reports `active` while MainActivity is actually background and the
+// native ring screen is the canonical UI. The retry-dismiss loop below was
+// then nuking IncomingCallActivity BEFORE the user could tap Atender (call
+// vanished right after appearing). Gate on the native CallRingingService
+// flag instead: if it's running, JS must NOT dismiss — that's the canonical
+// UI. ExpoCallKit.getDiagnostics is sync (Function, not AsyncFunction).
+function isNativeRingingActive() {
+  if (Platform.OS !== 'android') return false;
+  try {
+    const ExpoCallKit = require('../modules/expo-callkit');
+    const diag = ExpoCallKit.getDiagnostics?.();
+    return !!(diag && diag.ringingServiceActive);
+  } catch {
+    return false;
+  }
+}
+
 export default function IncomingCallListener() {
   const { colors } = useTheme();
   const { user } = useAuth();
@@ -295,8 +315,12 @@ export default function IncomingCallListener() {
         console.warn('[IncomingCall] Android displayIncomingCall failed:', e?.message);
       }
     } else if (Platform.OS === 'android') {
-      // Foreground: JS modal is canonical. Kill any native FCM UI that raced in.
-      dismissNativeIncomingUi(normalizedCallId);
+      // Foreground: JS modal is canonical. Kill any native FCM UI that raced
+      // in — BUT only if CallRingingService isn't actually running. If it is,
+      // the native screen is the canonical UI (AppState reports stale during
+      // fullScreenIntent transitions) and dismissing it would kill the call
+      // before the user can answer. See isNativeRingingActive helper above.
+      if (!isNativeRingingActive()) dismissNativeIncomingUi(normalizedCallId);
     }
     /* legacy _callActiveTimer removed in favor of explicit lifecycle */
 
@@ -525,11 +549,16 @@ export default function IncomingCallListener() {
         // may have shown IncomingCallActivity full-screen BEFORE the foreground
         // guard had AppState=active. When app is foreground, JS owns the UI —
         // dismiss the native UI on a retry ladder (defeats FCM-after-WS races).
-        if (Platform.OS === 'android' && AppState.currentState === 'active') {
+        // [bug 2026-05-15] Skip dismiss entirely if CallRingingService is
+        // running — that means the native screen IS the canonical UI (user
+        // about to tap Atender). The 50-500ms AppState lag was making this
+        // branch fire while IncomingCallActivity was on top, killing the
+        // ring screen before the user could answer.
+        if (Platform.OS === 'android' && AppState.currentState === 'active' && !isNativeRingingActive()) {
           dismissNativeIncomingUi(callData.call_id);
-          setTimeout(() => dismissNativeIncomingUi(callData.call_id), 250);
-          setTimeout(() => dismissNativeIncomingUi(callData.call_id), 800);
-          setTimeout(() => dismissNativeIncomingUi(callData.call_id), 1800);
+          setTimeout(() => { if (!isNativeRingingActive()) dismissNativeIncomingUi(callData.call_id); }, 250);
+          setTimeout(() => { if (!isNativeRingingActive()) dismissNativeIncomingUi(callData.call_id); }, 800);
+          setTimeout(() => { if (!isNativeRingingActive()) dismissNativeIncomingUi(callData.call_id); }, 1800);
         }
         showCall(callData);
       }));
