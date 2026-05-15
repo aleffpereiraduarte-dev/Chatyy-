@@ -1277,9 +1277,10 @@ export default function LiveViewerScreen() {
 
     const senderName = user?.name || user?.email?.split('@')[0] || 'You';
     const entry = new Animated.Value(0);
+    const msgId = String(++chatIdRef.current);
 
     appendChatMessage({
-      id: String(++chatIdRef.current),
+      id: msgId,
       name: senderName,
       email: user?.email,
       content: text,
@@ -1297,9 +1298,27 @@ export default function LiveViewerScreen() {
     }
 
     if (paramSessionId) {
-      api.liveSendChat(paramSessionId, text).catch(() => {});
+      // [bug 2026-05-15 #980] Same retry+toast pattern as broadcast side —
+      // viewer's comment cleared from composer immediately but if both the
+      // WS and API failed silently, peers got nothing and the viewer assumed
+      // it landed.
+      api.liveSendChat(paramSessionId, text).catch(() => {
+        setTimeout(() => {
+          api.liveSendChat(paramSessionId, text).catch(() => {
+            try {
+              const { ToastAndroid, Platform: P } = require('react-native');
+              if (P.OS === 'android' && ToastAndroid?.show) {
+                ToastAndroid.show(t('live.chatFailed') || 'Comentário não enviado', ToastAndroid.SHORT);
+              }
+            } catch {}
+            try {
+              setChatMessages(prev => prev.map(m => (m.id === msgId ? { ...m, _failed: true } : m)));
+            } catch {}
+          });
+        }, 800);
+      });
     }
-  }, [user, paramSessionId]);
+  }, [user, paramSessionId, t]);
 
   // Heart animation — parabolic float, randomized everything for that organic
   // "stream of love" vibe Instagram/TikTok perfected. Each heart has:
