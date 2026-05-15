@@ -15717,13 +15717,25 @@ export default function ChatConversationScreen() {
           const handleRsvp = async (status) => {
             const r = await api.chatMeetupRsvp(msg.id, status);
             if (r.success) {
+              // [bug 2026-05-15] User reported "mando resposta e não atualiza WS".
+              // Backend WS fanout shows `to=0` (channel mismatch / sub state),
+              // so even other members in the chat don't see the vote. Patch
+              // every layer: msg.content (JSON path), msg.meetup (native bubble
+              // path), AND the rsvps array for stat counts.
               setMessages(prev => prev.map(m => {
                 if (m.id !== msg.id) return m;
+                let content = m.content;
                 try {
                   const d = JSON.parse(m.content);
-                  d.rsvp = r.data.rsvp;
-                  return { ...m, content: JSON.stringify(d) };
-                } catch { return m; }
+                  if (r.data.rsvp) d.rsvp = r.data.rsvp;
+                  if (r.data.rsvps) d.rsvps = r.data.rsvps;
+                  content = JSON.stringify(d);
+                } catch {}
+                return {
+                  ...m,
+                  content,
+                  meetup: { ...(m.meetup || {}), ...(r.data || {}) },
+                };
               }));
             }
           };
