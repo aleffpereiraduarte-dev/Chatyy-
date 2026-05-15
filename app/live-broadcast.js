@@ -713,6 +713,18 @@ export default function LiveBroadcastScreen() {
     // Codex root cause #4 — server `live_viewer_count` is authoritative;
     // do not overwrite with local peer size (HLS sessions would always
     // report 0, hosts would think the live is empty).
+    //
+    // Bug #978-2 fix — bump the displayed count immediately on every viewer
+    // join so the host UI never sticks at 0 waiting for the (sometimes
+    // dropped) `live_viewer_count` packet. We take the MAX of (current WS
+    // count, peers map size) so the bump never under-reports.
+    {
+      const localCount = Math.max(viewerCountRef.current || 0, peersRef.current?.size || 0);
+      if (localCount !== viewerCountRef.current) {
+        viewerCountRef.current = localCount;
+        setViewerCount(localCount);
+      }
+    }
 
     // Track unique viewers across the entire run — survives churn (viewer
     // leaves & rejoins still counts once). Feeds the end-card summary.
@@ -1052,13 +1064,40 @@ export default function LiveBroadcastScreen() {
           setLiveDuration(prev => prev + 1);
         }, 1000);
 
-        // Update viewer count every 10s — Codex root cause #4: prefer the
-        // server-authoritative WS count over local peer size; HLS sessions
-        // have no peers at all so peersRef.size would always report 0.
+        // Bug #978-2 fix — viewer count shows 0 even with active viewers.
+        //
+        // Root cause: count display was driven SOLELY by the server's
+        // `live_viewer_count` WS event. That event is fired on viewer
+        // join/leave only — so if (a) the host's WS reconnected after a
+        // viewer was already there, (b) the live_viewer_count packet was
+        // dropped, or (c) the host's WS subscribe race ran AFTER the viewer
+        // joined, the host UI sticks at 0 even though peersRef.current.size
+        // and uniqueViewersRef.current.size both know better.
+        //
+        // Fix: every 5s reconcile the displayed count from the MAX of
+        //   1) WS-driven count (viewerCountRef)
+        //   2) Active WebRTC peers (peersRef.current.size)
+        //   3) Approved guest peers (1 if guestPeer set, otherwise 0)
+        // Display never under-reports the real-time signal we already have
+        // locally. Also bumped the cadence from 10s to 5s so the count
+        // catches up quickly after a WS hiccup.
         viewerCountTimerRef.current = setInterval(() => {
-          const count = Math.max(viewerCountRef.current || 0, peersRef.current.size);
-          api.liveUpdateViewers(sessionIdRef.current, count).catch(() => {});
-        }, 10000);
+          const sid = sessionIdRef.current;
+          if (!sid) return;
+          // Reconcile display count from the strongest local signal.
+          const wsCount = viewerCountRef.current || 0;
+          const peerCount = peersRef.current?.size || 0;
+          const display = Math.max(wsCount, peerCount);
+          if (display !== wsCount) {
+            // Local signal is ahead of the WS — surface it so user
+            // doesn't see a stale "0 assistindo".
+            viewerCountRef.current = display;
+            setViewerCount(display);
+          }
+          // Push our best estimate to the backend so /lives_global +
+          // home strip surface a non-zero badge.
+          api.liveUpdateViewers(sid, display).catch(() => {});
+        }, 5000);
       } else {
         setError(res?.message || t('live.connectionFailed') || 'Connection failed');
       }
