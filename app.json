@@ -288,6 +288,7 @@
       "expo-video",
       "./plugins/withFixResourceSigning.js",
       "./plugins/withManualIosSigning.js",
+      "./plugins/with-broadcast-extension.js",
       "expo-iap"
     ],
     "extra": {
