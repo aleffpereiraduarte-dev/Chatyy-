@@ -1,1 +1,1 @@
-2026-05-15T16:59:40Z
+trigger 2026-05-15T18:05:33Z #981 native (call earpiece + lock-screen flags)
