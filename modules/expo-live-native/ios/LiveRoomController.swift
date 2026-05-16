@@ -100,10 +100,11 @@ final class LiveRoomController: ObservableObject {
     self.lastError = nil
 
     // Install the delegate. We retain it manually because LiveKit holds
-    // delegates weakly.
+    // delegates weakly. LiveKit Swift SDK 2.x exposes delegates via the
+    // multicast `.delegates` property — `room.add(delegate:)` is Obj-C only.
     let bridge = RoomDelegateBridge(owner: self)
     self.delegateRetain = bridge
-    self.room.add(delegate: bridge)
+    self.room.delegates.add(delegate: bridge)
 
     do {
       let connectOptions = ConnectOptions(autoSubscribe: true)

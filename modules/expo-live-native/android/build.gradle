@@ -53,7 +53,7 @@ dependencies {
   // ---- LiveKit ----
   // 2.18.x targets WebRTC m132. Pinning to a hard version because LiveKit's
   // gradle metadata uses BOMs which can drift between releases.
-  implementation 'io.livekit:livekit-android:2.18.2'
+  implementation 'io.livekit:livekit-android:2.22.1'
 
   // ---- Jetpack Compose ----
   // Versions chosen to be compatible with kotlin 1.9.25 + AGP 8.6 (Expo SDK 55).

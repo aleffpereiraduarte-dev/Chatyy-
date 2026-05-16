@@ -190,12 +190,12 @@ public final class NativeCallRoom: NSObject {
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self = self else { return }
             do {
-                // LiveKit SDK 2.x: `Room()` does not accept a delegate in
-                // init. We register via `add(delegate:)` afterwards so the
-                // SDK matches across 2.0..2.x without breakage. If a future
-                // SDK version drops `add`, swap for `.delegates.add(self)`.
-                let room = Room()
-                room.add(delegate: self)
+                // LiveKit Swift SDK 2.x — correct API per docs.livekit.io:
+                // `Room(delegate:)` is THE Swift-facing constructor.
+                // `room.add(delegate:)` is Obj-C-only (`addObjC(delegate:)`).
+                // For Swift, init-with-delegate or `room.delegates.add(...)`
+                // on the multicast delegate. Init pattern is simpler.
+                let room = Room(delegate: self)
                 // Assign before connect so concurrent JS adoptions see the
                 // partially-initialized Room (snapshot will report
                 // `connecting`).

@@ -37,7 +37,9 @@ dependencies {
   // Audio routing handled by audioswitch which is brought transitively from
   // @livekit/react-native-webrtc (already in app). webrtc-sdk is pinned to
   // the version @livekit/react-native uses to avoid SO conflicts.
-  implementation('io.livekit:livekit-android:2.18.2') {
+  // [2026-05-15] Bumped 2.18.2 → 2.22.1 (confirmed on Maven Central per search).
+  // 2.18.2 may not exist on Central; 2.22.1 is documented.
+  implementation('io.livekit:livekit-android:2.22.1') {
     // Exclude transitive webrtc — @livekit/react-native-webrtc provides it.
     exclude group: 'io.github.webrtc-sdk', module: 'android'
   }
