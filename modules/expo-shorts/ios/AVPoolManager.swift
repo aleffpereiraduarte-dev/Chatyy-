@@ -105,7 +105,10 @@ import AVFoundation
   }
 
   /** Release all 3 players. Call on Reels feed unmount / memory warning. */
-  @objc public func release() {
+  // [2026-05-16] Renamed from `release()` — that selector conflicts with
+  // NSObject's Obj-C `-release` method (ARC). Swift compiler errors out
+  // when @objc-exposing it. `releaseAll()` is unambiguous.
+  @objc public func releaseAll() {
     lock.lock(); defer { lock.unlock() }
     for slot in slots {
       slot.player?.pause()

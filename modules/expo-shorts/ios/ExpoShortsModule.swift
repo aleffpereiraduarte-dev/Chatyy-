@@ -19,12 +19,12 @@ public class ExpoShortsModule: Module {
     }
 
     AsyncFunction("releasePool") {
-      AVPoolManager.shared.release()
+      AVPoolManager.shared.releaseAll()
       NSLog("[ExpoShorts] releasePool: drained")
     }
 
     OnDestroy {
-      AVPoolManager.shared.release()
+      AVPoolManager.shared.releaseAll()
     }
 
     View(ShortsPlayerView.self) {
