@@ -2115,8 +2115,8 @@ export default function OneScreen() {
           const callId = `one_${Date.now()}`;
           const contactEmail = params.contact_email;
           const contactName = contactEmail.split('@')[0];
-          // [#992 Stage 3] Mobile uses native call screen; web uses /call.js.
-          if (Platform.OS !== 'web') {
+          // [hybrid 2026-05-16] /call.js handles the UI on mobile too.
+          if (false) {
             (async () => {
               try {
                 let lkUrl = null, lkToken = null;

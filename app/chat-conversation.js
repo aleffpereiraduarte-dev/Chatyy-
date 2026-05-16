@@ -13337,11 +13337,10 @@ export default function ChatConversationScreen() {
       // Send push notification for the call
       api.callNotify(conversationId, callId, videoEnabled).catch(() => {});
 
-      // [#992 Stage 3] Mobile (iOS+Android) uses full-native call screen
-      // (CallActivity / CallViewController) which owns LiveKit Room.connect,
-      // audio, video, mute and hangup. JS-side /call.js is now web-only.
-      // Web still pushes /call.js because there's no native module on web.
-      if (Platform.OS !== 'web') {
+      // [hybrid 2026-05-16] /call.js owns the rich UI again on mobile (mute,
+      // video, screenshare, group grid). Native CallKit/LK pre-connect still
+      // run for ringtone/lock-screen; visible screen is the JS one.
+      if (false) {
         try {
           let lkUrl = null;
           let lkToken = null;

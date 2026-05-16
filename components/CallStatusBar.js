@@ -138,11 +138,9 @@ export default function CallStatusBar() {
       try { router.push('/chat?tab=calls'); return; } catch {}
     }
     // [#992 Stage 3] Mobile: re-open the full-native call screen. On native
-    // the JS /call.js is dead — the active call lives in CallActivity /
-    // CallViewController, which already has an existing Room. Use
-    // openNativeCall with the same callId; the native side recognises the
-    // active call and just re-presents it (lkUrl/lkToken null = keep current).
-    if (Platform.OS !== 'web') {
+    // [hybrid 2026-05-16] Resume goes back to /call.js JS UI (native LK Room
+    // stays running in background for ringtone/lock-screen).
+    if (false) {
       try {
         const ExpoCallKit = require('../modules/expo-callkit');
         ExpoCallKit.openNativeCall({

@@ -974,13 +974,11 @@ export default function IncomingCallListener() {
             const finalConversationId = updatedCall?.conversation_id || conversationId;
             callStateRef.current = null;
             console.log('[IncomingCall] Navigating to call: email=' + finalCallerEmail + ' hasSDP=' + !!_pendingOfferSdp);
-            // [#992 Stage 3] On mobile (iOS+Android) the native incoming-direct
-            // path (CallActivity / CallViewController) already takes over after
-            // CallKit answer. Don't push /call.js — that's web-only now.
-            if (Platform.OS !== 'web') {
-              voipDiag('skip_js_push_native_owns_call', callId);
-              return;
-            }
+            // [hybrid 2026-05-16] Push /call.js on all platforms — the rich
+            // JS UI is now the visible screen on mobile too. Native CallKit /
+            // IncomingCallActivity stay for ringing/lock-screen, but the
+            // in-call screen is /call.js with WhatsApp-grade features.
+            voipDiag('push_js_call_hybrid', callId);
             router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(finalCallerName)}&contactEmail=${encodeURIComponent(finalCallerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(finalConversationId)}&isCaller=0`);
           };
 
@@ -1199,12 +1197,9 @@ export default function IncomingCallListener() {
             // background; /call's connectToRoom will join LiveKit as soon
             // as WS is up.
             //
-            // [#992 Stage 3] On mobile the native incoming-direct path
-            // (CallActivity / CallViewController) already mounts the call UI.
-            // Skip the JS /call.js push — keep WS relay below running.
-            if (Platform.OS === 'web') {
-              router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&autoAccepted=1`);
-            }
+            // [hybrid 2026-05-16] Push /call.js on all platforms (mobile too).
+            // Native call screen still runs underneath for system integration.
+            router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&autoAccepted=1`);
 
             (async () => {
               const mailWs = require('../services/websocket').default;

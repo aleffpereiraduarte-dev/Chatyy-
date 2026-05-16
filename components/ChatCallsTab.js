@@ -3118,9 +3118,11 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     const name = item.contactName || item.contact_name || '';
     if (!email) return;
     const isVideo = item.video ? '1' : '0';
-    // [#992 Stage 3] Mobile: open the full-native call screen instead of /call.js.
-    // callId is generated freshly here (was minted inside /call before).
-    if (Platform.OS !== 'web') {
+    // [hybrid 2026-05-16] User reverted #992 Stage 3 for the call screen — JS
+    // /call.js owns the rich UI again (mute/video/speaker/screenshare/group
+    // grid). Native CallKit + LK pre-connect still run for lock-screen/PiP/
+    // ringtone, but the visible screen is /call.js.
+    if (false) {
       (async () => {
         try {
           const callId = `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;

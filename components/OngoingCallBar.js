@@ -65,8 +65,8 @@ export default function OngoingCallBar() {
         if (typeof call.onResume === 'function') {
           try { call.onResume(); return; } catch {}
         }
-        // [#992 Stage 3] Mobile: re-open the full-native call screen.
-        if (Platform.OS !== 'web') {
+        // [hybrid 2026-05-16] /call.js owns the call UI on mobile.
+        if (false) {
           try {
             const ExpoCallKit = require('../modules/expo-callkit');
             ExpoCallKit.openNativeCall({
