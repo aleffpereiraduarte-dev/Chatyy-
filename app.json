@@ -291,7 +291,8 @@
       "expo-video",
       "./plugins/withFixResourceSigning.js",
       "./plugins/withManualIosSigning.js",
-      "expo-iap"
+      "expo-iap",
+      "./modules/expo-live-native"
     ],
     "extra": {
       "router": {

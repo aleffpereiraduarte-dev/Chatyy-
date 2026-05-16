@@ -1,0 +1,33 @@
+{
+  "name": "expo-live-native",
+  "version": "0.1.0",
+  "description": "Native Live broadcast (host + viewer) for Expo using LiveKit Android SDK + Jetpack Compose. Replaces the JS @livekit/react-native VideoView path which caused black flashes / flicker on the host preview.",
+  "main": "src/index.js",
+  "scripts": {
+    "build": "expo-module build",
+    "clean": "expo-module clean",
+    "lint": "expo-module lint",
+    "test": "expo-module test",
+    "prepare": "expo-module prepare",
+    "prepublishOnly": "expo-module prepublishOnly",
+    "expo-module": "expo-module"
+  },
+  "keywords": [
+    "expo",
+    "livekit",
+    "live",
+    "broadcast",
+    "compose"
+  ],
+  "repository": "https://github.com/aleffduarte/webmail-app",
+  "author": "Chatyy / OneMundo",
+  "license": "MIT",
+  "homepage": "https://github.com/aleffduarte/webmail-app/tree/main/modules/expo-live-native",
+  "files": [
+    "android",
+    "ios",
+    "src",
+    "expo-module.config.json",
+    "README.md"
+  ]
+}
