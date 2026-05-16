@@ -1,18 +1,9 @@
 {
   "name": "expo-live-native",
   "version": "0.1.0",
-  "description": "Native Live broadcast host + viewer for Expo. iOS uses SwiftUI + LiveKit iOS SDK; Android uses Jetpack Compose + LiveKit Android SDK. Replaces the JS @livekit/react-native VideoView path which had black flash/flicker on host preview.",
+  "description": "Native Live broadcast host + viewer for Expo. iOS uses SwiftUI + LiveKit iOS SDK; Android uses Jetpack Compose + LiveKit Android SDK.",
   "main": "src/index.js",
   "types": "index.ts",
-  "scripts": {
-    "build": "expo-module build",
-    "clean": "expo-module clean",
-    "lint": "expo-module lint",
-    "test": "expo-module test",
-    "prepare": "expo-module prepare",
-    "prepublishOnly": "expo-module prepublishOnly",
-    "expo-module": "expo-module"
-  },
   "keywords": [
     "expo",
     "livekit",
