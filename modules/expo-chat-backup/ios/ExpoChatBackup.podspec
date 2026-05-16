@@ -1,5 +1,5 @@
 Pod::Spec.new do |s|
-  s.name           = 'expo-chat-backup'
+  s.name           = 'ExpoChatBackup'
   s.version        = '1.0.0'
   s.summary        = 'Encrypted SQLite chat snapshot backup to iCloud Drive'
   s.description    = 'Encrypts the chatyy.db SQLite file with PBKDF2 + AES-256-GCM and uploads to the user\'s iCloud Drive ubiquity container. End-to-end encrypted — Chatyy servers never see the data or key.'
