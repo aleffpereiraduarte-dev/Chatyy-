@@ -2194,6 +2194,12 @@ export default function LiveBroadcastScreen() {
           borderColor: '#22d3ee',
           overflow: 'hidden',
           zIndex: 25,
+          // Android: pair with the inner SurfaceView's zOrder=1 so the
+          // rounded PiP card sits cleanly ABOVE the host's full-screen
+          // preview SurfaceView. Without elevation the parent's rounded
+          // mask wins on the JS side but the SurfaceView punches a
+          // black-square hole on the native side.
+          ...(Platform.OS === 'android' ? { elevation: 6 } : null),
           ...(Platform.OS === 'web' ? { boxShadow: '0 6px 18px rgba(34,211,238,0.4)' } : {}),
         }}>
           {Platform.OS === 'web' ? (
@@ -2857,6 +2863,11 @@ export default function LiveBroadcastScreen() {
                 VV = require('@livekit/react-native').VideoView;
               }
             } catch {}
+            // Bind the native mount lifecycle to the underlying track sid so
+            // a reconnecting cohost (new SID) gets a fresh SurfaceView. The
+            // old SurfaceView would otherwise stick around half-detached and
+            // paint as a black square ("mancha preta") on Android.
+            const vvKey = `${p.identity}:${p.videoTrack?.sid || 'notrack'}`;
             return (
               <View
                 key={p.identity}
@@ -2868,10 +2879,25 @@ export default function LiveBroadcastScreen() {
                   backgroundColor: '#000',
                   borderWidth: 2,
                   borderColor: LIVE_RED,
+                  // Android: elevation lifts this card above the host's
+                  // full-screen SurfaceView so the rounded card mask renders
+                  // without a black square punch-through. zIndex alone is
+                  // ignored when a SurfaceView is involved.
+                  ...(Platform.OS === 'android' ? { elevation: 6 } : null),
                 }}
               >
                 {VV && p.videoTrack ? (
-                  <VV style={StyleSheet.absoluteFill} videoTrack={p.videoTrack} />
+                  // zOrder=1 → setZOrderMediaOverlay(true) on the underlying
+                  // SurfaceView. Required because the host's own camera
+                  // preview already owns the default window hole at zOrder=0.
+                  // Two SurfaceViews at the same z-order = the second paints
+                  // black on Android (single-hole-per-window rule).
+                  <VV
+                    key={vvKey}
+                    style={StyleSheet.absoluteFill}
+                    videoTrack={p.videoTrack}
+                    zOrder={1}
+                  />
                 ) : (
                   <View style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
                     <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600' }} numberOfLines={1}>
@@ -3410,6 +3436,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 2,
+    // Android: regular Views don't stack above a SurfaceView via zIndex.
+    // `elevation` is the only knob that lifts this scrim above the live
+    // camera SurfaceView when the host toggles their camera off — without
+    // it the user saw the live feed flicker through ("mancha preta").
+    elevation: 8,
   },
   videoOffText: {
     color: 'rgba(255,255,255,0.5)',

@@ -2333,13 +2333,33 @@ export default function LiveViewerScreen() {
             backgroundColor: '#000',
             borderWidth: 2,
             borderColor: LIVE_RED,
+            // Android: elevate the cohost self-preview card above the
+            // full-screen remote-stream SurfaceView. Without `elevation`
+            // the rounded card mask paints a black-square hole on top of
+            // the host's video ("mancha preta" reported during cohost).
+            ...(Platform.OS === 'android' ? { elevation: 6 } : null),
           }}>
             {(() => {
               const lk = _LK_VideoView ? { VideoView: _LK_VideoView } : loadLiveKit() || {};
               const VV = lk.VideoView;
               const track = cohostLocalTrackRef.current;
               if (VV && track && cohostPublishing) {
-                return <VV style={StyleSheet.absoluteFill} videoTrack={track} mirror />;
+                // zOrder=1 → setZOrderMediaOverlay(true). REQUIRED whenever
+                // another SurfaceView (the host's remote stream at zOrder=0)
+                // is already mounted: only one SurfaceView per window can
+                // own the default "behind window" hole, so the second one
+                // paints black without an explicit overlay z-order. Keying
+                // on track.sid forces a fresh native mount whenever the
+                // local cohost track is replaced (perm flow, reconnect).
+                return (
+                  <VV
+                    key={`cohost-self-${track?.sid || 'pending'}`}
+                    style={StyleSheet.absoluteFill}
+                    videoTrack={track}
+                    mirror
+                    zOrder={1}
+                  />
+                );
               }
               return (
                 <View style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
