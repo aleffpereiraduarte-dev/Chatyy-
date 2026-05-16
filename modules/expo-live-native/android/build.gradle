@@ -1,0 +1,81 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+apply plugin: 'expo-module-gradle-plugin'
+
+group = 'expo.modules.livenative'
+version = '0.1.0'
+
+// Compose requires the Kotlin compose plugin in newer Kotlin/AGP combos but with
+// kotlin 1.9.x + AGP 8.x we can keep using `composeOptions { kotlinCompilerExtensionVersion ... }`.
+// The host app already pins kotlin 1.9.x via expo's bundled config. If the kotlin
+// version drifts past 2.0, this block + the compiler-extension version may need
+// to bump in lockstep (see https://developer.android.com/jetpack/androidx/releases/compose-kotlin).
+
+android {
+  namespace 'expo.modules.livenative'
+
+  defaultConfig {
+    versionCode 1
+    versionName '0.1.0'
+    minSdkVersion 24
+  }
+
+  buildFeatures {
+    compose true
+  }
+
+  composeOptions {
+    // 1.5.15 is the latest compatible compiler extension for Kotlin 1.9.25.
+    // When the host app bumps Kotlin, bump this together.
+    kotlinCompilerExtensionVersion '1.5.15'
+  }
+
+  // LiveKit + WebRTC ship -keep rules; we don't ship a separate consumer-rules
+  // file but reuse the consumer rules baked into livekit-android.
+
+  kotlinOptions {
+    jvmTarget = '17'
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+}
+
+repositories {
+  google()
+  mavenCentral()
+  // LiveKit Android publishes to Maven Central. JitPack is not required here.
+}
+
+dependencies {
+  // ---- LiveKit ----
+  // 2.18.x targets WebRTC m132. Pinning to a hard version because LiveKit's
+  // gradle metadata uses BOMs which can drift between releases.
+  implementation 'io.livekit:livekit-android:2.18.2'
+
+  // ---- Jetpack Compose ----
+  // Versions chosen to be compatible with kotlin 1.9.25 + AGP 8.6 (Expo SDK 55).
+  implementation 'androidx.compose.ui:ui:1.7.5'
+  implementation 'androidx.compose.ui:ui-graphics:1.7.5'
+  implementation 'androidx.compose.ui:ui-tooling-preview:1.7.5'
+  implementation 'androidx.compose.material:material:1.7.5'
+  implementation 'androidx.compose.material:material-icons-core:1.7.5'
+  implementation 'androidx.compose.material:material-icons-extended:1.7.5'
+  implementation 'androidx.compose.foundation:foundation:1.7.5'
+  implementation 'androidx.compose.runtime:runtime:1.7.5'
+  implementation 'androidx.compose.animation:animation:1.7.5'
+
+  // Activity + Lifecycle Compose bindings.
+  implementation 'androidx.activity:activity-compose:1.9.3'
+  implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.8.7'
+  implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7'
+
+  // Kotlin coroutines — already in the host app but explicit here for clarity.
+  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
+
+  // Core/AppCompat needed for the Activity base classes Compose hooks into.
+  implementation 'androidx.core:core-ktx:1.13.1'
+  implementation 'androidx.appcompat:appcompat:1.7.0'
+}
