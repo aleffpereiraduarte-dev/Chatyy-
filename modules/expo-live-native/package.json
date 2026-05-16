@@ -1,0 +1,7 @@
+{
+  "name": "expo-live-native",
+  "version": "0.1.0",
+  "description": "Native SwiftUI host/viewer screens for LiveKit-backed live broadcasts.",
+  "main": "index.ts",
+  "types": "index.ts"
+}
