@@ -1,6 +1,6 @@
 import UIKit
 import SwiftUI
-import LiveKit
+import LiveKitClient
 // [2026-05-16] AVKit for AVPictureInPictureController. Already linked via
 // system framework (no podspec change needed).
 import AVKit

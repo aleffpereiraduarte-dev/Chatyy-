@@ -3,7 +3,7 @@ import UIKit
 // [Day 3, 2026-05-16] CallView now hosts video views (local preview +
 // remote tile) so it needs the LiveKit module for SwiftUIVideoView,
 // VideoTrack, and LocalVideoTrack types.
-import LiveKit
+import LiveKitClient
 
 // [native call screen, 2026-05-16] SwiftUI view that mirrors the Android
 // CallActivity layout (avatar circle + name + status + mute/hangup/video).

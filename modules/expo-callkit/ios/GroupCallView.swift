@@ -3,7 +3,7 @@ import UIKit
 // [native group call screen, 2026-05-16] Same LiveKit module as the 1:1
 // CallView — we need SwiftUIVideoView, VideoTrack, and LocalVideoTrack to
 // render each participant tile. Mirrors the Android GroupCallActivity grid.
-import LiveKit
+import LiveKitClient
 
 // [native group call screen, 2026-05-16]
 //

@@ -1,6 +1,6 @@
 import UIKit
 import SwiftUI
-import LiveKit
+import LiveKitClient
 import AVFoundation
 import Foundation
 

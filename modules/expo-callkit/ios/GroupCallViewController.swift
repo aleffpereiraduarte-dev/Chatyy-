@@ -1,6 +1,6 @@
 import UIKit
 import SwiftUI
-import LiveKit
+import LiveKitClient
 
 // [native group call screen, 2026-05-16]
 //
