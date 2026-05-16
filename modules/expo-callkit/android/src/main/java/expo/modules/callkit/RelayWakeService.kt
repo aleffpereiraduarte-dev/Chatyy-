@@ -319,8 +319,10 @@ class RelayWakeService : Service() {
         // the only option — it ignores priority/importance, which is fine
         // for our purposes since the notification is invisible-by-design.
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // Channel is IMPORTANCE_MIN — already silences sound + vibration +
+            // heads-up. setSilent() is API 29+; redundant when paired with a
+            // MIN channel so we drop it to keep the API 26-28 path identical.
             Notification.Builder(this, CHANNEL_ID)
-                .setSilent(true)
         } else {
             Notification.Builder(this)
                 .setPriority(Notification.PRIORITY_MIN)
