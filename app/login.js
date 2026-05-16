@@ -19,8 +19,10 @@ import {
 } from '../components/Icons';
 import { HelpModal, PrivacyModal, TermsModal } from '../components/LoginModals';
 import SignupIntro from '../components/SignupIntro';
+import RestoreBackupPrompt from '../components/RestoreBackupPrompt';
 import { LANGUAGES } from '../i18n';
 import * as api from '../services/api';
+import { getDeviceId as getE2eDeviceId, getDevicePublicKey as getE2eDevicePublicKey } from '../services/e2e';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import useDebouncedCallback from '../hooks/useDebouncedCallback';
 // COUNTRIES (with masks/maxDigits) used to power format-as-you-type. The
@@ -92,6 +94,65 @@ export default function LoginScreen() {
       if (mountedRef.current) router.replace(target);
     }, 100);
   };
+
+  // After a successful login, decide whether to surface the
+  // RestoreBackupPrompt before navigating. "New device" heuristic:
+  //   - SQLite getConversations() returns empty/null (no local chats)
+  //   - AND listBackups() returns >= 1 backup in iCloud/Google Drive
+  //   - AND the user hasn't tapped "Pular" (@chatyy_skip_restore !== '1')
+  // Web is excluded — the native module isn't available there.
+  // If any check fails / throws, we just navigate normally — restore is
+  // an opt-in enhancement, never a blocker.
+  const maybePromptRestoreThenGo = useCallback(async (isKids) => {
+    const target = postLoginTarget || defaultTarget(isKids);
+    pendingNavRef.current = { target };
+
+    const doNav = () => {
+      setTimeout(() => {
+        if (mountedRef.current) router.replace(target);
+      }, 100);
+    };
+
+    if (Platform.OS === 'web') { doNav(); return; }
+
+    try {
+      const skipped = await AsyncStorage.getItem('@chatyy_skip_restore');
+      if (skipped === '1') { doNav(); return; }
+
+      let convs = null;
+      try {
+        const localDb = require('../services/localDb');
+        if (typeof localDb.getConversations === 'function') {
+          convs = await localDb.getConversations();
+        }
+      } catch { /* localDb may not be initialised yet — treat as empty */ }
+      if (Array.isArray(convs) && convs.length > 0) { doNav(); return; }
+
+      let backups = [];
+      try {
+        const ChatBackup = require('expo-chat-backup');
+        backups = await ChatBackup.listBackups();
+      } catch { backups = []; }
+      if (!Array.isArray(backups) || backups.length === 0) { doNav(); return; }
+
+      setRestoreBackups(backups);
+      setShowRestorePrompt(true);
+      // Navigation deferred — fires inside handleRestorePromptClose below.
+    } catch {
+      doNav();
+    }
+  }, [postLoginTarget, router]);
+
+  // Closes the restore prompt and resumes the deferred navigation.
+  const handleRestorePromptClose = useCallback(() => {
+    setShowRestorePrompt(false);
+    const pending = pendingNavRef.current;
+    pendingNavRef.current = null;
+    if (!pending?.target) return;
+    setTimeout(() => {
+      if (mountedRef.current) router.replace(pending.target);
+    }, 100);
+  }, [router]);
   const { width } = useWindowDimensions();
   const mountedRef = useRef(true);
   const passwordRef = useRef(null);
@@ -402,6 +463,15 @@ export default function LoginScreen() {
   // sees a confirmation instead of a frozen screen.
   const [loginSuccess, setLoginSuccess] = useState(false);
   const successAnim = useRef(new Animated.Value(0)).current;
+
+  // Restore-from-backup prompt state. Surfaced after a successful login
+  // when (1) we have no local chat data, AND (2) the user has not
+  // dismissed the prompt before, AND (3) listBackups() returns >= 1
+  // backup from iCloud/Google Drive. See components/RestoreBackupPrompt.
+  // Web is opt-out (the native module is iOS/Android only).
+  const [showRestorePrompt, setShowRestorePrompt] = useState(false);
+  const [restoreBackups, setRestoreBackups] = useState([]);
+  const pendingNavRef = useRef(null); // { target: '/inbox' | '/chat' } to run after the prompt closes
   // Focus ring animations (native — web uses CSS box-shadow transition).
   // Each input row gets its own ring opacity 0→1 in 140ms when focused.
   const emailRingAnim = useRef(new Animated.Value(0)).current;
@@ -584,7 +654,7 @@ export default function LoginScreen() {
         // Kids go to chat, adults go to inbox
         safeHaptic(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success));
         const isKids = r.data?.is_child || isChildAccount();
-        goAfterLogin(isKids);
+        maybePromptRestoreThenGo(isKids);
       } else {
         // Backend returns "Incorrect email or password" in English + various
         // generic transport errors ("Servidor indisponivel", "Login failed").
@@ -634,7 +704,7 @@ export default function LoginScreen() {
                 } catch {}
               }
               setTimeout(() => {
-                if (mountedRef.current) router.replace(isChildAccount() ? '/chat' : '/inbox');
+                if (mountedRef.current) maybePromptRestoreThenGo(isChildAccount());
               }, 800);
             }
           } else if (r.data.status === 'denied') {
@@ -720,8 +790,19 @@ export default function LoginScreen() {
           // Auto-login with the received auth token
           if (res.data.auth_token && res.data.email) {
             await loginWithToken(res.data.auth_token, res.data.email);
+            // Stage 2: this web/desktop surface just got paired. Generate
+            // (or load) the per-device X25519 keypair + uuid, and publish
+            // the pubkey so the phone can encrypt envelopes targeting
+            // this device in future. Fire-and-forget — non-fatal if the
+            // network call fails; phone will re-fetch on next foreground.
+            try {
+              const did = await getE2eDeviceId();
+              const pub = await getE2eDevicePublicKey();
+              const kind = Platform.OS === 'web' ? 'web' : Platform.OS;
+              api.chatDeviceKeyPublish(did, pub, kind).catch(() => {});
+            } catch (e) { /* non-fatal */ }
             setTimeout(() => {
-              if (mountedRef.current) router.replace(isChildAccount() ? '/chat' : '/inbox');
+              if (mountedRef.current) maybePromptRestoreThenGo(isChildAccount());
             }, 800);
           }
         } else if (res.data?.status === 'expired') {
@@ -953,7 +1034,7 @@ export default function LoginScreen() {
           toValue: 1, friction: 5, tension: 90, useNativeDriver: true,
         }).start();
         setTimeout(() => {
-          if (mountedRef.current) router.replace(isChildAccount() ? '/chat' : '/inbox');
+          if (mountedRef.current) maybePromptRestoreThenGo(isChildAccount());
         }, 800);
         return;
       }
@@ -2544,6 +2625,16 @@ export default function LoginScreen() {
           </Pressable>
         </Modal>
       )}
+
+      {/* Restore-from-backup prompt — surfaces on new-device login when
+          the user has chat backups in iCloud (iOS) / Google Drive (Android)
+          but no local SQLite data yet. See components/RestoreBackupPrompt. */}
+      <RestoreBackupPrompt
+        visible={showRestorePrompt}
+        backups={restoreBackups}
+        onClose={handleRestorePromptClose}
+        onRestored={() => { /* no-op — onClose still fires after the user taps "Pronto" and that handles navigation */ }}
+      />
 
       {/* Success overlay — pops a big check after auth, holds for ~440ms,
           then the existing setTimeout routes to /inbox. Telegram-grade

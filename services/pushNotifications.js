@@ -129,19 +129,31 @@ async function loadModules() {
           const callId = data.call_id || data.room_id;
           const isVideo = data.video === '1' || data.video === true;
 
-          // ALWAYS try to trigger in-app call UI — don't check isCallActive here
-          // (it might be stuck true from a previous call that didn't clean up)
-          try {
-            const { triggerIncomingCall } = require('../components/IncomingCallListener');
-            triggerIncomingCall({
-              caller_email: data.caller_email,
-              caller_name: data.caller_name,
-              conversation_id: data.conversation_id,
-              room_id: data.room_id || callId,
-              call_id: callId,
-              video: isVideo,
-            });
-          } catch {}
+          // [#992 Stage 4 — retire JS modal on mobile]
+          // On iOS the PKPushRegistry → AppDelegate VoIP push path already
+          // reported the call to CXProvider before this expo-notifications
+          // handler runs. On Android the priority=10 CallFirebaseMessagingService
+          // already launched IncomingCallActivity / CallRingingService before
+          // expo-notifications surfaces the foreground notification. The JS
+          // Modal would now be a second, overlapping UI. Suppress it on
+          // mobile (still need shouldShowAlert=false so the system banner
+          // doesn't double up). Web keeps the JS Modal because Service
+          // Workers can't show full-screen incoming UI.
+          if (Platform.OS === 'web') {
+            // ALWAYS try to trigger in-app call UI — don't check isCallActive here
+            // (it might be stuck true from a previous call that didn't clean up)
+            try {
+              const { triggerIncomingCall } = require('../components/IncomingCallListener');
+              triggerIncomingCall({
+                caller_email: data.caller_email,
+                caller_name: data.caller_name,
+                conversation_id: data.conversation_id,
+                room_id: data.room_id || callId,
+                call_id: callId,
+                video: isVideo,
+              });
+            } catch {}
+          }
 
           // Suppress system notification — IncomingCallListener handles it with full-screen UI
           return {
@@ -795,7 +807,18 @@ export async function setupNotificationListeners() {
         setTimeout(sendAccepted, 1000);
         setTimeout(sendAccepted, 3000);
       }
-      router.push(`/call?callId=${callId}&contactName=${encodeURIComponent(data.caller_name || '')}&contactEmail=${encodeURIComponent(data.caller_email || '')}&isVideo=${isVideo}&conversationId=${data.conversation_id || ''}&isCaller=0`);
+      // [#992 Stage 3] On mobile the native incoming-direct path
+      // (CallActivity / CallViewController) opens automatically once the
+      // user taps Accept in the system notification — JS shouldn't push
+      // /call.js here. Web still uses /call.js.
+      try {
+        const { Platform } = require('react-native');
+        if (Platform.OS === 'web') {
+          router.push(`/call?callId=${callId}&contactName=${encodeURIComponent(data.caller_name || '')}&contactEmail=${encodeURIComponent(data.caller_email || '')}&isVideo=${isVideo}&conversationId=${data.conversation_id || ''}&isCaller=0`);
+        }
+      } catch {
+        router.push(`/call?callId=${callId}&contactName=${encodeURIComponent(data.caller_name || '')}&contactEmail=${encodeURIComponent(data.caller_email || '')}&isVideo=${isVideo}&conversationId=${data.conversation_id || ''}&isCaller=0`);
+      }
       return;
     }
     if (actionId === 'decline_call' && (data?.room_id || data?.call_id)) {
@@ -893,18 +916,24 @@ function handleNotificationNavigation(data) {
     if (data.type === 'incoming_call' && (data.room_id || data.call_id)) {
       // Dismiss system notifications
       try { Notifications.dismissAllNotificationsAsync(); } catch {}
-      // Show the incoming call UI (if not already showing)
-      try {
-        const { triggerIncomingCall } = require('../components/IncomingCallListener');
-        triggerIncomingCall({
-          caller_email: data.caller_email,
-          caller_name: data.caller_name,
-          conversation_id: data.conversation_id,
-          room_id: data.room_id || data.call_id,
-          call_id: data.call_id || data.room_id,
-          video: data.video === '1' || data.video === true,
-        });
-      } catch {}
+      // [#992 Stage 4 — retire JS modal on mobile]
+      // Native CallKit (iOS) / IncomingCallActivity (Android) already
+      // owns the incoming-call UI by the time this tap-response handler
+      // runs, so re-triggering the JS Modal here would just overlap.
+      // Web still needs the JS Modal trigger (no native call UI).
+      if (Platform.OS === 'web') {
+        try {
+          const { triggerIncomingCall } = require('../components/IncomingCallListener');
+          triggerIncomingCall({
+            caller_email: data.caller_email,
+            caller_name: data.caller_name,
+            conversation_id: data.conversation_id,
+            room_id: data.room_id || data.call_id,
+            call_id: data.call_id || data.room_id,
+            video: data.video === '1' || data.video === true,
+          });
+        } catch {}
+      }
       return;
     }
     router.push('/inbox');

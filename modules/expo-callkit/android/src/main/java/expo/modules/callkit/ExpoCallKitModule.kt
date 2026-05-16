@@ -476,5 +476,88 @@ class ExpoCallKitModule : Module() {
     AsyncFunction("lkSetCameraEnabled") { enabled: Boolean ->
       NativeCallRoom.setCameraEnabled(enabled)
     }
+
+    // [2026-05-15 Day 1 full-native] Launch the native call screen (CallActivity)
+    // directly from JS. Replaces `router.push('/call')` — the RN /call.js path
+    // is the source of the cold-start race that drops incoming calls. Native
+    // owns the entire UX: caller avatar, mute/hangup/video toggle. JS only
+    // launches and listens for onCallEnded.
+    //
+    // Outgoing flow (Stage 5): chat-conversation "Ligar" tap → openNativeCall.
+    // Incoming flow (Stage 4): IncomingCallActivity.onAccept will also call
+    // into here once the migration is complete — for now the legacy MainActivity
+    // path still runs.
+    AsyncFunction("openNativeCall") {
+      callId: String,
+      callerName: String,
+      callerEmail: String,
+      hasVideo: Boolean,
+      lkUrl: String?,
+      lkToken: String?
+      ->
+      try {
+        val intent = Intent(context, CallActivity::class.java).apply {
+          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          putExtra(CallActivity.EXTRA_CALL_ID, callId)
+          putExtra(CallActivity.EXTRA_CALLER_NAME, callerName)
+          putExtra(CallActivity.EXTRA_CALLER_EMAIL, callerEmail)
+          putExtra(CallActivity.EXTRA_HAS_VIDEO, hasVideo)
+          if (lkUrl != null) putExtra(CallActivity.EXTRA_LK_URL, lkUrl)
+          if (lkToken != null) putExtra(CallActivity.EXTRA_LK_TOKEN, lkToken)
+        }
+        context.startActivity(intent)
+      } catch (t: Throwable) {
+        Log.e(TAG, "openNativeCall failed: ${t.message}", t)
+      }
+    }
+
+    // [2026-05-16] Group call launcher — sibling of openNativeCall, but for
+    // the N-way GroupCallActivity. Replaces /group-call.js (RN WebView). JS
+    // passes a JSON-stringified participants list so the activity can pre-seed
+    // placeholder tiles before LiveKit's ParticipantConnected events arrive.
+    AsyncFunction("openGroupCall") {
+      roomName: String,
+      lkUrl: String,
+      lkToken: String,
+      participantsJson: String,
+      hasVideo: Boolean
+      ->
+      try {
+        val intent = Intent(context, GroupCallActivity::class.java).apply {
+          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          putExtra(GroupCallActivity.EXTRA_ROOM_NAME, roomName)
+          putExtra(GroupCallActivity.EXTRA_LK_URL, lkUrl)
+          putExtra(GroupCallActivity.EXTRA_LK_TOKEN, lkToken)
+          putExtra(GroupCallActivity.EXTRA_PARTICIPANTS_JSON, participantsJson)
+          putExtra(GroupCallActivity.EXTRA_HAS_VIDEO, hasVideo)
+        }
+        context.startActivity(intent)
+      } catch (t: Throwable) {
+        Log.e(TAG, "openGroupCall failed: ${t.message}", t)
+      }
+    }
+
+    // ─── Native WS call signaling (Stage 1, 2026-05-16) ──────────────────
+    //
+    // JS-callable bridge to CallSignalWs (raw OkHttp WebSocket to
+    // wss://ws.chatyy.com.br/ws). These are sync Function — fire-and-forget;
+    // the WS layer queues + auto-reconnects internally.
+    //
+    // Stage 1 only stands up the bridge. Stage 2 (separate work) will wire
+    // CallActivity.onAccept / onHangup to call these directly so the call
+    // signaling path no longer touches the JS bridge. Until then, the
+    // JS-side WS (services/api.js) remains the primary path and these are
+    // a no-op until JS opts in.
+    Function("fireCallInviteNative") { callId: String, conversationId: String, calleeEmail: String, hasVideo: Boolean ->
+      CallSignalWs.fireCallInvite(context.applicationContext, callId, conversationId, calleeEmail, hasVideo)
+    }
+
+    Function("fireCallAnsweredNative") { callId: String, conversationId: String ->
+      CallSignalWs.fireCallAnswered(context.applicationContext, callId, conversationId)
+    }
+
+    Function("fireCallEndNative") { callId: String, conversationId: String, reason: String ->
+      CallSignalWs.fireCallEnd(context.applicationContext, callId, conversationId, reason)
+    }
   }
 }

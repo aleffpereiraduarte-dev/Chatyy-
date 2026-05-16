@@ -1,5 +1,5 @@
 {
-  "platforms": ["apple"],
+  "platforms": ["apple", "android"],
   "apple": {
     "modules": [
       "ExpoNativeToolkitModule",
@@ -20,6 +20,12 @@
       "ExpoNativeWallpaperModule",
       "ExpoNativeClipboardHandoffModule",
       "ExpoChatyyIntentsModule"
+    ]
+  },
+  "android": {
+    "modules": [
+      "expo.modules.nativetoolkit.ExpoNativeAudioModule",
+      "expo.modules.nativetoolkit.ExpoNativeImageModule"
     ]
   }
 }

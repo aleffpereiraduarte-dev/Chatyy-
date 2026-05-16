@@ -9,7 +9,11 @@ import { Platform } from 'react-native';
 // IndexedDB Layer (Web) — cache everything locally
 // ═══════════════════════════════════════════
 const IDB_NAME = 'chatyy_v2';
-const IDB_VERSION = 3;
+// v4 (2026-05-16): add `local_seq` + `client_temp_id` to the messages store so
+// the SQLite-first chat migration (Stage 1) has parity with native. The
+// messages object store gets two new indexes; existing rows survive — only the
+// schema bumps. Older builds opening v4 just see the new fields as undefined.
+const IDB_VERSION = 4;
 let _idb = null;
 
 function getIDB() {
@@ -20,15 +24,28 @@ function getIDB() {
       const req = indexedDB.open(IDB_NAME, IDB_VERSION);
       req.onupgradeneeded = (e) => {
         const d = e.target.result;
+        const tx = e.target.transaction;
         if (!d.objectStoreNames.contains('cache')) d.createObjectStore('cache', { keyPath: 'key' });
         if (!d.objectStoreNames.contains('emails')) {
           const s = d.createObjectStore('emails', { keyPath: '_cid' });
           s.createIndex('folder', 'folder', { unique: false });
         }
         if (!d.objectStoreNames.contains('conversations')) d.createObjectStore('conversations', { keyPath: 'id' });
+        let msgStore;
         if (!d.objectStoreNames.contains('messages')) {
-          const s = d.createObjectStore('messages', { keyPath: 'id' });
-          s.createIndex('cid', 'conversation_id', { unique: false });
+          msgStore = d.createObjectStore('messages', { keyPath: 'id' });
+          msgStore.createIndex('cid', 'conversation_id', { unique: false });
+        } else if (tx) {
+          msgStore = tx.objectStore('messages');
+        }
+        // v3 → v4: add local_seq + client_temp_id indexes on messages.
+        // local_seq is monotonic per conversation for optimistic ordering;
+        // client_temp_id is the dedup key when a server new_message rolls in.
+        if (msgStore && !msgStore.indexNames.contains('local_seq')) {
+          try { msgStore.createIndex('local_seq', ['conversation_id', 'local_seq'], { unique: false }); } catch {}
+        }
+        if (msgStore && !msgStore.indexNames.contains('client_temp_id')) {
+          try { msgStore.createIndex('client_temp_id', 'client_temp_id', { unique: false }); } catch {}
         }
         if (!d.objectStoreNames.contains('contacts')) d.createObjectStore('contacts', { keyPath: 'email' });
       };
@@ -256,6 +273,12 @@ async function _createTables() {
       sync_seq INTEGER DEFAULT 0
     );
 
+    -- Note: id stays INTEGER PRIMARY KEY for backward compat. Optimistic
+    -- temp-id rows (id like "tmp_…") would collide on rowid=0 if stored
+    -- here, so the SQLite messages table only holds server-confirmed rows.
+    -- The pending optimistic intent lives in the offline_queue table (see
+    -- saveLocalMessage / queueOfflineAction). server WS new_message event
+    -- → saveMessage() with the durable id + client_temp_id dedup.
     CREATE TABLE IF NOT EXISTS messages (
       id INTEGER PRIMARY KEY,
       conversation_id INTEGER,
@@ -424,6 +447,11 @@ async function _createTables() {
     );
   `);
 
+  // Run additive schema migrations. We use PRAGMA user_version as a monotonic
+  // counter; each step ALTERs in new columns. Never DROP — older builds must
+  // still be able to read rows written by newer ones without data loss.
+  await _runMigrations();
+
   // FTS5 index on messages.content for offline search. Kept in sync via
   // triggers so saveMessage/updateMessage don't need extra calls. If FTS5
   // isn't compiled into the device's SQLite build, the CREATE silently
@@ -451,6 +479,87 @@ async function _createTables() {
     `);
   } catch (e) {
     console.warn('[localDb] FTS5 unavailable:', e?.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 2.5 Schema Migrations (additive ALTERs, indexed by PRAGMA user_version)
+// ---------------------------------------------------------------------------
+//
+// Bump CURRENT_DB_VERSION whenever a new migration step is added. Every step
+// is idempotent — ALTER TABLE wrapped in try/catch so re-running on a partially
+// migrated DB is safe (SQLite throws "duplicate column" but we ignore it).
+//
+//   v1 (2026-05-16) — SQLite-first chat migration Stage 1:
+//                     add `local_seq`, `client_temp_id`, `pending_state` to
+//                     messages so optimistic ordering + dedup + outbox state
+//                     all live in one row. See native_call_full_rewrite_plan.
+//
+const CURRENT_DB_VERSION = 1;
+
+async function _runMigrations() {
+  if (!db) return;
+  let from = 0;
+  try {
+    const row = await db.getFirstAsync('PRAGMA user_version');
+    // expo-sqlite returns { user_version: N } as the first column
+    from = (row && (row.user_version ?? row['user_version'])) | 0;
+  } catch {}
+  if (from >= CURRENT_DB_VERSION) return;
+
+  // --- v0 → v1 ---
+  if (from < 1) {
+    // Each ALTER may already exist on dev DBs that opened a previous build of
+    // this file before user_version was wired up. Catch + swallow the
+    // "duplicate column name" error so the migration is idempotent.
+    const alters = [
+      "ALTER TABLE messages ADD COLUMN local_seq INTEGER DEFAULT 0",
+      "ALTER TABLE messages ADD COLUMN client_temp_id TEXT",
+      "ALTER TABLE messages ADD COLUMN pending_state TEXT", // null | 'pending' | 'failed' | 'sent'
+    ];
+    for (const sql of alters) {
+      try { await db.execAsync(sql); }
+      catch (e) {
+        const msg = String(e?.message || '');
+        if (!/duplicate column/i.test(msg)) {
+          console.warn('[localDb] migration v1 ALTER failed:', msg);
+        }
+      }
+    }
+    try {
+      await db.execAsync(`
+        CREATE INDEX IF NOT EXISTS idx_msg_local_seq ON messages(conversation_id, local_seq);
+        CREATE INDEX IF NOT EXISTS idx_msg_client_temp ON messages(client_temp_id);
+      `);
+    } catch {}
+  }
+
+  try { await db.execAsync(`PRAGMA user_version = ${CURRENT_DB_VERSION}`); } catch {}
+  console.log('[localDb] migrated', from, '→', CURRENT_DB_VERSION);
+}
+
+// ---------------------------------------------------------------------------
+// 2.6 Optimistic ordering — per-conversation monotonic local sequence
+// ---------------------------------------------------------------------------
+
+// Returns max(local_seq)+1 for the given conversation. Used by every send
+// path to assign a stable order to optimistic rows BEFORE the server has
+// a chance to issue a real id/sync_seq. Web returns 0 (web uses IndexedDB
+// timestamps instead — see webSaveMessages).
+export async function getNextLocalSeq(conversationId) {
+  if (Platform.OS === 'web') return 0;
+  if (!conversationId && conversationId !== 0) return 0;
+  try {
+    await _ensureDb();
+    const row = await db.getFirstAsync(
+      'SELECT MAX(local_seq) AS max_seq FROM messages WHERE conversation_id = ?',
+      conversationId
+    );
+    const cur = (row && (row.max_seq ?? row['max_seq'])) | 0;
+    return cur + 1;
+  } catch (e) {
+    console.warn('[localDb] getNextLocalSeq:', e?.message);
+    return 0;
   }
 }
 
@@ -500,6 +609,13 @@ export async function saveConversations(conversations) {
   }
 }
 
+// Stage 1 invariant: deleting messages from local SQLite is only allowed when
+//   (a) the conversation itself is being deleted, OR
+//   (b) the user explicitly long-pressed → Delete a message, OR
+//   (c) a disappearing-timer expired for that row.
+// This call falls under (a). Do NOT add a "trim server-out-of-sync rows" or
+// similar pruning here — local is the source of truth, server is a sync
+// target. If you need to clear stale rows, use `clearLocalDb()` at logout.
 export async function deleteConversation(id) {
   if (Platform.OS === 'web') return;
   try {
@@ -613,10 +729,32 @@ export async function saveMessage(msg) {
   if (Platform.OS === 'web' || !msg?.id || String(msg.id).startsWith('tmp_')) return;
   try {
     await _ensureDb();
+    // Dedup: if this server row carries a client_temp_id and an optimistic
+    // row with that temp id is already in SQLite, swap the temp row's primary
+    // key over to the server id BEFORE the INSERT OR REPLACE — otherwise the
+    // optimistic row sticks around as a ghost row (different id) and the
+    // thread shows the message twice. local_seq carries over so ordering is
+    // stable across the swap.
+    const ctid = msg.client_temp_id || msg.client_message_id || null;
+    let localSeq = msg.local_seq != null ? msg.local_seq : null;
+    if (ctid) {
+      try {
+        const existing = await db.getFirstAsync(
+          'SELECT id, local_seq FROM messages WHERE client_temp_id = ? LIMIT 1',
+          ctid
+        );
+        if (existing && String(existing.id) !== String(msg.id)) {
+          if (localSeq == null) localSeq = existing.local_seq;
+          await db.runAsync('DELETE FROM messages WHERE id = ?', existing.id);
+        } else if (existing && localSeq == null) {
+          localSeq = existing.local_seq;
+        }
+      } catch {}
+    }
     await db.runAsync(
       `INSERT OR REPLACE INTO messages
-        (id, conversation_id, sender_email, content, type, file_url, reply_to_id, message_id, read_at, edited_at, deleted_at, created_at, sync_seq)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, conversation_id, sender_email, content, type, file_url, reply_to_id, message_id, read_at, edited_at, deleted_at, created_at, sync_seq, local_seq, client_temp_id, pending_state)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       msg.id,
       msg.conversation_id,
       msg.sender_email || msg.sender || null,
@@ -629,10 +767,111 @@ export async function saveMessage(msg) {
       msg.edited_at || null,
       msg.deleted_at || null,
       msg.created_at || null,
-      msg.sync_seq || 0
+      msg.sync_seq || 0,
+      localSeq != null ? localSeq : 0,
+      ctid,
+      'sent'
     );
   } catch (e) {
     console.warn('[localDb] saveMessage:', e?.message);
+  }
+}
+
+// Persist an optimistic chat-send intent to SQLite BEFORE the network call.
+// Stage 1 invariant: local SQLite is the source of truth, server is delivery.
+//
+// Why offline_queue instead of `messages`? The messages.id column is INTEGER
+// PRIMARY KEY (= rowid alias), so a tmp_… string would coerce to 0 and every
+// optimistic row would collide. The queue captures the durable intent +
+// payload; when the server acks, saveMessage() inserts the confirmed row in
+// `messages` keyed by the server id, with client_temp_id carrying the dedup
+// link back to the queue entry.
+//
+//   msg.id              — caller-generated temp id (e.g. 'tmp_…'). Required.
+//   msg.client_temp_id  — dedup key the server echoes back. Defaults to id.
+//   msg.conversation_id — required.
+//   pendingState        — 'pending' (in-flight) | 'failed' (will retry).
+//
+// Returns { id, local_seq, client_temp_id, queue_id } so the caller can hand
+// the assigned local_seq to the UI for stable ordering.
+export async function saveLocalMessage(msg, pendingState = 'pending') {
+  if (Platform.OS === 'web' || !msg?.id || !msg.conversation_id) return null;
+  try {
+    await _ensureDb();
+    const localSeq = msg.local_seq != null
+      ? msg.local_seq
+      : await getNextLocalSeq(msg.conversation_id);
+    const ctid = msg.client_temp_id || String(msg.id);
+    const payload = {
+      temp_id: msg.id,
+      conversation_id: msg.conversation_id,
+      sender_email: msg.sender_email || msg.sender || null,
+      content: msg.content || null,
+      type: msg.type || 'text',
+      file_url: msg.file_url || null,
+      reply_to_id: msg.reply_to_id || null,
+      client_temp_id: ctid,
+      client_message_id: ctid,
+      local_seq: localSeq,
+      pending_state: pendingState,
+      created_at: msg.created_at || new Date().toISOString(),
+    };
+    const res = await db.runAsync(
+      'INSERT INTO offline_queue (action, payload, created_at) VALUES (?, ?, ?)',
+      'chat_send',
+      JSON.stringify(payload),
+      payload.created_at
+    );
+    return {
+      id: msg.id,
+      local_seq: localSeq,
+      client_temp_id: ctid,
+      queue_id: res?.lastInsertRowId || null,
+    };
+  } catch (e) {
+    console.warn('[localDb] saveLocalMessage:', e?.message);
+    return null;
+  }
+}
+
+// Mark a previously optimistic queue entry as failed (server rejected / net
+// down) so the outbox drainer + UI know to retry. Does NOT delete — Stage 1
+// rule: pending intent survives until user explicitly retries or deletes.
+export async function markMessageFailed(tempId, errorMsg = null) {
+  if (Platform.OS === 'web' || !tempId) return;
+  try {
+    await _ensureDb();
+    await db.runAsync(
+      `UPDATE offline_queue
+         SET retries = retries + 1,
+             last_error = ?
+       WHERE action = 'chat_send'
+         AND payload LIKE ?`,
+      errorMsg ? String(errorMsg).slice(0, 500) : 'unknown',
+      '%"temp_id":"' + String(tempId).replace(/"/g, '') + '"%'
+    );
+  } catch (e) {
+    console.warn('[localDb] markMessageFailed:', e?.message);
+  }
+}
+
+// Called after the server acks an optimistic send — removes the matching
+// queue row(s) so we don't keep retrying a message that already landed.
+// Match on temp_id OR client_temp_id in the JSON payload (both stored).
+export async function clearPendingSend(tempIdOrCtid) {
+  if (Platform.OS === 'web' || !tempIdOrCtid) return;
+  try {
+    await _ensureDb();
+    const needle = String(tempIdOrCtid).replace(/"/g, '');
+    await db.runAsync(
+      `DELETE FROM offline_queue
+        WHERE action = 'chat_send'
+          AND (payload LIKE ? OR payload LIKE ?)`,
+      '%"temp_id":"' + needle + '"%',
+      '%"client_temp_id":"' + needle + '"%'
+    );
+  } catch (e) {
+    console.warn('[localDb] clearPendingSend:', e?.message);
   }
 }
 
@@ -653,7 +892,7 @@ export async function updateMessage(id, updates) {
   if (Platform.OS === 'web' || !id) return;
   try {
     await _ensureDb();
-    const allowed = ['content', 'edited_at', 'read_at', 'deleted_at', 'type', 'file_url', 'sync_seq'];
+    const allowed = ['content', 'edited_at', 'read_at', 'deleted_at', 'type', 'file_url', 'sync_seq', 'local_seq', 'client_temp_id', 'pending_state'];
     const sets = [];
     const vals = [];
     for (const key of allowed) {

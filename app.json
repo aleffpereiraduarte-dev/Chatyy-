@@ -291,7 +291,17 @@
       "expo-video",
       "./plugins/withFixResourceSigning.js",
       "./plugins/withManualIosSigning.js",
-      "expo-iap"
+      "expo-iap",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "extraInfoPlist": {
+              "NSUbiquityContainerIdentifier": "iCloud.com.onemundo.mail"
+            }
+          }
+        }
+      ]
     ],
     "extra": {
       "router": {

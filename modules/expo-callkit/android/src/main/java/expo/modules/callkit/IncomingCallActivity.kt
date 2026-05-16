@@ -415,7 +415,10 @@ class IncomingCallActivity : AppCompatActivity() {
                            android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
     } catch (_: Exception) {}
 
-    // Save to SharedPreferences so JS can read on cold start
+    // Save to SharedPreferences so JS can read on cold start. JS still
+    // consumePendingCall()s this when it eventually mounts (catches up to
+    // the call state, hydrates UI). Native CallActivity is the one the
+    // user actually SEES — JS is just bookkeeping at this point.
     ExpoCallKitModule.savePendingAcceptedCall(
       this, callId ?: "", callerName ?: "", callerEmail ?: "", conversationId ?: "", hasVideo
     )
@@ -427,55 +430,125 @@ class IncomingCallActivity : AppCompatActivity() {
     // in the reborn process and the phantom decline gets through.
     ExpoCallKitModule.persistCallAccepting(this, callId ?: "")
 
-    // Try to send event to JS (may fail if app is dead)
+    // Try to send event to JS (may fail if app is dead — that's OK, JS picks
+    // up the call via consumePendingCall when it eventually mounts).
     ExpoCallKitModule.emitCallAnswered(callId ?: "")
 
-    // [#992 Stage 1] FIRE THE NATIVE LIVEKIT ROOM CONNECT IMMEDIATELY.
-    // Pre-fetch token (or use cache if JS pre-stashed it) + connect on a
-    // background thread. Audio remoto começa em <500ms, ANTES de a JS bundle
-    // parsear. /call.js, when it eventually mounts, calls
-    // ExpoCallKit.adoptNativeRoom(callId) and adopts this existing Room
-    // — não cria outra. Resolve "atendi e desligou" no kill state.
-    triggerNativeLkConnect()
-
-    // Cancel the notification and stop the ringing foreground service
+    // Cancel the notification and stop the ringing foreground service. Do
+    // this BEFORE launching CallActivity so the user doesn't see both UIs
+    // briefly stacked during the transition.
     CallNotificationService.cancelNotification(this, callId ?: "")
     stopRingingService()
 
-    // Launch the main app
-    val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
-    if (launchIntent != null) {
-      launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-      launchIntent.putExtra("call_id", callId)
-      launchIntent.putExtra("caller_name", callerName)
-      launchIntent.putExtra("caller_email", callerEmail)
-      launchIntent.putExtra("conversation_id", conversationId)
-      launchIntent.putExtra("has_video", hasVideo)
-      // [bug 2026-05-15 #981] Signal MainActivity to apply SHOW_WHEN_LOCKED +
-      // requestDismissKeyguard. Lets the user see /call ABOVE the keyguard so
-      // the audio path connects + end-call works without forcing unlock.
-      launchIntent.putExtra("from_call_accept", true)
-      launchIntent.putExtra("accept_call_id", callId)
-      startActivity(launchIntent)
-    }
+    // [2026-05-16 Stage 4 full-native] Jump STRAIGHT to CallActivity.
+    //   - Cache hit (JS pre-stashed via persistPendingLkToken on call_invite
+    //     WS event) → launch synchronously, audio publishes ~500ms.
+    //   - Cache miss → launch coroutine on Dispatchers.IO to fetch the
+    //     token + url, then start CallActivity. While the fetch is in
+    //     flight (~300ms typical, 8s timeout) we keep this activity alive
+    //     showing the "Conectando…" overlay so the user is never staring
+    //     at a black screen.
+    //
+    // This replaces the old MainActivity launch path. The user's first
+    // visible frame after tapping Aceitar is now CallActivity (native LK
+    // connect) — no JS bundle parse on the critical path, no
+    // "atender e desliga" race.
+    launchCallActivity()
 
-    // WhatsApp-grade warm UI: instead of dropping the activity (which leaves the
-    // user staring at the launcher / home screen / black for 2-5s while the JS
-    // bundle parses + Hermes warms up), keep this activity on top with a
-    // "Conectando com X..." overlay until JS calls ExpoCallKit.notifyAppReady().
-    // The existing closeReceiver finishes us when that broadcast fires; we also
-    // arm an 8s safety timeout so a JS crash can't strand the overlay forever.
+    // WhatsApp-grade transitional overlay while CallActivity becomes
+    // visible (and while the token fetch resolves on cache miss). The
+    // existing closeReceiver finishes us when CallActivity / JS signals
+    // the call is up; safety timeout fires after 15s as last resort.
     buildConnectingOverlay()
-    // [2026-05-15] Bumped 8s → 15s. Cold-start with a stale OTA bundle on
-    // mid-range Android devices (Hermes warmup + JS parse + route mount)
-    // can hit 9-12s on the first call after install/update. The
-    // closeReceiver fires the happy-path dismiss the instant JS calls
-    // notifyAppReady(), so this only bites when JS crashes — and waiting
-    // a few extra seconds for the overlay is far better than dropping
-    // back to launcher mid-connect.
     mainHandler.postDelayed({
       try { finishAndRemoveTask() } catch (_: Exception) {}
     }, 15000)
+  }
+
+  /**
+   * [2026-05-16 Stage 4] Hand the call to CallActivity, which owns the
+   * actual LiveKit Room and renders the in-call UI. Token resolution:
+   *
+   *   1. Try LkTokenFetcher.getCached(callId) — JS may have already
+   *      fetched this in response to the call_invite WS event and
+   *      stashed it via persistPendingLkToken. If present, start the
+   *      activity synchronously.
+   *   2. Otherwise, launch a background Thread (NOT main-thread, the
+   *      doFetch in LkTokenFetcher does blocking HTTP) that fetches the
+   *      token and then starts the activity on the main thread.
+   *   3. On fetch failure (no auth persisted, network error, backend
+   *      down) we still start CallActivity but WITHOUT lk_url/lk_token —
+   *      CallActivity gracefully shows "Sem token" and the user can
+   *      hangup. The legacy JS path no longer exists as a fallback (this
+   *      IS the only path), so we must always show *something* native.
+   */
+  private fun launchCallActivity() {
+    val id = callId ?: return
+    val name = callerName ?: ""
+    val email = callerEmail ?: ""
+    val video = hasVideo
+
+    val cached = LkTokenFetcher.getCached(applicationContext, id)
+    if (cached != null) {
+      Log.d("IncomingCallActivity", "[stage4] cache hit — launching CallActivity sync")
+      startCallActivityWith(id, name, email, video, cached.url, cached.token)
+      // [2026-05-16 Stage 2 native WS signaling] Fire call_answered from
+      // native AFTER CallActivity is launched (cache-hit path). JS-side
+      // services/api.js call_answered fires in parallel via emitCallAnswered
+      // → JS listener; server dedupes by call_id, so the duplicate is safe.
+      // Empty conversationId is tolerated for dialer-style calls.
+      CallSignalWs.fireCallAnswered(applicationContext, id, conversationId ?: "")
+      return
+    }
+
+    // Cache miss → fetch on a background thread, then launch.
+    Thread {
+      val identity = email.takeIf { it.isNotBlank() } ?: "android-$id"
+      val tk = LkTokenFetcher.fetch(applicationContext, id, identity)
+      mainHandler.post {
+        if (tk == null) {
+          Log.w("IncomingCallActivity", "[stage4] token fetch FAILED — launching CallActivity without token (user will see error)")
+          startCallActivityWith(id, name, email, video, null, null)
+        } else {
+          Log.d("IncomingCallActivity", "[stage4] token fetched (${tk.token.length} chars) — launching CallActivity")
+          startCallActivityWith(id, name, email, video, tk.url, tk.token)
+        }
+        // [2026-05-16 Stage 2 native WS signaling] Fire call_answered AFTER
+        // LkTokenFetcher.fetch returns (success OR failure). We fire even on
+        // token failure because the user did tap Accept — letting the
+        // caller's UI know the callee answered is independent of whether
+        // the media plane comes up. Server dedupes by call_id.
+        CallSignalWs.fireCallAnswered(applicationContext, id, conversationId ?: "")
+      }
+    }.start()
+  }
+
+  private fun startCallActivityWith(
+    id: String,
+    name: String,
+    email: String,
+    video: Boolean,
+    url: String?,
+    token: String?
+  ) {
+    try {
+      val intent = Intent(this, CallActivity::class.java).apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        putExtra(CallActivity.EXTRA_CALL_ID, id)
+        putExtra(CallActivity.EXTRA_CALLER_NAME, name)
+        putExtra(CallActivity.EXTRA_CALLER_EMAIL, email)
+        putExtra(CallActivity.EXTRA_HAS_VIDEO, video)
+        // [2026-05-16 Stage 2] Forward the conversation_id so CallActivity's
+        // finishCall() can fire call_end with the right (call_id, conv_id)
+        // pair via CallSignalWs.
+        putExtra(CallActivity.EXTRA_CONVERSATION_ID, conversationId ?: "")
+        if (!url.isNullOrEmpty()) putExtra(CallActivity.EXTRA_LK_URL, url)
+        if (!token.isNullOrEmpty()) putExtra(CallActivity.EXTRA_LK_TOKEN, token)
+      }
+      startActivity(intent)
+    } catch (t: Throwable) {
+      Log.e("IncomingCallActivity", "startCallActivity failed: ${t.message}")
+    }
   }
 
   /**
@@ -627,44 +700,4 @@ class IncomingCallActivity : AppCompatActivity() {
     // Do not allow back press to dismiss - must accept or decline
   }
 
-  /**
-   * [#992 Stage 1] Pre-connect a LiveKit Room native-side immediately on
-   * accept. Runs on a background thread (Kotlin coroutine via NativeCallRoom).
-   *
-   * Flow:
-   *   1. Use roomName = call_id (backend convention)
-   *   2. Identity = caller_email (or "android-${callId}" fallback)
-   *   3. Try LkTokenFetcher.getCached() first (JS may have pre-stashed via
-   *      persistPendingLkToken on call_invite WS event). If cache miss, fetch.
-   *   4. NativeCallRoom.connect() — emits onLkConnected when ready.
-   *   5. /call.js JS calls ExpoCallKit.adoptNativeRoom(callId) on mount and
-   *      finds the Room already alive. Skips its own connect.
-   *
-   * Failure modes:
-   *   - JS hasn't called persistAuthForNativeCall yet → fetcher returns null
-   *     → no native pre-connect → /call.js falls back to legacy JS connect
-   *     (4-8s cold path). Graceful degrade.
-   *   - Backend 401/500 → same fallback.
-   *   - LiveKit URL unreachable → same fallback.
-   */
-  private fun triggerNativeLkConnect() {
-    val id = callId ?: return
-    val identity = (callerEmail?.takeIf { it.isNotBlank() } ?: "android-$id")
-    Thread {
-      try {
-        val ctx = applicationContext
-        // Try cache first
-        val cached = LkTokenFetcher.getCached(ctx, id)
-        val tk = cached ?: LkTokenFetcher.fetch(ctx, id, identity)
-        if (tk == null) {
-          Log.w("IncomingCallActivity", "[#992] no LK token — fallback to JS-side connect")
-          return@Thread
-        }
-        Log.i("IncomingCallActivity", "[#992] pre-connecting native LK room callId=$id hasVideo=$hasVideo")
-        NativeCallRoom.connect(ctx, tk.url, tk.token, id, hasVideo)
-      } catch (t: Throwable) {
-        Log.e("IncomingCallActivity", "[#992] triggerNativeLkConnect failed: ${t.message}")
-      }
-    }.start()
-  }
 }

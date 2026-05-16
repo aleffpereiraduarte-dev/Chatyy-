@@ -248,6 +248,9 @@ const ActiveCallBar = React.lazy(() => import('../components/ActiveCallBar').the
 import LoginChallengePrompt from '../components/LoginChallengePrompt';
 import PWAPrompts from '../components/PWAPrompts';
 import WhatsNewSheet, { shouldShowWhatsNew } from '../components/WhatsNewSheet';
+// Stage 6 — surface "Phone offline" UI when web's relay reads fall back to
+// IndexedDB cache. Web-only; renders null on native.
+import PhoneOfflineBanner from '../components/PhoneOfflineBanner';
 import { registerBackgroundSync } from '../services/backgroundSync';
 import { initAutoBackup } from '../services/autoBackup';
 import { trackPageview, trackAppOpen } from '../services/analytics';
@@ -726,7 +729,28 @@ function AppInit({ onNotification, setOtaToast }) {
       } catch {}
     })();
 
-    if (Platform.OS === 'web') return () => { mounted = false; if (wsLoginUnsub) wsLoginUnsub(); };
+    // [2026-05-16 Stage 3+4] Install the relay responder so this device
+    // (whichever it is) can answer chat-history relay_request frames sent
+    // by other devices on the same account. On the phone this satisfies
+    // the web companion's reads; on the web this is a no-op because web
+    // is never the target of relay_request (it doesn't own SQLite history).
+    // Safe to install eagerly — handler is a single ws.on() registration.
+    let relayResponderUnsub = null;
+    (async () => {
+      try {
+        const { installRelayResponder } = await import('../services/relayResponder');
+        relayResponderUnsub = installRelayResponder();
+      } catch (e) {
+        // Non-fatal — relay is best-effort.
+        console.warn('[relayResponder] install failed:', e?.message);
+      }
+    })();
+
+    if (Platform.OS === 'web') return () => {
+      mounted = false;
+      if (wsLoginUnsub) wsLoginUnsub();
+      if (relayResponderUnsub) relayResponderUnsub();
+    };
 
     (async () => {
       try {
@@ -822,6 +846,7 @@ function AppInit({ onNotification, setOtaToast }) {
       mounted = false;
       if (cleanupRef.current) cleanupRef.current();
       if (wsLoginUnsub) wsLoginUnsub();
+      if (relayResponderUnsub) relayResponderUnsub();
     };
   }, []);
 
@@ -1019,6 +1044,11 @@ export default function RootLayout() {
                   </RNView>
                 ) : null}
                 <ThemedStatusBar />
+                {/* Stage 6 — yellow "phone offline" banner shows when WS relay
+                    couldn't reach the phone and we served cached data from
+                    IndexedDB. Web-only; renders null on native. Above the
+                    Stack so it sits at the top of every web route. */}
+                <PhoneOfflineBanner />
                 <ChildRestrictionGuard>
                 <Stack screenOptions={{
                   headerShown: false,
@@ -1084,6 +1114,7 @@ export default function RootLayout() {
                   <Stack.Screen name="notebook-editor" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150, gestureEnabled: false }} />
                   <Stack.Screen name="plans" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="backup" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
+                  <Stack.Screen name="chat-backup" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="u/[username]" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="contacts" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="notifications" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />

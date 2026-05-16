@@ -1,0 +1,30 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+  <application>
+
+    <!--
+      Stage 1 scaffold (2026-05-16) — full-native Live host screen. Owns the
+      entire broadcast UX: camera preview + LiveKit publish + viewer count +
+      reactions. Replaces the RN /live-broadcast screen once Stage 2 lands.
+      portrait + NoActionBar so the activity owns its own chrome.
+    -->
+    <activity
+      android:name=".LiveHostActivity"
+      android:exported="false"
+      android:theme="@style/Theme.AppCompat.NoActionBar"
+      android:screenOrientation="portrait" />
+
+    <!--
+      Stage 1 scaffold — Live viewer screen. Subscribes to the host's video +
+      audio tracks; sends like reactions over the data channel. Replaces the
+      RN /live-viewer screen once Stage 2 lands.
+    -->
+    <activity
+      android:name=".LiveViewerActivity"
+      android:exported="false"
+      android:theme="@style/Theme.AppCompat.NoActionBar"
+      android:screenOrientation="portrait" />
+
+  </application>
+
+</manifest>

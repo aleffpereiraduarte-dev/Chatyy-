@@ -7,6 +7,9 @@ import android.os.Build
 import android.util.Log
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /**
  * Primary FCM message handler with priority=10 (higher than Expo's -1).
@@ -36,6 +39,26 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
 
         Log.d(TAG, "FCM message received: type=$type, dataKeys=${data.keys}")
 
+        // [2026-05-16 Stage 4] Silent push wake. When the web companion
+        // device needs chat history that only this phone has in SQLite,
+        // the server fires a data-only push to wake us briefly. We DO
+        // NOT show a notification, play sound, or vibrate — see
+        // RelayWakeService for the full contract. After ~10s we close
+        // the WS and stopSelf().
+        //
+        // CRITICAL: must be handled BEFORE the Expo delegate fallback,
+        // otherwise expo-notifications surfaces it as a visible push.
+        if (type == "wake_relay") {
+            val requestId = data["requestId"] ?: data["request_id"] ?: ""
+            Log.d(TAG, "wake_relay rcvd requestId=$requestId — starting RelayWakeService")
+            try {
+                RelayWakeService.start(applicationContext, requestId)
+            } catch (t: Throwable) {
+                Log.w(TAG, "Failed to start RelayWakeService: ${t.message}")
+            }
+            return
+        }
+
         if (type == "incoming_call") {
             val callId = data["call_id"] ?: data["room_id"] ?: return
             val callerEmail = data["caller_email"] ?: ""
@@ -55,8 +78,14 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
             // call screen + heads-up render only a "?" initial; with it we
             // download the bitmap async on the activity side.
             val callerAvatar = data["caller_avatar"] ?: ""
+            // [2026-05-16 Stage 4] Cold-start auto-accept signal. Set by
+            // backend (e.g. when a VoIP "answered on another device" push
+            // is converted into a CallKit accept on this device, or when
+            // the user enabled auto-pickup for a trusted contact). Skips
+            // the ringing UI and goes STRAIGHT to CallActivity.
+            val autoAccept = data["auto_accept"] == "1" || data["auto_accept"] == "true"
 
-            Log.d(TAG, "Incoming call from $callerName ($callerEmail) callId=$callId video=$hasVideo avatar=${callerAvatar.isNotEmpty()}")
+            Log.d(TAG, "Incoming call from $callerName ($callerEmail) callId=$callId video=$hasVideo avatar=${callerAvatar.isNotEmpty()} autoAccept=$autoAccept")
 
             // If the app is foreground, JS Modal (IncomingCallListener) handles
             // the call UI via the WS `call_invite` event. Showing the native
@@ -70,6 +99,23 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
             // check so we catch ALL foreground cases.
             if (ExpoCallKitModule.isAppForeground || isProcessForeground()) {
                 Log.d(TAG, "App is foreground — skipping native ring service, JS will handle")
+                return
+            }
+
+            // [2026-05-16 Stage 4] Cold-start auto-accept: bypass the
+            // ringing IncomingCallActivity entirely and go straight to
+            // CallActivity. We still:
+            //   - persist the call in pending_accepted_call so JS can
+            //     hydrate state via consumePendingCall when it boots
+            //   - persist the accept flag so any late-firing decline
+            //     intents (delete intent / cancel races) get swallowed
+            //   - emit onCallAnswered (no-op if JS isn't alive yet)
+            //
+            // We do NOT post the heads-up notification or start the
+            // ringing FGS — auto-accept means no UI prompting.
+            if (autoAccept) {
+                Log.d(TAG, "Auto-accept signaled — bypassing ring UI, jumping to CallActivity")
+                handleAutoAccept(callId, callerName, callerEmail, conversationId, hasVideo)
                 return
             }
 
@@ -202,6 +248,98 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
                 Log.e(TAG, "FirebaseMessagingDelegate class not found", e)
                 cachedDelegate = null
             }
+        }
+    }
+
+    /**
+     * [2026-05-16 Stage 4] Cold-start auto-accept handler. Called when the
+     * FCM payload sets `auto_accept: true`. Skips the ring UI and goes
+     * direct to CallActivity. Token resolution: cache hit → sync launch;
+     * cache miss → fetch on IO dispatcher, then launch.
+     *
+     * SharedPreferences side-effects are mandatory so JS can catch up:
+     *   - savePendingAcceptedCall: consumePendingCall() reads this when JS
+     *     finally mounts to hydrate the in-app call state UI.
+     *   - persistCallAccepting: swallow any decline that fires from
+     *     subsequent FCM delivery races (e.g. backend retried the push).
+     */
+    private fun handleAutoAccept(
+        callId: String,
+        callerName: String,
+        callerEmail: String,
+        conversationId: String,
+        hasVideo: Boolean
+    ) {
+        val ctx = applicationContext
+
+        // Pre-warm audio so the publisher attach doesn't drop first packets.
+        try {
+            val am = ctx.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            am.mode = android.media.AudioManager.MODE_IN_COMMUNICATION
+            am.requestAudioFocus(
+                null,
+                android.media.AudioManager.STREAM_VOICE_CALL,
+                android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
+            )
+        } catch (_: Exception) {}
+
+        ExpoCallKitModule.savePendingAcceptedCall(
+            ctx, callId, callerName, callerEmail, conversationId, hasVideo
+        )
+        ExpoCallKitModule.persistCallAccepting(ctx, callId)
+        ExpoCallKitModule.emitCallAnswered(callId)
+
+        // Cache hit → start sync
+        val cached = LkTokenFetcher.getCached(ctx, callId)
+        if (cached != null) {
+            Log.d(TAG, "[auto-accept] cache hit — launching CallActivity sync")
+            startCallActivityWith(callId, callerName, callerEmail, hasVideo, cached.url, cached.token)
+            return
+        }
+        // Cache miss → fetch async, then start. FCM services are short-
+        // lived; the OS keeps us alive while onMessageReceived is running
+        // but starting an activity after we return needs the BAL grant. We
+        // dispatch on IO and start the activity from there — the
+        // application context survives the service teardown and the
+        // CallActivity itself is what keeps the process alive once started.
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val identity = callerEmail.takeIf { it.isNotBlank() } ?: "android-$callId"
+                val tk = LkTokenFetcher.fetch(ctx, callId, identity)
+                if (tk == null) {
+                    Log.w(TAG, "[auto-accept] token fetch failed — launching CallActivity without token")
+                    startCallActivityWith(callId, callerName, callerEmail, hasVideo, null, null)
+                } else {
+                    Log.d(TAG, "[auto-accept] token fetched — launching CallActivity")
+                    startCallActivityWith(callId, callerName, callerEmail, hasVideo, tk.url, tk.token)
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "[auto-accept] async launch failed: ${t.message}")
+            }
+        }
+    }
+
+    private fun startCallActivityWith(
+        callId: String,
+        callerName: String,
+        callerEmail: String,
+        hasVideo: Boolean,
+        url: String?,
+        token: String?
+    ) {
+        try {
+            val intent = Intent(applicationContext, CallActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                putExtra(CallActivity.EXTRA_CALL_ID, callId)
+                putExtra(CallActivity.EXTRA_CALLER_NAME, callerName)
+                putExtra(CallActivity.EXTRA_CALLER_EMAIL, callerEmail)
+                putExtra(CallActivity.EXTRA_HAS_VIDEO, hasVideo)
+                if (!url.isNullOrEmpty()) putExtra(CallActivity.EXTRA_LK_URL, url)
+                if (!token.isNullOrEmpty()) putExtra(CallActivity.EXTRA_LK_TOKEN, token)
+            }
+            applicationContext.startActivity(intent)
+        } catch (t: Throwable) {
+            Log.e(TAG, "startCallActivity failed: ${t.message}")
         }
     }
 

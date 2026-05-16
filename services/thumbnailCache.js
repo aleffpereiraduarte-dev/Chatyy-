@@ -2,12 +2,16 @@ import * as FileSystem from 'expo-file-system';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { Platform } from 'react-native';
 
-// Native Core Image resize (iOS) — 5-10x faster than expo-image-manipulator
-// because CIImage stays on the GPU. Falls back to expo-image-manipulator
-// when the native module isn't available.
+// Native image resize (iOS Core Image / Android BitmapFactory) — 5-10x faster
+// than expo-image-manipulator because the pixels never round-trip through JS.
+// Falls back to expo-image-manipulator when the native module isn't available
+// (older binary, web).
 const _NativeImage = (() => {
-  if (Platform.OS !== 'ios') return null;
-  try { return require('../modules/expo-native-toolkit').Image; } catch { return null; }
+  if (Platform.OS !== 'ios' && Platform.OS !== 'android') return null;
+  try {
+    const mod = require('../modules/expo-native-toolkit').Image;
+    return mod && typeof mod.resize === 'function' ? mod : null;
+  } catch { return null; }
 })();
 
 const THUMB_DIR = `${FileSystem.documentDirectory}photo_thumbs/`;

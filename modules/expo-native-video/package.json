@@ -1,0 +1,7 @@
+{
+  "name": "expo-native-video",
+  "version": "0.1.0",
+  "description": "Native H.264 video compression + thumbnail/info utilities for Chatyy chat uploads. iOS via AVAssetExportSession, Android via MediaCodec (compress) + MediaMetadataRetriever (thumb/info).",
+  "main": "./src/index.ts",
+  "private": true
+}

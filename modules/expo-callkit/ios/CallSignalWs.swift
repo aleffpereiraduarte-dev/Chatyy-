@@ -1,0 +1,305 @@
+import Foundation
+
+/**
+ * [2026-05-16 native call signaling] CallSignalWs (iOS)
+ *
+ * Mirror of CallSignalWs.kt — raw URLSessionWebSocketTask to
+ * wss://ws.chatyy.com.br/ws used to fire call_invite / call_answered /
+ * call_end without bouncing through the JS bridge.
+ *
+ * Stage 1 (this file) stands up the WS plumbing and a JS-callable bridge in
+ * ExpoCallKitModule. Stage 2 (separate work) will have CallViewController
+ * call these directly. Until then, the JS-side WS (services/api.js) remains
+ * the primary path; this is exposed for opt-in callers.
+ *
+ * iOS support: URLSessionWebSocketTask is iOS 13+. Module deployment target
+ * is iOS 15.1 (see ExpoCallKit.podspec) so we're well in range. No new pod
+ * dependency — URLSession is built-in to Foundation.
+ *
+ * Lifecycle
+ * ---------
+ *  * Lazy: nothing happens until a fire*() call arrives.
+ *  * On first fire we open the WS, send {type:"auth", token:<bearer>}, wait
+ *    for {type:"auth_success"}, then drain the message queue.
+ *  * Subsequent fires reuse the warm WS.
+ *  * If a fire arrives before auth_success completes, the JSON is queued
+ *    (cap 64, oldest dropped) and shipped on drain.
+ *  * Disconnect (server close, network drop) triggers reconnect with
+ *    backoff: 1s → 2s → 4s, max 3 attempts. After 3 failures we give up;
+ *    the next fire resets the counter. JS-side WS keeps working as fallback.
+ *  * 25s ping interval via a repeating Timer (URLSessionWebSocketTask has
+ *    `sendPing(pongReceiveHandler:)` and we use it to keep NAT alive — Apple
+ *    doesn't auto-ping WS tasks).
+ *
+ * Token rotation
+ * --------------
+ * The bearer is read from the App Group UserDefaults on every (re)connect.
+ * JS persists fresh creds via persistAuthForNativeCall on login. If the
+ * App Group is empty we silently no-op so JS fallback handles it.
+ *
+ * Threading
+ * ---------
+ * All work is funneled onto a serial DispatchQueue so the public fire*()
+ * methods never block. Callers can be on any thread.
+ */
+final class CallSignalWs: NSObject {
+
+    static let shared = CallSignalWs()
+
+    // MARK: – Tunables
+    private let kAppGroupId = "group.com.onemundo.mail"
+    private let kWsURL = URL(string: "wss://ws.chatyy.com.br/ws")!
+    private let pingInterval: TimeInterval = 25
+    private let authTimeout: TimeInterval = 5
+    private let maxQueue = 64
+    private let maxReconnect = 3
+    private let backoffSec: [TimeInterval] = [1, 2, 4]
+
+    // MARK: – State (serial queue protected)
+    private let queue = DispatchQueue(label: "com.onemundo.callkit.signalws")
+    private var session: URLSession?
+    private var task: URLSessionWebSocketTask?
+    private var authed: Bool = false
+    private var connecting: Bool = false
+    private var pendingMessages: [String] = []
+    private var reconnectAttempts: Int = 0
+    private var authTimeoutWorkItem: DispatchWorkItem?
+    private var pingTimer: DispatchSourceTimer?
+
+    private override init() { super.init() }
+
+    // MARK: – Public API
+
+    func fireCallInvite(callId: String, conversationId: String, calleeEmail: String, hasVideo: Bool) {
+        let dict: [String: Any] = [
+            "type": "call_invite",
+            "conversation_id": conversationId,
+            "call_id": callId,
+            "callee_email": calleeEmail,
+            "has_video": hasVideo,
+            "ts": Int(Date().timeIntervalSince1970 * 1000)
+        ]
+        enqueue(dict)
+    }
+
+    func fireCallAnswered(callId: String, conversationId: String) {
+        let dict: [String: Any] = [
+            "type": "call_answered",
+            "call_id": callId,
+            "conversation_id": conversationId,
+            "ts": Int(Date().timeIntervalSince1970 * 1000)
+        ]
+        enqueue(dict)
+    }
+
+    func fireCallEnd(callId: String, conversationId: String, reason: String) {
+        let dict: [String: Any] = [
+            "type": "call_end",
+            "call_id": callId,
+            "conversation_id": conversationId,
+            "reason": reason,
+            "ts": Int(Date().timeIntervalSince1970 * 1000)
+        ]
+        enqueue(dict)
+    }
+
+    // MARK: – Internals
+
+    private func enqueue(_ dict: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: dict),
+              let s = String(data: data, encoding: .utf8) else { return }
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            // Bound the queue; drop oldest if we accumulate.
+            while self.pendingMessages.count >= self.maxQueue {
+                self.pendingMessages.removeFirst()
+            }
+            self.pendingMessages.append(s)
+            self.tryFlushLocked()
+        }
+    }
+
+    /// Called on `queue`.
+    private func tryFlushLocked() {
+        if authed { drainLocked(); return }
+        if connecting { return }
+        // Fresh fire — reset attempts so we retry even if a previous burst
+        // gave up.
+        reconnectAttempts = 0
+        connectLocked()
+    }
+
+    /// Called on `queue`.
+    private func connectLocked() {
+        guard !connecting else { return }
+        guard let ud = UserDefaults(suiteName: kAppGroupId),
+              let token = ud.string(forKey: "auth_token"), !token.isEmpty else {
+            NSLog("[CallSignalWs] connect: no auth_token in App Group — skipping (JS fallback will fire)")
+            return
+        }
+        connecting = true
+
+        if session == nil {
+            let cfg = URLSessionConfiguration.default
+            cfg.waitsForConnectivity = false
+            cfg.timeoutIntervalForRequest = 10
+            session = URLSession(configuration: cfg, delegate: nil, delegateQueue: nil)
+        }
+
+        let newTask = session!.webSocketTask(with: kWsURL)
+        task = newTask
+        newTask.resume()
+
+        // Send auth immediately. URLSessionWebSocketTask buffers the send
+        // until the handshake completes — Apple doesn't expose an onOpen
+        // hook so this is the canonical pattern.
+        let authMsg = "{\"type\":\"auth\",\"token\":\"\(escapeJSON(token))\"}"
+        newTask.send(.string(authMsg)) { [weak self] err in
+            if let err = err {
+                NSLog("[CallSignalWs] auth send failed: \(err.localizedDescription)")
+                self?.queue.async { self?.onDisconnectLocked() }
+            }
+        }
+
+        // Auth timeout — if auth_success doesn't arrive in time, give up
+        // and reconnect (or fall through to JS-side WS).
+        authTimeoutWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.queue.async {
+                if !self.authed {
+                    NSLog("[CallSignalWs] auth timeout — closing")
+                    self.task?.cancel(with: .normalClosure, reason: nil)
+                    self.onDisconnectLocked()
+                }
+            }
+        }
+        authTimeoutWorkItem = work
+        queue.asyncAfter(deadline: .now() + authTimeout, execute: work)
+
+        listenLocked(on: newTask)
+    }
+
+    /// Recursive receive loop on the task. URLSessionWebSocketTask requires
+    /// you to call `receive` again after each frame — there's no continuous
+    /// stream API.
+    private func listenLocked(on task: URLSessionWebSocketTask) {
+        task.receive { [weak self, weak task] result in
+            guard let self = self, let task = task else { return }
+            switch result {
+            case .failure(let err):
+                NSLog("[CallSignalWs] receive failure: \(err.localizedDescription)")
+                self.queue.async { self.onDisconnectLocked() }
+            case .success(let msg):
+                self.queue.async { self.handleFrameLocked(msg) }
+                self.listenLocked(on: task) // re-arm
+            }
+        }
+    }
+
+    /// Called on `queue`.
+    private func handleFrameLocked(_ msg: URLSessionWebSocketTask.Message) {
+        let text: String?
+        switch msg {
+        case .string(let s): text = s
+        case .data(let d): text = String(data: d, encoding: .utf8)
+        @unknown default: text = nil
+        }
+        guard let t = text,
+              let data = t.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return
+        }
+        let type = obj["type"] as? String ?? ""
+        switch type {
+        case "auth_success":
+            NSLog("[CallSignalWs] auth_success — draining \(pendingMessages.count) queued frame(s)")
+            authed = true
+            connecting = false
+            reconnectAttempts = 0
+            authTimeoutWorkItem?.cancel()
+            authTimeoutWorkItem = nil
+            startPingTimerLocked()
+            drainLocked()
+        case "error":
+            NSLog("[CallSignalWs] WS error frame: \(t)")
+        default:
+            // We don't consume any other server frames here; the JS WS owns
+            // the real call event surface.
+            break
+        }
+    }
+
+    /// Called on `queue`.
+    private func drainLocked() {
+        guard let task = task, authed else { return }
+        while !pendingMessages.isEmpty {
+            let msg = pendingMessages.removeFirst()
+            task.send(.string(msg)) { [weak self] err in
+                if let err = err {
+                    NSLog("[CallSignalWs] send failed: \(err.localizedDescription)")
+                    // Best-effort: put it back at the tail. Next reconnect
+                    // attempt will retry.
+                    self?.queue.async {
+                        self?.pendingMessages.append(msg)
+                        self?.onDisconnectLocked()
+                    }
+                }
+            }
+        }
+    }
+
+    /// Called on `queue`.
+    private func onDisconnectLocked() {
+        authed = false
+        connecting = false
+        task?.cancel(with: .goingAway, reason: nil)
+        task = nil
+        authTimeoutWorkItem?.cancel()
+        authTimeoutWorkItem = nil
+        pingTimer?.cancel()
+        pingTimer = nil
+        scheduleReconnectLocked()
+    }
+
+    /// Called on `queue`.
+    private func scheduleReconnectLocked() {
+        guard !pendingMessages.isEmpty else { return } // idle
+        let attempt = reconnectAttempts
+        reconnectAttempts += 1
+        if attempt >= maxReconnect {
+            NSLog("[CallSignalWs] reconnect: gave up after \(maxReconnect) attempts — JS WS is the fallback")
+            return
+        }
+        let backoff = backoffSec[min(attempt, backoffSec.count - 1)]
+        NSLog("[CallSignalWs] reconnect: attempt \(attempt + 1)/\(maxReconnect) in \(backoff)s")
+        queue.asyncAfter(deadline: .now() + backoff) { [weak self] in
+            self?.connectLocked()
+        }
+    }
+
+    /// Called on `queue`.
+    private func startPingTimerLocked() {
+        pingTimer?.cancel()
+        let t = DispatchSource.makeTimerSource(queue: queue)
+        t.schedule(deadline: .now() + pingInterval, repeating: pingInterval)
+        t.setEventHandler { [weak self] in
+            guard let self = self, let task = self.task, self.authed else { return }
+            task.sendPing { err in
+                if let err = err {
+                    NSLog("[CallSignalWs] ping failed: \(err.localizedDescription)")
+                    self.queue.async { self.onDisconnectLocked() }
+                }
+            }
+        }
+        t.resume()
+        pingTimer = t
+    }
+
+    private func escapeJSON(_ s: String) -> String {
+        // Minimal escape for the inline auth payload — the bearer is a
+        // base64url string in practice so this is paranoia.
+        return s.replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+}

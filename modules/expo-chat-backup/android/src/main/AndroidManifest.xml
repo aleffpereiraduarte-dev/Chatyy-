@@ -1,0 +1,13 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+  <!-- Required for the HTTPS calls to www.googleapis.com (Drive REST API)
+       and accounts.google.com (OAuth token exchange). -->
+  <uses-permission android:name="android.permission.INTERNET" />
+
+  <!-- GET_ACCOUNTS is needed on legacy Android versions so GoogleSignIn
+       can enumerate the device's Google accounts; on modern Android the
+       sign-in sheet handles account selection itself, but declaring this
+       avoids regressions on older OEM builds (Samsung 10/11). -->
+  <uses-permission android:name="android.permission.GET_ACCOUNTS" />
+
+</manifest>

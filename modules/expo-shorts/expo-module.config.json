@@ -1,0 +1,9 @@
+{
+  "platforms": ["ios", "android"],
+  "ios": {
+    "modules": ["ExpoShortsModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.shorts.ExpoShortsModule"]
+  }
+}

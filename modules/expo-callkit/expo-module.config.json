@@ -2,7 +2,10 @@
   "platforms": ["apple", "android"],
   "apple": {
     "modules": ["ExpoCallKitModule"],
-    "appDelegateSubscribers": ["VoipPushAppDelegateSubscriber"]
+    "appDelegateSubscribers": [
+      "VoipPushAppDelegateSubscriber",
+      "RelayWakeAppDelegateSubscriber"
+    ]
   },
   "android": {
     "modules": ["expo.modules.callkit.ExpoCallKitModule"]

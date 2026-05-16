@@ -1,7 +1,10 @@
 {
-  "platforms": ["apple"],
+  "platforms": ["apple", "android"],
   "apple": {
     "modules": ["ExpoBackgroundUploadModule"],
     "appDelegateSubscribers": ["BackgroundUploadAppDelegateSubscriber"]
+  },
+  "android": {
+    "modules": ["expo.modules.backgroundupload.ExpoBackgroundUploadModule"]
   }
 }

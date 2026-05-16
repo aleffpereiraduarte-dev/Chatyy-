@@ -65,6 +65,21 @@ export default function OngoingCallBar() {
         if (typeof call.onResume === 'function') {
           try { call.onResume(); return; } catch {}
         }
+        // [#992 Stage 3] Mobile: re-open the full-native call screen.
+        if (Platform.OS !== 'web') {
+          try {
+            const ExpoCallKit = require('../modules/expo-callkit');
+            ExpoCallKit.openNativeCall({
+              callId: call.callId || '',
+              callerName: call.contactName || call.number || '',
+              callerEmail: call.contactEmail || '',
+              hasVideo: !!call.isVideo,
+              lkUrl: null,
+              lkToken: null,
+            }).catch((e) => console.warn('[OngoingCallBar] openNativeCall failed:', e));
+          } catch (e) { console.warn('[OngoingCallBar] openNativeCall import failed:', e); }
+          return;
+        }
         router.push('/call');
       }}
       activeOpacity={0.8}

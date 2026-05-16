@@ -1,0 +1,7 @@
+{
+  "name": "expo-live-native",
+  "version": "0.1.0",
+  "description": "Native Live (host + viewer) module for Chatyy — LiveKit-backed broadcast UI.",
+  "main": "./src/index.ts",
+  "private": true
+}

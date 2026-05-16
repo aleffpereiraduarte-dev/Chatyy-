@@ -42,6 +42,10 @@ public class ExpoCallKitModule: Module {
   private var audioInterruptionObserver: Any?
   private var voipTokenObserver: Any?
   private var pendingCallObserver: Any?
+  // [native call screen, 2026-05-16] Observer for CallViewController's
+  // hangup notification — bridges the native UI's red-button tap back into
+  // the JS `onCallEnded` event so /call state stays consistent.
+  private var nativeCallEndedObserver: Any?
 
   // Serial queue for thread-safe access to activeCalls, callPayloads, pendingEvents
   private let stateQueue = DispatchQueue(label: "com.onemundo.callkit.state")
@@ -109,6 +113,7 @@ public class ExpoCallKitModule: Module {
         self.setupProvider()
         self.setupNetworkMonitor()
         self.installAppDelegateBridges()
+        self.installNativeCallEndedObserver()
         self.flushVoipTokenFromAppGroup()
         self.adoptPendingCallsFromAppGroup()
         // [bug 2026-05-15 #4] Removed AVAudioSession pre-arm.
@@ -305,6 +310,69 @@ public class ExpoCallKitModule: Module {
         "nativeRoomIdentity": NativeCallRoom.shared.lastIdentity as Any,
       ]
     }
+
+    // [native call screen, 2026-05-16] Mirrors Android's `openNativeCall`.
+    // JS calls this to swap /call.js out for the SwiftUI CallView.
+    // [Day 2, 2026-05-16] lkUrl + lkToken are now forwarded into the VC so
+    // CallViewController can own the LiveKit Room directly. When either is
+    // nil/empty the VC skips Room.connect and the JS @livekit/react-native
+    // path stays in charge (fallback for unmigrated callers).
+    AsyncFunction("openNativeCall") { (callId: String, callerName: String, callerEmail: String, hasVideo: Bool, lkUrl: String?, lkToken: String?) -> Void in
+      await MainActor.run {
+        guard let root = UIApplication.shared.connectedScenes
+            .compactMap({ ($0 as? UIWindowScene)?.keyWindow?.rootViewController })
+            .first else { return }
+        CallViewController.present(from: root,
+            callId: callId, callerName: callerName,
+            callerEmail: callerEmail, hasVideo: hasVideo,
+            lkUrl: lkUrl, lkToken: lkToken)
+      }
+    }
+
+    // [native group call screen, 2026-05-16] Mirrors Android's
+    // openGroupCall — JS swaps /group-call.js (WebView wrapping
+    // livekit-room.html) out for the SwiftUI GroupCallView grid.
+    // participantsJson is a JSON-encoded array of
+    //   { identity, name, audioMuted }
+    // so the grid can render avatar placeholders immediately while LiveKit
+    // negotiates the actual room.
+    AsyncFunction("openGroupCall") {
+      (roomName: String, lkUrl: String, lkToken: String, participantsJson: String, hasVideo: Bool) -> Void in
+      await MainActor.run {
+        guard let root = UIApplication.shared.connectedScenes
+          .compactMap({ ($0 as? UIWindowScene)?.keyWindow?.rootViewController })
+          .first else { return }
+        GroupCallViewController.present(from: root,
+          roomName: roomName, lkUrl: lkUrl, lkToken: lkToken,
+          participantsJson: participantsJson, hasVideo: hasVideo)
+      }
+    }
+
+    // ─── Native WS call signaling (Stage 1, 2026-05-16) ──────────────────
+    //
+    // JS-callable bridge to CallSignalWs (raw URLSessionWebSocketTask to
+    // wss://ws.chatyy.com.br/ws). Sync Function — fire-and-forget; the WS
+    // layer queues + auto-reconnects internally.
+    //
+    // Stage 1 only stands up the bridge. Stage 2 (separate work) will wire
+    // CallViewController to call these directly so the call signaling path
+    // no longer touches the JS bridge. JS-side WS keeps working in parallel.
+    Function("fireCallInviteNative") { (callId: String, conversationId: String, calleeEmail: String, hasVideo: Bool) -> Void in
+      CallSignalWs.shared.fireCallInvite(
+        callId: callId,
+        conversationId: conversationId,
+        calleeEmail: calleeEmail,
+        hasVideo: hasVideo
+      )
+    }
+
+    Function("fireCallAnsweredNative") { (callId: String, conversationId: String) -> Void in
+      CallSignalWs.shared.fireCallAnswered(callId: callId, conversationId: conversationId)
+    }
+
+    Function("fireCallEndNative") { (callId: String, conversationId: String, reason: String) -> Void in
+      CallSignalWs.shared.fireCallEnd(callId: callId, conversationId: conversationId, reason: reason)
+    }
   }
 
   private func setupProvider() {
@@ -355,6 +423,22 @@ public class ExpoCallKitModule: Module {
       ) { [weak self] note in
         self?.adoptPendingCall(from: note.userInfo ?? [:])
       }
+    }
+  }
+
+  /// [native call screen, 2026-05-16] Listen for the SwiftUI CallView's
+  /// hangup tap and translate it into the canonical `onCallEnded` JS event.
+  /// Ignored if the notification's userInfo is missing the callId — the
+  /// emitter is always CallViewController, which sets it unconditionally.
+  private func installNativeCallEndedObserver() {
+    guard nativeCallEndedObserver == nil else { return }
+    nativeCallEndedObserver = NotificationCenter.default.addObserver(
+      forName: Notification.Name("ExpoCallKitNativeCallEnded"),
+      object: nil,
+      queue: .main
+    ) { [weak self] note in
+      guard let callId = note.userInfo?["callId"] as? String, !callId.isEmpty else { return }
+      self?.safeSendEvent("onCallEnded", ["callId": callId])
     }
   }
 
@@ -460,6 +544,9 @@ public class ExpoCallKitModule: Module {
       NotificationCenter.default.removeObserver(obs)
     }
     if let obs = pendingCallObserver {
+      NotificationCenter.default.removeObserver(obs)
+    }
+    if let obs = nativeCallEndedObserver {
       NotificationCenter.default.removeObserver(obs)
     }
     pathMonitor?.cancel()
@@ -677,8 +764,167 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     } catch {
       print("[ExpoCallKit] Audio category set failed (non-fatal): \(error)")
     }
+    // [native call screen day-3 finale, 2026-05-16] Fire the JS event AND
+    // call action.fulfill() FIRST. Then, on a separate Task, fetch (or read
+    // cached) the LiveKit token + present CallViewController directly. This
+    // collapses the old accept→JS→router.push→Room.connect chain (4-8s) into
+    // accept→present→Room.connect (<500ms). JS still gets onCallAnswered so
+    // its WS notify path runs; the JS router.push('/call') becomes a no-op
+    // because CallViewController is already on screen above it.
     module?.callAnswered(uuid: action.callUUID)
     action.fulfill()
+
+    // Snapshot what we know about the call from the stashed payload BEFORE
+    // dispatching async work. callAnswered() above already removed the
+    // payload from the in-memory dictionary, so we look up the callId via
+    // the UUID→callId reverse map and re-derive caller info from any push
+    // copy still available in the App Group queue. Worst case, we degrade
+    // to placeholder strings — the room name only needs to be the callId.
+    let actionUUID = action.callUUID
+    let callId = module?.callIdForUUID(actionUUID) ?? actionUUID.uuidString
+    let snapshot = Self.collectAnswerSnapshot(callId: callId, uuid: actionUUID)
+
+    // [2026-05-16 Stage 2 native WS signaling] Fire call_answered from
+    // native immediately after CallKit hands us the answer action. This
+    // races the JS-side services/api.js call_answered fire that happens
+    // when JS receives the onCallAnswered event from callAnswered() above
+    // — server dedupes by call_id so the duplicate is safe. Native fires
+    // ~ms after CallKit answer, well before the JS bundle would parse
+    // the bridge event. Empty conversationId is tolerated (dialer flow).
+    if !callId.isEmpty {
+      CallSignalWs.shared.fireCallAnswered(
+        callId: callId,
+        conversationId: snapshot.conversationId
+      )
+    }
+
+    // Identity for the LiveKit token request. Backend ignores this today
+    // (it uses the authenticated session email) but we prefer the
+    // App-Group-persisted `user_email` so logs match the real user.
+    let identity: String = {
+      if let ud = UserDefaults(suiteName: kAppGroupId),
+         let e = ud.string(forKey: "user_email"), !e.isEmpty { return e }
+      return callId
+    }()
+
+    // First try the App Group LK token cache (populated by JS-side
+    // `persistPendingLkToken` whenever a chat_livekit_token mint round-trips
+    // through JS before the push lands). If the cache misses, fetch via
+    // NativeCallTokenFetcher.
+    let cachedToken: (token: String, url: String)? = {
+      guard let ud = UserDefaults(suiteName: kAppGroupId),
+            let t = ud.string(forKey: "lk_token_\(callId)"), !t.isEmpty,
+            let u = ud.string(forKey: "lk_url_\(callId)"), !u.isEmpty
+      else { return nil }
+      return (t, u)
+    }()
+
+    if let cached = cachedToken {
+      print("[ExpoCallKit] Answer: using cached LK token for \(callId)")
+      DispatchQueue.main.async {
+        Self.presentNativeCallVC(callId: callId,
+                                 callerName: snapshot.callerName,
+                                 callerEmail: snapshot.callerEmail,
+                                 hasVideo: snapshot.hasVideo,
+                                 lkUrl: cached.url,
+                                 lkToken: cached.token,
+                                 conversationId: snapshot.conversationId)
+      }
+      return
+    }
+
+    Task.detached(priority: .userInitiated) {
+      do {
+        let result = try await NativeCallTokenFetcher.shared.fetchToken(
+          roomName: callId,
+          identity: identity,
+          role: "publisher"
+        )
+        await MainActor.run {
+          Self.presentNativeCallVC(callId: callId,
+                                   callerName: snapshot.callerName,
+                                   callerEmail: snapshot.callerEmail,
+                                   hasVideo: snapshot.hasVideo,
+                                   lkUrl: result.url,
+                                   lkToken: result.token,
+                                   conversationId: snapshot.conversationId)
+        }
+      } catch {
+        // No native screen this round — JS-side router.push('/call') is the
+        // fallback and will retry the token fetch through @livekit/react-native.
+        print("[ExpoCallKit] LK token fetch failed in CXAnswer path: \(error). JS fallback will retry.")
+      }
+    }
+  }
+
+  /// Collect caller_name / caller_email / hasVideo / conversationId for
+  /// the answer-time CallViewController presentation. Looks at the App
+  /// Group pending-call queue (which AppDelegateSubscriber writes on every
+  /// VoIP push) since `callPayloads` in-memory was already drained by
+  /// callAnswered(). conversationId is best-effort: empty string when the
+  /// push didn't carry one (dialer-style calls).
+  fileprivate static func collectAnswerSnapshot(callId: String, uuid: UUID) -> (callerName: String, callerEmail: String, hasVideo: Bool, conversationId: String) {
+    var callerName = ""
+    var callerEmail = ""
+    var hasVideo = false
+    var conversationId = ""
+    if let ud = UserDefaults(suiteName: kAppGroupId),
+       let queue = ud.array(forKey: kPendingCallKey) as? [[String: Any]] {
+      for entry in queue {
+        let entryId = entry["callId"] as? String
+        let entryUuid = entry["uuid"] as? String
+        if entryId == callId || entryUuid == uuid.uuidString {
+          callerName = (entry["callerName"] as? String) ?? ""
+          if let p = entry["payload"] as? [String: Any] {
+            callerEmail = (p["caller_email"] as? String) ?? ""
+            if let v = p["video"] as? String { hasVideo = (v == "1") }
+            else if let b = p["video"] as? Bool { hasVideo = b }
+            else if let t = p["call_type"] as? String { hasVideo = (t == "video") }
+            if callerName.isEmpty { callerName = (p["caller_name"] as? String) ?? "" }
+            // [2026-05-16 Stage 2] Surface conversation_id for the native
+            // call_answered WS fire. May be missing on dialer-style pushes.
+            conversationId = (p["conversation_id"] as? String) ?? ""
+          }
+          break
+        }
+      }
+    }
+    if callerName.isEmpty { callerName = "Chatyy" }
+    return (callerName, callerEmail, hasVideo, conversationId)
+  }
+
+  /// Walk the connectedScenes to find the key window's rootViewController and
+  /// hand off to CallViewController.present. Must run on the main thread —
+  /// callers (Task continuation, etc.) wrap us in MainActor.run.
+  fileprivate static func presentNativeCallVC(callId: String,
+                                              callerName: String,
+                                              callerEmail: String,
+                                              hasVideo: Bool,
+                                              lkUrl: String,
+                                              lkToken: String,
+                                              conversationId: String = "") {
+    guard let root = UIApplication.shared.connectedScenes
+        .compactMap({ ($0 as? UIWindowScene)?.keyWindow?.rootViewController })
+        .first else {
+      print("[ExpoCallKit] presentNativeCallVC: no keyWindow rootViewController — skipping native present")
+      return
+    }
+    // [2026-05-16 Stage 2] isOutgoing stays false for the CXAnswer path —
+    // we're presenting because the callee just answered, NOT because they
+    // initiated. The native call_answered fire happens up in the CXAnswer
+    // handler; we just need conversationId here so CallViewController's
+    // hangup path can fire call_end with the correct (call_id, conv_id).
+    CallViewController.present(
+      from: root,
+      callId: callId,
+      callerName: callerName,
+      callerEmail: callerEmail,
+      hasVideo: hasVideo,
+      lkUrl: lkUrl,
+      lkToken: lkToken,
+      isOutgoing: false,
+      conversationId: conversationId
+    )
   }
 
   func provider(_ provider: CXProvider, perform action: CXEndCallAction) {

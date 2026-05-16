@@ -4734,10 +4734,11 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
       }
       if (!mountedRef.current) return;
       await expoAudio.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-      // ⭐ Native AVAudioEngine recorder (iOS only) — real waveform samples + lower latency.
-      // Falls back to expo-audio on Android or if the native module is missing.
+      // ⭐ Native recorder (iOS AVAudioRecorder, Android MediaRecorder) — real
+      // waveform samples + lower latency than expo-audio. Falls back to
+      // expo-audio if the native module isn't installed (older binary).
       let nativeRec = null;
-      if (Platform.OS === 'ios') {
+      if (Platform.OS === 'ios' || Platform.OS === 'android') {
         try {
           const { Audio: NativeAudio } = require('../modules/expo-native-toolkit');
           if (NativeAudio?.startRecording) {
@@ -11074,6 +11075,46 @@ export default function ChatConversationScreen() {
         }
       }
 
+      // Native video compression — without this, a 60s 720p capture lands at
+      // 50-100MB. AVAssetExportSession (iOS) / MediaCodec (Android, Stage 2)
+      // bring that down to ~3-8MB at 1.5Mbps H.264. WhatsApp does the same
+      // compress-before-upload step. Skip if file is already small (<2MB on
+      // a video almost certainly means it's a tiny clip or re-share, so
+      // re-encoding gains nothing).
+      const _shouldCompressVideo = Platform.OS !== 'web'
+        && fileType === 'video'
+        && file.uri
+        && uploadAttempt === 1
+        && (file.size || 0) > 2 * 1024 * 1024;
+      if (_shouldCompressVideo) {
+        try {
+          const ExpoNativeVideo = require('../modules/expo-native-video').default;
+          if (ExpoNativeVideo?.isAvailable?.()) {
+            // 1280x720 @ 1.5 Mbps — chat parity target. The native side
+            // skips the transcode automatically if the source is already
+            // within envelope, so this is cheap on already-compressed clips.
+            const compressed = await ExpoNativeVideo.compressVideo(file.uri, {
+              maxWidth: 1280,
+              maxHeight: 720,
+              bitrate: 1_500_000,
+              audioBitrate: 128_000,
+              fps: 30,
+            });
+            if (compressed?.uri && compressed?.size > 0) {
+              file = {
+                ...file,
+                uri: compressed.uri,
+                name: file.name?.replace(/\.\w+$/, '.mp4') || 'video.mp4',
+                type: 'video/mp4',
+                size: compressed.size,
+              };
+            }
+          }
+        } catch (e) {
+          console.warn('[video] native compress failed, uploading raw:', e?.message);
+        }
+      }
+
       // Try Rust upload first (direct to R2, 10x faster, no PHP workers)
       // Use chunked upload for files >1MB so progress callback fires; smaller
       // files take <1s anyway and the indeterminate spinner is enough.
@@ -13296,8 +13337,40 @@ export default function ChatConversationScreen() {
       // Send push notification for the call
       api.callNotify(conversationId, callId, videoEnabled).catch(() => {});
 
-      // Navigate to call screen as caller
-      router.push(`/call?callId=${callId}&contactName=${encodeURIComponent(otherName)}&contactEmail=${encodeURIComponent(otherEmail)}&isVideo=${videoEnabled ? '1' : '0'}&conversationId=${conversationId}&isCaller=1`);
+      // [#992 Stage 3] Mobile (iOS+Android) uses full-native call screen
+      // (CallActivity / CallViewController) which owns LiveKit Room.connect,
+      // audio, video, mute and hangup. JS-side /call.js is now web-only.
+      // Web still pushes /call.js because there's no native module on web.
+      if (Platform.OS !== 'web') {
+        try {
+          let lkUrl = null;
+          let lkToken = null;
+          try {
+            const r = await api.chatLivekitToken(conversationId, callId);
+            if (r?.success && r.data) {
+              lkUrl = r.data.url || null;
+              lkToken = r.data.token || null;
+            }
+          } catch (tokErr) {
+            console.warn('[startCall] chatLivekitToken failed:', tokErr);
+          }
+          const ExpoCallKit = require('../modules/expo-callkit');
+          await ExpoCallKit.openNativeCall({
+            callId,
+            callerName: otherName,
+            callerEmail: otherEmail,
+            hasVideo: !!videoEnabled,
+            lkUrl,
+            lkToken,
+          });
+        } catch (nativeErr) {
+          console.warn('[startCall] openNativeCall failed, falling back to /call:', nativeErr);
+          router.push(`/call?callId=${callId}&contactName=${encodeURIComponent(otherName)}&contactEmail=${encodeURIComponent(otherEmail)}&isVideo=${videoEnabled ? '1' : '0'}&conversationId=${conversationId}&isCaller=1`);
+        }
+      } else {
+        // Web: keep JS /call screen (no native module available)
+        router.push(`/call?callId=${callId}&contactName=${encodeURIComponent(otherName)}&contactEmail=${encodeURIComponent(otherEmail)}&isVideo=${videoEnabled ? '1' : '0'}&conversationId=${conversationId}&isCaller=1`);
+      }
     } catch (e) {
       console.warn('Start call error:', e);
       safeAlert(t('common.error') || 'Error', t('chat.callError') || 'Could not start call');

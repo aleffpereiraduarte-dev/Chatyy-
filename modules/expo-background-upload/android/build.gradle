@@ -1,0 +1,57 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+group = 'expo.modules.backgroundupload'
+version = '1.0.0'
+
+android {
+  namespace "expo.modules.backgroundupload"
+  compileSdkVersion safeExtGet("compileSdkVersion", 35)
+
+  defaultConfig {
+    minSdkVersion safeExtGet("minSdkVersion", 24)
+    targetSdkVersion safeExtGet("targetSdkVersion", 35)
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
+  kotlinOptions {
+    jvmTarget = "17"
+  }
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+  implementation 'androidx.core:core-ktx:1.13.1'
+  implementation 'androidx.appcompat:appcompat:1.7.0'
+
+  // [2026-05-16] WorkManager for surviving app process death — replaces the JS-driven
+  // TaskManager.defineTask path that was getting killed by Android battery saver.
+  // PeriodicWorkRequest runs in the WorkManager system process so background uploads
+  // continue even when the app is swiped away or doze-killed.
+  implementation 'androidx.work:work-runtime-ktx:2.9.0'
+
+  // [2026-05-16] OkHttp for streamed PUT to R2 — avoids loading the entire file into
+  // a byte[] (was the OOM root cause when JS uploadAsset did `await fetch(file).blob()`
+  // on 100MB videos). RequestBody.create() with a custom writeTo() streams from disk.
+  // 4.12.0 matches what react-native pulls transitively; if the app pins a different
+  // version elsewhere the resolver will pick the highest — no API breakage between
+  // 4.9–4.12.
+  implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+
+  // [2026-05-16] lifecycleScope for in-module coroutine launching from the background
+  // worker. Same version expo-callkit uses to keep transitives aligned.
+  implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
+
+  // kotlinx-coroutines for suspend functions called from AsyncFunction blocks via
+  // runBlocking on a dedicated dispatcher. Already pulled transitively by every
+  // expo module but declared for clarity.
+  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+}
+
+def safeExtGet(prop, fallback) {
+  rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+}

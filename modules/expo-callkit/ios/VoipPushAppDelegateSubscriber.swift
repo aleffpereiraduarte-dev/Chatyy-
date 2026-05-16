@@ -184,6 +184,20 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
         let callerName = (dict["caller_name"] as? String) ?? (dict["caller_email"] as? String) ?? "Unknown"
         let hasVideo = (dict["video"] as? String) == "1" || (dict["call_type"] as? String) == "video"
 
+        // [native call screen day-3 finale, 2026-05-16] OPT-IN cold-start
+        // auto-accept. If the server marks the push with `auto_accept=1`
+        // (e.g. a callback-style auto-pickup flow), skip the CallKit UI
+        // entirely and jump straight to CallViewController. The
+        // reportNewIncomingCall flow is still REQUIRED by Apple for every
+        // VoIP push so we report-and-immediately-end-as-answered below.
+        //
+        // TODO(future): wire backend to emit `auto_accept` on TestCalls /
+        // server-driven pickup. Today no push carries the flag — this branch
+        // is dormant in production.
+        let autoAccept = ((dict["auto_accept"] as? String) == "1")
+            || ((dict["auto_accept"] as? Bool) == true)
+            || ((dict["auto_accept"] as? NSNumber)?.boolValue == true)
+
         // reportNewIncomingCall FIRST — before any bookkeeping. Apple's
         // run-loop deadline is enforced: any work between the push receipt
         // and the report call eats budget and any blocking sync can push us
@@ -238,8 +252,116 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
                     "payload": dict
                 ]
             )
+
+            // [native call screen day-3 finale, 2026-05-16] If the server flag
+            // `auto_accept` was set, skip the CallKit ring UI and jump
+            // straight into CallViewController on the cold-start path. We
+            // must still call reportNewIncomingCall (above) to satisfy Apple's
+            // PushKit contract, then immediately report the call as answered
+            // and synthesise the connect by presenting the native VC.
+            if autoAccept {
+                print("[VoipSubscriber] auto_accept=1 — programmatically answering + presenting CallViewController")
+                // Programmatically answer the just-reported incoming call so
+                // CallKit clears its ring UI. This is the canonical
+                // server-driven auto-pickup flow: PushKit requires we report
+                // every VoIP push, but we can immediately request an answer
+                // transaction on behalf of the user. CallKit will then route
+                // through provider:perform CXAnswerCallAction (this same
+                // delegate), which kicks startNativeLkConnect; we ALSO
+                // present CallViewController explicitly here so the UI swap
+                // happens with no JS round-trip.
+                let controller = CXCallController(queue: .main)
+                let answer = CXAnswerCallAction(call: uuid)
+                controller.request(CXTransaction(action: answer)) { err in
+                    if let e = err {
+                        print("[VoipSubscriber] auto_accept answer request failed: \(e)")
+                    }
+                }
+                let callerEmail = (dict["caller_email"] as? String) ?? ""
+                VoipPushAppDelegateSubscriber.startAutoAcceptNativeCall(
+                    callId: callId,
+                    callerName: callerName,
+                    callerEmail: callerEmail,
+                    hasVideo: hasVideo,
+                    payload: dict
+                )
+            }
             completion()
         }
+    }
+
+    /// Cold-start auto-accept entry point. Reads the same App Group inputs
+    /// the regular CXAnswerCallAction path uses, fetches a LiveKit token
+    /// (via NativeCallTokenFetcher), then presents CallViewController on
+    /// the main thread.
+    fileprivate static func startAutoAcceptNativeCall(callId: String,
+                                                       callerName: String,
+                                                       callerEmail: String,
+                                                       hasVideo: Bool,
+                                                       payload: [AnyHashable: Any]) {
+        // Cached LK token short-circuit (server may have published one via
+        // the existing `persistPendingLkToken` JS function before the push).
+        if let ud = UserDefaults(suiteName: kAppGroupId),
+           let cachedToken = ud.string(forKey: "lk_token_\(callId)"), !cachedToken.isEmpty,
+           let cachedUrl = ud.string(forKey: "lk_url_\(callId)"), !cachedUrl.isEmpty {
+            DispatchQueue.main.async {
+                presentAutoAcceptVC(callId: callId,
+                                    callerName: callerName,
+                                    callerEmail: callerEmail,
+                                    hasVideo: hasVideo,
+                                    lkUrl: cachedUrl,
+                                    lkToken: cachedToken)
+            }
+            return
+        }
+        let identity: String = {
+            if let s = payload["identity"] as? String, !s.isEmpty { return s }
+            if let ud = UserDefaults(suiteName: kAppGroupId),
+               let e = ud.string(forKey: "user_email"), !e.isEmpty { return e }
+            return callId
+        }()
+        Task.detached(priority: .userInitiated) {
+            do {
+                let result = try await NativeCallTokenFetcher.shared.fetchToken(
+                    roomName: callId,
+                    identity: identity,
+                    role: "publisher"
+                )
+                await MainActor.run {
+                    presentAutoAcceptVC(callId: callId,
+                                        callerName: callerName,
+                                        callerEmail: callerEmail,
+                                        hasVideo: hasVideo,
+                                        lkUrl: result.url,
+                                        lkToken: result.token)
+                }
+            } catch {
+                print("[VoipSubscriber] auto-accept LK token fetch failed: \(error)")
+            }
+        }
+    }
+
+    fileprivate static func presentAutoAcceptVC(callId: String,
+                                                 callerName: String,
+                                                 callerEmail: String,
+                                                 hasVideo: Bool,
+                                                 lkUrl: String,
+                                                 lkToken: String) {
+        guard let root = UIApplication.shared.connectedScenes
+            .compactMap({ ($0 as? UIWindowScene)?.keyWindow?.rootViewController })
+            .first else {
+            print("[VoipSubscriber] auto-accept: no keyWindow rootVC yet — deferring (JS path will handle)")
+            return
+        }
+        CallViewController.present(
+            from: root,
+            callId: callId,
+            callerName: callerName,
+            callerEmail: callerEmail,
+            hasVideo: hasVideo,
+            lkUrl: lkUrl,
+            lkToken: lkToken
+        )
     }
 
     private func makeEphemeralProvider() -> CXProvider {
@@ -344,6 +466,38 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
         }
 
         action.fulfill()
+
+        // [native call screen day-3 finale, 2026-05-16] In addition to the
+        // legacy NativeCallRoom pre-connect above (which still feeds the JS
+        // adopt-room path), also present CallViewController directly so the
+        // user lands on the native fullscreen the moment they accept — even
+        // when RN bundle has not yet finished parsing. The stub CXAnswer
+        // delegate fires before the live ExpoCallKitModule.ProviderDelegate
+        // is wired, so we replicate the same present logic here.
+        if let p = payload {
+            let callId = (p["callId"] as? String)
+                ?? (p["call_id"] as? String)
+                ?? (p["room_name"] as? String)
+                ?? (p["conversation_id"] as? String)
+                ?? uuid.uuidString
+            let callerName = (p["callerName"] as? String)
+                ?? (p["caller_name"] as? String)
+                ?? "Chatyy"
+            let callerEmail = (p["caller_email"] as? String) ?? ""
+            let hasVideo: Bool = {
+                if let v = p["hasVideo"] as? Bool { return v }
+                if let v = p["video"] as? String { return v == "1" }
+                if let t = p["call_type"] as? String { return t == "video" }
+                return false
+            }()
+            Self.startAutoAcceptNativeCall(
+                callId: callId,
+                callerName: callerName,
+                callerEmail: callerEmail,
+                hasVideo: hasVideo,
+                payload: p
+            )
+        }
     }
 
     /// Read room_name/identity from the push payload and ask NativeCallRoom

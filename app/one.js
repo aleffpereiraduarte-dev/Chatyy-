@@ -2112,7 +2112,39 @@ export default function OneScreen() {
         if (params.contact_email) {
           // New Rust: navigate to /call with the contact
           const video = params.video ? '1' : '0';
-          router.push(`/call?contactEmail=${encodeURIComponent(params.contact_email)}&contactName=${encodeURIComponent(params.contact_email.split('@')[0])}&isVideo=${video}&isCaller=1&callId=one_${Date.now()}`);
+          const callId = `one_${Date.now()}`;
+          const contactEmail = params.contact_email;
+          const contactName = contactEmail.split('@')[0];
+          // [#992 Stage 3] Mobile uses native call screen; web uses /call.js.
+          if (Platform.OS !== 'web') {
+            (async () => {
+              try {
+                let lkUrl = null, lkToken = null;
+                try {
+                  const api = require('../services/api');
+                  const r = await api.chatLivekitToken('', callId);
+                  if (r?.success && r.data) {
+                    lkUrl = r.data.url || null;
+                    lkToken = r.data.token || null;
+                  }
+                } catch {}
+                const ExpoCallKit = require('../modules/expo-callkit');
+                await ExpoCallKit.openNativeCall({
+                  callId,
+                  callerName: contactName,
+                  callerEmail: contactEmail,
+                  hasVideo: !!params.video,
+                  lkUrl,
+                  lkToken,
+                });
+              } catch (e) {
+                console.warn('[one start_call] openNativeCall failed:', e);
+                router.push(`/call?contactEmail=${encodeURIComponent(contactEmail)}&contactName=${encodeURIComponent(contactName)}&isVideo=${video}&isCaller=1&callId=${callId}`);
+              }
+            })();
+          } else {
+            router.push(`/call?contactEmail=${encodeURIComponent(contactEmail)}&contactName=${encodeURIComponent(contactName)}&isVideo=${video}&isCaller=1&callId=${callId}`);
+          }
         } else if (params.phone) {
           if (Platform.OS === 'web') {
             router.push(`/chat?tab=calls&dial=${encodeURIComponent(params.phone)}`);

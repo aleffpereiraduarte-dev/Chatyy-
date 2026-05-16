@@ -3118,8 +3118,38 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     const name = item.contactName || item.contact_name || '';
     if (!email) return;
     const isVideo = item.video ? '1' : '0';
-    // callId is generated freshly on the call screen for outgoing calls,
-    // so we pass an empty placeholder and let /call mint one.
+    // [#992 Stage 3] Mobile: open the full-native call screen instead of /call.js.
+    // callId is generated freshly here (was minted inside /call before).
+    if (Platform.OS !== 'web') {
+      (async () => {
+        try {
+          const callId = `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          let lkUrl = null, lkToken = null;
+          try {
+            const api = require('../services/api');
+            const r = await api.chatLivekitToken(item.conversation_id || item.conversationId || '', callId);
+            if (r?.success && r.data) {
+              lkUrl = r.data.url || null;
+              lkToken = r.data.token || null;
+            }
+          } catch {}
+          const ExpoCallKit = require('../modules/expo-callkit');
+          await ExpoCallKit.openNativeCall({
+            callId,
+            callerName: name,
+            callerEmail: email,
+            hasVideo: !!item.video,
+            lkUrl,
+            lkToken,
+          });
+        } catch (e) {
+          console.warn('[handleHistoryCallBack] openNativeCall failed:', e);
+          router.push(`/call?contactName=${encodeURIComponent(name)}&contactEmail=${encodeURIComponent(email)}&isVideo=${isVideo}&isCaller=1`);
+        }
+      })();
+      return;
+    }
+    // Web fallback: keep /call.js
     router.push(`/call?contactName=${encodeURIComponent(name)}&contactEmail=${encodeURIComponent(email)}&isVideo=${isVideo}&isCaller=1`);
   }, [router, handleHistoryPress]);
 

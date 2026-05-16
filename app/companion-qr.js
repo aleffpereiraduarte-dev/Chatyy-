@@ -29,6 +29,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconShield, IconSmartphone } from '../components/Icons';
 import * as api from '../services/api';
+import { getDeviceId, getDevicePublicKey } from '../services/e2e';
 
 // Tiny deterministic "QR-ish" matrix — copied from profile-qr to avoid a
 // circular import. Real QR encoding is overkill for a 32-char token that
@@ -134,6 +135,17 @@ export default function CompanionQRScreen() {
         const s = r?.data?.status;
         if (s === 'approved' || s === 'confirmed') {
           setStatus('approved');
+          // Stage 2: this surface just got linked. Publish its X25519 pubkey
+          // so the phone (and any other linked device) can target it in
+          // future envelopes. Fire-and-forget — the pair is already valid
+          // even if this network call fails; phone will re-fetch the
+          // registry on next foreground.
+          try {
+            const deviceId = await getDeviceId();
+            const pubkey = await getDevicePublicKey();
+            const kind = Platform.OS === 'web' ? 'web' : Platform.OS;
+            api.chatDeviceKeyPublish(deviceId, pubkey, kind).catch(() => {});
+          } catch (e) { /* ignore — non-fatal */ }
         } else if (s === 'expired') {
           // Token died (>5min or already consumed) — mint a new one.
           mint();

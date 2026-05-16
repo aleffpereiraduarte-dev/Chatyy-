@@ -5,7 +5,9 @@
 // localStorage fallback kept them and silently dropped old entries.
 
 const IDB_NAME = 'chatyy_v2';
-const IDB_VERSION = 3;
+// v4 (2026-05-16): mirror native localDb.js — add local_seq + client_temp_id
+// indexes to the `messages` store. See localDb.js for full context.
+const IDB_VERSION = 4;
 let _idb = null;
 
 function getIDB() {
@@ -16,15 +18,25 @@ function getIDB() {
       const req = indexedDB.open(IDB_NAME, IDB_VERSION);
       req.onupgradeneeded = (e) => {
         const d = e.target.result;
+        const tx = e.target.transaction;
         if (!d.objectStoreNames.contains('cache')) d.createObjectStore('cache', { keyPath: 'key' });
         if (!d.objectStoreNames.contains('emails')) {
           const s = d.createObjectStore('emails', { keyPath: '_cid' });
           s.createIndex('folder', 'folder', { unique: false });
         }
         if (!d.objectStoreNames.contains('conversations')) d.createObjectStore('conversations', { keyPath: 'id' });
+        let msgStore;
         if (!d.objectStoreNames.contains('messages')) {
-          const s = d.createObjectStore('messages', { keyPath: 'id' });
-          s.createIndex('cid', 'conversation_id', { unique: false });
+          msgStore = d.createObjectStore('messages', { keyPath: 'id' });
+          msgStore.createIndex('cid', 'conversation_id', { unique: false });
+        } else if (tx) {
+          msgStore = tx.objectStore('messages');
+        }
+        if (msgStore && !msgStore.indexNames.contains('local_seq')) {
+          try { msgStore.createIndex('local_seq', ['conversation_id', 'local_seq'], { unique: false }); } catch {}
+        }
+        if (msgStore && !msgStore.indexNames.contains('client_temp_id')) {
+          try { msgStore.createIndex('client_temp_id', 'client_temp_id', { unique: false }); } catch {}
         }
         if (!d.objectStoreNames.contains('contacts')) d.createObjectStore('contacts', { keyPath: 'email' });
       };

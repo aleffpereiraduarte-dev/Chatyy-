@@ -3,18 +3,32 @@ import { Platform } from 'react-native';
 import { ExpoBackgroundUploadModuleEvents, UploadRequest } from './expo-background-upload.types';
 
 declare class ExpoBackgroundUploadModuleClass extends NativeModule<ExpoBackgroundUploadModuleEvents> {
+  // iOS-only orchestration helpers (kept for the existing iOS path)
   uploadAsset(request: UploadRequest): Promise<{ assetId: string; queued: boolean }>;
   uploadBatch(requests: UploadRequest[]): Promise<{ queued: number; failed: number }>;
   getActiveCount(): Promise<number>;
   cancelAll(): void;
+  // Android-side native primitives (also no-op on iOS — iOS does its own thing
+  // inside the Swift module).
+  scanMediaStore?(sinceMs: number | null): Promise<any[]>;
+  hashFile?(uri: string): Promise<string>;
+  compressImage?(uri: string, maxDim: number, quality: number): Promise<{
+    uri: string; path: string; size: number; width: number; height: number;
+  }>;
+  uploadToR2?(localPath: string, presignedUrl: string, assetId?: string, mimeType?: string): Promise<{
+    uploaded: boolean; status: number; etag: string;
+  }>;
+  scheduleBackup?(wifiOnly: boolean, chargingOnly: boolean): Promise<void>;
+  cancelBackup?(): Promise<void>;
+  setBackupCreds?(bearer: string, apiBase: string, email: string): Promise<void>;
 }
 
-// No-op stub for Android/web — modulo nativo so existe pro iOS.
-// Sem isso, `require('../modules/expo-background-upload')` chamava
-// requireNativeModule('ExpoBackgroundUpload') que lanca fatal error
-// "Cannot find native module" em qualquer plataforma sem o nativo,
-// crashando a tela inteira (Backup tab branca no Android — log
-// 2026-05-04 mostra esse erro). Stub retorna null/empty pros JS callers.
+// No-op stub for web and unsupported platforms. Without this,
+// `require('../modules/expo-background-upload')` calls
+// requireNativeModule('ExpoBackgroundUpload') which throws fatal
+// "Cannot find native module" on any platform without the native binary,
+// crashing the screen (Backup tab branca no Android — log 2026-05-04).
+// Stub returns null/empty for JS callers that don't gate on Platform.
 const NoOpModule: any = {
   addListener: () => ({ remove: () => {} }),
   removeListener: () => {},
@@ -34,11 +48,12 @@ const NoOpModule: any = {
 };
 
 let mod: ExpoBackgroundUploadModuleClass | any = NoOpModule;
-if (Platform.OS === 'ios') {
+if (Platform.OS === 'ios' || Platform.OS === 'android') {
   try {
     mod = requireNativeModule<ExpoBackgroundUploadModuleClass>('ExpoBackgroundUpload');
   } catch (e) {
-    // Fallback se modulo nao registrado por algum motivo (TestFlight beta etc).
+    // Fallback if the module wasn't registered (TestFlight beta, prebuild --clean
+    // before native rebuild, etc.). Better to silently degrade than crash.
     mod = NoOpModule;
   }
 }

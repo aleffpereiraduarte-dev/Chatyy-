@@ -117,12 +117,23 @@ export async function applyRealtimeEvent(event) {
     switch (event.type) {
       // Chat
       case 'new_message':
-        if (event.data) await localDb.saveMessage(event.data);
+        if (event.data) {
+          // Stage 1 dedup: a row with this client_temp_id may already exist
+          // in SQLite (the sender's own optimistic insert). saveMessage()
+          // upserts by server msg_id but ALSO collapses the optimistic row
+          // whose `client_temp_id` matches, preserving its local_seq so
+          // ordering doesn't jump when the server id replaces the temp one.
+          // Server msg_id wins as the durable primary key.
+          await localDb.saveMessage(event.data);
+        }
         break;
       case 'message_edited':
         if (event.data?.id) await localDb.updateMessage(event.data.id, event.data);
         break;
       case 'message_deleted':
+        // Soft-delete only (deleteMessage sets deleted_at). The row stays in
+        // SQLite so disappearing-timer + history search keep working until
+        // user explicitly purges.
         if (event.data?.id) await localDb.deleteMessage(event.data.id);
         break;
       case 'conversation_updated':

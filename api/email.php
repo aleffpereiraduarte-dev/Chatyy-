@@ -1228,6 +1228,9 @@ $CSRF_EXEMPT = ['login', 'signup', 'check_auth', 'logout', 'check_username',
     'meet_rsvp', 'meet_persist_chat', 'meet_upload_chunk', 'meet_upload_file', 'chat_upload', 'chat_send', 'chat_typing', 'file_upload',
     'status_create', 'status_view', 'status_upload', 'chat_favorite', 'backup_debug', 'crash_report', 'bug_report', 'drive_precheck_asset_ids', 'chat_pin_conversation', 'chat_mute', 'chat_react', 'user_presence',
     'chat_qr_login_create', 'chat_qr_login_status',
+    // [Stage 4 silent push wake] Internal-only — gated by X-API-Key /
+    // MAIL_WS_KEY at the handler. Never invoked by the app/web client.
+    'chat_wake_phone',
     // Family Sharing read-only actions (writes still go through CSRF check below).
     'family_info', 'family_calendar_list', 'family_shared_album_list',
     'family_shopping_list_get', 'family_location_all', 'family_plan_share',
@@ -9726,6 +9729,9 @@ try {
         case 'chat_call_history_add': case 'chat_pending_members':
         case 'chat_sticker_packs_list': case 'chat_user_stickers':
         case 'chat_sync':
+        // SQLite-first chat migration Stage 2 — per-device pubkey registry
+        case 'chat_device_key_publish': case 'chat_device_keys_list':
+        case 'chat_device_key_touch':
         // Voicemail (caller leaves a voice message after a missed call)
         case 'voicemail_init_upload': case 'voicemail_send':
         case 'voicemail_get': case 'voicemail_mark_listened':

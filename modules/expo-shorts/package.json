@@ -1,0 +1,24 @@
+{
+  "name": "expo-shorts",
+  "version": "0.1.0",
+  "description": "Native Shorts/Reels player for Expo. Stage 1 scaffold — no real playback yet.",
+  "main": "./src/index.ts",
+  "keywords": [
+    "expo",
+    "shorts",
+    "reels",
+    "video",
+    "exoplayer",
+    "avplayer"
+  ],
+  "repository": "https://github.com/aleffduarte/webmail-app",
+  "author": "Chatyy / OneMundo",
+  "license": "MIT",
+  "homepage": "https://github.com/aleffduarte/webmail-app/tree/main/modules/expo-shorts",
+  "files": [
+    "src",
+    "ios",
+    "android",
+    "expo-module.config.json"
+  ]
+}

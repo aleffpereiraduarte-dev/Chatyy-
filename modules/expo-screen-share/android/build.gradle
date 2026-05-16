@@ -25,4 +25,15 @@ android {
 
 dependencies {
   implementation project(':expo-modules-core')
+
+  // [2026-05-16 Android screenshare] Same LK version as expo-callkit so the
+  // shared transitive libwebrtc (m144) stays consistent — mixing versions
+  // crashes at runtime with UnsatisfiedLinkError on the JNI bridge.
+  implementation 'io.livekit:livekit-android:2.24.1'
+
+  // ContextCompat.startForegroundService + NotificationCompat builder.
+  implementation 'androidx.core:core-ktx:1.13.1'
+
+  // lifecycleScope for coroutine launches inside the module.
+  implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
 }

@@ -2226,6 +2226,42 @@ export async function chatConversations(search = '', includeArchived = false) {
   const params = {};
   if (search) params.search = search;
   if (includeArchived) params.include_archived = 1;
+
+  // Stage 6 — WhatsApp-Web read transport switch.
+  // On web with a paired phone available, fetch the conversation list via
+  // WS relay (phone reads SQLite, replies over WS) instead of REST. The
+  // server doesn't even need to touch PG — the phone is the source of
+  // truth. On phone-offline, fall back to IndexedDB cache + surface the
+  // banner via globalThis.__chatyy_phone_offline.
+  // Search/archived filters skip relay since relayResponder.get_conversations
+  // returns the unfiltered list (filtering is server-side in PHP path).
+  if (Platform.OS === 'web' && !search && !includeArchived) {
+    try {
+      const relay = require('./relayClient');
+      if (await relay.isAvailable()) {
+        try {
+          const r = await relay.getConversationsViaRelay();
+          try { globalThis.__chatyy_phone_offline = false; } catch {}
+          return r;
+        } catch (e) {
+          const code = e?.code || '';
+          if (code === 'phone_offline' || code === 'relay_timeout' || code === 'no_paired_device' || code === 'request_timeout') {
+            try { globalThis.__chatyy_phone_offline = true; } catch {}
+            try {
+              const { webGetConversations } = require('./localDb');
+              const cached = await webGetConversations();
+              if (cached && cached.length > 0) {
+                return { success: true, data: { conversations: cached }, _stale: true };
+              }
+            } catch {}
+            // Cache miss too — fall through to REST so the screen isn't blank.
+          }
+          // Unknown relay error — silently degrade to REST.
+        }
+      }
+    } catch {}
+  }
+
   // Try Rust first — reads from PG, returns in ~10ms vs 100ms on PHP.
   // Rust handles the unfiltered conversation list; fall back to PHP for search/archived filters.
   if (!search && !includeArchived && (await _probeRustChat())) {
@@ -2280,6 +2316,43 @@ export async function chatMessages(conversationId, limit = 20, beforeId = null, 
   else if (sinceId > 0) params.since_id = sinceId;
   if (topicId !== undefined && topicId !== null) params.topic_id = topicId;
 
+  // Stage 6 — read via WS relay when web companion is paired + phone online.
+  // Skip relay when sinceId/topicId are set: relayResponder.get_messages only
+  // implements limit + before_id; sinceId (delta) and topicId (threads) need
+  // the PHP path until the phone-side handler grows those filters.
+  if (Platform.OS === 'web' && !sinceId && topicId === undefined) {
+    try {
+      const relay = require('./relayClient');
+      if (await relay.isAvailable()) {
+        try {
+          const r = await relay.getMessagesViaRelay(conversationId, beforeId, limit);
+          try { globalThis.__chatyy_phone_offline = false; } catch {}
+          return r;
+        } catch (e) {
+          const code = e?.code || '';
+          if (code === 'phone_offline' || code === 'relay_timeout' || code === 'no_paired_device' || code === 'request_timeout') {
+            try { globalThis.__chatyy_phone_offline = true; } catch {}
+            try {
+              const { webGetMessages } = require('./localDb');
+              const cached = await webGetMessages(conversationId);
+              if (cached && cached.length > 0) {
+                // Apply limit/before_id locally so the consumer's pagination
+                // logic doesn't break. webGetMessages returns ascending; the
+                // REST shape mirrors that.
+                let rows = cached;
+                if (beforeId) rows = rows.filter(m => Number(m.id) < Number(beforeId));
+                if (limit && rows.length > limit) rows = rows.slice(-limit);
+                return { success: true, data: { messages: rows, conversation_id: conversationId }, _stale: true };
+              }
+            } catch {}
+            // Cache miss — fall through to PHP path.
+          }
+          // Other errors — silently fall through.
+        }
+      }
+    } catch {}
+  }
+
   // FORCED PHP until Rust handler is updated to include forwarded_from,
   // forward_count, thumb_b64, client_message_id, conv_pts, mentions, and
   // viewed_by in its SELECT. Users reported forwarded messages appearing
@@ -2322,6 +2395,127 @@ function _genClientMsgId() {
   return 'cli_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 14);
 }
 
+// Lazy-load localDb so we don't pay the SQLite init cost at module-eval time
+// AND avoid any circular-import edge cases (api.js is imported from many
+// callers; localDb has no deps on api.js but we keep the require inside the
+// helper anyway for safety). All helpers no-op on web — the local store is
+// IDB-backed there, the optimistic UI write already lives in chatCache.
+//
+// Stage 1 invariant: every state-mutating chat call writes to local SQLite
+// BEFORE hitting the server. The server is a delivery target, not the truth.
+let _localDb = null;
+function _ld() {
+  if (_localDb !== null) return _localDb;
+  try { _localDb = require('./localDb'); }
+  catch { _localDb = false; }
+  return _localDb;
+}
+async function _localOptimisticSend({ tempId, conversationId, content, type, replyToId, fileUrl, clientMessageId, senderEmail }) {
+  // Native-only path: best-effort write to SQLite *before* the network call.
+  // Failures are non-fatal — the caller still fires the POST and the offline
+  // queue path covers retries. We don't await this with a strict guarantee
+  // because the UI's own optimistic state is already up; SQLite just needs
+  // to catch up *before* the network round-trip completes, not before render.
+  const ld = _ld();
+  if (!ld || typeof ld.saveLocalMessage !== 'function') return null;
+  try {
+    return await ld.saveLocalMessage({
+      id: tempId,
+      conversation_id: conversationId,
+      sender_email: senderEmail || null,
+      content,
+      type: type || 'text',
+      file_url: fileUrl || null,
+      reply_to_id: replyToId || null,
+      client_temp_id: clientMessageId || tempId,
+      created_at: new Date().toISOString(),
+    }, 'pending');
+  } catch { return null; }
+}
+async function _localFinalizeSend(tempId, serverRow) {
+  // After a successful POST: insert the confirmed row into `messages` keyed
+  // by the durable server id, then drop the offline_queue entry for the
+  // optimistic intent so retries stop. saveMessage handles the client_temp_id
+  // dedup link so the local_seq survives the temp → server-id transition.
+  const ld = _ld();
+  if (!ld) return;
+  try {
+    if (serverRow && typeof ld.saveMessage === 'function') {
+      const ctid = serverRow.client_temp_id || serverRow.client_message_id || tempId || null;
+      await ld.saveMessage({ ...serverRow, client_temp_id: ctid, pending_state: 'sent' });
+    }
+    if (typeof ld.clearPendingSend === 'function') {
+      await ld.clearPendingSend(tempId);
+    }
+  } catch {}
+}
+async function _localMarkFailed(tempId, err) {
+  const ld = _ld();
+  if (!ld || typeof ld.markMessageFailed !== 'function' || !tempId) return;
+  try { await ld.markMessageFailed(tempId, err?.message || err); } catch {}
+}
+async function _localUpdateMessage(messageId, updates) {
+  const ld = _ld();
+  if (!ld || typeof ld.updateMessage !== 'function' || !messageId) return;
+  try { await ld.updateMessage(messageId, updates); } catch {}
+}
+
+// ─── Stage 7 envelope-mode feature flag (2026-05-16) ────────────────────────
+// `globalThis.__chatyy_envelope_mode === true` flips chatSend to the
+// per-recipient-device ciphertext path (see chatSend body below). Default is
+// OFF — Stage 6/7 will roll the flag default-ON per account via remote
+// config + a debug menu. These helpers give ops a runtime switch and a
+// persistent cross-session toggle (AsyncStorage `@chatyy_envelope_mode`).
+const _ENVELOPE_MODE_KEY = '@chatyy_envelope_mode';
+
+export function setEnvelopeMode(enabled) {
+  const flag = enabled === true;
+  try {
+    if (typeof globalThis !== 'undefined') {
+      globalThis.__chatyy_envelope_mode = flag;
+    }
+  } catch {}
+  // Persist for next bundle load. Web uses localStorage; native uses
+  // AsyncStorage via the helper already in this file.
+  try {
+    if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+      if (flag) localStorage.setItem(_ENVELOPE_MODE_KEY, '1');
+      else localStorage.removeItem(_ENVELOPE_MODE_KEY);
+    } else {
+      _writeAsyncStorage(_ENVELOPE_MODE_KEY, flag ? '1' : null);
+    }
+  } catch {}
+  return flag;
+}
+
+export async function loadEnvelopeMode() {
+  // Reads the persisted flag and mirrors it onto globalThis. Default OFF
+  // is preserved when storage has no value or read fails — we only flip
+  // ON when explicitly persisted.
+  let raw = null;
+  try {
+    if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+      raw = localStorage.getItem(_ENVELOPE_MODE_KEY);
+    } else {
+      raw = await _readAsyncStorage(_ENVELOPE_MODE_KEY);
+    }
+  } catch {}
+  const flag = raw === '1';
+  try {
+    if (typeof globalThis !== 'undefined') {
+      globalThis.__chatyy_envelope_mode = flag;
+    }
+  } catch {}
+  return flag;
+}
+
+// Fire-and-forget bootstrap: pull the persisted flag once on bundle load so
+// every call site (including `chatSend` further down) sees the right value
+// without any caller having to wait. Default OFF is preserved if anything
+// here throws — `globalThis.__chatyy_envelope_mode` stays undefined and the
+// `=== true` guard in chatSend evaluates false.
+try { loadEnvelopeMode().catch(() => {}); } catch {}
+
 export async function chatSend(conversationId, content, type = 'text', replyToId = null, mentions = null, fileUrl = null, tempId = null, clientMessageId = null, topicId = null, opts = null) {
   // Guard: server raises an unhelpful 400 when conversation_id is empty/0,
   // and the client bubble sticks as "pending" because the error message
@@ -2329,14 +2523,37 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
   if (!conversationId) {
     return { success: false, message: 'invalid_conversation_id', error: 'invalid_conversation_id' };
   }
+  // Stable client_message_id — generated once per logical send. Re-used as
+  // the dedup key when the server bounces the row back via WS new_message.
+  const stableCMI = clientMessageId || _genClientMsgId();
+  // Stable temp id — if the caller didn't pass one we synthesize. Caller MAY
+  // have already inserted an optimistic bubble using a different temp id; in
+  // that case the SQLite write here lands as a sibling row keyed by the
+  // local temp id we pick. saveMessage() folds them via client_temp_id on
+  // server echo, so they collapse to one row eventually.
+  const localTempId = tempId || ('tmp_' + stableCMI);
+
+  // ── 1. WRITE TO LOCAL SQLITE FIRST (Stage 1 invariant) ────────────────
+  // The local row is now the source of truth. Server is a delivery target.
+  // Failures here are logged but never block the POST; absolute worst case
+  // is the optimistic row is missing from cache but the server has it.
+  await _localOptimisticSend({
+    tempId: localTempId,
+    conversationId,
+    content,
+    type,
+    replyToId,
+    fileUrl,
+    clientMessageId: stableCMI,
+  });
+
   const payload = {
     conversation_id: conversationId,
     content,
     type,
     reply_to_id: replyToId,
     // CRITICAL: always send a stable client_message_id so retries don't duplicate.
-    // If caller doesn't provide one, generate it here ONCE per call (caller passes it back on retry).
-    client_message_id: clientMessageId || _genClientMsgId(),
+    client_message_id: stableCMI,
   };
   if (tempId) payload.temp_id = tempId;
   if (mentions && Array.isArray(mentions) && mentions.length > 0) {
@@ -2377,11 +2594,126 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
   // Skip Rust when an effect is set — the Rust signal-server insert path
   // doesn't know about the `effect` column and silently drops it. Force
   // the PHP path so the persisted row carries the effect for replay.
-  if (!topicId && !opts?.skipRust && !opts?.effect && !opts?.sealed) {
-    const rust = await _rustChatPost('send', payload);
-    if (rust?.success) return rust;
+  // ── 2. Send to server ──
+  //
+  // Stage 5 envelope mode (feature-flagged): when globalThis.__chatyy_envelope_mode
+  // is ON, we encrypt the body per-recipient-device with nacl.box and
+  // upload only the ciphertexts to chat_envelope_send. The plaintext
+  // chat_send / Rust path is *fully skipped* so the server never sees the
+  // body — no chat_messages row gets created. The optimistic SQLite row
+  // is the only plaintext copy until the receiver pulls + acks.
+  //
+  // Default OFF. Toggle for dev: `globalThis.__chatyy_envelope_mode = true`.
+  // Stage 6 will roll the flag on per-account; Stage 7 deprecates the
+  // legacy plaintext path entirely.
+  let result = null;
+  const envelopeMode = (typeof globalThis !== 'undefined') && globalThis.__chatyy_envelope_mode === true;
+  if (envelopeMode) {
+    try {
+      // Lazy import — avoid loading nacl + envelope code in apps that have
+      // the flag off (most of them, during rollout). Pulls both legacy and
+      // sender-keys builders so the second-level flag below can pick one.
+      const [envMod, deviceListResp] = await Promise.all([
+        import('./envelope.js'),
+        getRecipientDeviceKeys(conversationId),
+      ]);
+      const { buildEnvelopes, buildSenderKeysEnvelope, isSenderKeysEnabled } = envMod;
+      const targets = deviceListResp || [];
+      // Second-level flag: `globalThis.__chatyy_envelope_sender_keys === true`
+      // switches from N full-message encryptions to (1 body secretbox + N
+      // 32-byte key wraps). Default OFF; the helper centralises the global
+      // read so we don't open-code it.
+      let envelopePayload;
+      if (typeof isSenderKeysEnabled === 'function' && isSenderKeysEnabled()) {
+        const senderEnv = buildSenderKeysEnvelope(
+          content || '',
+          conversationId,
+          stableCMI,
+          targets,
+        );
+        envelopePayload = {
+          conversation_id: conversationId,
+          client_message_id: stableCMI,
+          body: senderEnv.body,
+          keys: senderEnv.keys,
+        };
+      } else {
+        const envelopes = buildEnvelopes(content || '', conversationId, targets);
+        envelopePayload = {
+          conversation_id: conversationId,
+          client_message_id: stableCMI,
+          envelopes,
+        };
+      }
+      const envResp = await chatEnvelopeSend(envelopePayload);
+      if (envResp && (envResp.success || envResp.data)) {
+        // Mark the local optimistic row as 'sent' even though there's no
+        // server message_id yet — the receiver acks per-device and the
+        // sender's UI flips to delivered via chat_message_receipts.
+        result = {
+          success: true,
+          envelope_mode: true,
+          inserted: envResp?.data?.inserted ?? 0,
+          client_message_id: stableCMI,
+        };
+      } else {
+        // Server rejected — surface as failure but DO NOT fall back to
+        // plaintext chat_send (that would defeat envelope mode's privacy
+        // guarantee).
+        await _localMarkFailed(localTempId, envResp?.message || 'envelope_send_failed');
+        return envResp;
+      }
+    } catch (e) {
+      // Network / crypto error in envelope mode — mark failed, surface.
+      // No fallback to plaintext: in envelope mode the sender chose
+      // ciphertext-only and we honor that contract.
+      await _localMarkFailed(localTempId, e);
+      throw e;
+    }
+  } else {
+    try {
+      if (!topicId && !opts?.skipRust && !opts?.effect && !opts?.sealed) {
+        const rust = await _rustChatPost('send', payload);
+        if (rust?.success) { result = rust; }
+      }
+      if (!result) {
+        result = await apiCall('chat_send', payload, 'POST');
+      }
+    } catch (e) {
+      // Network error / abort. Mark the optimistic row failed so the outbox
+      // drainer can pick it up. Re-throw so the caller's catch keeps running.
+      await _localMarkFailed(localTempId, e);
+      throw e;
+    }
   }
-  return apiCall('chat_send', payload, 'POST');
+
+  // ── 3. Finalize SQLite — swap temp id → server id, flip pending_state ──
+  if (result && (result.success || result.message_id || result.data?.message_id)) {
+    if (result.envelope_mode) {
+      // Stage 5 envelope mode — there is no server message_id, but the
+      // ciphertext was accepted. Flip the optimistic row to 'sent' so
+      // the bubble loses the spinner. Receiver acks will drive the
+      // double-check delivered indicator via chat_message_receipts.
+      try { await _localUpdateMessage(localTempId, { pending_state: 'sent' }); } catch {}
+    } else {
+      const serverRow = result.message || result.data?.message || (
+        (result.message_id || result.data?.message_id) ? {
+          id: result.message_id || result.data?.message_id,
+          conversation_id: conversationId,
+          content,
+          type: type || 'text',
+          file_url: fileUrl || null,
+          reply_to_id: replyToId || null,
+          client_message_id: stableCMI,
+          created_at: result.created_at || new Date().toISOString(),
+        } : null
+      );
+      if (serverRow) await _localFinalizeSend(localTempId, serverRow);
+    }
+  } else if (result && result.success === false) {
+    await _localMarkFailed(localTempId, result.message);
+  }
+  return result;
 }
 
 // Telegram-style features
@@ -2554,14 +2886,41 @@ function _chatActionId() {
 }
 
 export async function chatEdit(messageId, content) {
-  return apiCall('chat_edit', { message_id: messageId, content, client_action_id: _chatActionId() }, 'POST');
+  // Stage 1: write the edit to local SQLite FIRST, then POST. The optimistic
+  // row update is what the UI rebinds to on reload — server confirmation
+  // arrives later via WS message_edited.
+  const editedAt = new Date().toISOString();
+  await _localUpdateMessage(messageId, { content, edited_at: editedAt });
+  try {
+    const r = await apiCall('chat_edit', { message_id: messageId, content, client_action_id: _chatActionId() }, 'POST');
+    if (r && r.success === false) {
+      // Roll-forward fix: revert edited_at so the row reads as not-edited
+      // again. We can't restore the prior content here (we never had it);
+      // the UI layer keeps the previous string and will re-render it on
+      // chat_messages refresh.
+      await _localUpdateMessage(messageId, { edited_at: null });
+    }
+    return r;
+  } catch (e) {
+    await _localUpdateMessage(messageId, { edited_at: null });
+    throw e;
+  }
 }
 
 export async function chatDelete(messageId, mode = 'for_all') {
+  // Soft-delete local row first (sets deleted_at). Survives a failed POST —
+  // we deliberately do NOT revert on server error because the user's intent
+  // was clear; the outbox drainer will retry the network side.
+  const deletedAt = new Date().toISOString();
+  await _localUpdateMessage(messageId, { deleted_at: deletedAt });
   return apiCall('chat_delete_message', { message_id: messageId, mode, client_action_id: _chatActionId() }, 'POST');
 }
 
 export async function chatDeleteBulk(messageIds, mode = 'for_me') {
+  const deletedAt = new Date().toISOString();
+  if (Array.isArray(messageIds)) {
+    for (const id of messageIds) await _localUpdateMessage(id, { deleted_at: deletedAt });
+  }
   return apiCall('chat_delete_message', { message_ids: messageIds, mode, client_action_id: _chatActionId() }, 'POST');
 }
 
@@ -2593,6 +2952,24 @@ export async function chatReact(messageId, emoji, stickerUrl) {
   if (!messageId) return { success: false, message: 'invalid_message' };
   const actionId = _chatActionId();
 
+  // Stage 1: reactions live on the `chat_message_reactions` PG table, not on
+  // the message row itself. Local SQLite doesn't have a reactions table yet
+  // (Stage 1 scope is messages only). We queue the action through the
+  // offline_queue so a retry replays it; the actual reaction payload still
+  // round-trips through the server before any UI update. WS broadcast will
+  // refresh the bubble.
+  const ld = _ld();
+  if (ld && typeof ld.queueOfflineAction === 'function') {
+    try {
+      await ld.queueOfflineAction('chat_react', {
+        message_id: messageId,
+        emoji: emoji || null,
+        sticker_url: stickerUrl || null,
+        client_action_id: actionId,
+      });
+    } catch {}
+  }
+
   // Sticker reaction (premium): URL up to 512 chars. Server gates by plan.
   if (typeof stickerUrl === 'string' && stickerUrl.length > 0) {
     if (stickerUrl.length > 512) return { success: false, message: 'sticker_url_too_long' };
@@ -2609,6 +2986,13 @@ export async function chatReact(messageId, emoji, stickerUrl) {
 }
 
 export async function chatRead(conversationId, messageId) {
+  // Stage 1: stamp read_at on the local row BEFORE the POST so reload after
+  // a network blip still shows the correct read state. Stamp covers the
+  // single message that was acked; conversation-wide unread counts get
+  // refreshed from server on next sync.
+  if (messageId) {
+    await _localUpdateMessage(messageId, { read_at: new Date().toISOString() });
+  }
   const rust = await _rustChatPost('mark_read', { conversation_id: conversationId, message_id: messageId });
   if (rust) return rust;
   return apiCall('chat_mark_read', { conversation_id: conversationId, message_id: messageId }, 'POST');
@@ -2659,6 +3043,17 @@ export function chatDeliveryAckFlush() {
 
 // Send read acknowledgment for a conversation (WhatsApp-style blue double check)
 export async function chatReadAck(conversationId) {
+  // Stage 1: zero out unread_count locally first. Server WS event
+  // conversation_updated will overwrite this if the server count differs;
+  // but the optimistic write means a reload right after marking as read
+  // doesn't show a stale unread badge. We can't use saveConversations()
+  // here because INSERT OR REPLACE would null out name/avatar/members —
+  // queue the action through the offline_queue so the next replay picks
+  // up the explicit "I read this conv" intent.
+  const ld = _ld();
+  if (ld && typeof ld.queueOfflineAction === 'function' && conversationId) {
+    try { await ld.queueOfflineAction('chat_read', { conversation_id: conversationId }); } catch {}
+  }
   return apiCall('chat_read', { conversation_id: conversationId }, 'POST');
 }
 
@@ -2722,6 +3117,14 @@ export async function chatMute(conversationId, muteUntil = null) {
 }
 
 export async function chatPin(conversationId, messageId) {
+  // Stage 1: queue the pin intent locally first so a network blip doesn't
+  // lose it. The pinned/starred state lives in chat_pinned_messages /
+  // chat_starred_messages PG tables — no local table for them yet, so the
+  // offline_queue is the only durable store for the intent.
+  const ld = _ld();
+  if (ld && typeof ld.queueOfflineAction === 'function') {
+    try { await ld.queueOfflineAction('chat_pin', { conversation_id: conversationId, message_id: messageId }); } catch {}
+  }
   return apiCall('chat_pin', { conversation_id: conversationId, message_id: messageId }, 'POST');
 }
 
@@ -2924,10 +3327,35 @@ export async function chatTyping(conversationId, recording = false) {
 }
 
 export async function chatStarMessage(messageId, star = true) {
+  // Stage 1: queue the star intent locally first. No local starred table yet
+  // (Stage 2 scope); the offline_queue ensures intent survives a crash mid-POST.
+  const ld = _ld();
+  if (ld && typeof ld.queueOfflineAction === 'function') {
+    try { await ld.queueOfflineAction('chat_star_message', { message_id: messageId, star: star ? 1 : 0 }); } catch {}
+  }
   return apiCall('chat_star_message', { message_id: messageId, star: star ? 1 : 0 }, 'POST');
 }
 
 export async function chatStarredMessages() {
+  // Stage 6 — read via WS relay on web when phone paired + online.
+  if (Platform.OS === 'web') {
+    try {
+      const relay = require('./relayClient');
+      if (await relay.isAvailable()) {
+        try {
+          const r = await relay.getStarredViaRelay();
+          try { globalThis.__chatyy_phone_offline = false; } catch {}
+          return r;
+        } catch (e) {
+          const code = e?.code || '';
+          if (code === 'phone_offline' || code === 'relay_timeout' || code === 'no_paired_device' || code === 'request_timeout') {
+            try { globalThis.__chatyy_phone_offline = true; } catch {}
+            // No IDB cache for starred yet — fall through to REST.
+          }
+        }
+      }
+    } catch {}
+  }
   return apiCall('chat_starred_messages', {}, 'POST');
 }
 
@@ -4225,14 +4653,59 @@ export async function chatPlaylistRemoveSong(messageId, songIndex) {
 }
 
 export async function chatSearchMessages(conversationId, query) {
+  // Stage 6 — search via WS relay (phone runs FTS5 on its SQLite copy and
+  // returns matches). Skip on native — search is the phone's REST direct.
+  if (Platform.OS === 'web') {
+    try {
+      const relay = require('./relayClient');
+      if (await relay.isAvailable()) {
+        try {
+          const r = await relay.searchMessagesViaRelay(query, conversationId);
+          try { globalThis.__chatyy_phone_offline = false; } catch {}
+          return r;
+        } catch (e) {
+          const code = e?.code || '';
+          if (code === 'phone_offline' || code === 'relay_timeout' || code === 'no_paired_device' || code === 'request_timeout') {
+            try { globalThis.__chatyy_phone_offline = true; } catch {}
+            // Search has no IDB equivalent — fall back to REST so user
+            // still gets a (possibly slower) result instead of empty.
+          }
+        }
+      }
+    } catch {}
+  }
   return apiCall('chat_search_messages', { conversation_id: conversationId, query }, 'POST');
 }
 
 export async function chatPinMessage(messageId) {
+  // Stage 1: queue pin intent locally first (no local pinned_messages table yet).
+  const ld = _ld();
+  if (ld && typeof ld.queueOfflineAction === 'function') {
+    try { await ld.queueOfflineAction('chat_pin_message', { message_id: messageId }); } catch {}
+  }
   return apiCall('chat_pin_message', { message_id: messageId }, 'POST');
 }
 
 export async function chatPinnedMessages(conversationId) {
+  // Stage 6 — read pinned messages via WS relay on web when phone is paired.
+  if (Platform.OS === 'web') {
+    try {
+      const relay = require('./relayClient');
+      if (await relay.isAvailable()) {
+        try {
+          const r = await relay.getPinnedViaRelay(conversationId);
+          try { globalThis.__chatyy_phone_offline = false; } catch {}
+          return r;
+        } catch (e) {
+          const code = e?.code || '';
+          if (code === 'phone_offline' || code === 'relay_timeout' || code === 'no_paired_device' || code === 'request_timeout') {
+            try { globalThis.__chatyy_phone_offline = true; } catch {}
+            // No dedicated IDB cache for pinned — fall through to REST.
+          }
+        }
+      }
+    } catch {}
+  }
   return apiCall('chat_pinned_messages', { conversation_id: conversationId });
 }
 
@@ -5748,6 +6221,116 @@ export async function qrCheck(token) {
 export async function qrConfirm(token, deviceKind) {
   const body = deviceKind ? { token, device_kind: deviceKind } : { token };
   return apiCall('chat_qr_login_approve', body, 'POST');
+}
+
+// ============================================================
+// PER-DEVICE PUBLIC KEY REGISTRY (SQLite-first migration — Stage 2)
+// ============================================================
+// Each linked surface (web/desktop/companion-mobile) generates its own
+// X25519 keypair and publishes the pubkey here after QR pairing. Phone
+// fetches the list on foreground so Stage 5 envelope encryption can
+// target every device individually instead of one envelope per email.
+export async function chatDeviceKeyPublish(deviceId, pubkey, kind) {
+  if (!deviceId || !pubkey) {
+    return { success: false, message: 'device_id and pubkey required' };
+  }
+  const body = { device_id: deviceId, pubkey };
+  if (kind) body.kind = kind;
+  return apiCall('chat_device_key_publish', body, 'POST');
+}
+export async function chatDeviceKeysList() {
+  return apiCall('chat_device_keys_list');
+}
+// Fan-out helper used by Stage 5 sender: returns all (email, device_id,
+// pubkey) tuples for every member of the conversation, including the
+// sender's other paired devices. Caller must be a member of the convo.
+export async function chatConvDeviceKeys(conversationId) {
+  if (!conversationId) return { success: false, message: 'conversation_id required' };
+  return apiCall('chat_conv_device_keys', { conversation_id: conversationId });
+}
+// Stage 5 convenience: returns the device-key array shape buildEnvelopes()
+// expects ([{email, device_id, pubkey}, ...]). Returns [] on error so the
+// envelope flow can no-op (zero envelopes is a server-accepted shape).
+export async function getRecipientDeviceKeys(conversationId) {
+  try {
+    const r = await chatConvDeviceKeys(conversationId);
+    const list = r?.data?.devices || r?.devices || [];
+    if (!Array.isArray(list)) return [];
+    return list
+      .filter(d => d && d.email && d.device_id && d.pubkey)
+      .map(d => ({ email: d.email, device_id: d.device_id, pubkey: d.pubkey }));
+  } catch (e) {
+    console.warn('[getRecipientDeviceKeys] ' + (e?.message || e));
+    return [];
+  }
+}
+export async function chatDeviceKeyTouch(deviceId) {
+  if (!deviceId) return { success: false, message: 'device_id required' };
+  return apiCall('chat_device_key_touch', { device_id: deviceId }, 'POST');
+}
+
+// ============================================================
+// ENCRYPTED ENVELOPE DELIVERY (SQLite-first migration — Stage 5)
+// ============================================================
+// Per-recipient-device ciphertext fan-out. Plaintext never touches the
+// server in this mode — chat_pending_envelopes stores nacl.box output
+// keyed by (recipient_email, device_id, client_message_id) and the
+// receiver decrypts + acks. See services/envelope.js for the
+// build/decrypt helpers and services/envelopePuller.js for the
+// foreground pull loop.
+export async function chatEnvelopeSend(payload) {
+  // Payload accepts EITHER shape — backend chat_envelope_send detects via
+  // presence of `body`:
+  //   (A) Legacy per-device:
+  //       { conversation_id, client_message_id, envelopes: [
+  //           { recipient_email, recipient_device_id, ciphertext,
+  //             ephemeral_pubkey, nonce }, ... ] }
+  //   (B) Sender-Keys (Stage 5 optimization, 2026-05-16):
+  //       { conversation_id, client_message_id,
+  //         body: { ciphertext, iv, tag, algo },
+  //         keys: [ { recipient_email, recipient_device_id, key_ciphertext,
+  //                   key_ephemeral_pubkey, key_nonce }, ... ] }
+  //
+  // Both shapes route to chat_pending_envelopes on the server; (B) also
+  // writes a single chat_message_bodies row referenced by all key rows.
+  if (!payload || !payload.conversation_id || !payload.client_message_id) {
+    return { success: false, message: 'conversation_id, client_message_id required' };
+  }
+  const hasBody = payload.body && typeof payload.body === 'object';
+  if (hasBody) {
+    // Sender-Keys shape — validate the key wraps array.
+    if (!Array.isArray(payload.keys)) {
+      return { success: false, message: 'keys[] required for sender-keys payload' };
+    }
+    if (payload.keys.length === 0) {
+      // No paired devices to wrap for — treat as no-op, same as legacy
+      // empty-envelopes path. Avoid hitting the server with a body row
+      // that has zero recipients.
+      return { success: true, data: { inserted: 0, skipped: 0, total: 0 } };
+    }
+  } else {
+    // Legacy shape — must carry an envelopes array.
+    if (!Array.isArray(payload.envelopes)) {
+      return { success: false, message: 'conversation_id, client_message_id, envelopes[] required' };
+    }
+    if (payload.envelopes.length === 0) {
+      // Nothing to send (no paired devices yet). Caller treats as no-op.
+      return { success: true, data: { inserted: 0, skipped: 0, total: 0 } };
+    }
+  }
+  return apiCall('chat_envelope_send', payload, 'POST');
+}
+export async function chatEnvelopesPull(deviceId) {
+  if (!deviceId) return { success: false, message: 'device_id required' };
+  // GET on PHP for cacheless pull. Action is on the URL; device_id on query.
+  return apiCall('chat_envelopes_pull', { device_id: deviceId });
+}
+export async function chatEnvelopeAck(ids, deviceId) {
+  if (!deviceId) return { success: false, message: 'device_id required' };
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return { success: false, message: 'ids[] required' };
+  }
+  return apiCall('chat_envelope_ack', { ids, device_id: deviceId }, 'POST');
 }
 
 // ============================================================

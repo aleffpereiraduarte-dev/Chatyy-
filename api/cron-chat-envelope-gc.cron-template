@@ -1,0 +1,29 @@
+# cron-chat-envelope-gc.cron-template
+#
+# Stage 7 SQLite-first chat migration (2026-05-16) — server-side retention
+# cutdown for the `chat_pending_envelopes` PG table.
+#
+# THIS FILE IS A TEMPLATE. It is NOT auto-installed. Ops must run
+# `crontab -e` as the user that owns the PHP runtime (typically `www-data`
+# or `root` depending on the host) and paste the line below.
+#
+# Pre-flight (ONCE):
+#   sudo mkdir -p /var/log/chatyy
+#   sudo chown www-data:www-data /var/log/chatyy
+#   sudo chmod 0750 /var/log/chatyy
+#   sudo logrotate -d /etc/logrotate.d/chatyy   # optional: add a rotate rule
+#
+# Crontab line (every 10 minutes):
+
+*/10 * * * * php /var/www/mail/api/cron-chat-envelope-gc.php >> /var/log/chatyy/envelope-gc.log 2>&1
+
+# Notes:
+#   - 10-minute cadence is the WhatsApp-tier cap on staleness for the
+#     ephemeral envelope pipe. Rows are bounded by 30-day TTL anyway, so
+#     missing a run is safe — at worst the table grows by a few rows.
+#   - The script is idempotent and concurrency-safe (DELETE WHERE only).
+#     Running twice in the same minute is harmless.
+#   - To verify it's running:
+#       tail -f /var/log/chatyy/envelope-gc.log
+#     Each run emits a single line:
+#       [2026-05-16T12:00:00+00:00] [chat-envelope-gc] done — expired=N delivered_grace=N abandoned=N

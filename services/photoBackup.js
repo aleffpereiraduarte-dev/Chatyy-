@@ -158,6 +158,40 @@ export async function registerBackgroundBackup() {
   } catch (err) {
     console.warn('[photoBackup] registerBackgroundBackup error:', err);
   }
+
+  // ── Android: schedule the native WorkManager job ────────
+  // Replaces the JS TaskManager.defineTask path that Android battery
+  // saver was killing within minutes. WorkManager runs in the system
+  // process and survives swipe-to-kill / doze.
+  if (Platform.OS === 'android') {
+    try {
+      const native = require('../modules/expo-background-upload').default;
+      if (native && typeof native.scheduleBackup === 'function') {
+        const settings = await getBackupSettings();
+        await native.scheduleBackup(!!settings?.wifiOnly, false /* chargingOnly */);
+
+        // Stash creds for the worker to use after process death.
+        if (typeof native.setBackupCreds === 'function') {
+          try {
+            const apiSvc = require('./api');
+            const bearer = (apiSvc.getAuthToken && apiSvc.getAuthToken()) || '';
+            const email = (apiSvc.getSavedEmail && apiSvc.getSavedEmail()) || '';
+            // BASE_URL is just the host; the worker appends /email.php so
+            // we hand it the /api path here for parity with the JS callers.
+            const host = apiSvc.BASE_URL || 'https://chatyy.com.br';
+            const base = host.replace(/\/+$/, '') + '/api';
+            if (bearer && email) {
+              await native.setBackupCreds(bearer, base, email);
+            }
+          } catch (e) {
+            console.warn('[photoBackup] setBackupCreds failed:', e?.message);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[photoBackup] android scheduleBackup error:', err?.message);
+    }
+  }
 }
 
 export async function unregisterBackgroundBackup() {
@@ -167,6 +201,17 @@ export async function unregisterBackgroundBackup() {
     await backup.setBackupEnabled(false);
   } catch (err) {
     console.warn('[photoBackup] unregisterBackgroundBackup error:', err);
+  }
+
+  if (Platform.OS === 'android') {
+    try {
+      const native = require('../modules/expo-background-upload').default;
+      if (native && typeof native.cancelBackup === 'function') {
+        await native.cancelBackup();
+      }
+    } catch (err) {
+      console.warn('[photoBackup] android cancelBackup error:', err?.message);
+    }
   }
 }
 

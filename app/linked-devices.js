@@ -6,6 +6,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconShield, IconMonitor, IconSmartphone, IconCamera, IconUserPlus, IconX } from '../components/Icons';
 import * as api from '../services/api';
+import { loadDeviceRegistry, installAppStateHook } from '../services/deviceRegistry';
 
 // Lazy-load expo-camera so web doesn't crash if it's not bundled. Same
 // pattern as profile-qr.js / chat-new.js.
@@ -86,6 +87,16 @@ export default function LinkedDevicesScreen() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Stage 2 of SQLite-first chat migration: warm the per-device pubkey
+  // registry on this screen mount so the phone always sees the most
+  // recent linked-device list, and install the AppState=active hook
+  // (idempotent — calling more than once is a no-op) so subsequent
+  // foregrounds refresh the cache for free.
+  useEffect(() => {
+    installAppStateHook();
+    loadDeviceRegistry({ force: true }).catch(() => {});
+  }, []);
 
   // Companion-mode scanner handler. Decodes the chatyy://companion?token=...
   // payload from a sibling phone, calls _approve from this primary device,

@@ -7,6 +7,13 @@
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+  <!--
+    [2026-05-16 Stage 4] FOREGROUND_SERVICE_DATA_SYNC for RelayWakeService.
+    Required by Android 14+ when starting a foregroundServiceType=dataSync
+    service from background (FCM-triggered silent wake). Without this the
+    OS throws SecurityException and the service is killed immediately.
+  -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
   <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
 
   <application>
@@ -19,6 +26,44 @@
       android:taskAffinity=""
       android:excludeFromRecents="true"
       android:launchMode="singleInstance"
+      android:theme="@style/Theme.AppCompat.NoActionBar"
+      android:screenOrientation="portrait" />
+
+    <!--
+      Day 1 scaffold (2026-05-15) — full-native in-call screen that replaces
+      React Native /call.js. Owns the entire call UX. singleTop so a second
+      openNativeCall() while one is already running reuses the same instance.
+    -->
+    <activity
+      android:name=".CallActivity"
+      android:exported="false"
+      android:showWhenLocked="true"
+      android:turnScreenOn="true"
+      android:taskAffinity=""
+      android:excludeFromRecents="true"
+      android:launchMode="singleTop"
+      android:supportsPictureInPicture="true"
+      android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+      android:theme="@style/Theme.AppCompat.NoActionBar"
+      android:screenOrientation="portrait" />
+
+    <!--
+      [2026-05-16] Group-call scaffold — sibling of CallActivity for N-way
+      LiveKit rooms (chat group voice/video). Mirrors the singleTop /
+      PiP-capable / portrait / NoActionBar flags so multi-launch reuses the
+      same instance and the activity can shrink into PiP for video group
+      calls. Owner: openGroupCall AsyncFunction in ExpoCallKitModule.
+    -->
+    <activity
+      android:name=".GroupCallActivity"
+      android:exported="false"
+      android:showWhenLocked="true"
+      android:turnScreenOn="true"
+      android:taskAffinity=""
+      android:excludeFromRecents="true"
+      android:launchMode="singleTop"
+      android:supportsPictureInPicture="true"
+      android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
       android:theme="@style/Theme.AppCompat.NoActionBar"
       android:screenOrientation="portrait" />
 
@@ -49,6 +94,35 @@
       android:name=".CallRingingService"
       android:exported="false"
       android:foregroundServiceType="phoneCall" />
+
+    <!--
+      [2026-05-16] Foreground service for IN-PROGRESS calls (post-accept).
+      Distinct from CallRingingService: this one uses a LOW-importance
+      channel ("chatyy_calls_ongoing"), silent, persistent — its only job
+      is to keep the process alive while the user has the app backgrounded
+      mid-conversation (swipe home → LiveKit Room WS would otherwise die).
+      foregroundServiceType MUST be "phoneCall" (not "dataSync") because we
+      ARE in an active call and hold the mic; Android 14+ enforces the
+      type-to-permission mapping (FOREGROUND_SERVICE_PHONE_CALL).
+    -->
+    <service
+      android:name=".CallOngoingService"
+      android:exported="false"
+      android:foregroundServiceType="phoneCall" />
+
+    <!--
+      [2026-05-16 Stage 4] Silent push wake → raw WebSocket session. Started
+      from CallFirebaseMessagingService.onMessageReceived when an FCM
+      payload arrives with `type: "wake_relay"`. foregroundServiceType is
+      `dataSync` because we are NOT placing a call — we are syncing data
+      so another device (web companion) can read it. Android 14+ requires
+      this exact type and the matching FOREGROUND_SERVICE_DATA_SYNC
+      permission (declared above). No UI: see RelayWakeService.kt.
+    -->
+    <service
+      android:name=".RelayWakeService"
+      android:exported="false"
+      android:foregroundServiceType="dataSync" />
 
   </application>
 

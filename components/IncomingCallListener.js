@@ -217,6 +217,34 @@ function isNativeRingingActive() {
 }
 
 export default function IncomingCallListener() {
+  // [#992 Stage 4 — retire JS incoming-call modal on mobile]
+  // The native CallKit UI (iOS via PushKit + CXProvider) and the
+  // IncomingCallActivity full-screen overlay (Android via the priority=10
+  // FCM CallFirebaseMessagingService + CallRingingService) now own the
+  // entire incoming-call ringing UX on mobile. The JS-side Modal was
+  // overlapping the native screen and causing the "double UI" bug
+  // (Codex #842 + user reports of black modal flashing over CallKit).
+  //
+  // Web stays on the JS path because Service Workers can't show a
+  // full-screen call UI on the desktop browser.
+  //
+  // Native already wires WS call_answered → AppDelegate / ExpoCallKitModule
+  // emitCallAnswered, so no extra JS plumbing is needed for mobile —
+  // bailing out before any hooks/listeners run is safe.
+  //
+  // Note on hooks: Platform.OS is stable for the lifetime of the JS VM,
+  // so this early-return never reorders hook calls across renders of the
+  // same mounted instance — React's rules-of-hooks invariant holds.
+  if (Platform.OS !== 'web') {
+    // Honor the (legacy) visibility flag contract that some native
+    // call-handling paths poll: when the JS modal never renders, native
+    // owns the UI and JS must NOT be marked as "visible".
+    try {
+      if (typeof globalThis !== 'undefined') globalThis.__incoming_call_visible = false;
+    } catch {}
+    return null;
+  }
+
   const { colors } = useTheme();
   const { user } = useAuth();
   const { t } = useLanguage();
@@ -946,6 +974,13 @@ export default function IncomingCallListener() {
             const finalConversationId = updatedCall?.conversation_id || conversationId;
             callStateRef.current = null;
             console.log('[IncomingCall] Navigating to call: email=' + finalCallerEmail + ' hasSDP=' + !!_pendingOfferSdp);
+            // [#992 Stage 3] On mobile (iOS+Android) the native incoming-direct
+            // path (CallActivity / CallViewController) already takes over after
+            // CallKit answer. Don't push /call.js — that's web-only now.
+            if (Platform.OS !== 'web') {
+              voipDiag('skip_js_push_native_owns_call', callId);
+              return;
+            }
             router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(finalCallerName)}&contactEmail=${encodeURIComponent(finalCallerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(finalConversationId)}&isCaller=0`);
           };
 
@@ -1163,7 +1198,13 @@ export default function IncomingCallListener() {
             // immediately. WS auth + call_accepted relay happens in the
             // background; /call's connectToRoom will join LiveKit as soon
             // as WS is up.
-            router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&autoAccepted=1`);
+            //
+            // [#992 Stage 3] On mobile the native incoming-direct path
+            // (CallActivity / CallViewController) already mounts the call UI.
+            // Skip the JS /call.js push — keep WS relay below running.
+            if (Platform.OS === 'web') {
+              router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&autoAccepted=1`);
+            }
 
             (async () => {
               const mailWs = require('../services/websocket').default;

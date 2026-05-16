@@ -137,6 +137,25 @@ export default function CallStatusBar() {
       // Fallback: open the calls tab inside chat
       try { router.push('/chat?tab=calls'); return; } catch {}
     }
+    // [#992 Stage 3] Mobile: re-open the full-native call screen. On native
+    // the JS /call.js is dead — the active call lives in CallActivity /
+    // CallViewController, which already has an existing Room. Use
+    // openNativeCall with the same callId; the native side recognises the
+    // active call and just re-presents it (lkUrl/lkToken null = keep current).
+    if (Platform.OS !== 'web') {
+      try {
+        const ExpoCallKit = require('../modules/expo-callkit');
+        ExpoCallKit.openNativeCall({
+          callId: callData.callId || '',
+          callerName: callData.contactName || '',
+          callerEmail: callData.contactEmail || '',
+          hasVideo: !!callData.isVideo,
+          lkUrl: null,
+          lkToken: null,
+        }).catch((e) => console.warn('[CallStatusBar] openNativeCall failed:', e));
+      } catch (e) { console.warn('[CallStatusBar] openNativeCall import failed:', e); }
+      return;
+    }
     try {
       router.push({ pathname: '/call', params: {
         callId: callData.callId || '', contactName: callData.contactName || '',

@@ -1,0 +1,42 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+group = 'expo.modules.livenative'
+version = '0.1.0'
+
+android {
+  namespace "expo.modules.livenative"
+  compileSdkVersion safeExtGet("compileSdkVersion", 35)
+
+  defaultConfig {
+    minSdkVersion safeExtGet("minSdkVersion", 24)
+    targetSdkVersion safeExtGet("targetSdkVersion", 35)
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+  implementation 'androidx.core:core-ktx:1.13.1'
+  implementation 'androidx.appcompat:appcompat:1.7.0'
+
+  // [Stage 1 scaffold, 2026-05-16] Declared now so CI proves dep resolution
+  // works before Stage 2 wires LiveHostActivity + LiveViewerActivity against
+  // the LiveKit SDK. Same version as modules/expo-callkit so both pulls share
+  // the cached libwebrtc m144 artifacts (~15-25MB across ABIs).
+  implementation 'io.livekit:livekit-android:2.24.1'
+
+  // [Stage 1 scaffold] lifecycleScope + activityResult helpers — used by the
+  // host activity's CameraX preview launcher (Stage 2) and viewer activity's
+  // connect coroutine. Declared up front so Gradle wiring is validated.
+  implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
+  implementation 'androidx.activity:activity-ktx:1.9.0'
+}
+
+def safeExtGet(prop, fallback) {
+  rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+}

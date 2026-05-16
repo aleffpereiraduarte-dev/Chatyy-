@@ -27,24 +27,40 @@ dependencies {
   // for the avatar bitmap cache. Pulled transitively by core-ktx but
   // declared explicitly to make the dep visible and pin behavior.
   implementation 'androidx.collection:collection:1.4.0'
+  // [2026-05-16 Day 2 native call screen] lifecycleScope + repeatOnLifecycle.
+  // CallActivity launches the LiveKit connect coroutine inside lifecycleScope
+  // so it auto-cancels when the activity finishes — preventing zombie Rooms
+  // after a back-stack pop.
+  implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
   implementation platform('com.google.firebase:firebase-bom:33.7.0')
   implementation 'com.google.firebase:firebase-messaging'
 
-  // [2026-05-15 #992] LiveKit Android SDK for native pre-connect on call accept.
-  // Without this, the cold-start path is JS-bound: IncomingCallActivity →
-  // SharedPrefs → MainActivity boot → JS parse → /call → Room.connect (~4-8s).
-  // With native pre-connect, audio starts in <500ms on accept tap.
-  // Audio routing handled by audioswitch which is brought transitively from
-  // @livekit/react-native-webrtc (already in app). webrtc-sdk is pinned to
-  // the version @livekit/react-native uses to avoid SO conflicts.
-  // [2026-05-15] LiveKit Android SDK removed pending Stage 1 v2 — the 2.x API
-  // surface differs from what we wrote and broke gradle compile. NativeCallRoom
-  // is now a stub (Kotlin file kept so JS-side adoptNativeRoom() returns null
-  // gracefully). The 12 Java-level fixes from commit 5a526e5 still ship and
-  // resolve most of the kill-state accept bug.
-  // implementation('io.livekit:livekit-android:2.22.1') { ... }
-  // implementation 'com.squareup.okhttp3:okhttp:4.12.0'
-  // implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+  // [2026-05-16 Day 2 — full native call] LiveKit Android SDK. Bundles libwebrtc
+  // m144 transitively (~15-25MB across ABIs). API surface used by CallActivity:
+  //   - LiveKit.create(applicationContext)         → factory
+  //   - room.connect(url, token)                   → suspend
+  //   - room.events.collect { event -> when (event) is RoomEvent.X -> ... }
+  //   - room.initVideoRenderer(view)               → register a renderer
+  //   - VideoTrack.addRenderer(view)               → bind a remote track
+  //   - localParticipant.setMicrophoneEnabled(true) → suspend
+  //   - localParticipant.setCameraEnabled(true)    → suspend
+  //   - room.disconnect()                          → suspend
+  // 2.24.x and 2.22.x have the same public API for these; pinning 2.24.1.
+  // Sources validated: livekit/client-sdk-android/sample-app-basic MainActivity.kt.
+  implementation 'io.livekit:livekit-android:2.24.1'
+
+  // [2026-05-16 Stage 4] Explicit OkHttp for RelayWakeService's raw
+  // WebSocket connection. okhttp is pulled transitively by livekit-android
+  // today, but declaring it explicitly pins the version and prevents
+  // breakage if LiveKit is ever swapped out for another SFU.
+  implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+
+  // [2026-05-16 Stage 2 Android screenshare wiring] expo-callkit publishes the
+  // active LK Room into expo-screen-share's LiveKitRoomHolder so the
+  // foreground MediaProjection service can hand frames to the local
+  // participant. Direction is callkit -> screenshare (NOT the reverse —
+  // screenshare would create a cycle if it ever called back into callkit).
+  implementation project(':expo-screen-share')
 }
 
 def safeExtGet(prop, fallback) {

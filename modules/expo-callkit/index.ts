@@ -45,6 +45,56 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
   lkDisconnect(): Promise<void>;
   lkSetMicEnabled(enabled: boolean): Promise<void>;
   lkSetCameraEnabled(enabled: boolean): Promise<void>;
+  // [#992 Stage 3] Launches the full-native call screen (CallActivity on
+  // Android, CallViewController hosting SwiftUI CallView on iOS). Replaces
+  // the RN /call.js screen for outgoing/incoming calls.
+  openNativeCall(
+    callId: string,
+    callerName: string,
+    callerEmail: string,
+    hasVideo: boolean,
+    lkUrl: string | null,
+    lkToken: string | null
+  ): Promise<void>;
+  // [2026-05-16] Group-call scaffold (Android). Launches GroupCallActivity
+  // with an N×N grid of tiles, one per remote participant. Participants are
+  // serialized as JSON so the native side can pre-seed placeholder tiles
+  // before LiveKit's ParticipantConnected events fire. iOS counterpart will
+  // mirror this signature once SwiftUI GroupCallView lands.
+  openGroupCall(
+    roomName: string,
+    lkUrl: string,
+    lkToken: string,
+    participantsJson: string,
+    hasVideo: boolean
+  ): Promise<void>;
+}
+
+export interface OpenNativeCallParams {
+  callId: string;
+  callerName: string;
+  callerEmail: string;
+  hasVideo: boolean;
+  lkUrl?: string;
+  lkToken?: string;
+}
+
+/** Group-call invitee. `email` is the LiveKit participant identity (stable
+ *  across reconnects); `name` is the display label rendered on the tile;
+ *  `avatarUrl` is reserved for the avatar fallback (not yet wired in the
+ *  Android scaffold — it renders the first letter of `name` for now). */
+export interface GroupCallParticipant {
+  email: string;
+  name: string;
+  avatarUrl?: string;
+}
+
+export interface OpenGroupCallParams {
+  roomName: string;
+  lkUrl: string;
+  lkToken: string;
+  participants: GroupCallParticipant[];
+  hasVideo: boolean;
 }
 
 let mod: ExpoCallKitModuleType | null = null;
@@ -259,6 +309,42 @@ export async function lkSetCameraEnabled(enabled: boolean): Promise<void> {
   const m = getModule();
   if (!m) return;
   try { await m.lkSetCameraEnabled(enabled); } catch {}
+}
+
+/** Launches the full-native call screen. Replaces the RN /call.js screen for
+ *  outgoing/incoming calls (CallActivity on Android, CallViewController +
+ *  SwiftUI CallView on iOS). lkUrl/lkToken are optional — pass them when the
+ *  caller already has a LiveKit room minted, otherwise the native side
+ *  fetches via the auth persisted by persistAuthForNativeCall. */
+export async function openNativeCall(params: OpenNativeCallParams): Promise<void> {
+  const m = getModule();
+  if (!m) throw new Error('Native CallKit module unavailable');
+  await m.openNativeCall(
+    params.callId,
+    params.callerName,
+    params.callerEmail,
+    params.hasVideo,
+    params.lkUrl ?? null,
+    params.lkToken ?? null
+  );
+}
+
+/** Launches the full-native group-call screen (Android: GroupCallActivity).
+ *  Replaces the RN WebView `/group-call.js` path for native group calls. The
+ *  participants array is JSON-stringified into a single intent extra so the
+ *  Android side can pre-seed one placeholder tile per invitee before any
+ *  LiveKit `ParticipantConnected` events arrive — giving users a "ringing
+ *  Maria…" view instead of a blank black screen during the connect phase. */
+export async function openGroupCall(params: OpenGroupCallParams): Promise<void> {
+  const m = getModule();
+  if (!m) throw new Error('Native CallKit module unavailable');
+  await m.openGroupCall(
+    params.roomName,
+    params.lkUrl,
+    params.lkToken,
+    JSON.stringify(params.participants ?? []),
+    params.hasVideo
+  );
 }
 
 type LkEventName =

@@ -1,0 +1,7 @@
+{
+  "name": "expo-chat-backup",
+  "version": "1.0.0",
+  "description": "Encrypted SQLite chat snapshot backup to iCloud Drive (iOS) / Google Drive (Android). End-to-end encrypted with user password — Chatyy servers never see the data or key.",
+  "main": "src/index.ts",
+  "types": "src/index.ts"
+}

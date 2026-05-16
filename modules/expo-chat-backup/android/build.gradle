@@ -1,0 +1,43 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+group = 'expo.modules.chatbackup'
+version = '1.0.0'
+
+android {
+  namespace "expo.modules.chatbackup"
+  compileSdkVersion safeExtGet("compileSdkVersion", 35)
+
+  defaultConfig {
+    minSdkVersion safeExtGet("minSdkVersion", 24)
+    targetSdkVersion safeExtGet("targetSdkVersion", 35)
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+}
+
+dependencies {
+  implementation project(':expo-modules-core')
+  implementation 'androidx.core:core-ktx:1.13.1'
+  implementation 'androidx.work:work-runtime-ktx:2.9.1'
+
+  // Google Sign-In (gets the OAuth access token for the Drive REST API
+  // when the user signs in with their Google account). We only request
+  // the `drive.appdata` scope so backups live in the app-private "Application
+  // Data" folder of the user's Drive — invisible from drive.google.com
+  // and not counted against the user's normal Drive quota.
+  implementation 'com.google.android.gms:play-services-auth:21.2.0'
+
+  // Drive v3 REST API client (talks to www.googleapis.com/drive/v3 over
+  // HTTPS — no Drive code is bundled by Chatyy, just a typed wrapper
+  // around the public Google API).
+  implementation 'com.google.api-client:google-api-client-android:2.7.0'
+  implementation 'com.google.apis:google-api-services-drive:v3-rev20231128-2.0.0'
+}
+
+def safeExtGet(prop, fallback) {
+  rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+}

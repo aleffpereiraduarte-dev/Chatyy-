@@ -816,6 +816,18 @@ class MailWebSocket {
         this._emit('stopped_typing', msg.data || msg);
         break;
 
+      // Stage 6 — web↔phone history relay RESPONSE (web requester side).
+      // The phone read SQLite and is sending the rows back, OR the server is
+      // returning a sentinel error (phone_offline / relay_timeout /
+      // no_paired_device). We MUST emit the full frame (not msg.data) so the
+      // listener in services/relayClient.js can dispatch by requestId. The
+      // default `_emit(msg.type, msg.data || msg)` would strip the top-level
+      // requestId/error fields when msg.data is set, breaking the request
+      // map lookup.
+      case 'relay_response':
+        this._emit('relay_response', msg);
+        break;
+
       default:
         // Prefetch media for chat_summary too (list-screen bump with
         // full payload when user is on the list, not in-thread). Without

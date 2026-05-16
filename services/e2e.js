@@ -56,6 +56,12 @@ const E2E_PUBKEYS_CACHE = 'e2e_pubkeys';
 const E2E_PREKEY_SECRETS = 'e2e_prekey_secrets'; // { [prekey_id]: base64(secretKey) }
 const E2E_SIGNED_PREKEY = 'e2e_signed_prekey';   // { id, pub, sec, sig } — medium-term
 const E2E_SESSION_PREFIX = 'e2e_session:';        // per-peer cached SK + counters
+// SQLite-first chat migration Stage 2 — per-device keypair + stable device id.
+// Scoped per-account (suffixed with the active email) so switching accounts
+// on the same device doesn't leak the previous account's device pubkey to
+// the new login session.
+const E2E_DEVICE_KEYPAIR = 'e2e_device_keypair'; // { pub, sec } base64 — separate from identity
+const E2E_DEVICE_ID = 'e2e_device_id';            // UUIDv4 string
 
 // Scope identity keys per-email so switching accounts doesn't overwrite the
 // key pair, which would orphan every already-sent E2E envelope (user would
@@ -238,6 +244,116 @@ export async function getSigningPublicKeyBase64() {
   const seed = identity.secretKey.slice(0, 32);
   const signKp = nacl.sign.keyPair.fromSeed(seed);
   return encodeBase64(signKp.publicKey);
+}
+
+// ============================================================
+// PER-DEVICE KEY (SQLite-first chat migration — Stage 2)
+// ============================================================
+// The identity key is the user's long-term cross-device key. The *device*
+// key is per surface (this exact app install). When the phone publishes
+// pubkeys for every linked device, it lets envelopes target each one. We
+// keep it deliberately separate from the identity keypair so:
+//   1. Wiping a device key on logout doesn't compromise X3DH replayability
+//      for messages already received (identity stays intact).
+//   2. A future "remove this device" UX can rotate it without forcing the
+//      user to redo identity backup/restore.
+// Scope per active email so switching accounts gets a fresh device id —
+// otherwise account A's device id would be reused for account B and the
+// phone would think account B already has a registered web surface.
+
+function deviceKeypairStorageKey() {
+  return _activeAccountEmail
+    ? `${E2E_DEVICE_KEYPAIR}:${_activeAccountEmail.toLowerCase()}`
+    : E2E_DEVICE_KEYPAIR;
+}
+function deviceIdStorageKey() {
+  return _activeAccountEmail
+    ? `${E2E_DEVICE_ID}:${_activeAccountEmail.toLowerCase()}`
+    : E2E_DEVICE_ID;
+}
+
+// UUIDv4. Prefer Web Crypto's randomUUID when available; fall back to
+// nacl.randomBytes since this module already wires its PRNG above. Strip
+// dashes for the device_id format the backend regex expects
+// (^[A-Za-z0-9_-]+$).
+function _uuidv4() {
+  try {
+    if (typeof globalThis !== 'undefined' && globalThis.crypto?.randomUUID) {
+      return globalThis.crypto.randomUUID();
+    }
+  } catch {}
+  const b = nacl.randomBytes(16);
+  b[6] = (b[6] & 0x0f) | 0x40; // version 4
+  b[8] = (b[8] & 0x3f) | 0x80; // RFC 4122 variant
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+/**
+ * Stable per-device id (UUIDv4) — generated on first call, persisted via
+ * SecureStore on native / localStorage on web. The backend regex allows
+ * dashes so we keep the canonical UUID form.
+ */
+export async function getDeviceId() {
+  const key = deviceIdStorageKey();
+  let stored = await secureGet(key);
+  if (stored && typeof stored === 'string' && stored.length >= 8) return stored;
+  // One-time migration: older builds may have written the global key.
+  if (_activeAccountEmail && key !== E2E_DEVICE_ID) {
+    const legacy = await secureGet(E2E_DEVICE_ID);
+    if (legacy) {
+      await secureSet(key, legacy);
+      return legacy;
+    }
+  }
+  const fresh = _uuidv4();
+  await secureSet(key, fresh);
+  return fresh;
+}
+
+/**
+ * Per-device X25519 keypair (separate from the long-term identity pair).
+ * Lazy: generate-and-persist on first call. Returns the public key as
+ * base64 — that's what the phone needs to encrypt envelopes for this
+ * device in Stage 5.
+ */
+export async function getDevicePublicKey() {
+  const key = deviceKeypairStorageKey();
+  const stored = await secureGet(key);
+  if (stored) {
+    try {
+      const parsed = JSON.parse(stored);
+      if (parsed?.pub) return parsed.pub;
+    } catch {}
+  }
+  const kp = nacl.box.keyPair();
+  const pubB64 = encodeBase64(kp.publicKey);
+  await secureSet(key, JSON.stringify({
+    pub: pubB64,
+    sec: encodeBase64(kp.secretKey),
+  }));
+  return pubB64;
+}
+
+/**
+ * Internal — load the per-device keypair (both halves). Used when Stage 5
+ * needs to decrypt envelopes addressed to this device. Returns null if
+ * the keypair hasn't been generated yet (caller should call
+ * getDevicePublicKey() first to bootstrap).
+ */
+export async function getDeviceKeyPair() {
+  const key = deviceKeypairStorageKey();
+  const stored = await secureGet(key);
+  if (!stored) return null;
+  try {
+    const parsed = JSON.parse(stored);
+    return {
+      publicKey: decodeBase64(parsed.pub),
+      secretKey: decodeBase64(parsed.sec),
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1188,4 +1304,7 @@ export default {
   createEnvelope,
   openEnvelope,
   generateSafetyNumber,
+  getDeviceId,
+  getDevicePublicKey,
+  getDeviceKeyPair,
 };

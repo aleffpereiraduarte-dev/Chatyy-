@@ -1320,6 +1320,104 @@ function handleChatAction($action) {
             )");
             @$db->exec("CREATE INDEX IF NOT EXISTS idx_chat_live_replays_user ON chat_live_replays_saved (user_email, saved_at DESC)");
             @$db->exec("CREATE INDEX IF NOT EXISTS idx_chat_live_replays_session ON chat_live_replays_saved (session_id)");
+            // (9) Per-device X25519 public keys (SQLite-first chat migration —
+            //     Stage 2). Each linked surface (web/desktop/companion mobile)
+            //     publishes its own X25519 pubkey after QR pairing so the
+            //     phone can encrypt per-device envelopes in Stage 5 instead
+            //     of one envelope per email. UNIQUE(email, device_id) keeps
+            //     the table idempotent under retries from the same surface.
+            @$db->exec("CREATE TABLE IF NOT EXISTS chat_device_keys (
+                id BIGSERIAL PRIMARY KEY,
+                email TEXT NOT NULL,
+                device_id TEXT NOT NULL,
+                pubkey TEXT NOT NULL,
+                kind TEXT,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                UNIQUE(email, device_id)
+            )");
+            @$db->exec("CREATE INDEX IF NOT EXISTS idx_chat_device_keys_email ON chat_device_keys (email)");
+            // (10) Per-recipient-device encrypted envelopes (SQLite-first chat
+            //     migration — Stage 5). When the sender encrypts a message
+            //     individually for each paired device of each recipient, the
+            //     ciphertext (nacl.box output) lands here as a pending row.
+            //     The receiving device pulls its envelopes on foreground (or
+            //     after a silent-push wake — Stage 4) and acks them; on ack
+            //     the row is dropped and a per-device chat_message_receipts
+            //     entry is recorded so multi-device delivery is observable
+            //     by the sender. Rows expire after 30d so abandoned devices
+            //     don't bloat the table.
+            @$db->exec("CREATE TABLE IF NOT EXISTS chat_pending_envelopes (
+                id BIGSERIAL PRIMARY KEY,
+                sender_email TEXT NOT NULL,
+                recipient_email TEXT NOT NULL,
+                recipient_device_id TEXT NOT NULL,
+                conversation_id BIGINT NOT NULL,
+                client_message_id TEXT NOT NULL,
+                ciphertext TEXT NOT NULL,
+                ephemeral_pubkey TEXT NOT NULL,
+                nonce TEXT NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                delivered_at TIMESTAMPTZ,
+                expires_at TIMESTAMPTZ DEFAULT NOW() + INTERVAL '30 days',
+                UNIQUE(recipient_email, recipient_device_id, client_message_id)
+            )");
+            @$db->exec("CREATE INDEX IF NOT EXISTS idx_pending_env_recip ON chat_pending_envelopes(recipient_email, created_at DESC)");
+            // [Stage 7 SQLite-first 2026-05-16] Belt-and-suspenders: ensure
+            // delivered_at exists on hosts that ran an early Stage 5 schema
+            // without it. CREATE TABLE above carries it for fresh installs;
+            // this covers legacy upgrades and is a no-op when present.
+            @$db->exec("ALTER TABLE chat_pending_envelopes ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ");
+
+            // ── Sender-Keys envelope bodies (2026-05-16) ───────────────
+            // For group chats, the legacy schema stores one full-message
+            // ciphertext per recipient device — N rows for an N-device
+            // fan-out. Sender-Keys mode collapses that to ONE shared body
+            // (encrypted under a per-message symmetric key) + N tiny
+            // "wrapped key" rows. This table holds the shared body; the
+            // `chat_pending_envelopes` rows reference it via body_ref.
+            // Legacy rows (per-device ciphertext, no body_ref) coexist —
+            // body_ref is nullable.
+            //
+            // body_algo == 'nacl_secretbox' means the auth tag is embedded
+            // in body_ciphertext (Poly1305) and body_tag stays NULL. A
+            // future AES-GCM upgrade would set body_algo='aes_gcm' and
+            // populate body_tag separately.
+            @$db->exec("CREATE TABLE IF NOT EXISTS chat_pending_envelope_bodies (
+                id BIGSERIAL PRIMARY KEY,
+                sender_email TEXT NOT NULL,
+                conversation_id BIGINT NOT NULL,
+                client_message_id TEXT NOT NULL,
+                body_ciphertext TEXT NOT NULL,
+                body_iv TEXT NOT NULL,
+                body_tag TEXT,
+                body_algo TEXT DEFAULT 'nacl_secretbox',
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                expires_at TIMESTAMPTZ DEFAULT NOW() + INTERVAL '30 days',
+                UNIQUE(sender_email, conversation_id, client_message_id)
+            )");
+            @$db->exec("CREATE INDEX IF NOT EXISTS idx_pending_env_bodies_exp ON chat_pending_envelope_bodies(expires_at)");
+
+            // Extend chat_pending_envelopes with optional Sender-Keys
+            // fields. When body_ref is set, the row is a key-wrap shard
+            // and (ciphertext, ephemeral_pubkey, nonce) carry the wrapped
+            // 32-byte messageKey (~80 bytes base64) rather than a full
+            // per-device message ciphertext. Legacy rows leave body_ref
+            // NULL and continue to carry the whole per-device ciphertext
+            // in the original columns — no data migration required.
+            @$db->exec("ALTER TABLE chat_pending_envelopes ADD COLUMN IF NOT EXISTS body_ref BIGINT");
+            @$db->exec("CREATE INDEX IF NOT EXISTS idx_pending_env_body_ref ON chat_pending_envelopes(body_ref)");
+            // device_id on receipts so multi-device delivery is recorded per
+            // surface. NULL is allowed for legacy email-level receipts. The
+            // composite unique replaces the implicit (message_id, email)
+            // dedup that the legacy code path uses — that one is left in
+            // place via the original PK; this new one is additive.
+            // NOTE on column name: legacy chat_message_receipts uses `email`
+            // (not user_email) as the per-user column — see the SELECTs at
+            // ~3952, 9665, 13976. We extend that schema, not the spec'd
+            // `user_email`, to stay drop-in with the existing code paths.
+            @$db->exec("ALTER TABLE chat_message_receipts ADD COLUMN IF NOT EXISTS device_id TEXT");
+            @$db->exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_receipts_msg_user_device ON chat_message_receipts(message_id, email, device_id)");
         } catch (\Throwable $e) { error_log('[chat.schema] ' . $e->getMessage()); }
         $_migrated = true;
     }
@@ -2451,6 +2549,18 @@ function handleChatAction($action) {
         // chat_messages — Get messages for a conversation (paginated)
         // ============================================================
         case 'chat_messages': {
+            // [Stage 7 SQLite-first 2026-05-16] This action returns rows from
+            // the `chat_messages` PG table — the legacy plaintext store.
+            // Pre-migration history (everything before the envelope-mode flag
+            // flipped default-ON) lives here permanently and must remain
+            // readable forever. AFTER the feature-flag rollout (Stage 6 →
+            // Stage 7 default-ON), NEW messages no longer land in
+            // `chat_messages`; they flow through `chat_pending_envelopes` as
+            // per-recipient-device ciphertexts and are decrypted client-side
+            // into the local SQLite chat store. This endpoint then becomes a
+            // read-only archive of the legacy data — no new rows expected.
+            // The retention cron (`cron-chat-envelope-gc.php`) only GC's
+            // `chat_pending_envelopes`, never `chat_messages`.
             $user = requireChatAuth();
             $conversationId = (int)($input['conversation_id'] ?? $_GET['conversation_id'] ?? 0);
             if (!$conversationId) jsonResponse(false, null, 'conversation_id required', 400);
@@ -9746,6 +9856,171 @@ function handleChatAction($action) {
         case 'chat_payment_list':
         case 'chat_thread_messages':
         case 'chat_sticker_pack_stickers':
+        // ============================================================
+        // chat_wake_phone — Stage 4 silent push wake (web↔phone relay)
+        // ============================================================
+        //
+        // The Node WS server calls this when the web companion device
+        // issued a relay_request but the phone has no live WS session.
+        // We fire a silent FCM data-only push so the phone's native
+        // service can briefly bring up the WS, subscribe to its own
+        // chat_user_<email> channel, satisfy the relay, and tear down.
+        //
+        // Auth: server-to-server only. Gated by the existing MAIL_WS_KEY
+        // (X-API-Key header), the same shared secret broadcastChatMessage
+        // uses. We deliberately do NOT use requireChatAuth() here — this
+        // action is never invoked by the app/web client.
+        //
+        // Silent push contract (matches fcmSendSilentSync):
+        //   - Android: data-only, priority=high, TTL 60s, no notification
+        //     payload (so CallFirebaseMessagingService.onMessageReceived
+        //     gets the message even when the app is killed).
+        //   - iOS: apns-push-type=background, apns-priority=5,
+        //     content-available=1. Apple rate-limits these to ~2-3/hour
+        //     per device so this is best-effort.
+        case 'chat_wake_phone': {
+            $wsKey = getenv('MAIL_WS_KEY') ?: '';
+            if (!$wsKey) {
+                // Fallback: try to read from env file (PHP-FPM containers
+                // don't always inherit /etc/mail-api.env — same trick the
+                // other internal endpoints use).
+                $envFile = '/etc/mail-api.env';
+                if (file_exists($envFile)) {
+                    foreach (file($envFile) as $_line) {
+                        if (strpos($_line, 'MAIL_WS_KEY=') === 0) {
+                            $wsKey = trim(substr($_line, 12));
+                            break;
+                        }
+                    }
+                }
+            }
+            $hdrKey = $_SERVER['HTTP_X_API_KEY'] ?? '';
+            if (!$wsKey || !hash_equals($wsKey, $hdrKey)) {
+                jsonResponse(false, null, 'Forbidden', 403);
+                break;
+            }
+
+            $email = strtolower(trim((string)($input['email'] ?? '')));
+            $requestId = (string)($input['requestId'] ?? $input['request_id'] ?? '');
+            if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                jsonResponse(false, null, 'invalid email', 400);
+                break;
+            }
+
+            require_once __DIR__ . '/firebase_push.php';
+            if (!function_exists('fcmGetUserTokens') || !function_exists('fcmGetAccessToken')) {
+                jsonResponse(false, null, 'push module unavailable', 500);
+                break;
+            }
+
+            $tokens = fcmGetUserTokens($email);
+            if (empty($tokens)) {
+                jsonResponse(true, ['sent' => 0, 'reason' => 'no_tokens']);
+                break;
+            }
+            $accessToken = fcmGetAccessToken();
+            if (!$accessToken) {
+                jsonResponse(false, null, 'no fcm access token', 500);
+                break;
+            }
+            $saFile = defined('FCM_SERVICE_ACCOUNT') ? FCM_SERVICE_ACCOUNT : '/etc/onemundo-firebase-sa.json';
+            $sa = json_decode((string)@file_get_contents($saFile), true);
+            $projectId = $sa['project_id'] ?? '';
+            if (!$projectId) {
+                jsonResponse(false, null, 'no fcm project id', 500);
+                break;
+            }
+
+            $payload = [
+                'type'      => 'wake_relay',
+                'requestId' => $requestId,
+                'ts'        => (string)time(),
+            ];
+            $sent = 0;
+            $skipped = 0;
+            foreach ($tokens as $entry) {
+                $token = $entry['token'] ?? '';
+                $platform = $entry['platform'] ?? 'android';
+                if (!$token) { $skipped++; continue; }
+                // Expo Push tokens cannot deliver a true silent push — skip.
+                if (strpos($token, 'ExponentPushToken') !== false ||
+                    strpos($token, 'ExpoPushToken') !== false) { $skipped++; continue; }
+
+                $message = [
+                    'message' => [
+                        'token' => $token,
+                        // DATA ONLY — no `notification` key so nothing visible.
+                        'data'  => $payload,
+                    ],
+                ];
+                if ($platform === 'ios') {
+                    $message['message']['apns'] = [
+                        'headers' => [
+                            // apns-priority 5 = power-saving (REQUIRED for
+                            // background pushes). priority 10 would be a
+                            // visible alert push.
+                            'apns-priority'   => '5',
+                            // apns-push-type background REQUIRED on iOS 13+.
+                            'apns-push-type'  => 'background',
+                            'apns-expiration' => (string)(time() + 600),
+                        ],
+                        'payload' => [
+                            'aps' => [
+                                'content-available' => 1,
+                            ],
+                            // userInfo so the native handler can route on type.
+                            'type'      => 'wake_relay',
+                            'requestId' => $requestId,
+                        ],
+                    ];
+                } else {
+                    // Android: high priority so Doze doesn't delay it.
+                    // Short TTL — if the phone is offline >60s, the relay
+                    // has already timed out server-side (15s window).
+                    $message['message']['android'] = [
+                        'priority' => 'high',
+                        'ttl'      => '60s',
+                    ];
+                }
+
+                $url = "https://fcm.googleapis.com/v1/projects/{$projectId}/messages:send";
+                $ch = curl_init($url);
+                curl_setopt_array($ch, [
+                    CURLOPT_POST           => true,
+                    CURLOPT_POSTFIELDS     => json_encode($message),
+                    CURLOPT_HTTPHEADER     => [
+                        'Content-Type: application/json',
+                        'Authorization: Bearer ' . $accessToken,
+                    ],
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_TIMEOUT        => 6,
+                ]);
+                $resp = curl_exec($ch);
+                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                curl_close($ch);
+                if ($httpCode === 200) {
+                    $sent++;
+                } else {
+                    error_log("[chat_wake_phone] FCM HTTP {$httpCode} for "
+                        . substr($token, 0, 16) . "… resp=" . substr((string)$resp, 0, 200));
+                    if (($httpCode === 404 || $httpCode === 400)
+                        && function_exists('fcmRemoveInvalidToken')) {
+                        $respData = json_decode($resp, true);
+                        $errorCode = $respData['error']['details'][0]['errorCode'] ?? '';
+                        if (in_array($errorCode, ['UNREGISTERED', 'INVALID_ARGUMENT'])) {
+                            fcmRemoveInvalidToken($token);
+                        }
+                    }
+                }
+            }
+            jsonResponse(true, [
+                'sent'    => $sent,
+                'skipped' => $skipped,
+                'email'   => $email,
+            ]);
+            break;
+        }
+
         // chat_delivery_ack — receiver reports "I got these msg ids".
         // Server broadcasts chat_delivered to the sender's devices so their
         // ticks flip from single-gray (sent) to double-gray (delivered).
@@ -12590,6 +12865,571 @@ function handleChatAction($action) {
                 $upd->execute([':e' => $user['email'], ':bt' => $bearer, ':at' => time(), ':t' => $code]);
             }
             jsonResponse(true, ['approved' => true, 'email' => $user['email'], 'device_kind' => $row['device_kind'] ?? 'web']);
+            break;
+        }
+
+        // ── Per-device key registry (SQLite-first chat migration, Stage 2) ──
+        // After a web/desktop/companion-mobile device finishes QR pairing it
+        // generates its own X25519 keypair and publishes the pubkey here.
+        // Phone reads `chat_device_keys_list` on foreground so future
+        // envelopes (Stage 5) can target each device individually instead
+        // of relying on a single per-email key.
+        case 'chat_device_key_publish': {
+            $user = requireChatAuth();
+            $deviceId = trim((string)($input['device_id'] ?? $_POST['device_id'] ?? ''));
+            $pubkey   = trim((string)($input['pubkey']    ?? $_POST['pubkey']    ?? ''));
+            $kind     = trim((string)($input['kind']      ?? $_POST['kind']      ?? ''));
+            if ($deviceId === '' || $pubkey === '') {
+                jsonResponse(false, null, 'device_id and pubkey required', 400);
+            }
+            // Light shape validation — device_id is a UUID-ish opaque string,
+            // pubkey is base64 (~44 chars for X25519). Cap both to avoid an
+            // attacker stuffing the table.
+            if (strlen($deviceId) > 128 || strlen($pubkey) > 256 || strlen($kind) > 32) {
+                jsonResponse(false, null, 'value too long', 400);
+            }
+            if (!preg_match('/^[A-Za-z0-9_\-]+$/', $deviceId)) {
+                jsonResponse(false, null, 'invalid device_id', 400);
+            }
+            if (!preg_match('/^[A-Za-z0-9+\/=]+$/', $pubkey)) {
+                jsonResponse(false, null, 'invalid pubkey', 400);
+            }
+            $kindNorm = in_array(strtolower($kind), ['web', 'mobile', 'desktop', 'ios', 'android'], true)
+                ? strtolower($kind) : null;
+            try {
+                // UPSERT keyed by (email, device_id). On re-pair from the same
+                // surface, refresh the pubkey + bump last_seen_at; created_at
+                // stays anchored so the phone can sort by first-seen.
+                $up = $db->prepare("INSERT INTO chat_device_keys (email, device_id, pubkey, kind, last_seen_at)
+                    VALUES (:e, :d, :p, :k, now())
+                    ON CONFLICT (email, device_id) DO UPDATE SET
+                        pubkey = EXCLUDED.pubkey,
+                        kind = COALESCE(EXCLUDED.kind, chat_device_keys.kind),
+                        last_seen_at = now()");
+                $up->execute([':e' => $user['email'], ':d' => $deviceId, ':p' => $pubkey, ':k' => $kindNorm]);
+            } catch (\Throwable $e) {
+                error_log('[chat_device_key_publish] ' . $e->getMessage());
+                jsonResponse(false, null, 'publish failed', 500);
+            }
+            jsonResponse(true, ['device_id' => $deviceId, 'kind' => $kindNorm]);
+            break;
+        }
+        case 'chat_device_keys_list': {
+            $user = requireChatAuth();
+            try {
+                $s = $db->prepare("SELECT device_id, pubkey, kind, created_at, last_seen_at
+                    FROM chat_device_keys WHERE email = :e ORDER BY created_at ASC");
+                $s->execute([':e' => $user['email']]);
+                $rows = $s->fetchAll(PDO::FETCH_ASSOC);
+            } catch (\Throwable $e) {
+                error_log('[chat_device_keys_list] ' . $e->getMessage());
+                $rows = [];
+            }
+            $out = [];
+            foreach ($rows as $r) {
+                $out[] = [
+                    'device_id'    => $r['device_id'],
+                    'pubkey'       => $r['pubkey'],
+                    'kind'         => $r['kind'],
+                    'created_at'   => $r['created_at'],
+                    'last_seen_at' => $r['last_seen_at'],
+                ];
+            }
+            jsonResponse(true, ['devices' => $out]);
+            break;
+        }
+        // chat_conv_device_keys — returns per-device pubkeys for EVERY
+        // member of a conversation. Stage 5 sender calls this right
+        // before chat_envelope_send so it knows which (email, device_id,
+        // pubkey) tuples to fan out to. Caller must be a member of the
+        // conversation. We include the sender's own other devices too so
+        // a paired desktop sees its own outgoing bubbles.
+        case 'chat_conv_device_keys': {
+            $user = requireChatAuth();
+            $conversationId = (int)($input['conversation_id'] ?? $_GET['conversation_id'] ?? $_POST['conversation_id'] ?? 0);
+            if (!$conversationId) jsonResponse(false, null, 'conversation_id required', 400);
+            try {
+                $mem = $db->prepare("SELECT 1 FROM chat_conversation_members WHERE conversation_id = :cid AND LOWER(email) = LOWER(:e) LIMIT 1");
+                $mem->execute([':cid' => $conversationId, ':e' => $user['email']]);
+                if (!$mem->fetchColumn()) {
+                    jsonResponse(false, null, 'Not a member of this conversation', 403);
+                }
+            } catch (\Throwable $e) { /* fall through */ }
+            try {
+                $s = $db->prepare("SELECT k.email, k.device_id, k.pubkey, k.kind, k.last_seen_at
+                    FROM chat_device_keys k
+                    JOIN chat_conversation_members m
+                      ON LOWER(m.email) = LOWER(k.email)
+                    WHERE m.conversation_id = :cid
+                    ORDER BY k.email ASC, k.created_at ASC");
+                $s->execute([':cid' => $conversationId]);
+                $rows = $s->fetchAll(\PDO::FETCH_ASSOC);
+            } catch (\Throwable $e) {
+                error_log('[chat_conv_device_keys] ' . $e->getMessage());
+                $rows = [];
+            }
+            $out = [];
+            foreach ($rows as $r) {
+                $out[] = [
+                    'email'        => $r['email'],
+                    'device_id'    => $r['device_id'],
+                    'pubkey'       => $r['pubkey'],
+                    'kind'         => $r['kind'],
+                    'last_seen_at' => $r['last_seen_at'],
+                ];
+            }
+            jsonResponse(true, ['devices' => $out, 'count' => count($out)]);
+            break;
+        }
+        case 'chat_device_key_touch': {
+            // Light idempotent heartbeat — every linked device pings this on
+            // app foreground so the phone can see which surfaces are still
+            // active. Returns true even if the row doesn't exist (the publish
+            // step is the source of truth; touch just refreshes last_seen_at).
+            $user = requireChatAuth();
+            $deviceId = trim((string)($input['device_id'] ?? $_POST['device_id'] ?? ''));
+            if ($deviceId === '' || strlen($deviceId) > 128 || !preg_match('/^[A-Za-z0-9_\-]+$/', $deviceId)) {
+                jsonResponse(false, null, 'invalid device_id', 400);
+            }
+            try {
+                $st = $db->prepare("UPDATE chat_device_keys SET last_seen_at = now()
+                    WHERE email = :e AND device_id = :d");
+                $st->execute([':e' => $user['email'], ':d' => $deviceId]);
+            } catch (\Throwable $e) {
+                // swallow — touch is best-effort
+            }
+            jsonResponse(true, ['touched' => true]);
+            break;
+        }
+
+        // ── Per-recipient-device encrypted envelopes (Stage 5) ──────────
+        // chat_envelope_send: sender uploads N ciphertexts (one per paired
+        // device of every recipient). Each row carries the sender's
+        // ephemeral X25519 pubkey + nonce so the receiver can run
+        // nacl.box.open with their own device secret key. Server stores
+        // ciphertext only — never plaintext. Rows are scoped to the
+        // recipient + their device_id, so a phone and a paired desktop
+        // both pull *different* rows and decrypt independently.
+        case 'chat_envelope_send': {
+            $user = requireChatAuth();
+            $conversationId   = (int)($input['conversation_id']   ?? $_POST['conversation_id']   ?? 0);
+            $clientMessageId  = trim((string)($input['client_message_id'] ?? $_POST['client_message_id'] ?? ''));
+
+            // ── Shape detection ────────────────────────────────────────
+            // Two accepted payloads:
+            //   (A) Legacy:      {envelopes: [{recipient_email, recipient_device_id,
+            //                                  ciphertext, ephemeral_pubkey, nonce}, ...]}
+            //   (B) Sender-Keys: {body: {ciphertext, iv, tag?, algo?},
+            //                     keys:  [{recipient_email, recipient_device_id,
+            //                              key_ciphertext, key_ephemeral_pubkey, key_nonce}, ...]}
+            // Detect (B) by the presence of a `body` field; otherwise fall
+            // back to (A). Both shapes coexist during rollout.
+            $body  = $input['body']  ?? $_POST['body']  ?? null;
+            $keys  = $input['keys']  ?? $_POST['keys']  ?? null;
+            if (is_string($body)) {
+                $decoded = json_decode($body, true);
+                if (is_array($decoded)) $body = $decoded;
+            }
+            if (is_string($keys)) {
+                $decoded = json_decode($keys, true);
+                if (is_array($decoded)) $keys = $decoded;
+            }
+            $isSenderKeys = is_array($body) && is_array($keys);
+
+            if (!$isSenderKeys) {
+                $envelopes        = $input['envelopes'] ?? $_POST['envelopes'] ?? null;
+                if (is_string($envelopes)) {
+                    $decoded = json_decode($envelopes, true);
+                    if (is_array($decoded)) $envelopes = $decoded;
+                }
+            }
+
+            if (!$conversationId || $clientMessageId === '') {
+                jsonResponse(false, null, 'conversation_id, client_message_id required', 400);
+            }
+            if (strlen($clientMessageId) > 128) {
+                jsonResponse(false, null, 'client_message_id too long', 400);
+            }
+            if ($isSenderKeys) {
+                if (count($keys) > 200) {
+                    jsonResponse(false, null, 'too many key envelopes', 400);
+                }
+            } else {
+                if (!is_array($envelopes)) {
+                    jsonResponse(false, null, 'envelopes[] (legacy) or body+keys (sender-keys) required', 400);
+                }
+                if (count($envelopes) > 200) {
+                    // Hard cap — even a 50-member group with 4 devices each
+                    // is 200. Anything larger is almost certainly abuse.
+                    jsonResponse(false, null, 'too many envelopes', 400);
+                }
+            }
+
+            // Confirm the sender is actually a member of the target convo —
+            // we don't want a paired device to fan-out envelopes to
+            // arbitrary recipients.
+            try {
+                $mem = $db->prepare("SELECT 1 FROM chat_conversation_members WHERE conversation_id = :cid AND LOWER(email) = LOWER(:e) LIMIT 1");
+                $mem->execute([':cid' => $conversationId, ':e' => $user['email']]);
+                if (!$mem->fetchColumn()) {
+                    jsonResponse(false, null, 'Not a member of this conversation', 403);
+                }
+            } catch (\Throwable $e) { /* schema missing — fall through */ }
+
+            $inserted = 0;
+            $skipped  = 0;
+            try {
+                $db->beginTransaction();
+
+                if ($isSenderKeys) {
+                    // ── (B) Sender-Keys path ───────────────────────────
+                    // Validate body.
+                    $bCt   = trim((string)($body['ciphertext'] ?? ''));
+                    $bIv   = trim((string)($body['iv']         ?? ''));
+                    $bTag  = isset($body['tag']) && $body['tag'] !== null ? trim((string)$body['tag']) : null;
+                    $bAlgo = trim((string)($body['algo']       ?? 'nacl_secretbox'));
+                    if ($bCt === '' || $bIv === '') {
+                        $db->rollBack();
+                        jsonResponse(false, null, 'body.ciphertext and body.iv required', 400);
+                    }
+                    if (strlen($bCt) > 262144) {
+                        $db->rollBack();
+                        jsonResponse(false, null, 'body ciphertext too large', 400);
+                    }
+                    if (!preg_match('/^[A-Za-z0-9+\/=]+$/', $bCt) ||
+                        !preg_match('/^[A-Za-z0-9+\/=]+$/', $bIv) ||
+                        ($bTag !== null && $bTag !== '' && !preg_match('/^[A-Za-z0-9+\/=]+$/', $bTag))) {
+                        $db->rollBack();
+                        jsonResponse(false, null, 'body fields must be base64', 400);
+                    }
+                    if (!in_array($bAlgo, ['nacl_secretbox', 'aes_gcm'], true)) {
+                        $db->rollBack();
+                        jsonResponse(false, null, 'unsupported body.algo', 400);
+                    }
+
+                    // Upsert the body row — UNIQUE(sender, conv, cmi) makes
+                    // this idempotent on retry. Return the id either way
+                    // so we can stamp every shard with body_ref.
+                    $bodyIns = $db->prepare("INSERT INTO chat_pending_envelope_bodies
+                        (sender_email, conversation_id, client_message_id,
+                         body_ciphertext, body_iv, body_tag, body_algo)
+                        VALUES (:s, :cid, :cmi, :ct, :iv, :tag, :algo)
+                        ON CONFLICT (sender_email, conversation_id, client_message_id) DO UPDATE
+                            SET body_ciphertext = EXCLUDED.body_ciphertext
+                        RETURNING id");
+                    $bodyIns->execute([
+                        ':s'    => $user['email'],
+                        ':cid'  => $conversationId,
+                        ':cmi'  => $clientMessageId,
+                        ':ct'   => $bCt,
+                        ':iv'   => $bIv,
+                        ':tag'  => $bTag,
+                        ':algo' => $bAlgo,
+                    ]);
+                    $bodyId = (int)$bodyIns->fetchColumn();
+                    if (!$bodyId) {
+                        // Should not happen with RETURNING on UPSERT, but
+                        // belt-and-suspenders — re-fetch.
+                        $sel = $db->prepare("SELECT id FROM chat_pending_envelope_bodies
+                            WHERE sender_email = :s AND conversation_id = :cid AND client_message_id = :cmi");
+                        $sel->execute([':s' => $user['email'], ':cid' => $conversationId, ':cmi' => $clientMessageId]);
+                        $bodyId = (int)$sel->fetchColumn();
+                    }
+                    if (!$bodyId) {
+                        $db->rollBack();
+                        jsonResponse(false, null, 'body insert returned no id', 500);
+                    }
+
+                    // Insert one shard per recipient device. We reuse the
+                    // existing per-device columns (ciphertext, ephemeral_
+                    // pubkey, nonce) to carry the WRAPPED messageKey —
+                    // semantics shift when body_ref is non-NULL: it's a
+                    // 32-byte key wrap, not a full message ciphertext.
+                    $ins = $db->prepare("INSERT INTO chat_pending_envelopes
+                        (sender_email, recipient_email, recipient_device_id,
+                         conversation_id, client_message_id, ciphertext,
+                         ephemeral_pubkey, nonce, body_ref)
+                        VALUES (:s, :r, :d, :cid, :cmi, :ct, :ek, :n, :bref)
+                        ON CONFLICT (recipient_email, recipient_device_id, client_message_id) DO NOTHING");
+                    foreach ($keys as $k) {
+                        $r  = trim((string)($k['recipient_email']       ?? ''));
+                        $d  = trim((string)($k['recipient_device_id']   ?? ''));
+                        $ct = trim((string)($k['key_ciphertext']        ?? ''));
+                        $ek = trim((string)($k['key_ephemeral_pubkey']  ?? ''));
+                        $n  = trim((string)($k['key_nonce']             ?? ''));
+                        if ($r === '' || $d === '' || $ct === '' || $ek === '' || $n === '') {
+                            $skipped++; continue;
+                        }
+                        if (strlen($r) > 254 || strlen($d) > 128 || strlen($ek) > 256 || strlen($n) > 64) {
+                            $skipped++; continue;
+                        }
+                        // A wrapped 32-byte messageKey is ~80 bytes base64.
+                        // Hard-cap to 512B to defend against abuse — anything
+                        // larger isn't a key wrap.
+                        if (strlen($ct) > 512) { $skipped++; continue; }
+                        if (!preg_match('/^[A-Za-z0-9_\-]+$/', $d)) { $skipped++; continue; }
+                        if (!preg_match('/^[A-Za-z0-9+\/=]+$/', $ek)) { $skipped++; continue; }
+                        if (!preg_match('/^[A-Za-z0-9+\/=]+$/', $n))  { $skipped++; continue; }
+                        if (!preg_match('/^[A-Za-z0-9+\/=]+$/', $ct)) { $skipped++; continue; }
+                        $ins->execute([
+                            ':s'    => $user['email'],
+                            ':r'    => $r,
+                            ':d'    => $d,
+                            ':cid'  => $conversationId,
+                            ':cmi'  => $clientMessageId,
+                            ':ct'   => $ct,
+                            ':ek'   => $ek,
+                            ':n'    => $n,
+                            ':bref' => $bodyId,
+                        ]);
+                        if ($ins->rowCount() > 0) $inserted++;
+                    }
+                } else {
+                    // ── (A) Legacy path — unchanged behaviour ─────────
+                    $ins = $db->prepare("INSERT INTO chat_pending_envelopes
+                        (sender_email, recipient_email, recipient_device_id,
+                         conversation_id, client_message_id, ciphertext,
+                         ephemeral_pubkey, nonce)
+                        VALUES (:s, :r, :d, :cid, :cmi, :ct, :ek, :n)
+                        ON CONFLICT (recipient_email, recipient_device_id, client_message_id) DO NOTHING");
+                    foreach ($envelopes as $env) {
+                        $r  = trim((string)($env['recipient_email']       ?? ''));
+                        $d  = trim((string)($env['recipient_device_id']   ?? ''));
+                        $ct = trim((string)($env['ciphertext']            ?? ''));
+                        $ek = trim((string)($env['ephemeral_pubkey']      ?? ''));
+                        $n  = trim((string)($env['nonce']                 ?? ''));
+                        if ($r === '' || $d === '' || $ct === '' || $ek === '' || $n === '') {
+                            $skipped++; continue;
+                        }
+                        if (strlen($r) > 254 || strlen($d) > 128 || strlen($ek) > 256 || strlen($n) > 64) {
+                            $skipped++; continue;
+                        }
+                        // Cap ciphertext at 256KB base64 (~192KB binary) — larger
+                        // payloads should be uploaded as file_url, not inlined.
+                        if (strlen($ct) > 262144) { $skipped++; continue; }
+                        if (!preg_match('/^[A-Za-z0-9_\-]+$/', $d)) { $skipped++; continue; }
+                        if (!preg_match('/^[A-Za-z0-9+\/=]+$/', $ek)) { $skipped++; continue; }
+                        if (!preg_match('/^[A-Za-z0-9+\/=]+$/', $n))  { $skipped++; continue; }
+                        if (!preg_match('/^[A-Za-z0-9+\/=]+$/', $ct)) { $skipped++; continue; }
+                        $ins->execute([
+                            ':s'   => $user['email'],
+                            ':r'   => $r,
+                            ':d'   => $d,
+                            ':cid' => $conversationId,
+                            ':cmi' => $clientMessageId,
+                            ':ct'  => $ct,
+                            ':ek'  => $ek,
+                            ':n'   => $n,
+                        ]);
+                        if ($ins->rowCount() > 0) $inserted++;
+                    }
+                }
+                $db->commit();
+            } catch (\Throwable $e) {
+                try { $db->rollBack(); } catch (\Throwable $_) {}
+                error_log('[chat_envelope_send] ' . $e->getMessage());
+                jsonResponse(false, null, 'envelope insert failed', 500);
+            }
+            jsonResponse(true, [
+                'mode'     => $isSenderKeys ? 'sender_keys' : 'legacy',
+                'inserted' => $inserted,
+                'skipped'  => $skipped,
+                'total'    => $isSenderKeys ? count($keys) : count($envelopes),
+            ]);
+            break;
+        }
+
+        // chat_envelopes_pull: receiver-side fetch. Pulls all undelivered
+        // envelopes for (session_email, device_id). Marks them
+        // delivered_at = NOW() so retries are idempotent and the sender's
+        // delivery indicator can flip. Cap 100 per call — caller loops
+        // until the result is empty.
+        case 'chat_envelopes_pull':
+        case 'chat_envelopes_pull_v2': {
+            $user = requireChatAuth();
+            $deviceId = trim((string)($input['device_id'] ?? $_GET['device_id'] ?? $_POST['device_id'] ?? ''));
+            if ($deviceId === '' || strlen($deviceId) > 128 || !preg_match('/^[A-Za-z0-9_\-]+$/', $deviceId)) {
+                jsonResponse(false, null, 'invalid device_id', 400);
+            }
+            // The v2 alias is intent-revealing — both endpoints return the
+            // same superset shape. v1 callers ignore the new `body_*` /
+            // `key_*` keys; v2-aware callers detect the Sender-Keys shape
+            // by `body_ciphertext` (or top-level `body` when body_ref is
+            // set). Single SELECT supports both paths via LEFT JOIN.
+            try {
+                // Step 1 — atomically mark up to 100 rows delivered.
+                $upd = $db->prepare("UPDATE chat_pending_envelopes
+                    SET delivered_at = COALESCE(delivered_at, NOW())
+                    WHERE id IN (
+                        SELECT id FROM chat_pending_envelopes
+                        WHERE LOWER(recipient_email) = LOWER(:e)
+                          AND recipient_device_id = :d
+                          AND expires_at > NOW()
+                        ORDER BY id ASC
+                        LIMIT 100
+                    )
+                    RETURNING id");
+                $upd->execute([':e' => $user['email'], ':d' => $deviceId]);
+                $touched = $upd->fetchAll(\PDO::FETCH_COLUMN, 0);
+
+                $rows = [];
+                if (!empty($touched)) {
+                    // Step 2 — fetch metadata + LEFT JOIN the shared body
+                    // when body_ref is set (Sender-Keys shards). Legacy
+                    // rows have body_ref NULL and bodies.* come back NULL.
+                    $ph = implode(',', array_fill(0, count($touched), '?'));
+                    $sel = $db->prepare("SELECT e.id, e.sender_email, e.conversation_id, e.client_message_id,
+                                                e.ciphertext, e.ephemeral_pubkey, e.nonce, e.created_at,
+                                                e.body_ref,
+                                                b.body_ciphertext, b.body_iv, b.body_tag, b.body_algo
+                        FROM chat_pending_envelopes e
+                        LEFT JOIN chat_pending_envelope_bodies b ON b.id = e.body_ref
+                        WHERE e.id IN ($ph)
+                        ORDER BY e.id ASC");
+                    $sel->execute($touched);
+                    $rows = $sel->fetchAll(\PDO::FETCH_ASSOC);
+                }
+            } catch (\Throwable $e) {
+                error_log('[chat_envelopes_pull] ' . $e->getMessage());
+                $rows = [];
+            }
+            $out = [];
+            foreach ($rows as $r) {
+                $isSenderKeys = !empty($r['body_ref']) && !empty($r['body_ciphertext']);
+                $row = [
+                    'id'                => (int)$r['id'],
+                    'sender_email'      => $r['sender_email'],
+                    'conversation_id'   => (int)$r['conversation_id'],
+                    'client_message_id' => $r['client_message_id'],
+                    'created_at'        => $r['created_at'],
+                ];
+                if ($isSenderKeys) {
+                    // Sender-Keys: ciphertext/ephemeral_pubkey/nonce are
+                    // the WRAPPED messageKey — surface them as key_*
+                    // fields and include the shared body inline. Legacy
+                    // top-level fields are intentionally omitted so v1
+                    // clients can't accidentally feed a wrapped key into
+                    // decryptEnvelope (which would fail loudly anyway,
+                    // since the plaintext after unwrap is 32 random bytes).
+                    $row['body_ref']             = (int)$r['body_ref'];
+                    $row['body_ciphertext']      = $r['body_ciphertext'];
+                    $row['body_iv']              = $r['body_iv'];
+                    $row['body_tag']             = $r['body_tag'];
+                    $row['body_algo']            = $r['body_algo'] ?: 'nacl_secretbox';
+                    $row['key_ciphertext']       = $r['ciphertext'];
+                    $row['key_ephemeral_pubkey'] = $r['ephemeral_pubkey'];
+                    $row['key_nonce']            = $r['nonce'];
+                } else {
+                    // Legacy per-device ciphertext — original v1 shape.
+                    $row['ciphertext']       = $r['ciphertext'];
+                    $row['ephemeral_pubkey'] = $r['ephemeral_pubkey'];
+                    $row['nonce']            = $r['nonce'];
+                }
+                $out[] = $row;
+            }
+            jsonResponse(true, ['envelopes' => $out, 'count' => count($out)]);
+            break;
+        }
+
+        // chat_envelope_ack: receiver tells the server "I've decrypted and
+        // saved these N envelopes locally, drop them." Per-device delivery
+        // is logged into chat_message_receipts so the sender sees per-
+        // surface delivery (phone vs desktop, etc.).
+        case 'chat_envelope_ack': {
+            $user = requireChatAuth();
+            $deviceId = trim((string)($input['device_id'] ?? $_POST['device_id'] ?? ''));
+            $ids      = $input['ids'] ?? $_POST['ids'] ?? null;
+            if (is_string($ids)) {
+                $decoded = json_decode($ids, true);
+                if (is_array($decoded)) $ids = $decoded;
+            }
+            if ($deviceId === '' || !preg_match('/^[A-Za-z0-9_\-]+$/', $deviceId) || strlen($deviceId) > 128) {
+                jsonResponse(false, null, 'invalid device_id', 400);
+            }
+            if (!is_array($ids) || empty($ids)) {
+                jsonResponse(false, null, 'ids[] required', 400);
+            }
+            // Sanitize ids → ints, cap 200.
+            $intIds = [];
+            foreach ($ids as $v) {
+                $i = (int)$v;
+                if ($i > 0) $intIds[] = $i;
+                if (count($intIds) >= 200) break;
+            }
+            if (empty($intIds)) {
+                jsonResponse(false, null, 'no valid ids', 400);
+            }
+            $placeholders = implode(',', array_fill(0, count($intIds), '?'));
+            $acked = 0;
+            try {
+                $db->beginTransaction();
+                // Fetch envelope metadata first so we can write receipts
+                // before deleting the row.
+                $sel = $db->prepare("SELECT id, sender_email, recipient_email, conversation_id, client_message_id
+                    FROM chat_pending_envelopes
+                    WHERE id IN ($placeholders)
+                      AND LOWER(recipient_email) = LOWER(?)
+                      AND recipient_device_id = ?
+                    FOR UPDATE");
+                $sel->execute(array_merge($intIds, [$user['email'], $deviceId]));
+                $envRows = $sel->fetchAll(\PDO::FETCH_ASSOC);
+
+                // Per-device delivery receipts. message_id is the
+                // chat_messages.id if a legacy row exists (parallel path
+                // during Stage 5 rollout); else 0 — the unique index on
+                // (message_id, email, device_id) lets multiple
+                // distinct-cmi acks coexist on message_id = 0.
+                $recIns = null;
+                try {
+                    $recIns = $db->prepare("INSERT INTO chat_message_receipts
+                        (message_id, email, delivered_at, device_id)
+                        VALUES (:mid, :e, NOW(), :d)
+                        ON CONFLICT (message_id, email, device_id) DO UPDATE SET
+                            delivered_at = COALESCE(chat_message_receipts.delivered_at, EXCLUDED.delivered_at)");
+                } catch (\Throwable $_) { /* table shape varies — best-effort */ }
+
+                $msgLookup = null;
+                try {
+                    $msgLookup = $db->prepare("SELECT id FROM chat_messages
+                        WHERE conversation_id = :cid AND client_message_id = :cmi
+                        LIMIT 1");
+                } catch (\Throwable $_) {}
+
+                foreach ($envRows as $row) {
+                    $mid = 0;
+                    if ($msgLookup) {
+                        try {
+                            $msgLookup->execute([
+                                ':cid' => (int)$row['conversation_id'],
+                                ':cmi' => $row['client_message_id'],
+                            ]);
+                            $mid = (int)($msgLookup->fetchColumn() ?: 0);
+                        } catch (\Throwable $_) {}
+                    }
+                    if ($recIns) {
+                        try {
+                            $recIns->execute([
+                                ':mid' => $mid,
+                                ':e'   => $user['email'],
+                                ':d'   => $deviceId,
+                            ]);
+                        } catch (\Throwable $_) { /* schema drift, swallow */ }
+                    }
+                }
+
+                $del = $db->prepare("DELETE FROM chat_pending_envelopes
+                    WHERE id IN ($placeholders)
+                      AND LOWER(recipient_email) = LOWER(?)
+                      AND recipient_device_id = ?");
+                $del->execute(array_merge($intIds, [$user['email'], $deviceId]));
+                $acked = $del->rowCount();
+                $db->commit();
+            } catch (\Throwable $e) {
+                try { $db->rollBack(); } catch (\Throwable $_) {}
+                error_log('[chat_envelope_ack] ' . $e->getMessage());
+                jsonResponse(false, null, 'ack failed', 500);
+            }
+            jsonResponse(true, ['acked' => $acked]);
             break;
         }
 
