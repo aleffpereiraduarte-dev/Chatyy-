@@ -116,7 +116,7 @@ class LiveHostActivity : ComponentActivity() {
   private lateinit var commentsContainer: LinearLayout
   private lateinit var commentsScroll: ScrollView
   private lateinit var commentInput: EditText
-  private lateinit var composerRow: View
+  private lateinit var composerRow: LinearLayout
   private lateinit var heartLayer: FrameLayout
   private lateinit var livePill: TextView
   private lateinit var commentsCountPill: TextView
@@ -234,20 +234,7 @@ class LiveHostActivity : ComponentActivity() {
               ExpoLiveNativeModule.emitViewerJoined(roomName, identity, event.participant.name)
             } catch (_: Throwable) {}
           }
-          is RoomEvent.LocalTrackPublished -> {
-            // Bind the local camera track to the preview renderer once it's
-            // published (timing parity with CallActivity).
-            val t = event.publication.track
-            if (t is LocalVideoTrack) {
-              localVideoTrack = t
-              localRenderer?.let { rv ->
-                try { t.addRenderer(rv) } catch (e: Throwable) {
-                  Log.w(TAG, "addRenderer(local) failed: ${e.message}")
-                }
-              }
-            }
-          }
-          else -> { /* no-op */ }
+          else -> { /* no-op — local camera renderer is bound after setCameraEnabled in connectJob below */ }
         }
       }
     }
@@ -397,7 +384,7 @@ class LiveHostActivity : ComponentActivity() {
       val sb = android.text.SpannableStringBuilder(full)
       sb.setSpan(android.text.style.StyleSpan(Typeface.BOLD), 0, name.length,
         android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-      text = sb
+      setText(sb)
       setTextColor(Color.WHITE)
       setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
       setPadding(dp(8), dp(4), dp(8), dp(4))

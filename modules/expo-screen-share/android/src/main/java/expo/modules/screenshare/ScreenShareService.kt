@@ -22,6 +22,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import io.livekit.android.room.track.screencapture.ScreenCaptureParams
 
 /**
  * [2026-05-16 Android screenshare Stage 1] Foreground service that owns the
@@ -203,7 +204,7 @@ class ScreenShareService : Service() {
       // Primary path: LK 2.24 public API. The SDK owns capturer + track +
       // RtpSender lifetime from here on; we just hand it the result Intent
       // from MediaProjectionManager.createScreenCaptureIntent().
-      room.localParticipant.setScreenShareEnabled(true, resultData)
+      room.localParticipant.setScreenShareEnabled(true, ScreenCaptureParams(resultData))
       Log.d(TAG, "LK screen share enabled (setScreenShareEnabled true)")
     } catch (t: Throwable) {
       Log.e(TAG, "setScreenShareEnabled failed: ${t.message}", t)
