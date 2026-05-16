@@ -20,7 +20,7 @@ Pod::Spec.new do |s|
   # the iOS native side can connect to LiveKit before the RN bundle is up.
   # Pinned to ~> 2.0 to match the JS livekit-client ^2.19 and to share the
   # SDK with ChatyyBroadcastExtension (which has its own pod entry).
-  s.dependency 'LiveKitClient', '~> 2.0'
+  # LiveKitClient dep removed — Stage 2 stubbed pending API verification. See NativeCallRoom.swift.
 
   s.source_files = '**/*.swift'
 
