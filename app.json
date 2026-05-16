@@ -276,6 +276,7 @@
         }
       ],
       "./plugins/fix-jitpack",
+      "./plugins/with-android-packaging-pickfirst",
       "./plugins/voip-push",
       "expo-asset",
       [
