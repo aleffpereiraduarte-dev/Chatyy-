@@ -37,14 +37,14 @@ dependencies {
   // Audio routing handled by audioswitch which is brought transitively from
   // @livekit/react-native-webrtc (already in app). webrtc-sdk is pinned to
   // the version @livekit/react-native uses to avoid SO conflicts.
-  // [2026-05-15] Bumped 2.18.2 → 2.22.1 (confirmed on Maven Central per search).
-  // 2.18.2 may not exist on Central; 2.22.1 is documented.
-  implementation('io.livekit:livekit-android:2.22.1') {
-    // Exclude transitive webrtc — @livekit/react-native-webrtc provides it.
-    exclude group: 'io.github.webrtc-sdk', module: 'android'
-  }
-  implementation 'com.squareup.okhttp3:okhttp:4.12.0'
-  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+  // [2026-05-15] LiveKit Android SDK removed pending Stage 1 v2 — the 2.x API
+  // surface differs from what we wrote and broke gradle compile. NativeCallRoom
+  // is now a stub (Kotlin file kept so JS-side adoptNativeRoom() returns null
+  // gracefully). The 12 Java-level fixes from commit 5a526e5 still ship and
+  // resolve most of the kill-state accept bug.
+  // implementation('io.livekit:livekit-android:2.22.1') { ... }
+  // implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+  // implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
 }
 
 def safeExtGet(prop, fallback) {
