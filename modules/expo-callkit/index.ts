@@ -11,19 +11,18 @@ interface ExpoCallKitEvents {
   // CallKit's and we end up with competing setCategory paths.
   onCallKitAudioActivated: Record<string, never>;
   onCallKitAudioDeactivated: Record<string, never>;
-  // [#992 Stage 1] Native LiveKit Room events — fired by NativeCallRoom
-  // (Android Kotlin) / NativeCallRoom (iOS Swift, Stage 2). JS /call.js
-  // subscribes after adoptNativeRoom() succeeds to receive participant +
-  // track state instead of building its own Room.
-  onLkConnected: { callId: string; snapshot: Record<string, any> };
-  onLkParticipantConnected: { callId: string; identity: string; sid: string };
-  onLkParticipantDisconnected: { callId: string; identity: string };
-  onLkTrackSubscribed: { callId: string; identity: string; kind: 'audio' | 'video' | string; sid: string };
-  onLkTrackUnsubscribed: { callId: string; identity: string; kind: string };
-  onLkConnectionQuality: { callId: string; identity: string; quality: string };
-  onLkDisconnected: { callId: string; reason: string };
-  onLkDataReceived: { callId: string; identity: string; data: string };
-  onLkError: { callId: string; message: string };
+  // [#992 Stage 1 Android + Stage 2 iOS] Native LiveKit Room events. Shape is
+  // a union of the two platforms — some fields are platform-specific. JS
+  // listeners should treat all fields as optional and branch as needed.
+  onLkConnected: { callId?: string; snapshot?: Record<string, any>; roomName?: string; localIdentity?: string };
+  onLkParticipantConnected: { callId?: string; identity: string; sid?: string; name?: string };
+  onLkParticipantDisconnected: { callId?: string; identity: string };
+  onLkTrackSubscribed: { callId?: string; identity?: string; participantIdentity?: string; kind: string; sid?: string; trackSid?: string };
+  onLkTrackUnsubscribed: { callId?: string; identity?: string; participantIdentity?: string; kind: string; trackSid?: string };
+  onLkConnectionQuality: { callId?: string; identity?: string; participantIdentity?: string; quality: string };
+  onLkDisconnected: { callId?: string; reason: string };
+  onLkDataReceived: { callId?: string; identity?: string; data: string };
+  onLkError: { callId?: string; message: string };
 }
 
 declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
@@ -35,7 +34,9 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
   getDiagnostics(): Record<string, any>;
   consumePendingEvents(): Array<Record<string, any>>;
   consumePendingCall(): { callId: string; callerName: string; hasVideo: boolean } | null;
-  // [#992 Stage 1] Native LiveKit Room control
+  // [#992 Stage 1+2] Native LiveKit Room control. Positional args; both
+  // platforms accept this shape (Android Kotlin via @AsyncFunction direct
+  // positional; iOS Swift adapts internally).
   persistAuthForNativeCall(token: string, baseUrl: string): Promise<void>;
   persistPendingLkToken(roomName: string, token: string, url: string): Promise<void>;
   isNativeRoomConnected(): boolean;
@@ -193,12 +194,12 @@ export function consumePendingCall(): { callId: string; callerName: string; hasV
   }
 }
 
-// ─── Native LiveKit Room (Stage 1 #992) ──────────────────────────────────────
-// Bridges the JS /call screen to the native-owned Room. Used to eliminate the
-// 4-8s cold-start audio gap on Android (and iOS once Stage 2 lands).
+// ─── Native LiveKit Room (Stage 1+2 #992 #993) ───────────────────────────────
+// Bridges the JS /call screen to the native-owned Room. Eliminates the
+// 4-8s cold-start audio gap on Android. iOS Stage 2 lands the equivalent.
 
 /** Stash auth token + API base URL into native SharedPreferences (Android)
- *  / App Group UserDefaults (iOS). Call from AuthContext on login success
+ *  / App Group UserDefaults (iOS). Call from services/api.js setAuthTokenDirect
  *  so cold-start accept paths can fetch LK tokens without JS. */
 export async function persistAuthForNativeCall(token: string, baseUrl: string): Promise<void> {
   const m = getModule();
@@ -210,9 +211,6 @@ export async function persistAuthForNativeCall(token: string, baseUrl: string): 
   }
 }
 
-/** Stash a pre-fetched LK token+url for a roomName so the native side can
- *  skip the HTTP round-trip on accept. Call this from IncomingCallListener
- *  when WS delivers the call_invite event ahead of FCM/PushKit. */
 export async function persistPendingLkToken(roomName: string, token: string, url: string): Promise<void> {
   const m = getModule();
   if (!m) return;
@@ -223,16 +221,12 @@ export async function persistPendingLkToken(roomName: string, token: string, url
   }
 }
 
-/** Sync check — true when a native Room is connected. */
 export function isNativeRoomConnected(): boolean {
   const m = getModule();
   if (!m) return false;
   try { return !!m.isNativeRoomConnected(); } catch { return false; }
 }
 
-/** Ask native side if it already owns a connected Room for this callId.
- *  Returns the snapshot (participants, tracks) if yes; null otherwise.
- *  JS /call.js skips its own Room.connect when this returns non-null. */
 export async function adoptNativeRoom(callId: string): Promise<Record<string, any> | null> {
   const m = getModule();
   if (!m) return null;
@@ -243,8 +237,6 @@ export async function adoptNativeRoom(callId: string): Promise<Record<string, an
   }
 }
 
-/** Outgoing path: JS asks native to connect a Room. Used from chat-conversation
- *  when user taps "ligar" and we want audio to start before /call mounts. */
 export async function lkConnect(url: string, token: string, callId: string, hasVideo: boolean): Promise<void> {
   const m = getModule();
   if (!m) throw new Error('Native CallKit module unavailable');

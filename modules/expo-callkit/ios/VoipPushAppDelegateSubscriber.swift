@@ -29,6 +29,16 @@ import AVFoundation
 private let kAppGroupId = "group.com.onemundo.mail"
 private let kPendingCallKey = "pendingVoipCall"
 
+// [stage 2 native LiveKit pre-connect, 2026-05-15]
+// When CXAnswerCallAction fires before the RN bundle is up, we want to start
+// the LiveKit Room.connect handshake immediately so audio is alive in <1s.
+// We need the call payload (room_name, identity-or-email, callId) to do that,
+// keyed by the CallKit UUID — that's the only identifier CallKit hands us in
+// the answer callback. This dictionary persists in-memory for the lifetime of
+// the app process (which on a VoIP cold start is exactly the call's lifetime).
+private var kPendingAnswerPayloads: [UUID: [String: Any]] = [:]
+private let kPendingAnswerPayloadsLock = NSLock()
+
 public class VoipPushAppDelegateSubscriber: ExpoAppDelegateSubscriber {
 
     // PushKit registry and stub CallKit provider live for the lifetime of the
@@ -188,6 +198,21 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
         update.supportsHolding = true
         update.supportsDTMF = false
 
+        // [stage 2] Stash payload keyed by UUID so the stub answer handler
+        // can pre-connect LiveKit before the RN bundle is alive. Even if RN
+        // boots faster than the answer, ExpoCallKitModule will get the same
+        // payload via the App Group queue + NotificationCenter event, so
+        // there's no race.
+        kPendingAnswerPayloadsLock.lock()
+        var sp: [String: Any] = ["callId": callId, "hasVideo": hasVideo, "callerName": callerName]
+        for (k, v) in dict {
+            guard let key = k as? String else { continue }
+            if let s = v as? String { sp[key] = s }
+            else if let n = v as? NSNumber { sp[key] = n }
+        }
+        kPendingAnswerPayloads[uuid] = sp
+        kPendingAnswerPayloadsLock.unlock()
+
         let provider = VoipPushAppDelegateSubscriber.earlyProvider ?? makeEphemeralProvider()
         provider.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
             if let error = error {
@@ -270,11 +295,94 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
     }
 
     public func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
-        print("[VoipSubscriber] stub CXAnswerCallAction — marking pending accept")
+        print("[VoipSubscriber] stub CXAnswerCallAction — marking pending accept + native LK pre-connect")
+        let uuid = action.callUUID
+
+        // 1. Persist accept intent so ExpoCallKitModule replays once RN is up.
         if let ud = UserDefaults(suiteName: kAppGroupId) {
-            ud.set(action.callUUID.uuidString, forKey: "pendingAcceptUUID")
+            ud.set(uuid.uuidString, forKey: "pendingAcceptUUID")
         }
+
+        // 2. Configure AVAudioSession FIRST. CallKit will activate it after
+        //    fulfill() returns; setting category/mode early avoids a race
+        //    where LiveKit's first audio capture runs before voiceChat mode.
+        do {
+            try AVAudioSession.sharedInstance().setCategory(
+                .playAndRecord, mode: .voiceChat,
+                options: [.allowBluetoothA2DP, .allowBluetoothHFP]
+            )
+        } catch {
+            print("[VoipSubscriber] setCategory pre-connect failed: \(error)")
+        }
+
+        // 3. Grab the payload we stashed when the push arrived. If it's gone
+        //    (rare — possibly an app cold-restart between push and answer),
+        //    fall back to the App Group pending-call queue.
+        kPendingAnswerPayloadsLock.lock()
+        var payload = kPendingAnswerPayloads[uuid]
+        kPendingAnswerPayloadsLock.unlock()
+        if payload == nil, let ud = UserDefaults(suiteName: kAppGroupId),
+           let queue = ud.array(forKey: kPendingCallKey) as? [[String: Any]] {
+            for entry in queue {
+                if (entry["uuid"] as? String) == uuid.uuidString {
+                    var merged: [String: Any] = entry
+                    if let inner = entry["payload"] as? [String: Any] {
+                        for (k, v) in inner { merged[k] = v }
+                    }
+                    payload = merged
+                    break
+                }
+            }
+        }
+
+        // 4. Kick off the LiveKit Room connect in a Task — we MUST NOT block
+        //    this CXAnswer callback. fulfill() runs synchronously below.
+        if let p = payload {
+            Self.startNativeLkConnect(payload: p)
+        } else {
+            print("[VoipSubscriber] No payload found for \(uuid.uuidString) — skipping native LK pre-connect; JS path will handle.")
+        }
+
         action.fulfill()
+    }
+
+    /// Read room_name/identity from the push payload and ask NativeCallRoom
+    /// to connect. Token fetch happens inside the Task — total time-to-audio
+    /// on a typical 4G network is ~300-600ms.
+    static func startNativeLkConnect(payload: [String: Any]) {
+        let roomName = (payload["room_name"] as? String)
+            ?? (payload["conversation_id"] as? String)
+            ?? (payload["callId"] as? String)
+            ?? ""
+        // identity = our user; prefer explicit identity in payload, else fall
+        // back to user_email persisted in App Group at login.
+        var identity: String = (payload["identity"] as? String) ?? ""
+        if identity.isEmpty,
+           let ud = UserDefaults(suiteName: kAppGroupId),
+           let email = ud.string(forKey: "user_email") {
+            identity = email
+        }
+        guard !roomName.isEmpty, !identity.isEmpty else {
+            print("[VoipSubscriber] LK pre-connect skipped — missing room=\(roomName) identity=\(identity)")
+            return
+        }
+        Task.detached(priority: .userInitiated) {
+            do {
+                let tok = try await NativeCallTokenFetcher.shared.fetchToken(
+                    roomName: roomName,
+                    identity: identity,
+                    role: "subscriber"
+                )
+                NativeCallRoom.shared.connect(
+                    url: tok.url,
+                    token: tok.token,
+                    identity: identity,
+                    roomName: roomName
+                )
+            } catch {
+                print("[VoipSubscriber] LK token fetch failed: \(error) — JS path will retry")
+            }
+        }
     }
 
     public func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
@@ -282,6 +390,13 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
         if let ud = UserDefaults(suiteName: kAppGroupId) {
             ud.set(action.callUUID.uuidString, forKey: "pendingEndUUID")
         }
+        // [stage 2] Drop the stashed payload + tear the native LK room. Safe
+        // to call even if connect never fired — disconnect() is idempotent.
+        kPendingAnswerPayloadsLock.lock()
+        kPendingAnswerPayloads.removeValue(forKey: action.callUUID)
+        kPendingAnswerPayloadsLock.unlock()
+        NativeCallRoom.shared.disconnect()
+
         // Do NOT manually setActive(false) here. CallKit fires didDeactivate
         // automatically after fulfill(); calling setActive ourselves competes
         // with the WebRTC audio engine and races with the module's path.

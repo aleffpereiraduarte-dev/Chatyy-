@@ -15,6 +15,13 @@ Pod::Spec.new do |s|
 
   s.dependency 'ExpoModulesCore'
 
+  # [stage 2 native LiveKit pre-connect, 2026-05-15]
+  # NativeCallRoom.swift does `import LiveKit` from the LiveKitClient pod so
+  # the iOS native side can connect to LiveKit before the RN bundle is up.
+  # Pinned to ~> 2.0 to match the JS livekit-client ^2.19 and to share the
+  # SDK with ChatyyBroadcastExtension (which has its own pod entry).
+  s.dependency 'LiveKitClient', '~> 2.0'
+
   s.source_files = '**/*.swift'
 
   s.frameworks = 'CallKit', 'PushKit', 'AVFoundation'

@@ -78,7 +78,18 @@ public class ExpoCallKitModule: Module {
       // [bug 2026-05-15 #9] Bridged to JS so /call can wait for CallKit to
       // own the AVAudioSession before calling Room.connect on LiveKit.
       "onCallKitAudioActivated",
-      "onCallKitAudioDeactivated"
+      "onCallKitAudioDeactivated",
+      // [stage 2 native LiveKit pre-connect, 2026-05-15] Mirrored from
+      // NativeCallRoom so JS can adopt the already-connected Room instead of
+      // creating a duplicate. Order roughly mirrors livekit-client's events
+      // so /call can swap its emitter shim.
+      "onLkConnected",
+      "onLkDisconnected",
+      "onLkParticipantConnected",
+      "onLkParticipantDisconnected",
+      "onLkTrackSubscribed",
+      "onLkTrackUnsubscribed",
+      "onLkConnectionQuality"
     )
 
     // Auto-initialize on module load (skip CallKit in China per Apple requirement)
@@ -195,6 +206,82 @@ public class ExpoCallKitModule: Module {
       }
     }
 
+    // ---------------------------------------------------------------------
+    // [stage 2 native LiveKit pre-connect, 2026-05-15] JS-facing bridge.
+    //
+    // The CallKit answer path may have already started a LiveKit Room before
+    // JS mounted. /call calls `adoptNativeRoom()` first; if it returns a
+    // connected snapshot it skips its own Room.connect and just renders the
+    // participants from the snapshot, then listens to onLk* events for
+    // live updates.
+    // ---------------------------------------------------------------------
+
+    // [#992 Stage 1+2 alignment] Positional args matching Android Kotlin
+    // signature: lkConnect(url, token, callId, hasVideo). JS uses positional
+    // — Expo Module binds them to ordered params. identity is derived from
+    // App Group `user_email` (or callId fallback) since iOS only needs an
+    // identifier; the callId doubles as roomName.
+    AsyncFunction("lkConnect") { (url: String, token: String, callId: String, hasVideo: Bool) -> Void in
+      let identity: String = {
+        if let ud = UserDefaults(suiteName: kAppGroupId),
+           let e = ud.string(forKey: "user_email"), !e.isEmpty { return e }
+        return "ios-\(callId)"
+      }()
+      NativeCallRoom.shared.connect(
+        url: url,
+        token: token,
+        identity: identity,
+        roomName: callId
+      )
+    }
+
+    AsyncFunction("lkDisconnect") { () -> Void in
+      NativeCallRoom.shared.disconnect()
+    }
+
+    AsyncFunction("lkSetMicEnabled") { (enabled: Bool) -> Void in
+      NativeCallRoom.shared.setMicEnabled(enabled)
+    }
+
+    AsyncFunction("lkSetCameraEnabled") { (enabled: Bool) -> Void in
+      NativeCallRoom.shared.setCameraEnabled(enabled)
+    }
+
+    // [Stage 1+2 alignment] Match Android signature: adoptNativeRoom(callId)
+    // returns the snapshot dict or nil if no room or callId mismatch.
+    AsyncFunction("adoptNativeRoom") { (callId: String) -> [String: Any]? in
+      NativeCallRoom.shared.addListener(self)
+      let snap = NativeCallRoom.shared.getSnapshot()
+      guard snap.connected else { return nil }
+      if let active = NativeCallRoom.shared.lastRoomName, !active.isEmpty,
+         active != callId {
+        print("[ExpoCallKit] adoptNativeRoom: room is for \(active), not \(callId)")
+        return nil
+      }
+      var dict = snap.toDictionary()
+      dict["alreadyConnected"] = true
+      return dict
+    }
+
+    Function("isNativeRoomConnected") { () -> Bool in
+      NativeCallRoom.shared.state.rawValue == "connected"
+    }
+
+    // [Stage 1+2 alignment] Positional args: persistAuthForNativeCall(token, baseUrl).
+    AsyncFunction("persistAuthForNativeCall") { (token: String, baseUrl: String) -> Void in
+      guard let ud = UserDefaults(suiteName: kAppGroupId) else { return }
+      ud.set(token, forKey: "auth_token")
+      ud.set(baseUrl, forKey: "api_base")
+      ud.set(Date().timeIntervalSince1970, forKey: "auth_token_at")
+    }
+
+    AsyncFunction("persistPendingLkToken") { (roomName: String, token: String, url: String) -> Void in
+      guard let ud = UserDefaults(suiteName: kAppGroupId) else { return }
+      ud.set(token, forKey: "lk_token_\(roomName)")
+      ud.set(url, forKey: "lk_url_\(roomName)")
+      ud.set(Date().timeIntervalSince1970, forKey: "lk_ts_\(roomName)")
+    }
+
     Function("getDiagnostics") { () -> [String: Any] in
       let callCount = self.stateQueue.sync { self.activeCalls.count }
       let hasToken: Bool = {
@@ -210,7 +297,12 @@ public class ExpoCallKitModule: Module {
         "hasVoipToken": hasToken,
         "activeCalls": callCount,
         "isMainThread": Thread.isMainThread,
-        "registryOwner": "AppDelegate"
+        "registryOwner": "AppDelegate",
+        // [stage 2] surface native LK state to JS so /call can diagnose
+        // pre-connect outcome without a roundtrip through events.
+        "nativeRoomState": NativeCallRoom.shared.state.rawValue,
+        "nativeRoomName": NativeCallRoom.shared.lastRoomName as Any,
+        "nativeRoomIdentity": NativeCallRoom.shared.lastIdentity as Any,
       ]
     }
   }
@@ -743,5 +835,51 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
       }
     }
     module?.notifyAudioDeactivated()
+  }
+}
+
+// MARK: - NativeCallRoom listener bridge
+//
+// [stage 2 native LiveKit pre-connect, 2026-05-15]
+// Forwards LiveKit Room events from the native singleton up to JS via
+// safeSendEvent. Listener registration is idempotent — JS calls
+// adoptNativeRoom() which adds us to the listener bag (NSHashTable
+// dedupes); we never remove because the listener is owned by the module
+// for the lifetime of the app.
+extension ExpoCallKitModule: NativeCallRoomListener {
+  public func nativeCallRoom(_ room: NativeCallRoom, didEmit event: NativeCallRoomEvent) {
+    switch event {
+    case .connected(let roomName, let localIdentity):
+      safeSendEvent("onLkConnected", [
+        "roomName": roomName,
+        "localIdentity": localIdentity
+      ])
+    case .disconnected(let reason):
+      safeSendEvent("onLkDisconnected", ["reason": reason])
+    case .participantConnected(let identity, let name):
+      safeSendEvent("onLkParticipantConnected", [
+        "identity": identity,
+        "name": name ?? ""
+      ])
+    case .participantDisconnected(let identity):
+      safeSendEvent("onLkParticipantDisconnected", ["identity": identity])
+    case .trackSubscribed(let participantIdentity, let trackSid, let kind):
+      safeSendEvent("onLkTrackSubscribed", [
+        "participantIdentity": participantIdentity,
+        "trackSid": trackSid,
+        "kind": kind
+      ])
+    case .trackUnsubscribed(let participantIdentity, let trackSid, let kind):
+      safeSendEvent("onLkTrackUnsubscribed", [
+        "participantIdentity": participantIdentity,
+        "trackSid": trackSid,
+        "kind": kind
+      ])
+    case .connectionQualityChanged(let participantIdentity, let quality):
+      safeSendEvent("onLkConnectionQuality", [
+        "participantIdentity": participantIdentity,
+        "quality": quality
+      ])
+    }
   }
 }
