@@ -128,6 +128,52 @@ class ExpoCallKitModule : Module() {
       }
     }
 
+    // [2026-05-15 #992] LiveKit native pre-connect events. NativeCallRoom
+    // is a singleton that owns the Room and emits events through these
+    // companion methods so the Expo Module instance doesn't need to be alive
+    // at the time of the event (cold-start: room connects before RN bundle
+    // parses, the module subscribes when JS finally mounts and replays).
+    fun emitLkConnected(callId: String, snapshot: Map<String, Any?>) {
+      val inst = instance.get()
+      if (inst != null) {
+        inst.sendEvent("onLkConnected", mapOf("callId" to callId, "snapshot" to snapshot))
+      } else {
+        Log.d(TAG, "emitLkConnected: no JS instance yet — snapshot will be served via adoptNativeRoom()")
+      }
+    }
+    fun emitLkParticipantConnected(callId: String, identity: String, sid: String) {
+      instance.get()?.sendEvent("onLkParticipantConnected",
+        mapOf("callId" to callId, "identity" to identity, "sid" to sid))
+    }
+    fun emitLkParticipantDisconnected(callId: String, identity: String) {
+      instance.get()?.sendEvent("onLkParticipantDisconnected",
+        mapOf("callId" to callId, "identity" to identity))
+    }
+    fun emitLkTrackSubscribed(callId: String, identity: String, kind: String, sid: String) {
+      instance.get()?.sendEvent("onLkTrackSubscribed",
+        mapOf("callId" to callId, "identity" to identity, "kind" to kind, "sid" to sid))
+    }
+    fun emitLkTrackUnsubscribed(callId: String, identity: String, kind: String) {
+      instance.get()?.sendEvent("onLkTrackUnsubscribed",
+        mapOf("callId" to callId, "identity" to identity, "kind" to kind))
+    }
+    fun emitLkConnectionQuality(callId: String, identity: String, quality: String) {
+      instance.get()?.sendEvent("onLkConnectionQuality",
+        mapOf("callId" to callId, "identity" to identity, "quality" to quality))
+    }
+    fun emitLkDisconnected(callId: String, reason: String) {
+      instance.get()?.sendEvent("onLkDisconnected",
+        mapOf("callId" to callId, "reason" to reason))
+    }
+    fun emitLkDataReceived(callId: String, identity: String, data: String) {
+      instance.get()?.sendEvent("onLkDataReceived",
+        mapOf("callId" to callId, "identity" to identity, "data" to data))
+    }
+    fun emitLkError(callId: String, message: String) {
+      instance.get()?.sendEvent("onLkError",
+        mapOf("callId" to callId, "message" to message))
+    }
+
     /**
      * Save accepted call data to SharedPreferences so JS can read it on cold start.
      * Called from IncomingCallActivity and CallActionReceiver when instance is null.
@@ -156,7 +202,13 @@ class ExpoCallKitModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("ExpoCallKit")
 
-    Events("onCallAnswered", "onCallEnded", "onVoipTokenReceived", "onIncomingCall")
+    Events(
+      "onCallAnswered", "onCallEnded", "onVoipTokenReceived", "onIncomingCall",
+      // [2026-05-15 #992] Native LiveKit Room events fired by NativeCallRoom.
+      "onLkConnected", "onLkParticipantConnected", "onLkParticipantDisconnected",
+      "onLkTrackSubscribed", "onLkTrackUnsubscribed", "onLkConnectionQuality",
+      "onLkDisconnected", "onLkDataReceived", "onLkError"
+    )
 
     OnCreate {
       instance.set(this@ExpoCallKitModule)
@@ -358,8 +410,71 @@ class ExpoCallKitModule : Module() {
         "instanceReady" to (instance.get() != null),
         "canUseFullScreenIntent" to canUseFSI,
         "apiLevel" to Build.VERSION.SDK_INT,
-        "ringingServiceActive" to (CallRingingService.currentCallId.get() != null)
+        "ringingServiceActive" to (CallRingingService.currentCallId.get() != null),
+        "lkNativeRoomConnected" to NativeCallRoom.isConnected(),
+        "lkNativeCallId" to (NativeCallRoom.currentCallId() ?: "")
       )
+    }
+
+    // ─── Native LiveKit Room (Stage 1 #992) ───────────────────────────────
+    //
+    // Allow JS to persist auth + base URL into SharedPreferences so Kotlin
+    // can fetch a LiveKit token without waiting for the JS bridge to be alive.
+    // Called from services/api.js on login success.
+    AsyncFunction("persistAuthForNativeCall") { token: String, baseUrl: String ->
+      try {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+          .putString("auth_token", token)
+          .putString("api_base", baseUrl)
+          .apply()
+        Log.d(TAG, "persistAuthForNativeCall: stashed token len=${token.length} base=$baseUrl")
+      } catch (t: Throwable) {
+        Log.e(TAG, "persistAuthForNativeCall failed: ${t.message}")
+      }
+    }
+
+    // Pre-stash a fetched LK token+url so IncomingCallActivity.onAccept can
+    // use it without re-fetching (saves ~300ms on the critical path).
+    // Called from IncomingCallListener when JS handles the call_invite WS
+    // event ahead of the OS push delivery (warm path).
+    AsyncFunction("persistPendingLkToken") { roomName: String, token: String, url: String ->
+      LkTokenFetcher.setCached(context, roomName, token, url)
+    }
+
+    Function("isNativeRoomConnected") {
+      NativeCallRoom.isConnected()
+    }
+
+    // [#992] JS calls this when /call.js mounts. If native already has a
+    // connected Room for the callId, returns a snapshot and JS skips its
+    // own Room.connect → no dual-Room race. Otherwise returns null and JS
+    // falls back to its legacy connect path.
+    AsyncFunction("adoptNativeRoom") { callId: String ->
+      if (!NativeCallRoom.isConnected()) return@AsyncFunction null
+      if (NativeCallRoom.currentCallId() != callId) {
+        Log.w(TAG, "adoptNativeRoom: native room is for ${NativeCallRoom.currentCallId()}, not $callId — declining adoption")
+        return@AsyncFunction null
+      }
+      NativeCallRoom.getSnapshot()
+    }
+
+    // JS-initiated connect (outgoing calls — Stage 5). Native is happy to
+    // either pre-connect (incoming, from onAccept) or be told to connect
+    // (outgoing, from chat-conversation tap "ligar").
+    AsyncFunction("lkConnect") { url: String, token: String, callId: String, hasVideo: Boolean ->
+      NativeCallRoom.connect(context.applicationContext, url, token, callId, hasVideo)
+    }
+
+    AsyncFunction("lkDisconnect") {
+      NativeCallRoom.disconnect()
+    }
+
+    AsyncFunction("lkSetMicEnabled") { enabled: Boolean ->
+      NativeCallRoom.setMicEnabled(enabled)
+    }
+
+    AsyncFunction("lkSetCameraEnabled") { enabled: Boolean ->
+      NativeCallRoom.setCameraEnabled(enabled)
     }
   }
 }

@@ -430,6 +430,14 @@ class IncomingCallActivity : AppCompatActivity() {
     // Try to send event to JS (may fail if app is dead)
     ExpoCallKitModule.emitCallAnswered(callId ?: "")
 
+    // [#992 Stage 1] FIRE THE NATIVE LIVEKIT ROOM CONNECT IMMEDIATELY.
+    // Pre-fetch token (or use cache if JS pre-stashed it) + connect on a
+    // background thread. Audio remoto começa em <500ms, ANTES de a JS bundle
+    // parsear. /call.js, when it eventually mounts, calls
+    // ExpoCallKit.adoptNativeRoom(callId) and adopts this existing Room
+    // — não cria outra. Resolve "atendi e desligou" no kill state.
+    triggerNativeLkConnect()
+
     // Cancel the notification and stop the ringing foreground service
     CallNotificationService.cancelNotification(this, callId ?: "")
     stopRingingService()
@@ -617,5 +625,46 @@ class IncomingCallActivity : AppCompatActivity() {
 
   override fun onBackPressed() {
     // Do not allow back press to dismiss - must accept or decline
+  }
+
+  /**
+   * [#992 Stage 1] Pre-connect a LiveKit Room native-side immediately on
+   * accept. Runs on a background thread (Kotlin coroutine via NativeCallRoom).
+   *
+   * Flow:
+   *   1. Use roomName = call_id (backend convention)
+   *   2. Identity = caller_email (or "android-${callId}" fallback)
+   *   3. Try LkTokenFetcher.getCached() first (JS may have pre-stashed via
+   *      persistPendingLkToken on call_invite WS event). If cache miss, fetch.
+   *   4. NativeCallRoom.connect() — emits onLkConnected when ready.
+   *   5. /call.js JS calls ExpoCallKit.adoptNativeRoom(callId) on mount and
+   *      finds the Room already alive. Skips its own connect.
+   *
+   * Failure modes:
+   *   - JS hasn't called persistAuthForNativeCall yet → fetcher returns null
+   *     → no native pre-connect → /call.js falls back to legacy JS connect
+   *     (4-8s cold path). Graceful degrade.
+   *   - Backend 401/500 → same fallback.
+   *   - LiveKit URL unreachable → same fallback.
+   */
+  private fun triggerNativeLkConnect() {
+    val id = callId ?: return
+    val identity = (callerEmail?.takeIf { it.isNotBlank() } ?: "android-$id")
+    Thread {
+      try {
+        val ctx = applicationContext
+        // Try cache first
+        val cached = LkTokenFetcher.getCached(ctx, id)
+        val tk = cached ?: LkTokenFetcher.fetch(ctx, id, identity)
+        if (tk == null) {
+          Log.w("IncomingCallActivity", "[#992] no LK token — fallback to JS-side connect")
+          return@Thread
+        }
+        Log.i("IncomingCallActivity", "[#992] pre-connecting native LK room callId=$id hasVideo=$hasVideo")
+        NativeCallRoom.connect(ctx, tk.url, tk.token, id, hasVideo)
+      } catch (t: Throwable) {
+        Log.e("IncomingCallActivity", "[#992] triggerNativeLkConnect failed: ${t.message}")
+      }
+    }.start()
   }
 }

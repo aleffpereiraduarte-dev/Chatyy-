@@ -29,6 +29,20 @@ dependencies {
   implementation 'androidx.collection:collection:1.4.0'
   implementation platform('com.google.firebase:firebase-bom:33.7.0')
   implementation 'com.google.firebase:firebase-messaging'
+
+  // [2026-05-15 #992] LiveKit Android SDK for native pre-connect on call accept.
+  // Without this, the cold-start path is JS-bound: IncomingCallActivity →
+  // SharedPrefs → MainActivity boot → JS parse → /call → Room.connect (~4-8s).
+  // With native pre-connect, audio starts in <500ms on accept tap.
+  // Audio routing handled by audioswitch which is brought transitively from
+  // @livekit/react-native-webrtc (already in app). webrtc-sdk is pinned to
+  // the version @livekit/react-native uses to avoid SO conflicts.
+  implementation('io.livekit:livekit-android:2.18.2') {
+    // Exclude transitive webrtc — @livekit/react-native-webrtc provides it.
+    exclude group: 'io.github.webrtc-sdk', module: 'android'
+  }
+  implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
 }
 
 def safeExtGet(prop, fallback) {

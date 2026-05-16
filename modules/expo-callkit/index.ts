@@ -11,6 +11,19 @@ interface ExpoCallKitEvents {
   // CallKit's and we end up with competing setCategory paths.
   onCallKitAudioActivated: Record<string, never>;
   onCallKitAudioDeactivated: Record<string, never>;
+  // [#992 Stage 1] Native LiveKit Room events — fired by NativeCallRoom
+  // (Android Kotlin) / NativeCallRoom (iOS Swift, Stage 2). JS /call.js
+  // subscribes after adoptNativeRoom() succeeds to receive participant +
+  // track state instead of building its own Room.
+  onLkConnected: { callId: string; snapshot: Record<string, any> };
+  onLkParticipantConnected: { callId: string; identity: string; sid: string };
+  onLkParticipantDisconnected: { callId: string; identity: string };
+  onLkTrackSubscribed: { callId: string; identity: string; kind: 'audio' | 'video' | string; sid: string };
+  onLkTrackUnsubscribed: { callId: string; identity: string; kind: string };
+  onLkConnectionQuality: { callId: string; identity: string; quality: string };
+  onLkDisconnected: { callId: string; reason: string };
+  onLkDataReceived: { callId: string; identity: string; data: string };
+  onLkError: { callId: string; message: string };
 }
 
 declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
@@ -22,6 +35,15 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
   getDiagnostics(): Record<string, any>;
   consumePendingEvents(): Array<Record<string, any>>;
   consumePendingCall(): { callId: string; callerName: string; hasVideo: boolean } | null;
+  // [#992 Stage 1] Native LiveKit Room control
+  persistAuthForNativeCall(token: string, baseUrl: string): Promise<void>;
+  persistPendingLkToken(roomName: string, token: string, url: string): Promise<void>;
+  isNativeRoomConnected(): boolean;
+  adoptNativeRoom(callId: string): Promise<Record<string, any> | null>;
+  lkConnect(url: string, token: string, callId: string, hasVideo: boolean): Promise<void>;
+  lkDisconnect(): Promise<void>;
+  lkSetMicEnabled(enabled: boolean): Promise<void>;
+  lkSetCameraEnabled(enabled: boolean): Promise<void>;
 }
 
 let mod: ExpoCallKitModuleType | null = null;
@@ -169,4 +191,95 @@ export function consumePendingCall(): { callId: string; callerName: string; hasV
   } catch {
     return null;
   }
+}
+
+// ─── Native LiveKit Room (Stage 1 #992) ──────────────────────────────────────
+// Bridges the JS /call screen to the native-owned Room. Used to eliminate the
+// 4-8s cold-start audio gap on Android (and iOS once Stage 2 lands).
+
+/** Stash auth token + API base URL into native SharedPreferences (Android)
+ *  / App Group UserDefaults (iOS). Call from AuthContext on login success
+ *  so cold-start accept paths can fetch LK tokens without JS. */
+export async function persistAuthForNativeCall(token: string, baseUrl: string): Promise<void> {
+  const m = getModule();
+  if (!m) return;
+  try {
+    await m.persistAuthForNativeCall(token, baseUrl);
+  } catch (e) {
+    console.warn('[ExpoCallKit] persistAuthForNativeCall error:', e);
+  }
+}
+
+/** Stash a pre-fetched LK token+url for a roomName so the native side can
+ *  skip the HTTP round-trip on accept. Call this from IncomingCallListener
+ *  when WS delivers the call_invite event ahead of FCM/PushKit. */
+export async function persistPendingLkToken(roomName: string, token: string, url: string): Promise<void> {
+  const m = getModule();
+  if (!m) return;
+  try {
+    await m.persistPendingLkToken(roomName, token, url);
+  } catch (e) {
+    console.warn('[ExpoCallKit] persistPendingLkToken error:', e);
+  }
+}
+
+/** Sync check — true when a native Room is connected. */
+export function isNativeRoomConnected(): boolean {
+  const m = getModule();
+  if (!m) return false;
+  try { return !!m.isNativeRoomConnected(); } catch { return false; }
+}
+
+/** Ask native side if it already owns a connected Room for this callId.
+ *  Returns the snapshot (participants, tracks) if yes; null otherwise.
+ *  JS /call.js skips its own Room.connect when this returns non-null. */
+export async function adoptNativeRoom(callId: string): Promise<Record<string, any> | null> {
+  const m = getModule();
+  if (!m) return null;
+  try {
+    return (await m.adoptNativeRoom(callId)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Outgoing path: JS asks native to connect a Room. Used from chat-conversation
+ *  when user taps "ligar" and we want audio to start before /call mounts. */
+export async function lkConnect(url: string, token: string, callId: string, hasVideo: boolean): Promise<void> {
+  const m = getModule();
+  if (!m) throw new Error('Native CallKit module unavailable');
+  await m.lkConnect(url, token, callId, hasVideo);
+}
+
+export async function lkDisconnect(): Promise<void> {
+  const m = getModule();
+  if (!m) return;
+  try { await m.lkDisconnect(); } catch {}
+}
+
+export async function lkSetMicEnabled(enabled: boolean): Promise<void> {
+  const m = getModule();
+  if (!m) return;
+  try { await m.lkSetMicEnabled(enabled); } catch {}
+}
+
+export async function lkSetCameraEnabled(enabled: boolean): Promise<void> {
+  const m = getModule();
+  if (!m) return;
+  try { await m.lkSetCameraEnabled(enabled); } catch {}
+}
+
+type LkEventName =
+  | 'onLkConnected' | 'onLkParticipantConnected' | 'onLkParticipantDisconnected'
+  | 'onLkTrackSubscribed' | 'onLkTrackUnsubscribed' | 'onLkConnectionQuality'
+  | 'onLkDisconnected' | 'onLkDataReceived' | 'onLkError';
+
+export function onLkEvent<K extends LkEventName>(
+  event: K,
+  cb: (data: any) => void
+): () => void {
+  const e = getEmitter();
+  if (!e) return () => {};
+  const sub = e.addListener(event, cb);
+  return () => sub.remove();
 }

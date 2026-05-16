@@ -2078,6 +2078,26 @@ export function setAuthTokenDirect(token) {
     _saveTokenMeta().catch(() => {});
   }
   storeToken(token);
+  // [#992 Stage 1] Persist token+base into native SharedPreferences (Android)
+  // / App Group UserDefaults (iOS) so the call-accept cold-start path can
+  // fetch a LiveKit token without waiting for the JS bridge. Best-effort.
+  if (token) {
+    _persistAuthForNative(token).catch(() => {});
+  }
+}
+
+let _ExpoCallKitNative = null;
+async function _persistAuthForNative(token) {
+  try {
+    if (!_ExpoCallKitNative) {
+      _ExpoCallKitNative = await import('../modules/expo-callkit');
+    }
+    if (_ExpoCallKitNative?.persistAuthForNativeCall) {
+      await _ExpoCallKitNative.persistAuthForNativeCall(token, BASE_URL);
+    }
+  } catch {
+    // Module may not be linked on web. Silent fail.
+  }
 }
 
 export function saveTrustToken(token) {
