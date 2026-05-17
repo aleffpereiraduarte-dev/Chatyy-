@@ -4497,6 +4497,12 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState(null);
   const [waveformLevels, setWaveformLevels] = useState([]);
+  // View-once toggle — when on, the recipient can listen exactly once before
+  // the audio is consumed (WhatsApp 2026-Q1 parity). Visual: small "1" pill
+  // above the mic, purple when active + hint text "Áudio só pode ser ouvido
+  // uma vez". Pre-upload session is skipped when active so view_once=1 lands
+  // on chat_upload, which is the path that propagates the flag to the row.
+  const [voiceViewOnce, setVoiceViewOnce] = useState(false);
   // Preview state — set after stopping (to listen before sending, WhatsApp-style)
   const [previewData, setPreviewData] = useState(null); // { uri, blob?, name, type, duration, waveform, voiceSessionId? }
   const [previewPlaying, setPreviewPlaying] = useState(false);
@@ -4828,15 +4834,28 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
             new Promise(r => setTimeout(r, 4000)),
           ]);
         }
-        const voiceSessionId = voiceSessionRef.current?.alive ? voiceSessionRef.current.sessionId : null;
+        // View-once voice notes MUST go through the legacy chat_upload path
+        // because chat_voice_session_finalize doesn't propagate the
+        // view_once flag (it just dumps the assembled file into a row with
+        // is_view_once=0). Skipping the session id forces the fallback
+        // chatUploadFile branch in handleSendAudio, which forwards
+        // view_once=1 to the server.
+        const voiceSessionId = (voiceViewOnce || !voiceSessionRef.current?.alive)
+          ? null
+          : voiceSessionRef.current.sessionId;
+        // Abandon the session server-side (GC will clean) when we skip it.
+        if (voiceViewOnce && voiceSessionRef.current) {
+          voiceSessionRef.current.alive = false;
+        }
         setPreviewData({
           uri, blob,
           name: `audio_${Date.now()}.webm`,
           type: 'audio/webm',
           duration,
           waveform: snapshot,
-          voiceSessionId, // null → legacy upload fallback
+          voiceSessionId, // null → legacy upload fallback (also used for view-once)
           voiceSessionMime: 'audio/webm',
+          viewOnce: voiceViewOnce,
         });
       } else {
         let uri;
@@ -4854,7 +4873,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
         }
         try { const { setAudioModeAsync } = require('expo-audio'); await setAudioModeAsync({ allowsRecording: false }); } catch {}
         if (uri) {
-          setPreviewData({ uri, name: `audio_${Date.now()}.m4a`, type: 'audio/mp4', duration, waveform: nativeWaveform });
+          setPreviewData({ uri, name: `audio_${Date.now()}.m4a`, type: 'audio/mp4', duration, waveform: nativeWaveform, viewOnce: voiceViewOnce });
         } else {
           onCancel();
         }
@@ -5040,6 +5059,23 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
           {formatDuration(previewData.duration || duration)}
         </Text>
 
+        {/* View-once toggle on preview — last chance to flip before sending.
+            Mirrors the toggle on the record pill so users who only decide to
+            mark "view-once" *after* listening back can still flip the flag.
+            Tapping updates previewData.viewOnce which handleConfirmSend
+            forwards to handleSendAudio. */}
+        <TouchableOpacity
+          onPress={() => setPreviewData(p => p ? { ...p, viewOnce: !p.viewOnce } : p)}
+          style={[
+            recStyles.voiceOnceBtn,
+            previewData.viewOnce ? recStyles.voiceOnceBtnActive : { borderColor: colors.border || 'rgba(124,58,237,0.35)' },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel={previewData.viewOnce ? (t('chatConv.viewOnceVoiceLabel') || 'Áudio único') : 'Marcar como visualização única'}
+        >
+          <Text style={[recStyles.voiceOnceBtnText, { color: previewData.viewOnce ? '#fff' : (colors.textTertiary || '#9ca3af') }]}>1</Text>
+        </TouchableOpacity>
+
         {/* Send */}
         <TouchableOpacity onPress={handleConfirmSend} style={recStyles.sendBtn} accessibilityLabel="Enviar áudio">
           <IconSend size={20} color="#fff" />
@@ -5133,19 +5169,47 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
           </View>
         </View>
 
-        {/* Slide hint with animated arrow — fades out as user drags left */}
+        {/* Slide hint with animated arrow — fades out as user drags left.
+            When view-once is engaged, swap the slide hint for the view-once
+            explainer so the user gets explicit confirmation that the audio
+            will self-destruct after one play. */}
         <Animated.View style={[recStyles.slideRow, { opacity: slideHintOpacity }]}>
-          <Animated.Text style={[recStyles.slideArrow, {
-            color: slideCancelColor,
-            transform: [{ translateX: pulseAnim.interpolate({ inputRange: [1, 1.6], outputRange: [0, -4] }) }],
-            opacity: pulseAnim.interpolate({ inputRange: [1, 1.6], outputRange: [0.7, 1] }),
-          }]}>{'‹‹'}</Animated.Text>
-          <Text style={[recStyles.slideHint, { color: slideCancelColor }]}>
-            {t('chatConv.slideToCancel') || 'Deslize para cancelar · toque ✓ para pré-ouvir'}
-          </Text>
+          {voiceViewOnce ? (
+            <Text style={[recStyles.slideHint, { color: '#7C3AED', fontWeight: '600' }]} numberOfLines={1}>
+              {t('chatConv.viewOnceVoiceHint') || 'Áudio só pode ser ouvido uma vez'}
+            </Text>
+          ) : (
+            <>
+              <Animated.Text style={[recStyles.slideArrow, {
+                color: slideCancelColor,
+                transform: [{ translateX: pulseAnim.interpolate({ inputRange: [1, 1.6], outputRange: [0, -4] }) }],
+                opacity: pulseAnim.interpolate({ inputRange: [1, 1.6], outputRange: [0.7, 1] }),
+              }]}>{'‹‹'}</Animated.Text>
+              <Text style={[recStyles.slideHint, { color: slideCancelColor }]}>
+                {t('chatConv.slideToCancel') || 'Deslize para cancelar · toque ✓ para pré-ouvir'}
+              </Text>
+            </>
+          )}
         </Animated.View>
       </View>
 
+      {/* View-once "1" toggle — WhatsApp 2026-Q1 parity. Tapping flips the
+          flag; sending this voice note will deliver as is_view_once=1 and
+          the recipient bubble plays exactly once before locking. Visual:
+          small pill, dim border when off, solid purple when on. Hint text
+          ("Áudio só pode ser ouvido uma vez") appears under the slide-to-
+          cancel row when active so the user has explicit confirmation. */}
+      <TouchableOpacity
+        onPress={() => setVoiceViewOnce(v => !v)}
+        style={[
+          recStyles.voiceOnceBtn,
+          voiceViewOnce ? recStyles.voiceOnceBtnActive : { borderColor: colors.border || 'rgba(124,58,237,0.35)' },
+        ]}
+        accessibilityRole="button"
+        accessibilityLabel={voiceViewOnce ? (t('chatConv.viewOnceVoiceLabel') || 'Áudio único') : 'Marcar como visualização única'}
+      >
+        <Text style={[recStyles.voiceOnceBtnText, { color: voiceViewOnce ? '#fff' : (colors.textTertiary || '#9ca3af') }]}>1</Text>
+      </TouchableOpacity>
       {/* Lock affordance — tapping engages hands-free recording. The pop
           animation (0.8 → 1.2 → 1 spring) is the only confirmation on web
           since browsers have no haptic API; native pairs the pop with a 40ms
@@ -5225,6 +5289,21 @@ const recStyles = StyleSheet.create({
   },
   stopSquare: {
     width: 16, height: 16, borderRadius: 3, backgroundColor: '#fff',
+  },
+  // View-once "1" pill
+  voiceOnceBtn: {
+    width: 30, height: 30, borderRadius: 15,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1.5,
+    backgroundColor: 'transparent',
+    marginRight: 4,
+  },
+  voiceOnceBtnActive: {
+    backgroundColor: '#7C3AED',
+    borderColor: '#7C3AED',
+  },
+  voiceOnceBtnText: {
+    fontSize: 13, fontWeight: '800',
   },
   // Error state
   errorInner: {
@@ -11286,6 +11365,12 @@ export default function ChatConversationScreen() {
     const tempId = `tmp_audio_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const audioMsgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const localUri = audioData.blob ? URL.createObjectURL(audioData.blob) : audioData.uri;
+    // View-once propagation. While uploading the bubble still renders the
+    // standard AudioPlayer (so the sender sees the local audio with progress),
+    // and once the server response lands the canonical row carries
+    // is_view_once=1 which flips us into the ViewOnceMessage path — matches
+    // image/video view-once behavior.
+    const audioViewOnce = !!audioData?.viewOnce;
     const optimisticMsg = {
       id: tempId,
       sender_email: user?.email,
@@ -11308,7 +11393,10 @@ export default function ChatConversationScreen() {
       // we need is the cheap finalize call — server already has the bytes.
       // Falls through to the legacy single-shot upload otherwise.
       let r;
-      if (audioData.voiceSessionId) {
+      // Skip the fast pre-upload finalize path when view-once is on: the
+      // session endpoint hardcodes is_view_once=0 server-side, so we must
+      // go through chat_upload which honors view_once=1 on the request body.
+      if (audioData.voiceSessionId && !audioViewOnce) {
         // Snap the optimistic progress straight to ~95% so the user sees the
         // collapse — finalize handles the last bit.
         if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: 95 }));
@@ -11330,7 +11418,7 @@ export default function ChatConversationScreen() {
         // output) as VIDEO because .webm is in the video-extension list. On the
         // other side the message bubble then tries to render a video player and
         // the recipient sees a black player for a voice note.
-        r = await api.chatUploadFile(conversationId, filePayload, `Audio (${formatDuration(audioData.duration)})`, false, (progress) => {
+        r = await api.chatUploadFile(conversationId, filePayload, `Audio (${formatDuration(audioData.duration)})`, audioViewOnce, (progress) => {
           if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(progress * 100) }));
         }, 'audio');
       }
@@ -11373,6 +11461,7 @@ export default function ChatConversationScreen() {
             audio_type: audioData.type,
             duration: audioData.duration,
             temp_id: tempId,
+            view_once: audioViewOnce ? 1 : 0,
           });
           setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _queued: true, _uploading: false } : m));
         } catch {

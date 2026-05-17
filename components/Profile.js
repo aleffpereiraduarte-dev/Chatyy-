@@ -23,7 +23,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Image,
   Platform, Modal, Pressable, ActivityIndicator, Dimensions, Animated, Alert, TextInput,
-  PanResponder, Easing,
+  PanResponder, Easing, Switch,
 } from 'react-native';
 import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
@@ -40,7 +40,7 @@ import EmptyStateCard from './EmptyStateCard';
 import {
   IconX, IconPhone, IconVideo, IconMail, IconMessageSquare, IconUserPlus,
   IconChevronRight, IconSettings, IconMoreHorizontal, IconShare, IconAlertTriangle, IconLock, IconEdit,
-  IconTrash, IconPlus, IconGrid, IconFilm, IconTag, IconCheck,
+  IconTrash, IconPlus, IconGrid, IconFilm, IconTag, IconCheck, IconEyeOff,
 } from './Icons';
 const IconEdit3 = IconEdit;
 const IconTrash2 = IconTrash;
@@ -825,6 +825,12 @@ export default function Profile({
   // so Android needs a real modal. State here so the menu can open it.
   const [nicknameModalOpen, setNicknameModalOpen] = useState(false);
   const [nicknameDraft, setNicknameDraft] = useState('');
+  // Per-contact "hide my status from this person" toggle (WhatsApp parity).
+  // Backed by chat_user_privacy_contacts (email, contact_email, field='status',
+  // visibility='hide'|'show'). Optimistic UI — flips immediately on tap,
+  // POST reconciles in the background.
+  const [hideStatusFromContact, setHideStatusFromContact] = useState(false);
+  const [hideStatusSaving, setHideStatusSaving] = useState(false);
 
   useEffect(() => {
     if (!fetchKey) return;
@@ -907,6 +913,49 @@ export default function Profile({
       } catch {}
     })();
   }, [identity?.email]);
+
+  // Load per-contact "hide status from" preference. Endpoint returns the
+  // full list of overrides for the current user; we scan for an entry
+  // matching this contact + field='status'. Default = 'show'.
+  useEffect(() => {
+    if (!identity?.email) return;
+    if (identity.email === currentUser?.email) return; // not applicable to self
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await api.chatPrivacyContactList?.();
+        if (cancelled) return;
+        const items = r?.data?.items || r?.items || [];
+        const target = String(identity.email).toLowerCase();
+        const match = items.find(it =>
+          String(it?.contact_email || '').toLowerCase() === target &&
+          String(it?.field || '') === 'status'
+        );
+        setHideStatusFromContact(match?.visibility === 'hide');
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [identity?.email, currentUser?.email]);
+
+  const handleToggleHideStatus = useCallback(async (next) => {
+    if (!identity?.email) return;
+    if (hideStatusSaving) return;
+    const desired = typeof next === 'boolean' ? next : !hideStatusFromContact;
+    setHideStatusFromContact(desired); // optimistic
+    setHideStatusSaving(true);
+    try {
+      await api.chatPrivacyContactSet?.({
+        email: identity.email,
+        field: 'status',
+        visibility: desired ? 'hide' : 'show',
+      });
+    } catch {
+      // Revert on failure.
+      setHideStatusFromContact(!desired);
+    } finally {
+      setHideStatusSaving(false);
+    }
+  }, [identity?.email, hideStatusFromContact, hideStatusSaving]);
 
   // [feat-10, 2026-05-15] Story highlights — fetch persisted highlights from
   // chat_status_highlights and merge into data.highlights. The render row
@@ -2252,6 +2301,39 @@ export default function Profile({
                   ? `${t?.('profile.nicknameEdit') || 'Editar apelido'}: ${nicknameValue}`
                   : (t?.('profile.nicknameAdd') || 'Adicionar apelido')}
               </Text>
+            </TouchableOpacity>
+          )}
+          {identity?.email && identity.email !== currentUser?.email && (
+            // WhatsApp-style per-contact privacy: hide my status updates from
+            // just this person without going to Settings → Privacy → Status.
+            // Tapping the row anywhere flips the Switch (matches the rest of
+            // the sheet's tap target). Optimistic UI, see handleToggleHideStatus.
+            <TouchableOpacity
+              onPress={() => handleToggleHideStatus()}
+              activeOpacity={0.7}
+              style={[menuItemStyle(colors), { justifyContent: 'space-between' }]}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: hideStatusFromContact }}
+              accessibilityLabel={t?.('profile.hideStatusFromContact') || 'Ocultar status deste contato'}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, flex: 1 }}>
+                <IconEyeOff size={20} color={colors?.text} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 15, color: colors?.text, fontWeight: '500' }}>
+                    {t?.('profile.hideStatusFromContact') || 'Ocultar status deste contato'}
+                  </Text>
+                  <Text style={{ fontSize: 12, color: colors?.textSecondary, marginTop: 2 }}>
+                    {t?.('profile.hideStatusFromContactDesc') || 'Este contato não verá seus status'}
+                  </Text>
+                </View>
+              </View>
+              <Switch
+                value={hideStatusFromContact}
+                onValueChange={handleToggleHideStatus}
+                disabled={hideStatusSaving}
+                trackColor={{ false: '#767577', true: colors?.primary || '#25D366' }}
+                thumbColor={Platform.OS === 'android' ? (hideStatusFromContact ? '#fff' : '#f4f3f4') : undefined}
+              />
             </TouchableOpacity>
           )}
           <TouchableOpacity onPress={handleBlock} style={menuItemStyle(colors)}>

@@ -421,7 +421,7 @@ export async function replayOfflineQueue(api) {
             action.conversation_id,
             filePayload,
             `Audio (${action.duration || 0}s)`,
-            false,
+            !!action.view_once,
             null, // no progress callback in replay
             'audio',
           );

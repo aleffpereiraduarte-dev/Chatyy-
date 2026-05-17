@@ -4,7 +4,7 @@ import {
   Image, ActivityIndicator, Platform, StatusBar as RNStatusBar, BackHandler,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { IconEye, IconLock, IconVideo, IconCheck, IconX } from './Icons';
+import { IconEye, IconLock, IconVideo, IconCheck, IconX, IconMic, IconPlay, IconPause } from './Icons';
 
 let _expoVideoMod = null;
 function loadExpoVideo() {
@@ -12,6 +12,14 @@ function loadExpoVideo() {
   try { _expoVideoMod = require('expo-video'); }
   catch { _expoVideoMod = false; }
   return _expoVideoMod;
+}
+
+let _expoAudioMod = null;
+function loadExpoAudio() {
+  if (_expoAudioMod !== null) return _expoAudioMod;
+  try { _expoAudioMod = require('expo-audio'); }
+  catch { _expoAudioMod = false; }
+  return _expoAudioMod;
 }
 
 const VIEWED_KEY = 'chatyy.viewOnceViewed.v1';
@@ -249,7 +257,17 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
   };
 
   const fileUrl = msg?.file_url || null;
-  const isVideo = (msg?.type === 'video') || /\.(mp4|mov|webm|mkv|avi|m4v|3gp)(\?|$)/i.test(String(fileUrl || ''));
+  // Audio detection MUST come before video — a `.webm` voice note hits the
+  // video extension regex otherwise and gets rendered with VideoView (black
+  // screen, no audible playback). Voice notes use msg.type === 'audio' or
+  // 'voice'; the extension check (.m4a/.opus/.ogg/.mp3/.aac/.wav) is the
+  // belt-and-suspenders fallback for legacy rows that left type unset.
+  const isAudio = (msg?.type === 'audio' || msg?.type === 'voice') ||
+    /\.(m4a|opus|ogg|mp3|aac|wav)(\?|$)/i.test(String(fileUrl || ''));
+  const isVideo = !isAudio && (
+    (msg?.type === 'video') ||
+    /\.(mp4|mov|webm|mkv|avi|m4v|3gp)(\?|$)/i.test(String(fileUrl || ''))
+  );
 
   const vb = _parseViewedBy(msg?.viewed_by);
   const meLower = String(currentEmail || '').toLowerCase();
@@ -276,17 +294,22 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
     const sub = vbHasAny
       ? (t?.('chatConv.viewOnceOpened') || 'Visualizada')
       : (t?.('chatConv.viewOnceSent') || 'Visualização única');
+    const title = isAudio
+      ? (t?.('chatConv.viewOnceVoiceLabel') || 'Áudio único')
+      : isVideo
+        ? (t?.('chatConv.viewOnceVideo') || 'Vídeo único')
+        : (t?.('chatConv.viewOncePhoto') || 'Foto única');
     return (
       <View style={s.expiredRow}>
         <View style={[s.expiredIconCircle, { backgroundColor: 'rgba(255,255,255,0.15)' }]}>
-          {isVideo ? <IconVideo size={16} color={accent} /> : <IconEye size={16} color={accent} />}
+          {isAudio
+            ? <IconMic size={16} color={accent} />
+            : isVideo
+              ? <IconVideo size={16} color={accent} />
+              : <IconEye size={16} color={accent} />}
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={[s.expiredTitle, { color: accent }]} numberOfLines={1}>
-            {isVideo
-              ? (t?.('chatConv.viewOnceVideo') || 'Vídeo único')
-              : (t?.('chatConv.viewOncePhoto') || 'Foto única')}
-          </Text>
+          <Text style={[s.expiredTitle, { color: accent }]} numberOfLines={1}>{title}</Text>
           <Text style={[s.expiredSub, { color: subtle }]} numberOfLines={1}>{sub}</Text>
         </View>
         <IconLock size={13} color={subtle} />
@@ -298,23 +321,46 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
   if (isLocked) {
     const accent = safeColors.primary;
     const subtle = safeColors.textSecondary;
+    const title = isAudio
+      ? (t?.('chatConv.viewOnceVoiceLabel') || 'Áudio único')
+      : isVideo
+        ? (t?.('chatConv.viewOnceVideo') || 'Vídeo único')
+        : (t?.('chatConv.viewOncePhoto') || 'Foto única');
+    const subLabel = isAudio
+      ? (t?.('chatConv.viewOnceVoiceExpired') || 'Áudio expirado')
+      : (t?.('chatConv.viewOnceOpened') || 'Aberta');
     return (
       <View style={s.expiredRow}>
         <View style={[s.expiredIconCircle, { backgroundColor: 'rgba(124,58,237,0.12)' }]}>
-          <IconCheck size={16} color={accent} />
+          {isAudio ? <IconMic size={16} color={accent} /> : <IconCheck size={16} color={accent} />}
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={[s.expiredTitle, { color: accent }]} numberOfLines={1}>
-            {isVideo
-              ? (t?.('chatConv.viewOnceVideo') || 'Vídeo único')
-              : (t?.('chatConv.viewOncePhoto') || 'Foto única')}
-          </Text>
-          <Text style={[s.expiredSub, { color: subtle }]} numberOfLines={1}>
-            {t?.('chatConv.viewOnceOpened') || 'Aberta'}
-          </Text>
+          <Text style={[s.expiredTitle, { color: accent }]} numberOfLines={1}>{title}</Text>
+          <Text style={[s.expiredSub, { color: subtle }]} numberOfLines={1}>{subLabel}</Text>
         </View>
         <IconLock size={13} color={subtle} />
       </View>
+    );
+  }
+
+  // ───────────── RECEIVER UNVIEWED — AUDIO inline play ─────────────
+  // Audio view-once doesn't open a fullscreen modal — the recipient taps the
+  // pill, the audio plays inline once, and the bubble locks to "expired" as
+  // soon as the player emits `ended`. If playback errors out the pill stays
+  // tap-to-listen so the user can retry (same retry semantics as image/video).
+  if (isAudio) {
+    return (
+      <ViewOnceAudioPlayer
+        msg={msg}
+        fileUrl={fileUrl}
+        colors={safeColors}
+        t={t}
+        onConsumed={() => {
+          if (msg?.id != null) { _markLocalViewed(msg.id).catch(() => {}); }
+          setLocalViewed(true);
+          onView?.(msg?.id);
+        }}
+      />
     );
   }
 
@@ -364,6 +410,227 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
         />
       ) : null}
     </>
+  );
+}
+
+/**
+ * View-once audio player — receiver-side, single-shot inline playback.
+ *
+ *  - Initial state: purple pill with mic icon + "Tocar para ouvir" sub.
+ *  - On tap: starts playback (HTMLAudio on web, expo-audio AudioPlayer on
+ *    native). Pill flips to "Tocando... 0:03 / 0:14" with a play→pause swap.
+ *  - On `ended`: fire onConsumed (which marks the row server-side as opened
+ *    + locks locally). The parent ViewOnceMessage then re-renders us into
+ *    the "expired" pill via `isLocked === true`.
+ *  - On `error`: surface a "tap to retry" sub. Don't burn the view.
+ *  - Pause: tapping while playing pauses but does NOT lock — only `ended`
+ *    counts as consumption (WhatsApp parity; user must hear it through).
+ */
+function ViewOnceAudioPlayer({ msg, fileUrl, colors, t, onConsumed }) {
+  const [playing, setPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(Number(msg?.duration) || 0);
+  const [errored, setErrored] = useState(false);
+  const soundRef = useRef(null);
+  const intervalRef = useRef(null);
+  const consumedRef = useRef(false);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      // Pause + release on unmount so we don't leak an AVPlayer / HTMLAudio.
+      try {
+        if (Platform.OS === 'web') soundRef.current?.pause?.();
+        else {
+          soundRef.current?.pause?.();
+          soundRef.current?._sub?.remove?.();
+          soundRef.current?.remove?.();
+        }
+      } catch {}
+      soundRef.current = null;
+    };
+  }, []);
+
+  const fireConsumed = useCallback(() => {
+    if (consumedRef.current) return;
+    consumedRef.current = true;
+    try { onConsumed?.(); } catch {}
+  }, [onConsumed]);
+
+  const handleTap = useCallback(async () => {
+    if (errored) {
+      // Retry path: reset and let the user tap again.
+      setErrored(false);
+      soundRef.current = null;
+      return;
+    }
+    if (!fileUrl) { setErrored(true); return; }
+
+    if (Platform.OS === 'web') {
+      try {
+        if (!soundRef.current) {
+          const audio = new window.Audio(fileUrl);
+          audio.preload = 'auto';
+          audio.onloadedmetadata = () => {
+            if (!isMountedRef.current) return;
+            if (audio.duration && isFinite(audio.duration)) setDuration(audio.duration);
+          };
+          audio.onended = () => {
+            if (!isMountedRef.current) return;
+            setPlaying(false);
+            setCurrentTime(0);
+            if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+            // The actual consumption hook — fire AFTER state cleanup so the
+            // re-render that flips us into the locked pill happens cleanly.
+            fireConsumed();
+          };
+          audio.onerror = () => {
+            if (!isMountedRef.current) return;
+            setPlaying(false);
+            setErrored(true);
+            if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+          };
+          soundRef.current = audio;
+        }
+        if (playing) {
+          soundRef.current.pause();
+          setPlaying(false);
+          if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+          return;
+        }
+        await soundRef.current.play();
+        if (!isMountedRef.current) return;
+        setPlaying(true);
+        if (intervalRef.current) clearInterval(intervalRef.current);
+        intervalRef.current = setInterval(() => {
+          const a = soundRef.current;
+          if (!a) return;
+          if (a.duration > 0) {
+            setCurrentTime(a.currentTime);
+            if (a.duration && isFinite(a.duration) && !duration) setDuration(a.duration);
+          }
+        }, 100);
+      } catch (e) {
+        setErrored(true);
+        setPlaying(false);
+      }
+      return;
+    }
+
+    // Native (iOS/Android) — expo-audio
+    const mod = loadExpoAudio();
+    if (!mod || !mod.createAudioPlayer) {
+      setErrored(true);
+      return;
+    }
+    try {
+      if (!soundRef.current) {
+        // Force playback through speaker (not earpiece) and pause Spotify/etc.
+        // Same audio session config the regular AudioPlayer uses, so the
+        // view-once playback behaves identically — silent-switch safe, no
+        // mixing with music, releases focus back to other apps on ended.
+        try {
+          await mod.setAudioModeAsync?.({
+            playsInSilentMode: true,
+            allowsRecording: false,
+            shouldPlayInBackground: true,
+            interruptionMode: 'doNotMix',
+            interruptionModeAndroid: 'doNotMix',
+            shouldDuckAndroid: false,
+          });
+        } catch {}
+        const player = mod.createAudioPlayer(typeof fileUrl === 'string' ? fileUrl : { uri: String(fileUrl) }, { updateInterval: 150, downloadFirst: false });
+        const sub = player.addListener?.('playbackStatusUpdate', (status) => {
+          if (!isMountedRef.current) return;
+          if (status?.error) {
+            setErrored(true); setPlaying(false);
+            if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+            return;
+          }
+          if (status?.duration && isFinite(status.duration) && status.duration > 0) {
+            setDuration(status.duration);
+            if (status.playing) setCurrentTime(status.currentTime || 0);
+          }
+          // expo-audio reports `ended` by status.didJustFinish (preferred) or
+          // currentTime >= duration after !playing. Either signal counts.
+          const didFinish = status?.didJustFinish === true ||
+            (!status?.playing && status?.duration > 0 && status?.currentTime >= status?.duration);
+          if (didFinish) {
+            setPlaying(false);
+            setCurrentTime(0);
+            // Hand the audio session back to the OS so Spotify/YT can resume.
+            try {
+              mod.setAudioModeAsync?.({
+                interruptionMode: 'mixWithOthers',
+                interruptionModeAndroid: 'mixWithOthers',
+              }).catch(() => {});
+            } catch {}
+            fireConsumed();
+          }
+        });
+        player._sub = sub;
+        soundRef.current = player;
+      }
+      if (playing) {
+        try { soundRef.current.pause(); } catch {}
+        setPlaying(false);
+        return;
+      }
+      try {
+        soundRef.current.play();
+        setPlaying(true);
+      } catch {
+        setErrored(true);
+      }
+    } catch (e) {
+      setErrored(true);
+      setPlaying(false);
+    }
+  }, [errored, fileUrl, fireConsumed, playing, duration]);
+
+  const accent = colors.primary;
+  const subtle = colors.textSecondary;
+  const fmt = (s) => {
+    const n = Math.max(0, Math.floor(s || 0));
+    const m = Math.floor(n / 60);
+    const r = n % 60;
+    return `${m}:${r < 10 ? '0' : ''}${r}`;
+  };
+
+  const sub = errored
+    ? (t?.('chatConv.viewOnceLoadFailed') || 'Não foi possível carregar. Toque pra tentar.')
+    : playing
+      ? `${fmt(currentTime)} / ${fmt(duration)}`
+      : (t?.('chatConv.viewOnceVoiceTapToHear') || 'Tocar para ouvir');
+
+  return (
+    <TouchableOpacity
+      onPress={handleTap}
+      activeOpacity={0.7}
+      style={s.tapRow}
+      accessibilityRole="button"
+      accessibilityLabel={t?.('chatConv.viewOnceVoiceTapToHear') || 'Tocar para ouvir'}
+    >
+      <View style={[s.tapIconCircle, { backgroundColor: 'rgba(124,58,237,0.14)' }]}>
+        {playing
+          ? <IconPause size={18} color={accent} />
+          : errored
+            ? <IconMic size={18} color={accent} />
+            : <IconPlay size={18} color={accent} />}
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={[s.tapTitle, { color: accent }]} numberOfLines={1}>
+          {t?.('chatConv.viewOnceVoiceLabel') || 'Áudio único'}
+        </Text>
+        <Text style={[s.tapSub, { color: subtle }]} numberOfLines={1}>
+          {sub}
+        </Text>
+      </View>
+      <IconLock size={13} color={subtle} />
+    </TouchableOpacity>
   );
 }
 
