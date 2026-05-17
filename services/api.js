@@ -5897,6 +5897,71 @@ export async function liveRecordingDelete(sessionId) {
   return apiCall('live_recording_delete', { session_id: sessionId }, 'POST');
 }
 
+// ─── Live moderation + engagement endpoints ───
+// Host pins a comment so it sticks above the live chat overlay. Backend
+// persists it on chat_live_sessions and broadcasts WS `live_pin_comment` to
+// every subscribed viewer. Empty `comment_text` unpins.
+export async function chatLivePinComment(sessionId, commentText, commentAuthorName) {
+  return apiCall('chat_live_pin_comment', {
+    session_id: sessionId,
+    comment_text: commentText || '',
+    comment_author_name: commentAuthorName || '',
+  }, 'POST');
+}
+export async function chatLiveUnpinComment(sessionId) {
+  return apiCall('chat_live_pin_comment', {
+    session_id: sessionId,
+    comment_text: '',
+    comment_author_name: '',
+  }, 'POST');
+}
+// Host sets slow-mode (seconds between comments per viewer). 0 = disabled.
+// Backend rejects subsequent live_chat from viewers under the cooldown and
+// returns { code: 'slow_mode', wait_seconds } so the client can toast a hint.
+export async function chatLiveSetSlowMode(sessionId, seconds) {
+  return apiCall('chat_live_set_slow_mode', {
+    session_id: sessionId,
+    seconds: Number(seconds) || 0,
+  }, 'POST');
+}
+// Host bans/kicks a viewer from the current live (and future ones if perm).
+// Backend pushes WS `live_viewer_kicked` with viewer_email so the target's
+// client can hang up immediately.
+export async function chatLiveBanViewer(sessionId, viewerEmail, permanent = false) {
+  return apiCall('chat_live_ban_viewer', {
+    session_id: sessionId,
+    viewer_email: viewerEmail,
+    permanent: permanent ? 1 : 0,
+  }, 'POST');
+}
+// Create a live poll (question + 2-4 options). Backend inserts row +
+// broadcasts WS `live_poll_created` so both host + viewers paint the overlay.
+export async function chatLivePollCreate(sessionId, question, options) {
+  return apiCall('chat_live_poll_create', {
+    session_id: sessionId,
+    question: String(question || '').slice(0, 200),
+    options: (Array.isArray(options) ? options : []).slice(0, 4).map(o => String(o || '').slice(0, 80)),
+  }, 'POST');
+}
+// Viewer casts a single vote. Backend rejects duplicate votes by user/email
+// and broadcasts WS `live_poll_voted` with the new tallies.
+export async function chatLivePollVote(sessionId, pollId, optionIndex) {
+  return apiCall('chat_live_poll_vote', {
+    session_id: sessionId,
+    poll_id: pollId,
+    option_index: Number(optionIndex),
+  }, 'POST');
+}
+// Host closes the active poll. Backend stamps closed_at + broadcasts
+// `live_poll_closed`. Final tallies stay in the message so late viewers see
+// the outcome via session info.
+export async function chatLivePollClose(sessionId, pollId) {
+  return apiCall('chat_live_poll_close', {
+    session_id: sessionId,
+    poll_id: pollId,
+  }, 'POST');
+}
+
 // ============================================================
 // CALL HISTORY
 // ============================================================

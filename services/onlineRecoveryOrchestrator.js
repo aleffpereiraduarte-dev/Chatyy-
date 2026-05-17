@@ -58,11 +58,15 @@ const _listeners = new Set();
 const MIN_GAP_MS = 1500;
 // Debounce so multiple triggers in the same tick collapse to one run.
 const DEBOUNCE_MS = 800;
-// chat_sync caps at 200 convs / request (mirrored in chatSync.js); we batch
-// in groups of 100 with concurrency 4 so even a 1000-conv account drains in
-// 3 round-trips.
-const CONV_BATCH = 100;
+// chat_sync caps at 200 convs / request. Smaller batches = faster individual
+// calls + better UX. 2026-05-17: bumped down 100→25 because users reported
+// "Sincronizando…" stuck for 30s+ on dense accounts; each batch was waiting
+// on the backend's longest conv.
+const CONV_BATCH = 25;
 const CONV_CONCURRENCY = 4;
+// Max time the syncing badge stays visible. Sync may continue in the
+// background but UI dismisses to avoid the user thinking the app is stuck.
+const BADGE_MAX_MS = 8000;
 
 function _notify() {
   for (const fn of _listeners) {
@@ -155,6 +159,18 @@ async function _runRecovery(reason) {
   _notify();
   try { console.log('[onlineRecovery] start —', reason); } catch {}
 
+  // Watchdog: clear the visible badge after BADGE_MAX_MS even if the sync
+  // is still running in background. WhatsApp parity — sincronizando deve
+  // sumir rápido pro user não achar que travou.
+  const _badgeWatchdog = setTimeout(() => {
+    try {
+      _syncing = false;
+      globalThis.__chatyy_syncing = false;
+      _notify();
+      console.log('[onlineRecovery] badge timed out — hiding (sync may continue)');
+    } catch {}
+  }, BADGE_MAX_MS);
+
   try {
     // a) Outbox flush — chat_sends + email actions queued offline. Runs
     //    first because subsequent pulls might otherwise overlap with our
@@ -212,6 +228,7 @@ async function _runRecovery(reason) {
     _lastSyncAt = Date.now();
     try { console.log('[onlineRecovery] done'); } catch {}
   } finally {
+    try { clearTimeout(_badgeWatchdog); } catch {}
     _syncing = false;
     try { globalThis.__chatyy_syncing = false; } catch {}
     _notify();

@@ -29,6 +29,8 @@ import LiveConnectingOverlay from '../components/live/LiveConnectingOverlay';
 import LiveTopGifters from '../components/LiveTopGifters';
 import LiveGiftAnimation from '../components/LiveGiftAnimation';
 import LiveGiftPicker, { IconGiftBox } from '../components/LiveGiftPicker';
+import LivePollOverlay from '../components/live/LivePollOverlay';
+import ConnectionBars from '../components/ConnectionBars';
 
 // Humanize big counts the way Instagram/TikTok do: 999 → 999, 1.2K, 12.4K, 1.2M.
 // We localize the decimal separator from the user locale where possible.
@@ -263,6 +265,10 @@ export default function LiveViewerScreen() {
   const [error, setError] = useState('');
   const [following, setFollowing] = useState(false);
   const [connQuality, setConnQuality] = useState('good'); // good | medium | poor
+  // Numeric 0..4 level for the ConnectionBars indicator (top-right corner).
+  // 4 = excellent (hide bars), 3 = good, 2 = poor, 1 = lost. Mirrors the
+  // call screen's bar logic so the user reads "signal" instantly.
+  const [connLevel, setConnLevel] = useState(4);
   const [inputText, setInputText] = useState('');
   const [inputFocused, setInputFocused] = useState(false);
   const [burstHearts, setBurstHearts] = useState([]);
@@ -275,10 +281,20 @@ export default function LiveViewerScreen() {
   // without the chat noise. Bottom input collapses to just the inline heart.
   const [chatHidden, setChatHidden] = useState(false);
   // Pinned host comment — TikTok-style sticky chip above the comments column.
-  // Backend doesn't expose a pin endpoint yet; we keep this client-side so
-  // host can long-press their own messages (in live-broadcast) to pin one.
-  // Viewer just renders whatever the WS broadcasts (msg.type === 'live_pin').
+  // Updated 2026-05-17: backend now persists pins (`chat_live_pin_comment`),
+  // so late-joiners hydrate from `live_session_info.pinned_comment` AND react
+  // to WS `live_pin_comment`. Legacy `live_pin` (WS-only) still handled.
   const [pinnedMsg, setPinnedMsg] = useState(null);
+  // Live poll state — populated by `live_session_info.active_poll` on join
+  // and refreshed via WS `live_poll_created/voted/closed`. Voter UX tracks
+  // the local vote index so we can color the bar green and lock the row.
+  const [activePoll, setActivePoll] = useState(null); // { id, question, options:[{text,votes}], total_votes, closed }
+  const [myPollVoteIndex, setMyPollVoteIndex] = useState(null);
+  // Host-imposed cooldown for comments. Backend rejects with code='slow_mode'
+  // + wait_seconds when a viewer types too fast; we render a toast and short-
+  // circuit handleSendChat's optimistic insert if the cooldown isn't met.
+  const [slowModeSeconds, setSlowModeSeconds] = useState(0);
+  const lastChatSlowModeAtRef = useRef(0);
   // Host quick-peek (Instagram long-press preview) — shows a compact card
   // floating over the stream with avatar/name/quick actions. Long-press only,
   // single tap on the avatar still does the rail tap (toggleFollow).
@@ -483,9 +499,10 @@ export default function LiveViewerScreen() {
   useEffect(() => {
     if (streamType === 'cf_hls') {
       setConnQuality(connected ? 'good' : 'poor');
+      setConnLevel(connected ? 4 : 1);
       return undefined;
     }
-    if (!connected) { setConnQuality('poor'); return; }
+    if (!connected) { setConnQuality('poor'); setConnLevel(1); return; }
     let cancelled = false;
     const tick = async () => {
       const pc = pcRef.current;
@@ -508,7 +525,13 @@ export default function LiveViewerScreen() {
         let q = 'good';
         if (rtt > 350 || lossRate > 0.05) q = 'medium';
         if (rtt > 700 || lossRate > 0.12 || pc.connectionState !== 'connected') q = 'poor';
-        if (!cancelled) setConnQuality(q);
+        // Bars level mirrors ConnectionBars semantics: 4=excellent, 3=good,
+        // 2=meh/poor, 1=lost (very high RTT or PC not connected).
+        let level = 4;
+        if (rtt > 50 || lossRate > 0.005) level = 3;
+        if (rtt > 100 || lossRate > 0.01) level = 2;
+        if (rtt > 200 || lossRate > 0.04 || pc.connectionState !== 'connected') level = 1;
+        if (!cancelled) { setConnQuality(q); setConnLevel(level); }
       } catch {}
     };
     tick();
@@ -809,6 +832,30 @@ export default function LiveViewerScreen() {
           } else if (msg.stream_type === 'webrtc') {
             setStreamType('webrtc');
           }
+          // Late-joiner state hydration — backend includes the current pin,
+          // active poll, and slow-mode cooldown in this payload so viewers
+          // who joined mid-broadcast see the same overlays as in-session ones.
+          if (msg.pinned_comment) {
+            setPinnedMsg({
+              content: String(msg.pinned_comment),
+              name: msg.pinned_comment_by || '?',
+              email: '',
+            });
+          }
+          if (msg.active_poll && msg.active_poll.id) {
+            const p = msg.active_poll;
+            setActivePoll({
+              id: p.id,
+              question: p.question,
+              options: (p.options || []).map(o => typeof o === 'string'
+                ? { text: o, votes: 0 }
+                : { text: o.text || '', votes: Number(o.votes) || 0 }),
+              total_votes: Number(p.total_votes) || 0,
+              closed: !!p.closed,
+            });
+            if (typeof p.my_vote_index === 'number') setMyPollVoteIndex(p.my_vote_index);
+          }
+          if (typeof msg.slow_mode_seconds === 'number') setSlowModeSeconds(msg.slow_mode_seconds);
           break;
         case 'live_offer':
           // Update ICE with TURN credentials if provided
@@ -827,10 +874,9 @@ export default function LiveViewerScreen() {
           handleChatMsg(msg);
           break;
         case 'live_pin':
-          // Host pinned (or unpinned) a comment. Payload: { type: 'live_pin',
-          // content, sender_name, sender_email } — empty content clears. We
-          // keep this client-side (no persistence) so viewers who join after
-          // the pin just won't see it until host re-pins.
+          // Legacy WS-only pin (no persistence). Payload: { type: 'live_pin',
+          // content, sender_name, sender_email }. Empty content clears.
+          // Kept for back-compat with hosts still on the WS path.
           if (msg.content) {
             setPinnedMsg({
               content: String(msg.content),
@@ -839,6 +885,80 @@ export default function LiveViewerScreen() {
             });
           } else {
             setPinnedMsg(null);
+          }
+          break;
+        case 'live_pin_comment':
+          // Persisted-pin WS event. Same payload shape as the API: comment_text,
+          // comment_author_name. Empty comment_text = unpin. Late-joiners get
+          // the current pin from live_join's payload (read in handleJoinResponse).
+          if (msg.comment_text) {
+            setPinnedMsg({
+              content: String(msg.comment_text),
+              name: msg.comment_author_name || '?',
+              email: '',
+            });
+          } else {
+            setPinnedMsg(null);
+          }
+          break;
+        case 'live_viewer_kicked':
+          // Host kicked/banned someone. If the email is ours, bail out
+          // immediately (toast + hangup). For other targets, just drop them
+          // from the local viewer list (visual nicety).
+          {
+            const target = String(msg.viewer_email || '').toLowerCase();
+            const me = String(user?.email || '').toLowerCase();
+            if (target && me && target === me) {
+              try { showToastRef.current?.(t('live.youWereKicked') || 'Você foi removido do live'); } catch {}
+              // Mark as ended so any HLS retry timers short-circuit.
+              liveEndedRef.current = true;
+              setLiveEnded(true);
+              // Brief delay so the toast is readable before we leave.
+              setTimeout(() => { try { router.back(); } catch {} }, 1200);
+            } else if (target) {
+              setViewers(prev => prev.filter(v => (v.email || '').toLowerCase() !== target));
+            }
+          }
+          break;
+        case 'live_poll_created':
+          if (msg.poll || msg.poll_id) {
+            const poll = msg.poll || {
+              id: msg.poll_id,
+              question: msg.question,
+              options: (msg.options || []).map(o => typeof o === 'string'
+                ? { text: o, votes: 0 }
+                : { text: o.text || '', votes: Number(o.votes) || 0 }),
+              total_votes: Number(msg.total_votes) || 0,
+              closed: false,
+            };
+            setActivePoll(poll);
+            setMyPollVoteIndex(null);
+          }
+          break;
+        case 'live_poll_voted':
+          if (msg.poll_id) {
+            setActivePoll(prev => {
+              if (!prev || String(prev.id) !== String(msg.poll_id)) return prev;
+              const incoming = Array.isArray(msg.options) ? msg.options : null;
+              if (!incoming) return prev;
+              const next = prev.options.map((o, i) => ({
+                ...o,
+                votes: typeof incoming[i] === 'object'
+                  ? (Number(incoming[i].votes) || 0)
+                  : (Number(incoming[i]) || 0),
+              }));
+              const total = typeof msg.total_votes === 'number'
+                ? msg.total_votes
+                : next.reduce((s, o) => s + (o.votes || 0), 0);
+              return { ...prev, options: next, total_votes: total };
+            });
+          }
+          break;
+        case 'live_poll_closed':
+          if (msg.poll_id) {
+            setActivePoll(prev => (prev && String(prev.id) === String(msg.poll_id))
+              ? { ...prev, closed: true }
+              : prev);
           }
           break;
         case 'live_viewer_count':
@@ -1352,6 +1472,16 @@ export default function LiveViewerScreen() {
     // drops and felt the composer was broken ("sistema quebrando").
     const now = Date.now();
     if (now - lastChatSendAtRef.current < 600) return;
+    // Host slow-mode cooldown — client-side pre-check so we don't burn an API
+    // round-trip on a known reject. Server is authoritative; this is just UX.
+    if (slowModeSeconds > 0) {
+      const elapsed = (now - lastChatSlowModeAtRef.current) / 1000;
+      if (elapsed < slowModeSeconds) {
+        const wait = Math.ceil(slowModeSeconds - elapsed);
+        try { showToastRef.current?.((t('live.slowModeWait') || 'Aguarde {n}s antes de comentar de novo').replace('{n}', String(wait))); } catch {}
+        return;
+      }
+    }
     lastChatSendAtRef.current = now;
 
     const senderName = user?.name || user?.email?.split('@')[0] || 'You';
@@ -1381,7 +1511,19 @@ export default function LiveViewerScreen() {
       // viewer's comment cleared from composer immediately but if both the
       // WS and API failed silently, peers got nothing and the viewer assumed
       // it landed.
-      api.liveSendChat(paramSessionId, text).catch(() => {
+      // Slow-mode aware: if backend returns { code: 'slow_mode', wait_seconds },
+      // we toast the wait time and roll back the optimistic insert.
+      api.liveSendChat(paramSessionId, text).then((res) => {
+        if (res && res.success === false && (res.code === 'slow_mode' || res.data?.code === 'slow_mode')) {
+          const wait = Number(res.wait_seconds || res.data?.wait_seconds || slowModeSeconds || 0);
+          try { showToastRef.current?.((t('live.slowModeWait') || 'Aguarde {n}s antes de comentar de novo').replace('{n}', String(wait))); } catch {}
+          try { setChatMessages(prev => prev.filter(m => m.id !== msgId)); } catch {}
+          return;
+        }
+        // Success — stamp the slow-mode cooldown anchor so the next pre-check
+        // gates correctly until N seconds elapse.
+        lastChatSlowModeAtRef.current = now;
+      }).catch(() => {
         setTimeout(() => {
           api.liveSendChat(paramSessionId, text).catch(() => {
             try {
@@ -1397,7 +1539,7 @@ export default function LiveViewerScreen() {
         }, 800);
       });
     }
-  }, [user, paramSessionId, t]);
+  }, [user, paramSessionId, t, slowModeSeconds]);
 
   // Heart animation — parabolic float, randomized everything for that organic
   // "stream of love" vibe Instagram/TikTok perfected. Each heart has:
@@ -1779,6 +1921,29 @@ export default function LiveViewerScreen() {
       Animated.timing(toastAnim, { toValue: 0, duration: 240, useNativeDriver: true }),
     ]).start(() => setToast(''));
   }, [toastAnim]);
+
+  // Viewer casts a poll vote. Optimistic: bump local tallies + lock the row
+  // before the WS echo arrives so the UI feels instant. Fail-graceful — on
+  // backend miss we silently keep the optimistic state.
+  const handlePollVote = useCallback((optionIndex) => {
+    if (!activePoll || activePoll.closed || myPollVoteIndex !== null) return;
+    setMyPollVoteIndex(optionIndex);
+    setActivePoll(prev => {
+      if (!prev) return prev;
+      const opts = prev.options.map((o, i) => i === optionIndex
+        ? { ...o, votes: (o.votes || 0) + 1 }
+        : o);
+      return { ...prev, options: opts, total_votes: (prev.total_votes || 0) + 1 };
+    });
+    if (paramSessionId && activePoll.id) {
+      api.chatLivePollVote(paramSessionId, activePoll.id, optionIndex).then((res) => {
+        if (res && res.success === false) {
+          // Backend rejected (likely 404 / not shipped). Keep optimistic
+          // state — no toast spam.
+        }
+      }).catch(() => {});
+    }
+  }, [activePoll, myPollVoteIndex, paramSessionId]);
   // Bind showToast into the forward ref so requestToJoin (declared earlier in
   // source order, before showToast) can surface confirmation toasts without
   // hitting a temporal-dead-zone reference. See bug #978-3 fix above.
@@ -2233,6 +2398,29 @@ export default function LiveViewerScreen() {
         onClose={() => router.back()}
       />
 
+      {/* Connection-quality bars — only render when quality drops below
+          excellent (level 4). Sits just under the close button on the right.
+          Telegram pattern: "no news is good news" — drawing it only when
+          there's a problem is what makes the user trust the indicator. */}
+      {connLevel < 4 ? (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: insets.top + 12,
+            right: 60,
+            zIndex: 12,
+            backgroundColor: 'rgba(0,0,0,0.35)',
+            paddingHorizontal: 6,
+            paddingVertical: 4,
+            borderRadius: 8,
+          }}
+          accessibilityLabel={t('live.connectionQuality') || 'Connection quality'}
+        >
+          <ConnectionBars level={connLevel} size={14} />
+        </View>
+      ) : null}
+
       {/* Top gifters (right side, just below the topbar). Same component
           used on the host side so the leaderboard is consistent across
           POVs. Tap → full-screen leaderboard modal. */}
@@ -2511,6 +2699,27 @@ export default function LiveViewerScreen() {
           <LivePinnedChip
             pinnedMsg={pinnedMsg}
             onDismiss={() => setPinnedMsg(null)}
+          />
+        ) : null}
+
+        {/* Live poll overlay — viewer can tap once to vote; after voting or
+            after the poll is closed the card switches to a results-only view
+            with bars. Dismiss button only appears after closure. */}
+        {activePoll ? (
+          <LivePollOverlay
+            poll={activePoll}
+            isHost={false}
+            myVoteIndex={myPollVoteIndex}
+            onVote={handlePollVote}
+            onClose={() => setActivePoll(null)}
+            i18n={{
+              closeLabel: t('live.pollEnd') || 'Encerrar enquete',
+              closedLabel: t('live.pollClosedLabel') || 'Enquete encerrada',
+              votes: t('live.pollVotes') || 'votos',
+              poll: t('live.poll') || 'Enquete',
+              votedLabel: t('live.pollVoted') || 'Você votou',
+              dismiss: t('common.dismiss') || 'Dispensar',
+            }}
           />
         ) : null}
 

@@ -173,6 +173,20 @@ async function loadModules() {
           };
         }
 
+        // WhatsApp parity: silencia toasts de chat enquanto call ativa.
+        // While the user is on an active voice/video call, foreground chat
+        // pushes shouldn't pop a toast over the call screen (the system call
+        // UI plus the LK audio session make any chat alert disruptive). The
+        // badge still increments via AsyncStorage downstream, so the chat
+        // list reflects the unread on call end. Signaling-style pushes
+        // (incoming_call, login_challenge, etc) handled earlier still fire.
+        try {
+          const { isCallActive } = require('../components/IncomingCallListener');
+          if (typeof isCallActive === 'function' && isCallActive() && data?.type === 'chat_message') {
+            return { shouldShowAlert: false, shouldPlaySound: false, shouldSetBadge: true };
+          }
+        } catch {}
+
         // Per-conversation notification settings (set in
         // ChatNotificationSettingsSheet → cached locally as JSON in
         // AsyncStorage so we can read it sync-ish from this handler).

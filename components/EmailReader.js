@@ -284,10 +284,10 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
     return () => cleanups.forEach((fn) => fn());
   }, [email?.uid, email?.body_html, showQuoted, showTranslation]);
 
-  // Privacy: by default, remote <img> tags are blocked (replaced with a 1×1
-  // transparent pixel) so trackers can't fingerprint the user. The "Show
-  // images" button at the top of the body opts in for this email.
-  const [showImages, setShowImages] = useState(false);
+  // 2026-05-17: user requested images on by default. Tracking pixel concern
+  // dropped — convenience wins. The "Show images" button only appears now
+  // if user disabled them via a future setting (placeholder for opt-out).
+  const [showImages, setShowImages] = useState(true);
   const [hasRemoteImages, setHasRemoteImages] = useState(false);
 
   // Reset per-email state when switching emails
@@ -301,7 +301,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
     setTranslatedHtml('');
     setShowTranslation(false);
     setTranslating(false);
-    setShowImages(false);
+    setShowImages(true);
     setHasRemoteImages(false);
   }, [email?.uid]);
 

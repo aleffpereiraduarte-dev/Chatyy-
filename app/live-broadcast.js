@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Animated,
   Alert, TextInput, Dimensions, StatusBar, FlatList, Keyboard,
+  ActionSheetIOS, Modal,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,6 +17,7 @@ import { useTheme } from '../context/ThemeContext';
 import AnimatedViewerCount from '../components/AnimatedViewerCount';
 import LiveTopGifters from '../components/LiveTopGifters';
 import LiveGiftAnimation from '../components/LiveGiftAnimation';
+import LivePollOverlay from '../components/live/LivePollOverlay';
 
 // Cross-platform WebRTC — same pattern as call.js
 let RTC_PeerConnection, RTC_SessionDescription, RTC_IceCandidate, getUserMediaFn, NativeRTCView;
@@ -119,6 +121,18 @@ export default function LiveBroadcastScreen() {
   const [effectsOn, setEffectsOn] = useState(false);
   const [hideChat, setHideChat] = useState(false);
   const [muteReactions, setMuteReactions] = useState(false);
+  // Slow-mode (host moderation). 0 = disabled, otherwise N seconds the
+  // viewers must wait between comments. Mirror to ref so the WS+API
+  // success handlers can read it without re-renders.
+  const [slowModeSeconds, setSlowModeSeconds] = useState(0);
+  const [slowModeOpenAndroid, setSlowModeOpenAndroid] = useState(false);
+  // Live poll state (host creates from bottom bar). `activePoll` is the
+  // current poll being displayed to host + viewers; `pollDraft` is the
+  // in-progress creation form. Backend pushes WS `live_poll_*` events.
+  const [activePoll, setActivePoll] = useState(null); // { id, question, options:[{text, votes}], total_votes, closed }
+  const [pollDraftOpen, setPollDraftOpen] = useState(false);
+  const [pollDraftQuestion, setPollDraftQuestion] = useState('');
+  const [pollDraftOptions, setPollDraftOptions] = useState(['', '']);
   // Ref mirror so the WS message handler (which lives outside the
   // muteReactions closure window) reads the current toggle value.
   const muteReactionsRef = useRef(false);
@@ -612,6 +626,65 @@ export default function LiveBroadcastScreen() {
             setRequestsOpen(true);
           }
           break;
+        case 'live_pin_comment':
+          // Backend persisted-pin WS echo. Keep local pinnedComment in sync
+          // so the host UI matches what viewers see. Empty content = unpin.
+          if (msg.comment_text) {
+            setPinnedComment({
+              name: msg.comment_author_name || '?',
+              content: String(msg.comment_text),
+            });
+          } else {
+            setPinnedComment(null);
+          }
+          break;
+        case 'live_viewer_kicked':
+          // Server echo of our own ban call — drop the email from local
+          // viewer feeds so the insights list doesn't re-show them.
+          if (msg.viewer_email) {
+            try { setJoinFeed(prev => prev.filter(j => j.email !== msg.viewer_email)); } catch {}
+          }
+          break;
+        case 'live_poll_created':
+          if (msg.poll || msg.poll_id) {
+            const poll = msg.poll || {
+              id: msg.poll_id,
+              question: msg.question,
+              options: (msg.options || []).map(o => typeof o === 'string'
+                ? { text: o, votes: 0 }
+                : { text: o.text || '', votes: Number(o.votes) || 0 }),
+              total_votes: Number(msg.total_votes) || 0,
+              closed: false,
+            };
+            setActivePoll(poll);
+          }
+          break;
+        case 'live_poll_voted':
+          if (msg.poll_id) {
+            setActivePoll(prev => {
+              if (!prev || String(prev.id) !== String(msg.poll_id)) return prev;
+              const incoming = Array.isArray(msg.options) ? msg.options : null;
+              if (!incoming) return prev;
+              const next = prev.options.map((o, i) => ({
+                ...o,
+                votes: typeof incoming[i] === 'object'
+                  ? (Number(incoming[i].votes) || 0)
+                  : (Number(incoming[i]) || 0),
+              }));
+              const total = typeof msg.total_votes === 'number'
+                ? msg.total_votes
+                : next.reduce((s, o) => s + (o.votes || 0), 0);
+              return { ...prev, options: next, total_votes: total };
+            });
+          }
+          break;
+        case 'live_poll_closed':
+          if (msg.poll_id) {
+            setActivePoll(prev => (prev && String(prev.id) === String(msg.poll_id))
+              ? { ...prev, closed: true }
+              : prev);
+          }
+          break;
       }
     };
 
@@ -1026,6 +1099,12 @@ export default function LiveBroadcastScreen() {
                   sender_email: m.email || '',
                 }));
               } catch {}
+            }
+            // Persist via API so late-joining viewers can read the pin on
+            // their live_join response. Fail-graceful — WS broadcast above
+            // already covers the in-session viewers.
+            if (sessionIdRef.current) {
+              api.chatLivePinComment(sessionIdRef.current, pinContent, m.name || '').catch(() => {});
             }
           },
         },
@@ -1494,6 +1573,10 @@ export default function LiveBroadcastScreen() {
           }));
         } catch {}
       }
+      // Persist via API so viewers joining after this point still see the pin.
+      if (sessionIdRef.current) {
+        api.chatLivePinComment(sessionIdRef.current, pinContent, pinName).catch(() => {});
+      }
       setCommentDraft('');
       return;
     }
@@ -1790,6 +1873,206 @@ export default function LiveBroadcastScreen() {
     const last = [...chatMessages].reverse().find(m => m.type !== 'system');
     if (last) setPinnedComment({ name: last.name, content: last.content });
   }, [chatMessages]);
+
+  // Reusable toast — Android ToastAndroid + iOS Alert fallback. Used by the
+  // moderation flows (slow mode, ban) so the host gets confirmation without
+  // a noisy modal interrupting the broadcast.
+  const hostToast = useCallback((text) => {
+    if (!text) return;
+    try {
+      const { ToastAndroid } = require('react-native');
+      if (Platform.OS === 'android' && ToastAndroid?.show) {
+        ToastAndroid.show(text, ToastAndroid.SHORT);
+        return;
+      }
+    } catch {}
+    try { Alert.alert(text); } catch {}
+  }, []);
+
+  // Slow-mode setter — calls the API + WS broadcast so viewers' clients
+  // know the cooldown. Fail-graceful when the endpoint isn't shipped yet:
+  // we still keep the host UI state in sync, just toast "Em breve".
+  const applySlowMode = useCallback(async (seconds) => {
+    const sec = Number(seconds) || 0;
+    setSlowModeSeconds(sec);
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    try {
+      const res = await api.chatLiveSetSlowMode(sid, sec);
+      if (res && res.success === false) {
+        // Backend explicit rejection (e.g. unknown action 404'd) — surface
+        // a "coming soon" toast so the host doesn't think they broke it.
+        hostToast(t('live.featureSoon') || 'Em breve');
+        return;
+      }
+      hostToast(
+        sec > 0
+          ? (t('live.slowModeOnToast') || `Modo lento: ${sec}s`).replace('{n}', String(sec))
+          : (t('live.slowModeOffToast') || 'Modo lento desligado')
+      );
+    } catch {
+      hostToast(t('live.featureSoon') || 'Em breve');
+    }
+  }, [hostToast, t]);
+
+  // Open the slow-mode picker — ActionSheetIOS on iOS, custom Modal on
+  // Android (Android doesn't ship ActionSheet natively).
+  const openSlowModePicker = useCallback(() => {
+    const options = [
+      { sec: 0, label: t('live.slowModeOff') || 'Desligado' },
+      { sec: 5, label: '5s' },
+      { sec: 15, label: '15s' },
+      { sec: 30, label: '30s' },
+      { sec: 60, label: t('live.slowMode1min') || '1 min' },
+    ];
+    if (Platform.OS === 'ios' && ActionSheetIOS?.showActionSheetWithOptions) {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          title: t('live.slowModeTitle') || 'Modo lento',
+          options: [...options.map(o => o.label), t('common.cancel') || 'Cancelar'],
+          cancelButtonIndex: options.length,
+        },
+        (idx) => {
+          if (idx == null || idx === options.length) return;
+          const choice = options[idx];
+          if (choice) applySlowMode(choice.sec);
+        }
+      );
+    } else {
+      setSlowModeOpenAndroid(true);
+    }
+  }, [applySlowMode, t]);
+
+  // Open the moderation ActionSheet for a viewer row — kick from this live
+  // and/or ban permanently. Long-press handler in the insights/viewer list.
+  const openViewerActions = useCallback((viewer) => {
+    if (!viewer?.email) return;
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    const handleKick = async (permanent) => {
+      try {
+        const res = await api.chatLiveBanViewer(sid, viewer.email, permanent);
+        if (res && res.success === false) {
+          hostToast(t('live.featureSoon') || 'Em breve');
+          return;
+        }
+        // Optimistic — drop the viewer from local lists if present.
+        try { setJoinFeed(prev => prev.filter(j => j.email !== viewer.email)); } catch {}
+        // Notify viewers' clients to hangup via WS (server should also push
+        // `live_viewer_kicked` after the REST call resolved; this is a belt-
+        // and-suspenders broadcast for fast feedback).
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          try {
+            wsRef.current.send(JSON.stringify({
+              type: 'live_viewer_kicked',
+              session_id: sid,
+              viewer_email: viewer.email,
+              permanent: permanent ? 1 : 0,
+            }));
+          } catch {}
+        }
+        hostToast(
+          permanent
+            ? (t('live.viewerBanned') || 'Bloqueado de futuros lives')
+            : (t('live.viewerKicked') || 'Removido deste live')
+        );
+      } catch {
+        hostToast(t('live.featureSoon') || 'Em breve');
+      }
+    };
+    const options = [
+      { label: t('live.kickViewer') || 'Remover deste live', destructive: true, run: () => handleKick(false) },
+      { label: t('live.banViewer') || 'Bloquear de futuros', destructive: true, run: () => handleKick(true) },
+    ];
+    if (Platform.OS === 'ios' && ActionSheetIOS?.showActionSheetWithOptions) {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          title: viewer.name || viewer.email,
+          options: [...options.map(o => o.label), t('common.cancel') || 'Cancelar'],
+          destructiveButtonIndex: [0, 1],
+          cancelButtonIndex: options.length,
+        },
+        (idx) => {
+          if (idx == null || idx === options.length) return;
+          options[idx]?.run?.();
+        }
+      );
+    } else {
+      // Android: lean on Alert with destructive buttons (closer to platform
+      // ActionSheet UX than a bespoke Modal here, which would require
+      // additional sheet styling for a single rare path).
+      Alert.alert(
+        viewer.name || viewer.email,
+        viewer.email,
+        [
+          { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+          { text: options[0].label, style: 'destructive', onPress: options[0].run },
+          { text: options[1].label, style: 'destructive', onPress: options[1].run },
+        ],
+      );
+    }
+  }, [hostToast, t]);
+
+  // ─── Live polls (host) ─────────────────────────────────────────────
+  // Open the create-poll modal. Reset draft state so the host doesn't see
+  // stale text from a previous open.
+  const openPollDraft = useCallback(() => {
+    setPollDraftQuestion('');
+    setPollDraftOptions(['', '']);
+    setPollDraftOpen(true);
+  }, []);
+
+  const submitPollDraft = useCallback(async () => {
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    const q = pollDraftQuestion.trim();
+    const opts = pollDraftOptions.map(o => o.trim()).filter(Boolean);
+    if (!q || opts.length < 2) {
+      hostToast(t('live.pollInvalid') || 'Pergunta + pelo menos 2 opções');
+      return;
+    }
+    try {
+      const res = await api.chatLivePollCreate(sid, q, opts);
+      if (res && res.success === false) {
+        hostToast(t('live.featureSoon') || 'Em breve');
+        return;
+      }
+      // Backend echoes back the created poll via `live_poll_created` WS;
+      // the handler below will set activePoll. Optimistically close draft.
+      setPollDraftOpen(false);
+      // Optimistically seed activePoll so the host overlay shows up even if
+      // WS round-trip is slow.
+      const seeded = res?.data?.poll || {
+        id: res?.data?.poll_id || ('local_' + Date.now()),
+        question: q,
+        options: opts.map(text => ({ text, votes: 0 })),
+        total_votes: 0,
+        closed: false,
+      };
+      setActivePoll(seeded);
+    } catch {
+      hostToast(t('live.featureSoon') || 'Em breve');
+    }
+  }, [pollDraftQuestion, pollDraftOptions, hostToast, t]);
+
+  const closeActivePoll = useCallback(async () => {
+    const sid = sessionIdRef.current;
+    const pid = activePoll?.id;
+    if (!sid || !pid) { setActivePoll(null); return; }
+    try {
+      const res = await api.chatLivePollClose(sid, pid);
+      if (res && res.success === false) {
+        // Even on backend miss we should clear the local overlay so it
+        // doesn't get stuck.
+        setActivePoll(prev => prev ? { ...prev, closed: true } : null);
+        hostToast(t('live.featureSoon') || 'Em breve');
+        return;
+      }
+      setActivePoll(prev => prev ? { ...prev, closed: true } : null);
+    } catch {
+      setActivePoll(prev => prev ? { ...prev, closed: true } : null);
+    }
+  }, [activePoll, hostToast, t]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -2395,6 +2678,10 @@ export default function LiveBroadcastScreen() {
                     }));
                   } catch {}
                 }
+                // Clear the persisted pin so re-joiners don't re-see it.
+                if (sessionIdRef.current) {
+                  api.chatLiveUnpinComment(sessionIdRef.current).catch(() => {});
+                }
               }}
               style={styles.pinnedClose}
               accessibilityLabel="Unpin"
@@ -2481,6 +2768,22 @@ export default function LiveBroadcastScreen() {
           accessibilityRole="button"
         >
           <IconPin size={18} color="#fff" />
+        </TouchableOpacity>
+        {/* Poll button — opens the create-poll modal. Highlighted when an
+            active poll is on-screen (host can tap to jump to its overlay /
+            close it from there). */}
+        <TouchableOpacity
+          onPress={() => { if (activePoll && !activePoll.closed) { closeActivePoll(); } else { openPollDraft(); } }}
+          style={[styles.rightBtn, activePoll && !activePoll.closed && { backgroundColor: 'rgba(124,58,237,0.5)' }]}
+          activeOpacity={0.7}
+          accessibilityLabel={t('live.poll') || 'Enquete'}
+          accessibilityRole="button"
+        >
+          <Text style={{ color: activePoll && !activePoll.closed ? '#facc15' : '#fff', fontWeight: '900', fontSize: 11, letterSpacing: 0.5 }}>
+            {activePoll && !activePoll.closed
+              ? (t('live.pollClose') || 'FIM')
+              : (t('live.pollShort') || 'POLL')}
+          </Text>
         </TouchableOpacity>
         <TouchableOpacity
           onPress={handleFlipCamera}
@@ -2772,6 +3075,21 @@ export default function LiveBroadcastScreen() {
               <View style={[liveSheetStyles.toggle, muteReactions && liveSheetStyles.toggleOn]}>
                 <View style={[liveSheetStyles.knob, muteReactions && liveSheetStyles.knobOn]} />
               </View>
+            </TouchableOpacity>
+
+            {/* Slow-mode picker — opens an ActionSheet (iOS) or sub-Modal
+                (Android). Subtitle reflects the current cooldown so the
+                host can verify it's on without re-opening the picker. */}
+            <TouchableOpacity onPress={() => { setSettingsOpen(false); setTimeout(openSlowModePicker, Platform.OS === 'ios' ? 250 : 0); }} style={liveSheetStyles.row} activeOpacity={0.7}>
+              <View style={{ flex: 1 }}>
+                <Text style={liveSheetStyles.rowLabel}>{t('live.slowMode') || 'Modo lento'}</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 12, marginTop: 2 }}>
+                  {slowModeSeconds > 0
+                    ? ((t('live.slowModeEvery') || 'Comentário a cada {n}s').replace('{n}', String(slowModeSeconds)))
+                    : (t('live.slowModeOff') || 'Desligado')}
+                </Text>
+              </View>
+              <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 18 }}>›</Text>
             </TouchableOpacity>
 
             <TouchableOpacity onPress={() => setSettingsOpen(false)} style={liveSheetStyles.closeBtn} activeOpacity={0.85}>
@@ -3107,13 +3425,19 @@ export default function LiveBroadcastScreen() {
                 data={joinFeed}
                 keyExtractor={(item, idx) => `${item.email}-${idx}`}
                 renderItem={({ item }) => (
-                  <View style={styles.insightsJoinRow}>
+                  <TouchableOpacity
+                    onLongPress={() => openViewerActions(item)}
+                    delayLongPress={350}
+                    activeOpacity={0.7}
+                    style={styles.insightsJoinRow}
+                    accessibilityHint={t('live.longPressModerate') || 'Pressione para moderar'}
+                  >
                     <AvatarCircle name={item.name} email={item.email} size={32} />
                     <View style={{ flex: 1, marginLeft: 10 }}>
                       <Text style={styles.insightsJoinName} numberOfLines={1}>{item.name}</Text>
                       <Text style={styles.insightsJoinEmail} numberOfLines={1}>{item.email}</Text>
                     </View>
-                  </View>
+                  </TouchableOpacity>
                 )}
                 style={{ maxHeight: 320 }}
               />
@@ -3125,6 +3449,121 @@ export default function LiveBroadcastScreen() {
           </View>
         </View>
       ) : null}
+
+      {/* Active poll overlay — host always sees results + close button.
+          Positioned just below the top bar / pinned chip area so it doesn't
+          collide with the chat overlay along the bottom. */}
+      {activePoll ? (
+        <View
+          pointerEvents="box-none"
+          style={{ position: 'absolute', top: insets.top + 110, left: 0, right: 0, zIndex: 50 }}
+        >
+          <LivePollOverlay
+            poll={activePoll}
+            isHost
+            onClose={closeActivePoll}
+            i18n={{
+              closeLabel: t('live.pollEnd') || 'Encerrar enquete',
+              closedLabel: t('live.pollClosedLabel') || 'Enquete encerrada',
+              votes: t('live.pollVotes') || 'votos',
+              poll: t('live.poll') || 'Enquete',
+              votedLabel: t('live.pollVoted') || 'Você votou',
+              dismiss: t('common.dismiss') || 'Dispensar',
+            }}
+          />
+        </View>
+      ) : null}
+
+      {/* Poll create modal — minimal: question + 2-4 options. */}
+      <Modal visible={pollDraftOpen} transparent animationType="slide" onRequestClose={() => setPollDraftOpen(false)}>
+        <View style={liveSheetStyles.backdrop}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setPollDraftOpen(false)} />
+          <View style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={liveSheetStyles.grabber} />
+            <Text style={liveSheetStyles.title}>{t('live.pollCreate') || 'Criar enquete'}</Text>
+
+            <View style={{ backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 12 }}>
+              <TextInput
+                value={pollDraftQuestion}
+                onChangeText={setPollDraftQuestion}
+                placeholder={t('live.pollQuestionHint') || 'Pergunta...'}
+                placeholderTextColor="rgba(255,255,255,0.45)"
+                style={{ color: '#fff', fontSize: 15, padding: 0 }}
+                maxLength={200}
+              />
+            </View>
+
+            {pollDraftOptions.map((opt, idx) => (
+              <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10 }}>
+                  <TextInput
+                    value={opt}
+                    onChangeText={(txt) => {
+                      setPollDraftOptions(prev => prev.map((o, i) => i === idx ? txt : o));
+                    }}
+                    placeholder={(t('live.pollOptionN') || 'Opção {n}').replace('{n}', String(idx + 1))}
+                    placeholderTextColor="rgba(255,255,255,0.45)"
+                    style={{ color: '#fff', fontSize: 14, padding: 0 }}
+                    maxLength={80}
+                  />
+                </View>
+                {pollDraftOptions.length > 2 ? (
+                  <TouchableOpacity
+                    onPress={() => setPollDraftOptions(prev => prev.filter((_, i) => i !== idx))}
+                    style={{ marginLeft: 8, padding: 8 }}
+                  >
+                    <IconX size={16} color="rgba(255,255,255,0.6)" />
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            ))}
+
+            {pollDraftOptions.length < 4 ? (
+              <TouchableOpacity
+                onPress={() => setPollDraftOptions(prev => [...prev, ''])}
+                style={{ paddingVertical: 10, marginBottom: 8 }}
+              >
+                <Text style={{ color: '#a78bfa', fontWeight: '700', fontSize: 13 }}>
+                  + {t('live.pollAddOption') || 'Adicionar opção'}
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+
+            <TouchableOpacity onPress={submitPollDraft} style={liveSheetStyles.closeBtn} activeOpacity={0.85}>
+              <Text style={liveSheetStyles.closeText}>{t('live.pollStart') || 'Iniciar enquete'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Android slow-mode picker — ActionSheetIOS is iOS-only so we render
+          a custom Modal on Android for parity. iOS path skips this entirely. */}
+      <Modal visible={slowModeOpenAndroid} transparent animationType="slide" onRequestClose={() => setSlowModeOpenAndroid(false)}>
+        <View style={liveSheetStyles.backdrop}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setSlowModeOpenAndroid(false)} />
+          <View style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={liveSheetStyles.grabber} />
+            <Text style={liveSheetStyles.title}>{t('live.slowModeTitle') || 'Modo lento'}</Text>
+            {[
+              { sec: 0, label: t('live.slowModeOff') || 'Desligado' },
+              { sec: 5, label: '5s' },
+              { sec: 15, label: '15s' },
+              { sec: 30, label: '30s' },
+              { sec: 60, label: t('live.slowMode1min') || '1 min' },
+            ].map(o => (
+              <TouchableOpacity
+                key={o.sec}
+                onPress={() => { setSlowModeOpenAndroid(false); applySlowMode(o.sec); }}
+                style={liveSheetStyles.row}
+                activeOpacity={0.7}
+              >
+                <Text style={liveSheetStyles.rowLabel}>{o.label}</Text>
+                {slowModeSeconds === o.sec ? <Text style={{ color: '#a78bfa', fontWeight: '800' }}>✓</Text> : null}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

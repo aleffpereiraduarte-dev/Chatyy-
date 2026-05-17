@@ -31,7 +31,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Dimensions,
   Animated, Easing, StatusBar, PanResponder, AppState,
   Modal, Pressable, ScrollView, ActivityIndicator,
-  PermissionsAndroid,
+  PermissionsAndroid, ActionSheetIOS,
 } from 'react-native';
 
 // [2026-05-15 #976] Android needs explicit runtime CAMERA permission grant.
@@ -320,6 +320,28 @@ function CallScreenInner() {
   const [reconnecting, setReconnecting] = useState(false);
   const [connectionFailed, setConnectionFailed] = useState(false);
   const [showSlowConnectOverlay, setShowSlowConnectOverlay] = useState(false);
+
+  // Audio output picker (long-press speaker → ActionSheet with 4 options).
+  // On Android we use a Modal because there's no native sheet equivalent.
+  const [showAudioPicker, setShowAudioPicker] = useState(false);
+
+  // 1:1 active-speaker indicator. LiveKit emits ActiveSpeakersChanged with the
+  // list of currently-speaking participants — when the REMOTE peer is in the
+  // list, we animate a green ring around their avatar (WhatsApp-style cue).
+  const [peerSpeaking, setPeerSpeaking] = useState(false);
+  const speakingPulseAnim = useRef(new Animated.Value(0)).current;
+
+  // chatyySettings.sounds — controls whether UI tones (end-call whoosh) play.
+  // Loaded once at mount; defaults to true if the API fails.
+  const chatyySettingsRef = useRef({ sounds: true });
+  useEffect(() => {
+    try {
+      const api = require('../services/api');
+      api.chatGetSettings?.().then(r => {
+        if (r?.success && r?.data) chatyySettingsRef.current = r.data;
+      }).catch(() => {});
+    } catch {}
+  }, []);
 
   // Group raise-hand state (signaling-only, keeps the existing host banner).
   const [handRaised, setHandRaised] = useState(false);
@@ -952,6 +974,19 @@ function CallScreenInner() {
       }
     });
 
+    // ActiveSpeakersChanged — LK fires this whenever the set of currently-
+    // speaking participants changes (based on audio level). For the 1:1 UI
+    // we only care whether the REMOTE peer is in the list, and animate a
+    // soft green ring around their avatar while they're talking. Skipped
+    // for the group surface (group-call.js owns its own indicator).
+    r.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
+      if (isGroupCall) return;
+      try {
+        const remoteSpeaking = (speakers || []).some(p => p !== r.localParticipant);
+        setPeerSpeaking(remoteSpeaking);
+      } catch {}
+    });
+
     r.on(RoomEvent.LocalTrackPublished, (publication) => {
       // Local camera publication landed — surface for the PiP preview.
       if (publication.source === Track.Source.Camera && publication.videoTrack) {
@@ -1175,6 +1210,15 @@ function CallScreenInner() {
 
     try { const { stopRingtone } = require('../services/ringtone'); stopRingtone(); } catch {}
 
+    // End-call whoosh (440→220Hz descending tone). Skipped when the user
+    // disabled UI sounds in Chatyy settings.
+    try {
+      if (chatyySettingsRef.current?.sounds !== false) {
+        const { playEndTone } = require('../services/ringtone');
+        playEndTone();
+      }
+    } catch {}
+
     // WS BYE — peer's ringing-screen / CallKit needs this for cleanup if they
     // never accepted. Send a few times spaced out in case of WS flap.
     const delays = [0, 800, 1800];
@@ -1359,6 +1403,15 @@ function CallScreenInner() {
           }
         }
         if (data?.call_id === callId && mounted && !endedRef.current) {
+          // Peer hung up. Whoosh tone first (handleEndCall will also try,
+          // but the early endedRef flip inside handleEndCall could race —
+          // playing here guarantees the tone fires when the *peer* ends).
+          try {
+            if (chatyySettingsRef.current?.sounds !== false) {
+              const { playEndTone } = require('../services/ringtone');
+              playEndTone();
+            }
+          } catch {}
           // Peer hung up. Run full teardown.
           handleEndCall();
         }
@@ -1510,6 +1563,40 @@ function CallScreenInner() {
     pulse.start();
     return () => pulse.stop();
   }, [peerConnected, pulseAnim]);
+
+  // ───── Peer-speaking ring (1:1) ─────
+  // While the remote is speaking, animate a faint green ring around the
+  // avatar (opacity 0.25 → 0.7, scale 1 → 1.12) so the user gets a visual
+  // cue of who's talking, similar to ChatList's online dot pulse.
+  useEffect(() => {
+    if (!peerSpeaking) {
+      speakingPulseAnim.stopAnimation?.();
+      Animated.timing(speakingPulseAnim, {
+        toValue: 0,
+        duration: 180,
+        useNativeDriver: true,
+      }).start();
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(speakingPulseAnim, {
+          toValue: 1,
+          duration: 700,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(speakingPulseAnim, {
+          toValue: 0.4,
+          duration: 700,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [peerSpeaking, speakingPulseAnim]);
 
   // ───── Duration timer ─────
   useEffect(() => {
@@ -1793,6 +1880,77 @@ function CallScreenInner() {
     }
     resetControlsTimer();
   }, [speakerOn, resetControlsTimer]);
+
+  // Audio device picker — switch to one of 4 fixed routes. LiveKit's
+  // selectAudioOutput accepts arbitrary identifiers ('earpiece', 'speaker',
+  // 'bluetooth', 'wired'); on Android we also nudge InCallManager because
+  // some OEMs ignore the LK override. Fallback flow: if a device isn't
+  // physically available the OS just stays on the previous route — UI
+  // doesn't error.
+  const selectAudioRoute = useCallback(async (route) => {
+    setShowAudioPicker(false);
+    // Mirror speakerOn so the icon flips correctly when picking speaker/other.
+    setSpeakerOn(route === 'speaker');
+    if (Platform.OS !== 'web' && LK_AudioSession) {
+      try {
+        await LK_AudioSession.selectAudioOutput?.(route);
+      } catch (e) {
+        console.warn('[Call] LK selectAudioOutput route err:', e?.message);
+      }
+    }
+    if (Platform.OS === 'android') {
+      try {
+        const InCallManager = require('react-native-incall-manager').default;
+        if (route === 'speaker') {
+          InCallManager?.setForceSpeakerphoneOn?.(true);
+          try { InCallManager.chooseAudioRoute?.('SPEAKER_PHONE'); } catch {}
+        } else if (route === 'bluetooth') {
+          InCallManager?.setForceSpeakerphoneOn?.(false);
+          try { InCallManager.chooseAudioRoute?.('BLUETOOTH'); } catch {}
+        } else if (route === 'wired') {
+          InCallManager?.setForceSpeakerphoneOn?.(false);
+          try { InCallManager.chooseAudioRoute?.('WIRED_HEADSET'); } catch {}
+        } else {
+          InCallManager?.setForceSpeakerphoneOn?.(false);
+          try { InCallManager.chooseAudioRoute?.('EARPIECE'); } catch {}
+        }
+      } catch {}
+    }
+    resetControlsTimer();
+  }, [resetControlsTimer]);
+
+  const openAudioPicker = useCallback(() => {
+    if (!peerConnected) return;
+    _hapticTap('medium');
+    const labels = [
+      t('call.audioRouteEarpiece') || 'Auricular',
+      t('call.audioRouteSpeaker') || 'Viva-voz',
+      t('call.audioRouteBluetooth') || 'Bluetooth',
+      t('call.audioRouteWired') || 'Fones de ouvido',
+    ];
+    if (Platform.OS === 'ios') {
+      try {
+        ActionSheetIOS.showActionSheetWithOptions(
+          {
+            options: [...labels, t('common.cancel') || 'Cancelar'],
+            cancelButtonIndex: 4,
+            title: t('call.audioRouteTitle') || 'Saída de áudio',
+          },
+          (idx) => {
+            if (idx === 0) selectAudioRoute('earpiece');
+            else if (idx === 1) selectAudioRoute('speaker');
+            else if (idx === 2) selectAudioRoute('bluetooth');
+            else if (idx === 3) selectAudioRoute('wired');
+          }
+        );
+      } catch {
+        setShowAudioPicker(true);
+      }
+    } else {
+      // Android / web → Modal sheet.
+      setShowAudioPicker(true);
+    }
+  }, [peerConnected, t, selectAudioRoute]);
 
   const handleToggleHold = useCallback(async () => {
     const r = roomRef.current;
@@ -2358,6 +2516,38 @@ function CallScreenInner() {
                   }]} />
                 </>
               )}
+              {/* Outgoing-calling pulse rings — WhatsApp-style 2 concentric
+                  expanding rings while the callee is being rung. Only shows
+                  while the peer is in the ringing state and hasn't connected
+                  yet. Native driver true (transform + opacity only). */}
+              {peerRinging && !peerConnected && (
+                <CallingPulseRings size={isVideoCall ? 140 : 168} />
+              )}
+              {/* Active-speaker ring — soft green halo while the remote peer
+                  is talking (1:1 only; group has its own renderer). */}
+              {peerConnected && peerSpeaking && !isGroupCall && (
+                <Animated.View
+                  pointerEvents="none"
+                  style={[
+                    styles.speakingRing,
+                    {
+                      width: (isVideoCall ? 140 : 168) + 28,
+                      height: (isVideoCall ? 140 : 168) + 28,
+                      borderRadius: ((isVideoCall ? 140 : 168) + 28) / 2,
+                      opacity: speakingPulseAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0.25, 0.85],
+                      }),
+                      transform: [{
+                        scale: speakingPulseAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [1, 1.08],
+                        }),
+                      }],
+                    },
+                  ]}
+                />
+              )}
               <Animated.View style={{ transform: [{ scale: peerConnected ? 1 : pulseAnim }] }}>
                 <AvatarCircle name={callerName} email={_safePeerEmail} size={isVideoCall ? 140 : 168} />
                 {(() => {
@@ -2713,8 +2903,11 @@ function CallScreenInner() {
             <TouchableOpacity
               style={styles.primaryBtn}
               onPress={handleToggleSpeaker}
+              onLongPress={openAudioPicker}
+              delayLongPress={350}
               activeOpacity={0.7}
               accessibilityLabel={speakerOn ? (t('call.speakerOff') || 'Desligar viva-voz') : (t('call.speakerOn') || 'Viva-voz')}
+              accessibilityHint={t('call.audioRouteHint') || 'Pressione e segure para escolher saída'}
               accessibilityRole="button"
             >
               <View style={[styles.primaryBtnCircle, speakerOn && styles.primaryBtnCircleActive]}>
@@ -2725,6 +2918,51 @@ function CallScreenInner() {
           </Pressable>
         </Animated.View>
       )}
+
+      {/* Audio output picker (Android/web fallback — iOS uses ActionSheetIOS) */}
+      <Modal
+        visible={showAudioPicker}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowAudioPicker(false)}
+      >
+        <Pressable style={styles.audioPickerOverlay} onPress={() => setShowAudioPicker(false)}>
+          <Pressable style={styles.audioPickerSheet} onPress={(e) => e.stopPropagation?.()}>
+            <Text style={styles.audioPickerTitle}>
+              {t('call.audioRouteTitle') || 'Saída de áudio'}
+            </Text>
+            {[
+              { id: 'earpiece', label: t('call.audioRouteEarpiece') || 'Auricular' },
+              { id: 'speaker', label: t('call.audioRouteSpeaker') || 'Viva-voz' },
+              { id: 'bluetooth', label: t('call.audioRouteBluetooth') || 'Bluetooth' },
+              { id: 'wired', label: t('call.audioRouteWired') || 'Fones de ouvido' },
+            ].map((opt) => {
+              const isActive = (opt.id === 'speaker' && speakerOn) || (opt.id === 'earpiece' && !speakerOn);
+              return (
+                <TouchableOpacity
+                  key={opt.id}
+                  style={[styles.audioPickerRow, isActive && styles.audioPickerRowActive]}
+                  onPress={() => selectAudioRoute(opt.id)}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel={opt.label}
+                >
+                  <Text style={styles.audioPickerRowText}>{opt.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+            <TouchableOpacity
+              style={[styles.audioPickerRow, styles.audioPickerCancel]}
+              onPress={() => setShowAudioPicker(false)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.audioPickerCancelText}>
+                {t('common.cancel') || 'Cancelar'}
+              </Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* Add participant modal */}
       <Modal visible={showAddParticipant} transparent animationType="fade" onRequestClose={() => setShowAddParticipant(false)}>
@@ -2837,6 +3075,64 @@ function CallScreenInner() {
   );
 }
 
+// ───── Outgoing-call pulse rings ─────
+// Two concentric expanding rings (scale 1 → 1.4, opacity 0.6 → 0) staggered
+// by 600ms — the classic WhatsApp "Calling..." cue. Local Animated.Value
+// pair so we don't pollute the parent's render frequency. Native driver
+// enabled (only transform + opacity touched).
+function CallingPulseRings({ size = 168 }) {
+  const a1 = useRef(new Animated.Value(0)).current;
+  const a2 = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const mk = (val, delay) => Animated.loop(
+      Animated.sequence([
+        Animated.delay(delay),
+        Animated.timing(val, {
+          toValue: 1,
+          duration: 1400,
+          easing: Easing.out(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(val, {
+          toValue: 0,
+          duration: 0,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    const l1 = mk(a1, 0);
+    const l2 = mk(a2, 600);
+    l1.start();
+    l2.start();
+    return () => { l1.stop(); l2.stop(); };
+  }, [a1, a2]);
+
+  const renderRing = (val) => (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        styles.callingPulseRing,
+        {
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          opacity: val.interpolate({ inputRange: [0, 1], outputRange: [0.6, 0] }),
+          transform: [{
+            scale: val.interpolate({ inputRange: [0, 1], outputRange: [1, 1.4] }),
+          }],
+        },
+      ]}
+    />
+  );
+
+  return (
+    <>
+      {renderRing(a1)}
+      {renderRing(a2)}
+    </>
+  );
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   audioOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 5 },
@@ -2859,6 +3155,68 @@ const styles = StyleSheet.create({
   pulseRing: { position: 'absolute', borderRadius: 999, borderWidth: 1 },
   pulseRingOuter: { width: 200, height: 200, borderColor: 'rgba(255,255,255,0.08)' },
   pulseRingInner: { width: 170, height: 170, borderColor: 'rgba(255,255,255,0.12)' },
+  // Outgoing "calling" rings — bright white expanding rings (WhatsApp style).
+  callingPulseRing: {
+    position: 'absolute',
+    borderRadius: 999,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.55)',
+  },
+  // 1:1 active-speaker green halo.
+  speakingRing: {
+    position: 'absolute',
+    borderWidth: 3,
+    borderColor: '#34d399',
+  },
+  // Audio output picker (Android/web).
+  audioPickerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'flex-end',
+  },
+  audioPickerSheet: {
+    backgroundColor: '#1c1c1e',
+    paddingTop: 18,
+    paddingBottom: 22,
+    paddingHorizontal: 20,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+  },
+  audioPickerTitle: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 10,
+    textAlign: 'center',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
+  audioPickerRow: {
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    marginBottom: 6,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  audioPickerRowActive: {
+    backgroundColor: 'rgba(52,211,153,0.18)',
+  },
+  audioPickerRowText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  audioPickerCancel: {
+    marginTop: 8,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  audioPickerCancelText: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 15,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
   centerName: { color: '#fff', fontSize: 28, fontWeight: '700', marginTop: 24, textAlign: 'center' },
   centerStatus: { color: 'rgba(255,255,255,0.6)', fontSize: 15, marginTop: 6 },
   endedHint: { color: 'rgba(255,255,255,0.4)', fontSize: 13, marginTop: 12 },

@@ -265,6 +265,111 @@ export function startCallingTone() {
   }
 }
 
+// Play a short descending "whoosh" tone when the call ends.
+// 440Hz → 220Hz over ~300ms with exponential fade. Web Audio API on web,
+// expo-audio with a small generated WAV on native. Honors chatyySettings
+// (the caller should gate this — kept lightweight here).
+export function playEndTone() {
+  if (Platform.OS === 'web') {
+    try {
+      const ctx = getAudioContext();
+      if (!ctx || ctx.state === 'closed') return;
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      // Glide 440Hz -> 220Hz (one octave down) — that's the "whoosh down" feel.
+      osc.frequency.setValueAtTime(440, now);
+      osc.frequency.exponentialRampToValueAtTime(220, now + 0.3);
+      // Gentle envelope, slightly louder attack, exponential decay.
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(0.18, now + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.34);
+    } catch (e) {
+      // best-effort
+    }
+    return;
+  }
+
+  // Native: synthesize a 300ms 440→220 Hz sweep into a WAV buffer and play
+  // via expo-audio (works under the LiveKit-owned playAndRecord session
+  // because we use mixWithOthers / duckOthers below).
+  (async () => {
+    try {
+      const { createAudioPlayer, AudioModule } = require('expo-audio');
+      // Don't fight the in-call session for too long — duckOthers means the
+      // brief tone plays at full volume but the call media keeps streaming.
+      try {
+        await AudioModule.setAudioMode({
+          playsInSilentMode: true,
+          interruptionMode: 'mixWithOthers',
+          shouldPlayInBackground: true,
+          allowsRecording: false,
+        });
+      } catch {}
+
+      const sampleRate = 22050;
+      const duration = 0.32;
+      const samples = Math.floor(sampleRate * duration);
+      const buffer = new ArrayBuffer(44 + samples * 2);
+      const view = new DataView(buffer);
+      const writeStr = (offset, str) => {
+        for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+      };
+      writeStr(0, 'RIFF');
+      view.setUint32(4, 36 + samples * 2, true);
+      writeStr(8, 'WAVE');
+      writeStr(12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true);
+      view.setUint16(22, 1, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      writeStr(36, 'data');
+      view.setUint32(40, samples * 2, true);
+
+      // Exponential frequency sweep 440Hz -> 220Hz with phase accumulation
+      // (avoid the discontinuity you'd get from snapping freq per-sample).
+      let phase = 0;
+      const f0 = 440;
+      const f1 = 220;
+      for (let i = 0; i < samples; i++) {
+        const t = i / sampleRate;
+        const norm = t / duration;
+        // Exponential glide.
+        const f = f0 * Math.pow(f1 / f0, norm);
+        phase += (2 * Math.PI * f) / sampleRate;
+        // Envelope: fast attack, exponential decay.
+        let env;
+        if (t < 0.03) env = t / 0.03;
+        else env = Math.pow(0.001 / 1, (t - 0.03) / (duration - 0.03));
+        const val = Math.sin(phase) * 0.45 * env;
+        view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, val)) * 32767, true);
+      }
+
+      const base64 = arrayBufferToBase64(buffer);
+      const dataUri = 'data:audio/wav;base64,' + base64;
+      const player = createAudioPlayer({ uri: dataUri });
+      try { player.volume = 1.0; } catch {}
+      try { player.play(); } catch {}
+      // Auto-cleanup after the tone duration.
+      setTimeout(() => {
+        try { player.pause(); } catch {}
+        try { player.remove(); } catch {}
+      }, 600);
+    } catch (e) {
+      // expo-audio not available → silent no-op
+    }
+  })();
+}
+
 export function stopRingtone() {
   ringtoneGeneration++; // Cancel any pending async player creation
   if (ringtoneInterval) {
