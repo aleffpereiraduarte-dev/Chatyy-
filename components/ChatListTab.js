@@ -2725,8 +2725,52 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
               update: { type: LayoutAnimation.Types.spring, springDamping: 0.7 },
             });
           } catch {}
+          // WhatsApp parity: auto-unarchive when a new message lands in an
+          // archived conversation. Without this, msgs would sit silent in
+          // the archived bucket until the user browsed there. WhatsApp's
+          // default is to re-promote (the "Keep Chats Archived" setting,
+          // which we don't expose yet, would be the only way to opt out).
+          // We capture the archived row here so the setConversations branch
+          // below can re-insert it with full metadata instead of building a
+          // bare placeholder.
+          let unarchivedConv = null;
+          setArchivedConversations(prevArch => {
+            const ai = prevArch.findIndex(c => c.id == data.conversation_id || c.conversation_id == data.conversation_id);
+            if (ai === -1) return prevArch;
+            unarchivedConv = { ...prevArch[ai], archived: 0 };
+            // Persist the unarchive server-side so the next chat_list fetch
+            // doesn't bounce the conv back into the archived bucket.
+            try { api.chatArchive(unarchivedConv.id, false).catch(() => {}); } catch {}
+            const nextArch = [...prevArch];
+            nextArch.splice(ai, 1);
+            return nextArch;
+          });
           setConversations(prev => {
             const idx = prev.findIndex(c => c.id == data.conversation_id || c.conversation_id == data.conversation_id);
+            if (idx === -1 && unarchivedConv) {
+              // Conv was archived — promote it to top with the fresh msg.
+              const senderLc = String(data.sender_email || data.sender || '').toLowerCase();
+              const meLc = String(user?.email || '').toLowerCase();
+              const promoted = {
+                ...unarchivedConv,
+                archived: 0,
+                last_message: {
+                  ...(unarchivedConv.last_message || {}),
+                  content: data.content || data.message,
+                  type: data.type || 'text',
+                  sender_email: data.sender_email || data.sender,
+                  sender_name: data.sender_name || data.sender_email || data.sender,
+                  created_at: data.created_at || new Date().toISOString(),
+                },
+                last_message_type: data.type || 'text',
+                last_message_sender: data.sender_email || data.sender,
+                last_message_at: data.created_at || new Date().toISOString(),
+                unread_count: senderLc === meLc ? 0 : ((unarchivedConv.unread_count || 0) + 1),
+              };
+              const pinned = prev.filter(c => !!c.pinned);
+              const unpinned = prev.filter(c => !c.pinned);
+              return [...pinned, promoted, ...unpinned];
+            }
             if (idx === -1) {
               // Conversation not in local cache — common when the user was
               // just added to a group OR the cache is stale. Insert an
