@@ -348,6 +348,63 @@ public class ExpoCallKitModule: Module {
       }
     }
 
+    // [Stage #999 native live broadcast, 2026-05-17] Launch the SwiftUI
+    // host UI for /live. Replaces the RN /live-broadcast.js screen.
+    // hostAvatar is the URL string (empty string treated as nil — Swift
+    // optionals across the JS bridge are nullable). The VC owns the LK
+    // Room (publisher) and the WS subscription, so JS only needs the
+    // initial token + session id.
+    AsyncFunction("startLiveBroadcast") {
+      (liveSessionId: String, lkUrl: String, lkToken: String,
+       hostEmail: String, hostName: String, hostAvatar: String?) -> Void in
+      await MainActor.run {
+        guard let root = UIApplication.shared.connectedScenes
+          .compactMap({ ($0 as? UIWindowScene)?.keyWindow?.rootViewController })
+          .first else { return }
+        LiveBroadcastViewController.present(
+          from: root,
+          liveSessionId: liveSessionId,
+          lkUrl: lkUrl, lkToken: lkToken,
+          hostEmail: hostEmail, hostName: hostName,
+          hostAvatar: (hostAvatar?.isEmpty == false) ? hostAvatar : nil
+        )
+      }
+    }
+
+    // [Stage #1000 native live viewer, 2026-05-17] Launch the SwiftUI
+    // viewer UI for /live-viewer. Subscriber-only LK role. pinnedComment
+    // + slowModeSeconds let the viewer render the current host-side
+    // state without a WS round-trip (server snapshot already lives in
+    // chat_live_pin_comment + chat_live_sessions.slow_mode_seconds; JS
+    // pulls them on /live-viewer mount and forwards here).
+    AsyncFunction("startLiveViewer") {
+      (liveSessionId: String, lkUrl: String, lkToken: String,
+       hostEmail: String, hostName: String, hostAvatar: String?,
+       viewerEmail: String,
+       pinnedCommentText: String?, pinnedCommentAuthor: String?,
+       slowModeSeconds: Int) -> Void in
+      await MainActor.run {
+        guard let root = UIApplication.shared.connectedScenes
+          .compactMap({ ($0 as? UIWindowScene)?.keyWindow?.rootViewController })
+          .first else { return }
+        let pinned: LivePinnedComment? = {
+          guard let txt = pinnedCommentText, !txt.isEmpty else { return nil }
+          let name = pinnedCommentAuthor ?? "?"
+          return LivePinnedComment(authorName: name, text: txt)
+        }()
+        LiveViewerViewController.present(
+          from: root,
+          liveSessionId: liveSessionId,
+          lkUrl: lkUrl, lkToken: lkToken,
+          hostEmail: hostEmail, hostName: hostName,
+          hostAvatar: (hostAvatar?.isEmpty == false) ? hostAvatar : nil,
+          viewerEmail: viewerEmail,
+          pinnedComment: pinned,
+          slowModeSeconds: slowModeSeconds
+        )
+      }
+    }
+
     // ─── Native WS call signaling (Stage 1, 2026-05-16) ──────────────────
     //
     // JS-callable bridge to CallSignalWs (raw URLSessionWebSocketTask to

@@ -2131,19 +2131,32 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   useEffect(() => {
     let unsub = null;
     let cancelled = false;
+    let hideTimer = null;
     (async () => {
       try {
         const m = await import('../services/onlineRecoveryOrchestrator');
         if (cancelled) return;
         if (typeof m.subscribeSyncStatus === 'function') {
           unsub = m.subscribeSyncStatus(({ running }) => {
+            if (cancelled) return;
             setSyncingBadge(!!running);
+            // Hard client-side failsafe: hide badge after 5s no matter what
+            // the orchestrator says. Covers WS reconnect loops that keep
+            // re-emitting running:true and freeze the badge for the user.
+            if (hideTimer) { try { clearTimeout(hideTimer); } catch {} hideTimer = null; }
+            if (running) {
+              hideTimer = setTimeout(() => {
+                hideTimer = null;
+                setSyncingBadge(false);
+              }, 5000);
+            }
           });
         }
       } catch {}
     })();
     return () => {
       cancelled = true;
+      if (hideTimer) { try { clearTimeout(hideTimer); } catch {} hideTimer = null; }
       if (typeof unsub === 'function') { try { unsub(); } catch {} }
     };
   }, []);

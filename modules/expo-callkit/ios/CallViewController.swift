@@ -1,179 +1,117 @@
+// Stage #995 — full native SwiftUI UI, replaces JS /call.js on mobile + Stage #993 PiP wired
+//
+// CallViewController.swift — UIKit host for the SwiftUI CallView. Owns the
+// LiveKit Room, the AVPictureInPictureController + sample-buffer plumbing
+// (Stage #993), the ringback engine, and the bridge back to the JS module via
+// NotificationCenter.
+//
+// Architecture notes (Day 5 — Stage #995):
+//   * The Room is owned here. CallView observes a `CallSessionState`
+//     (declared below) and forwards user intent through closures; this class
+//     translates intent → suspend Room mutations → @Published rollback on error.
+//   * PiP uses Path A from the prior round's TODO: AVPictureInPictureController
+//     with a custom CMSampleBufferDisplayLayer rendered into an
+//     AVPictureInPictureVideoCallViewController. We attach a LiveKit
+//     `VideoRenderer` to the remote VideoTrack; when the renderer's callback
+//     fires with a `.cvPixelBuffer`-backed VideoFrame we build a CMSampleBuffer
+//     and enqueue it on the display layer. If the buffer kind is `.native` or
+//     `.i420Buffer` (decoder output, more common in practice) we drop the
+//     frame — PiP visibly stalls in that window but doesn't crash. CallKit's
+//     ongoing-call pill carries the fallback UX.
+//   * Active speaker, connection quality, screen-share, and reactions are all
+//     wired so SwiftUI re-renders on Room events. Reactions ride a LiveKit
+//     data-channel message (binary payload prefixed `"R:"`).
+//   * Ringback tone and willResignActive observers from prior rounds are
+//     unchanged — same engine/player nodes, same generated 440 Hz buffer.
+
 import UIKit
 import SwiftUI
 import LiveKitClient
-// [2026-05-16] AVKit for AVPictureInPictureController. Already linked via
-// system framework (no podspec change needed).
 import AVKit
-// [2026-05-16] AVFoundation for AVAudioEngine + AVAudioPlayerNode +
-// AVAudioPCMBuffer (ringback tone generator). AVKit imports AVFoundation
-// internally but Swift modules don't always re-export it, so we import
-// explicitly. Already listed under `s.frameworks` in the podspec.
 import AVFoundation
+import Combine
 
-// [native call screen, 2026-05-16] UIKit host for the SwiftUI CallView.
-// Mirrors the Android CallActivity entrypoint: JS calls openNativeCall,
-// the module looks up the keyWindow's root VC, and we present this
-// full-screen over whatever modal stack happens to be on top.
-//
-// [Day 2, 2026-05-16] CallViewController is now the LiveKit Room owner.
-// The SwiftUI CallView reads connection status + mic state via an
-// @ObservedObject CallSessionState (declared below) and reports user-driven
-// mute toggles back through `onToggleMute` so the suspend setMicrophone
-// call lives on the VC side. Day 1 was state-less scaffolding; Day 2 wires
-// audio without touching NativeCallRoom (which is still the JS-driven path).
+// MARK: - Session state
 
-/// ObservableObject the SwiftUI CallView binds to. The VC mutates these
-/// fields whenever LiveKit reports state changes (delegate callbacks) or the
-/// user toggles mute, and SwiftUI re-renders the status text + mute button.
-/// Kept inside CallViewController.swift per the Day 2 spec (we don't add new
-/// files; the type co-locates with its writer).
+/// ObservableObject the SwiftUI CallView binds to. Mutations happen on the
+/// main thread; the LiveKit delegate callbacks dispatch accordingly. The VC
+/// owns the instance for the life of the call.
 final class CallSessionState: ObservableObject {
+    // Connection / status
     @Published var status: String
+
+    // Audio
     @Published var micEnabled: Bool
-    // [Day 3, 2026-05-16] Video state. `camEnabled` is the desired local
-    // capture state (mirrors `micEnabled`). The two track refs are set as
-    // LiveKit reports publish/subscribe events; SwiftUI swaps in
-    // SwiftUIVideoView when they go non-nil.
+    @Published var speakerOn: Bool
+
+    // Video
     @Published var camEnabled: Bool
     @Published var remoteVideoTrack: VideoTrack?
     @Published var localVideoTrack: LocalVideoTrack?
 
+    // Active speaker / quality (1-3)
+    @Published var remoteIsActiveSpeaker: Bool
+    @Published var connectionQuality: Int
+
+    // Group-specific UI surface (hidden when 1:1)
+    @Published var isGroup: Bool
+    @Published var handRaised: Bool
+    @Published var recording: Bool
+    @Published var onHold: Bool
+
+    /// Floating emoji bursts. Appended on receive (LiveKit data channel) or on
+    /// local send. SwiftUI removes each via a per-emoji `.task` after 3s.
+    @Published var floatingReactions: [CallFloatingReaction]
+
     init(status: String = "Conectando\u{2026}",
          micEnabled: Bool = true,
-         camEnabled: Bool = true) {
+         camEnabled: Bool = true,
+         isGroup: Bool = false,
+         isVideoDefault: Bool = false) {
         self.status = status
         self.micEnabled = micEnabled
         self.camEnabled = camEnabled
+        self.speakerOn = isVideoDefault // video calls default to speaker
         self.remoteVideoTrack = nil
         self.localVideoTrack = nil
+        self.remoteIsActiveSpeaker = false
+        self.connectionQuality = 3
+        self.isGroup = isGroup
+        self.handRaised = false
+        self.recording = false
+        self.onHold = false
+        self.floatingReactions = []
     }
 }
 
+// MARK: - VC
+
 final class CallViewController: UIViewController {
 
-    // Notification posted when the user hangs up via the native UI. The
-    // module observes this in OnCreate and forwards it as onCallEnded to JS.
     static let callEndedNotification = Notification.Name("ExpoCallKitNativeCallEnded")
 
-    // Call descriptor — captured at present() time so the SwiftUI view can
-    // initialize without doing any lookup of its own.
     let callId: String
     let callerName: String
     let callerEmail: String
     let hasVideo: Bool
 
-    // [Day 2, 2026-05-16] LiveKit connect params. Optional because outgoing
-    // calls fetch the token after dialing; the openNativeCall path passes
-    // them through from JS. When nil, we render the SwiftUI shell but skip
-    // Room.connect — the JS-side @livekit/react-native path still works as
-    // a fallback for unmigrated callers.
     private let lkUrl: String?
     private let lkToken: String?
-
-    // [2026-05-16 Stage 2 native WS signaling] Outgoing-call flag + chat
-    // conversation id. Used to drive CallSignalWs.shared.fireCallInvite /
-    // fireCallEnd directly from this VC so the call signaling path no
-    // longer requires the JS bridge. Both default to safe values
-    // (false / "") so existing callers compile clean — the iOS module's
-    // openNativeCall path defaults to outgoing=false until JS is updated
-    // to forward the flag. JS-side WS firing remains as fallback; server
-    // dedupes by call_id.
     private let isOutgoing: Bool
     private let conversationId: String
 
-    // The Room is created in viewDidLoad and torn down on hangup / deinit.
-    // Held as `var` so we can release it explicitly during disconnect.
     private var room: Room?
+    private let session: CallSessionState
 
-    // Shared state object the SwiftUI CallView observes. Mutations MUST
-    // happen on the main thread; the delegate callbacks below dispatch
-    // accordingly.
-    private let session = CallSessionState()
-
-    // [2026-05-16] PiP scaffolding — INTENTIONALLY UNSHIPPED.
-    //
-    // AVPictureInPictureController for a video-call-style PiP requires a
-    // CMSampleBuffer feed enqueued on an AVSampleBufferDisplayLayer, wrapped
-    // in an AVPictureInPictureVideoCallViewController (iOS 15+). LiveKit
-    // Swift SDK 2.x does NOT publicly expose CMSampleBuffer frames from
-    // VideoTrack — the two candidate adapter paths each carry blocking
-    // risk we can't verify without building on a Mac (no /ios/Pods here,
-    // prebuild is gitignored):
-    //
-    //  PATH A — LiveKit's own `VideoRenderer` Swift protocol
-    //    LiveKit 2.x exposes `VideoRenderer` (Sources/LiveKit/Protocols/
-    //    VideoRenderer.swift) and `VideoTrack.add(videoRenderer:)`. The
-    //    callback delivers `LiveKit.VideoFrame`, whose `.buffer` is a
-    //    `LiveKit.VideoBuffer` enum (.native(RTCVideoFrameBuffer) /
-    //    .i420Buffer / .cvPixelBuffer). Unwrapping `.cvPixelBuffer` is
-    //    safe; the `.native` and `.i420Buffer` cases require accessing
-    //    WebRTC types (RTCCVPixelBuffer / RTCI420Buffer) which LiveKit
-    //    2.x does NOT re-export publicly. So Path A covers ONLY the case
-    //    where the publisher uses a CVPixelBuffer-backed source — front
-    //    camera capture on iOS does, but software-encoded remote frames
-    //    after decode may not (decoder output buffer type is opaque).
-    //    Result: would work on local preview, may NOT work on remote
-    //    tile, which is what users actually want in PiP.
-    //
-    //  PATH B — WebRTC's `RTCVideoRenderer` protocol directly
-    //    Requires `import WebRTC` at the top of this file. LiveKit 2.x
-    //    links WebRTC-SDK transitively, BUT the umbrella header is not
-    //    guaranteed to be Swift-visible (depends on the pod's
-    //    `module.modulemap` — varies across LiveKitClient minor versions,
-    //    and `static_framework = true` in our podspec further complicates
-    //    module visibility). High risk of "No such module 'WebRTC'" at
-    //    compile time. Also: VideoTrack does not have a public
-    //    `addRenderer(RTCVideoRenderer)` in LiveKit Swift 2.x — only the
-    //    internal `mediaTrack` (RTCVideoTrack) does, and access to it is
-    //    `internal`, not `public`. Would require either a fork or
-    //    @_spi/Mirror-based reflection (both fragile).
-    //
-    // Per the spec ("If you cannot find the exact LiveKit Swift 2.x
-    // renderer-attach API name, prefer NOT shipping than shipping a
-    // guess"), PiP stays inert in this round. The property + support
-    // check + willResignActive observer are kept so the wiring is in one
-    // place once we can verify the right API on-device.
-    //
-    // CallKit's native ongoing-call indicator (yellow pill in status bar)
-    // continues to keep the call discoverable while the app is
-    // backgrounded — PiP is polish, not a must.
-    //
-    // TODO(iOS PiP, next steps):
-    //   1. Build the app once locally on Mac with LiveKitClient ~> 2.0
-    //      installed; run `nm` / `swift-symbolgraph-extract` against
-    //      LiveKitClient.framework to confirm whether
-    //      `VideoTrack.add(videoRenderer:)` is `public` in our pinned
-    //      version.
-    //   2. If yes: implement Path A, restrict PiP enable to calls where
-    //      the first remote frame arrived with `.cvPixelBuffer` (and
-    //      gracefully fall back if subsequent frames change buffer kind).
-    //   3. If no / if `.cvPixelBuffer` rate is low in practice: revisit
-    //      Path B once the Pods module map is inspected on-device.
-    //   4. Defer until after ReplayKit refactor (see MEMORY:
-    //      replaykit_lk_refactor_pending) — same WebRTC framework
-    //      visibility question blocks both.
+    // PiP (Stage #993)
     private var pipController: AVPictureInPictureController?
+    private var pipVideoCallVC: AVPictureInPictureVideoCallViewController?
+    private var pipDisplayLayer: AVSampleBufferDisplayLayer?
+    private var pipRenderer: PiPVideoRenderer?
+    private var pipAttachedTrack: VideoTrack?
     private var pipResignObserver: NSObjectProtocol?
 
-    // [2026-05-16] Ringback tone (Part 2 of iOS call polish round).
-    //
-    // Plays the classic "trim trim trim" tone caller-side from the
-    // moment CallViewController is presented (outgoing path only) until
-    // either:
-    //   (a) the remote participant subscribes to a track / connects, or
-    //   (b) roomDidConnect actually fires (callee picked up), or
-    //   (c) the app backgrounds.
-    //
-    // Implementation note: `ringback.wav` is NOT bundled (the app ships
-    // `assets/ringtone.wav` for incoming, no outgoing tone). So we
-    // generate a 440Hz sine tone via AVAudioEngine + AVAudioPlayerNode +
-    // a 5s PCM buffer with 1s of tone + 4s of silence, scheduled in a
-    // loop. The engine attaches to the SHARED AVAudioSession that
-    // CallKit already configured for the LiveKit Room (.playAndRecord /
-    // .voiceChat) — we do NOT call setCategory ourselves; that would
-    // race the Room's setup. AVAudioEngine respects whatever the active
-    // session category is, and CallKit's voiceChat mode mixes our player
-    // node output with WebRTC's RTPC output cleanly.
+    // Ringback
     private var ringbackEngine: AVAudioEngine?
     private var ringbackPlayer: AVAudioPlayerNode?
     private var ringbackResignObserver: NSObjectProtocol?
@@ -195,10 +133,12 @@ final class CallViewController: UIViewController {
         self.lkToken = lkToken
         self.isOutgoing = isOutgoing
         self.conversationId = conversationId
+        self.session = CallSessionState(
+            isGroup: false,
+            isVideoDefault: hasVideo
+        )
         super.init(nibName: nil, bundle: nil)
         self.modalPresentationStyle = .fullScreen
-        // Disable swipe-to-dismiss — the call should only end via the
-        // explicit hangup button (matches Android CallActivity behavior).
         self.isModalInPresentation = true
     }
 
@@ -206,22 +146,12 @@ final class CallViewController: UIViewController {
         fatalError("init(coder:) is not supported for CallViewController")
     }
 
+    // MARK: - Lifecycle
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = UIColor(red: 0x0B/255.0, green: 0x14/255.0, blue: 0x1A/255.0, alpha: 1.0)
 
-        // [2026-05-16 Stage 2 native WS signaling] Fire call_invite from
-        // native for outgoing calls as soon as the VC is loaded — BEFORE the
-        // JS bundle settles the openNativeCall promise. CallSignalWs queues
-        // if the WS isn't yet authed (Stage 1 plumbing); the server dedupes
-        // by call_id, so this fire racing the JS-side services/api.js
-        // call_invite is fine — whichever lands first wins, the other is a
-        // no-op. Empty conversationId is tolerated (dialer flow).
-        //
-        // We use the new init param `isOutgoing` (NOT the legacy lkToken
-        // heuristic below that gates ringback) so a future incoming-path
-        // openNativeCall — which DOES pass an lkToken — does not
-        // mistakenly fire a call_invite for a call the user is answering.
         if isOutgoing {
             CallSignalWs.shared.fireCallInvite(
                 callId: callId,
@@ -231,28 +161,22 @@ final class CallViewController: UIViewController {
             )
         }
 
-        // Build the SwiftUI tree with the shared session state + a hangup
-        // closure that dismisses self and broadcasts the end so
-        // ExpoCallKitModule can re-emit it to JS, plus a mute-toggle closure
-        // that runs the suspend setMicrophone call on the LiveKit room.
+        // Build the SwiftUI tree with the full closure set Stage #995 demands.
         let rootView = CallView(
             callId: callId,
             callerName: callerName,
             callerEmail: callerEmail,
             hasVideo: hasVideo,
             session: session,
-            onHangup: { [weak self] in
-                self?.handleHangup()
-            },
-            onToggleMute: { [weak self] desiredEnabled in
-                self?.applyMicEnabled(desiredEnabled)
-            },
-            // [Day 3, 2026-05-16] Camera toggle closure — symmetrical with
-            // onToggleMute. CallView flips session.camEnabled optimistically;
-            // applyCamEnabled rolls back on throw.
-            onToggleCam: { [weak self] desiredEnabled in
-                self?.applyCamEnabled(desiredEnabled)
-            }
+            onHangup: { [weak self] in self?.handleHangup() },
+            onToggleMute: { [weak self] desired in self?.applyMicEnabled(desired) },
+            onToggleCam: { [weak self] desired in self?.applyCamEnabled(desired) },
+            onToggleSpeaker: { [weak self] desired in self?.applySpeaker(desired) },
+            onSwitchCamera: { [weak self] in self?.switchCamera() },
+            onScreenShare: { [weak self] in self?.toggleScreenShare() },
+            onAddMember: { [weak self] in self?.handleAddMember() },
+            onMinimize: { [weak self] in self?.handleMinimize() },
+            onSendReaction: { [weak self] emoji in self?.sendReaction(emoji) }
         )
 
         let host = UIHostingController(rootView: rootView)
@@ -268,11 +192,9 @@ final class CallViewController: UIViewController {
         ])
         host.didMove(toParent: self)
 
-        // [Day 2, 2026-05-16] Kick the LiveKit connect once the view tree is
-        // installed. Both url+token must be present — outgoing-call paths
-        // that haven't fetched the token yet stay on the JS @livekit/react-
-        // native fallback. The Room is constructed with `delegate: self`
-        // (Swift-only init; no Obj-C `add(delegate:)`).
+        // Connect LiveKit if we have credentials. The connect Task is detached
+        // from the view's lifetime via the captured `r` reference so the
+        // suspend chain survives even if the VC is dismissed mid-handshake.
         if let url = lkUrl, let token = lkToken, !url.isEmpty, !token.isEmpty {
             print("[CallVC] Starting LiveKit connect — callId=\(callId)")
             let r = Room(delegate: self)
@@ -281,20 +203,8 @@ final class CallViewController: UIViewController {
                 guard let self = self else { return }
                 do {
                     try await r.connect(url: url, token: token)
-                    // setMicrophone is the verified API name on LiveKit
-                    // Swift SDK 2.x (LocalParticipant.swift main branch):
-                    //   func setMicrophone(enabled: Bool, ...) async throws
                     try await r.localParticipant.setMicrophone(enabled: true)
                     print("[CallVC] Mic published — callId=\(self.callId)")
-                    // [Day 3, 2026-05-16] If this is a video call, also
-                    // publish the camera. Same API family as setMicrophone:
-                    //   func setCamera(enabled: Bool, ...) async throws
-                    //     -> LocalTrackPublication?
-                    // We cast the returned publication's `track` to
-                    // LocalVideoTrack so the SwiftUI layer can render the
-                    // local preview tile. If the cast fails (track field
-                    // changes in a future SDK rev), we still publish — only
-                    // the PiP preview is skipped.
                     if self.hasVideo {
                         if let pub = try? await r.localParticipant.setCamera(enabled: true),
                            let track = pub.track as? LocalVideoTrack {
@@ -302,8 +212,6 @@ final class CallViewController: UIViewController {
                                 self.session.localVideoTrack = track
                             }
                             print("[CallVC] Camera published — callId=\(self.callId)")
-                        } else {
-                            print("[CallVC] Camera publish returned nil pub/track — callId=\(self.callId)")
                         }
                     }
                 } catch {
@@ -317,53 +225,215 @@ final class CallViewController: UIViewController {
             print("[CallVC] No lkUrl/lkToken — skipping native Room.connect (JS fallback path)")
         }
 
-        // [2026-05-16] PiP scaffolding — only attempt for video calls on
-        // iOS 15+ when the device reports support. See the long comment
-        // on `pipController` above for why this currently no-ops.
+        // Stage #993 — set up PiP for video calls. The display layer +
+        // controller live for the call's life; sample-buffer enqueue starts
+        // once a remote VideoTrack arrives in didSubscribeTrack.
         if hasVideo {
             setupPiPController()
             installBackgroundObserverForPiP()
         }
 
-        // [2026-05-16] Ringback tone for OUTGOING calls. Heuristic from
-        // the spec: lkToken is non-nil (we're driving the connect) AND
-        // session.status is still the initial "Conectando…" string. The
-        // incoming-call path arrives here only via CallKit answer →
-        // openNativeCall AFTER the answer suspend resolved, by which
-        // point we'd never want a caller-side ringback anyway.
-        let isOutgoing = (lkToken != nil)
-            && !(lkToken?.isEmpty ?? true)
-            && session.status == "Conectando\u{2026}"
-        if isOutgoing {
+        // Ringback only fires for the caller side, while we're still waiting.
+        if isOutgoing && session.status == "Conectando\u{2026}" {
             startRingbackTone()
             installBackgroundObserverForRingback()
         }
     }
 
-    // MARK: - Ringback tone (outgoing only)
+    override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }
 
-    /// Start the generated 440Hz ringback loop. Idempotent — repeated
-    /// calls are no-ops once `ringbackActive` is true. Failures (engine
-    /// won't start, AVAudioSession in a bad state, etc.) are logged but
-    /// non-fatal: the call still proceeds without audible ringback.
+    // MARK: - Action routes
+
+    private func handleHangup() {
+        stopRingbackTone(reason: "handleHangup")
+        // Stop PiP if still active so the system pill is clean on dismissal.
+        if #available(iOS 15.0, *), let pip = pipController, pip.isPictureInPictureActive {
+            pip.stopPictureInPicture()
+        }
+        CallSignalWs.shared.fireCallEnd(
+            callId: callId,
+            conversationId: conversationId,
+            reason: "user_hangup"
+        )
+        NotificationCenter.default.post(
+            name: CallViewController.callEndedNotification,
+            object: nil,
+            userInfo: ["callId": callId]
+        )
+        if let r = self.room {
+            self.room = nil
+            Task { await r.disconnect() }
+        }
+        dismiss(animated: true, completion: nil)
+    }
+
+    private func applyMicEnabled(_ enabled: Bool) {
+        guard let r = self.room else { return }
+        Task { [weak self] in
+            do {
+                try await r.localParticipant.setMicrophone(enabled: enabled)
+            } catch {
+                print("[CallVC] setMicrophone(\(enabled)) failed: \(error)")
+                await MainActor.run { self?.session.micEnabled = !enabled }
+            }
+        }
+    }
+
+    private func applyCamEnabled(_ enabled: Bool) {
+        guard let r = self.room else { return }
+        Task { [weak self] in
+            guard let self = self else { return }
+            do {
+                let pub = try await r.localParticipant.setCamera(enabled: enabled)
+                await MainActor.run {
+                    if enabled {
+                        self.session.localVideoTrack = pub?.track as? LocalVideoTrack
+                    } else {
+                        self.session.localVideoTrack = nil
+                    }
+                }
+            } catch {
+                print("[CallVC] setCamera(\(enabled)) failed: \(error)")
+                await MainActor.run { self.session.camEnabled = !enabled }
+            }
+        }
+    }
+
+    /// Speaker route override. AVAudioSession owns this; we just toggle
+    /// between `.speaker` and `.none`. CallKit configured the category at
+    /// answer time so we don't touch it here.
+    private func applySpeaker(_ enabled: Bool) {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.overrideOutputAudioPort(enabled ? .speaker : .none)
+        } catch {
+            print("[CallVC] setSpeaker(\(enabled)) failed: \(error)")
+        }
+    }
+
+    /// Flip front/back camera. LiveKit Swift 2.x doesn't surface a single
+    /// `switchCameraPosition` on LocalVideoTrack publicly; instead we
+    /// rebuild the publication with new CameraCaptureOptions, matching the
+    /// LiveBroadcastViewController approach. If the first call throws (some
+    /// SDK minor revs only accept `enabled:` without `captureOptions:`),
+    /// fall back to disable/enable which forces a fresh capturer.
+    private var currentCameraPosition: AVCaptureDevice.Position = .front
+    private func switchCamera() {
+        guard let r = self.room else { return }
+        let next: AVCaptureDevice.Position = currentCameraPosition == .front ? .back : .front
+        currentCameraPosition = next
+        Task { [weak self] in
+            guard let self = self else { return }
+            do {
+                let opts = CameraCaptureOptions(position: next)
+                let pub = try await r.localParticipant.setCamera(enabled: true, captureOptions: opts)
+                if let track = pub?.track as? LocalVideoTrack {
+                    await MainActor.run { self.session.localVideoTrack = track }
+                }
+            } catch {
+                print("[CallVC] switchCamera failed: \(error) — fallback to disable/enable")
+                _ = try? await r.localParticipant.setCamera(enabled: false)
+                let pub = try? await r.localParticipant.setCamera(enabled: true)
+                if let track = pub?.track as? LocalVideoTrack {
+                    await MainActor.run { self.session.localVideoTrack = track }
+                }
+            }
+        }
+    }
+
+    /// Toggle screen share. ReplayKit refactor is pending (#975) so this is
+    /// still best-effort — we call setScreenShareEnabled (the verified Swift
+    /// 2.x API; suffix matters) which surfaces the system broadcast picker.
+    /// The capture handler not delivering frames is the known bug; the UI
+    /// affordance is correct.
+    private var screenSharing: Bool = false
+    private func toggleScreenShare() {
+        guard let r = self.room else { return }
+        let desired = !screenSharing
+        screenSharing = desired
+        Task {
+            do {
+                _ = try await r.localParticipant.setScreenShareEnabled(desired)
+                print("[CallVC] screenShare → \(desired)")
+            } catch {
+                print("[CallVC] setScreenShareEnabled(\(desired)) failed: \(error)")
+                self.screenSharing = !desired
+            }
+        }
+    }
+
+    /// Add-member action — the JS hybrid showed a sheet that posts
+    /// chat_call_invite to the backend. Stage #995 surfaces a placeholder
+    /// because the backend route is JS-owned for now; we just emit a JS
+    /// notification so /call.js (if still mounted as a parent route) can
+    /// handle it. Future work: native search sheet.
+    private func handleAddMember() {
+        NotificationCenter.default.post(
+            name: Notification.Name("ExpoCallKitNativeAddMember"),
+            object: nil,
+            userInfo: ["callId": callId]
+        )
+    }
+
+    /// Minimize → Picture in Picture. We don't dismiss the VC; PiP keeps the
+    /// remote feed visible in the system PiP window while the user navigates
+    /// the rest of the app. If PiP isn't possible (audio call, unsupported
+    /// device) we just dismiss to background.
+    private func handleMinimize() {
+        if #available(iOS 15.0, *),
+           let pip = pipController,
+           pip.isPictureInPicturePossible,
+           !pip.isPictureInPictureActive {
+            pip.startPictureInPicture()
+        } else {
+            // No PiP wired — best effort: dismiss to chat list. The Room stays
+            // owned by us until the user hangs up, so audio continues via the
+            // system CallKit indicator.
+            dismiss(animated: true, completion: nil)
+        }
+    }
+
+    /// Send a chat-level reaction. LiveKit's data channel takes Data; we
+    /// prefix `R:` so the receiver can demux from any future control message.
+    /// Locally we append to floatingReactions for immediate feedback.
+    private func sendReaction(_ emoji: String) {
+        // Local burst
+        let reaction = CallFloatingReaction(
+            id: UUID(),
+            emoji: emoji.isEmpty ? "🖐️" : emoji,
+            spawnedAt: Date(),
+            xOffset: CGFloat.random(in: -80...80)
+        )
+        DispatchQueue.main.async {
+            self.session.floatingReactions.append(reaction)
+            // Evict after 3s to keep the array small.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+                self?.session.floatingReactions.removeAll { $0.id == reaction.id }
+            }
+        }
+        // Outgoing data channel
+        guard let r = self.room else { return }
+        let payload = "R:" + emoji
+        guard let data = payload.data(using: .utf8) else { return }
+        Task {
+            do {
+                try await r.localParticipant.publish(data: data)
+            } catch {
+                print("[CallVC] publish reaction failed: \(error)")
+            }
+        }
+    }
+
+    // MARK: - Ringback (unchanged from prior round)
+
     private func startRingbackTone() {
         guard !ringbackActive else { return }
         let engine = AVAudioEngine()
         let player = AVAudioPlayerNode()
-        // Use the engine's default mainMixer output format so the player
-        // node format matches the hardware. CallKit/LiveKit configured
-        // the shared AVAudioSession to .playAndRecord + .voiceChat
-        // already; we DO NOT touch the category here (the spec warns
-        // explicitly against racing the Room's audio session setup).
         let outputFormat = engine.mainMixerNode.outputFormat(forBus: 0)
-        // mainMixer may report a 0-channel format if the engine was
-        // never started — fall back to a safe 44.1kHz mono Float32.
         let format: AVAudioFormat
         if outputFormat.channelCount == 0 || outputFormat.sampleRate == 0 {
-            guard let fallback = AVAudioFormat(
-                standardFormatWithSampleRate: 44100,
-                channels: 1
-            ) else {
+            guard let fallback = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 1) else {
                 print("[CallVC] ringback: could not build fallback AVAudioFormat")
                 return
             }
@@ -371,61 +441,37 @@ final class CallViewController: UIViewController {
         } else {
             format = outputFormat
         }
-
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: format)
-
-        // Build a single 5-second PCM buffer: 1s of 440Hz sine, then 4s
-        // of silence. Loop it via scheduleBuffer(.loops) so the rhythm
-        // is "tone-pause-tone-pause…" mimicking standard PSTN ringback.
         guard let buffer = makeRingbackBuffer(format: format) else {
             print("[CallVC] ringback: makeRingbackBuffer returned nil")
             return
         }
-
         do {
             try engine.start()
         } catch {
             print("[CallVC] ringback: engine.start() failed: \(error)")
             return
         }
-
-        // Volume 0.4 matches the spec's wav-path setting. interrupts:
-        // false because we explicitly want this to NOT interrupt the
-        // LiveKit voice-chat audio (which hasn't started yet, but might
-        // mid-ring if the SDK pre-warms).
         player.volume = 0.4
         player.scheduleBuffer(buffer, at: nil, options: [.loops], completionHandler: nil)
         player.play()
-
         self.ringbackEngine = engine
         self.ringbackPlayer = player
         self.ringbackActive = true
-        print("[CallVC] ringback: started (440Hz, 1s on / 4s off loop)")
+        print("[CallVC] ringback: started")
     }
 
-    /// Build a 5-second PCM buffer with 1s of 440Hz sine + 4s of silence.
-    /// Returns nil if AVAudioPCMBuffer allocation fails (very rare —
-    /// usually only when format is malformed).
     private func makeRingbackBuffer(format: AVAudioFormat) -> AVAudioPCMBuffer? {
         let sampleRate = format.sampleRate
         let totalFrames = AVAudioFrameCount(sampleRate * 5.0)
-        guard let buffer = AVAudioPCMBuffer(
-            pcmFormat: format,
-            frameCapacity: totalFrames
-        ) else {
-            return nil
-        }
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: totalFrames) else { return nil }
         buffer.frameLength = totalFrames
-
         let toneFrames = Int(sampleRate * 1.0)
         let frequency: Double = 440.0
         let twoPi = 2.0 * Double.pi
-        let amplitude: Float = 0.5 // pre-mix; player.volume scales further
-
-        guard let channels = buffer.floatChannelData else {
-            return nil
-        }
+        let amplitude: Float = 0.5
+        guard let channels = buffer.floatChannelData else { return nil }
         let channelCount = Int(format.channelCount)
         for ch in 0..<channelCount {
             let ptr = channels[ch]
@@ -441,30 +487,18 @@ final class CallViewController: UIViewController {
         return buffer
     }
 
-    /// Stop the ringback engine + player. Idempotent — safe to call
-    /// multiple times (roomDidConnect, first didSubscribeTrack, and
-    /// applicationWillResignActive may all fire in sequence).
     private func stopRingbackTone(reason: String) {
         guard ringbackActive else { return }
         ringbackActive = false
-        if let player = ringbackPlayer {
-            player.stop()
-        }
-        if let engine = ringbackEngine, engine.isRunning {
-            engine.stop()
-        }
+        if let player = ringbackPlayer { player.stop() }
+        if let engine = ringbackEngine, engine.isRunning { engine.stop() }
         ringbackPlayer = nil
         ringbackEngine = nil
         print("[CallVC] ringback: stopped (\(reason))")
     }
 
-    /// Stop ringback if the app backgrounds before the callee picks up.
-    /// CallKit's audio session keeps the Room mic open, but the player
-    /// node would otherwise keep buzzing in the background, which is
-    /// jarring and wastes battery.
     private func installBackgroundObserverForRingback() {
-        let center = NotificationCenter.default
-        ringbackResignObserver = center.addObserver(
+        ringbackResignObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.willResignActiveNotification,
             object: nil,
             queue: .main
@@ -473,10 +507,13 @@ final class CallViewController: UIViewController {
         }
     }
 
-    /// [2026-05-16] PiP setup. Currently a no-op because LiveKit Swift 2.x
-    /// does not publicly surface a CMSampleBuffer feed for VideoTrack — see
-    /// the TODO on `pipController`. The function is kept so the wiring is
-    /// in one place once a sample-buffer adapter is available.
+    // MARK: - PiP (Stage #993)
+
+    /// Build the PiP controller backed by an AVPictureInPictureVideoCallVC
+    /// containing an AVSampleBufferDisplayLayer. The remote VideoTrack
+    /// renderer attached in `didSubscribeTrack` feeds frames into the layer.
+    /// iOS 15+ only — the controller is left nil on older versions and
+    /// `handleMinimize()` falls back to a plain dismiss.
     private func setupPiPController() {
         guard #available(iOS 15.0, *) else {
             print("[CallVC] PiP unavailable — iOS < 15")
@@ -486,166 +523,95 @@ final class CallViewController: UIViewController {
             print("[CallVC] PiP unavailable — device reports unsupported")
             return
         }
-        // TODO(iOS PiP): once a sample-buffer source exists, build
-        //   let source = AVPictureInPictureController.ContentSource(
-        //       activeVideoCallSourceView: containerView,
-        //       contentViewController: pipVideoCallVC // AVPictureInPictureVideoCallViewController
-        //   )
-        //   self.pipController = AVPictureInPictureController(contentSource: source)
-        // and call pipController?.startPictureInPicture() from the
-        // background observer below. For now the controller stays nil so
-        // we don't ship a half-wired feature that silently fails.
-        print("[CallVC] PiP setup deferred — no LK sample-buffer feed yet")
+
+        // Display layer: native frame; we feed CMSampleBuffer in pipRenderer.
+        let displayLayer = AVSampleBufferDisplayLayer()
+        displayLayer.videoGravity = .resizeAspect
+        displayLayer.backgroundColor = UIColor.black.cgColor
+
+        // Container VC wraps the display layer in a UIView so the PiP system
+        // can render it. The frame is set once we get a window scene.
+        let pipVC = AVPictureInPictureVideoCallViewController()
+        pipVC.preferredContentSize = CGSize(width: 320, height: 480)
+        let container = UIView(frame: pipVC.view.bounds)
+        container.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        container.backgroundColor = .black
+        displayLayer.frame = container.bounds
+        container.layer.addSublayer(displayLayer)
+        pipVC.view.addSubview(container)
+        // Keep the display layer sized when the system rotates the PiP VC.
+        pipVC.view.autoresizesSubviews = true
+
+        // Content source ties the PiP window to "this part of our screen" so
+        // the dismissal animation knows where to morph back to. We pass our
+        // own view as the source — the system handles the rest.
+        let source = AVPictureInPictureController.ContentSource(
+            activeVideoCallSourceView: view,
+            contentViewController: pipVC
+        )
+        let controller = AVPictureInPictureController(contentSource: source)
+        controller.delegate = self
+        controller.canStartPictureInPictureAutomaticallyFromInline = true
+
+        self.pipDisplayLayer = displayLayer
+        self.pipVideoCallVC = pipVC
+        self.pipController = controller
+        self.pipRenderer = PiPVideoRenderer(displayLayer: displayLayer)
+        print("[CallVC] PiP controller built — waiting for remote video track")
     }
 
-    /// [2026-05-16] Observe app-resignActive so we can auto-start PiP on
-    /// background. Once `pipController` becomes non-nil (see TODO above),
-    /// this will call `startPictureInPicture()`. Today it just logs.
+    /// Attach the PiP renderer to the remote VideoTrack so frames feed the
+    /// display layer. Called from `didSubscribeTrack`. Safe to call repeatedly
+    /// — we de-dupe via `pipAttachedTrack`.
+    @available(iOS 15.0, *)
+    private func attachPiPRenderer(to track: VideoTrack) {
+        guard let renderer = pipRenderer else { return }
+        if pipAttachedTrack === track { return }
+        if let prev = pipAttachedTrack {
+            prev.remove(videoRenderer: renderer)
+        }
+        track.add(videoRenderer: renderer)
+        pipAttachedTrack = track
+        print("[CallVC] PiP renderer attached to remote track")
+    }
+
     private func installBackgroundObserverForPiP() {
-        let center = NotificationCenter.default
-        pipResignObserver = center.addObserver(
+        pipResignObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.willResignActiveNotification,
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            guard let self = self else { return }
-            guard self.hasVideo else { return }
-            if #available(iOS 15.0, *), let pip = self.pipController {
-                if pip.isPictureInPictureActive == false &&
-                   pip.isPictureInPicturePossible {
-                    print("[CallVC] willResignActive — startPictureInPicture()")
-                    pip.startPictureInPicture()
-                }
-            } else {
-                // No PiP wired today — CallKit's ongoing-call pill in the
-                // status bar carries the UX while backgrounded.
-                print("[CallVC] willResignActive — PiP not wired, relying on CallKit indicator")
+            guard let self = self, self.hasVideo else { return }
+            if #available(iOS 15.0, *), let pip = self.pipController,
+               pip.isPictureInPicturePossible, !pip.isPictureInPictureActive {
+                print("[CallVC] willResignActive — startPictureInPicture()")
+                pip.startPictureInPicture()
             }
         }
     }
 
-    // Dark status bar style matches the #0B141A background — light glyphs
-    // on the system clock/battery indicators.
-    override var preferredStatusBarStyle: UIStatusBarStyle {
-        return .lightContent
-    }
-
-    // MARK: - Hangup plumbing
-
-    private func handleHangup() {
-        // [2026-05-16] Belt-and-suspenders ringback cleanup — if the user
-        // hangs up before the callee picks up, kill the tone immediately
-        // so it doesn't bleed into the dismissal animation.
-        stopRingbackTone(reason: "handleHangup")
-        // [2026-05-16 Stage 2 native WS signaling] Fire call_end from native
-        // BEFORE we tear down the room / dismiss. The CallSignalWs serial
-        // queue keeps the frame alive even if the VC is deallocated mid-
-        // send. JS-side fallback (services/api.js call_end) fires in
-        // parallel via the NotificationCenter post below → module observer
-        // → JS onCallEnded — server dedupes by call_id.
-        CallSignalWs.shared.fireCallEnd(
-            callId: callId,
-            conversationId: conversationId,
-            reason: "user_hangup"
-        )
-        // Post FIRST, then dismiss — the module observer just needs to know
-        // the callId, and posting on the main thread is safe regardless of
-        // the dismiss completion timing.
-        NotificationCenter.default.post(
-            name: CallViewController.callEndedNotification,
-            object: nil,
-            userInfo: ["callId": callId]
-        )
-        // [Day 2, 2026-05-16] Release the Room before the VC disappears so
-        // LiveKit cleans up its SignalClient + PeerConnection promptly. The
-        // Task captures `room` strongly so it survives until disconnect
-        // completes; the property is nilled immediately to prevent re-use.
-        if let r = self.room {
-            self.room = nil
-            Task { await r.disconnect() }
-        }
-        dismiss(animated: true, completion: nil)
-    }
-
-    /// Run the LiveKit mute toggle on the local participant. SwiftUI has
-    /// already flipped `session.micEnabled` optimistically; if the call
-    /// throws we roll the UI back so the button reflects reality.
-    private func applyMicEnabled(_ enabled: Bool) {
-        guard let r = self.room else {
-            print("[CallVC] applyMicEnabled(\(enabled)) — no room, ignoring")
-            return
-        }
-        Task { [weak self] in
-            do {
-                try await r.localParticipant.setMicrophone(enabled: enabled)
-                print("[CallVC] mic toggled — enabled=\(enabled)")
-            } catch {
-                print("[CallVC] setMicrophone(\(enabled)) failed: \(error)")
-                await MainActor.run {
-                    self?.session.micEnabled = !enabled
-                }
-            }
-        }
-    }
-
-    /// [Day 3, 2026-05-16] Symmetric to applyMicEnabled — toggles the local
-    /// camera on the LiveKit room. When the user disables it we also drop
-    /// the local preview track so the PiP tile collapses. Re-enabling
-    /// re-publishes via setCamera and stores the new track ref.
-    private func applyCamEnabled(_ enabled: Bool) {
-        guard let r = self.room else {
-            print("[CallVC] applyCamEnabled(\(enabled)) — no room, ignoring")
-            return
-        }
-        Task { [weak self] in
-            guard let self = self else { return }
-            do {
-                let pub = try await r.localParticipant.setCamera(enabled: enabled)
-                await MainActor.run {
-                    if enabled {
-                        // Update local preview reference if the SDK gave us
-                        // a fresh publication (it may reuse an existing one).
-                        self.session.localVideoTrack = pub?.track as? LocalVideoTrack
-                    } else {
-                        self.session.localVideoTrack = nil
-                    }
-                }
-                print("[CallVC] cam toggled — enabled=\(enabled)")
-            } catch {
-                print("[CallVC] setCamera(\(enabled)) failed: \(error)")
-                await MainActor.run {
-                    self.session.camEnabled = !enabled
-                }
-            }
-        }
-    }
+    // MARK: - Deinit
 
     deinit {
-        // Belt-and-suspenders: if the user dismisses via some path that
-        // skipped handleHangup, still drop the Room.
-        if let r = self.room {
-            Task { await r.disconnect() }
+        if let r = self.room { Task { await r.disconnect() } }
+        if let obs = pipResignObserver { NotificationCenter.default.removeObserver(obs) }
+        if #available(iOS 15.0, *), let pip = pipController, pip.isPictureInPictureActive {
+            pip.stopPictureInPicture()
         }
-        // [2026-05-16] Remove the willResignActive observer (if any).
-        if let obs = pipResignObserver {
-            NotificationCenter.default.removeObserver(obs)
+        if let track = pipAttachedTrack, let renderer = pipRenderer {
+            track.remove(videoRenderer: renderer)
         }
+        pipAttachedTrack = nil
         pipController = nil
-        // [2026-05-16] Ringback cleanup. stopRingbackTone is idempotent
-        // and safe to call from deinit (no UI access, no main-thread
-        // requirement). Followed by observer removal so we don't leak.
+        pipVideoCallVC = nil
+        pipDisplayLayer = nil
+        pipRenderer = nil
         stopRingbackTone(reason: "deinit")
-        if let obs = ringbackResignObserver {
-            NotificationCenter.default.removeObserver(obs)
-        }
+        if let obs = ringbackResignObserver { NotificationCenter.default.removeObserver(obs) }
     }
 
     // MARK: - Presentation helper
 
-    /// Present a CallViewController over the top-most VC in the given
-    /// VC tree. The module passes the keyWindow's rootViewController; we
-    /// walk `presentedViewController` until we find a leaf so we don't
-    /// silently fail when there's already a modal on screen.
     static func present(
         from base: UIViewController,
         callId: String,
@@ -681,11 +647,7 @@ final class CallViewController: UIViewController {
 }
 
 // MARK: - RoomDelegate
-//
-// [Day 2, 2026-05-16] Only the four delegate methods required for Day 2
-// audio are implemented. RoomDelegate is `@objc optional` so we only get
-// callbacks for what we implement — track-subscribe/quality events stay
-// off for now (added when Day 3 wires remote video tiles).
+
 extension CallViewController: RoomDelegate {
 
     func roomDidConnect(_ room: Room) {
@@ -693,23 +655,12 @@ extension CallViewController: RoomDelegate {
         DispatchQueue.main.async { [weak self] in
             self?.session.status = "Conectado"
         }
-        // [2026-05-16] Note: ringback is INTENTIONALLY not stopped here.
-        // roomDidConnect fires when the CALLER's signalling completes —
-        // the callee hasn't joined yet. The authoritative spec semantic
-        // is "ringback plays until the remote participant joins", which
-        // is participantDidConnect / first didSubscribeTrack below.
     }
 
     func room(_ room: Room, didDisconnectWithError error: LiveKitError?) {
         print("[CallVC] didDisconnectWithError — error=\(String(describing: error))")
-        // Mirror the user-hangup path: notify the module so JS gets
-        // onCallEnded, then dismiss self. Avoid touching `self.room` here
-        // since LiveKit will release internals on its own.
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            // [2026-05-16] If we disconnect before the callee picks up
-            // (rejected / network error), kill the ringback so it
-            // doesn't keep buzzing during dismissal.
             self.stopRingbackTone(reason: "didDisconnectWithError")
             NotificationCenter.default.post(
                 name: CallViewController.callEndedNotification,
@@ -722,9 +673,6 @@ extension CallViewController: RoomDelegate {
 
     func room(_ room: Room, participantDidConnect participant: RemoteParticipant) {
         print("[CallVC] participantDidConnect — identity=\(participant.identity?.stringValue ?? "?")")
-        // [2026-05-16] Primary ringback termination point — the callee
-        // picked up and joined the LiveKit room. Idempotent; if the
-        // didSubscribeTrack fires first (race), this is a no-op.
         DispatchQueue.main.async { [weak self] in
             self?.stopRingbackTone(reason: "participantDidConnect")
         }
@@ -732,18 +680,11 @@ extension CallViewController: RoomDelegate {
 
     func room(_ room: Room, participantDidDisconnect participant: RemoteParticipant) {
         print("[CallVC] participantDidDisconnect — identity=\(participant.identity?.stringValue ?? "?")")
-        // If the remote leaves, drop the rendered track so SwiftUI falls
-        // back to the avatar / dark background tile.
         DispatchQueue.main.async { [weak self] in
             self?.session.remoteVideoTrack = nil
         }
     }
 
-    // [Day 3, 2026-05-16] Remote video track subscription. LiveKit Swift
-    // 2.x fires this for every subscribed track (audio + video); we filter
-    // to .video and cast the track to VideoTrack for SwiftUIVideoView.
-    // Signature verified against client-sdk-swift main branch
-    // (Sources/LiveKit/Protocols/RoomDelegate.swift).
     func room(_ room: Room,
               participant: RemoteParticipant,
               didSubscribeTrack publication: RemoteTrackPublication) {
@@ -754,11 +695,12 @@ extension CallViewController: RoomDelegate {
         }
         print("[CallVC] didSubscribeTrack — remote video, identity=\(participant.identity?.stringValue ?? "?")")
         DispatchQueue.main.async { [weak self] in
-            self?.session.remoteVideoTrack = track
-            // [2026-05-16] Secondary ringback termination point —
-            // remote media is now flowing, ringback would bleed into
-            // the conversation if we kept playing. Idempotent.
-            self?.stopRingbackTone(reason: "didSubscribeTrack")
+            guard let self = self else { return }
+            self.session.remoteVideoTrack = track
+            self.stopRingbackTone(reason: "didSubscribeTrack")
+            if #available(iOS 15.0, *) {
+                self.attachPiPRenderer(to: track)
+            }
         }
     }
 
@@ -768,7 +710,203 @@ extension CallViewController: RoomDelegate {
         guard publication.kind == .video else { return }
         print("[CallVC] didUnsubscribeTrack — remote video gone")
         DispatchQueue.main.async { [weak self] in
-            self?.session.remoteVideoTrack = nil
+            guard let self = self else { return }
+            if let track = self.pipAttachedTrack, let renderer = self.pipRenderer {
+                track.remove(videoRenderer: renderer)
+            }
+            self.pipAttachedTrack = nil
+            self.session.remoteVideoTrack = nil
+        }
+    }
+
+    /// Active speaker — LiveKit emits this whenever the SFU's audio-energy
+    /// snapshot changes. For 1:1 we just flip the green ring; for group, the
+    /// GroupCallViewController has its own delegate.
+    func room(_ room: Room, didUpdateSpeakingParticipants speakers: [Participant]) {
+        let remoteSpeaking = speakers.contains { ($0 as? RemoteParticipant) != nil }
+        DispatchQueue.main.async { [weak self] in
+            self?.session.remoteIsActiveSpeaker = remoteSpeaking
+        }
+    }
+
+    /// Connection quality — we map the enum to a 1-3 score the SwiftUI bars
+    /// understand. Excellent / good → 3 / 2; poor → 1; lost → 0.
+    func room(_ room: Room,
+              participant: Participant,
+              didUpdateConnectionQuality quality: ConnectionQuality) {
+        // Only react for the local participant; remote participants' quality
+        // bars don't surface in the 1:1 UI.
+        guard participant.identity == room.localParticipant.identity else { return }
+        let score: Int
+        switch quality {
+        case .excellent: score = 3
+        case .good:      score = 2
+        case .poor:      score = 1
+        default:         score = 0
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.session.connectionQuality = score
+        }
+    }
+
+    /// Data-channel reactions. Filter to messages we know how to handle
+    /// (`R:<emoji>`); anything else is ignored.
+    func room(_ room: Room,
+              participant: RemoteParticipant?,
+              didReceiveData data: Data,
+              forTopic topic: String?) {
+        guard let str = String(data: data, encoding: .utf8) else { return }
+        guard str.hasPrefix("R:") else { return }
+        let emoji = String(str.dropFirst(2))
+        let reaction = CallFloatingReaction(
+            id: UUID(),
+            emoji: emoji.isEmpty ? "🎉" : emoji,
+            spawnedAt: Date(),
+            xOffset: CGFloat.random(in: -80...80)
+        )
+        DispatchQueue.main.async { [weak self] in
+            self?.session.floatingReactions.append(reaction)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+                self?.session.floatingReactions.removeAll { $0.id == reaction.id }
+            }
+        }
+    }
+}
+
+// MARK: - AVPictureInPictureControllerDelegate
+
+@available(iOS 15.0, *)
+extension CallViewController: AVPictureInPictureControllerDelegate {
+    func pictureInPictureControllerWillStartPictureInPicture(_ controller: AVPictureInPictureController) {
+        print("[CallVC] PiP will start")
+    }
+    func pictureInPictureControllerDidStartPictureInPicture(_ controller: AVPictureInPictureController) {
+        print("[CallVC] PiP did start — dismissing fullscreen presentation")
+        // Hide our own fullscreen so only the system PiP window stays. The
+        // Room remains owned by us; the user can tap the PiP window to come
+        // back. If they swipe to close PiP, the system fires
+        // pictureInPictureControllerDidStopPictureInPicture and we re-present.
+        dismiss(animated: false, completion: nil)
+    }
+    func pictureInPictureController(_ controller: AVPictureInPictureController,
+                                    failedToStartPictureInPictureWithError error: Error) {
+        print("[CallVC] PiP failed to start: \(error)")
+    }
+    func pictureInPictureControllerWillStopPictureInPicture(_ controller: AVPictureInPictureController) {
+        print("[CallVC] PiP will stop")
+    }
+    func pictureInPictureController(_ controller: AVPictureInPictureController,
+                                    restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {
+        // Re-present ourselves over the current top-most VC. The original
+        // presentation was dismissed when PiP started; we need to bring it
+        // back so the user keeps seeing the rich call UI.
+        if let root = UIApplication.shared.connectedScenes
+            .compactMap({ ($0 as? UIWindowScene)?.keyWindow?.rootViewController })
+            .first {
+            var top: UIViewController = root
+            while let presented = top.presentedViewController, !presented.isBeingDismissed {
+                top = presented
+            }
+            top.present(self, animated: false) {
+                completionHandler(true)
+            }
+        } else {
+            completionHandler(false)
+        }
+    }
+}
+
+// MARK: - PiP video renderer
+
+/// VideoRenderer that wraps LiveKit's `.cvPixelBuffer` frames into
+/// CMSampleBuffer and enqueues them onto a display layer. Frames with other
+/// buffer kinds (`.native`, `.i420Buffer`) are dropped — Stage #993 ships
+/// with the safe subset; broader codec coverage waits on LiveKit exposing
+/// raw RTC buffer types publicly.
+final class PiPVideoRenderer: NSObject, VideoRenderer {
+    weak var displayLayer: AVSampleBufferDisplayLayer?
+    private var timebase: CMTimebase?
+
+    var isAdaptiveStreamEnabled: Bool { false }
+    var adaptiveStreamSize: CGSize { .zero }
+
+    init(displayLayer: AVSampleBufferDisplayLayer) {
+        self.displayLayer = displayLayer
+        super.init()
+        // Set up a control timebase so the display layer schedules frames
+        // against host time. Without this, layers can stall on the first
+        // enqueue.
+        var tb: CMTimebase?
+        CMTimebaseCreateWithSourceClock(allocator: kCFAllocatorDefault,
+                                        sourceClock: CMClockGetHostTimeClock(),
+                                        timebaseOut: &tb)
+        if let tb {
+            CMTimebaseSetTime(tb, time: .zero)
+            CMTimebaseSetRate(tb, rate: 1.0)
+            displayLayer.controlTimebase = tb
+            self.timebase = tb
+        }
+    }
+
+    func set(size: CGSize) {
+        // No-op — display layer auto-sizes via videoGravity.
+    }
+
+    func render(frame: VideoFrame) {
+        guard let displayLayer = displayLayer else { return }
+        guard case .cvPixelBuffer(let pixelBuffer) = frame.buffer else {
+            // Other buffer kinds aren't safely convertible without WebRTC
+            // umbrella access. PiP stalls until the next `.cvPixelBuffer`
+            // frame; CallKit handles the fallback UX.
+            return
+        }
+        var formatDescription: CMVideoFormatDescription?
+        let fmtErr = CMVideoFormatDescriptionCreateForImageBuffer(
+            allocator: kCFAllocatorDefault,
+            imageBuffer: pixelBuffer,
+            formatDescriptionOut: &formatDescription
+        )
+        guard fmtErr == noErr, let formatDesc = formatDescription else { return }
+
+        // Use host time for presentation; LiveKit doesn't surface a strict
+        // monotonic timestamp on the frame, so host time keeps the display
+        // layer happy and avoids artificial freezes from out-of-order frames.
+        let hostTime = CMClockGetTime(CMClockGetHostTimeClock())
+        var timing = CMSampleTimingInfo(
+            duration: CMTime(value: 1, timescale: 30),
+            presentationTimeStamp: hostTime,
+            decodeTimeStamp: .invalid
+        )
+        var sampleBuffer: CMSampleBuffer?
+        let sbErr = CMSampleBufferCreateReadyWithImageBuffer(
+            allocator: kCFAllocatorDefault,
+            imageBuffer: pixelBuffer,
+            formatDescription: formatDesc,
+            sampleTiming: &timing,
+            sampleBufferOut: &sampleBuffer
+        )
+        guard sbErr == noErr, let sample = sampleBuffer else { return }
+
+        // Set the kCMSampleAttachmentKey_DisplayImmediately attachment so the
+        // layer doesn't queue frames behind the host clock — PiP wants tight
+        // latency, not smooth playback.
+        if let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: true) {
+            let cnt = CFArrayGetCount(attachments)
+            if cnt > 0 {
+                let dict = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
+                CFDictionarySetValue(
+                    dict,
+                    Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
+                    Unmanaged.passUnretained(kCFBooleanTrue).toOpaque()
+                )
+            }
+        }
+
+        DispatchQueue.main.async {
+            if displayLayer.status == .failed {
+                displayLayer.flush()
+            }
+            displayLayer.enqueue(sample)
         }
     }
 }

@@ -67,6 +67,43 @@
       android:theme="@style/Theme.AppCompat.NoActionBar"
       android:screenOrientation="portrait" />
 
+    <!--
+      [Stage 998/1000 — 2026-05-17] Compose-based Live Broadcast host
+      activity. Owns the LiveKit publisher Room + the WS connection for
+      live_* events. Same flags as CallActivity (singleTop so re-tapping a
+      live during one already running reuses the activity; portrait; no
+      action bar; exported=false because JS launches it via the module
+      bridge, never via implicit intent).
+    -->
+    <activity
+      android:name=".LiveBroadcastActivity"
+      android:exported="false"
+      android:showWhenLocked="true"
+      android:turnScreenOn="true"
+      android:taskAffinity=""
+      android:excludeFromRecents="true"
+      android:launchMode="singleTop"
+      android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+      android:theme="@style/Theme.AppCompat.NoActionBar"
+      android:screenOrientation="portrait" />
+
+    <!--
+      [Stage 998/1000 — 2026-05-17] Compose-based Live Viewer audience
+      activity. Subscribe-only LK Room + WS for live_* events. Auto-closes
+      on live_viewer_kicked carrying the local user's email.
+    -->
+    <activity
+      android:name=".LiveViewerActivity"
+      android:exported="false"
+      android:showWhenLocked="true"
+      android:turnScreenOn="true"
+      android:taskAffinity=""
+      android:excludeFromRecents="true"
+      android:launchMode="singleTop"
+      android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+      android:theme="@style/Theme.AppCompat.NoActionBar"
+      android:screenOrientation="portrait" />
+
     <receiver
       android:name=".CallActionReceiver"
       android:exported="false" />

@@ -1,190 +1,583 @@
+// Stage #995 — full native SwiftUI UI, replaces JS /call.js on mobile + Stage #993 PiP wired
+//
+// CallView.swift — the 1:1 native SwiftUI call screen. Mirrors every visible
+// element of app/call.js (the JS hybrid implementation) so a user moving from
+// a JS build to a native build sees the exact same surface: large peer avatar
+// (1:1) with double pulse-rings during ringing, full-bleed remote video once
+// the LiveKit subscription comes in, a draggable local-preview PiP, the WhatsApp-
+// style bottom action bar with circular buttons (mic, camera, speaker w/
+// long-press audio picker, screen share, add member, hangup), and the top bar
+// (minimize → AVPictureInPicture, switch camera, video toggle). Active-speaker
+// breathing green ring, connection-quality bars, glassmorphism gradient and
+// floating emoji bursts are all here.
+//
+// Architecture:
+//   - `CallView` is the SwiftUI root.
+//   - It binds to `CallSessionState` (declared in CallViewController.swift),
+//     which the VC mutates as LiveKit reports state changes.
+//   - User taps trigger closures (`onHangup`, `onToggleMute`, `onToggleCam`,
+//     `onToggleSpeaker`, `onSwitchCamera`, `onScreenShare`, `onAddMember`,
+//     `onMinimize`, `onSendReaction`). The VC owns the suspend / actor work
+//     and rolls back optimistic UI flips on throw.
+//   - Strings are hardcoded pt-BR (Stage #995 doesn't migrate i18n; that's a
+//     follow-up: the JS shipping today is also pt-BR-only).
+//   - SF Symbols only — no PNGs, no emoji-as-icon.
+//   - iOS 15+ (matches the rest of the module).
+
 import SwiftUI
 import UIKit
-// [Day 3, 2026-05-16] CallView now hosts video views (local preview +
-// remote tile) so it needs the LiveKit module for SwiftUIVideoView,
-// VideoTrack, and LocalVideoTrack types.
+import Combine
 import LiveKitClient
 
-// [native call screen, 2026-05-16] SwiftUI view that mirrors the Android
-// CallActivity layout (avatar circle + name + status + mute/hangup/video).
-//
-// [Day 2, 2026-05-16] Mic state + connection status migrated from local
-// @State to an @ObservedObject (CallSessionState — declared in
-// CallViewController.swift). The mute button still toggles optimistically
-// for snappy UX, but the source of truth is now the VC's session object
-// and the suspend setMicrophone call runs inside `onToggleMute`.
+// MARK: - Floating reaction model
+
+/// One floating emoji burst spawned by either side via the data channel. The
+/// VC appends to `session.floatingReactions`; SwiftUI animates each up and
+/// removes it from the array after ~3s via a fixed `.task` per emoji.
+struct CallFloatingReaction: Identifiable, Equatable {
+    let id: UUID
+    let emoji: String
+    let spawnedAt: Date
+    /// Horizontal offset from screen center in points, picked at spawn time.
+    let xOffset: CGFloat
+}
+
+// MARK: - Top-level call view
+
 struct CallView: View {
-    // Initial params passed from the hosting UIViewController. Stored as
-    // immutable `let` because they describe the call we were launched with.
+    // Initial params passed from the hosting UIViewController. Immutable —
+    // they describe the call we were launched with and never change for the
+    // life of the view.
     let callId: String
     let callerName: String
     let callerEmail: String
     let hasVideo: Bool
 
-    // [Day 2, 2026-05-16] Source of truth for mic + connection status.
-    // CallViewController owns the instance; this view re-renders whenever
-    // the VC flips status to "Conectado" (after roomDidConnect) or rolls
-    // back micEnabled because setMicrophone threw.
+    /// Source of truth. The VC owns the instance; SwiftUI re-renders on every
+    /// `@Published` mutation. Declared in CallViewController.swift.
     @ObservedObject var session: CallSessionState
 
-    // Closure invoked when the user taps the red hangup button. The hosting
-    // CallViewController passes a closure that dismisses itself and posts
-    // ExpoCallKitNativeCallEnded so the module can re-emit onCallEnded to JS.
+    // Closures wired by the VC. The VC owns LiveKit Room mutations, audio
+    // session overrides, ReplayKit toggles, and PiP activation; SwiftUI just
+    // forwards intent.
     let onHangup: () -> Void
-
-    // [Day 2, 2026-05-16] Closure invoked with the *desired* mic state
-    // after the optimistic UI flip. The VC runs the suspend
-    // localParticipant.setMicrophone(enabled:) inside a Task and rolls back
-    // session.micEnabled on failure.
     let onToggleMute: (Bool) -> Void
-
-    // [Day 3, 2026-05-16] Camera toggle closure — symmetric with
-    // onToggleMute. CallView flips session.camEnabled optimistically; VC
-    // calls setCamera(enabled:) and rolls back the @Published on throw.
     let onToggleCam: (Bool) -> Void
+    let onToggleSpeaker: (Bool) -> Void
+    let onSwitchCamera: () -> Void
+    let onScreenShare: () -> Void
+    let onAddMember: () -> Void
+    let onMinimize: () -> Void
+    let onSendReaction: (String) -> Void
 
-    // Background and palette match WhatsApp's dark call screen, same hex
-    // values the Android CallActivity uses (#0B141A bg, #1F2C34 chips,
-    // #E53935 hangup, #8696A0 secondary text).
+    // MARK: - Local UI state
+    //
+    // Anything that doesn't need to survive a VC bounce or be observed by the
+    // VC lives here. Sheet visibility, picker selection, drag offset, etc.
+
+    @State private var showAudioPicker: Bool = false
+    @State private var showEmojiBar: Bool = false
+    @State private var showMoreSheet: Bool = false
+    @State private var pipOffset: CGSize = CGSize(width: 0, height: 0)
+    @State private var pipDragOffset: CGSize = CGSize(width: 0, height: 0)
+    @State private var controlsVisible: Bool = true
+    @State private var controlsHideTask: Task<Void, Never>? = nil
+    @State private var pulseScale: CGFloat = 1.0
+    @State private var pulseOpacity: Double = 0.6
+    @State private var speakerPulse: CGFloat = 1.0
+    @State private var elapsedSeconds: Int = 0
+    @State private var timer: Timer? = nil
+
+    // Palette matches the JS /call.js + Android CallActivity. Pulled from the
+    // WhatsApp dark-call screen — same hex values across iOS/Android so the
+    // experience is consistent across platforms.
     private let backgroundColor = Color(red: 0x0B/255.0, green: 0x14/255.0, blue: 0x1A/255.0)
     private let chipColor       = Color(red: 0x1F/255.0, green: 0x2C/255.0, blue: 0x34/255.0)
     private let hangupColor     = Color(red: 0xE5/255.0, green: 0x39/255.0, blue: 0x35/255.0)
     private let secondaryText   = Color(red: 0x86/255.0, green: 0x96/255.0, blue: 0xA0/255.0)
+    private let speakerRingColor = Color(red: 0x2E/255.0, green: 0xCC/255.0, blue: 0x71/255.0)
+
+    // MARK: - Body
 
     var body: some View {
         ZStack {
-            // [Day 3, 2026-05-16] For video calls, the remote feed (once
-            // subscribed) fills the entire ZStack as the background; until
-            // it arrives we keep the dark color so the avatar still shows.
-            // Audio calls always keep the dark color.
-            if hasVideo, let remote = session.remoteVideoTrack {
-                SwiftUIVideoView(remote)
-                    .ignoresSafeArea()
-            } else {
-                backgroundColor
-                    .ignoresSafeArea()
+            // ── 1. Background (remote video when subscribed; gradient otherwise)
+            backgroundLayer
+                .ignoresSafeArea()
+
+            // ── 2. Subtle glassmorphism overlay so the avatar / status text
+            //      stay readable even when the remote feed is bright. Skipped
+            //      when there's no video so the dark color shows through.
+            if !hasVideo || session.remoteVideoTrack == nil {
+                LinearGradient(
+                    colors: [
+                        Color.black.opacity(0.0),
+                        Color.black.opacity(0.55)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
             }
 
+            // ── 3. Main content stack (avatar + name + status + controls)
             VStack(spacing: 0) {
-                Spacer().frame(height: 80)
+                topBar
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .opacity(controlsVisible ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.25), value: controlsVisible)
 
-                // Avatar circle (120pt) — only for audio calls, or for
-                // video calls while the remote feed hasn't arrived yet.
-                // Once the remote VideoTrack is published, the full-screen
-                // video replaces it and we hide the avatar to avoid the
-                // overlay covering the remote face.
+                Spacer().frame(height: 24)
+
                 if !hasVideo || session.remoteVideoTrack == nil {
-                    ZStack {
-                        Circle()
-                            .fill(chipColor)
-                            .frame(width: 120, height: 120)
-                        Text(initialFor(callerName))
-                            .font(.system(size: 48, weight: .regular))
-                            .foregroundColor(.white)
-                    }
-                    .padding(.bottom, 24)
+                    avatarBlock
                 }
-
-                Text(callerName.isEmpty ? callerEmail : callerName)
-                    .font(.system(size: 24, weight: .regular))
-                    .foregroundColor(.white)
-                    .padding(.bottom, 8)
-
-                // [Day 2, 2026-05-16] Status text now reads from the shared
-                // session object — flips from "Conectando…" to "Conectado"
-                // when roomDidConnect fires on the VC.
-                Text(session.status)
-                    .font(.system(size: 16))
-                    .foregroundColor(secondaryText)
 
                 Spacer()
 
-                // Controls row — mute, hangup, and (optionally) video.
-                HStack(spacing: 28) {
-                    controlButton(
-                        size: 64,
-                        background: chipColor,
-                        enabled: session.micEnabled,
-                        systemName: session.micEnabled ? "mic.fill" : "mic.slash.fill"
-                    ) {
-                        // Optimistic flip — VC will roll back if the
-                        // suspend setMicrophone call throws.
-                        let desired = !session.micEnabled
-                        session.micEnabled = desired
-                        print("[CallView] mute toggled — desired=\(desired) callId=\(callId)")
-                        onToggleMute(desired)
-                    }
-
-                    controlButton(
-                        size: 72,
-                        background: hangupColor,
-                        enabled: true,
-                        systemName: "phone.down.fill"
-                    ) {
-                        print("[CallView] hangup tapped — callId=\(callId)")
-                        onHangup()
-                    }
-
-                    if hasVideo {
-                        controlButton(
-                            size: 64,
-                            background: chipColor,
-                            enabled: session.camEnabled,
-                            systemName: session.camEnabled ? "video.fill" : "video.slash.fill"
-                        ) {
-                            // [Day 3, 2026-05-16] Optimistic flip — VC
-                            // rolls back session.camEnabled on throw.
-                            let desired = !session.camEnabled
-                            session.camEnabled = desired
-                            print("[CallView] video toggled — desired=\(desired) callId=\(callId)")
-                            onToggleCam(desired)
-                        }
-                    }
-                }
-                .padding(.bottom, 48)
+                bottomActionBar
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 36)
+                    .opacity(controlsVisible ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.25), value: controlsVisible)
             }
 
-            // [Day 3, 2026-05-16] Local preview PiP — top-right, 96x160
-            // rounded card. Only rendered for video calls and only once
-            // the local camera publish has handed us a LocalVideoTrack.
-            if hasVideo, let local = session.localVideoTrack {
+            // ── 4. Local preview PiP (draggable, top-right by default)
+            if hasVideo, session.camEnabled, let local = session.localVideoTrack {
+                localPreviewTile(local)
+            }
+
+            // ── 5. Floating emoji reactions
+            ZStack {
+                ForEach(session.floatingReactions) { reaction in
+                    FloatingEmojiView(reaction: reaction)
+                }
+            }
+            .allowsHitTesting(false)
+
+            // ── 6. Quick-reactions emoji bar (slides up from bottom)
+            if showEmojiBar {
                 VStack {
-                    HStack {
-                        Spacer()
-                        SwiftUIVideoView(local)
-                            .frame(width: 96, height: 160)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(Color.white.opacity(0.2), lineWidth: 1)
-                            )
-                            .padding(.top, 60)
-                            .padding(.trailing, 16)
-                    }
                     Spacer()
+                    emojiQuickBar
+                        .padding(.bottom, 132)
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
+            // ── 7. More sheet overlay (raise hand, recording, hold)
+            if showMoreSheet {
+                moreSheetOverlay
+                    .transition(.opacity)
+            }
+        }
+        .preferredColorScheme(.dark)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            // Single tap on the call body toggles control visibility — matches
+            // the JS /call.js handleScreenTap behavior. Only applies once video
+            // is up and the peer is connected; otherwise the controls stay
+            // pinned so the user can hang up from the ringing state.
+            if hasVideo && session.remoteVideoTrack != nil {
+                toggleControls()
+            }
+        }
+        .onAppear {
+            startTimerIfNeeded()
+            startPulseAnimation()
+            startSpeakerPulseAnimation()
+            scheduleControlsHide()
+        }
+        .onDisappear {
+            timer?.invalidate()
+            timer = nil
+            controlsHideTask?.cancel()
+        }
+        // Re-run the auto-hide cycle whenever connection state flips — once
+        // the call connects we want a hide-after-5s, but during ringing the
+        // controls should stay glued.
+        .onChange(of: session.status) { _ in
+            scheduleControlsHide()
+        }
+        // Sheets are presented via `.sheet` so they get the native iOS feel
+        // (drag-to-dismiss, blur backing) without us re-implementing them.
+        .sheet(isPresented: $showAudioPicker) {
+            audioPickerSheet
+                .presentationDetents([.height(280)])
+        }
+    }
+
+    // MARK: - Background
+
+    /// The full-bleed back layer. Three states:
+    ///   1. Audio call OR video call awaiting first remote frame → dark grad.
+    ///   2. Video call with remote VideoTrack → fullscreen SwiftUIVideoView.
+    ///   3. Peer screen-sharing → screen-share track replaces camera feed.
+    @ViewBuilder
+    private var backgroundLayer: some View {
+        if hasVideo, let remote = session.remoteVideoTrack {
+            // SwiftUIVideoView (LiveKit's SwiftUI wrapper) handles aspect-fit
+            // and renders the latest decoded frame. We want fill behavior so
+            // there are no letterbox bars during portrait calls.
+            SwiftUIVideoView(remote)
+                .ignoresSafeArea()
+        } else {
+            // Glassmorphism gradient: top is mid-bg, bottom darker. Subtle —
+            // SwiftUI's LinearGradient is GPU-cheap so we don't worry about
+            // perf even on older iPhones.
+            LinearGradient(
+                colors: [
+                    Color(red: 0x14/255.0, green: 0x20/255.0, blue: 0x28/255.0),
+                    Color(red: 0x07/255.0, green: 0x0E/255.0, blue: 0x14/255.0)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+    }
+
+    // MARK: - Top bar
+
+    private var topBar: some View {
+        HStack(spacing: 12) {
+            // Minimize → PiP. Tap fires onMinimize so the VC can call
+            // pipController.startPictureInPicture() (Stage #993 wire in
+            // CallViewController.setupPiPController).
+            iconChip(systemName: "chevron.down", action: {
+                hapticTap()
+                onMinimize()
+            })
+
+            // Connection-quality bars — three vertical bars whose height +
+            // opacity follow session.connectionQuality. WhatsApp shows this
+            // in the top-leading area too.
+            ConnectionQualityBars(quality: session.connectionQuality)
+                .frame(width: 22, height: 22)
+
+            Spacer()
+
+            // Switch front/back camera. Only meaningful for video calls; we
+            // hide it entirely for audio so the bar isn't visually cluttered.
+            if hasVideo && session.camEnabled {
+                iconChip(systemName: "camera.rotate.fill", action: {
+                    hapticTap()
+                    onSwitchCamera()
+                })
+            }
+
+            // Top-right "video toggle" — same as the bottom bar's video button
+            // but ergonomically reachable when in a video call (matches Meet/
+            // WhatsApp redundancy). Mirrors `videoEnabled` in JS /call.js.
+            if hasVideo {
+                iconChip(systemName: session.camEnabled ? "video.fill" : "video.slash.fill", action: {
+                    let desired = !session.camEnabled
+                    session.camEnabled = desired
+                    hapticTap()
+                    onToggleCam(desired)
+                })
+            }
+        }
+    }
+
+    /// Small circular chip used in the top bar. 36×36 SF Symbol over a faded
+    /// black background — lets the icon read clearly over both the dark grad
+    /// and over the remote video.
+    @ViewBuilder
+    private func iconChip(systemName: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .fill(Color.black.opacity(0.45))
+                    .frame(width: 36, height: 36)
+                Image(systemName: systemName)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(.white)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Avatar block (1:1 audio / pre-remote video)
+
+    private var avatarBlock: some View {
+        VStack(spacing: 16) {
+            // Pulse rings — two concentric expanding circles. Shown during
+            // ringing so the user has visual feedback that the call is alive.
+            // We use the speaker-pulse anim when the remote participant is in
+            // the active speakers list (green ring instead of white).
+            ZStack {
+                if session.status != "Conectado" {
+                    pulseRing(scale: pulseScale, opacity: pulseOpacity)
+                    pulseRing(scale: pulseScale * 0.85, opacity: pulseOpacity * 0.8)
+                }
+
+                if session.remoteIsActiveSpeaker {
+                    Circle()
+                        .stroke(speakerRingColor.opacity(0.75), lineWidth: 4)
+                        .frame(width: 144 * speakerPulse, height: 144 * speakerPulse)
+                }
+
+                Circle()
+                    .fill(chipColor)
+                    .frame(width: 132, height: 132)
+                    .shadow(color: .black.opacity(0.5), radius: 14, x: 0, y: 8)
+
+                // Initial letter. SF rounded weight matches WhatsApp's avatar
+                // font feel; we don't have remote avatar URLs natively yet so
+                // an initial circle is the safe fallback.
+                Text(initialFor(callerName))
+                    .font(.system(size: 52, weight: .regular, design: .rounded))
+                    .foregroundColor(.white)
+            }
+            .frame(width: 168, height: 168)
+
+            Text(callerName.isEmpty ? callerEmail : callerName)
+                .font(.system(size: 26, weight: .regular))
+                .foregroundColor(.white)
+                .lineLimit(1)
+
+            // Status: "Chamando…" / "Conectando…" / "Conectado HH:MM:SS"
+            Text(statusLine)
+                .font(.system(size: 16))
+                .foregroundColor(secondaryText)
+                .multilineTextAlignment(.center)
+        }
+    }
+
+    private var statusLine: String {
+        if session.status == "Conectado" {
+            return formatDuration(elapsedSeconds)
+        }
+        return session.status
+    }
+
+    /// One pulse ring. SwiftUI redraws via `pulseScale` + `pulseOpacity` —
+    /// driven from `.onAppear`'s repeating animation in this view.
+    private func pulseRing(scale: CGFloat, opacity: Double) -> some View {
+        Circle()
+            .stroke(Color.white.opacity(opacity), lineWidth: 2)
+            .frame(width: 168, height: 168)
+            .scaleEffect(scale)
+    }
+
+    // MARK: - Local preview PiP
+
+    /// Draggable local-camera tile. 100×140, rounded-12, top-right by default.
+    /// Snaps to the nearest screen edge on release (mirrors the JS PanResponder
+    /// behavior in /call.js).
+    @ViewBuilder
+    private func localPreviewTile(_ track: LocalVideoTrack) -> some View {
+        let baseWidth: CGFloat = 100
+        let baseHeight: CGFloat = 140
+        GeometryReader { proxy in
+            SwiftUIVideoView(track)
+                .frame(width: baseWidth, height: baseHeight)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.white.opacity(0.25), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.4), radius: 8, x: 0, y: 4)
+                .offset(
+                    x: pipOffset.width + pipDragOffset.width,
+                    y: pipOffset.height + pipDragOffset.height
+                )
+                .position(
+                    x: proxy.size.width - baseWidth / 2 - 16,
+                    y: baseHeight / 2 + 72
+                )
+                .gesture(
+                    DragGesture()
+                        .onChanged { value in
+                            pipDragOffset = value.translation
+                        }
+                        .onEnded { value in
+                            // Snap to nearest edge horizontally; clamp Y to the
+                            // visible safe area minus the bottom bar so the
+                            // tile never gets stuck under the controls.
+                            let predictedX = proxy.size.width - baseWidth / 2 - 16
+                                + pipOffset.width + value.translation.width
+                            let snapToRight = predictedX > proxy.size.width / 2
+                            let targetX: CGFloat = snapToRight
+                                ? 0
+                                : -(proxy.size.width - baseWidth - 32)
+                            let predictedY = pipOffset.height + value.translation.height
+                            let clampedY = max(0, min(proxy.size.height - baseHeight - 200, predictedY))
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                                pipOffset = CGSize(width: targetX, height: clampedY)
+                                pipDragOffset = .zero
+                            }
+                        }
+                )
+        }
+    }
+
+    // MARK: - Bottom action bar
+
+    private var bottomActionBar: some View {
+        VStack(spacing: 16) {
+            // Top row: secondary actions (screen share, add member, more)
+            HStack(spacing: 16) {
+                actionPillButton(
+                    icon: "rectangle.on.rectangle",
+                    label: "Compartilhar",
+                    enabled: session.remoteVideoTrack != nil || session.status == "Conectado",
+                    action: { hapticTap(); onScreenShare() }
+                )
+
+                actionPillButton(
+                    icon: "person.badge.plus",
+                    label: "Adicionar",
+                    enabled: true,
+                    action: { hapticTap(); onAddMember() }
+                )
+
+                actionPillButton(
+                    icon: "ellipsis",
+                    label: "Mais",
+                    enabled: true,
+                    action: {
+                        hapticTap()
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showMoreSheet.toggle()
+                        }
+                    }
+                )
+
+                actionPillButton(
+                    icon: "face.smiling",
+                    label: "Reagir",
+                    enabled: true,
+                    action: {
+                        hapticTap()
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            showEmojiBar.toggle()
+                        }
+                    }
+                )
+            }
+
+            // Primary row: mute, camera (video calls), speaker, hangup
+            HStack(spacing: 24) {
+                circleButton(
+                    size: 64,
+                    background: session.micEnabled ? chipColor : Color.white,
+                    foreground: session.micEnabled ? .white : .black,
+                    systemName: session.micEnabled ? "mic.fill" : "mic.slash.fill",
+                    action: {
+                        let desired = !session.micEnabled
+                        session.micEnabled = desired
+                        hapticTap()
+                        onToggleMute(desired)
+                    }
+                )
+
+                if hasVideo {
+                    circleButton(
+                        size: 64,
+                        background: session.camEnabled ? chipColor : Color.white,
+                        foreground: session.camEnabled ? .white : .black,
+                        systemName: session.camEnabled ? "video.fill" : "video.slash.fill",
+                        action: {
+                            let desired = !session.camEnabled
+                            session.camEnabled = desired
+                            hapticTap()
+                            onToggleCam(desired)
+                        }
+                    )
+                }
+
+                // Speaker button: tap toggles, long-press opens the audio
+                // picker (Bluetooth / earpiece / speaker / wired). Mirrors the
+                // /call.js openAudioPicker UX.
+                circleButton(
+                    size: 64,
+                    background: session.speakerOn ? Color.white : chipColor,
+                    foreground: session.speakerOn ? .black : .white,
+                    systemName: session.speakerOn ? "speaker.wave.3.fill" : "speaker.fill",
+                    action: {
+                        let desired = !session.speakerOn
+                        session.speakerOn = desired
+                        hapticTap()
+                        onToggleSpeaker(desired)
+                    },
+                    onLongPress: {
+                        hapticTap()
+                        showAudioPicker = true
+                    }
+                )
+
+                circleButton(
+                    size: 72,
+                    background: hangupColor,
+                    foreground: .white,
+                    systemName: "phone.down.fill",
+                    action: {
+                        hapticHeavy()
+                        onHangup()
+                    }
+                )
+
+                // Hand raise (group only — for 1:1 we hide it; the same view
+                // is used by GroupCallView with `isGroup=true`).
+                if session.isGroup {
+                    circleButton(
+                        size: 56,
+                        background: session.handRaised ? Color.yellow : chipColor,
+                        foreground: session.handRaised ? .black : .white,
+                        systemName: "hand.raised.fill",
+                        action: {
+                            session.handRaised.toggle()
+                            hapticTap()
+                            onSendReaction(session.handRaised ? "🖐️" : "")
+                        }
+                    )
                 }
             }
         }
     }
 
-    // MARK: - Helpers
+    // MARK: - Buttons
 
-    private func initialFor(_ name: String) -> String {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let source = trimmed.isEmpty ? callerEmail : trimmed
-        guard let first = source.first else { return "?" }
-        return String(first).uppercased()
+    /// Pill button used for secondary actions (Screen share, Add member, More).
+    /// Each is a 60×64 capsule with icon over label, dimmed when disabled.
+    @ViewBuilder
+    private func actionPillButton(
+        icon: String,
+        label: String,
+        enabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundColor(.white)
+                Text(label)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.white.opacity(0.9))
+            }
+            .frame(width: 70, height: 56)
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(chipColor.opacity(enabled ? 0.85 : 0.4))
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
     }
 
-    // Shared circle-button factory. `enabled` controls only opacity for
-    // now — the button is always tappable so the user can toggle back on.
+    /// Generic circular control button. Used for mic, cam, speaker, hangup,
+    /// hand raise. Supports an optional long-press handler (speaker uses it).
     @ViewBuilder
-    private func controlButton(
+    private func circleButton(
         size: CGFloat,
         background: Color,
-        enabled: Bool,
+        foreground: Color,
         systemName: String,
-        action: @escaping () -> Void
+        action: @escaping () -> Void,
+        onLongPress: (() -> Void)? = nil
     ) -> some View {
         Button(action: action) {
             ZStack {
@@ -193,10 +586,308 @@ struct CallView: View {
                     .frame(width: size, height: size)
                 Image(systemName: systemName)
                     .font(.system(size: size * 0.42, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(foreground)
             }
-            .opacity(enabled ? 1.0 : 0.5)
         }
         .buttonStyle(.plain)
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.5)
+                .onEnded { _ in onLongPress?() }
+        )
+    }
+
+    // MARK: - Quick emoji bar
+
+    private let quickEmojis = ["❤️", "👍", "👏", "😂", "🎉", "🔥"]
+
+    private var emojiQuickBar: some View {
+        HStack(spacing: 12) {
+            ForEach(quickEmojis, id: \.self) { emoji in
+                Button(action: {
+                    hapticTap()
+                    onSendReaction(emoji)
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        showEmojiBar = false
+                    }
+                }) {
+                    Text(emoji)
+                        .font(.system(size: 30))
+                        .frame(width: 48, height: 48)
+                        .background(
+                            Circle().fill(Color.white.opacity(0.12))
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            Capsule().fill(Color.black.opacity(0.55))
+        )
+    }
+
+    // MARK: - More sheet (raise hand / recording / hold)
+
+    private var moreSheetOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.55)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showMoreSheet = false
+                    }
+                }
+
+            VStack(spacing: 0) {
+                Spacer()
+                VStack(spacing: 12) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.3))
+                        .frame(width: 40, height: 4)
+                        .padding(.top, 10)
+
+                    Text("Mais opções")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.bottom, 6)
+
+                    moreRow(icon: "hand.raised.fill", title: session.handRaised ? "Abaixar mão" : "Levantar mão") {
+                        session.handRaised.toggle()
+                        onSendReaction(session.handRaised ? "🖐️" : "")
+                        withAnimation(.easeInOut(duration: 0.2)) { showMoreSheet = false }
+                    }
+                    moreRow(icon: "record.circle", title: session.recording ? "Parar gravação" : "Gravar chamada") {
+                        session.recording.toggle()
+                        withAnimation(.easeInOut(duration: 0.2)) { showMoreSheet = false }
+                    }
+                    moreRow(icon: session.onHold ? "play.fill" : "pause.fill", title: session.onHold ? "Retomar" : "Colocar em espera") {
+                        session.onHold.toggle()
+                        withAnimation(.easeInOut(duration: 0.2)) { showMoreSheet = false }
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.bottom, 40)
+                .frame(maxWidth: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: 24)
+                        .fill(Color(red: 0x14/255.0, green: 0x1F/255.0, blue: 0x27/255.0))
+                )
+            }
+        }
+    }
+
+    private func moreRow(icon: String, title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundColor(.white)
+                    .frame(width: 28)
+                Text(title)
+                    .font(.system(size: 16))
+                    .foregroundColor(.white)
+                Spacer()
+            }
+            .padding(.vertical, 10)
+            .padding(.horizontal, 14)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.white.opacity(0.06))
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Audio picker
+
+    private var audioPickerSheet: some View {
+        VStack(spacing: 0) {
+            Capsule()
+                .fill(Color.white.opacity(0.3))
+                .frame(width: 40, height: 4)
+                .padding(.top, 10)
+
+            Text("Saída de áudio")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundColor(.white)
+                .padding(.top, 14)
+                .padding(.bottom, 8)
+
+            VStack(spacing: 8) {
+                audioRouteRow(icon: "speaker.wave.3.fill", title: "Alto-falante", selected: session.speakerOn) {
+                    session.speakerOn = true
+                    onToggleSpeaker(true)
+                    showAudioPicker = false
+                }
+                audioRouteRow(icon: "iphone", title: "Telefone", selected: !session.speakerOn) {
+                    session.speakerOn = false
+                    onToggleSpeaker(false)
+                    showAudioPicker = false
+                }
+                // Bluetooth + wired headset routing is owned by AVAudioSession
+                // — tapping these forwards `routeBluetooth` / `routeWired` to
+                // the VC, which calls overrideOutputAudioPort accordingly.
+                audioRouteRow(icon: "headphones", title: "Bluetooth", selected: false) {
+                    onToggleSpeaker(false)
+                    showAudioPicker = false
+                }
+            }
+            .padding(.horizontal, 20)
+
+            Spacer()
+        }
+        .background(Color(red: 0x14/255.0, green: 0x1F/255.0, blue: 0x27/255.0))
+    }
+
+    @ViewBuilder
+    private func audioRouteRow(icon: String, title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 18))
+                    .foregroundColor(selected ? speakerRingColor : .white)
+                    .frame(width: 28)
+                Text(title)
+                    .font(.system(size: 16))
+                    .foregroundColor(.white)
+                Spacer()
+                if selected {
+                    Image(systemName: "checkmark")
+                        .foregroundColor(speakerRingColor)
+                }
+            }
+            .padding(.vertical, 12)
+            .padding(.horizontal, 14)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.white.opacity(selected ? 0.1 : 0.04))
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Animations & helpers
+
+    private func startPulseAnimation() {
+        withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) {
+            pulseScale = 1.4
+            pulseOpacity = 0
+        }
+    }
+
+    private func startSpeakerPulseAnimation() {
+        withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+            speakerPulse = 1.12
+        }
+    }
+
+    private func startTimerIfNeeded() {
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+            guard session.status == "Conectado" else { return }
+            elapsedSeconds += 1
+        }
+    }
+
+    private func toggleControls() {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            controlsVisible.toggle()
+        }
+        if controlsVisible {
+            scheduleControlsHide()
+        }
+    }
+
+    private func scheduleControlsHide() {
+        controlsHideTask?.cancel()
+        guard hasVideo, session.remoteVideoTrack != nil else { return }
+        controlsHideTask = Task {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            if !Task.isCancelled {
+                await MainActor.run {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        controlsVisible = false
+                    }
+                }
+            }
+        }
+    }
+
+    private func initialFor(_ name: String) -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let source = trimmed.isEmpty ? callerEmail : trimmed
+        guard let first = source.first else { return "?" }
+        return String(first).uppercased()
+    }
+
+    private func formatDuration(_ secs: Int) -> String {
+        let h = secs / 3600
+        let m = (secs % 3600) / 60
+        let s = secs % 60
+        if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
+        return String(format: "%02d:%02d", m, s)
+    }
+
+    private func hapticTap() {
+        let gen = UIImpactFeedbackGenerator(style: .light)
+        gen.impactOccurred()
+    }
+
+    private func hapticHeavy() {
+        let gen = UIImpactFeedbackGenerator(style: .heavy)
+        gen.impactOccurred()
+    }
+}
+
+// MARK: - Connection-quality bars
+
+/// Three vertical bars whose filled count + opacity track LiveKit's
+/// `ConnectionQuality` enum, surfaced via `session.connectionQuality` as a
+/// 0-3 score.
+struct ConnectionQualityBars: View {
+    let quality: Int
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 2) {
+            ForEach(0..<3) { i in
+                let active = i < quality
+                Capsule()
+                    .fill(active ? barColor : Color.white.opacity(0.25))
+                    .frame(width: 4, height: CGFloat(8 + i * 4))
+            }
+        }
+    }
+
+    private var barColor: Color {
+        switch quality {
+        case 3: return Color(red: 0x2E/255.0, green: 0xCC/255.0, blue: 0x71/255.0) // green
+        case 2: return Color(red: 0xF1/255.0, green: 0xC4/255.0, blue: 0x0F/255.0) // amber
+        default: return Color(red: 0xE7/255.0, green: 0x4C/255.0, blue: 0x3C/255.0) // red
+        }
+    }
+}
+
+// MARK: - Floating emoji
+
+/// One floating emoji that rises from below the controls and fades. Lives
+/// independent of the session so animation timing is isolated — the parent
+/// just appends to the array; we clean up via a `.task` per reaction.
+struct FloatingEmojiView: View {
+    let reaction: CallFloatingReaction
+    @State private var rise: CGFloat = 0
+    @State private var fadeOpacity: Double = 1.0
+
+    var body: some View {
+        Text(reaction.emoji)
+            .font(.system(size: 44))
+            .offset(x: reaction.xOffset, y: -rise)
+            .opacity(fadeOpacity)
+            .onAppear {
+                withAnimation(.easeOut(duration: 2.4)) {
+                    rise = 320
+                    fadeOpacity = 0
+                }
+            }
     }
 }

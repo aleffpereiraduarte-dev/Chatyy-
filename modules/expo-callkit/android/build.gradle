@@ -17,6 +17,23 @@ android {
     sourceCompatibility JavaVersion.VERSION_17
     targetCompatibility JavaVersion.VERSION_17
   }
+
+  // [2026-05-17 Stage #994] Enable Jetpack Compose for the full-native call
+  // UI in CallActivity / GroupCallActivity. Compose lets us build the rich
+  // /call.js replacement (animated pulse rings, active-speaker breathing
+  // ring, floating reactions, glassmorphism gradient) without dragging in
+  // dozens of view-system custom Drawables.
+  buildFeatures {
+    compose true
+  }
+  composeOptions {
+    // Kotlin 2.0+ uses the bundled compose-compiler-gradle-plugin; expo
+    // already sets kotlinVersion ~2.0.21 so the BOM picks a matching
+    // compiler under the hood. We still set this explicitly so the
+    // Compose Compiler plugin (KGP < 2.0 fallback) finds a known-good
+    // version if needed.
+    kotlinCompilerExtensionVersion "1.5.15"
+  }
 }
 
 dependencies {
@@ -61,6 +78,26 @@ dependencies {
   // participant. Direction is callkit -> screenshare (NOT the reverse —
   // screenshare would create a cycle if it ever called back into callkit).
   implementation project(':expo-screen-share')
+
+  // [2026-05-17 Stage #994] Jetpack Compose stack for CallActivity /
+  // GroupCallActivity Compose UI rewrite. BOM 2024.09.03 pins the
+  // ui/material3/foundation/animation matrix to a single tested set so
+  // we don't have to manage individual artifact versions. activity-compose
+  // gives us setContent {} on ComponentActivity (the base class both
+  // activities already extend). material-icons-extended is heavy (~5MB)
+  // but pulls every Filled icon we need (Mic, MicOff, CameraAlt, etc.)
+  // — much smaller than embedding 20 vector drawables.
+  implementation platform('androidx.compose:compose-bom:2024.09.03')
+  implementation 'androidx.compose.ui:ui'
+  implementation 'androidx.compose.ui:ui-tooling-preview'
+  implementation 'androidx.compose.material3:material3'
+  implementation 'androidx.compose.material:material-icons-extended'
+  implementation 'androidx.compose.foundation:foundation'
+  implementation 'androidx.compose.animation:animation'
+  implementation 'androidx.compose.runtime:runtime'
+  implementation 'androidx.activity:activity-compose:1.9.2'
+  implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6'
+  implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.8.6'
 }
 
 def safeExtGet(prop, fallback) {

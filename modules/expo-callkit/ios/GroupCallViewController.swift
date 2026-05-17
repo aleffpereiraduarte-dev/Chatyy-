@@ -1,19 +1,17 @@
-import UIKit
-import SwiftUI
-import LiveKitClient
-
-// [native group call screen, 2026-05-16]
+// Stage #995 — full native SwiftUI UI, replaces JS /call.js on mobile + Stage #993 PiP wired
 //
-// UIKit host for the SwiftUI GroupCallView. Mirrors the 1:1 CallViewController
-// pattern (Room owner, RoomDelegate, SwiftUI hosted via UIHostingController,
-// hangup posts a NotificationCenter event the JS module observes), but the
-// state object is GroupCallSessionState — a participants array instead of a
-// single remote video track.
+// GroupCallViewController.swift — UIKit host for the SwiftUI GroupCallView.
+// Mirrors the 1:1 CallViewController pattern: Room owner, RoomDelegate,
+// SwiftUI hosted via UIHostingController, hangup posts a NotificationCenter
+// event the JS module observes. The state object is GroupCallSessionState —
+// a participants array instead of a single remote video track, plus the
+// audio/video toggle flags the SwiftUI controls bind to.
 //
-// Roster handoff: JS passes the initial participants as a JSON-encoded
-// string (mirroring Android's intent extras). We parse it once in init so
-// the SwiftUI grid renders avatar placeholders immediately — actual video
-// tracks come in later via RoomDelegate's didSubscribeTrack callback.
+// Roster handoff: JS passes the initial participants as a JSON-encoded string
+// (mirroring Android's intent extras). We seed the SwiftUI grid with avatar
+// placeholders right away; LiveKit's RoomDelegate callbacks (participantDidConnect,
+// didSubscribeTrack, didUpdateSpeakingParticipants, didUpdateConnectionQuality,
+// didUpdateIsMuted) reconcile against the participant snapshot as media arrives.
 //
 // Module entrypoint:
 //   ExpoCallKit.openGroupCall(roomName, lkUrl, lkToken,
@@ -21,34 +19,23 @@ import LiveKitClient
 // → ExpoCallKitModule resolves the rootViewController and calls
 //   GroupCallViewController.present(from:roomName:...).
 
+import UIKit
+import SwiftUI
+import LiveKitClient
+import AVFoundation
+import Combine
+
 final class GroupCallViewController: UIViewController {
 
-    /// Posted when the user hangs up via the native UI. ExpoCallKitModule
-    /// observes this in its OnCreate flow and re-emits as `onCallEnded` so
-    /// JS can clean up (clear /group-call route, drop bearer, etc.).
-    /// Reuses the existing 1:1 callEndedNotification name so the module's
-    /// observer covers both screens with one wire — the userInfo's `callId`
-    /// is the room name for group calls.
     static let groupCallEndedNotification = Notification.Name("ExpoCallKitNativeCallEnded")
 
-    // Connect descriptor — captured at present() time. roomName doubles as
-    // the JS-side call_id when we post the ended notification.
     let roomName: String
     let lkUrl: String
     let lkToken: String
     let hasVideo: Bool
 
-    // Initial roster decoded from the JSON string the module passes in. Only
-    // used to seed the SwiftUI grid with placeholder avatars; once LiveKit
-    // fires participantDidConnect we overwrite from the room's snapshot.
     private let initialRoster: [GroupParticipant]
-
-    // The LiveKit room. Held as a var so we can release explicitly on hangup
-    // / didDisconnectWithError, same pattern as CallViewController.
     private var room: Room?
-
-    // Source of truth for the SwiftUI view. All mutations happen on the main
-    // actor — the RoomDelegate callbacks below dispatch via MainActor.run.
     private let session: GroupCallSessionState
 
     init(roomName: String,
@@ -65,12 +52,11 @@ final class GroupCallViewController: UIViewController {
             participants: initialRoster,
             status: "Conectando\u{2026}",
             micEnabled: true,
-            camEnabled: hasVideo
+            camEnabled: hasVideo,
+            speakerOn: true
         )
         super.init(nibName: nil, bundle: nil)
         self.modalPresentationStyle = .fullScreen
-        // Match the 1:1 screen — only the explicit red hangup button ends
-        // the call. Swipe-to-dismiss would skip our room.disconnect path.
         self.isModalInPresentation = true
     }
 
@@ -82,20 +68,20 @@ final class GroupCallViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = UIColor(red: 0x0B/255.0, green: 0x14/255.0, blue: 0x1A/255.0, alpha: 1.0)
 
-        // Build the SwiftUI tree. Closures forward control taps to the VC
-        // so the Room mutations stay on the UIKit side.
         let rootView = GroupCallView(
             session: session,
+            roomName: roomName,
             hasVideo: hasVideo,
-            onHangup: { [weak self] in
-                self?.handleHangup()
-            },
-            onToggleMute: { [weak self] desired in
-                self?.applyMicEnabled(desired)
-            },
-            onToggleCam: { [weak self] desired in
-                self?.applyCamEnabled(desired)
-            }
+            onHangup: { [weak self] in self?.handleHangup() },
+            onToggleMute: { [weak self] desired in self?.applyMicEnabled(desired) },
+            onToggleCam: { [weak self] desired in self?.applyCamEnabled(desired) },
+            onToggleSpeaker: { [weak self] desired in self?.applySpeaker(desired) },
+            onSwitchCamera: { [weak self] in self?.switchCamera() },
+            onScreenShare: { [weak self] in self?.toggleScreenShare() },
+            onAddMember: { [weak self] in self?.handleAddMember() },
+            onMinimize: { [weak self] in self?.dismiss(animated: true) },
+            onSendReaction: { [weak self] emoji in self?.sendReaction(emoji) },
+            onHandRaiseToggle: { [weak self] raised in self?.publishHandRaise(raised) }
         )
 
         let host = UIHostingController(rootView: rootView)
@@ -111,10 +97,6 @@ final class GroupCallViewController: UIViewController {
         ])
         host.didMove(toParent: self)
 
-        // Kick the LiveKit connect — same Room(delegate:) init the 1:1
-        // CallViewController uses on Day 2. Mic publishes immediately, camera
-        // only for video calls. The connect Task captures `r` strongly so the
-        // suspend chain survives even if `self.room` is nilled on hangup.
         guard !lkUrl.isEmpty, !lkToken.isEmpty else {
             print("[GroupCallVC] missing lkUrl/lkToken — staying in placeholder grid")
             return
@@ -139,22 +121,16 @@ final class GroupCallViewController: UIViewController {
                 }
             } catch {
                 print("[GroupCallVC] connect/mic failed: \(error)")
-                await MainActor.run {
-                    self.session.status = "Erro"
-                }
+                await MainActor.run { self.session.status = "Erro" }
             }
         }
     }
 
-    override var preferredStatusBarStyle: UIStatusBarStyle {
-        return .lightContent
-    }
+    override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }
 
-    // MARK: - Hangup
+    // MARK: - Actions
 
     private func handleHangup() {
-        // Post BEFORE dismiss so the module observer always sees the end
-        // event regardless of when the dismissal animation completes.
         NotificationCenter.default.post(
             name: GroupCallViewController.groupCallEndedNotification,
             object: nil,
@@ -172,14 +148,10 @@ final class GroupCallViewController: UIViewController {
         Task { [weak self] in
             do {
                 try await r.localParticipant.setMicrophone(enabled: enabled)
-                await MainActor.run {
-                    self?.updateLocalParticipant(audioMuted: !enabled)
-                }
+                await MainActor.run { self?.updateLocalParticipant(audioMuted: !enabled) }
             } catch {
                 print("[GroupCallVC] setMicrophone(\(enabled)) failed: \(error)")
-                await MainActor.run {
-                    self?.session.micEnabled = !enabled
-                }
+                await MainActor.run { self?.session.micEnabled = !enabled }
             }
         }
     }
@@ -199,26 +171,120 @@ final class GroupCallViewController: UIViewController {
                 }
             } catch {
                 print("[GroupCallVC] setCamera(\(enabled)) failed: \(error)")
-                await MainActor.run {
-                    self.session.camEnabled = !enabled
+                await MainActor.run { self.session.camEnabled = !enabled }
+            }
+        }
+    }
+
+    private func applySpeaker(_ enabled: Bool) {
+        let audio = AVAudioSession.sharedInstance()
+        do {
+            try audio.overrideOutputAudioPort(enabled ? .speaker : .none)
+        } catch {
+            print("[GroupCallVC] setSpeaker failed: \(error)")
+        }
+    }
+
+    private var currentCameraPosition: AVCaptureDevice.Position = .front
+    private func switchCamera() {
+        guard let r = self.room else { return }
+        let next: AVCaptureDevice.Position = currentCameraPosition == .front ? .back : .front
+        currentCameraPosition = next
+        Task { [weak self] in
+            guard let self = self else { return }
+            do {
+                let opts = CameraCaptureOptions(position: next)
+                let pub = try await r.localParticipant.setCamera(enabled: true, captureOptions: opts)
+                if let track = pub?.track as? LocalVideoTrack {
+                    await MainActor.run { self.updateLocalParticipant(videoTrack: track) }
                 }
+            } catch {
+                print("[GroupCallVC] switchCamera failed: \(error) — fallback to disable/enable")
+                _ = try? await r.localParticipant.setCamera(enabled: false)
+                let pub = try? await r.localParticipant.setCamera(enabled: true)
+                if let track = pub?.track as? LocalVideoTrack {
+                    await MainActor.run { self.updateLocalParticipant(videoTrack: track) }
+                }
+            }
+        }
+    }
+
+    private var screenSharing: Bool = false
+    private func toggleScreenShare() {
+        guard let r = self.room else { return }
+        let desired = !screenSharing
+        screenSharing = desired
+        Task {
+            do {
+                _ = try await r.localParticipant.setScreenShareEnabled(desired)
+            } catch {
+                print("[GroupCallVC] setScreenShareEnabled(\(desired)) failed: \(error)")
+                self.screenSharing = !desired
+            }
+        }
+    }
+
+    private func handleAddMember() {
+        NotificationCenter.default.post(
+            name: Notification.Name("ExpoCallKitNativeAddMember"),
+            object: nil,
+            userInfo: ["callId": roomName]
+        )
+    }
+
+    /// Local floating-reaction + LiveKit data channel publish so other peers
+    /// also see the burst. Mirrors CallViewController.sendReaction.
+    private func sendReaction(_ emoji: String) {
+        let reaction = CallFloatingReaction(
+            id: UUID(),
+            emoji: emoji.isEmpty ? "🎉" : emoji,
+            spawnedAt: Date(),
+            xOffset: CGFloat.random(in: -80...80)
+        )
+        DispatchQueue.main.async {
+            self.session.floatingReactions.append(reaction)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+                self?.session.floatingReactions.removeAll { $0.id == reaction.id }
+            }
+        }
+        guard let r = self.room else { return }
+        let payload = "R:" + emoji
+        guard let data = payload.data(using: .utf8) else { return }
+        Task {
+            do {
+                try await r.localParticipant.publish(data: data)
+            } catch {
+                print("[GroupCallVC] publish reaction failed: \(error)")
+            }
+        }
+    }
+
+    /// Hand-raise — broadcast through the data channel so other clients can
+    /// flip the per-tile yellow hand badge. Local user also gets the badge
+    /// via updateLocalParticipant.
+    private func publishHandRaise(_ raised: Bool) {
+        DispatchQueue.main.async {
+            self.updateLocalParticipant(handRaised: raised)
+        }
+        guard let r = self.room else { return }
+        let payload = raised ? "H:1" : "H:0"
+        guard let data = payload.data(using: .utf8) else { return }
+        Task {
+            do {
+                try await r.localParticipant.publish(data: data)
+            } catch {
+                print("[GroupCallVC] publish hand-raise failed: \(error)")
             }
         }
     }
 
     // MARK: - Roster mutation helpers (main actor only)
 
-    /// Replace the local participant's snapshot in the session. Used after
-    /// setCamera publishes a track and when the mic toggles. Creates the
-    /// local entry on first use so audio-only group calls still render the
-    /// local mic state badge (even though we hide the PiP tile when no
-    /// videoTrack is available).
     @MainActor
     private func updateLocalParticipant(videoTrack: LocalVideoTrack? = nil,
-                                        audioMuted: Bool? = nil) {
-        // The "local" identity is whatever LiveKit assigned — we don't have
-        // it until after connect. Use the existing entry's identity or fall
-        // back to a sentinel. The grid view filters by isLocal anyway.
+                                        audioMuted: Bool? = nil,
+                                        handRaised: Bool? = nil,
+                                        isSpeaking: Bool? = nil) {
         var arr = session.participants
         if let idx = arr.firstIndex(where: { $0.isLocal }) {
             let cur = arr[idx]
@@ -228,7 +294,10 @@ final class GroupCallViewController: UIViewController {
                 name: cur.name,
                 videoTrack: videoTrack ?? cur.videoTrack,
                 audioMuted: audioMuted ?? cur.audioMuted,
-                isLocal: true
+                isLocal: true,
+                isSpeaking: isSpeaking ?? cur.isSpeaking,
+                handRaised: handRaised ?? cur.handRaised,
+                connectionQuality: cur.connectionQuality
             )
         } else {
             let identity = room?.localParticipant.identity?.stringValue ?? "local"
@@ -238,20 +307,23 @@ final class GroupCallViewController: UIViewController {
                 name: "Você",
                 videoTrack: videoTrack,
                 audioMuted: audioMuted ?? false,
-                isLocal: true
+                isLocal: true,
+                isSpeaking: isSpeaking ?? false,
+                handRaised: handRaised ?? false,
+                connectionQuality: 3
             ))
         }
         session.participants = arr
     }
 
-    /// Append (or update if already present) a remote participant. Mirror of
-    /// updateLocalParticipant — used from participantDidConnect /
-    /// didSubscribeTrack / didUpdateIsMuted callbacks below.
     @MainActor
     private func upsertRemote(identity: String,
                               name: String? = nil,
                               videoTrack: VideoTrack? = nil,
-                              audioMuted: Bool? = nil) {
+                              audioMuted: Bool? = nil,
+                              isSpeaking: Bool? = nil,
+                              handRaised: Bool? = nil,
+                              connectionQuality: Int? = nil) {
         var arr = session.participants
         if let idx = arr.firstIndex(where: { $0.identity == identity && !$0.isLocal }) {
             let cur = arr[idx]
@@ -261,7 +333,10 @@ final class GroupCallViewController: UIViewController {
                 name: name ?? cur.name,
                 videoTrack: videoTrack ?? cur.videoTrack,
                 audioMuted: audioMuted ?? cur.audioMuted,
-                isLocal: false
+                isLocal: false,
+                isSpeaking: isSpeaking ?? cur.isSpeaking,
+                handRaised: handRaised ?? cur.handRaised,
+                connectionQuality: connectionQuality ?? cur.connectionQuality
             )
         } else {
             arr.append(GroupParticipant(
@@ -270,7 +345,10 @@ final class GroupCallViewController: UIViewController {
                 name: name ?? identity,
                 videoTrack: videoTrack,
                 audioMuted: audioMuted ?? false,
-                isLocal: false
+                isLocal: false,
+                isSpeaking: isSpeaking ?? false,
+                handRaised: handRaised ?? false,
+                connectionQuality: connectionQuality ?? 3
             ))
         }
         session.participants = arr
@@ -282,22 +360,11 @@ final class GroupCallViewController: UIViewController {
     }
 
     deinit {
-        // Belt-and-suspenders: drop the Room if some non-hangup path
-        // dismissed us (system back gesture etc — we set isModalInPresentation
-        // but a future SDK could still hit this).
-        if let r = self.room {
-            Task { await r.disconnect() }
-        }
+        if let r = self.room { Task { await r.disconnect() } }
     }
 
     // MARK: - Presentation helper
 
-    /// JSON shape expected by `participantsJson`:
-    ///   [ { "identity": "alice@x", "name": "Alice", "audioMuted": false }, ... ]
-    /// Any participant not in the initial roster will still appear once
-    /// LiveKit reports participantDidConnect, so the JSON is purely
-    /// optimistic — the grid renders avatar placeholders right away even
-    /// before the Room handshake completes.
     static func present(from base: UIViewController,
                         roomName: String,
                         lkUrl: String,
@@ -332,7 +399,10 @@ final class GroupCallViewController: UIViewController {
                 name: name,
                 videoTrack: nil,
                 audioMuted: audioMuted,
-                isLocal: false
+                isLocal: false,
+                isSpeaking: false,
+                handRaised: false,
+                connectionQuality: 3
             )
         }
     }
@@ -347,11 +417,6 @@ final class GroupCallViewController: UIViewController {
 }
 
 // MARK: - RoomDelegate
-//
-// Same minimal subset CallViewController implements. RoomDelegate methods
-// are @objc optional in LiveKit Swift 2.x — we only get callbacks for the
-// signatures we declare, so anything we don't need (connectionQuality,
-// dataReceived, etc.) stays off until a future round needs it.
 
 extension GroupCallViewController: RoomDelegate {
 
@@ -359,8 +424,6 @@ extension GroupCallViewController: RoomDelegate {
         print("[GroupCallVC] roomDidConnect — room=\(roomName)")
         DispatchQueue.main.async { [weak self] in
             self?.session.status = "Conectado"
-            // Refresh local identity in case the SDK assigned one different
-            // from our placeholder.
             self?.updateLocalParticipant()
         }
     }
@@ -381,7 +444,6 @@ extension GroupCallViewController: RoomDelegate {
     func room(_ room: Room, participantDidConnect participant: RemoteParticipant) {
         let identity = participant.identity?.stringValue ?? "?"
         let name = participant.name
-        print("[GroupCallVC] participantDidConnect — identity=\(identity)")
         let displayName = (name?.isEmpty == false ? name : identity) ?? identity
         Task { @MainActor [weak self] in
             self?.upsertRemote(identity: identity, name: displayName)
@@ -390,26 +452,17 @@ extension GroupCallViewController: RoomDelegate {
 
     func room(_ room: Room, participantDidDisconnect participant: RemoteParticipant) {
         let identity = participant.identity?.stringValue ?? "?"
-        print("[GroupCallVC] participantDidDisconnect — identity=\(identity)")
         Task { @MainActor [weak self] in
             self?.removeRemote(identity: identity)
         }
     }
 
-    /// LiveKit Swift 2.x fires this for both audio + video; we set the video
-    /// track on the matching tile and ignore audio (the WebRTC engine will
-    /// route it to the AudioSession automatically). Signature kept identical
-    /// to CallViewController so a future SDK rev hits both in one place.
     func room(_ room: Room,
               participant: RemoteParticipant,
               didSubscribeTrack publication: RemoteTrackPublication) {
         guard publication.kind == .video else { return }
-        guard let track = publication.track as? VideoTrack else {
-            print("[GroupCallVC] didSubscribeTrack — video pub but track cast failed")
-            return
-        }
+        guard let track = publication.track as? VideoTrack else { return }
         let identity = participant.identity?.stringValue ?? "?"
-        print("[GroupCallVC] didSubscribeTrack — remote video identity=\(identity)")
         Task { @MainActor [weak self] in
             self?.upsertRemote(identity: identity, videoTrack: track)
         }
@@ -425,10 +478,6 @@ extension GroupCallViewController: RoomDelegate {
         }
     }
 
-    /// Audio-mute toggle on any participant — the LiveKit 2.x signature
-    /// passes the publication that changed. We re-derive audioMuted from
-    /// the publication's `isMuted` field; only react for audio kind so the
-    /// mic-slash badge doesn't flicker on camera toggles.
     func room(_ room: Room,
               participant: Participant,
               trackPublication: TrackPublication,
@@ -442,6 +491,86 @@ extension GroupCallViewController: RoomDelegate {
                 self.updateLocalParticipant(audioMuted: isMuted)
             } else {
                 self.upsertRemote(identity: identity, audioMuted: isMuted)
+            }
+        }
+    }
+
+    /// Active speakers — flip per-tile green outline. LiveKit gives us the
+    /// list of currently-active participants on every audio-energy snapshot.
+    func room(_ room: Room, didUpdateSpeakingParticipants speakers: [Participant]) {
+        let speakingIds = Set(speakers.compactMap { $0.identity?.stringValue })
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            // Rebuild participants array with new isSpeaking flag per row.
+            self.session.participants = self.session.participants.map { p in
+                let speaking = speakingIds.contains(p.identity)
+                if p.isSpeaking == speaking { return p }
+                return GroupParticipant(
+                    id: p.id,
+                    identity: p.identity,
+                    name: p.name,
+                    videoTrack: p.videoTrack,
+                    audioMuted: p.audioMuted,
+                    isLocal: p.isLocal,
+                    isSpeaking: speaking,
+                    handRaised: p.handRaised,
+                    connectionQuality: p.connectionQuality
+                )
+            }
+        }
+    }
+
+    /// Connection quality per participant — we want it on every tile that has
+    /// a value below "excellent" so the SwiftUI tile draws the quality bars.
+    func room(_ room: Room,
+              participant: Participant,
+              didUpdateConnectionQuality quality: ConnectionQuality) {
+        let score: Int
+        switch quality {
+        case .excellent: score = 3
+        case .good:      score = 2
+        case .poor:      score = 1
+        default:         score = 0
+        }
+        let identity = participant.identity?.stringValue ?? "?"
+        let isLocal = (participant as? LocalParticipant) != nil
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            if isLocal {
+                self.session.connectionQuality = score
+            } else {
+                self.upsertRemote(identity: identity, connectionQuality: score)
+            }
+        }
+    }
+
+    /// Data channel messages (`R:<emoji>` reactions, `H:1`/`H:0` hand toggles).
+    /// Filter strictly so a future control message can ride the same channel
+    /// without us mis-handling it.
+    func room(_ room: Room,
+              participant: RemoteParticipant?,
+              didReceiveData data: Data,
+              forTopic topic: String?) {
+        guard let str = String(data: data, encoding: .utf8) else { return }
+        if str.hasPrefix("R:") {
+            let emoji = String(str.dropFirst(2))
+            let reaction = CallFloatingReaction(
+                id: UUID(),
+                emoji: emoji.isEmpty ? "🎉" : emoji,
+                spawnedAt: Date(),
+                xOffset: CGFloat.random(in: -80...80)
+            )
+            DispatchQueue.main.async { [weak self] in
+                self?.session.floatingReactions.append(reaction)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+                    self?.session.floatingReactions.removeAll { $0.id == reaction.id }
+                }
+            }
+        } else if str.hasPrefix("H:") {
+            let raised = (str == "H:1")
+            let identity = participant?.identity?.stringValue ?? "?"
+            Task { @MainActor [weak self] in
+                self?.upsertRemote(identity: identity, handRaised: raised)
             }
         }
     }
