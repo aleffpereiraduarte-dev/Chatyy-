@@ -2122,6 +2122,31 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   // the user knows new messages aren't syncing live. Only shows after a
   // 3.5s delay (set by the connection listener) so brief flaps don't flash.
   const [wsDownBanner, setWsDownBanner] = useState(false);
+  // Auto-sync badge — fires from onlineRecoveryOrchestrator when an outbox
+  // flush + delta sync round is running after coming back online. WhatsApp
+  // shows the same kind of subtle "Connecting..." → "Updating..." hint at
+  // the top of the chat list. Hidden when wsDownBanner is on (the WS-down
+  // banner already represents the same "we're catching up" state).
+  const [syncingBadge, setSyncingBadge] = useState(false);
+  useEffect(() => {
+    let unsub = null;
+    let cancelled = false;
+    (async () => {
+      try {
+        const m = await import('../services/onlineRecoveryOrchestrator');
+        if (cancelled) return;
+        if (typeof m.subscribeSyncStatus === 'function') {
+          unsub = m.subscribeSyncStatus(({ running }) => {
+            setSyncingBadge(!!running);
+          });
+        }
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+      if (typeof unsub === 'function') { try { unsub(); } catch {} }
+    };
+  }, []);
   // [silent-fail-w3] Surface a load failure when the cold-start fetch fails
   // AND the user has nothing on screen — previously the catch swallowed it,
   // leaving the user staring at the empty-state copy "start a new chat" even
@@ -4584,6 +4609,29 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             </View>
           </TouchableOpacity>
         </Animated.View>
+      )}
+      {/* Sync badge — WhatsApp-style subtle "Sincronizando..." while the
+          onlineRecoveryOrchestrator is flushing the outbox + delta-pulling
+          missed messages after a reconnect. Hidden while wsDownBanner is
+          visible (that banner already represents the catching-up state).
+          Tiny, muted purple-gray so it doesn't compete with content. */}
+      {syncingBadge && !wsDownBanner && (
+        <View
+          accessibilityRole="status"
+          accessibilityLiveRegion="polite"
+          accessibilityLabel={t?.('chat.syncing') || 'Sincronizando...'}
+          style={{
+            flexDirection: 'row', alignItems: 'center', gap: 8,
+            paddingHorizontal: 14, paddingVertical: 5,
+            backgroundColor: isDark ? 'rgba(124,58,237,0.10)' : 'rgba(124,58,237,0.06)',
+            borderBottomWidth: StyleSheet.hairlineWidth,
+            borderBottomColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.14)',
+          }}>
+          <ActivityIndicator size="small" color={isDark ? 'rgba(180,150,255,0.85)' : '#7C3AED'} />
+          <Text style={{ flex: 1, fontSize: 11.5, color: isDark ? 'rgba(200,180,255,0.85)' : '#6D28D9', fontWeight: '500' }}>
+            {t?.('chat.syncing') || 'Sincronizando...'}
+          </Text>
+        </View>
       )}
       {/* WS down banner — only shown after 5s delay (set by the connection
           listener) so any reconnect under 5s is completely invisible. Visual

@@ -518,6 +518,20 @@ function AppInit({ onNotification, setOtaToast }) {
     // Server dedup by client_message_id makes double-sends impossible.
     try { import('../services/outboxDrainer').then(m => m.initOutboxDrainer?.()); } catch {}
 
+    // Online recovery orchestrator — WhatsApp-grade auto-sync. Listens for
+    // NetInfo offline→online flips, WS authenticated reconnects, and
+    // AppState 'active' transitions; coalesces them with an 800ms debounce
+    // and runs: outbox flush → conv delta sync → chat list refresh →
+    // envelope pull. See services/onlineRecoveryOrchestrator.js.
+    try {
+      import('../services/onlineRecoveryOrchestrator').then(m => {
+        try {
+          const apiMod = require('../services/api');
+          m.startOnlineRecovery?.(apiMod);
+        } catch {}
+      });
+    } catch {}
+
     // Share-intent: one-shot check at startup. The CONTINUOUS live listener
     // (for shares that arrive while the app is already running in the
     // background) is wired via `useShareIntent()` hook below in RootLayout.
