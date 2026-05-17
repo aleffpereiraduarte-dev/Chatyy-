@@ -56,6 +56,24 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
     lkUrl: string | null,
     lkToken: string | null
   ): Promise<void>;
+  // [Stage #996] Native outgoing-call entry point. On iOS submits a
+  // CXStartCallAction (so CallKit tracks the call in Recents / lock screen)
+  // and then presents CallViewController; on Android starts CallActivity
+  // with EXTRA_IS_OUTGOING=true so it fires call_invite + plays ringback.
+  // The single-object signature is what JS callers prefer (vs. the long
+  // positional list of openNativeCall) — Expo Modules adapts maps to the
+  // platform native dictionary/Map shape automatically.
+  startOutgoingCall(params: {
+    callee_email: string;
+    callee_name?: string;
+    caller_name?: string;
+    is_video: boolean;
+    room_name?: string;
+    conversation_id?: string;
+    call_id?: string;
+    lk_url?: string;
+    lk_token?: string;
+  }): Promise<boolean>;
   // [2026-05-16] Group-call scaffold (Android). Launches GroupCallActivity
   // with an N×N grid of tiles, one per remote participant. Participants are
   // serialized as JSON so the native side can pre-seed placeholder tiles
@@ -327,6 +345,67 @@ export async function openNativeCall(params: OpenNativeCallParams): Promise<void
     params.lkUrl ?? null,
     params.lkToken ?? null
   );
+}
+
+export interface StartOutgoingCallParams {
+  /** Email of the person being called. Always required — used as the
+   *  CXHandle on iOS and as the chat target on the WS layer. */
+  calleeEmail: string;
+  /** Display name shown on the native call screen while ringing. Defaults
+   *  to the email when omitted. */
+  calleeName?: string;
+  /** Display name of the local user. Forwarded into call_invite so the
+   *  callee's incoming-call UI can show "Maria está chamando…". */
+  callerName?: string;
+  /** True for video calls, false for audio-only. Drives the CXCallUpdate
+   *  hasVideo flag on iOS and the LiveKit setCamera path on Android. */
+  isVideo: boolean;
+  /** LiveKit room name. Defaults to callId when omitted. Stick with callId
+   *  unless you need a stable room across devices (e.g., bridging an
+   *  existing meeting). */
+  roomName?: string;
+  /** Chat conversation row id. Used as the second key (alongside callId)
+   *  when firing call_invite / call_end via CallSignalWs. Empty string is
+   *  valid for dialer-style flows. */
+  conversationId?: string;
+  /** Server-side call id. Lets the JS layer pin a known value so the
+   *  WS call_invite payload sent by the native side matches what the JS
+   *  side reports to /api/call_notify. */
+  callId?: string;
+  /** LiveKit websocket URL — when JS already minted a token via
+   *  chat_livekit_token, forward it here so the native side can connect
+   *  the Room without an extra HTTP round trip. */
+  lkUrl?: string;
+  /** LiveKit access token (publisher grant). Pair with `lkUrl`. */
+  lkToken?: string;
+}
+
+/** Stage #996 — kick off an outgoing call through the native CallKit /
+ *  CallActivity flow. On iOS this submits a CXStartCallAction so the system
+ *  tracks the call (Recents, lock-screen UI, audio session ownership) and
+ *  presents CallViewController; on Android it starts CallActivity with the
+ *  outgoing flag so it fires call_invite + plays the standard ringback
+ *  tone. Returns true once the transaction was queued; the call lifecycle
+ *  continues via the onCallAnswered / onCallEnded events.
+ *
+ *  Throws on iOS if no CXCallController is ready (provider hasn't been set
+ *  up — should never happen in practice since OnCreate wires it). Throws
+ *  on Android if context.startActivity fails (typically a packaging error).
+ *  Callers should treat any rejection as "fall back to the JS /call screen". */
+export async function startOutgoingCall(params: StartOutgoingCallParams): Promise<boolean> {
+  const m = getModule();
+  if (!m) throw new Error('Native CallKit module unavailable');
+  return await m.startOutgoingCall({
+    callee_email: params.calleeEmail,
+    callee_name: params.calleeName,
+    caller_name: params.callerName,
+    is_video: !!params.isVideo,
+    room_name: params.roomName,
+    conversation_id: params.conversationId,
+    call_id: params.callId,
+    lk_url: params.lkUrl,
+    lk_token: params.lkToken,
+  });
 }
 
 /** Launches the full-native group-call screen (Android: GroupCallActivity).

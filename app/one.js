@@ -2115,30 +2115,23 @@ export default function OneScreen() {
           const callId = `one_${Date.now()}`;
           const contactEmail = params.contact_email;
           const contactName = contactEmail.split('@')[0];
-          // [hybrid 2026-05-16] /call.js handles the UI on mobile too.
-          if (false) {
+          // [Stage #996] Mobile → native CXStartCallAction / CallActivity via
+          // services/voipNative. Web → /call.js as before.
+          if (Platform.OS === 'ios' || Platform.OS === 'android') {
             (async () => {
               try {
-                let lkUrl = null, lkToken = null;
-                try {
-                  const api = require('../services/api');
-                  const r = await api.chatLivekitToken('', callId);
-                  if (r?.success && r.data) {
-                    lkUrl = r.data.url || null;
-                    lkToken = r.data.token || null;
-                  }
-                } catch {}
-                const ExpoCallKit = require('../modules/expo-callkit');
-                await ExpoCallKit.openNativeCall({
+                const voipNative = require('../services/voipNative');
+                const { native } = await voipNative.startOutgoingCall({
+                  calleeEmail: contactEmail,
+                  calleeName: contactName,
+                  isVideo: !!params.video,
                   callId,
-                  callerName: contactName,
-                  callerEmail: contactEmail,
-                  hasVideo: !!params.video,
-                  lkUrl,
-                  lkToken,
                 });
+                if (!native) {
+                  router.push(`/call?contactEmail=${encodeURIComponent(contactEmail)}&contactName=${encodeURIComponent(contactName)}&isVideo=${video}&isCaller=1&callId=${callId}`);
+                }
               } catch (e) {
-                console.warn('[one start_call] openNativeCall failed:', e);
+                console.warn('[one start_call] startOutgoingCall failed:', e);
                 router.push(`/call?contactEmail=${encodeURIComponent(contactEmail)}&contactName=${encodeURIComponent(contactName)}&isVideo=${video}&isCaller=1&callId=${callId}`);
               }
             })();

@@ -64,6 +64,31 @@ public class ExpoCallKitModule: Module {
   private var activeCalls: [String: UUID] = [:]
   // Store VoIP push payloads so we can pass full data in onCallAnswered
   private var callPayloads: [String: [AnyHashable: Any]] = [:]
+  // [Stage #996 outgoing native flow, 2026-05-17] Outgoing-call params keyed
+  // by UUID, consumed by ProviderDelegate.provider(_:perform:CXStartCallAction)
+  // once CallKit hands us the action. We can't pass these through the action
+  // itself (CXStartCallAction only carries the UUID + handle), so we stash
+  // them in this module-owned dictionary and pop on transaction execution.
+  internal struct OutgoingCallParams {
+    let callId: String
+    let calleeEmail: String
+    let calleeName: String
+    let callerName: String
+    let isVideo: Bool
+    let roomName: String
+    let conversationId: String
+    let lkUrl: String?
+    let lkToken: String?
+  }
+  private var pendingOutgoingCalls: [UUID: OutgoingCallParams] = [:]
+
+  internal func consumeOutgoingCallParams(uuid: UUID) -> OutgoingCallParams? {
+    return stateQueue.sync {
+      let params = pendingOutgoingCalls[uuid]
+      pendingOutgoingCalls.removeValue(forKey: uuid)
+      return params
+    }
+  }
 
   // Buffer events when JS is not ready (cold start)
   private var pendingEvents: [(String, [String: Any])] = []
@@ -326,6 +351,94 @@ public class ExpoCallKitModule: Module {
             callId: callId, callerName: callerName,
             callerEmail: callerEmail, hasVideo: hasVideo,
             lkUrl: lkUrl, lkToken: lkToken)
+      }
+    }
+
+    // ─── Stage #996 outgoing native flow (2026-05-17) ────────────────────
+    //
+    // JS calls `startOutgoingCall` from the chat "Ligar" tap. We:
+    //   1. Generate (or accept JS-supplied) callId.
+    //   2. Mint a CXStartCallAction so CallKit knows this is an outgoing
+    //      call — required for the system to show the call in Recents, route
+    //      the audio session properly, allow lock-screen access etc.
+    //   3. ProviderDelegate.provider(_:perform:CXStartCallAction) is the
+    //      delegate hook CallKit fires once the transaction executes; that
+    //      handler reads `pendingOutgoingCalls[uuid]`, fetches the LK token
+    //      if not provided, presents CallViewController with isOutgoing=true
+    //      (which fires call_invite + plays ringback already), and calls
+    //      action.fulfill().
+    //
+    // Returns true once the CXTransaction was submitted (not when it
+    // completes — CallKit handles the rest async).
+    AsyncFunction("startOutgoingCall") { (params: [String: Any]) -> Bool in
+      let calleeEmail = (params["callee_email"] as? String) ?? ""
+      guard !calleeEmail.isEmpty else {
+        throw NSError(domain: "ExpoCallKit", code: 100,
+                      userInfo: [NSLocalizedDescriptionKey: "callee_email required"])
+      }
+      let calleeName = (params["callee_name"] as? String) ?? calleeEmail
+      let callerName = (params["caller_name"] as? String) ?? ""
+      let isVideo = (params["is_video"] as? Bool) ?? false
+      let roomName = (params["room_name"] as? String) ?? ""
+      let conversationId = (params["conversation_id"] as? String) ?? ""
+      let lkUrl = params["lk_url"] as? String
+      let lkToken = params["lk_token"] as? String
+      // Caller may pin a callId (so the JS side and the server share the same
+      // identifier); otherwise we generate one. Note: this is the server-side
+      // call_id string, NOT the CallKit UUID — the two are mapped via
+      // activeCalls.
+      let callId: String = {
+        if let cid = params["call_id"] as? String, !cid.isEmpty { return cid }
+        return "call_\(Int(Date().timeIntervalSince1970 * 1000))_\(UUID().uuidString.prefix(8))"
+      }()
+      let uuid = UUID()
+
+      // Stash params for the delegate path AND register the callId↔UUID map
+      // so callAnswered/callEnded/endCall route correctly once the callee
+      // accepts (the answer event comes through the same CallKit channel).
+      self.stateQueue.sync {
+        self.activeCalls[callId] = uuid
+        self.pendingOutgoingCalls[uuid] = OutgoingCallParams(
+          callId: callId,
+          calleeEmail: calleeEmail,
+          calleeName: calleeName,
+          callerName: callerName,
+          isVideo: isVideo,
+          roomName: roomName.isEmpty ? callId : roomName,
+          conversationId: conversationId,
+          lkUrl: lkUrl,
+          lkToken: lkToken
+        )
+      }
+
+      guard let cc = self.callController else {
+        throw NSError(domain: "ExpoCallKit", code: 101,
+                      userInfo: [NSLocalizedDescriptionKey: "CallController not ready"])
+      }
+      let handle = CXHandle(type: .emailAddress, value: calleeEmail)
+      let startAction = CXStartCallAction(call: uuid, handle: handle)
+      startAction.isVideo = isVideo
+      startAction.contactIdentifier = calleeName
+      let transaction = CXTransaction(action: startAction)
+
+      // CXCallController.request takes a completion. We bridge it to the
+      // async function via withCheckedThrowingContinuation so JS gets a
+      // proper Promise resolve/reject.
+      return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Bool, Error>) in
+        cc.request(transaction) { error in
+          if let error = error {
+            print("[ExpoCallKit] startOutgoingCall: transaction failed: \(error.localizedDescription)")
+            // Clean up the stashed state on failure so we don't leak.
+            self.stateQueue.sync {
+              self.activeCalls.removeValue(forKey: callId)
+              self.pendingOutgoingCalls.removeValue(forKey: uuid)
+            }
+            continuation.resume(throwing: error)
+          } else {
+            print("[ExpoCallKit] startOutgoingCall: transaction queued for callId=\(callId)")
+            continuation.resume(returning: true)
+          }
+        }
       }
     }
 
@@ -981,6 +1094,118 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
       lkToken: lkToken,
       isOutgoing: false,
       conversationId: conversationId
+    )
+  }
+
+  // [Stage #996 outgoing native flow, 2026-05-17] CXStartCallAction is the
+  // canonical way to tell CallKit "we're starting an outgoing call". Without
+  // it, iOS won't show the call in Recents, won't surface a lock-screen UI,
+  // and the audio session ownership lifecycle is uneven. We pop the params
+  // stashed by startOutgoingCall(), report startedConnecting, fetch (or
+  // accept the pre-minted) LK token, then present CallViewController with
+  // isOutgoing=true — CallViewController already fires call_invite via
+  // CallSignalWs and plays the ringback engine.
+  func provider(_ provider: CXProvider, perform action: CXStartCallAction) {
+    let uuid = action.callUUID
+    guard let module = self.module,
+          let params = module.consumeOutgoingCallParams(uuid: uuid) else {
+      print("[ExpoCallKit] CXStartCallAction: no pending params for uuid=\(uuid.uuidString), failing")
+      action.fail()
+      return
+    }
+    print("[ExpoCallKit] CXStartCallAction: callId=\(params.callId) callee=\(params.calleeEmail) video=\(params.isVideo)")
+    // Mark startedConnecting so the system shows "Calling …" status. Apple
+    // wants this BEFORE we ship the SIP/WS invite — it covers the brief
+    // window between "user tapped call" and "callee phone is ringing".
+    provider.reportOutgoingCall(with: uuid, startedConnectingAt: nil)
+
+    // Configure audio category up front. Same pattern as CXAnswerCallAction —
+    // don't activate the session, just set the category. CallKit will
+    // activate via provider:didActivate audioSession: once the system is
+    // ready.
+    let session = AVAudioSession.sharedInstance()
+    do {
+      try session.setCategory(
+        .playAndRecord, mode: .voiceChat,
+        options: [.allowBluetoothA2DP, .allowBluetoothHFP]
+      )
+    } catch {
+      print("[ExpoCallKit] CXStartCallAction: audio category set failed (non-fatal): \(error)")
+    }
+
+    // [Stage #996] Native WS invite fires from CallViewController.viewDidLoad
+    // when isOutgoing=true — we do NOT fire here to avoid double-shipping
+    // (server dedupes by call_id anyway, but cleaner to keep one fire path).
+
+    let identity: String = {
+      if let ud = UserDefaults(suiteName: kAppGroupId),
+         let e = ud.string(forKey: "user_email"), !e.isEmpty { return e }
+      return params.callId
+    }()
+
+    // If JS already minted a token (warm path — services/api.js called
+    // chat_livekit_token before invoking startOutgoingCall), use it directly.
+    if let url = params.lkUrl, let token = params.lkToken,
+       !url.isEmpty, !token.isEmpty {
+      print("[ExpoCallKit] CXStartCallAction: using JS-supplied LK token for \(params.callId)")
+      DispatchQueue.main.async {
+        Self.presentOutgoingCallVC(params: params, lkUrl: url, lkToken: token)
+      }
+      action.fulfill()
+      return
+    }
+
+    // Otherwise fetch via NativeCallTokenFetcher. Fulfill the action FIRST so
+    // CallKit doesn't time us out — token fetch may take 200-500ms on a cold
+    // network and Apple's CX deadline is generous but not infinite. The VC
+    // present runs once the token resolves.
+    action.fulfill()
+    Task.detached(priority: .userInitiated) {
+      do {
+        let result = try await NativeCallTokenFetcher.shared.fetchToken(
+          roomName: params.roomName,
+          identity: identity,
+          role: "publisher"
+        )
+        await MainActor.run {
+          Self.presentOutgoingCallVC(params: params, lkUrl: result.url, lkToken: result.token)
+        }
+      } catch {
+        print("[ExpoCallKit] CXStartCallAction: LK token fetch failed: \(error). Presenting VC without token (JS fallback may take over).")
+        await MainActor.run {
+          Self.presentOutgoingCallVC(params: params, lkUrl: nil, lkToken: nil)
+        }
+      }
+    }
+  }
+
+  /// Push the CallViewController for an outgoing call. Mirrors
+  /// presentNativeCallVC (used by the answer path) but flips isOutgoing=true
+  /// so the VC's viewDidLoad fires call_invite via CallSignalWs and starts
+  /// the ringback engine. callerName here is the *callee*'s display name
+  /// from the JS side — that's the name the SwiftUI screen shows during
+  /// "Calling …".
+  fileprivate static func presentOutgoingCallVC(
+    params: ExpoCallKitModule.OutgoingCallParams,
+    lkUrl: String?,
+    lkToken: String?
+  ) {
+    guard let root = UIApplication.shared.connectedScenes
+        .compactMap({ ($0 as? UIWindowScene)?.keyWindow?.rootViewController })
+        .first else {
+      print("[ExpoCallKit] presentOutgoingCallVC: no keyWindow rootViewController — skipping native present")
+      return
+    }
+    CallViewController.present(
+      from: root,
+      callId: params.callId,
+      callerName: params.calleeName,
+      callerEmail: params.calleeEmail,
+      hasVideo: params.isVideo,
+      lkUrl: lkUrl,
+      lkToken: lkToken,
+      isOutgoing: true,
+      conversationId: params.conversationId
     )
   }
 

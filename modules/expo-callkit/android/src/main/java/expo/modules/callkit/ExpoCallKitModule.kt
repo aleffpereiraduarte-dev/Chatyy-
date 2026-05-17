@@ -511,6 +511,62 @@ class ExpoCallKitModule : Module() {
       }
     }
 
+    // ─── Stage #996 outgoing native flow (2026-05-17) ────────────────────
+    //
+    // Higher-level outgoing-call entry point. Encapsulates the steps the JS
+    // side used to do inline (generate callId, mint LK token, openNativeCall):
+    //
+    //   1. Accept a JS-supplied call_id (so the JS layer and server share
+    //      the same identifier), otherwise generate one.
+    //   2. Launch CallActivity with EXTRA_IS_OUTGOING=true so the activity
+    //      fires call_invite via CallSignalWs and plays the standard ringback
+    //      tone (TONE_SUP_RINGTONE) while waiting for the callee to answer.
+    //   3. If JS pre-fetched the LK token (warm path), forward it through
+    //      EXTRA_LK_URL/EXTRA_LK_TOKEN. Otherwise CallActivity will skip
+    //      Room.connect and JS can mint+forward later via lkConnect.
+    //
+    // Returns true once the activity intent is dispatched (fire-and-forget).
+    // Android has no analog to CXStartCallAction's "system tracks the call
+    // in Recents" — we approximate by relying on the chat history bubbles
+    // server-side (call_status row + WS broadcast).
+    AsyncFunction("startOutgoingCall") { params: Map<String, Any> ->
+      val calleeEmail = (params["callee_email"] as? String) ?: ""
+      if (calleeEmail.isEmpty()) {
+        throw IllegalArgumentException("callee_email required")
+      }
+      val calleeName = (params["callee_name"] as? String) ?: calleeEmail
+      val callerName = (params["caller_name"] as? String) ?: ""
+      val isVideo = (params["is_video"] as? Boolean) ?: false
+      val roomName = (params["room_name"] as? String) ?: ""
+      val conversationId = (params["conversation_id"] as? String) ?: ""
+      val lkUrl = params["lk_url"] as? String
+      val lkToken = params["lk_token"] as? String
+      val callId: String = (params["call_id"] as? String)?.takeIf { it.isNotEmpty() }
+        ?: "call_${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().substring(0, 8)}"
+
+      try {
+        val intent = Intent(context, CallActivity::class.java).apply {
+          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+          putExtra(CallActivity.EXTRA_CALL_ID, callId)
+          // For an outgoing call the "caller_name" displayed on the screen is
+          // actually the *callee* — that's who we're calling. Mirroring iOS.
+          putExtra(CallActivity.EXTRA_CALLER_NAME, calleeName)
+          putExtra(CallActivity.EXTRA_CALLER_EMAIL, calleeEmail)
+          putExtra(CallActivity.EXTRA_HAS_VIDEO, isVideo)
+          putExtra(CallActivity.EXTRA_IS_OUTGOING, true)
+          putExtra(CallActivity.EXTRA_CONVERSATION_ID, conversationId)
+          if (!lkUrl.isNullOrEmpty()) putExtra(CallActivity.EXTRA_LK_URL, lkUrl)
+          if (!lkToken.isNullOrEmpty()) putExtra(CallActivity.EXTRA_LK_TOKEN, lkToken)
+        }
+        context.startActivity(intent)
+        Log.d(TAG, "startOutgoingCall: started CallActivity callId=$callId callee=$calleeEmail video=$isVideo hasToken=${!lkToken.isNullOrEmpty()}")
+        return@AsyncFunction true
+      } catch (t: Throwable) {
+        Log.e(TAG, "startOutgoingCall failed: ${t.message}", t)
+        throw t
+      }
+    }
+
     // [2026-05-16] Group call launcher — sibling of openNativeCall, but for
     // the N-way GroupCallActivity. Replaces /group-call.js (RN WebView). JS
     // passes a JSON-stringified participants list so the activity can pre-seed

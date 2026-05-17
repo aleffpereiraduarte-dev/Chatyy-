@@ -13479,43 +13479,27 @@ export default function ChatConversationScreen() {
     // Stop any playing audio before starting a call
     stopAllAudio();
     try {
-      const callId = `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       const otherName = conversationName || t('chat.unknown');
 
-      // Send push notification for the call
-      api.callNotify(conversationId, callId, videoEnabled).catch(() => {});
-
-      // [hybrid 2026-05-16] /call.js owns the rich UI again on mobile (mute,
-      // video, screenshare, group grid). Native CallKit/LK pre-connect still
-      // run for ringtone/lock-screen; visible screen is the JS one.
-      if (false) {
-        try {
-          let lkUrl = null;
-          let lkToken = null;
-          try {
-            const r = await api.chatLivekitToken(conversationId, callId);
-            if (r?.success && r.data) {
-              lkUrl = r.data.url || null;
-              lkToken = r.data.token || null;
-            }
-          } catch (tokErr) {
-            console.warn('[startCall] chatLivekitToken failed:', tokErr);
-          }
-          const ExpoCallKit = require('../modules/expo-callkit');
-          await ExpoCallKit.openNativeCall({
-            callId,
-            callerName: otherName,
-            callerEmail: otherEmail,
-            hasVideo: !!videoEnabled,
-            lkUrl,
-            lkToken,
-          });
-        } catch (nativeErr) {
-          console.warn('[startCall] openNativeCall failed, falling back to /call:', nativeErr);
-          router.push(`/call?callId=${callId}&contactName=${encodeURIComponent(otherName)}&contactEmail=${encodeURIComponent(otherEmail)}&isVideo=${videoEnabled ? '1' : '0'}&conversationId=${conversationId}&isCaller=1`);
-        }
-      } else {
-        // Web: keep JS /call screen (no native module available)
+      // [Stage #996] Mobile: go through the native startOutgoingCall flow
+      // (CXStartCallAction on iOS, CallActivity on Android). Web stays on
+      // the JS /call screen. The wrapper handles callNotify + LK token
+      // mint + native present; if it returns native:false we fall back to
+      // /call.js so users on web or with a missing native module still
+      // see something.
+      const voipNative = require('../services/voipNative');
+      const { callId, native } = await voipNative.startOutgoingCall({
+        calleeEmail: otherEmail,
+        calleeName: otherName,
+        callerName: currentEmail || '',
+        isVideo: !!videoEnabled,
+        conversationId,
+        onWebFallback: (cid) => {
+          router.push(`/call?callId=${cid}&contactName=${encodeURIComponent(otherName)}&contactEmail=${encodeURIComponent(otherEmail)}&isVideo=${videoEnabled ? '1' : '0'}&conversationId=${conversationId}&isCaller=1`);
+        },
+      });
+      if (!native && (Platform.OS === 'ios' || Platform.OS === 'android')) {
+        // Native flow rejected — caller (mobile) needs the JS fallback.
         router.push(`/call?callId=${callId}&contactName=${encodeURIComponent(otherName)}&contactEmail=${encodeURIComponent(otherEmail)}&isVideo=${videoEnabled ? '1' : '0'}&conversationId=${conversationId}&isCaller=1`);
       }
     } catch (e) {

@@ -3118,34 +3118,24 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     const name = item.contactName || item.contact_name || '';
     if (!email) return;
     const isVideo = item.video ? '1' : '0';
-    // [hybrid 2026-05-16] User reverted #992 Stage 3 for the call screen — JS
-    // /call.js owns the rich UI again (mute/video/speaker/screenshare/group
-    // grid). Native CallKit + LK pre-connect still run for lock-screen/PiP/
-    // ringtone, but the visible screen is /call.js.
-    if (false) {
+    // [Stage #996] Mobile → native startOutgoingCall (CXStartCallAction on
+    // iOS, CallActivity with EXTRA_IS_OUTGOING on Android). Web stays on
+    // the JS /call screen.
+    if (Platform.OS === 'ios' || Platform.OS === 'android') {
       (async () => {
         try {
-          const callId = `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          let lkUrl = null, lkToken = null;
-          try {
-            const api = require('../services/api');
-            const r = await api.chatLivekitToken(item.conversation_id || item.conversationId || '', callId);
-            if (r?.success && r.data) {
-              lkUrl = r.data.url || null;
-              lkToken = r.data.token || null;
-            }
-          } catch {}
-          const ExpoCallKit = require('../modules/expo-callkit');
-          await ExpoCallKit.openNativeCall({
-            callId,
-            callerName: name,
-            callerEmail: email,
-            hasVideo: !!item.video,
-            lkUrl,
-            lkToken,
+          const voipNative = require('../services/voipNative');
+          const { callId, native } = await voipNative.startOutgoingCall({
+            calleeEmail: email,
+            calleeName: name,
+            isVideo: !!item.video,
+            conversationId: item.conversation_id || item.conversationId || '',
           });
+          if (!native) {
+            router.push(`/call?callId=${callId}&contactName=${encodeURIComponent(name)}&contactEmail=${encodeURIComponent(email)}&isVideo=${isVideo}&isCaller=1`);
+          }
         } catch (e) {
-          console.warn('[handleHistoryCallBack] openNativeCall failed:', e);
+          console.warn('[handleHistoryCallBack] startOutgoingCall failed:', e);
           router.push(`/call?contactName=${encodeURIComponent(name)}&contactEmail=${encodeURIComponent(email)}&isVideo=${isVideo}&isCaller=1`);
         }
       })();
