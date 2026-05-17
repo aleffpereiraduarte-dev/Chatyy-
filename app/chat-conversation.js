@@ -7811,6 +7811,19 @@ export default function ChatConversationScreen() {
             if (uniqueOlder.length === 0) return prev;
             return [...uniqueOlder, ...prev];
           });
+          // WhatsApp parity: older messages from paginate must also land in
+          // local SQLite + MMKV so a future cold-start hydrate has them.
+          // Without this, every relaunch you only see the last fullSync window
+          // — scroll-loaded history would re-fetch from server.
+          const confirmedOlder = newMsgs.filter(m => typeof m.id === 'number' && m.id > 0);
+          if (confirmedOlder.length > 0) {
+            cacheMessages(conversationId, confirmedOlder).catch(e => console.warn('[chat] paginate cacheMessages fail:', e?.message));
+            try { SmartCache.cacheMessages(conversationId, confirmedOlder); } catch {}
+            try {
+              const cleanConfirmed = confirmedOlder.map(_sanitizeNativeMsg).filter(Boolean);
+              _NativeChatCache?.saveMessages?.(conversationId, cleanConfirmed);
+            } catch {}
+          }
         } else if (newMsgs.length > 0) {
           // Fresh load or refresh — merge with existing, skip if unchanged to prevent flicker
           setMessages(prev => {

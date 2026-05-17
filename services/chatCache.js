@@ -570,9 +570,12 @@ let _prewarmedIds = new Set();
 export async function prewarmConversationsCache(conversations, opts = {}) {
   if (_prewarmRunning) return;
   if (!Array.isArray(conversations) || conversations.length === 0) return;
-  const topN = Math.max(1, Math.min(opts.topN ?? 10, 25));
-  const perConv = Math.max(1, Math.min(opts.perConv ?? 5, 20));
-  const concurrency = Math.max(1, Math.min(opts.concurrency ?? 2, 4));
+  // WhatsApp-tier caps: 100 convs × 100 msgs each = full offline history for
+  // an average user. Bumped from 25×20 in 2026-05-17. Cost on cold start is
+  // amortized by concurrency + the per-conv loop yielding to the event loop.
+  const topN = Math.max(1, Math.min(opts.topN ?? 50, 100));
+  const perConv = Math.max(1, Math.min(opts.perConv ?? 50, 100));
+  const concurrency = Math.max(1, Math.min(opts.concurrency ?? 3, 6));
   const warmMedia = opts.media !== false && isNative;
   // WhatsApp-tier: also refresh the TOP 5 already-cached convs so new
   // messages that arrived via push (while the chat screen was closed) are

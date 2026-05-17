@@ -2537,7 +2537,11 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     // background requests. Also avoids a thundering-herd at login when
     // the list, inbox, and meetings all mount together.
     const kick = setTimeout(() => {
-      prewarmConversationsCache(conversations, { topN: 10, perConv: 5 }).catch(() => {});
+      // WhatsApp parity: prewarm ALL conversations with last 50 msgs each so
+      // tapping any chat paints instantly from local cache, not just the top
+      // 10. Concurrency=3 keeps the hit on cold start bounded; the bulk of
+      // work happens 1-2s after chat list mount and never blocks UI.
+      prewarmConversationsCache(conversations, { topN: 50, perConv: 50, concurrency: 3 }).catch(() => {});
     }, 1500);
     return () => clearTimeout(kick);
   }, [conversations]);
@@ -2873,6 +2877,11 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       // OS resumes the radio — without this, the banner sits forever even
       // though chat is fully online. Also kicks ensureHealthy() so a dead
       // socket reconnects without waiting for the next NetInfo flap.
+      // WhatsApp parity (2026-05-17): bumped 3000 → 1500 so the banner
+      // clears within 1.5s of WS heal (was sticking up to 3s after recovery
+      // because the 'authenticated' event would sometimes race the watchdog
+      // tick). Also fires ensureHealthy() twice as often on a dead socket so
+      // a stuck connection self-repairs faster on flaky cellular.
       const healWatchdog = setInterval(() => {
         try {
           if (mailWs?.isConnected) {
@@ -2883,7 +2892,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             mailWs.ensureHealthy(1000).catch(() => {});
           }
         } catch {}
-      }, 3000);
+      }, 1500);
       unsubs.push(() => clearInterval(healWatchdog));
 
       // Real-time reaction toast — peer reacted to MY status. Suppress on

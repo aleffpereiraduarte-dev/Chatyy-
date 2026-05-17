@@ -544,7 +544,21 @@ class MailWebSocket {
     // the whole window instead of clustering them at the end. Floor at
     // RECONNECT_BASE so we don't burn through retries faster than the
     // network can possibly recover (~800ms minimum settle).
-    const cap = Math.min(RECONNECT_BASE * Math.pow(2, Math.min(this.reconnectAttempt, 5)), RECONNECT_MAX);
+    //
+    // WhatsApp parity (2026-05-17): keep the first 4 attempts capped at 2.4s
+    // so a transient flap (carrier handoff, AP roam, server reload) heals
+    // before the "Reconectando..." banner even paints. Previously attempts
+    // 4-5 climbed to 7-13s — banner appeared and lingered for what felt like
+    // an outage. Only attempt 5+ allows the full 30s backoff for sustained
+    // failures (e.g. real network outage), giving the device time to recover.
+    const fastAttempts = 4;
+    let cap;
+    if (this.reconnectAttempt < fastAttempts) {
+      // Fast lane: 800ms → 1.6s → 2.4s → 2.4s (capped)
+      cap = Math.min(RECONNECT_BASE * (this.reconnectAttempt + 1), 2400);
+    } else {
+      cap = Math.min(RECONNECT_BASE * Math.pow(2, Math.min(this.reconnectAttempt, 5)), RECONNECT_MAX);
+    }
     const delay = Math.max(RECONNECT_BASE, Math.floor(Math.random() * cap));
     this.reconnectAttempt++;
     this._emit('connection', {
