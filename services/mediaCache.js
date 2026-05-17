@@ -234,14 +234,113 @@ export async function getCachedUri(url) {
 // the image appears uncached on next open.
 const _inflightDownloads = new Map(); // key → Promise<localPath | url>
 
-// Heuristic: extension hints whether the asset is heavy (video/file) and
-// should be deferred on cellular vs lightweight (image/audio/voice) which is
-// safe to auto-fetch on any connection. Telegram & WhatsApp default behavior:
-// auto-download images on any data, defer video/document to wifi (or explicit
-// tap). Caller can still force an immediate download by passing { force: true }.
-function _isHeavyByUrl(url) {
-  if (typeof url !== 'string') return false;
-  return /\.(mp4|mov|m4v|webm|mkv|avi|pdf|doc|docx|xls|xlsx|zip|rar|7z)(\?|$)/i.test(url);
+// ── Media auto-download preferences (WhatsApp Settings → Storage parity) ──
+//
+// 4 buckets: photos, audio, videos, docs. Each is 'wifi' | 'mobile' | 'never'.
+// - 'wifi'   = auto-DL only on Wi-Fi (or no NetInfo signal — fail-safe).
+// - 'mobile' = auto-DL on any connection (Wi-Fi + cellular).
+// - 'never'  = no auto-DL ever; user must tap to download.
+// Defaults match WhatsApp factory: photos+audio on wifi, videos+docs never.
+// Cached in AsyncStorage under MEDIA_DL_PREFS_KEY so cacheMedia() can read
+// them synchronously after the first hydrate at app start.
+const MEDIA_DL_PREFS_KEY = 'chatyy:media_dl_prefs';
+const _defaultMediaDlPrefs = {
+  media_auto_dl_photos: 'wifi',
+  media_auto_dl_audio:  'wifi',
+  media_auto_dl_videos: 'never',
+  media_auto_dl_docs:   'never',
+};
+let _mediaDlPrefs = { ..._defaultMediaDlPrefs };
+let _mediaDlPrefsHydrated = false;
+
+// Hydrate cached prefs from AsyncStorage at module load. Best-effort —
+// any failure leaves us on the WhatsApp defaults. Public setter is
+// `setMediaDownloadPrefs` (used by settings.js after a chat_user_defaults_set
+// roundtrip lands).
+function _hydrateMediaDlPrefs() {
+  if (_mediaDlPrefsHydrated) return;
+  _mediaDlPrefsHydrated = true;
+  if (Platform.OS === 'web') return; // web has no cellular gate
+  try {
+    import('@react-native-async-storage/async-storage').then(m => {
+      m.default.getItem(MEDIA_DL_PREFS_KEY).then(raw => {
+        if (!raw) return;
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') {
+            for (const k of Object.keys(_defaultMediaDlPrefs)) {
+              const v = parsed[k];
+              if (v === 'wifi' || v === 'mobile' || v === 'never') {
+                _mediaDlPrefs[k] = v;
+              }
+            }
+          }
+        } catch {}
+      }).catch(() => {});
+    }).catch(() => {});
+  } catch {}
+}
+_hydrateMediaDlPrefs();
+
+// Update the in-memory prefs cache + persist to AsyncStorage. Settings UI
+// calls this after a successful chat_user_defaults_set so cacheMedia() picks
+// up new gates instantly without waiting for the next app launch.
+export function setMediaDownloadPrefs(patch) {
+  if (!patch || typeof patch !== 'object') return;
+  for (const k of Object.keys(_defaultMediaDlPrefs)) {
+    const v = patch[k];
+    if (v === 'wifi' || v === 'mobile' || v === 'never') {
+      _mediaDlPrefs[k] = v;
+    }
+  }
+  if (Platform.OS === 'web') return;
+  try {
+    import('@react-native-async-storage/async-storage').then(m => {
+      m.default.setItem(MEDIA_DL_PREFS_KEY, JSON.stringify(_mediaDlPrefs)).catch(() => {});
+    }).catch(() => {});
+  } catch {}
+}
+
+// Read-only accessor — used by debug screens / settings preview.
+export function getMediaDownloadPrefs() {
+  return { ..._mediaDlPrefs };
+}
+
+// Classify a URL into one of the 4 buckets. Audio/voice → 'audio'; video → 'videos';
+// documents (pdf/doc/zip/etc) → 'docs'; everything else (images, gif, sticker) → 'photos'.
+function _bucketForUrl(url) {
+  if (typeof url !== 'string') return 'photos';
+  const lower = url.toLowerCase();
+  if (/\.(mp4|mov|m4v|webm|mkv|avi|3gp)(\?|$|#)/.test(lower)) return 'videos';
+  if (/\.(mp3|m4a|ogg|opus|wav|aac|flac)(\?|$|#)/.test(lower)) return 'audio';
+  if (/\.(pdf|doc|docx|xls|xlsx|ppt|pptx|zip|rar|7z|txt|csv)(\?|$|#)/.test(lower)) return 'docs';
+  return 'photos';
+}
+
+// Returns true if the URL should auto-download given the current network +
+// user prefs. Used by cacheMedia()'s gate. Callers can bypass via
+// { force: true } (explicit tap-to-download UI).
+function _shouldAutoDownload(url) {
+  const bucket = _bucketForUrl(url);
+  const pref = _mediaDlPrefs[`media_auto_dl_${bucket}`] || _defaultMediaDlPrefs[`media_auto_dl_${bucket}`];
+  if (pref === 'never') return false;
+  if (pref === 'mobile') return true; // wifi + cellular both OK
+  // pref === 'wifi' → only auto-DL on Wi-Fi. Read NetInfo state; if unknown
+  // (e.g. NetInfo not initialized yet), be conservative: allow lightweight
+  // (photos/audio) and defer heavy (videos/docs) on cellular. This keeps
+  // behaviour sane during the brief window before the first network event.
+  try {
+    const { isWifi, getNetworkState } = require('./networkInfo');
+    if (typeof isWifi === 'function' && isWifi() === true) return true;
+    const st = typeof getNetworkState === 'function' ? getNetworkState() : null;
+    if (st && st.type === 'unknown') {
+      // Network not yet probed — fall back: photos/audio yes, videos/docs no.
+      return bucket === 'photos' || bucket === 'audio';
+    }
+    return false;
+  } catch {
+    return bucket === 'photos' || bucket === 'audio';
+  }
 }
 
 // Download and cache a URL, return local URI.
@@ -253,16 +352,14 @@ export async function cacheMedia(url, opts = {}) {
   const fs = getFS();
   if (!fs) return url;
 
-  // Cellular gate: skip auto-prefetch of heavy assets when not on wifi. The
-  // tap-to-download UI in the bubble passes { force: true } so the user's
-  // explicit intent always proceeds.
-  if (!opts.force && _isHeavyByUrl(url)) {
-    try {
-      const { isWifi } = require('./networkInfo');
-      if (typeof isWifi === 'function' && isWifi() === false) {
-        return url; // Return remote URL — bubble shows "tap to download" UI.
-      }
-    } catch {}
+  // Auto-download gate (WhatsApp parity): read per-bucket user prefs
+  // (photos/audio/videos/docs) + current network state. The tap-to-download
+  // UI in the bubble passes { force: true } so the user's explicit intent
+  // always proceeds regardless of pref. Web bypasses the gate (no cellular).
+  if (!opts.force && Platform.OS !== 'web') {
+    if (!_shouldAutoDownload(url)) {
+      return url; // Return remote URL — bubble shows "tap to download" UI.
+    }
   }
 
   const key = urlToKey(url);

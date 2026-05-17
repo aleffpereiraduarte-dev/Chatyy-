@@ -3788,6 +3788,16 @@ export async function chatSetDisappearing(conversationId, timer) {
   return apiCall('chat_set_disappearing', { conversation_id: conversationId, timer }, 'POST');
 }
 
+// chat_user_defaults_* — unified user-level chat defaults bag.
+// Holds: default_disappearing (int seconds), media_auto_dl_photos|audio|videos|docs
+// (each 'wifi'|'mobile'|'never'). Reads/writes the chat_user_defaults PG table.
+export async function chatUserDefaultsGet() {
+  return apiCall('chat_user_defaults_get', {}, 'POST');
+}
+export async function chatUserDefaultsSet(patch = {}) {
+  return apiCall('chat_user_defaults_set', patch, 'POST');
+}
+
 export async function chatLock(conversationId, locked) {
   return apiCall('chat_lock', { conversation_id: conversationId, locked: locked ? 1 : 0 }, 'POST');
 }
@@ -4677,13 +4687,23 @@ export async function chatSearchMessages(conversationId, query) {
   return apiCall('chat_search_messages', { conversation_id: conversationId, query }, 'POST');
 }
 
-export async function chatPinMessage(messageId) {
+// chatPinMessage — duration in seconds (WhatsApp parity).
+//   86400  = 24h
+//   604800 = 7d (default — matches WhatsApp pre-selected option)
+//   2592000 = 30d
+// Backend clamps anything else to 7d, so passing nothing is safe. Toggling an
+// already-pinned message ignores duration (unpins it).
+export async function chatPinMessage(messageId, durationSeconds) {
+  const payload = { message_id: messageId };
+  if (durationSeconds && Number.isFinite(durationSeconds)) {
+    payload.duration_seconds = durationSeconds;
+  }
   // Stage 1: queue pin intent locally first (no local pinned_messages table yet).
   const ld = _ld();
   if (ld && typeof ld.queueOfflineAction === 'function') {
-    try { await ld.queueOfflineAction('chat_pin_message', { message_id: messageId }); } catch {}
+    try { await ld.queueOfflineAction('chat_pin_message', payload); } catch {}
   }
-  return apiCall('chat_pin_message', { message_id: messageId }, 'POST');
+  return apiCall('chat_pin_message', payload, 'POST');
 }
 
 export async function chatPinnedMessages(conversationId) {

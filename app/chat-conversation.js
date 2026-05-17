@@ -3,7 +3,7 @@ import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, Image, InteractionManager,
   ActivityIndicator, TextInput, Platform, Keyboard, Dimensions,
   Alert, Modal, Pressable, Linking, Animated, Easing, ScrollView, PanResponder, Share, BackHandler,
-  KeyboardAvoidingView, AppState, Vibration,
+  KeyboardAvoidingView, AppState, Vibration, ActionSheetIOS,
 } from 'react-native';
 // FlashList reverted to FlatList
 // Native UICollectionView chat view (iOS only) — WhatsApp-style instant render.
@@ -12588,19 +12588,65 @@ export default function ChatConversationScreen() {
   }, [searchIdx, searchResults]);
 
   // ---- Pinned messages ----
-  const handlePinMessage = useCallback(async (msg) => {
+  // WhatsApp parity: when pinning a NEW message, ask how long via ActionSheet
+  // (24h / 7d / 30d, default 7d). Unpinning is a single confirm-less tap.
+  const _pinPicker = useRef({ msg: null, resolve: null });
+  const [pinDurationModal, setPinDurationModal] = useState(null); // { msg } when open
+  const _executePin = useCallback(async (msg, durationSeconds) => {
     try {
-      const r = await api.chatPinMessage(msg.id);
+      const r = await api.chatPinMessage(msg.id, durationSeconds);
       if (r.success) {
+        // Optimistic update — server will broadcast pts/event for other
+        // devices. We only need to surface it locally right now.
+        const pinnedUntil = durationSeconds
+          ? new Date(Date.now() + durationSeconds * 1000).toISOString()
+          : null;
         setPinnedMessages(prev => {
           const exists = prev.find(p => p.id === msg.id);
           if (exists) return prev.filter(p => p.id !== msg.id);
-          return [msg, ...prev];
+          return [{ ...msg, pinned_until: pinnedUntil }, ...prev];
         });
       }
     } catch {}
     setSelectedMsg(null);
   }, []);
+
+  const handlePinMessage = useCallback(async (msg) => {
+    // Unpin path — no duration prompt, just toggle off.
+    const isAlreadyPinned = pinnedMessages.some(p => String(p.id) === String(msg.id));
+    if (isAlreadyPinned) {
+      _executePin(msg, undefined);
+      return;
+    }
+    // Pin path — pick duration.
+    if (Platform.OS === 'ios') {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          title: t('chatConv.pinDuration') || 'Por quanto tempo?',
+          options: [
+            t('chatConv.pin24h') || '24 horas',
+            t('chatConv.pin7d') || '7 dias',
+            t('chatConv.pin30d') || '30 dias',
+            t('common.cancel') || 'Cancelar',
+          ],
+          cancelButtonIndex: 3,
+          // 1 = "7 dias" — WhatsApp's pre-selected default.
+          // ActionSheetIOS doesn't visually highlight a non-destructive
+          // default the way iOS does for destructive, but listing 7d in the
+          // middle position matches WhatsApp's ordering so users expect it.
+        },
+        (buttonIndex) => {
+          if (buttonIndex === 0) _executePin(msg, 86400);
+          else if (buttonIndex === 1) _executePin(msg, 604800);
+          else if (buttonIndex === 2) _executePin(msg, 2592000);
+          else setSelectedMsg(null);
+        }
+      );
+    } else {
+      // Android / web — custom Modal at render time (see pinDurationModal).
+      setPinDurationModal({ msg });
+    }
+  }, [pinnedMessages, _executePin, t]);
 
   const loadGroupMembers = async () => {
     try {
@@ -13803,6 +13849,42 @@ export default function ChatConversationScreen() {
   const msgKeyExtractor = useCallback((item) => (
     item._key || (item.deleted_at ? `${item.id}_d` : String(item.id))
   ), []);
+
+  // Defensive client-side expiry filter for pinned messages. Server already
+  // hides expired pins via `pinned_until > NOW()` in the SELECT, but a stale
+  // local copy (held in state since mount, or pushed via WS before expiry)
+  // could still display an expired pin until the next refetch. Reading the
+  // current Date.now() each render keeps the banner self-healing within
+  // seconds of expiry without needing a setInterval.
+  const visiblePinnedMessages = useMemo(() => {
+    const now = Date.now();
+    return pinnedMessages.filter(p => {
+      if (!p.pinned_until) return true;
+      const t = Date.parse(p.pinned_until);
+      return !Number.isFinite(t) || t > now;
+    });
+  }, [pinnedMessages]);
+
+  // Format "Xd / Xh / Xm restantes" for the pin countdown shown beside the
+  // header in the banner. Same dimensions WhatsApp uses (days down to minutes).
+  const formatPinRemaining = useCallback((pinnedUntilIso) => {
+    if (!pinnedUntilIso) return '';
+    const ts = Date.parse(pinnedUntilIso);
+    if (!Number.isFinite(ts)) return '';
+    const ms = ts - Date.now();
+    if (ms <= 0) return '';
+    const sec = Math.floor(ms / 1000);
+    const days = Math.floor(sec / 86400);
+    const hours = Math.floor((sec % 86400) / 3600);
+    const mins  = Math.floor((sec % 3600) / 60);
+    if (days >= 1) {
+      return (t('chatConv.pinExpiresDays') || '{n}d restantes').replace('{n}', String(days));
+    }
+    if (hours >= 1) {
+      return (t('chatConv.pinExpiresHours') || '{n}h restantes').replace('{n}', String(hours));
+    }
+    return (t('chatConv.pinExpiresMin') || '{n}min restantes').replace('{n}', String(Math.max(1, mins)));
+  }, [t]);
 
   // PERF: pinnedMessages is consulted PER ROW inside renderMessage
   // (`pinnedMessages.find(p => String(p.id) === String(msg.id))`). With N
@@ -17989,7 +18071,7 @@ export default function ChatConversationScreen() {
             jump to the latest pin. Without this, dismissing the banner
             buried pinned messages until reopening the chat (Telegram parity:
             always-visible pin indicator). */}
-        {pinnedMessages.length > 0 && !showPinnedBanner ? (
+        {visiblePinnedMessages.length > 0 && !showPinnedBanner ? (
           <TouchableOpacity
             onPress={() => setShowPinnedBanner(true)}
             style={[styles.headerBtn, { flexDirection: 'row', alignItems: 'center', gap: 3 }]}
@@ -17998,8 +18080,8 @@ export default function ChatConversationScreen() {
             hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
           >
             <IconPin size={15} color="#f59e0b" />
-            {pinnedMessages.length > 1 ? (
-              <Text style={{ color: '#f59e0b', fontSize: 11, fontWeight: '700' }}>{pinnedMessages.length}</Text>
+            {visiblePinnedMessages.length > 1 ? (
+              <Text style={{ color: '#f59e0b', fontSize: 11, fontWeight: '700' }}>{visiblePinnedMessages.length}</Text>
             ) : null}
           </TouchableOpacity>
         ) : null}
@@ -18355,8 +18437,13 @@ export default function ChatConversationScreen() {
       )}
 
       {/* Pinned messages list — WhatsApp parity: up to 3 stacked pins, each
-          tappable to scroll-to-message, long-press to unpin. */}
-      {pinnedMessages.length > 0 && showPinnedBanner && !showSearchBar && (
+          tappable to scroll-to-message, long-press to unpin. visiblePinned
+          excludes any client-cached row whose pinned_until has already
+          passed (defensive — server filter is the source of truth). Each
+          row shows a "Xd restantes" countdown in the right gutter when the
+          pin has a finite TTL. Permanent legacy pins (NULL pinned_until)
+          omit the countdown entirely. */}
+      {visiblePinnedMessages.length > 0 && showPinnedBanner && !showSearchBar && (
         <View style={{
           backgroundColor: isDark ? 'rgba(245,158,11,0.10)' : 'rgba(245,158,11,0.08)',
           borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
@@ -18371,39 +18458,50 @@ export default function ChatConversationScreen() {
               <IconPin size={12} color="#f59e0b" />
             </View>
             <Text style={{ fontSize: 11, color: '#f59e0b', fontWeight: '700', letterSpacing: 0.2, flex: 1 }}>
-              {pinnedMessages.length > 1
-                ? `${pinnedMessages.length} ${t('chatConv.pinnedMessages') || 'mensagens fixadas'}`
+              {visiblePinnedMessages.length > 1
+                ? `${visiblePinnedMessages.length} ${t('chatConv.pinnedMessages') || 'mensagens fixadas'}`
                 : (t('chatConv.pinnedMessage') || 'Mensagem fixada')}
             </Text>
             <TouchableOpacity onPress={() => setShowPinnedBanner(false)} style={{ padding: 4 }} hitSlop={6}>
               <IconX size={14} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
-          {pinnedMessages.slice(0, 3).map((pinned) => (
-            <TouchableOpacity
-              key={`pinrow-${pinned.id}`}
-              activeOpacity={0.7}
-              onPress={() => safeScrollToMsg(pinned)}
-              onLongPress={() => handlePinMessage(pinned)}
-              delayLongPress={400}
-              style={{
-                flexDirection: 'row', alignItems: 'center',
-                paddingHorizontal: 14, paddingVertical: 5, gap: 10,
-              }}
-              accessibilityRole="button"
-              accessibilityLabel={t('chatConv.pinnedMessage') || 'Pinned message'}
-            >
-              <View style={{ width: 3, alignSelf: 'stretch', backgroundColor: '#f59e0b', borderRadius: 2 }} />
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 11, color: '#f59e0b', fontWeight: '600' }} numberOfLines={1}>
-                  {pinned.sender_name || pinned.sender_email?.split('@')[0] || ''}
-                </Text>
-                <Text style={{ fontSize: 13, color: colors.text }} numberOfLines={1}>
-                  {pinned.content || (pinned.type === 'image' ? '📷 Foto' : pinned.type === 'video' ? '🎬 Vídeo' : pinned.type === 'voice' ? '🎵 Áudio' : 'Mensagem')}
-                </Text>
-              </View>
-            </TouchableOpacity>
-          ))}
+          {visiblePinnedMessages.slice(0, 3).map((pinned) => {
+            const remaining = formatPinRemaining(pinned.pinned_until);
+            return (
+              <TouchableOpacity
+                key={`pinrow-${pinned.id}`}
+                activeOpacity={0.7}
+                onPress={() => safeScrollToMsg(pinned)}
+                onLongPress={() => handlePinMessage(pinned)}
+                delayLongPress={400}
+                style={{
+                  flexDirection: 'row', alignItems: 'center',
+                  paddingHorizontal: 14, paddingVertical: 5, gap: 10,
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={t('chatConv.pinnedMessage') || 'Pinned message'}
+              >
+                <View style={{ width: 3, alignSelf: 'stretch', backgroundColor: '#f59e0b', borderRadius: 2 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 11, color: '#f59e0b', fontWeight: '600' }} numberOfLines={1}>
+                    {pinned.sender_name || pinned.sender_email?.split('@')[0] || ''}
+                  </Text>
+                  <Text style={{ fontSize: 13, color: colors.text }} numberOfLines={1}>
+                    {pinned.content || (pinned.type === 'image' ? '📷 Foto' : pinned.type === 'video' ? '🎬 Vídeo' : pinned.type === 'voice' ? '🎵 Áudio' : 'Mensagem')}
+                  </Text>
+                </View>
+                {!!remaining && (
+                  <Text
+                    style={{ fontSize: 10, color: colors.textSecondary, fontWeight: '500', marginLeft: 4 }}
+                    numberOfLines={1}
+                  >
+                    {remaining}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            );
+          })}
         </View>
       )}
 
@@ -23403,6 +23501,58 @@ export default function ChatConversationScreen() {
               >
                 <Text style={{ fontSize: 15, color: colors.text }}>{opt.label}</Text>
                 {disappearingTimer === opt.value && <IconCheck size={18} color={colors.primary} />}
+              </TouchableOpacity>
+            ))}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Pin Duration Modal (Android / web) — iOS uses native ActionSheetIOS
+          in handlePinMessage. Same 3 buckets WhatsApp exposes:
+          24h / 7d (default) / 30d. */}
+      <Modal
+        visible={!!pinDurationModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => { setPinDurationModal(null); setSelectedMsg(null); }}
+      >
+        <Pressable
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}
+          onPress={() => { setPinDurationModal(null); setSelectedMsg(null); }}
+        >
+          <Pressable
+            style={{ backgroundColor: colors.surface, borderRadius: 16, width: 300, padding: 20 }}
+            onPress={e => e.stopPropagation()}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+              <IconPin size={20} color="#f59e0b" />
+              <Text style={{ fontSize: 17, fontWeight: '600', color: colors.text }}>
+                {t('chatConv.pinDuration') || 'Por quanto tempo?'}
+              </Text>
+            </View>
+            {[
+              { label: t('chatConv.pin24h') || '24 horas', value: 86400, isDefault: false },
+              { label: t('chatConv.pin7d')  || '7 dias',   value: 604800, isDefault: true  },
+              { label: t('chatConv.pin30d') || '30 dias',  value: 2592000, isDefault: false },
+            ].map(opt => (
+              <TouchableOpacity
+                key={opt.value}
+                onPress={() => {
+                  const m = pinDurationModal?.msg;
+                  setPinDurationModal(null);
+                  if (m) _executePin(m, opt.value);
+                }}
+                style={{
+                  flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                  paddingVertical: 14,
+                  borderBottomWidth: opt.value === 2592000 ? 0 : 0.5,
+                  borderBottomColor: colors.border,
+                }}
+              >
+                <Text style={{ fontSize: 15, color: colors.text }}>{opt.label}</Text>
+                {opt.isDefault && (
+                  <IconCheck size={18} color={colors.primary} />
+                )}
               </TouchableOpacity>
             ))}
           </Pressable>

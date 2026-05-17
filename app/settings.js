@@ -240,6 +240,79 @@ function SettingsScreenInner() {
     });
   }, []);
 
+  // ── Chat user defaults: media auto-download + default disappearing ──
+  // Loaded from /chat.php?action=chat_user_defaults_get on mount; mutations
+  // debounced by 500ms before PATCHing back via chat_user_defaults_set.
+  // Mirrored into AsyncStorage via setMediaDownloadPrefs so mediaCache's
+  // cellular gate picks up the new prefs instantly.
+  const [chatDefaults, setChatDefaults] = useState({
+    default_disappearing: 0,
+    media_auto_dl_photos: 'wifi',
+    media_auto_dl_audio:  'wifi',
+    media_auto_dl_videos: 'never',
+    media_auto_dl_docs:   'never',
+  });
+  const _chatDefaultsHydrated = useRef(false);
+  const _chatDefaultsSaveTimer = useRef(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await api.chatUserDefaultsGet?.();
+        if (r?.success && r.data) {
+          const next = {
+            default_disappearing: Number.isFinite(+r.data.default_disappearing) ? +r.data.default_disappearing : 0,
+            media_auto_dl_photos: r.data.media_auto_dl_photos || 'wifi',
+            media_auto_dl_audio:  r.data.media_auto_dl_audio  || 'wifi',
+            media_auto_dl_videos: r.data.media_auto_dl_videos || 'never',
+            media_auto_dl_docs:   r.data.media_auto_dl_docs   || 'never',
+          };
+          setChatDefaults(next);
+          // Push the media prefs into mediaCache so the cellular gate updates
+          // without waiting for the next app launch.
+          try {
+            const mc = require('../services/mediaCache');
+            mc.setMediaDownloadPrefs?.({
+              media_auto_dl_photos: next.media_auto_dl_photos,
+              media_auto_dl_audio:  next.media_auto_dl_audio,
+              media_auto_dl_videos: next.media_auto_dl_videos,
+              media_auto_dl_docs:   next.media_auto_dl_docs,
+            });
+          } catch {}
+        }
+      } catch {}
+      _chatDefaultsHydrated.current = true;
+    })();
+  }, []);
+
+  // Debounced save: any change to chatDefaults schedules a PATCH 500ms later.
+  // Coalesces rapid toggles (e.g. user cycling through wifi → mobile → never)
+  // into a single backend roundtrip.
+  const updateChatDefault = useCallback((patch) => {
+    setChatDefaults(prev => {
+      const next = { ...prev, ...patch };
+      // Mirror media keys into mediaCache instantly.
+      const mediaPatch = {};
+      for (const k of ['media_auto_dl_photos','media_auto_dl_audio','media_auto_dl_videos','media_auto_dl_docs']) {
+        if (k in patch) mediaPatch[k] = next[k];
+      }
+      if (Object.keys(mediaPatch).length) {
+        try {
+          const mc = require('../services/mediaCache');
+          mc.setMediaDownloadPrefs?.(mediaPatch);
+        } catch {}
+      }
+      // Debounce backend save.
+      if (_chatDefaultsSaveTimer.current) clearTimeout(_chatDefaultsSaveTimer.current);
+      _chatDefaultsSaveTimer.current = setTimeout(() => {
+        api.chatUserDefaultsSet?.(patch).catch(() => {});
+      }, 500);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => () => { if (_chatDefaultsSaveTimer.current) clearTimeout(_chatDefaultsSaveTimer.current); }, []);
+
   useEffect(() => {
     loadSettings();
     // Load undo delay + smart compose + notif prefs
@@ -1431,6 +1504,120 @@ function SettingsScreenInner() {
                 <View style={s.settingInfo}>
                   <Text style={[s.settingLabel, { color: colors.text }]}>{opt.label}</Text>
                   <Text style={[s.settingDesc, { color: colors.textTertiary }]}>{opt.sub}</Text>
+                </View>
+                {selected && <IconCheck size={20} color={colors.primary} />}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        )}
+
+        {/* Mídia automática — WhatsApp Settings → Storage and Data parity.
+            4 buckets (photos, audio, videos, docs) × 3 modes (Wi-Fi / Wi-Fi+Móvel
+            / Nunca). Reads/writes chat_user_defaults via debounced PATCH; mirrors
+            into mediaCache.setMediaDownloadPrefs so the cellular gate respects
+            the new pref without an app restart. Mobile-only (web has no
+            cellular concept). */}
+        {Platform.OS !== 'web' && sectionMatches(t('settings.mediaAutoDownload'), t('settings.mediaPhotos'), t('settings.mediaAudio'), t('settings.mediaVideos'), t('settings.mediaDocs'), 'storage', 'auto-download') && (
+        <View ref={registerSectionRef('mediaAutoDownload')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.mediaAutoDownload')}</Text>
+          <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
+            {t('settings.mediaAutoDownloadDesc')}
+          </Text>
+          {[
+            { key: 'media_auto_dl_photos', label: t('settings.mediaPhotos') },
+            { key: 'media_auto_dl_audio',  label: t('settings.mediaAudio') },
+            { key: 'media_auto_dl_videos', label: t('settings.mediaVideos') },
+            { key: 'media_auto_dl_docs',   label: t('settings.mediaDocs') },
+          ].map((row, rowIdx, rowArr) => {
+            const cur = chatDefaults[row.key];
+            const isLast = rowIdx === rowArr.length - 1;
+            return (
+              <View
+                key={row.key}
+                style={[
+                  s.settingRow,
+                  {
+                    borderBottomColor: colors.borderLight,
+                    borderBottomWidth: isLast ? 0 : StyleSheet.hairlineWidth,
+                    flexDirection: 'column',
+                    alignItems: 'stretch',
+                    paddingVertical: Spacing.md,
+                  },
+                ]}
+              >
+                <Text style={[s.settingLabel, { color: colors.text, marginBottom: Spacing.sm }]}>{row.label}</Text>
+                <View style={s.perPageBtns}>
+                  {[
+                    { val: 'wifi',   label: t('settings.mediaWifi') },
+                    { val: 'mobile', label: t('settings.mediaWifiMobile') },
+                    { val: 'never',  label: t('settings.mediaNever') },
+                  ].map(opt => {
+                    const selected = cur === opt.val;
+                    return (
+                      <TouchableOpacity
+                        key={opt.val}
+                        style={[
+                          s.perPageBtn,
+                          { borderColor: colors.divider, flex: 1 },
+                          selected && { backgroundColor: colors.primary, borderColor: colors.primary },
+                        ]}
+                        onPress={() => updateChatDefault({ [row.key]: opt.val })}
+                        accessibilityRole="radio"
+                        accessibilityState={{ selected }}
+                        accessibilityLabel={`${row.label} — ${opt.label}`}
+                      >
+                        <Text style={[
+                          s.perPageText,
+                          { color: colors.text, textAlign: 'center' },
+                          selected && { color: '#fff' },
+                        ]}>
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            );
+          })}
+        </View>
+        )}
+
+        {/* Mensagens temporárias por padrão — WhatsApp Settings → Privacy →
+            Default Disappearing Messages. Applied at chat_create time only
+            (existing convs unaffected). 4 options: Off / 24h / 7d / 90d. */}
+        {sectionMatches(t('settings.defaultDisappearing'), t('settings.disappearingOff'), t('settings.disappearing24h'), t('settings.disappearing7d'), t('settings.disappearing90d'), 'privacy', 'disappearing') && (
+        <View ref={registerSectionRef('defaultDisappearing')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+          <View style={s.sectionTitleRow}>
+            <IconShield size={18} color={colors.primary} style={{ marginRight: 8 }} />
+            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.defaultDisappearing')}</Text>
+          </View>
+          <Text style={[s.settingDesc, { color: colors.textTertiary, marginTop: Spacing.xs, marginBottom: Spacing.sm }]}>
+            {t('settings.defaultDisappearingDesc')}
+          </Text>
+          {[
+            { val: 0,       label: t('settings.disappearingOff') },
+            { val: 86400,   label: t('settings.disappearing24h') },
+            { val: 604800,  label: t('settings.disappearing7d') },
+            { val: 7776000, label: t('settings.disappearing90d') },
+          ].map((opt, idx, arr) => {
+            const selected = Number(chatDefaults.default_disappearing) === opt.val;
+            const isLast = idx === arr.length - 1;
+            return (
+              <TouchableOpacity
+                key={opt.val}
+                onPress={() => updateChatDefault({ default_disappearing: opt.val })}
+                style={[
+                  s.settingRow,
+                  { borderBottomColor: colors.borderLight, borderBottomWidth: isLast ? 0 : StyleSheet.hairlineWidth },
+                ]}
+                accessibilityRole="radio"
+                accessibilityState={{ selected }}
+                accessibilityLabel={opt.label}
+              >
+                <View style={s.settingInfo}>
+                  <Text style={[s.settingLabel, { color: colors.text }]}>{opt.label}</Text>
                 </View>
                 {selected && <IconCheck size={20} color={colors.primary} />}
               </TouchableOpacity>
