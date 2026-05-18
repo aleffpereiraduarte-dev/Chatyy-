@@ -370,19 +370,15 @@ window.addEventListener('message', function(ev) {
 // Race: load gmaps script; if it errors OR doesn't fire initMap in 5s,
 // fall back to Leaflet so the screen never sits blank.
 function initMap() { try { bootGmaps(); } catch (e) { bootLeaflet(); } }
-if (API_KEY) {
-  var s = document.createElement('script');
-  s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(API_KEY) + '&callback=initMap';
-  s.async = true; s.defer = true;
-  s.onerror = function(){ bootLeaflet(); };
-  document.head.appendChild(s);
-  // Watchdog — if Google's loader paints the "can't load Google Maps"
-  // overlay (billing rejection), initMap never fires. After 6s, force
-  // Leaflet so the user still sees the map.
-  setTimeout(function(){ if (!__backend) bootLeaflet(); }, 6000);
-} else {
-  bootLeaflet();
-}
+// Snap-map é sempre Leaflet/OSM. Google Maps JS API via WebView pinta o
+// watermark "For development purposes only" porque o referrer enviado por
+// WebView srcDoc (iOS) ou intent (Android) não bate com o domain restriction
+// da API key — mesmo com baseUrl: https://chatyy.com.br/. Static Maps API
+// (usado em LocationMessage.js) funciona porque não checa referrer.
+// Leaflet é grátis, sem key, sem billing — qualidade ótima pra friend tracking.
+// O bootGmaps continua existindo se alguém shippar uma key cross-platform OK
+// no futuro, mas por padrão usamos Leaflet.
+bootLeaflet();
 // Also catch the "billing not enabled" runtime banner Google paints over
 // the map — when it fires, gmAuthFailure is the only signal we get.
 window.gm_authFailure = function() {

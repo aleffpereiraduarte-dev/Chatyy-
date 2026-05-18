@@ -15389,6 +15389,14 @@ try {
                 handleChatAction($action);
                 break;
             }
+            // Catchall: any unrecognized live_* action is forwarded to chat.php.
+            // VOD pipeline (CF Stream live_start_cf, live_end_cf, live_recordings_list,
+            // live_save_replay, live_recording_get etc.) lives in chat.php.
+            if (strpos($action, 'live_') === 0) {
+                require_once __DIR__ . '/chat.php';
+                handleChatAction($action);
+                break;
+            }
             // Unrecognized parental_* or kids_* → parental.php. Lets us add
             // new parental features (Ask Parent, achievements, daily quest)
             // without editing the big switch above.
