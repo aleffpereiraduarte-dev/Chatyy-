@@ -190,6 +190,13 @@ jobs:
         # self-hosted under certain shell configurations).
         run: node scripts/patch-shareext-signing.js
 
+      - name: Patch NotificationService signing in pbxproj
+        # [2026-05-18] Same reason as ShareExtension: with-notification-service
+        # plugin sets CODE_SIGN_STYLE=Automatic but CI uses Manual everywhere.
+        # Inject PROVISIONING_PROFILE_SPECIFIER directly into per-target
+        # XCBuildConfiguration so xcodebuild Archive can find the profile.
+        run: node scripts/patch-nse-signing.js
+
       - name: Patch BroadcastExtension signing in pbxproj
         # The with-broadcast-extension Expo plugin generates the appex target
         # with CODE_SIGN_STYLE=Automatic. Our CI is Manual signing across
