@@ -1783,7 +1783,11 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [phone, setPhone] = useState('');
-  const [polling, setPolling] = useState(false);
+  // Telnyx Verified Numbers API delivers the code by SMS (default) or voice
+  // call; user types the 6-digit code back into the app. Differs from the
+  // legacy Twilio OutgoingCallerIds flow where Twilio called the user with
+  // a PIN to type on the phone keypad.
+  const [method, setMethod] = useState('sms');
 
   useEffect(() => {
     setStep('intro');
@@ -1802,24 +1806,22 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
   const txt = isDark ? '#fff' : '#000';
   const sub = isDark ? '#8e8e93' : '#636366';
 
-  // Request step: tells Twilio to CALL the user's phone with a PIN.
-  // Returns the PIN so we can display it on screen for the user to type.
+  // Request step: asks Telnyx to send the user a 6-digit code (SMS by default,
+  // voice call if method='call'). User then types the code back into the app
+  // and we POST to /v2/verified_numbers/{phone}/actions/verify.
   const handleStartVerify = async () => {
     setLoading(true);
     setError('');
     try {
-      const r = await voipVerifiedNumberRequest();
+      const r = await voipVerifiedNumberRequest(undefined, method);
       if (r?.success) {
         if (r.data?.already_verified) {
           setStep('done');
           onVerified?.();
-        } else if (r.data?.validation_code) {
-          setPin(r.data.validation_code);
-          setStep('pin');
-          // Start polling Twilio for confirmation every 3s
-          setPolling(true);
         } else {
-          setError(r?.message || 'Não foi possível iniciar a verificação');
+          // Reset any stale code from a previous attempt
+          setPin('');
+          setStep('pin');
         }
       } else {
         setError(r?.message || 'Erro ao iniciar verificação');
@@ -1831,24 +1833,28 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
     }
   };
 
-  // Poll Twilio every 3s to see if user entered PIN (up to 2 min)
-  useEffect(() => {
-    if (!polling) return;
-    const start = Date.now();
-    const iv = setInterval(async () => {
-      if (Date.now() - start > 120000) { clearInterval(iv); setPolling(false); setError('Tempo esgotado. Tente novamente.'); return; }
-      try {
-        const r = await voipVerifiedNumberConfirm('');
-        if (r?.success) {
-          clearInterval(iv);
-          setPolling(false);
-          setStep('done');
-          onVerified?.();
-        }
-      } catch {}
-    }, 3000);
-    return () => clearInterval(iv);
-  }, [polling, onVerified]);
+  // User types the 6-digit code Telnyx sent and we POST it to confirm.
+  const handleSubmitPin = async () => {
+    if (!/^\d{6}$/.test(pin)) {
+      setError('Digite os 6 dígitos do código.');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const r = await voipVerifiedNumberConfirm(pin);
+      if (r?.success) {
+        setStep('done');
+        onVerified?.();
+      } else {
+        setError(r?.message || 'Código incorreto ou expirado');
+      }
+    } catch (e) {
+      setError(String(e?.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <View style={{ backgroundColor: bg, borderRadius: 22, padding: 0, overflow: 'hidden', maxWidth: 420, alignSelf: 'center', width: '100%' }}>
@@ -1923,7 +1929,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                     <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>1</Text>
                   </View>
                   <Text style={{ flex: 1, fontSize: 13, color: txt, lineHeight: 19 }}>
-                    Seu celular vai <Text style={{ fontWeight: '700' }}>tocar agora</Text> (ligação da nossa operadora, gratuita).
+                    Você vai receber {method === 'call' ? <Text style={{ fontWeight: '700' }}>uma ligação</Text> : <Text style={{ fontWeight: '700' }}>um SMS</Text>} com um código de 6 dígitos.
                   </Text>
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 }}>
@@ -1931,7 +1937,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                     <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>2</Text>
                   </View>
                   <Text style={{ flex: 1, fontSize: 13, color: txt, lineHeight: 19 }}>
-                    Você atende e a gente mostra um <Text style={{ fontWeight: '700' }}>PIN de 6 dígitos</Text> aqui na tela.
+                    Digite o código aqui no app pra confirmar que esse número é seu.
                   </Text>
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
@@ -1939,9 +1945,25 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                     <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>3</Text>
                   </View>
                   <Text style={{ flex: 1, fontSize: 13, color: txt, lineHeight: 19 }}>
-                    Digite o PIN no <Text style={{ fontWeight: '700' }}>teclado do celular</Text> durante a ligação — pronto, verificado pra sempre.
+                    Pronto — <Text style={{ fontWeight: '700' }}>verificado pra sempre</Text>. Suas ligações vão mostrar seu número real.
                   </Text>
                 </View>
+              </View>
+
+              {/* Method toggle: SMS (default) vs voice call */}
+              <View style={{ flexDirection: 'row', backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7', borderRadius: 10, padding: 3, marginBottom: 14 }}>
+                <TouchableOpacity
+                  onPress={() => setMethod('sms')}
+                  style={{ flex: 1, paddingVertical: 9, borderRadius: 8, alignItems: 'center', backgroundColor: method === 'sms' ? (isDark ? '#3a3a3c' : '#fff') : 'transparent' }}
+                >
+                  <Text style={{ fontSize: 13, fontWeight: method === 'sms' ? '700' : '500', color: method === 'sms' ? txt : sub }}>SMS</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setMethod('call')}
+                  style={{ flex: 1, paddingVertical: 9, borderRadius: 8, alignItems: 'center', backgroundColor: method === 'call' ? (isDark ? '#3a3a3c' : '#fff') : 'transparent' }}
+                >
+                  <Text style={{ fontSize: 13, fontWeight: method === 'call' ? '700' : '500', color: method === 'call' ? txt : sub }}>Ligação</Text>
+                </TouchableOpacity>
               </View>
 
               {phone ? (
@@ -1975,38 +1997,48 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
           ) : (
             <>
               <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'center', gap: 6, marginBottom: 16 }}>
-                <IconPhone size={14} color={sub} style={{ marginTop: 2 }} />
+                <IconSmartphone size={14} color={sub} style={{ marginTop: 2 }} />
                 <Text style={{ fontSize: 13, color: sub, lineHeight: 19, textAlign: 'center', flexShrink: 1 }}>
-                  <Text style={{ fontWeight: '700', color: txt }}>Atenda a ligação</Text> da Chatyy e digite este PIN no{'\n'}teclado do telefone:
+                  {method === 'call'
+                    ? <>Atenda a ligação e <Text style={{ fontWeight: '700', color: txt }}>digite o código de 6 dígitos</Text> aqui no app:</>
+                    : <>Enviamos um <Text style={{ fontWeight: '700', color: txt }}>SMS com código de 6 dígitos</Text>. Digite abaixo:</>}
                 </Text>
               </View>
 
-              {/* Big PIN display */}
-              <View style={{
-                backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7',
-                borderRadius: 16, paddingVertical: 22, paddingHorizontal: 20,
-                alignItems: 'center', marginBottom: 16,
-                borderWidth: 2, borderColor: '#007AFF',
-              }}>
-                <Text style={{ fontSize: 40, fontWeight: '900', color: '#007AFF', letterSpacing: 8, fontVariant: ['tabular-nums'] }}>
-                  {pin}
-                </Text>
-              </View>
+              {/* 6-digit code input — the user types what Telnyx sent them */}
+              <TextInput
+                value={pin}
+                onChangeText={(v) => setPin(v.replace(/[^0-9]/g, '').slice(0, 6))}
+                keyboardType="number-pad"
+                maxLength={6}
+                autoFocus
+                placeholder="000000"
+                placeholderTextColor={sub}
+                style={{
+                  backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7',
+                  borderRadius: 16, paddingVertical: 22, paddingHorizontal: 20,
+                  textAlign: 'center', marginBottom: 16,
+                  borderWidth: 2, borderColor: '#007AFF',
+                  fontSize: 36, fontWeight: '900', color: '#007AFF',
+                  letterSpacing: 8, fontVariant: ['tabular-nums'],
+                }}
+              />
 
-              {/* Polling indicator */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 12 }}>
-                <ActivityIndicator size="small" color="#007AFF" />
-                <Text style={{ fontSize: 12, color: sub }}>Aguardando você digitar o PIN no telefone…</Text>
-              </View>
+              {!!error && <Text style={{ color: '#ef4444', fontSize: 12, marginTop: 4, marginBottom: 8, textAlign: 'center' }}>{error}</Text>}
 
-              {!!error && <Text style={{ color: '#ef4444', fontSize: 12, marginTop: 4, textAlign: 'center' }}>{error}</Text>}
-
-              <View style={{ flexDirection: 'row', gap: 10, marginTop: 8 }}>
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
                 <TouchableOpacity
-                  onPress={() => { setPolling(false); setStep('intro'); }}
-                  style={{ flex: 1, height: 46, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7' }}
+                  onPress={() => { setStep('intro'); setPin(''); setError(''); }}
+                  style={{ flex: 1, height: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7' }}
                 >
                   <Text style={{ color: txt, fontWeight: '600' }}>Cancelar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  disabled={loading || pin.length !== 6}
+                  onPress={handleSubmitPin}
+                  style={{ flex: 1.4, height: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#007AFF', opacity: (loading || pin.length !== 6) ? 0.4 : 1 }}
+                >
+                  {loading ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Confirmar</Text>}
                 </TouchableOpacity>
               </View>
             </>

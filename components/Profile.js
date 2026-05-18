@@ -1043,6 +1043,30 @@ export default function Profile({
       try { unsubOff?.(); } catch {}
     };
   }, [identity?.email]);
+
+  // "Contatos em comum" — fetched separately because not every profileGet
+  // payload includes it (older backend builds). If the endpoint isn't
+  // deployed yet, api.commonContacts swallows the error and returns [].
+  // We hide the section unless there's at least one match OR the viewer
+  // is non-self (then we show the "Em breve" placeholder for parity).
+  const [commonContactsData, setCommonContactsData] = useState([]);
+  useEffect(() => {
+    if (!identity?.email) { setCommonContactsData([]); return undefined; }
+    if (identity.email === currentUser?.email) { setCommonContactsData([]); return undefined; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await api.commonContacts(identity.email);
+        if (cancelled) return;
+        const items = Array.isArray(r?.items) ? r.items : [];
+        setCommonContactsData(items);
+      } catch {
+        if (!cancelled) setCommonContactsData([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [identity?.email, currentUser?.email]);
+
   const presence = data?.presence;
   const social = data?.social;
   const actions = data?.actions || {};
@@ -1862,6 +1886,49 @@ export default function Profile({
           </>
         )}
 
+        {/* Common contacts (mutual address book) */}
+        {!actions.is_self && (
+          <>
+            <View style={{ paddingHorizontal: 8, paddingTop: 14, paddingBottom: 6, flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' }}>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: colors?.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                {t?.('profile.commonContacts.title') || 'Contatos em comum'}
+              </Text>
+              {commonContactsData.length > 0 && (
+                <Text style={{ fontSize: 11, color: colors?.textTertiary }}>
+                  {(t?.('profile.commonContacts.count') || '{n} em comum').replace('{n}', String(commonContactsData.length))}
+                </Text>
+              )}
+            </View>
+            {commonContactsData.length === 0 ? (
+              // TODO: backend `common_contacts` endpoint pending — until it
+              // ships api.commonContacts returns [], so we surface a small
+              // placeholder for parity with WhatsApp's "in common" row.
+              <View style={{ paddingHorizontal: 12, paddingVertical: 10 }}>
+                <Text style={{ fontSize: 13, color: colors?.textTertiary, fontStyle: 'italic' }}>
+                  {t?.('common.comingSoon') || 'Em breve'}
+                </Text>
+              </View>
+            ) : (
+              commonContactsData.slice(0, 5).map((c) => (
+                <TouchableOpacity
+                  key={c.email || c.id}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingVertical: 10 }}
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    if (!c.email) return;
+                    if (mode === 'peek') onClose?.();
+                    router?.push(`/u/${encodeURIComponent(c.email)}`);
+                  }}
+                >
+                  <AvatarCircle name={c.name || c.email} email={c.email} size={36} />
+                  <Text style={{ flex: 1, fontSize: 14, color: colors?.text, fontWeight: '500' }} numberOfLines={1}>{c.name || c.email}</Text>
+                  <IconChevronRight size={18} color={colors?.textTertiary} />
+                </TouchableOpacity>
+              ))
+            )}
+          </>
+        )}
+
         {/* See full profile */}
         <TouchableOpacity
           onPress={handleOpenFullFromPeek}
@@ -2206,6 +2273,12 @@ export default function Profile({
           console.warn('[story.addMore]', e?.message);
         }
       }}
+      onMentionPress={({ email, username }) => {
+        const target = email || username;
+        if (!target) return;
+        setStoryViewer({ open: false, startIdx: 0 });
+        setTimeout(() => { try { router?.push?.(`/u/${encodeURIComponent(target)}`); } catch {} }, 150);
+      }}
     />
   );
 
@@ -2231,6 +2304,12 @@ export default function Profile({
       }}
       onReact={async (story, emoji) => {
         try { await api.apiCall?.('status_react', { status_id: story?.id, emoji }, 'POST'); } catch {}
+      }}
+      onMentionPress={({ email, username }) => {
+        const target = email || username;
+        if (!target) return;
+        setHighlightViewer({ open: false, items: [], title: '', startIdx: 0, highlightId: null });
+        setTimeout(() => { try { router?.push?.(`/u/${encodeURIComponent(target)}`); } catch {} }, 150);
       }}
     />
   );

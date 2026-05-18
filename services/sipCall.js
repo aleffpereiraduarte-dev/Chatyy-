@@ -423,16 +423,23 @@ async function placeCall() {
     const hostCount = (sdp?.match(/typ host/g) || []).length;
     if (__DEV__) console.log('[Verto] Sending INVITE, SDP length:', sdp?.length, 'candidates: host=' + hostCount, 'srflx=' + srflxCount, 'relay=' + relayCount);
 
-    wsSend('telnyx_rtc.invite', {
-      sdp,
-      dialogParams: {
-        audio: true, video: false, useStereo: false,
-        destination_number: _dest,
-        caller_id_number: _callerId || '+19513931371', caller_id_name: 'Chatyy',
-        callID: uuid(),
-        remote_caller_id_name: '', remote_caller_id_number: _dest,
-      },
-    });
+    // Telnyx only honors caller_id_number when the number is on its Verified
+    // Numbers list for this account. Passing an unverified number makes
+    // Telnyx silently substitute the connection default — which used to be
+    // the hardcoded US +19513931371 here, so callees saw a random US number.
+    // Now: if the backend didn't provide a verified caller_id (creds.caller_id
+    // empty), we omit the field entirely so Telnyx uses the connection's own
+    // default consistently. UI surfaces "Caller ID not verified" so the user
+    // knows to go through the /voip_verified_number_request flow.
+    const dialogParams = {
+      audio: true, video: false, useStereo: false,
+      destination_number: _dest,
+      caller_id_name: 'Chatyy',
+      callID: uuid(),
+      remote_caller_id_name: '', remote_caller_id_number: _dest,
+    };
+    if (_callerId) dialogParams.caller_id_number = _callerId;
+    wsSend('telnyx_rtc.invite', { sdp, dialogParams });
   } catch (e) {
     if (__DEV__) console.warn('[Verto] placeCall error:', e.message);
     _onStateChange?.('error:Failed to start call: ' + e.message);

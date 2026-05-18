@@ -276,30 +276,45 @@ export async function startForegroundBackup(onProgress) {
   // Wrap the caller's progress callback so we ALSO drive the persistent
   // ongoing notification on every tick. Cheap — the wrapper is created once
   // per backup session and reused across all native/engine emit events.
+  //
+  // BUG FIX (2026-05-18): we used to fire the "Backup do Chatyy" sticky
+  // notification BEFORE we even knew anything would be uploaded — so every
+  // app cold-start auto-fired one even when 100% of photos were already
+  // backed up (the user reported it as "toda vez que abre o app aparece um
+  // novo backup do chatyy"). Now we lazily create the notification only
+  // once we see a real progress tick with at least 1 pending item.
   const _userProgressCb = onProgress || null;
+  let _notifStarted = false;
   progressCallback = (p) => {
     try {
-      uploadNotification.update(BACKUP_NOTIF_ID, {
-        current: p?.current || 0,
-        total: p?.total || 0,
-      });
+      const cur = p?.current || 0;
+      const tot = p?.total || 0;
+      // Only show the sticky notification if there's actually work to do.
+      // This single-shot guard prevents the notif from flashing during the
+      // initial precheck phase (current=0,total=0) on cold-starts where
+      // every device asset is already backed up.
+      if (!_notifStarted && tot > 0) {
+        _notifStarted = true;
+        uploadNotification.start({
+          id: BACKUP_NOTIF_ID,
+          title: 'Backup do Chatyy',
+          total: tot,
+          onCancel: () => { requestStop(); },
+        }).catch(() => {});
+      }
+      if (_notifStarted) {
+        uploadNotification.update(BACKUP_NOTIF_ID, { current: cur, total: tot });
+      }
     } catch {}
     if (_userProgressCb) {
       try { _userProgressCb(p); } catch {}
     }
   };
-
-  // Surface the ongoing notification — sticky on Android, passive on iOS.
-  // Cancel action calls requestStop() so the user can halt without opening
-  // the app.
-  try {
-    await uploadNotification.start({
-      id: BACKUP_NOTIF_ID,
-      title: 'Backup do Chatyy',
-      total: 0,
-      onCancel: () => { requestStop(); },
-    });
-  } catch {}
+  // Expose the notif-started flag on the closure so the completion / failure
+  // paths below can skip uploadNotification.complete() when we never showed
+  // anything (otherwise expo-notifications fires a "Backup done" toast for a
+  // notification that was never visible).
+  progressCallback.__wasShown = () => _notifStarted;
 
   // Refresh BG creds — ensures the next BGTaskScheduler wake-up has a fresh
   // token, even if the user never opens the Photos screen explicitly.
@@ -314,8 +329,12 @@ export async function startForegroundBackup(onProgress) {
     const ML = require('expo-media-library');
     const { status } = await ML.getPermissionsAsync();
     if (status !== 'granted') {
+      // No need to surface a fail notification — we never showed the sticky
+      // start notif yet (gated on first non-zero progress tick), and firing
+      // "Falha no envio" when the user simply hasn't granted Photos access
+      // is misleading.
       releaseLock();
-      try { await uploadNotification.fail(BACKUP_NOTIF_ID, { errorMessage: 'Permissão de fotos negada' }); } catch {}
+      progressCallback = null;
       return { uploaded: 0, total: 0, error: 'permission_denied' };
     }
 
@@ -540,9 +559,14 @@ export async function startForegroundBackup(onProgress) {
           try { await completeSub?._drain?.(); } catch {}
           completeSub?.remove?.();
           if (uploaded > 0) await setLastSync(new Date().toISOString());
+          const _showCompleteNotif = !!progressCallback?.__wasShown?.();
           releaseLock();
           progressCallback = null;
-          try { await uploadNotification.complete(BACKUP_NOTIF_ID, { successCount: uploaded, total: done }); } catch {}
+          // Only surface the "Backup completo" toast when the sticky notif
+          // was actually shown (i.e. there was something to back up).
+          if (_showCompleteNotif) {
+            try { await uploadNotification.complete(BACKUP_NOTIF_ID, { successCount: uploaded, total: done }); } catch {}
+          }
           return { success: true, uploaded, total: done, nativeMode: true };
         }
 
@@ -627,9 +651,12 @@ export async function startForegroundBackup(onProgress) {
       completeSub?.remove();
 
       if (uploaded > 0) await setLastSync(new Date().toISOString());
+      const _showCompleteNotif = !!progressCallback?.__wasShown?.();
       releaseLock();
       progressCallback = null;
-      try { await uploadNotification.complete(BACKUP_NOTIF_ID, { successCount: uploaded, total: done }); } catch {}
+      if (_showCompleteNotif) {
+        try { await uploadNotification.complete(BACKUP_NOTIF_ID, { successCount: uploaded, total: done }); } catch {}
+      }
       return { uploaded, total: done };
     }
 
@@ -659,14 +686,17 @@ export async function startForegroundBackup(onProgress) {
 
     if (uploaded > 0) await setLastSync(new Date().toISOString());
 
+    const _showCompleteNotif = !!progressCallback?.__wasShown?.();
     releaseLock();
     progressCallback = null;
-    try {
-      await uploadNotification.complete(BACKUP_NOTIF_ID, {
-        successCount: uploaded,
-        total: result?.totalFiles || uploaded,
-      });
-    } catch {}
+    if (_showCompleteNotif) {
+      try {
+        await uploadNotification.complete(BACKUP_NOTIF_ID, {
+          successCount: uploaded,
+          total: result?.totalFiles || uploaded,
+        });
+      } catch {}
+    }
     console.log(`[backup] Foreground complete: ${uploaded} uploaded`);
     return {
       uploaded,
@@ -674,9 +704,12 @@ export async function startForegroundBackup(onProgress) {
       backedUpCount: totalBackedUp,
     };
   } catch (err) {
+    const _showFailNotif = !!progressCallback?.__wasShown?.();
     releaseLock();
     progressCallback = null;
-    try { await uploadNotification.fail(BACKUP_NOTIF_ID, { errorMessage: err?.message || 'Falha no envio' }); } catch {}
+    if (_showFailNotif) {
+      try { await uploadNotification.fail(BACKUP_NOTIF_ID, { errorMessage: err?.message || 'Falha no envio' }); } catch {}
+    }
     return { uploaded: 0, total: 0, error: err?.message || 'unknown' };
   }
 }

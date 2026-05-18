@@ -119,10 +119,139 @@ function hashColor(name) {
   return `hsl(${hue}, 55%, 55%)`;
 }
 
-function AvatarCircle({ name, email, uri, size = 48, style, online = false, ringColor = '#7C3AED', showStatus = false }) {
+// ── Group collage tile ──────────────────────────────────────────
+// A single tile of a 2×2 (or 1+2) collage. Renders the member's avatar
+// when available, otherwise falls back to their initials on a colored
+// background — mirrors AvatarCircle's main rendering path but without the
+// online-ring, cache-bump subscription, or recycling key (the parent
+// AvatarCircle owns those concerns and forwards the right cacheBust here).
+function _CollageTile({ member, size, width, height }) {
+  const [tileErr, setTileErr] = useState(false);
+  useEffect(() => { setTileErr(false); }, [member?.email, member?.avatar_url]);
+  const ImageComponent = ExpoImage || RNImage;
+  const memberEmail = typeof member?.email === 'string' ? member.email : '';
+  const memberName = member?.display_name || member?.name || memberEmail || '';
+  const looksLikeEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(memberEmail);
+  const baseUrl = looksLikeEmail ? getAvatarUrlForEmail(memberEmail) : null;
+  // Prefer an explicit avatar_url passed in by the caller — saves a redirect
+  // and lets the caller pin a specific version (e.g. WS-pushed update).
+  let uri = '';
+  if (typeof member?.avatar_url === 'string' && member.avatar_url) {
+    uri = /^https?:\/\//i.test(member.avatar_url)
+      ? member.avatar_url
+      : `https://chatyy.com.br${member.avatar_url.startsWith('/') ? '' : '/'}${member.avatar_url}`;
+  } else if (baseUrl) {
+    uri = baseUrl;
+  }
+  const initials = getInitials(memberName, memberEmail);
+  const bg = hashColor((memberName || memberEmail || '').toLowerCase());
+  // Allow non-square tiles (WhatsApp 1+2 layout has a full-height left tile).
+  // Default to square when only `size` is passed.
+  const w = typeof width === 'number' ? width : size;
+  const h = typeof height === 'number' ? height : size;
+  // Tiles paint flush against neighbors — overflow:hidden on the container
+  // does the circular clipping for the whole collage.
+  return (
+    <View style={{ width: w, height: h, backgroundColor: bg, alignItems: 'center', justifyContent: 'center' }}>
+      <Text
+        style={{ color: '#fff', fontWeight: '600', fontSize: Math.max(8, Math.min(w, h) * 0.4), position: 'absolute' }}
+        allowFontScaling={false}
+      >
+        {initials}
+      </Text>
+      {uri && !tileErr ? (
+        <ImageComponent
+          source={{ uri }}
+          style={{ width: w, height: h, position: 'absolute' }}
+          onError={() => setTileErr(true)}
+          {...(ExpoImage ? { cachePolicy: 'memory-disk', contentFit: 'cover' } : (Platform.OS === 'web' ? { loading: 'lazy' } : {}))}
+        />
+      ) : null}
+    </View>
+  );
+}
+
+// ── Group collage layout ────────────────────────────────────────
+// 2 members → side-by-side halves.
+// 3 members → big tile on the left, 2 stacked on the right (WhatsApp 1+2).
+// 4+ members → 2×2 grid with the first 4 entries.
+function _GroupCollage({ members, size, style }) {
+  const radius = size / 2;
+  const m = (members || []).slice(0, 4);
+  const count = m.length;
+  const halfH = size / 2;
+  const halfW = size / 2;
+  return (
+    <View
+      style={[{ width: size, height: size, borderRadius: radius, overflow: 'hidden', backgroundColor: '#000', flexDirection: 'row' }, style, { width: size, height: size, borderRadius: radius }]}
+      accessibilityLabel="Group avatar"
+      accessibilityRole="image"
+    >
+      {count === 2 && (
+        <>
+          <_CollageTile member={m[0]} size={halfW} />
+          <_CollageTile member={m[1]} size={halfW} />
+        </>
+      )}
+      {count === 3 && (
+        <>
+          {/* Left tile is full-height (halfW × size) to match the WhatsApp
+              1+2 layout. The two right tiles share the right half stacked. */}
+          <_CollageTile member={m[0]} width={halfW} height={size} size={halfW} />
+          <View style={{ width: halfW, height: size, flexDirection: 'column' }}>
+            <_CollageTile member={m[1]} size={halfW} />
+            <_CollageTile member={m[2]} size={halfW} />
+          </View>
+        </>
+      )}
+      {count >= 4 && (
+        <>
+          <View style={{ width: halfW, height: size, flexDirection: 'column' }}>
+            <_CollageTile member={m[0]} size={halfW} />
+            <_CollageTile member={m[2]} size={halfW} />
+          </View>
+          <View style={{ width: halfW, height: size, flexDirection: 'column' }}>
+            <_CollageTile member={m[1]} size={halfW} />
+            <_CollageTile member={m[3]} size={halfW} />
+          </View>
+        </>
+      )}
+    </View>
+  );
+}
+
+function AvatarCircle({ name, email, uri, size = 48, style, online = false, ringColor = '#7C3AED', showStatus = false, members }) {
   const [imgError, setImgError] = useState(false);
   const [version, setVersion] = useState(() => getAvatarVersion(email));
   useEffect(() => { setImgError(false); setVersion(getAvatarVersion(email)); }, [email]);
+
+  // ── Group collage short-circuit ────────────────────────────────
+  // When the caller passes `members` and there's no single image to show
+  // (no explicit `uri` AND no email-derived avatar would apply), render
+  // a 2-4 tile collage of the first members instead of an initials bubble.
+  // Behaves like a normal circular avatar from the parent's perspective —
+  // same size/style/online-ring contract.
+  const _hasCollage = Array.isArray(members) && members.length >= 2 && !uri;
+  if (_hasCollage) {
+    // Online ring honored even on collages so group "active" state can still
+    // show — same wrapper math as the regular path further down.
+    const ringWidth = online && showStatus ? 2 : 0;
+    const totalSize = size + (ringWidth * 2) + 2;
+    if (online && showStatus) {
+      return (
+        <View style={[{ width: totalSize, height: totalSize, borderRadius: totalSize / 2, alignItems: 'center', justifyContent: 'center', borderWidth: ringWidth, borderColor: ringColor, overflow: 'hidden' }, style, { borderRadius: totalSize / 2 }]}>
+          <_GroupCollage members={members} size={size} />
+          <View style={{
+            position: 'absolute', right: 0, bottom: 0,
+            width: Math.max(10, size * 0.25), height: Math.max(10, size * 0.25),
+            borderRadius: Math.max(5, size * 0.125),
+            backgroundColor: ringColor, borderWidth: 2, borderColor: '#fff',
+          }} />
+        </View>
+      );
+    }
+    return <_GroupCollage members={members} size={size} style={style} />;
+  }
 
   // Subscribe to global cache bumps so this avatar refreshes when the user uploads a new pic.
   // IMPORTANT: this useEffect must run UNCONDITIONALLY before any early returns so the hook
@@ -316,6 +445,28 @@ const styles = StyleSheet.create({
 // 100-message scroll re-renders every avatar 60×/sec because parent rows
 // pass freshly-spread style objects on every frame.
 function _avatarEqual(prev, next) {
+  // For group collages we need to know when the member list shape changes
+  // — but a shallow array identity check is fine because callers either
+  // pass a stable memoized array or recreate it intentionally when the
+  // backing data changes.
+  if (prev.members !== next.members) {
+    const pm = prev.members, nm = next.members;
+    // Both falsy → still equal on this dim.
+    if (!pm && !nm) {
+      // fall through to the other props
+    } else if (!pm || !nm || pm.length !== nm.length) {
+      return false;
+    } else {
+      // Compare the first 4 entries (only those are rendered) by email +
+      // avatar_url. Cheap enough at 4 slots, avoids re-renders when the
+      // parent rebuilds a logically identical members array each tick.
+      const n = Math.min(4, pm.length);
+      for (let i = 0; i < n; i++) {
+        if ((pm[i]?.email || '') !== (nm[i]?.email || '')) return false;
+        if ((pm[i]?.avatar_url || '') !== (nm[i]?.avatar_url || '')) return false;
+      }
+    }
+  }
   return (
     prev.email === next.email &&
     prev.name === next.name &&

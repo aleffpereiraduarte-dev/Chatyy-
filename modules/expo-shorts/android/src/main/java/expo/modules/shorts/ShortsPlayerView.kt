@@ -27,6 +27,14 @@ class ErrorEventPayload(
   @Field val message: String
 ) : Record
 
+// Stage 3 (2026-05-18): periodic time update for the JS scrubber. Replaces
+// the WebView postMessage tick. ms = current playhead, dur = duration. Both
+// in milliseconds.
+class TimeEventPayload(
+  @Field val ms: Double,
+  @Field val dur: Double
+) : Record
+
 // -----------------------------------------------------------------------------
 // ShortsPlayerView — Stage 2 (2026-05-16)
 //
@@ -61,6 +69,26 @@ class ShortsPlayerView(context: Context, appContext: AppContext) :
   private val onPlaybackReady by EventDispatcher<Unit>()
   private val onBuffering by EventDispatcher<BufferingEventPayload>()
   private val onError by EventDispatcher<ErrorEventPayload>()
+  private val onTime by EventDispatcher<TimeEventPayload>()
+
+  // Tick handler — emits onTime every 120ms while attached + playing. Cheap
+  // (one main-thread post per frame); the JS side reads ms/dur out of the
+  // event nativeEvent.
+  private val timeTickHandler = android.os.Handler(android.os.Looper.getMainLooper())
+  private val timeTickRunnable = object : Runnable {
+    override fun run() {
+      val p = boundPlayer
+      if (p != null) {
+        try {
+          val ms = p.currentPosition.toDouble()
+          val durRaw = p.duration
+          val dur = if (durRaw > 0) durRaw.toDouble() else 0.0
+          onTime(TimeEventPayload(ms = ms, dur = dur))
+        } catch (_: Throwable) {}
+      }
+      timeTickHandler.postDelayed(this, 120L)
+    }
+  }
 
   private val container: FrameLayout
   private val playerView: PlayerView
@@ -166,12 +194,34 @@ class ShortsPlayerView(context: Context, appContext: AppContext) :
     }
   }
 
+  /**
+   * Seek the bound player to [ms] milliseconds. No-op when nothing is bound.
+   * Called from ExpoShortsModule via AsyncFunction("seek").
+   */
+  fun seekToMs(ms: Double) {
+    try {
+      boundPlayer?.seekTo(ms.toLong())
+    } catch (t: Throwable) {
+      Log.w(TAG, "seekToMs failed: ${t.message}")
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // view lifecycle
   // ---------------------------------------------------------------------------
 
+  override fun onAttachedToWindow() {
+    super.onAttachedToWindow()
+    // Start the periodic time tick so the JS scrubber stays in sync. Runs
+    // even when paused — the tick is so cheap that gating on play state
+    // isn't worth the bookkeeping.
+    timeTickHandler.removeCallbacks(timeTickRunnable)
+    timeTickHandler.postDelayed(timeTickRunnable, 120L)
+  }
+
   override fun onDetachedFromWindow() {
     super.onDetachedFromWindow()
+    timeTickHandler.removeCallbacks(timeTickRunnable)
     // Detach the surface so the player can be reused elsewhere, but do NOT
     // release — the pool owns it.
     detachPlayer()

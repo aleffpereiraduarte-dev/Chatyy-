@@ -204,6 +204,21 @@ async function loadModules() {
           } catch {}
         }
 
+        // Channel routing hint for Android — backend stamps `data.is_group`
+        // on every chat push. If the OS already routed by channel
+        // (notification.request.trigger.channelId on Android), we trust it;
+        // otherwise we mark the data payload so downstream readers (foreground
+        // toast, in-app banner) can pick the right styling/sound. The actual
+        // channel is honored at the OS level when the system displays the
+        // notification — this just mirrors the routing into JS state for
+        // foreground UI.
+        if (Platform.OS === 'android' && data?.type === 'chat_message') {
+          const isGroup = data.is_group === '1' || data.is_group === true || data.is_group === 'true';
+          // Mutate data so the foreground toast helper sees the intended
+          // channel without re-deriving from is_group everywhere.
+          data.__channel = isGroup ? 'chat_group' : 'chat_dm';
+        }
+
         // Per-conversation notification settings (set in
         // ChatNotificationSettingsSheet → cached locally as JSON in
         // AsyncStorage so we can read it sync-ish from this handler).
@@ -425,7 +440,10 @@ export async function registerForPushNotifications() {
         showBadge: true,
       });
 
-      // Chat channel
+      // Chat channel — legacy bucket kept for backward compat with pushes
+      // sent before the chat_dm / chat_group split landed. New pushes from
+      // backend use the more specific channels below so users can fine-tune
+      // DMs and group chats separately in the system notification UI.
       await Notifications.setNotificationChannelAsync('chat', {
         name: 'Chat Messages',
         description: 'Notifications for new chat messages',
@@ -435,6 +453,44 @@ export async function registerForPushNotifications() {
         sound: 'default',
         enableLights: true,
         enableVibrate: true,
+        showBadge: true,
+      });
+
+      // chat_dm — direct messages (1:1). HIGH importance + default sound +
+      // vibration so DMs feel like WhatsApp/Signal 1:1s. Backend tags the
+      // FCM payload with channelId 'chat_dm' when conversation has 2
+      // members (is_group=false). i18n.notif.channel.dm provides the
+      // localized title — Android caches the channel name across launches,
+      // so the localized string is only rebuilt on next install/upgrade.
+      await Notifications.setNotificationChannelAsync('chat_dm', {
+        name: 'Mensagens diretas',
+        description: 'Notificações de conversas individuais (1:1)',
+        importance: Notifications.AndroidImportance.HIGH,
+        vibrationPattern: [0, 150, 80, 150],
+        lightColor: '#10b981',
+        sound: 'default',
+        enableLights: true,
+        enableVibrate: true,
+        showBadge: true,
+      });
+
+      // chat_group — group chats. DEFAULT importance + silent sound to
+      // avoid waking the user every time a 200-member group pings.
+      // Mirrors WhatsApp: groups go to the quiet bucket by default and
+      // users opt back into sound per-group via the conversation settings
+      // sheet (which writes chat_user_conv_settings.sound override).
+      await Notifications.setNotificationChannelAsync('chat_group', {
+        name: 'Grupos',
+        description: 'Notificações de conversas em grupo',
+        importance: Notifications.AndroidImportance.DEFAULT,
+        vibrationPattern: [0, 100],
+        lightColor: '#3b82f6',
+        // null sound = system silent for this channel. Group pushes still
+        // show in the tray + drop a badge; they just don't ping audibly
+        // unless the user flips the channel sound from system settings.
+        sound: null,
+        enableLights: true,
+        enableVibrate: false,
         showBadge: true,
       });
 
@@ -654,6 +710,25 @@ export async function registerForPushNotifications() {
         identifier: 'DISMISS',
         buttonTitle: 'Ignorar',
         options: { isDestructive: false },
+      },
+    ]);
+
+    // missed_call — fired when caller hung up before we picked up (or we
+    // declined). Single action "Ligar de volta" that dials the caller back
+    // through /call.js as the initiator. Pairs with the Android side handled
+    // by ChatActionReceiver.ACTION_CALL_BACK so both platforms surface the
+    // same shortcut without opening the app first.
+    await Notifications.setNotificationCategoryAsync('missed_call', [
+      {
+        identifier: 'CALL_BACK',
+        // i18n.notif.missedCall.callBack mirrors this — kept here as a
+        // hard-coded fallback because UNNotificationAction titles are
+        // rendered by iOS, not by our JS, so they need the literal string
+        // at registration time. The active language is read from the
+        // running app, but iOS caches the category between launches so
+        // the title only updates after the app foregrounds.
+        buttonTitle: 'Ligar de volta',
+        options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: true },
       },
     ]);
 
@@ -895,6 +970,17 @@ export async function setupNotificationListeners() {
       handleJoinLiveFromNotification(data);
       return;
     }
+    // Missed call → "Ligar de volta". Same identifier used by the iOS
+    // notification action and the Android ChatActionReceiver broadcast that
+    // tunnels back into JS via expo-notifications' presentation hook.
+    if (actionId === 'CALL_BACK' && (data?.caller_email || data?.peer_email || data?.target_email)) {
+      const peer = data.caller_email || data.peer_email || data.target_email;
+      const peerName = data.caller_name || data.peer_name || '';
+      const isVideo = (data.video === '1' || data.video === true) ? '1' : '0';
+      try { Notifications.dismissAllNotificationsAsync(); } catch {}
+      router.push(`/call?email=${encodeURIComponent(peer)}&name=${encodeURIComponent(peerName)}&initiator=1&isVideo=${isVideo}`);
+      return;
+    }
     if (actionId === 'accept_call' && (data?.room_id || data?.call_id)) {
       const callId = data.call_id || data.room_id;
       const isVideo = (data.video === '1' || data.video === true) ? '1' : '0';
@@ -1000,6 +1086,22 @@ function handleNotificationNavigation(data) {
       const nameParam = senderName ? `&name=${encodeURIComponent(senderName)}` : '';
       const emailParam = data.sender_email ? `&email=${encodeURIComponent(data.sender_email)}` : '';
       router.push(`/chat-conversation?id=${data.conversation_id}${nameParam}${emailParam}&type=direct`);
+      return;
+    }
+    // Voicemail deep-link — tapping a "X left you a voicemail" push lands on
+    // the conversation with the voicemail bubble scrolled into view and the
+    // player auto-starts. Backend sends `data.type === 'voicemail'` plus
+    // `data.conversation_id` and `data.voicemail_id`.
+    //
+    // TODO(chat-conversation.js): currently only `id` is consumed from the
+    // route params (see chat-conversation.js useLocalSearchParams ~L5685).
+    // Need to read `voicemail_id` + `autoplay` to scroll-to-message + auto
+    // tap play on the matching VoicemailMessage component. Until then the
+    // user still lands on the right conversation — just no scroll/autoplay.
+    if (data.type === 'voicemail' && data.conversation_id) {
+      const vmId = data.voicemail_id || data.vm_id || '';
+      const vmParam = vmId ? `&voicemail_id=${encodeURIComponent(vmId)}` : '';
+      router.push(`/chat-conversation?id=${data.conversation_id}${vmParam}&autoplay=1&type=direct`);
       return;
     }
     if (data.type === 'login_challenge' && data.challenge_id) {

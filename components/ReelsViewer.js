@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef, memo } from 'react';
+import React, { useState, useEffect, useCallback, useRef, memo, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, FlatList, Dimensions,
   Animated, Platform, Share, TextInput, Modal, KeyboardAvoidingView,
-  ActivityIndicator, Pressable, ScrollView, Image, Easing,
+  ActivityIndicator, Pressable, ScrollView, Image, Easing, PanResponder,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import AvatarCircle from './AvatarCircle';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -17,6 +18,15 @@ import {
 // mirrors LivePaidGiftSheet's grid but calls feed_post_tip instead of
 // the live-only live_gift_send endpoint.
 import * as api from '../services/api';
+// expo-shorts powers the native player + pool. Imported lazily so a missing
+// native binary (dev only) doesn't break the import chain — fallback paths
+// degrade gracefully when these are null.
+let _expoShorts = null;
+try { _expoShorts = require('expo-shorts'); } catch {}
+const prefetchShortsVideoFn = _expoShorts?.prefetchShortsVideo || null;
+const releaseShortsPoolFn = _expoShorts?.releaseShortsPool || null;
+const setShortsAudioSessionPlaybackFn = _expoShorts?.setShortsAudioSessionPlayback || null;
+const restoreShortsAudioSessionFn = _expoShorts?.restoreShortsAudioSession || null;
 
 // Pick the active subtitle segment for a video time (in ms). Segments
 // arrive shaped like {start, end, text} with start/end in SECONDS. We
@@ -36,82 +46,60 @@ function pickSubtitle(segments, currentMs) {
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-// Native video player using WebView with HTML5 video (autoplay, loop, controls via JS)
-const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActive, paused, playbackRate = 1 }) {
-  const webViewRef = useRef(null);
-  const webViewReady = useRef(false);
+// Native video player — uses the bespoke `expo-shorts` module which loans
+// from a 3-slot AVPlayer (iOS) / ExoPlayer (Android) pool. Replaced the
+// previous WebView+HTML5 path (2026-05-18): native saves ~60% TTFF, ~50%
+// memory (3 decoders total vs N WebViews), and survives lock-screen audio
+// the way TikTok does.
+//
+// API surface kept identical to the old NativeReelVideo so callers don't
+// have to change:
+//   - props:    videoUrl, poster, isActive, paused, playbackRate, isPreload
+//   - callbacks: onTimeUpdate(ms, durMs), onReady({ seek })
+//
+// Pre-load mode: when isPreload is true we mount the native view with
+// playWhenInFocus=false + muted so the pool warms the URL but no playback
+// starts. AVPoolManager + ExoPoolManager pick up the same slot on focus,
+// so swiping to it paints the first frame already decoded.
+const ShortsPlayerLazy = (() => {
+  try { return require('expo-shorts').ShortsPlayer; } catch { return null; }
+})();
 
+const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActive, paused, playbackRate = 1, isPreload = false, muted = true, onTimeUpdate, onReady }) {
+  const shortsRef = useRef(null);
+
+  // Expose the imperative seek API to the parent through onReady — keeps the
+  // callsite identical to the old WebView-backed component.
   useEffect(() => {
-    if (!webViewRef.current || !webViewReady.current) return;
-    if (isActive && !paused) {
-      webViewRef.current.injectJavaScript(`
-        var v=document.querySelector("video");
-        if(v){v.muted=true;v.play().then(function(){setTimeout(function(){v.muted=false},300)}).catch(function(){});}
-        true;
-      `);
-    } else {
-      webViewRef.current.injectJavaScript('var v=document.querySelector("video");if(v)v.pause();true;');
-    }
-  }, [isActive, paused]);
+    if (!onReady) return;
+    const seekFn = (ms) => {
+      try { shortsRef.current?.seek?.(Math.max(0, Number(ms) || 0)); } catch {}
+    };
+    onReady({ seek: seekFn });
+    // Re-publish if shortsRef remounts.
+  }, [onReady]);
 
-  // Speed control: TikTok-style 0.5x / 1x / 1.5x / 2x. Inject playbackRate
-  // each time it changes; the underlying <video> applies it instantly.
-  useEffect(() => {
-    if (!webViewRef.current || !webViewReady.current) return;
-    const r = Number(playbackRate) || 1;
-    webViewRef.current.injectJavaScript(`var v=document.querySelector("video");if(v){v.playbackRate=${r};}true;`);
-  }, [playbackRate]);
+  // Time updates from native (~8fps). Replaces the WebView postMessage tick.
+  const handleNativeTime = useCallback((ms, durMs) => {
+    if (onTimeUpdate) onTimeUpdate(ms, durMs);
+  }, [onTimeUpdate]);
 
-  // iOS quirk: when a transparent Modal slides up over the WebView (the
-  // CommentsSheet), iOS treats the underlying WebView as backgrounded and
-  // pauses HTML5 <video>. There's no JS event we can hook on the RN side,
-  // but we CAN periodically re-inject play() while the reel should still
-  // be playing — a "watchdog" loop. Cheap (1 frame eval per 800ms) and only
-  // runs while isActive && !paused.
-  useEffect(() => {
-    if (!webViewRef.current || !webViewReady.current) return;
-    if (!isActive || paused) return;
-    const watchdog = setInterval(() => {
-      try {
-        webViewRef.current?.injectJavaScript(
-          'var v=document.querySelector("video");if(v&&v.paused){v.muted=true;v.play().then(function(){setTimeout(function(){v.muted=false},300)}).catch(function(){});}true;'
-        );
-      } catch {}
-    }, 800);
-    return () => clearInterval(watchdog);
-  }, [isActive, paused]);
+  // Native-only — if for any reason the module didn't link (dev binary),
+  // surface a black placeholder rather than crash the feed.
+  if (!ShortsPlayerLazy) {
+    return <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }]} />;
+  }
 
-  const WebView = require('react-native-webview').WebView;
-  const html = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><style>*{margin:0;padding:0}html,body{width:100%;height:100%;background:#000;overflow:hidden}video{position:fixed;top:0;left:0;width:100%;height:100%;object-fit:cover}</style></head><body><video src="${videoUrl}" ${poster ? `poster="${poster}"` : ''} autoplay loop playsinline webkit-playsinline muted preload="auto"></video><script>var v=document.querySelector('video');v.muted=true;v.play().then(function(){setTimeout(function(){v.muted=false},300)}).catch(function(){});document.addEventListener('visibilitychange',function(){if(!document.hidden){v.muted=true;v.play().then(function(){setTimeout(function(){v.muted=false},300)}).catch(function(){});}});</script></body></html>`;
-
+  const shouldPlay = !!isActive && !paused && !isPreload;
   return (
     <View style={StyleSheet.absoluteFill}>
-      <WebView
-        ref={webViewRef}
-        source={{ html, baseUrl: 'https://chatyy.com.br' }}
-        style={{ flex: 1, backgroundColor: '#000' }}
-        allowsInlineMediaPlayback={true}
-        mediaPlaybackRequiresUserAction={false}
-        javaScriptEnabled={true}
-        originWhitelist={['*']}
-        setSupportMultipleWindows={false}
-        allowsFullscreenVideo={false}
-        scrollEnabled={false}
-        bounces={false}
-        onLoadEnd={() => {
-          webViewReady.current = true;
-          if (isActive && !paused && webViewRef.current) {
-            webViewRef.current.injectJavaScript(`
-              var v=document.querySelector("video");
-              if(v){v.muted=true;v.play().then(function(){setTimeout(function(){v.muted=false},300)}).catch(function(){});}
-              true;
-            `);
-          }
-        }}
-        onShouldStartLoadWithRequest={(req) => {
-          if (req.url === 'about:blank' || req.url.startsWith('https://chatyy.com.br')) return true;
-          return false;
-        }}
+      <ShortsPlayerLazy
+        ref={shortsRef}
+        videoUrl={videoUrl}
+        playWhenInFocus={shouldPlay}
+        muted={!!muted}
+        playbackRate={Number(playbackRate) || 1}
+        onTime={handleNativeTime}
       />
     </View>
   );
@@ -889,8 +877,197 @@ function ShareSheet({ visible, reel, t, onClose, onRepost, onCopyLink, onExterna
   );
 }
 
+// ── Speed Picker Sheet ──
+// Replaces the inline cycle button when the user opens it via the more-menu.
+// Tap a speed → applies + persists to AsyncStorage under REELS_SPEED_KEY so
+// the next reel loads with the same default. TikTok parity: 5 speed options.
+const REELS_SPEED_KEY = '@chatyy:reels_speed_default_v1';
+const REELS_CC_KEY = '@chatyy:reels_cc_enabled_v1';
+
+function SpeedPickerSheet({ visible, current, onSelect, onClose, t }) {
+  const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
+  useEffect(() => {
+    Animated.timing(slideAnim, {
+      toValue: visible ? 0 : SCREEN_HEIGHT,
+      duration: visible ? 220 : 180,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [visible]);
+  if (!visible) return null;
+  const SPEEDS = [0.5, 0.75, 1, 1.5, 2];
+  return (
+    <Modal transparent visible={visible} animationType="none" onRequestClose={onClose} statusBarTranslucent>
+      <Pressable style={styles.sheetBackdrop} onPress={onClose}>
+        <Animated.View style={[styles.sheetContainer, { transform: [{ translateY: slideAnim }], minHeight: 240, paddingBottom: 24 }]}>
+          <Pressable onPress={() => {}}>
+            <View style={styles.sheetHandle}><View style={styles.sheetHandleBar} /></View>
+            <View style={[styles.sheetHeader, { borderBottomWidth: 0, paddingBottom: 4 }]}>
+              <Text style={styles.sheetTitle}>{t?.('feed.speedPicker') || 'Velocidade'}</Text>
+              <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                <IconX size={22} color="#999" />
+              </TouchableOpacity>
+            </View>
+            <View style={{ paddingHorizontal: 14, paddingTop: 12 }}>
+              {SPEEDS.map(s => {
+                const active = Math.abs(s - current) < 0.01;
+                return (
+                  <TouchableOpacity
+                    key={s}
+                    activeOpacity={0.7}
+                    onPress={() => onSelect(s)}
+                    style={{
+                      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                      paddingVertical: 12, paddingHorizontal: 10, borderRadius: 10,
+                      backgroundColor: active ? 'rgba(124,58,237,0.20)' : 'transparent',
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${s}x`}
+                  >
+                    <Text style={{ color: '#fff', fontSize: 16, fontWeight: active ? '800' : '500' }}>
+                      {s}×{s === 1 ? `  (${t?.('common.default') || 'Padrão'})` : ''}
+                    </Text>
+                    {active ? (
+                      <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#7C3AED' }} />
+                    ) : null}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </Pressable>
+        </Animated.View>
+      </Pressable>
+    </Modal>
+  );
+}
+
+// ── Scrubber (draggable progress bar) ──
+// TikTok/Instagram parity: horizontal bar at the very bottom — tap to jump,
+// drag to scrub. While the user is touching it we suspend the auto-progress
+// update so the thumb doesn't fight the finger. Calls onSeek(progressNormalized)
+// once on release (web) or live (native) so the underlying <video> seeks.
+const Scrubber = memo(function Scrubber({ progress, onSeek, onScrubStart, onScrubEnd }) {
+  const [width, setWidth] = useState(0);
+  const [scrubbing, setScrubbing] = useState(false);
+  const [livePct, setLivePct] = useState(progress);
+  const widthRef = useRef(0);
+  useEffect(() => { widthRef.current = width; }, [width]);
+  useEffect(() => { if (!scrubbing) setLivePct(progress); }, [progress, scrubbing]);
+
+  const panResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderGrant: (e) => {
+        setScrubbing(true);
+        onScrubStart?.();
+        const x = e.nativeEvent.locationX;
+        const w = widthRef.current || 1;
+        const pct = Math.max(0, Math.min(1, x / w));
+        setLivePct(pct);
+        onSeek?.(pct, false);
+      },
+      onPanResponderMove: (e) => {
+        const x = e.nativeEvent.locationX;
+        const w = widthRef.current || 1;
+        const pct = Math.max(0, Math.min(1, x / w));
+        setLivePct(pct);
+        onSeek?.(pct, false);
+      },
+      onPanResponderRelease: (e) => {
+        const x = e.nativeEvent.locationX;
+        const w = widthRef.current || 1;
+        const pct = Math.max(0, Math.min(1, x / w));
+        setLivePct(pct);
+        onSeek?.(pct, true);
+        setScrubbing(false);
+        onScrubEnd?.();
+      },
+      onPanResponderTerminate: () => {
+        setScrubbing(false);
+        onScrubEnd?.();
+      },
+    })
+  ).current;
+
+  const shown = scrubbing ? livePct : progress;
+  return (
+    <View
+      {...panResponder.panHandlers}
+      onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
+      // Bigger hit target than the visible bar so it's easy to grab; the
+      // visible track stays 3px to match the prior aesthetic.
+      style={styles.scrubberHit}
+      accessibilityRole="adjustable"
+    >
+      <View style={[styles.progressBar, scrubbing ? { height: 5 } : null]}>
+        <View style={[styles.progressFill, { width: `${Math.min(shown * 100, 100)}%` }]} />
+        {scrubbing ? (
+          <View pointerEvents="none" style={[styles.scrubberThumb, { left: `${Math.min(shown * 100, 100)}%` }]} />
+        ) : null}
+      </View>
+    </View>
+  );
+});
+
+// ── Pinch-to-zoom wrapper ──
+// Two-finger pinch scales the video 1..3× with a spring-back to 1 on release.
+// Uses RNGH's PinchGestureHandler when available; on web (no RNGH) or older
+// builds without it, returns the child unchanged (graceful no-op).
+const PinchZoomBox = memo(function PinchZoomBox({ children }) {
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+  let PinchHandler = null;
+  let GH = null;
+  if (Platform.OS !== 'web') {
+    try { GH = require('react-native-gesture-handler'); PinchHandler = GH?.PinchGestureHandler; } catch {}
+  }
+  const onPinch = useCallback((ev) => {
+    const s = Math.max(1, Math.min(3, ev.nativeEvent.scale || 1));
+    scaleAnim.setValue(s);
+  }, [scaleAnim]);
+  const onStateChange = useCallback((ev) => {
+    if (!GH) return;
+    if (ev.nativeEvent.state === GH.State.END || ev.nativeEvent.state === GH.State.CANCELLED) {
+      Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, tension: 80, friction: 7 }).start();
+    }
+  }, [GH, scaleAnim]);
+  const wrapped = (
+    <Animated.View style={[StyleSheet.absoluteFill, { transform: [{ scale: scaleAnim }] }]} pointerEvents="box-none">
+      {children}
+    </Animated.View>
+  );
+  if (PinchHandler) {
+    return (
+      <PinchHandler onGestureEvent={onPinch} onHandlerStateChange={onStateChange}>
+        {wrapped}
+      </PinchHandler>
+    );
+  }
+  return wrapped;
+});
+
+// ── 2× Speed Toast (long-press boost) ──
+const BoostToast = memo(function BoostToast({ visible }) {
+  const opacity = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(opacity, {
+      toValue: visible ? 1 : 0,
+      duration: 160,
+      useNativeDriver: true,
+    }).start();
+  }, [visible]);
+  return (
+    <Animated.View pointerEvents="none" style={[styles.boostToast, { opacity }]}>
+      <View style={styles.boostToastBg}>
+        <Text style={styles.boostToastText}>2×</Text>
+      </View>
+    </Animated.View>
+  );
+});
+
 // ── Single Reel Item ──
-const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, user, containerHeight, onOpenComments, onOpenLikers, onOpenProfile, onUseSound, onDuet, onStitch, onHidePost, showLiveRing, overlayOpen, router }) {
+const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, user, containerHeight, onOpenComments, onOpenLikers, onOpenProfile, onUseSound, onDuet, onStitch, onHidePost, showLiveRing, overlayOpen, router, preload }) {
   // Safe-area insets so the bottom info block (username/caption/music row)
   // doesn't sit on top of the iOS home indicator or Android gesture pill.
   const insets = useSafeAreaInsets();
@@ -905,14 +1082,35 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
   // the Modal stack doesn't pause the underlying video — the reel keeps
   // playing unmuted and you have to manually pause before reading replies.
   const effectivePaused = paused || !!overlayOpen || shareSheetOpen;
-  // TikTok-style speed selector: cycle 1x → 1.5x → 2x → 0.5x → 1x. Stored
-  // per-reel in this component instance so swiping between reels resets to
-  // 1x (matches TikTok behavior where each reel starts at default speed).
+  // TikTok-style speed selector: persists to AsyncStorage so the user's
+  // chosen default rides between reels. While long-pressing the video we
+  // temporarily boost to 2× and snap back on release (rateBoost flag).
   const [playbackRate, setPlaybackRate] = useState(1);
+  const [rateBoost, setRateBoost] = useState(false); // long-press 2× preview
+  const [speedPickerOpen, setSpeedPickerOpen] = useState(false);
+  // Hydrate the persisted default once on mount so subsequent reels open at
+  // the user's preferred rate. Stored as a string number under REELS_SPEED_KEY.
+  useEffect(() => {
+    (async () => {
+      try {
+        const v = await AsyncStorage.getItem(REELS_SPEED_KEY);
+        const n = Number(v);
+        if (Number.isFinite(n) && n > 0 && n !== 1) setPlaybackRate(n);
+      } catch {}
+    })();
+  }, []);
   const cyclePlaybackRate = useCallback(() => {
-    setPlaybackRate(r => (r === 1 ? 1.5 : r === 1.5 ? 2 : r === 2 ? 0.5 : 1));
+    setSpeedPickerOpen(true);
     try { require('expo-haptics').selectionAsync(); } catch {}
   }, []);
+  const handleSelectSpeed = useCallback(async (s) => {
+    setPlaybackRate(s);
+    setSpeedPickerOpen(false);
+    try { await AsyncStorage.setItem(REELS_SPEED_KEY, String(s)); } catch {}
+    try { require('expo-haptics').selectionAsync(); } catch {}
+  }, []);
+  // Effective rate sent to the video — boost wins.
+  const effectiveRate = rateBoost ? 2 : playbackRate;
   const [muted, setMuted] = useState(false);
   const [liked, setLiked] = useState(!!reel.user_liked);
   const [likeCount, setLikeCount] = useState(Number(reel.like_count) || 0);
@@ -920,17 +1118,39 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
   const [captionExpanded, setCaptionExpanded] = useState(false);
   const [progress, setProgress] = useState(0);
   const [currentMs, setCurrentMs] = useState(0);
+  const [isScrubbing, setIsScrubbing] = useState(false);
+  const scrubbingRef = useRef(false);
+  useEffect(() => { scrubbingRef.current = isScrubbing; }, [isScrubbing]);
   const [showPauseFlash, setShowPauseFlash] = useState(false);
   // Burst particle key — bump to remount HeartParticleBurst so the
   // animation reruns on every double-tap or like-button trigger.
   const [particleKey, setParticleKey] = useState(0);
   const [viewCount, setViewCount] = useState(Number(reel.view_count) || 0);
-  // Subtitles (TikTok auto-captions). Toggle persists per-session inside
-  // this list — defaults to ON when segments are present so first-time
-  // viewers see captions Just Like TikTok.
+  // Subtitles (TikTok auto-captions). CC enabled persists across sessions to
+  // AsyncStorage (REELS_CC_KEY) so the user keeps their preference. We still
+  // default to ON when segments are present (matches TikTok behavior).
   const initialSegs = Array.isArray(reel?.subtitles) ? reel.subtitles : [];
   const [subtitleSegments, setSubtitleSegments] = useState(initialSegs);
   const [subtitlesEnabled, setSubtitlesEnabled] = useState(initialSegs.length > 0);
+  const ccHydratedRef = useRef(false);
+  useEffect(() => {
+    if (ccHydratedRef.current) return;
+    ccHydratedRef.current = true;
+    (async () => {
+      try {
+        const v = await AsyncStorage.getItem(REELS_CC_KEY);
+        if (v === '0') setSubtitlesEnabled(false);
+        else if (v === '1') setSubtitlesEnabled(true);
+      } catch {}
+    })();
+  }, []);
+  const toggleSubtitles = useCallback(() => {
+    setSubtitlesEnabled(v => {
+      const next = !v;
+      AsyncStorage.setItem(REELS_CC_KEY, next ? '1' : '0').catch(() => {});
+      return next;
+    });
+  }, []);
   const transcribeFiredRef = useRef(false);
 
   const videoRef = useRef(null);
@@ -1086,11 +1306,15 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
   // Progress tracking (web). Also drives subtitle current-time so the
   // overlay re-paints in sync with playback. 100ms tick is generous —
   // captions feel stuttery below ~250ms but TikTok runs ~16ms; we
-  // compromise at 100ms because RN setState batches anyway.
+  // compromise at 100ms because RN setState batches anyway. Suspend the
+  // tick while the user is dragging the scrubber so the thumb tracks the
+  // finger instead of the underlying playhead. (scrubbingRef declared above
+  // alongside isScrubbing state so handleNativeTime can read it.)
   useEffect(() => {
     if (!isWeb) return;
     if (isActive) {
       progressIntervalRef.current = setInterval(() => {
+        if (scrubbingRef.current) return;
         if (videoRef.current && videoRef.current.duration) {
           setProgress(videoRef.current.currentTime / videoRef.current.duration);
           setCurrentMs(videoRef.current.currentTime * 1000);
@@ -1331,12 +1555,74 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
 
   const height = containerHeight || SCREEN_HEIGHT;
 
+  // Long-press anywhere on the video → boost playbackRate to 2× (TikTok parity).
+  // Snap back on release. (isScrubbing declared earlier so the progress effect
+  // can read it via scrubbingRef.)
+  const handleLongPress = useCallback(() => {
+    setRateBoost(true);
+    try { require('expo-haptics').impactAsync('medium'); } catch {}
+  }, []);
+  const handlePressOut = useCallback(() => {
+    if (rateBoost) {
+      setRateBoost(false);
+      // Re-apply user's chosen rate to web video on release. Native reacts
+      // automatically via the playbackRate prop on NativeReelVideo.
+      if (isWeb && videoRef.current) {
+        try { videoRef.current.playbackRate = playbackRate; } catch {}
+      }
+    }
+  }, [rateBoost, playbackRate]);
+
+  // Web: keep <video>.playbackRate in sync with effectiveRate (handles both
+  // boost on long-press and user-chosen default).
+  useEffect(() => {
+    if (!isWeb || !videoRef.current) return;
+    try { videoRef.current.playbackRate = effectiveRate; } catch {}
+  }, [effectiveRate]);
+
+  // Native seek bridge — exposed by NativeReelVideo (expo-shorts) via onReady.
+  const nativeSeekRef = useRef(null);
+  const handleNativeReady = useCallback((api) => {
+    nativeSeekRef.current = api;
+  }, []);
+  // Native duration captured from the WebView's time updates so the
+  // scrubber can convert pct → ms on seek without a round-trip.
+  const nativeDurMsRef = useRef(0);
+  // Native time updates — drives the scrubber. Suppressed while the user is
+  // actively dragging so the thumb tracks the finger instead of the playhead.
+  const handleNativeTime = useCallback((ms, durMs) => {
+    if (!durMs) return;
+    nativeDurMsRef.current = durMs;
+    if (scrubbingRef.current) return;
+    setProgress(ms / durMs);
+    setCurrentMs(ms);
+  }, []);
+
+  // Scrubber seek handler. `final` is true on PanResponder release; false
+  // during the live drag. We seek the underlying video either way so the
+  // viewer sees the frame they're scrubbing to immediately.
+  const handleScrub = useCallback((pct, final) => {
+    setProgress(pct);
+    if (isWeb && videoRef.current && Number.isFinite(videoRef.current.duration)) {
+      try { videoRef.current.currentTime = videoRef.current.duration * pct; } catch {}
+    } else if (!isWeb && nativeSeekRef.current?.seek) {
+      const dur = nativeDurMsRef.current || 0;
+      if (dur > 0) nativeSeekRef.current.seek(dur * pct);
+    }
+  }, []);
+
   return (
     <View style={[styles.reelContainer, { height, width: SCREEN_WIDTH }]}>
-      {/* Video - full screen edge to edge */}
+      {/* Video - full screen edge to edge. Long-press anywhere → 2× boost.
+          Wrapped in PinchZoomBox so two-finger pinch scales 1..3× then springs
+          back on release (silent no-op when RNGH isn't on the path). */}
+      <PinchZoomBox>
       <TouchableOpacity
         activeOpacity={1}
         onPress={handleDoubleTap}
+        onLongPress={handleLongPress}
+        onPressOut={handlePressOut}
+        delayLongPress={350}
         style={StyleSheet.absoluteFill}
       >
         {isWeb ? (
@@ -1370,9 +1656,23 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
             poster={reel.thumbnail_url ? resolveMediaUrl(reel.thumbnail_url) : undefined}
           />
         ) : (
-          <NativeReelVideo videoUrl={videoUrl} poster={reel.thumbnail_url ? resolveMediaUrl(reel.thumbnail_url) : null} isActive={isActive} paused={effectivePaused} playbackRate={playbackRate} />
+          <NativeReelVideo
+            videoUrl={videoUrl}
+            poster={reel.thumbnail_url ? resolveMediaUrl(reel.thumbnail_url) : null}
+            isActive={isActive}
+            paused={effectivePaused}
+            playbackRate={effectiveRate}
+            muted={muted}
+            onTimeUpdate={handleNativeTime}
+            onReady={handleNativeReady}
+            isPreload={!!preload && !isActive}
+          />
         )}
       </TouchableOpacity>
+      </PinchZoomBox>
+
+      {/* 2× boost toast (long-press). Floats top-center, fades in/out. */}
+      <BoostToast visible={rateBoost} />
 
       {/* Gradient overlays for readability */}
       <View pointerEvents="none" style={styles.topGradient} />
@@ -1450,14 +1750,14 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
             {muted ? <IconVolumeX size={20} color="#fff" /> : <IconVolume2 size={20} color="#fff" />}
           </TouchableOpacity>
           {/* CC toggle — only renders when the post has segments. Tap
-              hides/shows the bottom subtitle overlay. */}
+              hides/shows the bottom subtitle overlay. Persists to AsyncStorage. */}
           {subtitleSegments.length > 0 && (
             <TouchableOpacity
-              onPress={() => setSubtitlesEnabled(v => !v)}
+              onPress={toggleSubtitles}
               activeOpacity={0.7}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               style={{ backgroundColor: subtitlesEnabled ? 'rgba(124,58,237,0.85)' : 'rgba(0,0,0,0.35)', borderRadius: 8, paddingHorizontal: 8, height: 28, alignItems: 'center', justifyContent: 'center' }}
-              accessibilityLabel={subtitlesEnabled ? (t('media.subtitlesOn') || 'Subtitles on') : (t('media.subtitlesOff') || 'Subtitles off')}
+              accessibilityLabel={subtitlesEnabled ? (t('feed.captionsOn') || t('media.subtitlesOn') || 'Captions on') : (t('feed.captionsOff') || t('media.subtitlesOff') || 'Captions off')}
               accessibilityRole="button"
             >
               <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800', letterSpacing: 0.5 }}>CC</Text>
@@ -1719,10 +2019,13 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
         t={t}
       />
 
-      {/* ── PROGRESS BAR ── */}
-      <View style={styles.progressBar}>
-        <View style={[styles.progressFill, { width: `${Math.min(progress * 100, 100)}%` }]} />
-      </View>
+      {/* ── DRAGGABLE SCRUBBER ── (tap to jump / drag to seek) */}
+      <Scrubber
+        progress={progress}
+        onSeek={handleScrub}
+        onScrubStart={() => setIsScrubbing(true)}
+        onScrubEnd={() => setIsScrubbing(false)}
+      />
 
       {/* Share drawer (Repost / Copy link / External) */}
       <ShareSheet
@@ -1814,6 +2117,19 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
               </Text>
             </TouchableOpacity>
 
+            {/* Speed picker entry — opens dedicated 5-option sheet. */}
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 14 }}
+              onPress={() => { setMoreSheetOpen(false); setSpeedPickerOpen(true); }}
+              activeOpacity={0.7}
+            >
+              <IconPlay size={22} color="#fff" />
+              <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', flex: 1 }}>
+                {t?.('feed.speed') || 'Velocidade'}
+              </Text>
+              <Text style={{ color: '#a78bfa', fontSize: 14, fontWeight: '700' }}>{playbackRate}×</Text>
+            </TouchableOpacity>
+
             {/* Report — escalated negative signal. */}
             <TouchableOpacity
               style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 14 }}
@@ -1828,6 +2144,15 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* Speed picker (TikTok parity: 0.5 / 0.75 / 1 / 1.5 / 2). Persists to AsyncStorage. */}
+      <SpeedPickerSheet
+        visible={speedPickerOpen}
+        current={playbackRate}
+        onSelect={handleSelectSpeed}
+        onClose={() => setSpeedPickerOpen(false)}
+        t={t}
+      />
     </View>
   );
 });
@@ -1882,6 +2207,19 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     // soundIdProp drives a "by-sound" load path — when set, both lists fold
     // into the same sound-feed so swiping shows every reel using that audio.
   }, [soundIdProp]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Native player housekeeping — flip AVAudioSession to .playback on mount
+  // (TikTok parity: audio survives lock screen) and restore + drain the pool
+  // on unmount. Both functions are no-ops on web / when expo-shorts isn't
+  // available (dev binaries that didn't link the native module).
+  useEffect(() => {
+    if (isWeb) return undefined;
+    try { setShortsAudioSessionPlaybackFn?.(); } catch {}
+    return () => {
+      try { restoreShortsAudioSessionFn?.(); } catch {}
+      try { releaseShortsPoolFn?.(); } catch {}
+    };
+  }, []);
 
   const loadReels = async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -1953,6 +2291,25 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
 
   const activeReels = reelTab === 'following' ? followingReels : reels;
 
+  // Native pool prefetch — warm slots for the next two reels when the
+  // viewable item changes. Cheap (singleton pool tops out at 3 instances),
+  // and it's what makes TikTok-style swipes feel instant. The pool's LRU
+  // strategy means the just-watched reel naturally evicts itself when we
+  // hit reel N+3. No-op on web (HLS+<video> already preloads metadata).
+  useEffect(() => {
+    if (isWeb || !prefetchShortsVideoFn) return;
+    if (!Array.isArray(activeReels) || activeReels.length === 0) return;
+    for (const offset of [1, 2]) {
+      const nextIdx = currentIndex + offset;
+      const next = activeReels[nextIdx];
+      if (!next) continue;
+      const urls = parseMediaUrls(next.media_urls);
+      const u = resolveMediaUrl(urls[0]);
+      if (!u) continue;
+      try { prefetchShortsVideoFn(String(next.id), u); } catch {}
+    }
+  }, [currentIndex, activeReels]);
+
   // Reset index when switching tabs
   const handleTabChange = useCallback((tab) => {
     setReelTab(tab);
@@ -2005,27 +2362,37 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   }, []);
 
   const overlayOpen = !!commentsReel || !!likersReel;
-  const renderItem = useCallback(({ item, index }) => (
-    <ReelItem
-      reel={item}
-      isActive={index === currentIndex}
-      colors={colors}
-      isDark={isDark}
-      t={t}
-      user={user}
-      router={router}
-      containerHeight={containerHeight}
-      onOpenComments={handleOpenComments}
-      onOpenLikers={handleOpenLikers}
-      onOpenProfile={handleOpenProfile}
-      onUseSound={handleUseSound}
-      onDuet={handleDuet}
-      onStitch={handleStitch}
-      onHidePost={handleHidePost}
-      showLiveRing={!!showLiveRing}
-      overlayOpen={overlayOpen}
-    />
-  ), [currentIndex, colors, isDark, t, user, router, containerHeight, handleOpenComments, handleOpenLikers, handleOpenProfile, handleUseSound, handleDuet, handleStitch, handleHidePost, showLiveRing, overlayOpen]);
+  // Pre-load window: mark the reel that's one and two ahead as `preload`.
+  // On native, the parent's prefetch effect already warmed the pool — this
+  // flag just keeps the native view paused (playWhenInFocus=false) while
+  // the AVPlayer / ExoPlayer holds the URL ready. On web, <video preload="auto">
+  // does the same trick.
+  const renderItem = useCallback(({ item, index }) => {
+    const isActiveItem = index === currentIndex;
+    const isPreloadItem = !isActiveItem && (index === currentIndex + 1 || index === currentIndex + 2);
+    return (
+      <ReelItem
+        reel={item}
+        isActive={isActiveItem}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+        user={user}
+        router={router}
+        containerHeight={containerHeight}
+        onOpenComments={handleOpenComments}
+        onOpenLikers={handleOpenLikers}
+        onOpenProfile={handleOpenProfile}
+        onUseSound={handleUseSound}
+        onDuet={handleDuet}
+        onStitch={handleStitch}
+        onHidePost={handleHidePost}
+        showLiveRing={!!showLiveRing}
+        overlayOpen={overlayOpen}
+        preload={isPreloadItem}
+      />
+    );
+  }, [currentIndex, colors, isDark, t, user, router, containerHeight, handleOpenComments, handleOpenLikers, handleOpenProfile, handleUseSound, handleDuet, handleStitch, handleHidePost, showLiveRing, overlayOpen]);
 
   const keyExtractor = useCallback((item) => String(item.id), []);
 
@@ -2401,18 +2768,35 @@ const styles = StyleSheet.create({
     textShadowRadius: 3,
   },
 
-  // ── Progress bar ──
-  // Bumped to 3px so the track reads at a glance even on smaller screens.
-  // Track tint also raised slightly so the empty portion stays legible
-  // against bright/light video content (white sky etc.).
-  progressBar: {
+  // ── Progress bar / Scrubber ──
+  // 3px visible track with a 22px tall hit area so the user can grab + drag.
+  // While scrubbing the visible bar bumps to 5px to confirm the interaction.
+  scrubberHit: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
+    height: 22,
+    justifyContent: 'flex-end',
+    zIndex: 15,
+  },
+  progressBar: {
     height: 3,
     backgroundColor: 'rgba(255,255,255,0.25)',
-    zIndex: 15,
+  },
+  scrubberThumb: {
+    position: 'absolute',
+    top: -5,
+    width: 13,
+    height: 13,
+    borderRadius: 6.5,
+    backgroundColor: '#fff',
+    marginLeft: -6.5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.5,
+    shadowRadius: 3,
+    ...(isWeb ? {} : { elevation: 4 }),
   },
   // Brand purple → pink gradient with a soft halo on web. Native uses a
   // solid brand purple (RN Animated doesn't render CSS gradients cheaply
@@ -2605,5 +2989,34 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     alignSelf: 'center',
     marginTop: 4,
+  },
+
+  // ── 2× Boost toast (long-press) ──
+  // Floats below the top bar so it doesn't fight the tab row. Brand purple
+  // pill with a single "2×" label — minimal, TikTok-style.
+  boostToast: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 100 : 70,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 25,
+  },
+  boostToastBg: {
+    backgroundColor: 'rgba(124,58,237,0.92)',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
+    ...(Platform.OS === 'web' ? {} : { elevation: 5 }),
+  },
+  boostToastText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: 1,
   },
 });

@@ -11,9 +11,11 @@
 // "Enviar localização atual" CTA. That's what we mirror here.
 //
 // We don't have `react-native-maps` (would require a native rebuild) so we
-// use the Google Maps Static API image to render a non-interactive preview.
-// Good enough for share-confirmation UX; live tracking (the green-bubble
-// flow) still goes through its own existing code path.
+// route through the backend's `static_map.php` endpoint (CartoCDN tiles
+// composed server-side into a single PNG with red pin overlay, 7d edge
+// cache). Original implementation used Google Maps Static API directly,
+// but that returns 403 without an API key — leaving an empty grey box in
+// the share preview. Static-map proxy renders reliably across web + RN.
 //
 // Props
 // -----
@@ -29,8 +31,11 @@ import {
   Image, Platform, KeyboardAvoidingView, TextInput,
 } from 'react-native';
 import { IconMapPin, IconX } from './Icons';
+import * as api from '../services/api';
 
-const GOOGLE_STATIC = 'https://maps.googleapis.com/maps/api/staticmap';
+// Server-side static map proxy. CartoCDN tiles + red pin overlay, 7d edge
+// cache. No API key needed (server side handles the upstream).
+const STATIC_MAP_PATH = '/api/static_map.php';
 
 const LIVE_DURATIONS = [
   { key: '15m', label: '15 min', seconds: 15 * 60 },
@@ -174,7 +179,7 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
   };
 
   const mapUrl = coords
-    ? `${GOOGLE_STATIC}?center=${coords.latitude},${coords.longitude}&zoom=16&size=640x320&scale=2&maptype=roadmap&markers=color:red%7C${coords.latitude},${coords.longitude}`
+    ? `${(api?.BASE_URL || 'https://chatyy.com.br')}${STATIC_MAP_PATH}?lat=${coords.latitude}&lng=${coords.longitude}&z=16&w=640&h=320`
     : null;
 
   return (

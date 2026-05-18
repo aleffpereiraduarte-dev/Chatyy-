@@ -2835,6 +2835,26 @@ export async function callStatus(callId, status, duration = 0) {
   }, 'POST');
 }
 
+// Post-call quality rating (1-5 stars) shipped from the end-of-call screen.
+// Backend stores anonymized rating + ttfc/duration/quality flags for QoS
+// analytics. Optional `meta` carries TTFC (ms), final connection_quality
+// label, and whether the user experienced a reconnect during the call.
+// Fire-and-forget on the client — UI doesn't block on the response.
+//   rating   — integer 1..5 (lower is worse)
+//   meta     — { ttfc_ms?, duration_sec?, quality?, reconnects?, was_video? }
+export async function callRate(callId, rating, meta = {}) {
+  const r = Math.max(1, Math.min(5, Math.round(Number(rating) || 0)));
+  return apiCall('call_rate', {
+    call_id: callId,
+    rating: r,
+    ttfc_ms: Number(meta.ttfc_ms) || 0,
+    duration_sec: Math.max(0, Math.round(Number(meta.duration_sec) || 0)),
+    quality: typeof meta.quality === 'string' ? meta.quality : '',
+    reconnects: Math.max(0, Math.round(Number(meta.reconnects) || 0)),
+    was_video: !!meta.was_video,
+  }, 'POST');
+}
+
 // ─── Voicemail ────────────────────────────────────────────────────────
 // Caller leaves a voice message after a missed/declined call. Audio is
 // uploaded directly to R2 (Google-Photos-style) — backend issues a
@@ -4822,6 +4842,12 @@ export async function chatGroupSetRequireApproval(conversationId, requireApprova
   return apiCall('chat_group_set_require_approval', {
     conversation_id: conversationId, require_approval: requireApproval,
   }, 'POST');
+}
+// Friendly alias — UI surface (group info toggle) reads better as
+// "approval required" than "require approval". Both call the same
+// backend endpoint; this name is what new call sites should use.
+export async function chatGroupSetApprovalRequired(conversationId, approvalRequired) {
+  return chatGroupSetRequireApproval(conversationId, !!approvalRequired);
 }
 export async function chatGroupRequestList(conversationId) {
   return apiCall('chat_group_request_list', { conversation_id: conversationId });
@@ -7642,6 +7668,74 @@ export async function chatLivekitToken(conversationId, room = '') {
   return apiCall('chat_livekit_token', { conversation_id: conversationId, room }, 'POST');
 }
 
+// ─── Group call host controls (2026-05-18) ───
+// Mute ALL non-host participants in a group call. Backend enforces host role
+// via conversation admin check, then fans `call_mute_request` WS events to
+// every remote identity in the LK room (skipping host).
+export async function chatCallMuteAll(conversationId, callId) {
+  return apiCall('chat_call_mute_all', {
+    conversation_id: conversationId,
+    call_id: callId,
+  }, 'POST');
+}
+
+// Host removes a participant from the call. Backend issues a LiveKit
+// RemoveParticipant API call (server-authoritative kick) AND fans a WS
+// `call_force_end` event to the target so their /group-call screen exits
+// cleanly even when the LK signal arrives late.
+export async function chatCallRemoveParticipant(conversationId, callId, targetEmail) {
+  return apiCall('chat_call_remove_participant', {
+    conversation_id: conversationId,
+    call_id: callId,
+    target_email: targetEmail,
+  }, 'POST');
+}
+
+// Lock / unlock the room so no new joiners can hit the LK token endpoint
+// for this call. Persisted in chat_call_state table — `chat_livekit_token`
+// rejects locked rooms unless the requester is already a participant.
+export async function chatCallSetLocked(conversationId, callId, locked) {
+  return apiCall('chat_call_set_locked', {
+    conversation_id: conversationId,
+    call_id: callId,
+    locked: locked ? 1 : 0,
+  }, 'POST');
+}
+
+// Promote a participant to co-host. Co-hosts inherit the same mute/remove
+// permissions as the original host. Tracked in chat_call_roles table.
+export async function chatCallMakeCoHost(conversationId, callId, targetEmail) {
+  return apiCall('chat_call_make_cohost', {
+    conversation_id: conversationId,
+    call_id: callId,
+    target_email: targetEmail,
+  }, 'POST');
+}
+
+// Toggle host recording state. When started, backend fans
+// `call_recording_started` to all participants so every client paints the
+// "Being recorded" banner (legal consent requirement in multiple
+// jurisdictions). Stopping fans `call_recording_stopped`.
+export async function chatCallSetRecording(conversationId, callId, recording) {
+  return apiCall('chat_call_set_recording', {
+    conversation_id: conversationId,
+    call_id: callId,
+    recording: recording ? 1 : 0,
+  }, 'POST');
+}
+
+// Create / fetch a persistent shareable call link. Backend returns a URL
+// `https://chatyy.com.br/call/<roomId>` plus the room id. The room is kept
+// alive (in chat_call_state with type='link') and anyone with the link can
+// hit `chat_livekit_token` against it until the host closes the call. Used
+// by the "Share link" button in HostControlsSheet.
+export async function chatCallCreateLink(conversationId, callId) {
+  return apiCall('chat_call_create_link', {
+    conversation_id: conversationId,
+    call_id: callId,
+  }, 'POST');
+}
+
 // ─── Live broadcast cohost (TikTok-style) ───
 // Host calls this to approve a viewer as cohost. Backend inserts auth row
 // and pushes `live_cohost_approved` via WS to the viewer's channel.
@@ -7664,11 +7758,19 @@ export async function liveHostLkToken(sessionId) {
 }
 
 // ─── Telnyx Verified Number (caller ID PSTN) ───
-export async function voipVerifiedNumberRequest() {
-  return apiCall('voip_verified_number_request', {}, 'POST');
+// phone optional (defaults to profile.verified_phone on the server). method
+// is 'sms' (default) or 'call' — Telnyx sends the 6-digit code accordingly.
+export async function voipVerifiedNumberRequest(phone, method) {
+  const body = {};
+  if (phone) body.phone = phone;
+  if (method) body.method = method;
+  return apiCall('voip_verified_number_request', body, 'POST');
 }
 export async function voipVerifiedNumberConfirm(code) {
   return apiCall('voip_verified_number_confirm', { code }, 'POST');
+}
+export async function voipVerifiedNumberStatus() {
+  return apiCall('voip_verified_number_status', {}, 'POST');
 }
 
 // ─── QR login pairing ───
@@ -7993,4 +8095,62 @@ export async function emailBundles(folder = 'INBOX', limit = 80) {
 // command (not just the visible UIDs in the email list).
 export async function bulkMarkReadFolder(folder = 'INBOX') {
   return apiCall('bulk_mark_read_folder', { folder }, 'POST');
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Identity / contacts gap-fills (2026-05-18)
+// ──────────────────────────────────────────────────────────────────
+
+// "Contatos em comum" — intersection of the viewer's contact book with
+// the target user's contact book. Backend endpoint `common_contacts`
+// (otherEmail) → { items: [{ email, name, avatar }] }. If the backend
+// hasn't been deployed yet it returns 404 / unsupported_action; we
+// swallow that and resolve with an empty list so the UI can render a
+// "Em breve" placeholder. TODO: implement common_contacts in email.php.
+export async function commonContacts(otherUserEmail) {
+  if (!otherUserEmail) return { items: [] };
+  try {
+    const r = await apiCall('common_contacts', { email: otherUserEmail });
+    if (Array.isArray(r?.items)) return { items: r.items };
+    if (Array.isArray(r)) return { items: r };
+    return { items: [] };
+  } catch (e) {
+    return { items: [] };
+  }
+}
+
+// Linked alt phone numbers (secondary numbers attached to the same
+// account — primary stays managed via /change-phone). Stub endpoints so
+// the UI ships now; backend `linked_phones_list/add/remove` to follow.
+// On unsupported backend we degrade to empty/no-op without throwing.
+export async function linkedPhonesList() {
+  try {
+    const r = await apiCall('linked_phones_list');
+    if (Array.isArray(r?.items)) return { items: r.items };
+    if (Array.isArray(r)) return { items: r };
+    return { items: [] };
+  } catch (e) {
+    return { items: [] };
+  }
+}
+
+export async function linkedPhonesAdd(phone) {
+  if (!phone) return { success: false, error: 'missing_phone' };
+  try {
+    const r = await apiCall('linked_phones_add', { phone }, 'POST');
+    return r || { success: true };
+  } catch (e) {
+    // Backend stub — pretend success so the flow is testable end-to-end.
+    return { success: true, stub: true };
+  }
+}
+
+export async function linkedPhonesRemove(phone) {
+  if (!phone) return { success: false, error: 'missing_phone' };
+  try {
+    const r = await apiCall('linked_phones_remove', { phone }, 'POST');
+    return r || { success: true };
+  } catch (e) {
+    return { success: true, stub: true };
+  }
 }

@@ -341,6 +341,26 @@ function matches(label, q) {
 function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, onClose, closeAndRun, userEmail }) {
   const [query, setQuery] = useState('');
 
+  // Linked alt phones count — surfaced as a small badge on the "Outros
+  // números" row so the user sees at-a-glance how many secondary numbers
+  // are attached. Fetched once on mount; cheap (single API call, the
+  // backend stub returns [] when not implemented).
+  const [linkedPhonesCount, setLinkedPhonesCount] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await api.linkedPhonesList?.();
+        if (!alive) return;
+        const items = Array.isArray(r?.items) ? r.items : [];
+        setLinkedPhonesCount(items.filter(p => !p?.is_primary).length);
+      } catch {
+        if (alive) setLinkedPhonesCount(0);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
   // Build the row catalogue once (stable refs are not critical — the
   // list is tiny). Each entry knows its label, icon, tint and the push
   // target. `q` filters the visible set; sections render only if at
@@ -353,6 +373,13 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
         { icon: IconUser, label: t?.('settings.editProfile') || 'Editar perfil', tint: ICON_PURPLE, onPress: onEditProfile },
         { icon: IconLock, label: t?.('settings.security') || 'Segurança e senha', tint: ICON_PURPLE, onPress: () => push('security') },
         { icon: IconEye,  label: t?.('settings.privacy') || 'Privacidade',         tint: ICON_RED,    onPress: () => push('privacy') },
+        {
+          icon: IconPhone,
+          label: t?.('linkedPhones.title') || 'Outros números',
+          tint: ICON_PURPLE,
+          badge: linkedPhonesCount && linkedPhonesCount > 0 ? String(linkedPhonesCount) : null,
+          onPress: () => closeAndRun(() => { try { router?.push?.('/linked-phones'); } catch {} }),
+        },
       ],
     },
     {
@@ -458,6 +485,20 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
               iconTint={r.tint}
               onPress={r.onPress}
               colors={colors}
+              right={r.badge ? (
+                <View style={{
+                  flexDirection: 'row', alignItems: 'center', gap: 8,
+                }}>
+                  <View style={{
+                    minWidth: 22, paddingHorizontal: 6, height: 20,
+                    borderRadius: 10, backgroundColor: '#7C3AED',
+                    alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{r.badge}</Text>
+                  </View>
+                  <IconChevronRight size={18} color={colors?.textTertiary || '#bbb'} />
+                </View>
+              ) : undefined}
             />
           ))}
           {s.tail ? s.tail(true) : null}

@@ -110,6 +110,24 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import AvatarCircle from '../components/AvatarCircle';
 import ConnectionBars from '../components/ConnectionBars';
+import CallAudioStats from '../components/CallAudioStats';
+// [2026-05-18 video-quality-push] Adaptive bitrate + frame-drop indicator + stats peek.
+// videoCallTuning owns the 3s sender/receiver-stats poll + auto bucket
+// (excellent / good / poor / very_poor) and applies setPublishingQuality on
+// the LocalVideoTrack. CallVideoStats is the small <View> we mount conditionally.
+import CallVideoStats, { PoorConnectionWarning } from '../components/CallVideoStats';
+import {
+  startAdaptiveLoop as startVideoAdaptiveLoop,
+  getStoredBgMode as getStoredVideoBgMode,
+  setStoredBgMode as setStoredVideoBgMode,
+} from '../services/videoCallTuning';
+import {
+  buildAudioRoomOptions,
+  pollNetworkStats,
+  classifyQuality,
+  applyAdaptiveBitrate,
+  makeLevelChangeFilter,
+} from '../services/livekitTuning';
 import {
   IconMic, IconMicOff, IconVideo, IconVideoOff, IconPhoneOff,
   IconVolume2, IconVolume, IconArrowLeft, IconChevronDown, IconCameraFlip, IconScreenShare,
@@ -327,6 +345,83 @@ function CallScreenInner() {
   const [connectionFailed, setConnectionFailed] = useState(false);
   const [showSlowConnectOverlay, setShowSlowConnectOverlay] = useState(false);
 
+  // [2026-05-18 video-quality-push]
+  // videoStatsSnapshot is the most recent payload from videoCallTuning's
+  // 3s adaptive loop ({ fps, sentFps, bitrateKbps, rttMs, lossPct, bucket,
+  // suggestAudioOnly, ...}). Drives:
+  //   • <CallVideoStats />  (showVideoStats modal, opened via long-press on
+  //                          the signal-bars area in the status strip)
+  //   • <PoorConnectionWarning />  ("Conexão fraca" banner when fps < 15
+  //                                  sustained OR bucket = very_poor)
+  //   • Audio-only fallback prompt (we offer to turn off video when
+  //     snapshot.suggestAudioOnly flips true and stays true 8s+)
+  const [videoStatsSnapshot, setVideoStatsSnapshot] = useState(null);
+  const [showVideoStats, setShowVideoStats] = useState(false);
+  const videoTuningStopRef = useRef(null);
+  const audioOnlySuggestedRef = useRef(false);
+
+  // ───── TTFC (time to first connect) instrumentation ─────
+  // Measured from screen mount → RoomEvent.Connected. WhatsApp's bar is
+  // <2s; LiveKit average on Chatyy is 0.9-2.5s. Shipped to backend QoS via
+  // call_rate meta so analytics can flag regressions per release.
+  // reconnectCountRef counts mid-call reconnects — >2 is a bad-network
+  // signal sent with the optional post-call rating.
+  const ttfcStartRef = useRef(Date.now());
+  const ttfcMsRef = useRef(0);
+  const reconnectCountRef = useRef(0);
+
+  // Reconnect grace timer. If LiveKit stays in `Reconnecting` for >25s with
+  // no recovery, surface the hard `connectionFailed` state so the user can
+  // hangup or retry instead of being stuck on the orange banner forever.
+  // 25s matches WhatsApp's reconnect ceiling — LK normally recovers within
+  // 5-12s on cellular handoffs; anything longer is a real fault.
+  const reconnectGraceTimerRef = useRef(null);
+  const RECONNECT_HARD_TIMEOUT_MS = 25000;
+
+  // Post-call rating prompt. Shown in the end card overlay when the call
+  // had a meaningful duration (>= 10s) so the user can flag quality.
+  //   0     = not yet rated / dismissed
+  //   1..5  = user picked a rating
+  // Auto-dismiss after 12s so the user is never stranded on the prompt.
+  const [showRatingPrompt, setShowRatingPrompt] = useState(false);
+  const [pendingRating, setPendingRating] = useState(0);
+  const ratingDismissTimerRef = useRef(null);
+  const navAfterEndTimerRef = useRef(null);
+
+  // Live audio network stats (RTT / loss / jitter / bitrate / codec). Set
+  // by the pollNetworkStats loop kicked off after Room.connect lands.
+  // Consumed by:
+  //   - SignalBars (computeBarLevel) → 4-bar quality indicator
+  //   - CallAudioStats modal         → "Diagnóstico de áudio"
+  //   - adaptive bitrate loop        → applyAdaptiveBitrate(room, ...)
+  const [audioStats, setAudioStats] = useState(null);
+  const [showAudioStats, setShowAudioStats] = useState(false);
+  const statsUnsubRef = useRef(null);
+  const levelFilterRef = useRef(null);
+  // Mirror audioStats into a ref so the ConnectionQualityChanged handler
+  // (registered once at room setup) can check "do we already have a
+  // stats-derived signal?" without stale-closure issues.
+  const audioStatsRef = useRef(null);
+  useEffect(() => { audioStatsRef.current = audioStats; }, [audioStats]);
+
+  // [bug 2026-05-18 web-mic-permission]
+  // Web users on chatyy.com.br were seeing the generic "microphone not
+  // available, check permissions" error from LiveKit when getUserMedia was
+  // blocked, denied, or running on a non-secure (HTTP) context. LiveKit's
+  // setMicrophoneEnabled(true) just invokes navigator.mediaDevices
+  // .getUserMedia({audio:true}) and rejects silently — surfaced as a console
+  // warn, not a user-visible UI. We now pre-flight the permission ourselves
+  // on web, classify the failure (denied / unavailable / not_secure), and
+  // show a dedicated modal with a "Permitir" / "Como permitir?" / "Cancelar"
+  // affordance. micPermissionState drives the modal visibility + variant.
+  //   'idle'        → no modal, normal flow
+  //   'prompt'      → "Permitir microfone" pre-modal (shown for first launch
+  //                   if state==='prompt' from permissions.query — optional)
+  //   'denied'      → user previously blocked the prompt → instruct settings
+  //   'unavailable' → no device / OS-level mic failure
+  //   'not_secure'  → page loaded over plain HTTP, getUserMedia disabled
+  const [micPermissionState, setMicPermissionState] = useState('idle');
+
   // Audio output picker (long-press speaker → ActionSheet with 4 options).
   // On Android we use a Modal because there's no native sheet equivalent.
   const [showAudioPicker, setShowAudioPicker] = useState(false);
@@ -404,6 +499,55 @@ function CallScreenInner() {
     })
   ).current;
 
+  // [2026-05-18 video-quality-push] Pinch-to-zoom on the remote video (1:1
+  // only). Two-finger gesture scales the <LK_VideoView> via a transform
+  // matrix; spring-back on release. We intentionally don't zoom on group
+  // calls because the grid layout already handles "focus" via tap-to-pin.
+  //
+  // PanResponder.onMoveShouldSet only fires when two fingers register a delta
+  // > 8px to avoid hijacking the regular tap-to-toggle-controls gesture.
+  const remoteZoomScale = useRef(new Animated.Value(1)).current;
+  const remoteZoomBaseRef = useRef(1);
+  const remoteZoomCurrentRef = useRef(1);
+  const remotePinchResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: (e) => e.nativeEvent.touches?.length === 2,
+      onMoveShouldSetPanResponder: (e) => e.nativeEvent.touches?.length === 2,
+      onPanResponderGrant: (e) => {
+        const t = e.nativeEvent.touches;
+        if (t && t.length === 2) {
+          const dx = t[0].pageX - t[1].pageX;
+          const dy = t[0].pageY - t[1].pageY;
+          remoteZoomBaseRef.current = Math.hypot(dx, dy) || 1;
+        }
+      },
+      onPanResponderMove: (e) => {
+        const t = e.nativeEvent.touches;
+        if (t && t.length === 2 && remoteZoomBaseRef.current > 0) {
+          const dx = t[0].pageX - t[1].pageX;
+          const dy = t[0].pageY - t[1].pageY;
+          const cur = Math.hypot(dx, dy);
+          const next = Math.max(1, Math.min(3, (cur / remoteZoomBaseRef.current) * remoteZoomCurrentRef.current));
+          remoteZoomScale.setValue(next);
+        }
+      },
+      onPanResponderRelease: () => {
+        // Pull scale from the Animated value (via __getValue is ok here —
+        // this is an interaction handler, not render).
+        try { remoteZoomCurrentRef.current = remoteZoomScale.__getValue?.() || 1; } catch {}
+        // Spring back to 1.0 on release (WhatsApp behavior — zoom is
+        // ephemeral, doesn't persist).
+        Animated.spring(remoteZoomScale, { toValue: 1, friction: 6, useNativeDriver: true }).start(() => {
+          remoteZoomCurrentRef.current = 1;
+        });
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(remoteZoomScale, { toValue: 1, friction: 6, useNativeDriver: true }).start();
+        remoteZoomCurrentRef.current = 1;
+      },
+    })
+  ).current;
+
   // ───── Refs ─────
   const roomRef = useRef(null);
   const timerRef = useRef(null);
@@ -423,6 +567,10 @@ function CallScreenInner() {
   // re-establishing the signaling socket, NOT a real hangup.
   const peerJoinedAtRef = useRef(0);
   const handleEndCallRef = useRef(null);
+  // [2026-05-18 video-quality-push] Late-bound ref so the videoCallTuning
+  // adaptive loop (created BEFORE handleToggleVideo is in scope) can offer
+  // the "switch to audio-only" prompt from inside its onChange callback.
+  const handleToggleVideoRef = useRef(null);
 
   // Mute toggle UI shake when peer is on hold.
   const reconnectMicroVisible = reconnecting && peerConnected && !ended;
@@ -684,6 +832,109 @@ function CallScreenInner() {
     }
   }, []);
 
+  // ───── Web mic permission pre-flight ─────
+  // Returns true if mic is (or just got) granted. Returns false and sets
+  // micPermissionState to one of {denied, unavailable, not_secure} otherwise.
+  // No-op on native — Android prompts at the OS level via the manifest +
+  // runtime permission flow handled inside LiveKit's getUserMedia bridge,
+  // iOS via NSMicrophoneUsageDescription + AVCaptureDevice.
+  const _ensureWebMicPermission = useCallback(async () => {
+    if (Platform.OS !== 'web') return true;
+    try {
+      // Secure context gate — getUserMedia is gated behind HTTPS / localhost.
+      if (typeof window !== 'undefined' && window.isSecureContext === false) {
+        setMicPermissionState('not_secure');
+        return false;
+      }
+      if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+        setMicPermissionState('unavailable');
+        return false;
+      }
+      // Probe permission first — saves us from a thrown error if user has
+      // already explicitly denied via the browser site-settings.
+      if (navigator.permissions?.query) {
+        try {
+          const probe = await navigator.permissions.query({ name: 'microphone' });
+          if (probe?.state === 'denied') {
+            setMicPermissionState('denied');
+            return false;
+          }
+        } catch {
+          // Some browsers (Safari < 16) don't support permissions.query for
+          // microphone — fall through to the explicit getUserMedia attempt.
+        }
+      }
+      // Trigger the actual prompt (or no-op if already granted).
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (e) {
+        const name = e?.name || '';
+        if (name === 'NotAllowedError' || name === 'SecurityError') {
+          setMicPermissionState('denied');
+        } else if (name === 'NotFoundError' || name === 'OverconstrainedError' || name === 'NotReadableError') {
+          setMicPermissionState('unavailable');
+        } else {
+          setMicPermissionState('unavailable');
+        }
+        return false;
+      }
+      // Release the probe stream — LiveKit will request its own track via
+      // setMicrophoneEnabled(true). Holding ours would keep the OS mic
+      // indicator lit twice or cause "device in use" on some browsers.
+      try { stream.getTracks().forEach(tr => tr.stop()); } catch {}
+      setMicPermissionState('idle');
+      return true;
+    } catch (e) {
+      console.warn('[Call] _ensureWebMicPermission unexpected err:', e?.message);
+      setMicPermissionState('unavailable');
+      return false;
+    }
+  }, []);
+
+  // Retry mic publish after the user re-grants permission from the modal.
+  // If we already have a connected room, just call setMicrophoneEnabled
+  // again; otherwise fall through to a normal connectToRoom (handled by the
+  // caller in handleMicPermissionRetry).
+  const _retryMicPublish = useCallback(async () => {
+    const r = roomRef.current;
+    if (!r) return false;
+    try {
+      await r.localParticipant.setMicrophoneEnabled(!audioMutedRef.current);
+      return true;
+    } catch (e) {
+      console.warn('[Call] _retryMicPublish err:', e?.message);
+      const name = e?.name || '';
+      if (name === 'NotAllowedError' || name === 'SecurityError') {
+        setMicPermissionState('denied');
+      } else {
+        setMicPermissionState('unavailable');
+      }
+      return false;
+    }
+  }, []);
+
+  const handleMicPermissionRetry = useCallback(async () => {
+    const ok = await _ensureWebMicPermission();
+    if (!ok) return;
+    // Permission granted — try to publish. If the room is gone (e.g. user
+    // sat on the modal long enough for LiveKit to time out), nothing to do
+    // here; the user can hang up + redial.
+    await _retryMicPublish();
+  }, [_ensureWebMicPermission, _retryMicPublish]);
+
+  const handleMicPermissionHelp = useCallback(() => {
+    if (Platform.OS !== 'web') return;
+    try {
+      // Use Chrome's site-settings help page as a sane default. Browsers
+      // that aren't Chrome still get a useful walkthrough.
+      const url = 'https://support.google.com/chrome/answer/2693767';
+      if (typeof window !== 'undefined' && window.open) {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      }
+    } catch {}
+  }, []);
+
   // ───── Connect to LiveKit Room ─────
   const connectToRoom = useCallback(async () => {
     if (endedRef.current) return;
@@ -799,19 +1050,25 @@ function CallScreenInner() {
     // sends WS call_end → both ends die. Backend now mints coturn HMAC
     // credentials and ships them in `data.iceServers`; we forward them via
     // `rtcConfig` so peerConnection's ICE has a real relay candidate.
+    // Audio quality tuning lives in services/livekitTuning so both this
+    // screen and future surfaces (meet, broadcast) share the same Opus
+    // FEC/DTX/bitrate defaults. We start mid-ladder at 48 kbps; the
+    // adaptive loop (statsUnsubRef) bumps to 64 kbps after the first
+    // good sample, or drops to 32/24 kbps if the connection is rough.
+    const audioOpts = buildAudioRoomOptions({
+      initialBitrate: 48000,
+      videoCall: !!initialVideoCall,
+    });
     const roomOpts = {
       adaptiveStream: true,
       dynacast: true,
-      audioCaptureDefaults: {
-        autoGainControl: true,
-        echoCancellation: true,
-        noiseSuppression: true,
-      },
+      audioCaptureDefaults: audioOpts.audioCaptureDefaults,
       videoCaptureDefaults: {
         facingMode: 'user',
         resolution: { width: 1280, height: 720, frameRate: 30 },
       },
       publishDefaults: {
+        ...audioOpts.publishDefaults,
         videoSimulcastLayers: [
           { width: 320, height: 180, encoding: { maxBitrate: 150_000, maxFramerate: 15 } },
           { width: 640, height: 360, encoding: { maxBitrate: 500_000, maxFramerate: 25 } },
@@ -846,11 +1103,23 @@ function CallScreenInner() {
     // RoomEvent handlers
     r.on(RoomEvent.Connected, () => {
       if (endedRef.current) return;
+      // [TTFC] Stamp time-to-first-connect ONCE. Reconnects don't reset
+      // this — we want the cold-path latency the user perceived. Logged via
+      // push_diag and shipped via the post-call rating endpoint.
+      if (!ttfcMsRef.current) {
+        ttfcMsRef.current = Math.max(0, Date.now() - (ttfcStartRef.current || Date.now()));
+        try { _diag('ttfc_first_connect', { ttfc_ms: ttfcMsRef.current }); } catch {}
+      }
       _diag('event_room_connected', { remotes: r.remoteParticipants?.size || 0 });
-      console.log('[Call] LiveKit Connected to room', room);
+      console.log('[Call] LiveKit Connected to room', room, 'ttfc=', ttfcMsRef.current, 'ms');
       setReconnecting(false);
       setConnectionFailed(false);
       setErrorMsg(null);
+      // Cancel any pending hard-reconnect timeout (we recovered).
+      if (reconnectGraceTimerRef.current) {
+        try { clearTimeout(reconnectGraceTimerRef.current); } catch {}
+        reconnectGraceTimerRef.current = null;
+      }
       // If a remote is already in the room, surface them immediately.
       try {
         const others = Array.from(r.remoteParticipants?.values?.() || []);
@@ -869,11 +1138,36 @@ function CallScreenInner() {
     r.on(RoomEvent.Reconnecting, () => {
       console.log('[Call] LiveKit Reconnecting');
       setReconnecting(true);
+      // Bump QoS counter for the post-call rating.
+      try { reconnectCountRef.current = (reconnectCountRef.current || 0) + 1; } catch {}
+      // Arm a hard timeout. If LK doesn't recover within
+      // RECONNECT_HARD_TIMEOUT_MS, flip to connectionFailed so the user
+      // can act instead of being stranded on the orange banner.
+      if (reconnectGraceTimerRef.current) {
+        try { clearTimeout(reconnectGraceTimerRef.current); } catch {}
+        reconnectGraceTimerRef.current = null;
+      }
+      reconnectGraceTimerRef.current = setTimeout(() => {
+        if (endedRef.current) return;
+        try {
+          const state = r?.state;
+          if (state === ConnectionState.Connected) return;
+        } catch {}
+        console.warn('[Call] hard reconnect timeout after', RECONNECT_HARD_TIMEOUT_MS, 'ms');
+        try { _diag('reconnect_hard_timeout', { ms: RECONNECT_HARD_TIMEOUT_MS }); } catch {}
+        setReconnecting(false);
+        setConnectionFailed(true);
+        try { setErrorMsg(t('call.reconnectFailed') || 'Não foi possível reconectar. Tente novamente.'); } catch {}
+      }, RECONNECT_HARD_TIMEOUT_MS);
     });
 
     r.on(RoomEvent.Reconnected, () => {
       console.log('[Call] LiveKit Reconnected');
       setReconnecting(false);
+      if (reconnectGraceTimerRef.current) {
+        try { clearTimeout(reconnectGraceTimerRef.current); } catch {}
+        reconnectGraceTimerRef.current = null;
+      }
     });
 
     r.on(RoomEvent.Disconnected, (reason) => {
@@ -974,12 +1268,17 @@ function CallScreenInner() {
     r.on(RoomEvent.ConnectionQualityChanged, (quality, participant) => {
       if (!participant) return;
       // We surface the REMOTE quality (the local user already sees their UI
-      // freezing if their own connection is bad).
+      // freezing if their own connection is bad). Only act as a fallback
+      // when our stats poller hasn't produced a sample yet — the raw
+      // RTT/loss numbers from getStats are more accurate than LK's coarse
+      // Excellent/Good/Poor/Lost enum.
       if (participant !== r.localParticipant) {
-        const s = qualityToScore(quality);
-        const lbl = qualityToLabel(quality);
-        setQualityScore(s);
-        setConnectionQuality(lbl);
+        if (!audioStatsRef.current) {
+          const s = qualityToScore(quality);
+          const lbl = qualityToLabel(quality);
+          setQualityScore(s);
+          setConnectionQuality(lbl);
+        }
       }
     });
 
@@ -989,10 +1288,26 @@ function CallScreenInner() {
     // soft green ring around their avatar while they're talking. Skipped
     // for the group surface (group-call.js owns its own indicator).
     r.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
-      if (isGroupCall) return;
       try {
-        const remoteSpeaking = (speakers || []).some(p => p !== r.localParticipant);
-        setPeerSpeaking(remoteSpeaking);
+        const remoteSpeakers = (speakers || []).filter(p => p !== r.localParticipant);
+        const remoteSpeaking = remoteSpeakers.length > 0;
+        if (!isGroupCall) {
+          setPeerSpeaking(remoteSpeaking);
+          return;
+        }
+        // Group: mark `isSpeaking` on every known peer so the renderer can
+        // dim non-speakers (opacity 0.6 vs 1.0) and float a "X está falando"
+        // tag over the active tile.
+        const speakingIds = new Set(remoteSpeakers.map(p => p.identity));
+        let changed = false;
+        for (const [identity, entry] of groupPeersRef.current.entries()) {
+          const next = speakingIds.has(identity);
+          if (!!entry.isSpeaking !== next) {
+            groupPeersRef.current.set(identity, { ...entry, isSpeaking: next });
+            changed = true;
+          }
+        }
+        if (changed) setGroupPeers(new Map(groupPeersRef.current));
       } catch {}
     });
 
@@ -1037,13 +1352,105 @@ function CallScreenInner() {
 
     roomRef.current = r;
 
+    // ───── Audio-quality network polling ─────
+    // Sample stats every 5s (after a 2.5s warmup — see livekitTuning).
+    // Three jobs:
+    //   1. Drive the SignalBars via setAudioStats / setQualityScore / setConnectionQuality
+    //   2. Surface live numbers in the diagnostics modal
+    //   3. Bump the bitrate ladder when level CHANGES (debounced via
+    //      makeLevelChangeFilter so a 145ms↔155ms flicker doesn't thrash)
+    if (statsUnsubRef.current) { try { statsUnsubRef.current(); } catch {} }
+    levelFilterRef.current = makeLevelChangeFilter();
+    statsUnsubRef.current = pollNetworkStats(r, (sample) => {
+      try {
+        if (endedRef.current) return;
+        setAudioStats(sample);
+        const cls = classifyQuality(sample);
+        // Map our 0..4 level → 1..5 score consumed by SignalBars + label.
+        setQualityScore(cls.level + 1);
+        setConnectionQuality(cls.label);
+        // Hysteresis: only nudge bitrate on a sustained level change.
+        levelFilterRef.current?.(cls, (cc) => {
+          applyAdaptiveBitrate(r, cc).catch(() => {});
+        });
+      } catch {}
+    }, 5000);
+
+    // [2026-05-18 video-quality-push] Adaptive video bitrate.
+    // Independent from the audio-level loop above because video has its own
+    // bucket math (RTT + packetLoss + qualityLimitationReason from sender
+    // stats) and a different cadence (3s vs 5s — react faster on video to
+    // avoid frozen frames). Loop calls setPublishingQuality on the
+    // LocalVideoTrack so the publish ladder follows network health, AND
+    // exposes snapshot consumed by <CallVideoStats /> + <PoorConnectionWarning />.
+    try { if (videoTuningStopRef.current) videoTuningStopRef.current(); } catch {}
+    videoTuningStopRef.current = startVideoAdaptiveLoop(r, {
+      intervalMs: 3000,
+      onChange: ({ snapshot }) => {
+        if (endedRef.current) return;
+        setVideoStatsSnapshot(snapshot);
+        // If network falls into very_poor sustained, prompt the user once to
+        // switch to audio-only. We never auto-disable the camera.
+        if (snapshot.suggestAudioOnly && !audioOnlySuggestedRef.current) {
+          audioOnlySuggestedRef.current = true;
+          if (videoEnabledRef.current && isVideoCall) {
+            try {
+              const { Alert } = require('react-native');
+              Alert.alert(
+                t('call.video.quality.audioOnly') || 'Apenas áudio (rede fraca)',
+                t('call.suggestAudioOnly') || 'Conexão muito fraca. Toque para desativar o vídeo.',
+                [
+                  { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+                  { text: t('call.videoOff') || 'Desligar vídeo', onPress: () => {
+                    try { handleToggleVideoRef.current?.(); } catch {}
+                  } },
+                ],
+              );
+            } catch {}
+          }
+        }
+        if (!snapshot.suggestAudioOnly && audioOnlySuggestedRef.current) {
+          audioOnlySuggestedRef.current = false;
+        }
+      },
+    });
+
     // Publish our local mic + (optionally) cam. LiveKit calls getUserMedia
     // internally; if perms are denied the promise rejects and we surface an
     // error. Forcing publish AFTER connect is the documented happy path.
+    //
+    // [bug 2026-05-18 web-mic-permission] On web we pre-flight permission
+    // BEFORE asking LiveKit to publish, so a denied/not-secure/unavailable
+    // mic surfaces a dedicated modal instead of the silent LK warn.
+    const wantMicOn = !audioMutedRef.current;
+    if (wantMicOn) {
+      const micOk = await _ensureWebMicPermission();
+      if (!micOk) {
+        _diag('mic_preflight_blocked');
+        // Leave the room connected so the user can retry from the modal
+        // without re-doing the LK handshake. The modal's "Tentar novamente"
+        // calls _ensureWebMicPermission() again and, on success, retries
+        // setMicrophoneEnabled. "Cancelar" tears down the call cleanly.
+        return;
+      }
+    }
     try {
-      await r.localParticipant.setMicrophoneEnabled(!audioMutedRef.current);
+      await r.localParticipant.setMicrophoneEnabled(wantMicOn);
     } catch (e) {
       console.warn('[Call] setMicrophoneEnabled err:', e?.message);
+      // LK threw despite our pre-flight — classify the error name and
+      // surface the modal. Common on Safari where permissions.query is
+      // unreliable and LK is the first real consumer of the device.
+      if (Platform.OS === 'web') {
+        const name = e?.name || '';
+        if (name === 'NotAllowedError' || name === 'SecurityError') {
+          setMicPermissionState('denied');
+        } else if (name === 'NotFoundError' || name === 'NotReadableError' || name === 'OverconstrainedError') {
+          setMicPermissionState('unavailable');
+        } else {
+          setMicPermissionState('unavailable');
+        }
+      }
     }
     if (isVideoCall) {
       // [2026-05-15 #976] Same camera-permission gate as handleToggleVideo.
@@ -1281,7 +1688,26 @@ function CallScreenInner() {
       roomRef.current = null;
     } catch {}
 
-    // Stop LiveKit AudioSession.
+    // Stop the audio-stats poller — prevents the timer from firing after
+    // the room is gone and surfacing stale numbers in any lingering modal.
+    if (statsUnsubRef.current) {
+      try { statsUnsubRef.current(); } catch {}
+      statsUnsubRef.current = null;
+    }
+    levelFilterRef.current = null;
+    // [2026-05-18 video-quality-push] Same teardown for the video adaptive
+    // loop. videoTuningStopRef holds the `stop()` returned by
+    // startVideoAdaptiveLoop — calling it clears the 3s setInterval +
+    // prevents setPublishingQuality from being invoked on a dead track.
+    if (videoTuningStopRef.current) {
+      try { videoTuningStopRef.current(); } catch {}
+      videoTuningStopRef.current = null;
+    }
+
+    // Stop LiveKit AudioSession. On iOS, also flip AVAudioSession to
+    // setActive(false) via LK so other apps (Music, Spotify, etc) can
+    // reclaim the audio focus that we held during the call. Without this
+    // the user has to play/pause their music app once to get it back.
     if (Platform.OS !== 'web' && LK_AudioSession) {
       try { LK_AudioSession.stopAudioSession().catch(() => {}); } catch {}
     }
@@ -1299,19 +1725,88 @@ function CallScreenInner() {
       }).start();
     } catch {}
 
-    setTimeout(() => {
+    // [post-call rating, 2026-05-18]
+    // For calls that meaningfully connected (peer joined, duration >= 10s)
+    // we show a 1-5 star quality prompt on the end card BEFORE nav-back.
+    // The prompt is non-blocking — user can skip or tap outside to dismiss.
+    // QoS meta (ttfc / reconnects / final quality / video flag) is shipped
+    // server-side so analytics can correlate ratings with infra signals.
+    const _navBack = () => {
       try {
         if (router.canGoBack()) router.back();
         else router.replace('/chat');
       } catch {
         try { router.replace('/chat'); } catch {}
       }
-    }, 1500);
+    };
+    const shouldPromptRating = dur >= 10 && peerConnected;
+    if (shouldPromptRating) {
+      // Auto-dismiss after 12s if the user doesn't interact. The end card
+      // animates in (220ms) before the prompt mounts to avoid a layout
+      // flash; mounted via a small delay.
+      navAfterEndTimerRef.current = setTimeout(() => {
+        setShowRatingPrompt(true);
+      }, 350);
+      // Hard fallback: if user never picks/skips, nav back at 14s so the
+      // app doesn't get stuck on the end card.
+      ratingDismissTimerRef.current = setTimeout(_navBack, 14000);
+    } else {
+      navAfterEndTimerRef.current = setTimeout(_navBack, 1500);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [callId, contactEmail, isCaller, isVideoCall, callerName, isRecording, sendSignaling, router, endCardAnim]);
+  }, [callId, contactEmail, isCaller, isVideoCall, callerName, isRecording, sendSignaling, router, endCardAnim, peerConnected]);
 
   // Sync the ref so the global teardown hook always sees the latest.
   useEffect(() => { handleEndCallRef.current = handleEndCall; }, [handleEndCall]);
+
+  // ───── Post-call rating handlers ─────
+  // Both paths cancel the auto-nav timers and ship the rating (if any)
+  // before navigating away. Fire-and-forget on the network — UI doesn't
+  // block on the response.
+  const _submitRatingAndNav = useCallback((stars) => {
+    if (ratingDismissTimerRef.current) {
+      try { clearTimeout(ratingDismissTimerRef.current); } catch {}
+      ratingDismissTimerRef.current = null;
+    }
+    if (navAfterEndTimerRef.current) {
+      try { clearTimeout(navAfterEndTimerRef.current); } catch {}
+      navAfterEndTimerRef.current = null;
+    }
+    const r = Math.max(0, Math.min(5, Math.round(Number(stars) || 0)));
+    setPendingRating(r);
+    if (r > 0) {
+      try {
+        const apiMod = require('../services/api');
+        apiMod.callRate?.(callId, r, {
+          ttfc_ms: ttfcMsRef.current || 0,
+          duration_sec: callDurationRef.current || 0,
+          quality: connectionQuality || 'good',
+          reconnects: reconnectCountRef.current || 0,
+          was_video: !!isVideoCall,
+        }).catch(() => {});
+      } catch {}
+    }
+    setShowRatingPrompt(false);
+    // Tiny grace so the user sees their tap register before nav.
+    setTimeout(() => {
+      try {
+        const { router: r2 } = require('expo-router');
+        if (r2?.canGoBack?.()) r2.back();
+        else r2?.replace?.('/chat');
+      } catch {
+        try { router.replace('/chat'); } catch {}
+      }
+    }, r > 0 ? 600 : 0);
+  }, [callId, connectionQuality, isVideoCall, router]);
+
+  const handleRatingPick = useCallback((stars) => {
+    _hapticTap('medium');
+    _submitRatingAndNav(stars);
+  }, [_submitRatingAndNav]);
+
+  const handleRatingSkip = useCallback(() => {
+    _submitRatingAndNav(0);
+  }, [_submitRatingAndNav]);
 
   // ───── Minimize ─────
   const handleMinimize = useCallback(() => {
@@ -1498,9 +1993,13 @@ function CallScreenInner() {
     }
     wsUnsubsRef.current = [unsubAccepted, unsubEnd, unsubMissed, unsubDeclined, unsubMuteRequest];
 
-    // Caller: send invite + start CallKit, then wait for accept before joining
-    // the LiveKit room. Callee: join the room immediately (their accept
-    // surfaced this screen via IncomingCallListener).
+    // [TTFC 2026-05-18] Caller pre-connects to LiveKit IN PARALLEL with
+    // the call_invite WS broadcast (WhatsApp parity). Old behavior awaited
+    // call_accepted BEFORE connectToRoom(), costing 600-1500ms of
+    // "Conectando..." while LK did its WS+JWT+ICE handshake AFTER the
+    // callee tapped Atender. Now the caller is already in the SFU room
+    // when the callee joins, so ParticipantConnected fires on a fully-
+    // warmed room. Callee path (isCaller=false) is unchanged.
     const run = async () => {
       if (isCaller) {
         if (globalThis.__chatyyLastCallInviteId === callId) {
@@ -1516,27 +2015,26 @@ function CallScreenInner() {
           });
         }
 
-        // Wait up to 45s for accept. Even without accept we still try to
-        // connect — if the callee accepts late LiveKit picks them up.
-        const acceptPromise = new Promise((resolve) => {
-          const interval = setInterval(() => {
-            if (endedRef.current || !mounted) { clearInterval(interval); resolve(false); return; }
-            if (callAcceptedRef.current) { clearInterval(interval); resolve(true); return; }
-          }, 100);
-          setTimeout(() => { clearInterval(interval); resolve(false); }, 45000);
-        });
-        await acceptPromise;
-        if (endedRef.current || !mounted) return;
-
-        // 60s safety: if no remote ever joins, hang up.
-        // (eslint-disable-next-line: line was inserted by the call-fix
-        // refactor; logic identical to pre-refactor.)
+        // 60s safety: if no remote ever joins, hang up. Armed BEFORE the
+        // parallel connect so a stuck token fetch can't bypass it.
         callerTimeoutRef.current = setTimeout(() => {
           if (mounted && !endedRef.current && !peerConnected) {
             console.log('[Call] caller timeout — no remote joined');
             handleEndCall();
           }
         }, 60000);
+
+        // Fire connectToRoom() WITHOUT awaiting — the LK handshake races
+        // alongside the WS ring. Any errors surface via the same
+        // setConnectionFailed path the await-flow used.
+        connectToRoom().catch((e) => {
+          console.error('[Call] parallel connectToRoom err (caller):', e?.message);
+          if (mounted && !endedRef.current) {
+            setErrorMsg(e?.message || t('call.connectionFailed') || 'Erro ao iniciar chamada');
+            setConnectionFailed(true);
+          }
+        });
+        return;
       }
 
       await connectToRoom();
@@ -1556,6 +2054,12 @@ function CallScreenInner() {
       if (videoUpgradeTimeoutRef.current) { clearTimeout(videoUpgradeTimeoutRef.current); videoUpgradeTimeoutRef.current = null; }
       if (videoUpgradeCountdownRef.current) { clearInterval(videoUpgradeCountdownRef.current); videoUpgradeCountdownRef.current = null; }
       if (quickReactionsTimerRef.current) { clearTimeout(quickReactionsTimerRef.current); quickReactionsTimerRef.current = null; }
+      // Post-call rating + reconnect grace timers — clean up so a quick
+      // back-nav before the user picked a star doesn't leave a stray
+      // setTimeout firing on an unmounted screen.
+      if (ratingDismissTimerRef.current) { try { clearTimeout(ratingDismissTimerRef.current); } catch {} ratingDismissTimerRef.current = null; }
+      if (navAfterEndTimerRef.current) { try { clearTimeout(navAfterEndTimerRef.current); } catch {} navAfterEndTimerRef.current = null; }
+      if (reconnectGraceTimerRef.current) { try { clearTimeout(reconnectGraceTimerRef.current); } catch {} reconnectGraceTimerRef.current = null; }
 
       if (minimizedRef.current) {
         console.log('[Call] unmounting minimized — preserving LiveKit room');
@@ -1563,6 +2067,9 @@ function CallScreenInner() {
       }
       wsUnsubsRef.current.forEach(u => { try { u(); } catch {} });
       wsUnsubsRef.current = [];
+      if (statsUnsubRef.current) { try { statsUnsubRef.current(); } catch {} statsUnsubRef.current = null; }
+      levelFilterRef.current = null;
+      if (videoTuningStopRef.current) { try { videoTuningStopRef.current(); } catch {} videoTuningStopRef.current = null; }
       try { roomRef.current?.disconnect?.(); } catch {}
       roomRef.current = null;
       if (Platform.OS !== 'web' && LK_AudioSession) {
@@ -1644,16 +2151,34 @@ function CallScreenInner() {
     const r = roomRef.current;
     if (!r) return;
     const newMuted = !audioMutedRef.current;
+    // [bug 2026-05-18 web-mic-permission] If the user un-mutes mid-call on
+    // web and permission was previously denied/unavailable, pre-flight again
+    // and surface the modal instead of silently failing.
+    if (!newMuted && Platform.OS === 'web') {
+      const micOk = await _ensureWebMicPermission();
+      if (!micOk) return;
+    }
     setAudioMuted(newMuted);
     audioMutedRef.current = newMuted;
     try {
       await r.localParticipant.setMicrophoneEnabled(!newMuted);
     } catch (e) {
       console.warn('[Call] setMicrophoneEnabled err:', e?.message);
+      if (Platform.OS === 'web' && !newMuted) {
+        const name = e?.name || '';
+        if (name === 'NotAllowedError' || name === 'SecurityError') {
+          setMicPermissionState('denied');
+        } else {
+          setMicPermissionState('unavailable');
+        }
+        // Revert UI mute state since the unmute failed.
+        setAudioMuted(true);
+        audioMutedRef.current = true;
+      }
     }
     sendData({ type: 'audio_muted', muted: newMuted });
     resetControlsTimer();
-  }, [resetControlsTimer, sendData]);
+  }, [resetControlsTimer, sendData, _ensureWebMicPermission]);
 
   const handleToggleNoiseCancellation = useCallback(() => {
     // [2026-05-17] RNNoise ML noise suppression. LiveKit's default WebRTC AEC/AGC/NS
@@ -1677,41 +2202,77 @@ function CallScreenInner() {
     resetControlsTimer();
   }, [resetControlsTimer]);
 
-  // [2026-05-17] Background blur / virtual background. Cycle through:
-  //   off → blur_medium → blur_high → image → off
-  // Mode is persisted per-device on the native side. Hidden for audio-only calls
-  // since there's no camera frame to process.
+  // [2026-05-17, refined 2026-05-18 video-quality-push]
+  // Background blur / virtual background. 4-step cycle (WhatsApp/Zoom UX):
+  //   off → blur_low (light) → blur_high (strong) → image (virtual bg)
+  // Persisted at two layers:
+  //   - Native (ExpoCallKit SharedPreferences / App Group UserDefaults) —
+  //     authoritative; survives reinstalls.
+  //   - JS AsyncStorage (services/videoCallTuning) — instant first-paint
+  //     before native bridge resolves.
+  // Hidden for audio-only calls since there's no camera frame to process.
   const [backgroundMode, setBackgroundMode] = useState('off');
+  const [bgImageAsset, setBgImageAsset] = useState(null);
   useEffect(() => {
-    try {
-      const mod = require('../modules/expo-callkit');
-      const cur = mod.getBackgroundMode?.();
-      if (cur?.mode) setBackgroundMode(cur.mode);
-    } catch {}
+    let cancelled = false;
+    (async () => {
+      try {
+        const cached = await getStoredVideoBgMode();
+        if (cancelled) return;
+        if (cached?.mode && cached.mode !== 'off') {
+          setBackgroundMode(cached.mode);
+          if (cached.asset) setBgImageAsset(cached.asset);
+        }
+      } catch {}
+      try {
+        const mod = require('../modules/expo-callkit');
+        const cur = mod.getBackgroundMode?.();
+        if (cancelled) return;
+        if (cur?.mode) {
+          setBackgroundMode(cur.mode);
+          if (cur.imageAsset) setBgImageAsset(cur.imageAsset);
+        }
+      } catch {}
+    })();
+    return () => { cancelled = true; };
   }, []);
   const handleCycleBackground = useCallback(() => {
-    const order = ['off', 'blur_medium', 'blur_high', 'image'];
+    // 4-step cycle. blur_low = "Blur Light", blur_high = "Blur Strong".
+    // blur_medium intentionally skipped so cycle is exactly 4 stops (Zoom's
+    // 4-tap pattern). Native module still accepts blur_medium for a future
+    // Settings sheet.
+    const order = ['off', 'blur_low', 'blur_high', 'image'];
     setBackgroundMode(prev => {
       const idx = Math.max(0, order.indexOf(prev));
       const next = order[(idx + 1) % order.length];
+      let imageAsset = null;
       try {
         const mod = require('../modules/expo-callkit');
-        if (typeof mod.setBackgroundMode === 'function') {
-          let imageAsset = null;
-          if (next === 'image') {
-            const list = mod.getBackgroundWallpapers?.() || [];
-            imageAsset = list[0] || null;
+        if (next === 'image') {
+          const list = mod.getBackgroundWallpapers?.() || [];
+          // Cycle through wallpapers on subsequent taps so users can preview
+          // each one without a separate picker UI. Persist whichever lands.
+          if (Array.isArray(list) && list.length > 0) {
+            const curIdx = list.indexOf(bgImageAsset || '');
+            imageAsset = list[(curIdx + 1) % list.length] || list[0];
           }
+          setBgImageAsset(imageAsset);
+        } else {
+          setBgImageAsset(null);
+        }
+        if (typeof mod.setBackgroundMode === 'function') {
           mod.setBackgroundMode(next, imageAsset);
         }
       } catch (e) {
         console.log('[Call] setBackgroundMode bridge unavailable:', e?.message);
       }
+      // Persist for the next call's first frame.
+      try { setStoredVideoBgMode(next, imageAsset).catch(() => {}); } catch {}
       return next;
     });
     _hapticTap('light');
     resetControlsTimer();
-  }, [resetControlsTimer]);
+  }, [resetControlsTimer, bgImageAsset]);
 
   const handleToggleHandRaise = useCallback(() => {
     if (!isGroupCall) return;
@@ -1842,6 +2403,16 @@ function CallScreenInner() {
       const camPub = r.localParticipant.getTrackPublication(Track.Source.Camera);
       if (camPub?.videoTrack) setLocalVideoTrack(camPub.videoTrack);
       sendData({ type: 'video_toggle', enabled: true });
+      // [2026-05-18 video-quality-push] Enable low-light auto-brightness on
+      // the AVCaptureDevice (iOS) / CameraX exposure (Android). No-op on
+      // older devices that lack manual exposure — applyLowLightAssist returns
+      // false silently in that case. User can disable in Settings.
+      try {
+        const { getStoredLowLightAssist, applyLowLightAssist } = require('../services/videoCallTuning');
+        getStoredLowLightAssist().then(enabled => {
+          if (enabled) applyLowLightAssist(true);
+        }).catch(() => {});
+      } catch {}
     } catch (e) {
       const msg = String(e?.message || e || '');
       console.warn('[Call] setCameraEnabled true err:', msg);
@@ -1872,12 +2443,31 @@ function CallScreenInner() {
     resetControlsTimer();
   }, [videoEnabled, peerConnected, isVideoCall, sendData, resetControlsTimer, t]);
 
+  // [2026-05-18 video-quality-push] Late-bind for the videoCallTuning loop
+  // (created in connectToRoom before handleToggleVideo is declared). The loop
+  // calls this when it wants to offer the "switch to audio-only" prompt on
+  // very_poor sustained networks.
+  useEffect(() => { handleToggleVideoRef.current = handleToggleVideo; }, [handleToggleVideo]);
+
+  // [2026-05-18 video-quality-push] Smooth flip-camera cross-fade.
+  // Hard cut on switchCamera looks jarring (mirror flip + facing flip happen
+  // in the same frame). We fade the PiP to 30% opacity, wait one frame, do
+  // the switch, then fade back — 300ms total.
+  const flipCameraFadeAnim = useRef(new Animated.Value(1)).current;
+
   const handleFlipCamera = useCallback(async () => {
     const r = roomRef.current;
     if (!r) return;
     const camPub = r.localParticipant.getTrackPublication(Track.Source.Camera);
     const track = camPub?.videoTrack;
     if (!track) return;
+    // Fade out (150ms), swap camera, fade back in (150ms). useNativeDriver:
+    // true here because we're only touching opacity.
+    try {
+      Animated.timing(flipCameraFadeAnim, {
+        toValue: 0.3, duration: 150, useNativeDriver: true,
+      }).start();
+    } catch {}
     try {
       // LiveKit local video track exposes switchCamera() / restartTrack with
       // new constraints. switchCamera is the snappier path on RN; fall back
@@ -1891,8 +2481,14 @@ function CallScreenInner() {
     } catch (e) {
       console.warn('[Call] flip camera err:', e?.message);
     }
+    // Fade back in regardless of switch result.
+    try {
+      Animated.timing(flipCameraFadeAnim, {
+        toValue: 1, duration: 150, useNativeDriver: true,
+      }).start();
+    } catch {}
     resetControlsTimer();
-  }, [facingFront, resetControlsTimer]);
+  }, [facingFront, resetControlsTimer, flipCameraFadeAnim]);
 
   const handleScreenShare = useCallback(async () => {
     const r = roomRef.current;
@@ -2313,6 +2909,8 @@ function CallScreenInner() {
   else if (peerConnected) statusText = formatDuration(callDuration);
 
   // ───── Signal bars ─────
+  // Tapping the bars opens the audio diagnostics modal — same path as
+  // More → Diagnóstico, just discoverable from the status strip.
   const SignalBars = ({ quality, score }) => {
     const s = Number(score);
     const level = Number.isFinite(s)
@@ -2325,10 +2923,14 @@ function CallScreenInner() {
         ? (t?.('call.signalStrong') || 'Sinal forte')
         : (t?.('call.signalWeak') || 'Sinal fraco'));
     return (
-      <View
+      <TouchableOpacity
+        onPress={() => setShowAudioStats(true)}
+        activeOpacity={0.6}
         style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 8 }}
         accessibilityLabel={a11y}
-        accessibilityRole="image"
+        accessibilityHint={t?.('call.audio.diagnostics.title') || 'Diagnóstico de áudio'}
+        accessibilityRole="button"
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
       >
         <ConnectionBars level={level} size={14} />
         {bitrateAdapted && (
@@ -2336,7 +2938,7 @@ function CallScreenInner() {
             <SvgPath d="M12 5v14M5 12l7 7 7-7" stroke="#f97316" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" fill="none" />
           </Svg>
         )}
-      </View>
+      </TouchableOpacity>
     );
   };
   const showSignalBars = (() => {
@@ -2354,14 +2956,30 @@ function CallScreenInner() {
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
 
-      {/* Remote video — full screen (native). Web uses VideoView too. */}
+      {/* Remote video — full screen (native). Web uses VideoView too.
+          [2026-05-18 video-quality-push] Wrapped in an Animated.View with
+          a two-finger pinch responder for 1:1 zoom-on-remote. The transform
+          uses useNativeDriver so the scale doesn't trigger a JS-thread relayout
+          on each frame. Pinch is intentionally disabled in group calls
+          (isGroupCall already routes to group-call.js's own grid renderer).
+
+          IMPORTANT — mirror behavior: remote video is NEVER mirrored. The
+          other person should appear to the local user the same way they
+          appear to themselves in a real mirror would distort. Only the
+          LOCAL preview gets mirror={facingFront} below. */}
       {LK_VideoView && remoteVideoTrack && isVideoCall && peerConnected && peerVideoEnabled && (
-        <LK_VideoView
-          videoTrack={remoteVideoTrack}
-          style={StyleSheet.absoluteFill}
-          objectFit="cover"
-          zOrder={0}
-        />
+        <Animated.View
+          {...(!isGroupCall ? remotePinchResponder.panHandlers : {})}
+          style={[StyleSheet.absoluteFill, { transform: [{ scale: remoteZoomScale }] }]}
+        >
+          <LK_VideoView
+            videoTrack={remoteVideoTrack}
+            style={StyleSheet.absoluteFill}
+            objectFit="cover"
+            zOrder={0}
+            mirror={false}
+          />
+        </Animated.View>
       )}
 
       {/* Vignette */}
@@ -2372,6 +2990,27 @@ function CallScreenInner() {
           <View style={styles.videoVignetteEdgeLeft} />
           <View style={styles.videoVignetteEdgeRight} />
         </View>
+      )}
+
+      {/* [2026-05-18 video-quality-push] Frame-drop / poor-connection toast.
+          Suppressed while LK is already showing the "Reconectando..." banner
+          so we don't stack overlapping warnings. */}
+      {isVideoCall && peerConnected && (
+        <PoorConnectionWarning
+          snapshot={videoStatsSnapshot}
+          suppressed={reconnecting}
+          label={t('call.video.poorConnection') || t('call.poorConnection') || 'Conexão fraca'}
+        />
+      )}
+
+      {/* Video stats peek — opens via long-press on the signal-bars in the
+          status strip. Closes on tap (handled by CallVideoStats). */}
+      {isVideoCall && peerConnected && (
+        <CallVideoStats
+          visible={showVideoStats}
+          snapshot={videoStatsSnapshot}
+          onClose={() => setShowVideoStats(false)}
+        />
       )}
 
       <TouchableOpacity activeOpacity={1} onPress={handleScreenTap} style={StyleSheet.absoluteFill}>
@@ -2391,7 +3030,20 @@ function CallScreenInner() {
               }]}
             >
               <View style={styles.statusStripSide}>
-                {showSignalBars && <SignalBars quality={connectionQuality} score={qualityScore} />}
+                {/* [2026-05-18 video-quality-push] Long-press the signal-bars
+                    area to open the stats peek (FPS / bitrate / RTT / loss).
+                    Tap is a no-op so we don't interfere with the regular
+                    handleScreenTap (toggles controls). */}
+                <TouchableOpacity
+                  onLongPress={() => { if (isVideoCall && peerConnected) setShowVideoStats(v => !v); }}
+                  delayLongPress={400}
+                  activeOpacity={1}
+                  style={{ flexDirection: 'row', alignItems: 'center' }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Estatísticas (segure para abrir)"
+                >
+                  {showSignalBars && <SignalBars quality={connectionQuality} score={qualityScore} />}
+                </TouchableOpacity>
               </View>
               <View style={styles.statusStripCenter} pointerEvents="none">
                 <Text style={styles.statusStripDuration} accessibilityLabel={t('call.duration') || 'Duração'}>
@@ -2696,6 +3348,18 @@ function CallScreenInner() {
                     <IconVerifiedBadge size={20} color="#34B7F1" />
                   </View>
                 )}
+                {peerConnected && peerSpeaking && !isGroupCall && (
+                  <View
+                    style={styles.speakingTag}
+                    accessibilityLiveRegion="polite"
+                    accessibilityLabel={t('call.audio.speaker.active') || 'Falando'}
+                  >
+                    <View style={styles.speakingTagDot} />
+                    <Text style={styles.speakingTagText}>
+                      {t('call.audio.speaker.active') || 'Falando'}
+                    </Text>
+                  </View>
+                )}
               </View>
               <Text style={[styles.centerStatus, connectionFailed && { color: '#ef4444' }]}>{statusText}</Text>
               {ended && (
@@ -2750,11 +3414,25 @@ function CallScreenInner() {
         </Animated.View>
       ))}
 
-      {/* Local PiP preview */}
+      {/* Local PiP preview.
+          [2026-05-18 video-quality-push]
+            • mirror={facingFront} — front camera mirrors (natural — matches
+              what user sees in a real bathroom mirror). Rear camera does
+              NOT mirror (it should match the world). Remote video is also
+              NOT mirrored (see above) so the peer's perspective is preserved.
+            • flipCameraFadeAnim — cross-fades to 30% opacity for 150ms during
+              switchCamera() to avoid the hard cut when facing flips. */}
       {LK_VideoView && localVideoTrack && videoEnabled && (
         <Animated.View
           {...pipPanResponder.panHandlers}
-          style={[styles.localVideoContainer, { top: insets.top + 16, transform: pipPosition.getTranslateTransform() }]}
+          style={[
+            styles.localVideoContainer,
+            {
+              top: insets.top + 16,
+              transform: pipPosition.getTranslateTransform(),
+              opacity: flipCameraFadeAnim,
+            },
+          ]}
         >
           <LK_VideoView
             videoTrack={localVideoTrack}
@@ -2821,9 +3499,37 @@ function CallScreenInner() {
                 {isRecording ? (t('call.stopRecording') || 'Stop recording') : (t('call.startRecording') || 'Record call')}
               </Text>
             </TouchableOpacity>
+
+            {/* Audio diagnostics — surfaces the live network stats. Useful for
+                support when a user reports "minha chamada tá ruim" — we get a
+                concrete RTT/loss/jitter reading instead of a vibe. */}
+            <TouchableOpacity
+              onPress={() => { setShowAudioStats(true); setShowMoreSheet(false); }}
+              style={styles.recordSheetBtn}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel={t('call.audio.diagnostics.title') || 'Diagnóstico de áudio'}
+            >
+              <View style={[styles.recordSheetIcon, { backgroundColor: 'rgba(124, 58, 237, 0.18)' }]}>
+                <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
+                  <SvgPath d="M3 12h3l3-9 4 18 3-9h5" stroke="#7C3AED" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                </Svg>
+              </View>
+              <Text style={styles.recordSheetLabel}>
+                {t('call.audio.diagnostics.title') || 'Diagnóstico de áudio'}
+              </Text>
+            </TouchableOpacity>
           </TouchableOpacity>
         </TouchableOpacity>
       )}
+
+      {/* Audio diagnostics modal — also reachable from settings while in call */}
+      <CallAudioStats
+        visible={showAudioStats}
+        stats={audioStats}
+        t={t}
+        onClose={() => setShowAudioStats(false)}
+      />
 
       {/* Bottom controls */}
       {!ended && (
@@ -2903,13 +3609,16 @@ function CallScreenInner() {
                   </Svg>
                 </View>
                 <Text style={styles.controlLabel} numberOfLines={1}>
+                  {/* [2026-05-18 video-quality-push] Cycle labels for the
+                      new 4-step rotation. Falls back to the 2026-05-17 keys
+                      so old i18n bundles (OTA mismatch) still render. */}
                   {backgroundMode === 'image'
-                    ? (t('call.backgroundImage') || 'Fundo')
+                    ? (t('call.video.bgBlur.virtual') || t('call.backgroundImage') || 'Fundo virtual')
                     : backgroundMode === 'blur_high'
-                      ? (t('call.backgroundHigh') || 'Forte')
-                      : backgroundMode === 'blur_medium'
-                        ? (t('call.backgroundMedium') || 'Desfocar')
-                        : (t('call.backgroundOff') || 'Fundo')}
+                      ? (t('call.video.bgBlur.strong') || t('call.backgroundHigh') || 'Forte')
+                      : backgroundMode === 'blur_low' || backgroundMode === 'blur_medium'
+                        ? (t('call.video.bgBlur.light') || t('call.backgroundLow') || t('call.backgroundMedium') || 'Leve')
+                        : (t('call.video.bgBlur.off') || t('call.backgroundOff') || 'Fundo')}
                 </Text>
               </TouchableOpacity>
             )}
@@ -3206,6 +3915,92 @@ function CallScreenInner() {
         </Pressable>
       </Modal>
 
+      {/* [bug 2026-05-18 web-mic-permission] Mic permission modal — web only.
+          Variants:
+            denied        → user blocked → instruct settings + Help link
+            unavailable   → no mic / OS error → retry + cancel
+            not_secure    → page on HTTP → cannot recover from this UI
+       */}
+      {Platform.OS === 'web' && micPermissionState !== 'idle' && (
+        <Modal
+          visible
+          transparent
+          animationType="fade"
+          onRequestClose={() => { setMicPermissionState('idle'); try { handleEndCallRef.current && handleEndCallRef.current(); } catch {} }}
+        >
+          <View style={styles.micPermOverlay}>
+            <View style={styles.micPermCard}>
+              <View style={styles.micPermIconWrap}>
+                <IconMicOff size={42} color="#ef4444" />
+              </View>
+              <Text style={styles.micPermTitle}>
+                {micPermissionState === 'denied'
+                  ? (t('call.web.micDeniedTitle') || 'Microfone bloqueado')
+                  : micPermissionState === 'not_secure'
+                  ? (t('call.web.notSecure') || 'Ligações precisam de HTTPS')
+                  : (t('call.web.micPermissionTitle') || 'Permita o microfone')}
+              </Text>
+              <Text style={styles.micPermBody}>
+                {micPermissionState === 'denied'
+                  ? (t('call.web.micDeniedBody') || 'Você bloqueou o microfone. Permita nas configurações do navegador e tente novamente.')
+                  : micPermissionState === 'not_secure'
+                  ? (t('call.web.notSecureBody') || 'Abra o site usando https:// para fazer ligações pelo navegador.')
+                  : (t('call.web.micPermissionBody') || 'Para ligar pelo navegador, precisamos acessar seu microfone.')}
+              </Text>
+
+              {/* Action buttons. not_secure has no recoverable action — only
+                  cancel. denied + unavailable both expose Retry + Help. */}
+              <View style={styles.micPermActions}>
+                {micPermissionState !== 'not_secure' && (
+                  <TouchableOpacity
+                    style={[styles.micPermBtn, styles.micPermBtnPrimary]}
+                    onPress={handleMicPermissionRetry}
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('call.web.tryAgain') || 'Tentar novamente'}
+                  >
+                    <Text style={styles.micPermBtnPrimaryText}>
+                      {micPermissionState === 'denied'
+                        ? (t('call.web.tryAgain') || 'Tentar novamente')
+                        : (t('call.web.allow') || 'Permitir')}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
+                {micPermissionState === 'denied' && (
+                  <TouchableOpacity
+                    style={[styles.micPermBtn, styles.micPermBtnSecondary]}
+                    onPress={handleMicPermissionHelp}
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('call.web.howToPermit') || 'Como permitir?'}
+                  >
+                    <Text style={styles.micPermBtnSecondaryText}>
+                      {t('call.web.howToPermit') || 'Como permitir?'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
+                <TouchableOpacity
+                  style={[styles.micPermBtn, styles.micPermBtnGhost]}
+                  onPress={() => {
+                    setMicPermissionState('idle');
+                    try { handleEndCallRef.current && handleEndCallRef.current(); } catch {}
+                  }}
+                  activeOpacity={0.8}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('call.web.cancel') || t('common.cancel') || 'Cancelar'}
+                >
+                  <Text style={styles.micPermBtnGhostText}>
+                    {t('call.web.cancel') || t('common.cancel') || 'Cancelar'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
+
       {/* Slow-connect overlay */}
       {showSlowConnectOverlay && !peerConnected && !peerRinging && !ended && (
         <View
@@ -3251,7 +4046,10 @@ function CallScreenInner() {
 
       {/* End-state card */}
       {ended && (
-        <Animated.View pointerEvents="none" style={[styles.endCardOverlay, { opacity: endCardAnim }]}>
+        <Animated.View
+          pointerEvents={showRatingPrompt ? 'box-none' : 'none'}
+          style={[styles.endCardOverlay, { opacity: endCardAnim }]}
+        >
           <View style={styles.endCard}>
             <AvatarCircle name={callerName} email={_safePeerEmail} size={84} />
             <Text style={styles.endCardName} numberOfLines={1}>{callerName}</Text>
@@ -3266,6 +4064,55 @@ function CallScreenInner() {
                 </>
               )}
             </View>
+
+            {/* [post-call rating, 2026-05-18] 1-5 star QoS prompt. Only
+                rendered when shouldPromptRating was true at hangup time
+                (peer connected + dur >= 10s). Star tap calls callRate
+                with ttfc / reconnects / quality meta, then navigates. */}
+            {showRatingPrompt && (
+              <View style={styles.ratingPromptBlock}>
+                <Text style={styles.ratingPromptTitle}>
+                  {t('call.rating.title') || 'Como foi a sua chamada?'}
+                </Text>
+                <View style={styles.ratingStarsRow}>
+                  {[1, 2, 3, 4, 5].map(n => {
+                    const active = pendingRating >= n;
+                    return (
+                      <TouchableOpacity
+                        key={n}
+                        onPress={() => handleRatingPick(n)}
+                        activeOpacity={0.6}
+                        accessibilityRole="button"
+                        accessibilityLabel={(t('call.rating.starsAria') || '{n} de 5 estrelas').replace('{n}', String(n))}
+                        hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+                        style={styles.ratingStarBtn}
+                      >
+                        <Svg width={32} height={32} viewBox="0 0 24 24" fill={active ? '#fbbf24' : 'none'}>
+                          <SvgPath
+                            d="M12 2.5l2.95 5.98 6.6.96-4.78 4.66 1.13 6.58L12 17.6l-5.9 3.08 1.13-6.58L2.45 9.44l6.6-.96L12 2.5z"
+                            stroke={active ? '#fbbf24' : 'rgba(255,255,255,0.55)'}
+                            strokeWidth={1.6}
+                            strokeLinejoin="round"
+                          />
+                        </Svg>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                <TouchableOpacity
+                  onPress={handleRatingSkip}
+                  activeOpacity={0.6}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('call.rating.skip') || 'Pular'}
+                  style={styles.ratingSkipBtn}
+                  hitSlop={{ top: 6, bottom: 6, left: 12, right: 12 }}
+                >
+                  <Text style={styles.ratingSkipText}>
+                    {t('call.rating.skip') || 'Pular'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         </Animated.View>
       )}
@@ -3366,6 +4213,30 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     borderColor: '#34d399',
   },
+  // "Falando" tag — WhatsApp-style pill next to the peer name. Pairs with
+  // the green halo ring so users get both a visual + textual cue.
+  speakingTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.18)',
+    borderRadius: 999,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    marginTop: 4,
+    gap: 5,
+  },
+  speakingTagDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: '#10b981',
+  },
+  speakingTagText: {
+    color: '#a7f3d0',
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+  },
   // Audio output picker (Android/web).
   audioPickerOverlay: {
     flex: 1,
@@ -3415,6 +4286,54 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
   },
+  // [bug 2026-05-18 web-mic-permission] Mic permission modal — centered card.
+  micPermOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.72)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  micPermCard: {
+    backgroundColor: '#1c1c1e',
+    borderRadius: 18,
+    paddingHorizontal: 22,
+    paddingTop: 24,
+    paddingBottom: 20,
+    width: '100%',
+    maxWidth: 360,
+    alignItems: 'center',
+  },
+  micPermIconWrap: {
+    width: 72, height: 72, borderRadius: 36,
+    backgroundColor: 'rgba(239,68,68,0.15)',
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 14,
+  },
+  micPermTitle: {
+    color: '#fff', fontSize: 18, fontWeight: '700',
+    textAlign: 'center', marginBottom: 8,
+  },
+  micPermBody: {
+    color: 'rgba(255,255,255,0.7)', fontSize: 14, lineHeight: 20,
+    textAlign: 'center', marginBottom: 18,
+  },
+  micPermActions: {
+    width: '100%',
+    gap: 8,
+  },
+  micPermBtn: {
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  micPermBtnPrimary: { backgroundColor: '#7C3AED' },
+  micPermBtnPrimaryText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  micPermBtnSecondary: { backgroundColor: 'rgba(255,255,255,0.10)' },
+  micPermBtnSecondaryText: { color: '#fff', fontSize: 14, fontWeight: '600' },
+  micPermBtnGhost: { backgroundColor: 'transparent' },
+  micPermBtnGhostText: { color: 'rgba(255,255,255,0.55)', fontSize: 14, fontWeight: '600' },
   centerName: { color: '#fff', fontSize: 28, fontWeight: '700', marginTop: 24, textAlign: 'center' },
   centerStatus: { color: 'rgba(255,255,255,0.6)', fontSize: 15, marginTop: 6 },
   endedHint: { color: 'rgba(255,255,255,0.4)', fontSize: 13, marginTop: 12 },
@@ -3644,6 +4563,47 @@ const styles = StyleSheet.create({
   endCardLabel: { color: 'rgba(255,255,255,0.6)', fontSize: 13, fontWeight: '500' },
   endCardDot: { color: 'rgba(255,255,255,0.4)', fontSize: 13, marginHorizontal: 2 },
   endCardDuration: { color: 'rgba(255,255,255,0.85)', fontSize: 13, fontWeight: '600', fontVariant: ['tabular-nums'] },
+  // [post-call rating, 2026-05-18] Tucked inside endCard. Title + 5 stars
+  // row + Skip ghost button. Stars use SVG (no emoji per project rule).
+  ratingPromptBlock: {
+    marginTop: 18,
+    alignItems: 'center',
+    width: '100%',
+    paddingTop: 14,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(255,255,255,0.10)',
+  },
+  ratingPromptTitle: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginBottom: 12,
+    letterSpacing: -0.15,
+  },
+  ratingStarsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 6,
+    marginBottom: 10,
+  },
+  ratingStarBtn: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ratingSkipBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    marginTop: 2,
+  },
+  ratingSkipText: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 13,
+    fontWeight: '600',
+  },
   reconnectBanner: {
     position: 'absolute', top: 80, left: 16, right: 16,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',

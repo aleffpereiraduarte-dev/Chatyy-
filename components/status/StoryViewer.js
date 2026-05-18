@@ -19,13 +19,33 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, Pressable, Image,
   Platform, Modal, Alert, Animated, Keyboard, FlatList, ActivityIndicator,
-  PanResponder, AppState, Linking, Easing, Dimensions,
+  PanResponder, AppState, Linking, Easing, Dimensions, StyleSheet,
 } from 'react-native';
 import * as api from '../../services/api';
 import { BASE_URL } from '../../services/api';
-import { IconX, IconPlus, IconTrash, IconSend, IconCheck, IconMessageSquare, IconEye, IconMusic, IconVolume2, IconVolumeX, IconPause, IconArrowRight } from '../Icons';
+import { IconX, IconPlus, IconTrash, IconSend, IconCheck, IconMessageSquare, IconEye, IconMusic, IconVolume2, IconVolumeX, IconPause, IconArrowRight, IconDownload } from '../Icons';
 import AvatarCircle from '../AvatarCircle';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect } from 'react-native-svg';
+
+// Text-status gradient presets — mirrored from ChatStatusTab.TEXT_BG_GRADIENTS
+// so the viewer can paint the same SVG fill the composer previewed. Kept
+// inline (instead of importing) to avoid a circular dep: ChatStatusTab
+// already pulls StoryViewer indirectly through ChatListTab.
+const _TEXT_BG_GRADIENTS_VIEWER = {
+  purple_pink: ['#8B5CF6', '#EC4899'],
+  blue_cyan:   ['#2563EB', '#06B6D4'],
+  orange_red:  ['#F97316', '#EF4444'],
+  green_teal:  ['#10B981', '#14B8A6'],
+  sunset:      ['#FACC15', '#F97316', '#EF4444'],
+  aurora:      ['#06B6D4', '#8B5CF6', '#EC4899'],
+};
+function _resolveTextGradient(bgColor) {
+  if (!bgColor || typeof bgColor !== 'string' || !bgColor.startsWith('gradient:')) return null;
+  const id = bgColor.slice('gradient:'.length);
+  const colors = _TEXT_BG_GRADIENTS_VIEWER[id];
+  return colors ? { id, colors } : null;
+}
 
 const WEB = Platform.OS === 'web';
 const STORY_DURATION_MS = 5000;
@@ -294,6 +314,10 @@ export default function StoryViewer({
   groupCount = 1,
   onNextGroup = null,
   onPrevGroup = null,
+  // Mention sticker → fires when viewer taps an `@username` chip painted
+  // on the story. Caller routes to /u/<email> (profile screen) or opens a
+  // profile modal. Optional; if omitted the chip stays decorative.
+  onMentionPress = null,
 }) {
   const stories = Array.isArray(storiesProp) ? storiesProp : [];
   const insets = useSafeAreaInsets();
@@ -347,6 +371,17 @@ export default function StoryViewer({
   // dismiss that left users wondering "did I tap something wrong?".
   const [caughtUp, setCaughtUp] = useState(false);
   const caughtUpAnim = useRef(new Animated.Value(0)).current;
+  // Save-to-gallery — transient "Salvo na galeria" toast confirms the save
+  // worked. Auto-clears after 1.8s. `saving` blocks re-taps while the file
+  // is being copied so we don't fire MediaLibrary twice on a slow flush.
+  const [saving, setSaving] = useState(false);
+  const [savedToast, setSavedToast] = useState(false);
+  const savedToastAnim = useRef(new Animated.Value(0)).current;
+  // Reply aggregate count — populated lazily for own statuses via
+  // status_analytics. Surfaced as a pill above the "Seen by N" row so the
+  // owner sees BOTH metrics at a glance (Instagram pattern). Map keyed by
+  // status id so flipping between slides in the same group doesn't refetch.
+  const [repliesCountById, setRepliesCountById] = useState({});
   // UI fade when paused (long-press to inspect a story). Mirrors Instagram —
   // header + bottom bar fade to 0 so the photo is unobstructed; tap-release
   // brings them back. Native-driven opacity, free even on cheap Android.
@@ -465,6 +500,31 @@ export default function StoryViewer({
       if (dismissTimer) clearTimeout(dismissTimer);
     };
   }, [visible, isSelf, idx, stories, reactToastAnim]);
+
+  // Replies count fetcher — lazy-loads status_analytics for own statuses so
+  // the "Seen by N" row can surface a "💬 X respostas" pill alongside it.
+  // Keyed by status id so re-entering the same slide doesn't re-fetch.
+  // statusAnalytics is owner-only on the backend so we gate on isSelf to
+  // avoid 403 churn. Failure is silent — pill just stays hidden.
+  useEffect(() => {
+    if (!visible || !isSelf) return;
+    const curStory = stories?.[idx];
+    const sid = curStory?.id;
+    if (!sid) return;
+    if (Object.prototype.hasOwnProperty.call(repliesCountById, sid)) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await api.statusAnalytics?.(sid);
+        if (cancelled) return;
+        const n = Number(r?.data?.replies);
+        setRepliesCountById(prev => ({ ...prev, [sid]: Number.isFinite(n) ? n : 0 }));
+      } catch {
+        if (!cancelled) setRepliesCountById(prev => ({ ...prev, [sid]: 0 }));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [visible, isSelf, idx, stories, repliesCountById]);
 
   const keyboardOffset = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -863,6 +923,68 @@ export default function StoryViewer({
     return undefined;
   }, [visible, stories?.length, onClose, isFreshMount]);
 
+  // Save the current story media to the device gallery. Mirrors the
+  // ChatMediaViewer flow: prefer mediaCache (already on disk) → fall back
+  // to a direct download via expo-file-system → handoff to MediaLibrary.
+  // Author-only by default; non-owners only see the button if the publisher
+  // hasn't opted out (cur.allow_save !== false). Web silently no-ops since
+  // RN's web shim lacks createAssetAsync.
+  const handleSaveToGallery = useCallback(async (story) => {
+    if (!story || saving || Platform.OS === 'web') return;
+    setSaving(true);
+    try {
+      const ML = (() => { try { return require('expo-media-library'); } catch { return null; } })();
+      if (!ML) { setSaving(false); return; }
+      const perm = await ML.requestPermissionsAsync(true);
+      if (perm?.status !== 'granted' && perm?.accessPrivileges !== 'all') {
+        try { Alert.alert(t?.('common.permissionRequired') || 'Permissão necessária', t?.('chatMedia.permPhotos') || 'Permita acesso a Fotos nas configurações.'); } catch {}
+        setSaving(false);
+        return;
+      }
+      const rawUrl = story.media_url || (story.content || '').split('\n')[0] || '';
+      const remoteUrl = rawUrl
+        ? (rawUrl.startsWith('http') ? rawUrl : `${BASE_URL}${rawUrl}`)
+        : '';
+      if (!remoteUrl) { setSaving(false); return; }
+      // Reuse the per-app media cache if it's already there — saves a
+      // duplicate network round-trip and is exactly the local path the
+      // task describes ("cache mediaCache").
+      let sourceUri = remoteUrl;
+      try {
+        if (_cacheMedia) {
+          const cached = await _cacheMedia(remoteUrl, { force: true });
+          if (cached && typeof cached === 'string') sourceUri = cached;
+        }
+      } catch {}
+      let FS;
+      try { FS = require('expo-file-system/legacy'); } catch { try { FS = require('expo-file-system'); } catch { FS = null; } }
+      if (sourceUri.startsWith('http') && FS?.downloadAsync) {
+        const ext = (sourceUri.split('/').pop() || 'file').split('?')[0].split('.').pop() || 'jpg';
+        const tempPath = (FS.cacheDirectory || '') + 'chatyy_status_save_' + Date.now() + '.' + ext;
+        const dl = await FS.downloadAsync(sourceUri, tempPath);
+        if (dl?.uri) sourceUri = dl.uri;
+      }
+      let ok = false;
+      try {
+        const asset = await ML.createAssetAsync(sourceUri);
+        if (asset) ok = true;
+      } catch {
+        try { await ML.saveToLibraryAsync(sourceUri); ok = true; } catch {}
+      }
+      if (ok) {
+        setSavedToast(true);
+        savedToastAnim.setValue(0);
+        Animated.sequence([
+          Animated.timing(savedToastAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
+          Animated.delay(1400),
+          Animated.timing(savedToastAnim, { toValue: 0, duration: 220, useNativeDriver: true }),
+        ]).start(() => setSavedToast(false));
+        try { if (_Haptics) _Haptics.notificationAsync(_Haptics.NotificationFeedbackType.Success); } catch {}
+      }
+    } catch {}
+    finally { setSaving(false); }
+  }, [saving, t, savedToastAnim]);
+
   if (!visible) return null;
   if (!stories.length) return null;
   const safeIdx = Math.min(Math.max(0, idx), stories.length - 1);
@@ -905,8 +1027,32 @@ export default function StoryViewer({
 
   const renderMedia = () => {
     if (isText) {
+      // Gradient text status — bg_color is a `gradient:<id>` token instead
+      // of a hex value. Paint the SVG behind the text in absoluteFill so
+      // the gradient bleeds edge-to-edge while the centered Text stays put.
+      const gradient = _resolveTextGradient(cur.bg_color);
+      const stops = gradient
+        ? (gradient.colors.length > 1 ? gradient.colors : [gradient.colors[0], gradient.colors[0]])
+        : null;
       return (
-        <View style={{ flex: 1, backgroundColor: cur.bg_color || '#25D366', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
+        <View style={{ flex: 1, backgroundColor: gradient ? '#000' : (cur.bg_color || '#25D366'), alignItems: 'center', justifyContent: 'center', padding: 30 }}>
+          {gradient ? (
+            <Svg
+              pointerEvents="none"
+              style={StyleSheet.absoluteFill}
+              preserveAspectRatio="none"
+              viewBox="0 0 1 1"
+            >
+              <Defs>
+                <SvgLinearGradient id={`storyTextGrad_${gradient.id}`} x1="0" y1="0" x2="1" y2="1">
+                  {stops.map((c, i) => (
+                    <Stop key={i} offset={`${Math.round((i / (stops.length - 1)) * 100)}%`} stopColor={c} stopOpacity="1" />
+                  ))}
+                </SvgLinearGradient>
+              </Defs>
+              <SvgRect x="0" y="0" width="1" height="1" fill={`url(#storyTextGrad_${gradient.id})`} />
+            </Svg>
+          ) : null}
           <Text style={{ color: '#fff', fontSize: 26, fontWeight: '800', textAlign: 'center', lineHeight: 34 }}>
             {cur.content || ''}
           </Text>
@@ -1339,6 +1485,29 @@ export default function StoryViewer({
               ) : null}
             </>
           )}
+          {/* Save to gallery — visible on the author's own non-text stories
+              (images/videos). Saving a text status is a no-op since the
+              content lives only in cur.content. Hidden on web (no
+              MediaLibrary parity in expo-media-library's web shim). */}
+          {isSelf && cur?.id && Platform.OS !== 'web' && (cur.type === 'image' || cur.type === 'video') ? (
+            <TouchableOpacity
+              onPress={() => handleSaveToGallery(cur)}
+              disabled={saving}
+              style={{
+                width: 34, height: 34, borderRadius: 17,
+                backgroundColor: saving ? 'rgba(124,58,237,0.55)' : 'rgba(0,0,0,0.4)',
+                alignItems: 'center', justifyContent: 'center',
+                opacity: saving ? 0.7 : 1,
+              }}
+              accessibilityLabel={t?.('status.saveToGallery') || 'Salvar na galeria'}
+            >
+              {saving ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <IconDownload size={18} color="#fff" />
+              )}
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity
             onPress={onClose}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -1552,6 +1721,51 @@ export default function StoryViewer({
                       t={t}
                     />
                   </View>
+                );
+              }
+              // Mention sticker — Instagram-style "@username" chip that
+              // routes to the mentioned user's profile when tapped. Email
+              // can live in `s.email` (preferred), otherwise fall back to
+              // resolving via `s.username` (legacy). When neither parent
+              // wired onMentionPress nor a target is present, the chip
+              // stays decorative (no-op onPress).
+              // TODO(backend): backend should send a push notification to
+              // the mentioned user when a status containing their mention
+              // is published. Currently the chat.php status_publish
+              // pipeline doesn't fan out a "you were mentioned in a story"
+              // FCM ping — track in chat_status_mentions table + push-notify
+              // mention_type='status'.
+              if (s.type === 'mention') {
+                const username = String(s.username || '').replace(/^@/, '');
+                const email = s.email || (username.includes('@') ? username : null);
+                const targetEmail = email || (username ? `${username}` : null);
+                const tappable = !!(onMentionPress && targetEmail);
+                return (
+                  <TouchableOpacity
+                    key={`mention-${s.id || si}`}
+                    activeOpacity={tappable ? 0.7 : 1}
+                    disabled={!tappable}
+                    onPress={() => {
+                      if (!tappable) return;
+                      try { if (_Haptics) _Haptics.impactAsync(_Haptics.ImpactFeedbackStyle.Light); } catch {}
+                      try { onMentionPress?.({ email: targetEmail, username, sticker: s, story: cur }); } catch {}
+                    }}
+                    style={{ position: 'absolute', left: Number(s.x) || 0, top: Number(s.y) || 0 }}
+                    accessibilityRole="link"
+                    accessibilityLabel={`@${username}`}
+                  >
+                    <View style={{
+                      backgroundColor: 'rgba(59,130,246,0.92)',
+                      borderRadius: 20, paddingVertical: 8, paddingHorizontal: 16,
+                      borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+                      shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
+                      elevation: 3,
+                    }}>
+                      <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
+                        @{username}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
                 );
               }
               return null;
@@ -1814,6 +2028,39 @@ export default function StoryViewer({
           </Animated.View>
         )}
 
+        {/* Save-to-gallery toast — confirms the file landed in the camera
+            roll. Same chrome as the react toast so the visual language
+            stays consistent. Anchored top so it doesn't fight the reply
+            keyboard at the bottom. */}
+        {savedToast && (
+          <Animated.View
+            pointerEvents="none"
+            style={{
+              position: 'absolute', top: Platform.OS === 'ios' ? 110 : 92,
+              left: 0, right: 0, alignItems: 'center', zIndex: 31,
+              opacity: savedToastAnim,
+              transform: [{
+                translateY: savedToastAnim.interpolate({
+                  inputRange: [0, 1], outputRange: [-12, 0],
+                }),
+              }],
+            }}
+          >
+            <View style={{
+              flexDirection: 'row', alignItems: 'center', gap: 8,
+              backgroundColor: 'rgba(34,197,94,0.95)',
+              borderRadius: 22, paddingHorizontal: 14, paddingVertical: 9,
+              shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 8,
+              shadowOffset: { width: 0, height: 4 }, elevation: 6,
+            }}>
+              <IconCheck size={16} color="#fff" strokeWidth={3} />
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }} numberOfLines={1}>
+                {t?.('status.savedToGallery') || 'Salvo na galeria'}
+              </Text>
+            </View>
+          </Animated.View>
+        )}
+
         {/* Heart burst — 5 hearts spawned by long-press on ❤️ in the reaction
             row. Each one floats up ~180px while fading + scaling. Stacked at
             bottom: 130 (above the reaction row) so the flock appears to lift
@@ -1864,37 +2111,61 @@ export default function StoryViewer({
           opacity: uiOpacity,
         }}>
           {isSelf ? (
-            // Tappable "Seen by N" pill — opens inline viewers sheet when caller wired.
-            // Falls back to inline label for surfaces that don't pass onSeenByPress.
-            onSeenByPress ? (
-              <TouchableOpacity
-                onPress={() => onSeenByPress(cur)}
-                activeOpacity={0.8}
-                style={{
-                  flexDirection: 'row', alignItems: 'center', gap: 10,
-                  backgroundColor: 'rgba(0,0,0,0.55)',
-                  borderRadius: 22, paddingHorizontal: 14, paddingVertical: 9,
-                  borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
-                }}
-                accessibilityLabel={t?.('status.seenBy') || 'Visualizações'}
-                accessibilityRole="button"
-              >
-                <IconEye size={17} color="#fff" />
-                <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600', flex: 1 }}>
-                  {(cur.views || 0) === 0
-                    ? (t?.('status.noViewsYet') || 'Ninguém viu ainda')
-                    : `${cur.views || 0} ${(cur.views || 0) === 1 ? (t?.('status.viewSingular') || 'visualização') : (t?.('status.viewPlural') || 'visualizações')}`}
-                </Text>
-                <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 16 }}>›</Text>
-              </TouchableOpacity>
-            ) : (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <IconEye size={16} color="#fff" />
-                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600', opacity: 0.9 }}>
-                  {(cur?.views ?? 0)} {cur?.views === 1 ? (t?.('status.view') || 'visualização') : (t?.('status.views') || 'visualizações')}
-                </Text>
-              </View>
-            )
+            // Tappable "Seen by N" pill + reply aggregate pill — opens
+            // inline viewers sheet when caller wired. Falls back to inline
+            // label for surfaces that don't pass onSeenByPress.
+            <View style={{ gap: 8 }}>
+              {onSeenByPress ? (
+                <TouchableOpacity
+                  onPress={() => onSeenByPress(cur)}
+                  activeOpacity={0.8}
+                  style={{
+                    flexDirection: 'row', alignItems: 'center', gap: 10,
+                    backgroundColor: 'rgba(0,0,0,0.55)',
+                    borderRadius: 22, paddingHorizontal: 14, paddingVertical: 9,
+                    borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+                  }}
+                  accessibilityLabel={t?.('status.seenBy') || 'Visualizações'}
+                  accessibilityRole="button"
+                >
+                  <IconEye size={17} color="#fff" />
+                  <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600', flex: 1 }}>
+                    {(cur.views || 0) === 0
+                      ? (t?.('status.noViewsYet') || 'Ninguém viu ainda')
+                      : `${cur.views || 0} ${(cur.views || 0) === 1 ? (t?.('status.viewSingular') || 'visualização') : (t?.('status.viewPlural') || 'visualizações')}`}
+                  </Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 16 }}>›</Text>
+                </TouchableOpacity>
+              ) : (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <IconEye size={16} color="#fff" />
+                  <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600', opacity: 0.9 }}>
+                    {(cur?.views ?? 0)} {cur?.views === 1 ? (t?.('status.view') || 'visualização') : (t?.('status.views') || 'visualizações')}
+                  </Text>
+                </View>
+              )}
+              {/* Reply count pill — surfaced only when > 0 so empty stories
+                  don't render a misleading "0 respostas" line. Backed by
+                  statusAnalytics (owner-only). Tap is a no-op for now —
+                  future wave wires it to a replies sheet listing the DM
+                  cards that quoted this story. */}
+              {(repliesCountById[cur.id] || 0) > 0 ? (
+                <View
+                  style={{
+                    flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start',
+                    gap: 8,
+                    backgroundColor: 'rgba(124,58,237,0.78)',
+                    borderRadius: 18, paddingHorizontal: 12, paddingVertical: 6,
+                    borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+                  }}
+                >
+                  <IconMessageSquare size={14} color="#fff" />
+                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+                    {(t?.('status.replies.count') || '{n} respostas').replace('{n}', repliesCountById[cur.id] || 0)}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
           ) : (
             <View style={{ gap: 10 }}>
               {/* Quick reactions — scale-pop animation + medium haptic on tap.

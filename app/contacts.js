@@ -807,28 +807,70 @@ function ContactsScreenInner() {
     });
   }, [contacts, activeTab, debouncedSearch, activeGroup]);
 
-  // Non-favorite contacts with alphabetical sections
+  // Non-favorite contacts with alphabetical sections.
+  // Sections layout:
+  //   1. "Adicionados recentemente" — contacts whose added_at (preferred)
+  //      or created_at is within the last 7 days. If neither timestamp is
+  //      populated on any contact (older backend payloads), we fall back
+  //      to top 5 by created_at desc so the section still has something
+  //      meaningful instead of going empty. Capped at 5 either way.
+  //   2. A…Z (and "#" bucket) — every non-favorite, including those that
+  //      already appear in "Recently added" (parity with WhatsApp, which
+  //      surfaces recents at the top and still keeps them under their
+  //      alphabetical letter).
   const alphabeticalSections = useMemo(() => {
     if (activeTab !== 'my') return [];
     const nonFav = filteredItems.filter(c => !c.favorite);
+    const enrich = (c) => ({
+      ...c,
+      _lastContactedFormatted: c.last_contacted ? `${t('contacts.lastContacted')}: ${formatLastContacted(c.last_contacted, t)}` : '',
+    });
+
+    // Recently added — last 7 days by added_at|created_at.
+    const SEVEN_D_MS = 7 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const tsOf = (c) => {
+      const raw = c.added_at || c.created_at || '';
+      if (!raw) return 0;
+      const n = typeof raw === 'number' ? raw : Date.parse(raw);
+      return Number.isFinite(n) ? n : 0;
+    };
+    const withTs = nonFav.map(c => ({ c, ts: tsOf(c) })).filter(x => x.ts > 0);
+    let recent = withTs.filter(x => now - x.ts <= SEVEN_D_MS);
+    if (recent.length === 0 && withTs.length > 0) {
+      // Fallback: top 5 by created_at desc when nothing falls in the 7d
+      // window (e.g. all contacts imported long ago).
+      recent = [...withTs].sort((a, b) => b.ts - a.ts).slice(0, 5);
+    } else {
+      recent = recent.sort((a, b) => b.ts - a.ts).slice(0, 5);
+    }
+    const recentData = recent.map(x => enrich(x.c));
+
+    // Alphabetical buckets.
     const grouped = {};
     for (const c of nonFav) {
       const letter = ((c.name || c.email || '?')[0] || '?').toUpperCase();
       const key = /[A-Z]/.test(letter) ? letter : '#';
       if (!grouped[key]) grouped[key] = [];
-      // Pre-compute formatted last contacted to avoid re-computing in render
-      grouped[key].push({
-        ...c,
-        _lastContactedFormatted: c.last_contacted ? `${t('contacts.lastContacted')}: ${formatLastContacted(c.last_contacted, t)}` : '',
-      });
+      grouped[key].push(enrich(c));
     }
     const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
-    return Object.keys(grouped).sort().map(letter => ({
+    const alpha = Object.keys(grouped).sort().map(letter => ({
       title: letter,
       data: grouped[letter].sort((a, b) =>
         collator.compare((a.name || a.email || ''), (b.name || b.email || ''))
       ),
     }));
+
+    const out = [];
+    if (recentData.length > 0) {
+      out.push({
+        title: t('contacts.recentlyAdded') || 'Adicionados recentemente',
+        key: '__recent__',
+        data: recentData,
+      });
+    }
+    return out.concat(alpha);
   }, [filteredItems, activeTab, t]);
 
   // Render favorite contact (larger avatar). Tap = profile (Instagram/WA
@@ -957,7 +999,11 @@ function ContactsScreenInner() {
 
   const deviceKeyExtractor = useCallback((item, index) => item.id || String(index), []);
   const familyKeyExtractor = useCallback((item, index) => item.email || String(index), []);
-  const myKeyExtractor = useCallback((item, index) => item.id || item.email || String(index), []);
+  // SectionList note: a contact can appear in BOTH the "Recently added"
+  // section and its alphabetical letter section, which would yield
+  // duplicate keys if we keyed solely off item.id. Prefix the key with
+  // the section index so each rendered row is unique.
+  const myKeyExtractor = useCallback((item, index) => `${item.id || item.email || ''}-${index}`, []);
 
   const isLoading = (activeTab === 'my' && loading) ||
     (activeTab === 'device' && loadingDevice) ||

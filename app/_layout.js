@@ -1119,6 +1119,7 @@ export default function RootLayout() {
                   <Stack.Screen name="signup-phone" options={{ headerShown: false, animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="signup-username" options={{ headerShown: false, animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="change-phone" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="linked-phones" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="verify-phone-required" options={{ animation: 'fade', animationDuration: 150, gestureEnabled: false }} />
                   <Stack.Screen name="inbox" options={{ animation: 'fade', animationDuration: 100 }} />
                   <Stack.Screen name="compose" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 150 }} />
@@ -1197,6 +1198,8 @@ export default function RootLayout() {
                   <Stack.Screen name="hashtag/[tag]" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   {/* Reels P0 — "Use this sound" deep link + Duet/Stitch composer. */}
                   <Stack.Screen name="reels-sound" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 150 }} />
+                  {/* Reels recorder — dedicated full-screen camera (TikTok/Instagram-style). */}
+                  <Stack.Screen name="reels-recorder" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'slide_from_bottom', animationDuration: 180 }} />
                   <Stack.Screen name="post-create" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'slide_from_bottom', animationDuration: 150 }} />
                   <Stack.Screen name="community/[id]" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="community/create" options={{ headerShown: false, presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 180 }} />

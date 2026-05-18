@@ -6,11 +6,9 @@
  * straight away. Uses expo-camera's built-in barcode scanner — already
  * relied on elsewhere in the app (chat-new.js, inbox.js, login.js).
  *
- * QR rendering: we don't have react-native-qrcode-svg installed, so we
- * encode the payload with a tiny embedded matrix-style QR generator
- * (numeric/alpha mode skipped — UTF-8 byte mode only). For shareability
- * we also expose a "Share QR" action that copies the chatyy:// link to
- * the system share sheet, which works without a real QR raster on web.
+ * QR rendering: uses react-native-qrcode-svg (real QR w/ error correction)
+ * so the artwork is actually scannable by any camera app — not just the
+ * in-app scanner. Falls back gracefully if the lib isn't bundled.
  */
 import React, { useMemo, useState } from 'react';
 import {
@@ -24,6 +22,15 @@ import { useLanguage } from '../context/LanguageContext';
 import { Spacing, BorderRadius } from '../constants/theme';
 import { IconX, IconShare, IconCamera, IconUserPlus } from './../components/Icons';
 import AvatarCircle from './../components/AvatarCircle';
+import { getAvatarUrlForEmail } from '../services/api';
+
+// Lazy-load react-native-qrcode-svg so an environment without it (or web
+// SSR without react-native-svg) doesn't crash. Real QRs are preferred but
+// not required for the screen to render.
+let QRCode = null;
+try {
+  QRCode = require('react-native-qrcode-svg').default;
+} catch {}
 
 // Lazy-load expo-camera so web doesn't crash if it's not bundled.
 let CameraView = null;
@@ -40,53 +47,27 @@ function buildPayload(email, name) {
   return `chatyy://add-contact?${params.toString()}`;
 }
 
-// Tiny deterministic "QR-ish" matrix generator — produces a 25x25 grid
-// from a hash of the payload. This is NOT a real QR (no error correction)
-// but gives a visually distinct, scannable-looking artwork that you can
-// see + share. The actual transport is the chatyy:// link via Share. If
-// react-native-qrcode-svg becomes available, swap this for the real lib.
-function pseudoQrMatrix(payload, size = 25) {
-  const out = Array.from({ length: size }, () => Array(size).fill(false));
-  // FNV-1a-ish rolling hash to seed each cell.
-  let h = 2166136261;
-  for (let i = 0; i < payload.length; i++) {
-    h ^= payload.charCodeAt(i);
-    h = (h * 16777619) >>> 0;
-  }
-  for (let r = 0; r < size; r++) {
-    for (let c = 0; c < size; c++) {
-      h = (h * 1103515245 + 12345) >>> 0;
-      out[r][c] = ((h >> ((r + c) % 24)) & 1) === 1;
-    }
-  }
-  // Place QR-style finder squares in corners so the artwork reads as a code.
-  const drawFinder = (br, bc) => {
-    for (let r = 0; r < 7; r++) for (let c = 0; c < 7; c++) {
-      const onEdge = r === 0 || r === 6 || c === 0 || c === 6;
-      const inner = r >= 2 && r <= 4 && c >= 2 && c <= 4;
-      out[br + r][bc + c] = onEdge || inner;
-    }
-  };
-  drawFinder(0, 0);
-  drawFinder(0, size - 7);
-  drawFinder(size - 7, 0);
-  return out;
-}
-
-function QrArtwork({ payload, size = 240, color = '#111' }) {
-  const matrix = useMemo(() => pseudoQrMatrix(payload, 25), [payload]);
-  const cell = size / 25;
-  return (
-    <View style={{ width: size, height: size, backgroundColor: '#fff', padding: 8, borderRadius: 12 }}>
-      <View style={{ flex: 1 }}>
-        {matrix.map((row, r) => (
-          <View key={r} style={{ flexDirection: 'row', height: cell }}>
-            {row.map((on, c) => (
-              <View key={c} style={{ width: cell, height: cell, backgroundColor: on ? color : 'transparent' }} />
-            ))}
-          </View>
-        ))}
+function QrArtwork({ payload, size = 240, color = '#111', backgroundColor = '#fff', logoUri = '' }) {
+  // Real QR via react-native-qrcode-svg. Embeds the avatar as a center logo
+  // so the QR doubles as a profile card (WhatsApp / Telegram parity).
+  if (QRCode) {
+    return (
+      <View style={{ padding: 12, backgroundColor, borderRadius: 12 }}>
+        <QRCode
+          value={payload}
+          size={size}
+          color={color}
+          backgroundColor={backgroundColor}
+          {...(logoUri ? { logo: { uri: logoUri }, logoSize: 48, logoBackgroundColor: backgroundColor, logoBorderRadius: 24, logoMargin: 2 } : {})}
+        />
       </View>
+    );
+  }
+  // Fallback when the lib isn't bundled — render a neutral placeholder
+  // and rely on the share/copy action instead of pretending it's a QR.
+  return (
+    <View style={{ width: size, height: size, backgroundColor, padding: 8, borderRadius: 12, alignItems: 'center', justifyContent: 'center' }}>
+      <Text style={{ color, fontSize: 12, textAlign: 'center', paddingHorizontal: 16 }}>{payload}</Text>
     </View>
   );
 }
@@ -178,7 +159,13 @@ export default function ProfileQRScreen() {
             </View>
 
             <View style={{ alignItems: 'center', marginTop: 24 }}>
-              <QrArtwork payload={payload} size={240} color={isDark ? '#fff' : '#111'} />
+              <QrArtwork
+                payload={payload}
+                size={240}
+                color={isDark ? '#fff' : '#000'}
+                backgroundColor={isDark ? '#000' : '#fff'}
+                logoUri={user?.email ? getAvatarUrlForEmail(user.email) : ''}
+              />
             </View>
 
             <Text style={[s.hint, { color: colors.textSecondary }]}>

@@ -47,6 +47,18 @@ class ExpoShortsModule : Module() {
       }
     }
 
+    // Audio-session helpers — iOS sets AVAudioSession.playback so lock-screen
+    // audio keeps going. Android handles that via the MediaSession + audio
+    // focus in ExoPlayer, which is already on by default. We expose stubs so
+    // the JS surface is platform-agnostic.
+    AsyncFunction("setAudioSessionPlayback") {
+      Log.d(TAG, "setAudioSessionPlayback: noop on Android (ExoPlayer handles focus)")
+    }
+
+    AsyncFunction("restoreAudioSession") {
+      Log.d(TAG, "restoreAudioSession: noop on Android")
+    }
+
     // Module lifecycle: drain the pool when the module is destroyed by RN
     // (full reload / app teardown).
     OnDestroy {
@@ -56,7 +68,7 @@ class ExpoShortsModule : Module() {
     }
 
     View(ShortsPlayerView::class) {
-      Events("onPlaybackReady", "onBuffering", "onError")
+      Events("onPlaybackReady", "onBuffering", "onError", "onTime")
 
       Prop("videoUrl") { view: ShortsPlayerView, value: String? ->
         view.setVideoUrl(value)
@@ -73,6 +85,12 @@ class ExpoShortsModule : Module() {
 
       Prop("playbackRate") { view: ShortsPlayerView, value: Double? ->
         view.setPlaybackRate(value ?: 1.0)
+      }
+
+      // View-bound async function: drives the JS scrubber by seeking the
+      // pooled ExoPlayer attached to this surface.
+      AsyncFunction("seek") { view: ShortsPlayerView, ms: Double ->
+        view.seekToMs(ms)
       }
     }
   }

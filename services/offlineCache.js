@@ -407,6 +407,90 @@ export async function replayOfflineQueue(api) {
         case 'send_email':
           await api.sendEmail(action.payload);
           break;
+        case 'chat_voice_upload': {
+          // WhatsApp-grade voice note offline send. User recorded while
+          // offline (or while WS was reconnecting). The audio file lives
+          // in documentDirectory/outbox/voice/ so it survived a kill.
+          // Once uploaded successfully we delete the outbox copy and
+          // persist the server's canonical message into chatCache so the
+          // bubble flips from optimistic to delivered.
+          if (!action.audio_uri) {
+            const e = new Error('voice_uri_missing');
+            e.isHardError = true;
+            throw e;
+          }
+          const filePayload = {
+            uri: action.audio_uri,
+            name: action.audio_name || 'voice.m4a',
+            type: action.audio_type || 'audio/mp4',
+          };
+          let r;
+          try {
+            r = await api.chatUploadFile(
+              action.conversation_id,
+              filePayload,
+              `Voice (${action.duration || 0}s)`,
+              false, // view_once disabled for voice
+              null,
+              'voice',
+            );
+          } catch (uploadErr) {
+            const m = String(uploadErr?.message || '');
+            // 404/410 — outbox file gone (user cleared cache between
+            // record and net-up). Hard fail; user will see red ❗.
+            if (/\b40[49]\b|\b410\b|gone|not.?found/i.test(m)) {
+              uploadErr.isHardError = true;
+            }
+            throw uploadErr;
+          }
+          if (r?.success && r.data) {
+            const serverMsg = r.data.message || r.data;
+            try {
+              const { removePendingMessage, cacheSingleMessage } = require('./chatCache');
+              await removePendingMessage(action.conversation_id, action.temp_id).catch(() => {});
+              await cacheSingleMessage(action.conversation_id, serverMsg).catch(() => {});
+            } catch {}
+            // Persist server-side waveform peaks alongside the cached
+            // audio so future renders paint instantly. The server may
+            // have recomputed peaks from the file even if we passed
+            // an inline waveform via chat_voice_session_finalize.
+            try {
+              const { setVoiceWaveform, cacheVoiceMessage, removeOutboxVoice } = require('./audioCache');
+              const peaks = serverMsg.wave_peaks || serverMsg.waveform || action.waveform;
+              if (Array.isArray(peaks)) setVoiceWaveform(serverMsg.file_url, peaks, serverMsg.id);
+              // Adopt the just-uploaded local file as the canonical
+              // cache for the new remote URL so we don't waste bytes
+              // re-downloading what we already have on disk.
+              if (serverMsg.file_url) {
+                const mc = require('./mediaCache');
+                if (typeof mc.adoptLocalFileAsCache === 'function') {
+                  mc.adoptLocalFileAsCache(serverMsg.file_url, action.audio_uri).catch(() => {});
+                }
+                // Also fire the official prefetch so the syncIndex
+                // entry is registered for both list + bubble consumers.
+                cacheVoiceMessage(serverMsg.file_url, serverMsg.id, peaks).catch(() => {});
+              }
+              // Cleanup outbox file — successfully uploaded, no longer
+              // needed. Free the bytes from documentDirectory.
+              await removeOutboxVoice(action.audio_uri).catch(() => {});
+            } catch {}
+            try {
+              const ws = require('./websocket').default;
+              ws?.emit?.('chat_message', {
+                conversation_id: action.conversation_id,
+                message: serverMsg,
+              });
+              ws?.relayChatMessage?.(action.conversation_id, serverMsg, action.temp_id, []);
+            } catch {}
+          } else {
+            const m = String(r?.message || r?.error || '');
+            const isHard = /too large|size|mime|rejected|blocked|forbidden|\b413\b|\b415\b|\b403\b/i.test(m);
+            const err = new Error(m || 'voice_upload_failed');
+            if (isHard) err.isHardError = true;
+            throw err;
+          }
+          break;
+        }
         case 'chat_audio_upload': {
           // Áudio gravado offline ou com net ruim — tenta subir novamente
           // quando conexão voltar. Só funciona no native (precisa do uri

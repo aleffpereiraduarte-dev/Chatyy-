@@ -49,7 +49,13 @@ export async function registerForWebPush() {
     }
 
     if (!VAPID_PUBLIC_KEY) {
-      console.warn('[webPush] VAPID public key not configured — skipping');
+      // Web push is gated on ops shipping a VAPID public key. Until then the
+      // platform falls back to in-app + native push, so this is expected on
+      // the web build. Keep the log out of production console — it confused
+      // users investigating F12 (looked like a bug, isn't).
+      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        console.warn('[webPush] VAPID public key not configured — skipping');
+      }
       return null;
     }
 

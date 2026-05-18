@@ -47,15 +47,29 @@ let _debounceTimer = null;
 let _running = false;        // is the orchestrator wired up?
 let _syncing = false;        // is a recovery in flight right now?
 let _lastSyncAt = 0;
+let _lastScheduledAt = 0;    // hard cooldown gate — see SCHEDULE_COOLDOWN_MS
 let _apiRef = null;
 let _opts = {};
 // Subscribers for the syncing badge (ChatListTab consumes these).
 const _listeners = new Set();
 
+// Dev-only logger. The `[onlineRecovery] start — ws_authenticated` line used
+// to fire on every WS reconnect (sometimes hundreds of times in a row when
+// the WS thrashed). Suppress in prod so the console isn't flooded; keep it
+// on in dev so debugging the trigger path is still trivial.
+const _isDev = (typeof __DEV__ !== 'undefined') ? __DEV__ : false;
+function _log(...args) { if (_isDev) { try { console.log(...args); } catch {} } }
+
 // Minimum gap between two successful recoveries. Triggers that fire inside
 // this window are dropped — prevents WS flap loops from hammering the
 // backend.
 const MIN_GAP_MS = 1500;
+// Hard cooldown at the schedule layer. The debounce alone collapses bursts
+// fired in the same tick, but a sustained WS reconnect storm (auth_success
+// every ~1s after each fast reconnect attempt) would otherwise queue a fresh
+// recovery every cycle. With this cooldown, any trigger arriving within
+// SCHEDULE_COOLDOWN_MS of the last accepted schedule is silently dropped.
+const SCHEDULE_COOLDOWN_MS = 5000;
 // Debounce so multiple triggers in the same tick collapse to one run.
 const DEBOUNCE_MS = 800;
 // chat_sync caps at 200 convs / request. Smaller batches = faster individual
@@ -76,6 +90,14 @@ function _notify() {
 
 function _schedule(reason) {
   if (!_running) return;
+  // Hard cooldown — drop triggers that fire while a recent schedule is still
+  // pending or just finished. Without this a thrashing WS (close→reconnect→
+  // auth_success looping every ~1s) would queue a fresh recovery every cycle
+  // because each trigger resets the debounce timer instead of riding the
+  // existing one. Prints to the console were a clear symptom of that loop.
+  const now = Date.now();
+  if (now - _lastScheduledAt < SCHEDULE_COOLDOWN_MS) return;
+  _lastScheduledAt = now;
   if (_debounceTimer) { try { clearTimeout(_debounceTimer); } catch {} _debounceTimer = null; }
   _debounceTimer = setTimeout(() => {
     _debounceTimer = null;
@@ -157,7 +179,7 @@ async function _runRecovery(reason) {
   _syncing = true;
   try { globalThis.__chatyy_syncing = true; } catch {}
   _notify();
-  try { console.log('[onlineRecovery] start —', reason); } catch {}
+  _log('[onlineRecovery] start —', reason);
 
   // Watchdog: clear the visible badge after BADGE_MAX_MS even if the sync
   // is still running in background. WhatsApp parity — sincronizando deve
@@ -167,7 +189,7 @@ async function _runRecovery(reason) {
       _syncing = false;
       globalThis.__chatyy_syncing = false;
       _notify();
-      console.log('[onlineRecovery] badge timed out — hiding (sync may continue)');
+      _log('[onlineRecovery] badge timed out — hiding (sync may continue)');
     } catch {}
   }, BADGE_MAX_MS);
 
@@ -226,7 +248,7 @@ async function _runRecovery(reason) {
     }
 
     _lastSyncAt = Date.now();
-    try { console.log('[onlineRecovery] done'); } catch {}
+    _log('[onlineRecovery] done');
   } finally {
     try { clearTimeout(_badgeWatchdog); } catch {}
     _syncing = false;
@@ -245,7 +267,20 @@ async function _runRecovery(reason) {
 export function startOnlineRecovery(apiCall, opts) {
   if (_running) return;
   if (!apiCall) return;
+  // Belt-and-suspenders: if stopOnlineRecovery wasn't called between two
+  // starts (e.g. fast logout→login), make sure no stray subscriptions from
+  // the previous wire-up remain. Without this, every login would stack a
+  // fresh `ws.on('connection')` listener on top of the old one and each
+  // auth_success would fan out to N listeners, each scheduling its own
+  // recovery — the symptom users saw as the WS reconnect storm log spam.
+  if (_netUnsub) { try { _netUnsub(); } catch {} _netUnsub = null; }
+  if (_wsUnsub)  { try { _wsUnsub();  } catch {} _wsUnsub  = null; }
+  if (_appStateSub && typeof _appStateSub.remove === 'function') {
+    try { _appStateSub.remove(); } catch {}
+  }
+  _appStateSub = null;
   _running = true;
+  _lastScheduledAt = 0;
   _apiRef = apiCall;
   _opts = opts || {};
 
@@ -296,6 +331,7 @@ export function startOnlineRecovery(apiCall, opts) {
 export function stopOnlineRecovery() {
   _running = false;
   _apiRef = null;
+  _lastScheduledAt = 0;
   if (_debounceTimer) { try { clearTimeout(_debounceTimer); } catch {} _debounceTimer = null; }
   if (_netUnsub) { try { _netUnsub(); } catch {} _netUnsub = null; }
   if (_wsUnsub)  { try { _wsUnsub();  } catch {} _wsUnsub  = null; }

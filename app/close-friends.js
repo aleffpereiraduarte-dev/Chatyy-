@@ -70,6 +70,12 @@ export default function CloseFriendsScreen() {
   });
 
   const countText = (t?.('closeFriends.count') || '{n} em amigos próximos').replace('{n}', closeFriends.size);
+  // Subtitle line — surfaces the purpose of the screen. When the user has
+  // 0 close friends saved, swap to the empty-state CTA so they know what
+  // to do next. Both strings live in i18n so translations stay in sync.
+  const subtitleText = closeFriends.size === 0
+    ? (t?.('closeFriends.subtitle') || 'Compartilhe com um grupo selecionado')
+    : countText;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -79,9 +85,9 @@ export default function CloseFriendsScreen() {
         </TouchableOpacity>
         <View style={{ flex: 1, marginLeft: 4 }}>
           <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>
-            {t?.('closeFriends.title') || 'Amigos próximos'}
+            {t?.('closeFriends.title') || 'Melhores amigos'}
           </Text>
-          <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>{countText}</Text>
+          <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>{subtitleText}</Text>
         </View>
         <IconStar size={22} color="#22C55E" />
       </View>
@@ -134,7 +140,7 @@ export default function CloseFriendsScreen() {
           }}
           ListEmptyComponent={
             <Text style={{ color: colors.textSecondary, textAlign: 'center', marginTop: 40 }}>
-              {t?.('closeFriends.empty') || 'Nenhum contato'}
+              {t?.('closeFriends.empty') || 'Adicione amigos proximos'}
             </Text>
           }
         />

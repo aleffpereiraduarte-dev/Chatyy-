@@ -981,6 +981,20 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   if (!visible) return null;
 
   const _active = _list[_currentIdx] || _list[0];
+  // Privacy belt-and-suspenders: when the active item has no fileUrl (most
+  // common shape for a deleted msg after the per-bubble strip), the viewer
+  // has nothing to display. Auto-close instead of rendering a blank/
+  // last-frame placeholder that could surface a still-cached image. The
+  // viewOnce flow still opens with an empty URL intentionally (the pill
+  // owns its own loading state) so we leave that path untouched.
+  if (!viewOnce && (!_active || !_active.fileUrl)) {
+    // useEffect can't be added below an early return — invoke onClose via
+    // microtask so React unwinds cleanly without dropping a "setState in
+    // render" warning.
+    try { Promise.resolve().then(() => onClose && onClose()); } catch {}
+    return null;
+  }
+
   // Prefer HLS playlist for videos when available (chunk-streamed, <500ms
   // first frame). Falls back to the progressive mp4 fileUrl when HLS isn't
   // generated yet (transcode is async during chat_send).

@@ -392,6 +392,10 @@ export async function cacheMedia(url, opts = {}) {
   }
 
   const key = urlToKey(url);
+  // Best-effort owner tag so the LRU sweep can protect favorites.
+  if (opts && opts.conversationId != null) {
+    try { _urlConvOwner.set(key, String(opts.conversationId)); } catch {}
+  }
   const indexed = syncIndex.get(key);
   if (indexed) {
     try {
@@ -616,6 +620,13 @@ export function prefetchIncomingMessageMedia(message) {
   let url = message.file_url;
   if (!url || typeof url !== 'string') return;
   if (!url.startsWith('http')) url = `https://chatyy.com.br${url}`;
+  // Persist LQIP (thumb_b64) opportunistically so the blur placeholder is
+  // available the moment the bubble mounts — even before the row hits the
+  // chat-conversation render path.
+  if (typeof message.thumb_b64 === 'string' && message.thumb_b64.length > 0) {
+    try { persistThumbB64(message.id, message.thumb_b64); } catch {}
+  }
+  const convId = message.conversation_id ?? message.conversationId;
   try {
     if (t === 'audio' || t === 'voice') {
       // Audio is tiny (~50-300KB) and the user expects instant playback —
@@ -623,10 +634,11 @@ export function prefetchIncomingMessageMedia(message) {
       // ChatListTab #886 behavior. Goes through saveMediaPermanent which
       // shares the same destination dir as cacheMedia.
       prefetchAudioMessage(url);
+      if (convId != null) tagUrlConversation(url, convId);
     } else {
       // Image — honor the cellular gate via cacheMedia (defaults to wifi-only).
       // Fire-and-forget; failures don't bubble up to the WS handler.
-      cacheMedia(url).catch(() => {});
+      cacheMedia(url, convId != null ? { conversationId: convId } : undefined).catch(() => {});
     }
   } catch {}
 }
@@ -742,17 +754,36 @@ export async function evictIfNeeded() {
       }
       const total = entries.reduce((a, e) => a + e.size, 0);
       if (total <= limitBytes) return;
-      // Oldest first — purge LRU until under cap.
+      // Oldest first — purge LRU until under cap. Skip files whose owning
+      // conversation is flagged Keep-Always (per-conv favorites). If after
+      // protecting all favorites we STILL can't free enough, we fall back
+      // to evicting protected entries too — better the user loses a few
+      // favorites than the device runs out of disk.
       entries.sort((a, b) => a.mtime - b.mtime);
       let freed = 0;
       const need = total - limitBytes;
+      const skipped = [];
       for (const e of entries) {
         if (freed >= need) break;
+        if (_isFileProtected(e.name)) { skipped.push(e); continue; }
         try {
           await fs.deleteAsync(e.path, { idempotent: true });
           syncIndex.delete(e.name);
+          _urlConvOwner.delete(e.name);
           freed += e.size;
         } catch {}
+      }
+      // Last-resort sweep: only if we still haven't hit the target.
+      if (freed < need) {
+        for (const e of skipped) {
+          if (freed >= need) break;
+          try {
+            await fs.deleteAsync(e.path, { idempotent: true });
+            syncIndex.delete(e.name);
+            _urlConvOwner.delete(e.name);
+            freed += e.size;
+          } catch {}
+        }
       }
       _schedulePersistIndex();
     } finally {
@@ -912,4 +943,217 @@ export async function clearAllCache() {
   }
   syncIndex.clear();
   _schedulePersistIndex();
+}
+
+// ── Keep-Always set (per-conversation favorites) ─────────────────────────
+// Conversations flagged "Manter sempre" never have their media evicted by
+// the LRU sweep. Persisted in MMKV under KEEP_ALWAYS_KEY as a string[] of
+// conversation IDs. The evict path consults `_isUrlProtected` which walks
+// the syncIndex tagging and skips any file whose owner conv is in the set.
+const KEEP_ALWAYS_KEY = 'media_keep_always_convs_v1';
+const _keepAlwaysConvs = new Set();
+const _urlConvOwner = new Map(); // key → conversationId (best-effort tag)
+let _keepAlwaysHydrated = false;
+
+function _hydrateKeepAlways() {
+  if (_keepAlwaysHydrated) return;
+  _keepAlwaysHydrated = true;
+  if (Platform.OS === 'web') return;
+  try {
+    const mmkv = require('./mmkv');
+    const raw = mmkv.getString?.(KEEP_ALWAYS_KEY);
+    if (!raw) return;
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) {
+      for (const id of arr) if (id != null) _keepAlwaysConvs.add(String(id));
+    }
+  } catch {}
+}
+_hydrateKeepAlways();
+
+function _persistKeepAlways() {
+  if (Platform.OS === 'web') return;
+  try {
+    const mmkv = require('./mmkv');
+    mmkv.setString?.(KEEP_ALWAYS_KEY, JSON.stringify([..._keepAlwaysConvs]));
+  } catch {}
+}
+
+export function setConversationKeepAlways(conversationId, on) {
+  if (conversationId == null) return;
+  _hydrateKeepAlways();
+  const id = String(conversationId);
+  if (on) _keepAlwaysConvs.add(id); else _keepAlwaysConvs.delete(id);
+  _persistKeepAlways();
+}
+
+export function isConversationKeepAlways(conversationId) {
+  if (conversationId == null) return false;
+  _hydrateKeepAlways();
+  return _keepAlwaysConvs.has(String(conversationId));
+}
+
+export function getKeepAlwaysConvs() {
+  _hydrateKeepAlways();
+  return [..._keepAlwaysConvs];
+}
+
+// Tag a URL with the conversation that "owns" it. Best-effort: callers
+// pass conversationId when known (cacheMedia from chat path / WS handler).
+// Without a tag the file is treated as orphan and evictable normally.
+export function tagUrlConversation(url, conversationId) {
+  if (!url || conversationId == null || Platform.OS === 'web') return;
+  try { _urlConvOwner.set(urlToKey(url), String(conversationId)); } catch {}
+}
+
+function _isFileProtected(filename) {
+  const owner = _urlConvOwner.get(filename);
+  if (!owner) return false;
+  return _keepAlwaysConvs.has(owner);
+}
+
+// ── Thumbnail b64 (LQIP) persistent cache ────────────────────────────────
+// Backend `chat_messages.thumb_b64` (40-50px base64 JPEG, <500 bytes) is the
+// blur placeholder the chat bubble paints while the full image downloads.
+// We persist a small in-memory map (capped) backed by MMKV so the LQIP
+// survives kill-and-reopen and is queryable synchronously in render. Keyed
+// by message ID rather than URL because the row already carries it and
+// scrolling FlatList wants zero overhead per item.
+const THUMB_B64_MMKV_KEY = 'media_thumb_b64_v1';
+const THUMB_B64_MAX_ENTRIES = 2000; // ~1MB at 500B per entry
+const _thumbB64Cache = new Map(); // messageId(str) → base64 string
+let _thumbB64Hydrated = false;
+let _thumbB64PersistTimer = null;
+
+function _hydrateThumbB64() {
+  if (_thumbB64Hydrated) return;
+  _thumbB64Hydrated = true;
+  if (Platform.OS === 'web') return;
+  try {
+    const mmkv = require('./mmkv');
+    const raw = mmkv.getString?.(THUMB_B64_MMKV_KEY);
+    if (!raw) return;
+    const obj = JSON.parse(raw);
+    if (obj && typeof obj === 'object') {
+      for (const [k, v] of Object.entries(obj)) {
+        if (typeof v === 'string' && v.length < 4096) _thumbB64Cache.set(k, v);
+      }
+    }
+  } catch {}
+}
+_hydrateThumbB64();
+
+function _scheduleThumbB64Persist() {
+  if (Platform.OS === 'web') return;
+  if (_thumbB64PersistTimer) return;
+  _thumbB64PersistTimer = setTimeout(() => {
+    _thumbB64PersistTimer = null;
+    try {
+      const mmkv = require('./mmkv');
+      const obj = {};
+      // Cap at THUMB_B64_MAX_ENTRIES by FIFO — Map preserves insertion order,
+      // so iterating reverse and keeping the LAST inserted N gives recency.
+      const all = [..._thumbB64Cache.entries()];
+      const start = Math.max(0, all.length - THUMB_B64_MAX_ENTRIES);
+      for (let i = start; i < all.length; i++) {
+        const [k, v] = all[i];
+        obj[k] = v;
+      }
+      mmkv.setString?.(THUMB_B64_MMKV_KEY, JSON.stringify(obj));
+    } catch {}
+  }, 3000);
+}
+
+// Store/retrieve LQIP base64 for a message. Synchronous reads from the
+// in-memory map (hot on first paint), async persist debounced to MMKV.
+export function persistThumbB64(messageId, b64) {
+  if (messageId == null || !b64 || typeof b64 !== 'string') return;
+  if (b64.length > 4096) return; // sanity guard
+  _hydrateThumbB64();
+  const k = String(messageId);
+  if (_thumbB64Cache.get(k) === b64) return;
+  _thumbB64Cache.set(k, b64);
+  // Evict oldest if oversized
+  if (_thumbB64Cache.size > THUMB_B64_MAX_ENTRIES + 200) {
+    const drop = _thumbB64Cache.size - THUMB_B64_MAX_ENTRIES;
+    let i = 0;
+    for (const key of _thumbB64Cache.keys()) {
+      if (i++ >= drop) break;
+      _thumbB64Cache.delete(key);
+    }
+  }
+  _scheduleThumbB64Persist();
+}
+
+export function getThumbB64Sync(messageId) {
+  if (messageId == null) return null;
+  _hydrateThumbB64();
+  return _thumbB64Cache.get(String(messageId)) || null;
+}
+
+// Batch ingest — call after a `chat_get_messages` / WS sync lands so all
+// LQIPs are persisted in one shot. Iterates safely: missing thumb_b64 keys
+// are ignored, no throw on bad rows.
+export function ingestThumbB64FromMessages(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) return;
+  for (const m of messages) {
+    if (!m || m.id == null) continue;
+    if (typeof m.thumb_b64 === 'string' && m.thumb_b64.length > 0) {
+      persistThumbB64(m.id, m.thumb_b64);
+    }
+  }
+}
+
+// ── Offline-aware lookup ─────────────────────────────────────────────────
+// Returns:
+//   { localUri: file://... }  → cached, render this
+//   { localUri: null, offline: true }  → no cache + no network
+//   { localUri: null, offline: false } → no cache but online (caller can fetch)
+//
+// ChatMediaViewer / image bubbles use this to render "Foto não disponível
+// offline" when there's no connectivity AND no local copy. Sync, zero I/O.
+export function getOfflineMediaStatus(url) {
+  if (!url || Platform.OS === 'web') return { localUri: null, offline: false };
+  const localUri = getLocalUriSyncJs(url);
+  if (localUri) return { localUri, offline: false };
+  let online = true;
+  try {
+    const { isConnected } = require('./networkInfo');
+    if (typeof isConnected === 'function') online = !!isConnected();
+  } catch {}
+  return { localUri: null, offline: !online };
+}
+
+// ── Tap-to-download UX helpers ───────────────────────────────────────────
+// WhatsApp threshold: photos > 2MB on cellular get the manual tap gate even
+// when the user's pref is "wifi". Inside cacheMedia the pref gate already
+// blocks the auto-download — these helpers are for the bubble UI to *show*
+// the correct affordance (icon + size label).
+const TAP_TO_DL_PHOTO_BYTES = 2 * 1024 * 1024;
+
+export function shouldShowTapToDownload(url, sizeBytes) {
+  if (!url || Platform.OS === 'web') return false;
+  // Already cached → no gate.
+  if (getLocalUriSyncJs(url)) return false;
+  // Honor user prefs first — 'never' or wifi-pref-on-cellular both block.
+  if (!_shouldAutoDownload(url)) return true;
+  // On cellular even when allowed, big photos still get the gate.
+  try {
+    const { isWifi } = require('./networkInfo');
+    if (typeof isWifi === 'function' && isWifi() === false) {
+      if (typeof sizeBytes === 'number' && sizeBytes > TAP_TO_DL_PHOTO_BYTES) return true;
+    }
+  } catch {}
+  return false;
+}
+
+// Format byte count as a short human label ("1.4 MB" / "640 KB"). Plays
+// nice with the i18n placeholder `photo.tapToDownload.cellular` = "Tocar
+// para baixar ({size})".
+export function formatBytesShort(bytes) {
+  const n = Number(bytes);
+  if (!isFinite(n) || n <= 0) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }

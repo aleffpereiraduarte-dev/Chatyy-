@@ -42,6 +42,12 @@ object ChatMessagingStyleHandler {
     const val ACTION_MUTE_8H = "com.onemundo.mail.ACTION_CHAT_MUTE_8H"
     const val ACTION_SNOOZE_1H = "com.onemundo.mail.ACTION_CHAT_SNOOZE_1H"
     const val ACTION_SMART_REPLY = "com.onemundo.mail.ACTION_CHAT_SMART_REPLY"
+    // Missed-call notification "Ligar de volta" tap → broadcast picked up by
+    // ChatActionReceiver, which launches the app deep-linked to /call with
+    // the caller's email + initiator=1. JS-side mirror: actionId === 'CALL_BACK'
+    // in pushNotifications.js (used by both iOS UNNotificationAction and the
+    // Android tap-through path).
+    const val ACTION_CALL_BACK = "com.onemundo.mail.ACTION_CALL_BACK"
 
     /**
      * Try to handle the FCM message as a chat message rendered with

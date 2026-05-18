@@ -776,13 +776,18 @@ function broadcastChatMessage($db, $conversationId, $messageId, $senderEmail, $e
             $rpStmt->execute([':id' => (int)$msg['reply_to_id']]);
             $rp = $rpStmt->fetch();
             if ($rp) {
+                // Strip content/file_url for deleted replies — privacy
+                // guard so the WS push payload can't leak the original
+                // message body to clients that haven't applied the local
+                // tombstone yet.
+                $rpDeleted = !empty($rp['deleted_at']);
                 $msg['reply_to'] = [
                     'id'           => (int)$rp['id'],
                     'sender_email' => $rp['sender_email'],
                     'sender_name'  => chatDisplayName($rp['sender_email']),
-                    'content'      => chatTruncate((string)$rp['content'], 200),
+                    'content'      => $rpDeleted ? '' : chatTruncate((string)$rp['content'], 200),
                     'type'         => $rp['type'],
-                    'file_url'     => $rp['file_url'],
+                    'file_url'     => $rpDeleted ? null : $rp['file_url'],
                     'deleted_at'   => $rp['deleted_at'],
                 ];
             }
@@ -3460,13 +3465,19 @@ function handleChatAction($action) {
 
                 if ($msg['reply_to_id'] && isset($replyBodies[$msg['reply_to_id']])) {
                     $rp = $replyBodies[$msg['reply_to_id']];
+                    // Privacy: if the replied-to message was deleted, strip
+                    // its content + file_url so the reply preview can't leak
+                    // the original. Frontend already shows "Mensagem apagada"
+                    // when reply_to.deleted_at is set, but a stale client
+                    // (or future renderer) could fall through to content.
+                    $rpDeleted = !empty($rp['deleted_at']);
                     $msg['reply_to'] = [
                         'id'           => (int)$rp['id'],
                         'sender_email' => $rp['sender_email'],
                         'sender_name'  => chatDisplayName($rp['sender_email']),
-                        'content'      => chatTruncate($rp['content'] ?? '', 200),
+                        'content'      => $rpDeleted ? '' : chatTruncate($rp['content'] ?? '', 200),
                         'type'         => $rp['type'],
-                        'file_url'     => $rp['file_url'] ?? null,
+                        'file_url'     => $rpDeleted ? null : ($rp['file_url'] ?? null),
                         'deleted_at'   => $rp['deleted_at'] ?? null,
                     ];
                 } else {
@@ -3517,6 +3528,32 @@ function handleChatAction($action) {
                     if (isset($translationByMsg[$msg['id']])) {
                         $msg['auto_translation'] = $translationByMsg[$msg['id']];
                     }
+                }
+
+                // Privacy hardening: when a message is deleted (for_all
+                // semantics — soft-delete server-side), nuke every field
+                // that could leak the original content. Frontend already
+                // renders the tombstone for these rows, but if any code
+                // path (cache restore, double-tap, native list onMessageTap)
+                // re-uses content/file_url/thumb_b64/file_name it would
+                // surface the deleted media. Strip server-side so the
+                // wire response can't leak it in the first place.
+                if (!empty($msg['deleted_at'])) {
+                    $msg['content']        = '';
+                    $msg['file_url']       = null;
+                    $msg['file_name']      = null;
+                    $msg['file_size']      = 0;
+                    $msg['thumb_b64']      = null;
+                    $msg['hls_url']        = null;
+                    $msg['waveform']       = null;
+                    $msg['mentions']       = null;
+                    $msg['reply_quote_text'] = null;
+                    $msg['forwarded_from'] = null;
+                    $msg['poll']           = null;
+                    $msg['meetup']         = null;
+                    $msg['playlist']       = null;
+                    $msg['auto_translation'] = null;
+                    $msg['reactions']      = [];
                 }
 
                 $enriched[] = $msg;
@@ -4405,8 +4442,13 @@ function handleChatAction($action) {
             try {
                 // Wrap both writes so a mid-op failure doesn't leave reactions
                 // orphaned under a tombstoned message row.
+                // Privacy: nuke file_url + file_name + thumb_b64 alongside
+                // content so the row carries zero recoverable evidence of
+                // the original media. Without this, any client (or cron job)
+                // that SELECTs without the deleted_at strip can replay the
+                // image / video / audio via its old CDN path.
                 $db->beginTransaction();
-                $db->prepare("UPDATE chat_messages SET deleted_at = ?, content = '' WHERE id = ?")
+                $db->prepare("UPDATE chat_messages SET deleted_at = ?, content = '', file_url = NULL, file_name = NULL, file_size = 0, thumb_b64 = NULL, waveform = NULL, mentions = NULL, reply_quote_text = NULL WHERE id = ?")
                    ->execute([date('c'), $messageId]);
                 $db->prepare("DELETE FROM chat_message_reactions WHERE message_id = ?")
                    ->execute([$messageId]);

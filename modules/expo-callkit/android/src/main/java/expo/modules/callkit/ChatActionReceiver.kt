@@ -93,6 +93,43 @@ class ChatActionReceiver : BroadcastReceiver() {
                     ))
                 }
             }
+
+            // "Ligar de volta" tap on a missed-call notification. Cancels
+            // the notification and launches the app deep-linked into
+            // /call with the caller's email + initiator=1, so the dial
+            // starts as soon as the JS side mounts. Bypasses JS for the
+            // navigation primitive so this works even when the process
+            // was killed (the launch intent is what wakes RN).
+            ChatMessagingStyleHandler.ACTION_CALL_BACK -> {
+                cancelNotification(context, notifId)
+                val callerEmail = intent.getStringExtra("caller_email") ?: ""
+                val callerName = intent.getStringExtra("caller_name") ?: ""
+                val isVideo = intent.getBooleanExtra("video", false)
+                if (callerEmail.isEmpty()) {
+                    Log.w(TAG, "ACTION_CALL_BACK without caller_email — ignoring")
+                    return
+                }
+                try {
+                    val openIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                        // Pass-through extras consumed by MainActivity's deep-link
+                        // bridge → router.push('/call?...') on first JS frame.
+                        putExtra("deep_link_route", "/call")
+                        putExtra("call_back", true)
+                        putExtra("caller_email", callerEmail)
+                        putExtra("caller_name", callerName)
+                        putExtra("video", isVideo)
+                        putExtra("initiator", true)
+                    }
+                    if (openIntent != null) {
+                        context.startActivity(openIntent)
+                    } else {
+                        Log.w(TAG, "ACTION_CALL_BACK: no launch intent for ${context.packageName}")
+                    }
+                } catch (t: Throwable) {
+                    Log.w(TAG, "ACTION_CALL_BACK startActivity failed: ${t.message}")
+                }
+            }
         }
     }
 

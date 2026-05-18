@@ -23,7 +23,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
-import { IconSearch } from './Icons';
+import { IconSearch, IconCamera } from './Icons';
 import ReelsViewer from './ReelsViewer';
 
 const BRAND = '#7C3AED';
@@ -214,6 +214,17 @@ export default function ChatReelsTab() {
               ]}
             />
           </View>
+
+          {/* Create reel button (right of search) */}
+          <Pressable
+            onPress={() => router.push('/reels-recorder')}
+            style={[styles.searchBtn, { right: 54 }]}
+            accessibilityRole="button"
+            accessibilityLabel={t?.('reels.recorder.title') || 'Criar reel'}
+            hitSlop={10}
+          >
+            <IconCamera size={24} color="#fff" />
+          </Pressable>
 
           {/* Search icon (right) */}
           <Pressable

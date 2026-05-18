@@ -122,6 +122,7 @@
         <action android:name="com.onemundo.mail.ACTION_CHAT_MUTE_8H" />
         <action android:name="com.onemundo.mail.ACTION_CHAT_SNOOZE_1H" />
         <action android:name="com.onemundo.mail.ACTION_CHAT_SMART_REPLY" />
+        <action android:name="com.onemundo.mail.ACTION_CALL_BACK" />
       </intent-filter>
     </receiver>
 

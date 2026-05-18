@@ -2090,12 +2090,17 @@ export default function OneScreen() {
   }, []);
 
   const pickImage = useCallback(() => {
-    // ActionSheet on iOS (native); Alert buttons on Android / web fallback.
+    // ActionSheet on iOS (native); Alert buttons on Android. On WEB, RN-Web's
+    // Alert.alert is a no-op (literally returns nothing) — the "+" button used
+    // to silently do nothing for web users. Web path now opens an <input
+    // type="file"> picker directly via a hidden DOM element, which supports
+    // both gallery and camera capture on mobile browsers.
     const options = [
       { text: t('one.takePhoto') || 'Tirar foto', onPress: takePhoto },
       { text: t('one.chooseFromLibrary') || 'Escolher da galeria', onPress: pickFromLibrary },
       { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
     ];
+
     if (Platform.OS === 'ios') {
       try {
         const { ActionSheetIOS } = require('react-native');
@@ -2109,7 +2114,50 @@ export default function OneScreen() {
         return;
       } catch {}
     }
-    // Android / web: use Alert 3-button fallback.
+
+    if (Platform.OS === 'web') {
+      // Web: use a native <input type=file> — Alert.alert is no-op on
+      // react-native-web so the old fallback below never showed the picker.
+      try {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = 'image/*,application/pdf,.doc,.docx,.txt,.csv,.xls,.xlsx';
+        input.style.display = 'none';
+        input.onchange = (ev) => {
+          const file = ev?.target?.files?.[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = () => {
+            const result = reader.result || '';
+            // result = "data:image/png;base64,xxxx" — split off the base64 part
+            const comma = String(result).indexOf(',');
+            const base64 = comma >= 0 ? String(result).slice(comma + 1) : '';
+            const mimeType = file.type || 'image/jpeg';
+            // Only attach images as visual context; for other files, embed text-style hint.
+            if (mimeType.startsWith('image/')) {
+              setAttachedImage({ uri: result, base64, mimeType });
+            } else {
+              // Document: append a note to the input so the user knows
+              // they can ask One about it; full doc parsing is server-side
+              // territory and not wired yet.
+              setInputText(prev => (prev ? prev + '\n' : '') + `[${t('one.attachedFile') || 'arquivo'}: ${file.name}]`);
+            }
+          };
+          reader.readAsDataURL(file);
+          try { document.body.removeChild(input); } catch {}
+        };
+        document.body.appendChild(input);
+        input.click();
+        return;
+      } catch (e) {
+        console.warn('[one] web file picker failed:', e);
+        // Last-resort: try gallery via ImagePicker (works on some mobile web)
+        pickFromLibrary();
+        return;
+      }
+    }
+
+    // Android: use Alert 3-button fallback (native modal works there).
     try {
       const { Alert } = require('react-native');
       Alert.alert(

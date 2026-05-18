@@ -257,6 +257,32 @@ const TEXT_BG_COLORS = [
   '#E84393', '#D63031', '#E17055', '#FDCB6E', '#00B894',
 ];
 
+// Text-status gradient presets — Instagram-style 6 multi-stop fills the
+// composer offers alongside solid colors. `id` is the serialization key
+// (persisted in bg_color as `gradient:<id>`) so the StoryViewer can
+// reconstruct the same SVG <LinearGradient> from a published row. Order
+// inside `colors` is top-left → bottom-right (SVG x1/y1=0, x2/y2=1).
+// Note: expo-linear-gradient isn't in the dep tree on SDK 55, so we
+// render via react-native-svg's <LinearGradient> (already imported above).
+const TEXT_BG_GRADIENTS = [
+  { id: 'purple_pink', colors: ['#8B5CF6', '#EC4899'] },
+  { id: 'blue_cyan',   colors: ['#2563EB', '#06B6D4'] },
+  { id: 'orange_red',  colors: ['#F97316', '#EF4444'] },
+  { id: 'green_teal',  colors: ['#10B981', '#14B8A6'] },
+  { id: 'sunset',      colors: ['#FACC15', '#F97316', '#EF4444'] },
+  { id: 'aurora',      colors: ['#06B6D4', '#8B5CF6', '#EC4899'] },
+];
+
+// Resolve a published `bg_color` (string solid OR `gradient:<id>` token)
+// back to a gradient descriptor. Returns null for plain hex colors so the
+// caller can fall through to backgroundColor.
+function resolveGradient(bgColor) {
+  if (!bgColor || typeof bgColor !== 'string') return null;
+  if (!bgColor.startsWith('gradient:')) return null;
+  const id = bgColor.slice('gradient:'.length);
+  return TEXT_BG_GRADIENTS.find(g => g.id === id) || null;
+}
+
 // Circular 40x40 glass button used in the photo-status editor top-right
 // toolbar. Defined once so each tool shares the same hit target, backdrop
 // blur, and subtle shadow — keeps the row visually coherent.
@@ -4094,7 +4120,43 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
               </ScrollView>
             </View>
           ) : (
-          <View style={[styles.creatorContainer, { backgroundColor: creatorMode === 'photo' ? '#000' : textBgColor }]}>
+          <View style={[styles.creatorContainer, {
+            // When a gradient preset is selected (textBgColor is a
+            // `gradient:<id>` token), we paint via SVG below and let the
+            // container stay transparent so the gradient bleeds to the
+            // edges. Plain hex colors keep the legacy backgroundColor path.
+            backgroundColor: creatorMode === 'photo'
+              ? '#000'
+              : (resolveGradient(textBgColor) ? '#000' : textBgColor),
+          }]}>
+            {/* Gradient background layer — only painted in text mode when
+                the user picked a multi-stop preset. Renders behind everything
+                else (pattern overlay + body + header) via absoluteFill.
+                react-native-svg's <Svg> needs an explicit width/height pair
+                or preserveAspectRatio="none" to stretch — we use the latter
+                so the gradient fills any phone size without measuring. */}
+            {creatorMode === 'text' && (() => {
+              const g = resolveGradient(textBgColor);
+              if (!g) return null;
+              const stops = g.colors.length > 1 ? g.colors : [g.colors[0], g.colors[0]];
+              return (
+                <Svg
+                  pointerEvents="none"
+                  style={StyleSheet.absoluteFill}
+                  preserveAspectRatio="none"
+                  viewBox="0 0 1 1"
+                >
+                  <Defs>
+                    <LinearGradient id={`textBgGrad_${g.id}`} x1="0" y1="0" x2="1" y2="1">
+                      {stops.map((c, i) => (
+                        <Stop key={i} offset={`${Math.round((i / (stops.length - 1)) * 100)}%`} stopColor={c} stopOpacity="1" />
+                      ))}
+                    </LinearGradient>
+                  </Defs>
+                  <Rect x="0" y="0" width="1" height="1" fill={`url(#textBgGrad_${g.id})`} />
+                </Svg>
+              );
+            })()}
             {/* Subtle pattern overlay for text mode */}
             {creatorMode === 'text' && (
               <View style={styles.creatorPatternOverlay} pointerEvents="none" />
@@ -4175,6 +4237,16 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                   // Long-press the chip while on "except" to re-open the
                   // picker without cycling the whole audience wheel.
                   if (statusPrivacy === 'except') setExceptPickerVisible(true);
+                  // Long-press while on "close_friends" routes to the
+                  // dedicated list management screen so the user can edit
+                  // their persisted close-friends roster (chat_close_friends).
+                  // We close the composer first so the navigation lands on
+                  // a clean stack — the publish UI is in a Modal that would
+                  // otherwise sit on top of the manager screen.
+                  if (statusPrivacy === 'close_friends' && router) {
+                    setCreatorVisible(false);
+                    setTimeout(() => { try { router.push('/close-friends'); } catch {} }, 140);
+                  }
                 }}
                 style={styles.privacyToggleBtn}
                 activeOpacity={0.7}
@@ -4199,6 +4271,47 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
               <View style={{ flex: 1 }} />
               {creatorMode === 'text' && (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.colorPicker}>
+                  {/* Gradient presets — painted first so the user discovers
+                      the multi-stop options without scrolling. Each dot is
+                      a mini SVG with the same LinearGradient the full canvas
+                      will render — preview-by-thumbnail beats a guessing UX.
+                      Selection serializes as `gradient:<id>` so the backend
+                      stores it in chat_user_status.bg_color verbatim. */}
+                  {TEXT_BG_GRADIENTS.map((g) => {
+                    const token = `gradient:${g.id}`;
+                    const selected = textBgColor === token;
+                    const stops = g.colors.length > 1 ? g.colors : [g.colors[0], g.colors[0]];
+                    return (
+                      <TouchableOpacity
+                        key={g.id}
+                        onPress={() => setTextBgColor(token)}
+                        style={[
+                          styles.colorDot,
+                          { backgroundColor: 'transparent', overflow: 'hidden' },
+                          selected && styles.colorDotSelected,
+                        ]}
+                        accessibilityLabel={`${t?.('status.textBg.gradients') || 'Gradientes'}: ${g.id}`}
+                      >
+                        <Svg
+                          width="100%"
+                          height="100%"
+                          viewBox="0 0 1 1"
+                          preserveAspectRatio="none"
+                          style={StyleSheet.absoluteFill}
+                        >
+                          <Defs>
+                            <LinearGradient id={`pickerGrad_${g.id}`} x1="0" y1="0" x2="1" y2="1">
+                              {stops.map((c, i) => (
+                                <Stop key={i} offset={`${Math.round((i / (stops.length - 1)) * 100)}%`} stopColor={c} stopOpacity="1" />
+                              ))}
+                            </LinearGradient>
+                          </Defs>
+                          <Rect x="0" y="0" width="1" height="1" fill={`url(#pickerGrad_${g.id})`} />
+                        </Svg>
+                        {selected && <View style={styles.colorDotInner} />}
+                      </TouchableOpacity>
+                    );
+                  })}
                   {TEXT_BG_COLORS.map((c) => (
                     <TouchableOpacity
                       key={c}

@@ -67,6 +67,11 @@ const SWIPE_MAX = 164;
 const useNative = Platform.OS !== 'web';
 const isWeb = Platform.OS === 'web';
 
+// WhatsApp parity — only 3 conversations may sit at the very top of the
+// list at once. Pinning a 4th silently displaces the oldest pin (the one
+// with the earliest pinned_at, falling back to last activity).
+const MAX_PINNED_CHATS = 3;
+
 function safeAlert(title, message, buttons) {
   if (Platform.OS === 'web') {
     if (buttons && buttons.length > 0) {
@@ -306,7 +311,25 @@ function PulsingOnlineDot({ colors, isDark }) {
 function GroupAvatarStack({ conversation, size = 56, isDark }) {
   const groupPhoto = conversation.avatar_url || conversation.avatar || '';
   const name = conversation.display_name || conversation.name || '?';
-  return <AvatarCircle name={name} email={null} size={size} uri={groupPhoto || undefined} />;
+  // When the group has no uploaded photo, fall back to a 2-4 tile collage
+  // built from the members list (WhatsApp parity). Only fires when there's
+  // no explicit group avatar — once the admin uploads one, the single
+  // image takes over again. Falsy-filtered to skip stub entries with no
+  // identifying data.
+  const collageMembers = !groupPhoto
+    ? (conversation.members || [])
+        .filter(m => m && (m.email || m.display_name || m.name))
+        .slice(0, 4)
+    : null;
+  return (
+    <AvatarCircle
+      name={name}
+      email={null}
+      size={size}
+      uri={groupPhoto || undefined}
+      members={collageMembers && collageMembers.length >= 2 ? collageMembers : undefined}
+    />
+  );
 }
 
 // ── ConversationRow with swipe ──
@@ -1820,6 +1843,18 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
             viewersList={statusViewersList}
             viewersLoading={statusViewersLoading}
             onCloseViewers={() => setStatusViewersFor(null)}
+            onMentionPress={({ email, username }) => {
+              // Mention sticker tap → user profile. Dismiss viewer first so
+              // the navigation lands on a clean stack (instead of stacking
+              // /u/<email> on top of the modal).
+              setStatusViewerEmail(null); setStatusViewIdx(0);
+              setStatusViewerLockedGroup(null); setStatusViewerLockedItems(null);
+              const target = email || username;
+              if (!target) return;
+              setTimeout(() => {
+                try { router.push(`/u/${encodeURIComponent(target)}`); } catch {}
+              }, 150);
+            }}
           />
         );
       })()}
@@ -3348,19 +3383,52 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   }, [loadConversations]);
 
   const handlePinConversation = useCallback(async (conv) => {
-    // Optimistic toggle so swipe feels instant
-    setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, pinned: !c.pinned } : c));
+    const willPin = !conv.pinned;
+
+    // WhatsApp parity: at most MAX_PINNED_CHATS (3) conversations can be
+    // pinned. When the user pins a 4th, silently unpin the oldest pin (the
+    // one with the earliest last_message_at — best proxy for "stale pin"
+    // when we don't have a pinned_at column) so the user never hits a wall.
+    let displaceId = null;
+    if (willPin) {
+      const currentPins = conversations.filter(c => !!c.pinned && c.id !== conv.id);
+      if (currentPins.length >= MAX_PINNED_CHATS) {
+        const oldest = currentPins.slice().sort((a, b) => {
+          const at = new Date(a.last_message_at || a.last_activity || 0).getTime();
+          const bt = new Date(b.last_message_at || b.last_activity || 0).getTime();
+          return at - bt;
+        })[0];
+        displaceId = oldest?.id || null;
+      }
+    }
+
+    // Optimistic toggle (plus displacement) so swipe feels instant.
+    setConversations(prev => prev.map(c => {
+      if (c.id === conv.id) return { ...c, pinned: willPin };
+      if (displaceId && c.id === displaceId) return { ...c, pinned: false };
+      return c;
+    }));
+
     try {
       // chat_pin pins a MESSAGE (needs message_id). For pinning the whole
       // conversation to top of the list we need chat_pin_conversation which
       // in email.php maps to the chat_favorite/chat_pin_conversation case.
+      if (displaceId) {
+        // Server-side toggle for the displaced row first, so when the
+        // refetch lands below it reflects the new ordering.
+        try { await api.apiCall('chat_pin_conversation', { conversation_id: displaceId }, 'POST'); } catch {}
+      }
       await api.apiCall('chat_pin_conversation', { conversation_id: conv.id }, 'POST');
       loadConversations(false);
     } catch {
-      // Revert optimistic toggle on error
-      setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, pinned: !c.pinned } : c));
+      // Revert optimistic toggles on error.
+      setConversations(prev => prev.map(c => {
+        if (c.id === conv.id) return { ...c, pinned: !willPin };
+        if (displaceId && c.id === displaceId) return { ...c, pinned: true };
+        return c;
+      }));
     }
-  }, [loadConversations]);
+  }, [conversations, loadConversations]);
 
   const handleMarkUnreadConversation = useCallback(async (conv) => {
     try {
@@ -4044,7 +4112,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   // ids resolved against the loaded conversation list. The smart-pin entries
   // get an `_smartPin: true` flag so the UI can render the ✨ differentiator.
   const pinnedConversations = useMemo(() => {
-    const manual = filteredConversations.filter(c => c.pinned).slice(0, 9);
+    const manual = filteredConversations.filter(c => c.pinned).slice(0, MAX_PINNED_CHATS);
     let combined = manual;
     if (smartPinEnabled && smartPinIds.length > 0) {
       const manualIds = new Set(manual.map(c => c.id));

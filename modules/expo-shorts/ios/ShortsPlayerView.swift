@@ -26,6 +26,9 @@ public class ShortsPlayerView: ExpoView {
   let onPlaybackReady = EventDispatcher()
   let onBuffering = EventDispatcher()
   let onError = EventDispatcher()
+  // Stage 3 (2026-05-18): periodic time update so the JS scrubber can stay
+  // in sync without polling the WebView (now killed). Emits {ms,dur} ~10fps.
+  let onTime = EventDispatcher()
 
   private let containerView = UIView()
   private let playerLayer = AVPlayerLayer()
@@ -40,6 +43,7 @@ public class ShortsPlayerView: ExpoView {
   private var timeControlStatusObs: NSKeyValueObservation?
   private var statusObs: NSKeyValueObservation?
   private var loopObserver: NSObjectProtocol?
+  private var periodicTimeObs: Any?
 
   public required init(appContext: AppContext? = nil) {
     super.init(appContext: appContext)
@@ -128,6 +132,15 @@ public class ShortsPlayerView: ExpoView {
     }
   }
 
+  /// Seek the bound player to the given offset in milliseconds. No-op when
+  /// nothing is bound yet. Called via ExpoShortsModule.seek(viewTag, ms).
+  func seek(toMillis ms: Double) {
+    guard let p = boundPlayer else { return }
+    let secs = max(0, ms / 1000.0)
+    let t = CMTime(seconds: secs, preferredTimescale: 600)
+    p.seek(to: t, toleranceBefore: .zero, toleranceAfter: .zero)
+  }
+
   // ---------------------------------------------------------------------------
   // internals
   // ---------------------------------------------------------------------------
@@ -200,6 +213,17 @@ public class ShortsPlayerView: ExpoView {
       player?.seek(to: .zero)
       player?.play()
     }
+
+    // Periodic time observer for the JS scrubber. 120ms ≈ 8fps — matches the
+    // old WebView watchdog and is light on main thread.
+    let interval = CMTime(seconds: 0.12, preferredTimescale: 600)
+    periodicTimeObs = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self, weak player] time in
+      guard let self = self, let p = player else { return }
+      let ms = CMTimeGetSeconds(time) * 1000.0
+      let durSec = CMTimeGetSeconds(p.currentItem?.duration ?? .zero)
+      let durMs = durSec.isFinite ? durSec * 1000.0 : 0
+      self.onTime(["ms": ms, "dur": durMs])
+    }
   }
 
   private func teardownObservers() {
@@ -211,6 +235,10 @@ public class ShortsPlayerView: ExpoView {
       NotificationCenter.default.removeObserver(obs)
       loopObserver = nil
     }
+    if let obs = periodicTimeObs, let p = boundPlayer {
+      p.removeTimeObserver(obs)
+    }
+    periodicTimeObs = nil
   }
 
   private func showFallback(message: String) {

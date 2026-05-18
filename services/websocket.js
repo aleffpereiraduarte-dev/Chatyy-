@@ -387,7 +387,20 @@ class MailWebSocket {
       try { this.ws.onmessage = null; } catch {}
       try { this.ws.onclose = null; } catch {}
       try { this.ws.onerror = null; } catch {}
-      try { this.ws.close(); } catch {}
+      // Avoid the "WebSocket is closed before the connection is established"
+      // console.warn that browsers emit when close() is called while the
+      // socket is still in CONNECTING. Defer the close until open, then
+      // immediately tear it down. If the connection never opens it'll
+      // close on its own. We still null out the handlers so any later
+      // onopen/onclose can't drive a phantom reconnect.
+      try {
+        if (typeof WebSocket !== 'undefined' && this.ws.readyState === WebSocket.CONNECTING) {
+          const _dying = this.ws;
+          _dying.onopen = () => { try { _dying.close(); } catch {} };
+        } else {
+          this.ws.close();
+        }
+      } catch {}
       this.ws = null;
     }
     this.connected = false;

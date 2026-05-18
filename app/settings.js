@@ -25,6 +25,7 @@ import { PrivacyModal, TermsModal } from '../components/LoginModals';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import { SettingsSkeleton } from '../components/SkeletonLoader';
+import Constants from 'expo-constants';
 
 function getStorage(key) {
   if (Platform.OS === 'web') {
@@ -130,12 +131,46 @@ function SettingsScreenInner() {
   const [oneEnabled, setOneEnabled] = useState(true);
   const [oneNotifLevel, setOneNotifLevel] = useState('push'); // 'email', 'push', 'urgent' — for One AI
   const [pushNotifLevel, setPushNotifLevel] = useState('all'); // 'all', 'urgent', 'silent' — global push delivery
+  // ── New WhatsApp-grade preference rows (15-gap closer 2026-05-18) ──
+  // Each lives in AsyncStorage / localStorage via getStorage/setStorage so
+  // the source-of-truth is the device — backend sync only if/when a feature
+  // calls for it (e.g. theme follows device on mobile, bubble shape is
+  // device-local). Defaults match the per-row spec in the task brief.
+  const [themeMode, setThemeMode] = useState('system'); // 'light' | 'dark' | 'system'
+  const [enterSends, setEnterSends] = useState(Platform.OS === 'web');
+  const [autocorrectOn, setAutocorrectOn] = useState(true);
+  const [voiceSpeedDefault, setVoiceSpeedDefault] = useState(1); // 0.5 | 1 | 1.5 | 2
+  const [betaFeatures, setBetaFeatures] = useState(false);
+  const [languageAuto, setLanguageAuto] = useState(false);
+  const [dataSaver, setDataSaver] = useState(false);
+  const [bubbleShape, setBubbleShape] = useState('rounded'); // 'rounded' | 'square' | 'classic'
+  const [notifLedColor, setNotifLedColor] = useState('#7C3AED');
+  const [mediaRoaming, setMediaRoaming] = useState(false);
+  const [wallpaperDefault, setWallpaperDefault] = useState('#075E54');
+  // Modal state
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [backupKeyOpen, setBackupKeyOpen] = useState(false);
+  const [backupKeyPass, setBackupKeyPass] = useState('');
+  const [backupKeyPass2, setBackupKeyPass2] = useState('');
+  const [backupKeyBusy, setBackupKeyBusy] = useState(false);
+  const [backupKeyMsg, setBackupKeyMsg] = useState('');
+  // Network usage stats — placeholder values pulled from media_dl_stats
+  // (lifetime up/down bytes for chat media). When the service hasn't been
+  // wired the rows show "—".
+  const [netStats, setNetStats] = useState(null);
   // Palavras silenciadas (mute words) — user's per-feed blocklist. Posts
   // whose caption contains any of these words are filtered server-side
   // inside feed_list. CRUD via feed_muted_words_* endpoints.
   const [mutedWords, setMutedWords] = useState([]);
   const [mutedWordsInput, setMutedWordsInput] = useState('');
   const [mutedWordsLoading, setMutedWordsLoading] = useState(false);
+  // Login alerts — opt-in push when a NEW device signs into this account.
+  // Hydrates from chat_user_defaults.login_alerts_enabled (default ON). The
+  // history modal pulls last 30d of sign-in events via getLoginHistory().
+  const [loginAlertsEnabled, setLoginAlertsEnabled] = useState(true);
+  const [loginHistoryOpen, setLoginHistoryOpen] = useState(false);
+  const [loginHistory, setLoginHistory] = useState([]);
+  const [loginHistoryLoading, setLoginHistoryLoading] = useState(false);
   const [avatarKey, setAvatarKey] = useState(Date.now());
   // Live search across settings rows. Filters out sections whose section
   // title and row labels don't match the typed query (case-insensitive).
@@ -195,6 +230,81 @@ function SettingsScreenInner() {
         }).catch(() => {});
       }).catch(() => {});
     }
+  }, []);
+
+  // ── Hydrate the new 15-gap prefs from local storage ────────────────
+  // All are device-local; we read them once on mount and write through
+  // setStorage on every change. The themeMode key shadows the ThemeContext
+  // boolean toggle: `light`/`dark` force the value, `system` lets the
+  // existing toggle drive (we don't subscribe to Appearance changes since
+  // ThemeContext owns that — this row is purely a forcing-knob).
+  useEffect(() => {
+    const apply = (kv) => {
+      if (kv.theme_mode === 'light' || kv.theme_mode === 'dark' || kv.theme_mode === 'system') setThemeMode(kv.theme_mode);
+      if (kv.enter_sends === 'true') setEnterSends(true);
+      else if (kv.enter_sends === 'false') setEnterSends(false);
+      if (kv.autocorrect_enabled === 'false') setAutocorrectOn(false);
+      const vs = parseFloat(kv.voice_speed_default);
+      if (Number.isFinite(vs) && [0.5, 1, 1.5, 2].includes(vs)) setVoiceSpeedDefault(vs);
+      if (kv.beta_features === 'true') setBetaFeatures(true);
+      if (kv.language_auto === 'true') setLanguageAuto(true);
+      if (kv.data_saver === 'true') setDataSaver(true);
+      if (kv.bubble_shape === 'rounded' || kv.bubble_shape === 'square' || kv.bubble_shape === 'classic') setBubbleShape(kv.bubble_shape);
+      if (typeof kv.notif_led_color === 'string' && /^#[0-9a-fA-F]{6}$/.test(kv.notif_led_color)) setNotifLedColor(kv.notif_led_color);
+      if (kv.media_auto_dl_roaming === 'true') setMediaRoaming(true);
+      if (typeof kv.wallpaper_default === 'string' && kv.wallpaper_default.length > 0) setWallpaperDefault(kv.wallpaper_default);
+    };
+    const KEYS = [
+      'theme_mode', 'enter_sends', 'autocorrect_enabled', 'voice_speed_default',
+      'beta_features', 'language_auto', 'data_saver', 'bubble_shape',
+      'notif_led_color', 'media_auto_dl_roaming', 'wallpaper_default',
+    ];
+    if (Platform.OS === 'web') {
+      const kv = {};
+      for (const k of KEYS) kv[k] = getStorage(k);
+      apply(kv);
+    } else {
+      import('@react-native-async-storage/async-storage').then(m => {
+        Promise.all(KEYS.map(k => m.default.getItem(k))).then(vals => {
+          const kv = {};
+          KEYS.forEach((k, i) => { kv[k] = vals[i]; });
+          apply(kv);
+        }).catch(() => {});
+      }).catch(() => {});
+    }
+
+    // Network usage stats — try services/mediaCache.getNetStats then fall
+    // back to a stashed media_dl_stats blob. Either returns { up, down }
+    // in bytes; missing keys leave the placeholder dashes in place.
+    (async () => {
+      try {
+        if (Platform.OS !== 'web') {
+          const mc = require('../services/mediaCache');
+          if (typeof mc.getNetStats === 'function') {
+            const r = await mc.getNetStats();
+            if (r && (Number.isFinite(r.up) || Number.isFinite(r.down))) {
+              setNetStats({ up: r.up || 0, down: r.down || 0 });
+              return;
+            }
+          }
+        }
+        // Fallback: serialized blob in storage written by other services.
+        let raw = null;
+        if (Platform.OS === 'web') raw = getStorage('media_dl_stats');
+        else {
+          const m = await import('@react-native-async-storage/async-storage');
+          raw = await m.default.getItem('media_dl_stats');
+        }
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed && (Number.isFinite(parsed.up) || Number.isFinite(parsed.down))) {
+              setNetStats({ up: parsed.up || 0, down: parsed.down || 0 });
+            }
+          } catch {}
+        }
+      } catch {}
+    })();
   }, []);
 
   const [settings, setSettings] = useState({
@@ -289,6 +399,13 @@ function SettingsScreenInner() {
             media_auto_dl_docs:   r.data.media_auto_dl_docs   || 'never',
           };
           setChatDefaults(next);
+          // Login alerts persist under the same chat_user_defaults blob —
+          // backend column `login_alerts_enabled` (boolean, default true).
+          // Falls back to ON if the column was added after the user's row
+          // was created and still reads NULL.
+          if (r.data.login_alerts_enabled !== undefined && r.data.login_alerts_enabled !== null) {
+            setLoginAlertsEnabled(!!r.data.login_alerts_enabled);
+          }
           // Push the media prefs into mediaCache so the cellular gate updates
           // without waiting for the next app launch.
           try {
@@ -698,23 +815,56 @@ function SettingsScreenInner() {
         )}
 
         {/* Appearance */}
-        {sectionMatches(t('settings.appearance'), t('settings.darkMode'), t('settings.density')) && (
+        {sectionMatches(t('settings.appearance'), t('settings.theme.light'), t('settings.theme.dark'), t('settings.theme.system'), t('settings.density')) && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.appearance')}</Text>
 
-          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.darkMode')}</Text>
+          {/* Theme tri-state — Light / Dark / System. `system` defers to
+              ThemeContext's auto-detect (we just clear the override so the
+              existing toggle keeps the user's last manual choice without
+              forcing). `light`/`dark` set the toggle directly via isDark
+              comparison. Storage key is `theme_mode` so other surfaces
+              (Profile theme picker, future bootstrap) can read it. */}
+          <View style={[s.settingRowColumn, { borderBottomColor: colors.borderLight }]}>
+            <View style={{ width: '100%' }}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.theme.label') || 'Tema'}</Text>
               <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
                 {t('settings.darkModeDesc')}
               </Text>
             </View>
-            <Switch
-              value={isDark}
-              onValueChange={toggle}
-              trackColor={{ false: colors.divider, true: colors.primaryLight }}
-              thumbColor={isDark ? colors.primary : '#fff'}
-            />
+            <View style={[s.perPageBtns, { marginTop: 10, flexWrap: 'wrap' }]}>
+              {[
+                { val: 'light',  label: t('settings.theme.light') || 'Claro' },
+                { val: 'dark',   label: t('settings.theme.dark') || 'Escuro' },
+                { val: 'system', label: t('settings.theme.system') || 'Sistema' },
+              ].map(opt => (
+                <TouchableOpacity
+                  key={opt.val}
+                  style={[
+                    s.perPageBtn,
+                    { borderColor: colors.divider },
+                    themeMode === opt.val && { backgroundColor: colors.primary, borderColor: colors.primary },
+                  ]}
+                  onPress={() => {
+                    setThemeMode(opt.val);
+                    setStorage('theme_mode', opt.val);
+                    // Drive ThemeContext: only 'light'/'dark' force a flip
+                    // when the current state disagrees. 'system' leaves the
+                    // existing flag alone (best-effort default until
+                    // ThemeContext grows a 3-state API).
+                    if (opt.val === 'light' && isDark) toggle();
+                    else if (opt.val === 'dark' && !isDark) toggle();
+                  }}
+                >
+                  <Text style={[
+                    s.perPageText, { color: colors.text },
+                    themeMode === opt.val && { color: '#fff' },
+                  ]}>
+                    {opt.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
 
           {/* Density */}
@@ -1117,13 +1267,47 @@ function SettingsScreenInner() {
         )}
 
         {/* Language */}
-        {sectionMatches(t('settings.language'), t('settings.languageLabel')) && (
+        {sectionMatches(t('settings.language'), t('settings.languageLabel'), t('settings.language.autoDetect')) && (
         <View ref={registerSectionRef('language')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <View style={s.sectionTitleRow}>
             <IconGlobe size={18} color={colors.primary} style={{ marginRight: 8 }} />
             <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.language')}</Text>
           </View>
+
+          {/* Auto-detect — when ON, clears the manual override key so the
+              app picks up navigator.languages / device locale on next
+              cold start. Persists `language_auto` so future visits to this
+              screen render the checkbox correctly. */}
           <View style={[s.settingRow, { borderBottomColor: colors.borderLight, marginTop: Spacing.md }]}>
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.language.autoDetect') || 'Seguir idioma do sistema'}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {t('settings.language.autoDetectDesc') || 'Detecta o idioma a partir do seu aparelho.'}
+              </Text>
+            </View>
+            <Switch
+              value={languageAuto}
+              onValueChange={(v) => {
+                setLanguageAuto(v);
+                setStorage('language_auto', String(v));
+                if (v) {
+                  // Clear the manual override so LanguageContext re-detects
+                  // on next mount. AsyncStorage path handled via dynamic import.
+                  if (Platform.OS === 'web') {
+                    try { if (typeof localStorage !== 'undefined') localStorage.removeItem('app_language_manual'); } catch {}
+                  } else {
+                    import('@react-native-async-storage/async-storage').then(m => {
+                      m.default.removeItem('app_language_manual').catch(() => {});
+                    }).catch(() => {});
+                  }
+                }
+              }}
+              trackColor={{ false: colors.divider, true: colors.primaryLight }}
+              thumbColor={languageAuto ? colors.primary : '#fff'}
+            />
+          </View>
+
+          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
             <View style={s.settingInfo}>
               <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.languageLabel')}</Text>
               <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
@@ -1134,12 +1318,17 @@ function SettingsScreenInner() {
               {[{ val: 'pt-BR', label: '🇧🇷 PT' }, { val: 'en', label: '🇺🇸 EN' }, { val: 'es', label: '🇪🇸 ES' }].map(l => (
                 <TouchableOpacity
                   key={l.val}
+                  disabled={languageAuto}
                   style={[
                     s.perPageBtn,
-                    { borderColor: colors.divider },
+                    { borderColor: colors.divider, opacity: languageAuto ? 0.45 : 1 },
                     language === l.val && { backgroundColor: colors.primary, borderColor: colors.primary },
                   ]}
-                  onPress={() => { changeLanguage(l.val); setSettings(prev => ({ ...prev, language: l.val })); }}
+                  onPress={() => {
+                    if (languageAuto) return;
+                    changeLanguage(l.val);
+                    setSettings(prev => ({ ...prev, language: l.val }));
+                  }}
                 >
                   <Text style={[
                     s.perPageText, { color: colors.text },
@@ -1262,6 +1451,402 @@ function SettingsScreenInner() {
               <View style={[s.toggleThumb, smartComposeOn && s.toggleThumbActive]} />
             </TouchableOpacity>
           </View>
+        </View>
+        )}
+
+        {/* Chat preferences — Enter sends / Auto-correct / Voice speed /
+            Bubble shape / Data saver / Beta. All are device-local prefs
+            persisted via setStorage; consumers (chat-conversation, voice
+            player, message bubbles, image upload pipeline) read these on
+            mount. Beta gates experimental features behind a flag. */}
+        {sectionMatches(
+          t('settings.chatPrefs.title') || 'Preferências do chat',
+          t('settings.enterSends.title') || 'Enter envia',
+          t('settings.autocorrect.title') || 'Auto-correção',
+          t('settings.voiceSpeed.title') || 'Velocidade dos áudios',
+          t('settings.bubble.title') || 'Estilo dos balões',
+          t('settings.dataSaver.title') || 'Modo economia',
+          t('settings.beta.title') || 'Recursos beta',
+        ) && (
+        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.chatPrefs.title') || 'Preferências do chat'}</Text>
+
+          {/* Enter sends — desktop default ON, mobile default OFF. */}
+          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.enterSends.title') || 'Enter envia mensagem'}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {t('settings.enterSends.subtitle') || 'Pressione Enter pra enviar. Shift+Enter quebra linha.'}
+              </Text>
+            </View>
+            <Switch
+              value={enterSends}
+              onValueChange={(v) => { setEnterSends(v); setStorage('enter_sends', String(v)); }}
+              trackColor={{ false: colors.divider, true: colors.primaryLight }}
+              thumbColor={enterSends ? colors.primary : '#fff'}
+            />
+          </View>
+
+          {/* Auto-correct — wired into TextInputs via context (set elsewhere). */}
+          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.autocorrect.title') || 'Auto-correção'}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {t('settings.autocorrect.subtitle') || 'Corrige palavras automaticamente enquanto você digita.'}
+              </Text>
+            </View>
+            <Switch
+              value={autocorrectOn}
+              onValueChange={(v) => { setAutocorrectOn(v); setStorage('autocorrect_enabled', String(v)); }}
+              trackColor={{ false: colors.divider, true: colors.primaryLight }}
+              thumbColor={autocorrectOn ? colors.primary : '#fff'}
+            />
+          </View>
+
+          {/* Voice playback speed — 4 options. Defaults to 1×. */}
+          <View style={[s.settingRowColumn, { borderBottomColor: colors.borderLight }]}>
+            <View style={{ width: '100%' }}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.voiceSpeed.title') || 'Velocidade padrão dos áudios'}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {t('settings.voiceSpeed.subtitle') || 'Aplica a todos os áudios recebidos. Você pode trocar individual no chat.'}
+              </Text>
+            </View>
+            <View style={[s.perPageBtns, { marginTop: 10, flexWrap: 'wrap' }]}>
+              {[
+                { val: 0.5, label: t('settings.voiceSpeed.option_0_5') || '0.5×' },
+                { val: 1,   label: t('settings.voiceSpeed.option_1')   || '1×' },
+                { val: 1.5, label: t('settings.voiceSpeed.option_1_5') || '1.5×' },
+                { val: 2,   label: t('settings.voiceSpeed.option_2')   || '2×' },
+              ].map(opt => (
+                <TouchableOpacity
+                  key={String(opt.val)}
+                  style={[
+                    s.perPageBtn,
+                    { borderColor: colors.divider },
+                    voiceSpeedDefault === opt.val && { backgroundColor: colors.primary, borderColor: colors.primary },
+                  ]}
+                  onPress={() => { setVoiceSpeedDefault(opt.val); setStorage('voice_speed_default', String(opt.val)); }}
+                >
+                  <Text style={[
+                    s.perPageText, { color: colors.text },
+                    voiceSpeedDefault === opt.val && { color: '#fff' },
+                  ]}>
+                    {opt.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          {/* Bubble shape — rounded / square / classic. */}
+          <View style={[s.settingRowColumn, { borderBottomColor: colors.borderLight }]}>
+            <View style={{ width: '100%' }}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.bubble.title') || 'Estilo dos balões'}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {t('settings.bubble.subtitle') || 'Formato visual das mensagens.'}
+              </Text>
+            </View>
+            <View style={[s.perPageBtns, { marginTop: 10, flexWrap: 'wrap' }]}>
+              {[
+                { val: 'rounded', label: t('settings.bubble.rounded') || 'Arredondado' },
+                { val: 'square',  label: t('settings.bubble.square')  || 'Quadrado' },
+                { val: 'classic', label: t('settings.bubble.classic') || 'Clássico' },
+              ].map(opt => (
+                <TouchableOpacity
+                  key={opt.val}
+                  style={[
+                    s.perPageBtn,
+                    { borderColor: colors.divider },
+                    bubbleShape === opt.val && { backgroundColor: colors.primary, borderColor: colors.primary },
+                  ]}
+                  onPress={() => { setBubbleShape(opt.val); setStorage('bubble_shape', opt.val); }}
+                >
+                  <Text style={[
+                    s.perPageText, { color: colors.text },
+                    bubbleShape === opt.val && { color: '#fff' },
+                  ]}>
+                    {opt.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          {/* Data saver — flips a global flag that other surfaces read. */}
+          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.dataSaver.title') || 'Modo economia de dados'}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {t('settings.dataSaver.subtitle') || 'Comprime mídia e reduz pré-carregamento de vídeos.'}
+              </Text>
+            </View>
+            <Switch
+              value={dataSaver}
+              onValueChange={(v) => { setDataSaver(v); setStorage('data_saver', String(v)); }}
+              trackColor={{ false: colors.divider, true: colors.primaryLight }}
+              thumbColor={dataSaver ? colors.primary : '#fff'}
+            />
+          </View>
+
+          {/* Beta features — opts the device into experimental flows. */}
+          <View style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0 }]}>
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.beta.title') || 'Recursos beta'}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {t('settings.beta.subtitle') || 'Ative pra testar funcionalidades em desenvolvimento. Podem ter bugs.'}
+              </Text>
+            </View>
+            <Switch
+              value={betaFeatures}
+              onValueChange={(v) => { setBetaFeatures(v); setStorage('beta_features', String(v)); }}
+              trackColor={{ false: colors.divider, true: colors.primaryLight }}
+              thumbColor={betaFeatures ? colors.primary : '#fff'}
+            />
+          </View>
+        </View>
+        )}
+
+        {/* Notif LED color — Android only. Picks the LED color used by
+            the notification channel. The native module reads
+            `notif_led_color` on push delivery. Six brand-spectrum presets. */}
+        {Platform.OS === 'android' && sectionMatches(
+          t('settings.led.title') || 'Cor do LED',
+          'led',
+        ) && (
+        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.led.title') || 'Cor do LED (Android)'}</Text>
+          <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
+            {t('settings.led.desc') || 'Cor do LED de notificação no Android.'}
+          </Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
+            {['#7C3AED', '#EF4444', '#F59E0B', '#10B981', '#3B82F6', '#EC4899'].map(c => (
+              <TouchableOpacity
+                key={c}
+                onPress={() => { setNotifLedColor(c); setStorage('notif_led_color', c); }}
+                style={{
+                  width: 38, height: 38, borderRadius: 19,
+                  backgroundColor: c,
+                  borderWidth: 3,
+                  borderColor: notifLedColor === c ? colors.text : 'transparent',
+                  alignItems: 'center', justifyContent: 'center',
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={`LED ${c}`}
+              >
+                {notifLedColor === c && <IconCheck size={16} color="#fff" />}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+        )}
+
+        {/* Wallpaper global default — picks the default chat background
+            for new conversations. 8 colors + 4 gradients + custom upload. */}
+        {sectionMatches(t('settings.wallpaperDefault.title') || 'Papel de parede padrão', 'wallpaper', 'papel de parede') && (
+        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.wallpaperDefault.title') || 'Papel de parede padrão'}</Text>
+          <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
+            {t('settings.wallpaperDefault.desc') || 'Aplica em conversas novas. Cada chat pode ter o seu próprio.'}
+          </Text>
+          {/* Solid colors */}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: Spacing.md }}>
+            {['#075E54', '#1F2937', '#374151', '#7C3AED', '#DB2777', '#0EA5E9', '#16A34A', '#F59E0B'].map(c => (
+              <TouchableOpacity
+                key={c}
+                onPress={() => { setWallpaperDefault(c); setStorage('wallpaper_default', c); }}
+                style={{
+                  width: 56, height: 56, borderRadius: 12,
+                  backgroundColor: c,
+                  borderWidth: 3,
+                  borderColor: wallpaperDefault === c ? colors.primary : 'transparent',
+                  alignItems: 'center', justifyContent: 'center',
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={`Wallpaper ${c}`}
+              >
+                {wallpaperDefault === c && <IconCheck size={18} color="#fff" />}
+              </TouchableOpacity>
+            ))}
+          </View>
+          {/* Gradients — stored as `grad:<id>` */}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: Spacing.md }}>
+            {[
+              { id: 'grad:purple', preview: '#7C3AED', label: 'Roxo' },
+              { id: 'grad:sunset', preview: '#F59E0B', label: 'Pôr-do-sol' },
+              { id: 'grad:ocean',  preview: '#0EA5E9', label: 'Oceano' },
+              { id: 'grad:forest', preview: '#16A34A', label: 'Floresta' },
+            ].map(g => (
+              <TouchableOpacity
+                key={g.id}
+                onPress={() => { setWallpaperDefault(g.id); setStorage('wallpaper_default', g.id); }}
+                style={{
+                  width: 56, height: 56, borderRadius: 12,
+                  backgroundColor: g.preview,
+                  borderWidth: 3,
+                  borderColor: wallpaperDefault === g.id ? colors.primary : 'transparent',
+                  alignItems: 'center', justifyContent: 'center',
+                  opacity: 0.85,
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={`Gradient ${g.label}`}
+              >
+                {wallpaperDefault === g.id && <IconCheck size={18} color="#fff" />}
+              </TouchableOpacity>
+            ))}
+          </View>
+          {/* Custom upload — reuses ImagePicker */}
+          <TouchableOpacity
+            onPress={async () => {
+              try {
+                const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+                if (!perm.granted) return;
+                const result = await ImagePicker.launchImageLibraryAsync({
+                  mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                  allowsEditing: false,
+                  quality: 0.85,
+                });
+                if (!result.canceled && result.assets?.[0]?.uri) {
+                  const v = `custom:${result.assets[0].uri}`;
+                  setWallpaperDefault(v);
+                  setStorage('wallpaper_default', v);
+                }
+              } catch {}
+            }}
+            style={[s.addSigBtn, { borderColor: colors.primary, paddingVertical: 10 }]}
+          >
+            <Text style={{ color: colors.primary, fontWeight: '600' }}>
+              {t('settings.wallpaperDefault.custom') || '+ Enviar imagem própria'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+        )}
+
+        {/* Backup key rotation — entry into the rotate flow. */}
+        {sectionMatches(t('settings.backupKey.title') || 'Senha do backup', 'backup key', 'redefinir senha') && (
+        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+          <View style={s.sectionTitleRow}>
+            <IconShield size={18} color={colors.primary} style={{ marginRight: 8 }} />
+            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.backupKey.title') || 'Senha do backup'}</Text>
+          </View>
+          <TouchableOpacity
+            style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0, marginTop: Spacing.md }]}
+            onPress={() => {
+              setBackupKeyPass('');
+              setBackupKeyPass2('');
+              setBackupKeyMsg('');
+              setBackupKeyOpen(true);
+            }}
+            activeOpacity={0.65}
+          >
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.backupKey.rotate') || 'Redefinir senha do backup'}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {t('settings.backupKey.subtitle') || 'Troque a frase secreta que protege seu backup criptografado. Backups antigos deixam de ser restauráveis.'}
+              </Text>
+            </View>
+            <IconChevronRight size={20} color={colors.textTertiary} />
+          </TouchableOpacity>
+        </View>
+        )}
+
+        {/* Network usage stats — lifetime up/down bytes for chat media. */}
+        {sectionMatches(t('settings.networkUsage.title') || 'Uso de rede', 'network usage', 'uso de rede') && (
+        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+          <View style={s.sectionTitleRow}>
+            <IconDatabase size={18} color={colors.primary} style={{ marginRight: 8 }} />
+            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.networkUsage.title') || 'Uso de rede'}</Text>
+          </View>
+          <Text style={[s.settingDesc, { color: colors.textTertiary, marginTop: Spacing.sm, marginBottom: Spacing.md }]}>
+            {t('settings.networkUsage.desc') || 'Total de dados enviados e recebidos no chat desde a instalação.'}
+          </Text>
+          {(() => {
+            const fmt = (b) => {
+              if (!Number.isFinite(b)) return '—';
+              const bytes = Math.max(0, Number(b) || 0);
+              if (bytes < 1024) return bytes === 0 ? '0 KB' : '< 1 KB';
+              const kb = bytes / 1024;
+              if (kb < 1024) return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} KB`;
+              const mb = kb / 1024;
+              if (mb < 1024) return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+              const gb = mb / 1024;
+              return `${gb < 10 ? gb.toFixed(2) : gb.toFixed(1)} GB`;
+            };
+            return (
+              <>
+                <View style={[s.settingRow, { borderBottomColor: colors.borderLight, paddingVertical: Spacing.sm }]}>
+                  <View style={s.settingInfo}>
+                    <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.networkUsage.sent') || 'Enviado'}</Text>
+                  </View>
+                  <Text style={[s.settingLabel, { color: colors.textSecondary }]}>{netStats ? fmt(netStats.up) : '—'}</Text>
+                </View>
+                <View style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0, paddingVertical: Spacing.sm }]}>
+                  <View style={s.settingInfo}>
+                    <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.networkUsage.received') || 'Recebido'}</Text>
+                  </View>
+                  <Text style={[s.settingLabel, { color: colors.textSecondary }]}>{netStats ? fmt(netStats.down) : '—'}</Text>
+                </View>
+              </>
+            );
+          })()}
+        </View>
+        )}
+
+        {/* Help center — opens the support page via Linking. */}
+        {sectionMatches(t('settings.help.title') || 'Central de ajuda', 'help', 'ajuda', 'support') && (
+        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+          <View style={s.sectionTitleRow}>
+            <IconMail size={18} color={colors.primary} style={{ marginRight: 8 }} />
+            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.help.title') || 'Central de ajuda'}</Text>
+          </View>
+          <TouchableOpacity
+            style={[s.settingRow, { borderBottomColor: colors.borderLight, marginTop: Spacing.md }]}
+            onPress={() => { Linking.openURL('https://chatyy.com.br/ajuda').catch(() => {}); }}
+          >
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.help.title') || 'Central de ajuda'}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>chatyy.com.br/ajuda</Text>
+            </View>
+            <IconChevronRight size={20} color={colors.textTertiary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0 }]}
+            onPress={() => { Linking.openURL('mailto:support@chatyy.com.br').catch(() => {}); }}
+          >
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.help.contactSupport') || 'Falar com o suporte'}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>support@chatyy.com.br</Text>
+            </View>
+            <IconChevronRight size={20} color={colors.textTertiary} />
+          </TouchableOpacity>
+        </View>
+        )}
+
+        {/* About — opens a modal with app version, build, and legal links. */}
+        {sectionMatches(t('settings.about.title') || 'Sobre', 'about', 'sobre', 'version') && (
+        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+          <View style={s.sectionTitleRow}>
+            <IconFileText size={18} color={colors.primary} style={{ marginRight: 8 }} />
+            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.about.title') || 'Sobre'}</Text>
+          </View>
+          <TouchableOpacity
+            style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0, marginTop: Spacing.md }]}
+            onPress={() => setAboutOpen(true)}
+          >
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.about.title') || 'Sobre'}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {(() => {
+                  const ver = Constants?.expoConfig?.version || Constants?.manifest?.version || '?';
+                  const build = Constants?.expoConfig?.ios?.buildNumber
+                    || Constants?.expoConfig?.android?.versionCode
+                    || '';
+                  const label = (t('settings.about.version') || 'Versão {ver}').replace('{ver}', ver);
+                  return build ? `${label} (${build})` : label;
+                })()}
+              </Text>
+            </View>
+            <IconChevronRight size={20} color={colors.textTertiary} />
+          </TouchableOpacity>
         </View>
         )}
 
@@ -1621,6 +2206,49 @@ function SettingsScreenInner() {
               <Text style={{ color: colors.textTertiary, fontSize: 20 }}>›</Text>
             </TouchableOpacity>
 
+            {/* Alertas de login — notify when a NEW device signs into this
+                account. Tap opens the history modal (last 30d of sign-ins),
+                toggle persists via chat_user_defaults.login_alerts_enabled. */}
+            <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
+              <TouchableOpacity
+                style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 }}
+                onPress={async () => {
+                  setLoginHistoryOpen(true);
+                  setLoginHistoryLoading(true);
+                  try {
+                    const r = await api.getLoginHistory?.();
+                    if (r?.success && Array.isArray(r?.data?.events)) setLoginHistory(r.data.events);
+                    else if (Array.isArray(r?.data)) setLoginHistory(r.data);
+                    else setLoginHistory([]);
+                  } catch { setLoginHistory([]); }
+                  finally { setLoginHistoryLoading(false); }
+                }}
+                activeOpacity={0.65}
+              >
+                <IconShield size={18} color={colors.primary} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.settingLabel, { color: colors.text }]}>
+                    {t('settings.loginAlerts.title') || 'Alertas de login'}
+                  </Text>
+                  <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                    {t('settings.loginAlerts.subtitle') || 'Receba notif quando novo dispositivo logar'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+              <Switch
+                value={loginAlertsEnabled}
+                onValueChange={(v) => {
+                  setLoginAlertsEnabled(v);
+                  // Persist via chat_user_defaults_set — same blob the rest
+                  // of this section already uses for media auto-download
+                  // prefs, so we don't introduce a new endpoint.
+                  try { api.chatUserDefaultsSet?.({ login_alerts_enabled: v }).catch(() => {}); } catch {}
+                }}
+                trackColor={{ false: colors.divider, true: colors.primaryLight }}
+                thumbColor={loginAlertsEnabled ? colors.primary : '#fff'}
+              />
+            </View>
+
             {/* Privacidade avançada — proxy/Tor, screen-capture block,
                 discoverable opt-out, VPN suggestion. Grouped behind one
                 row so the main Security section stays scannable. */}
@@ -1812,7 +2440,7 @@ function SettingsScreenInner() {
             into mediaCache.setMediaDownloadPrefs so the cellular gate respects
             the new pref without an app restart. Mobile-only (web has no
             cellular concept). */}
-        {Platform.OS !== 'web' && sectionMatches(t('settings.mediaAutoDownload'), t('settings.mediaPhotos'), t('settings.mediaAudio'), t('settings.mediaVideos'), t('settings.mediaDocs'), 'storage', 'auto-download') && (
+        {Platform.OS !== 'web' && sectionMatches(t('settings.mediaAutoDownload'), t('settings.mediaPhotos'), t('settings.mediaAudio'), t('settings.mediaVideos'), t('settings.mediaDocs'), t('settings.roaming.title'), 'storage', 'auto-download', 'roaming') && (
         <View ref={registerSectionRef('mediaAutoDownload')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.mediaAutoDownload')}</Text>
           <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
@@ -1875,6 +2503,45 @@ function SettingsScreenInner() {
               </View>
             );
           })}
+
+          {/* Roaming gate — separate toggle that scopes the "mobile" mode
+              to also fire while roaming. When OFF, the mediaCache cellular
+              gate treats `mobile` as "Wi-Fi + home carrier" and skips
+              downloads on roaming. Persisted via local storage; read by
+              services/mediaCache on bootstrap. */}
+          <View
+            style={[
+              s.settingRow,
+              {
+                borderBottomColor: colors.borderLight,
+                borderBottomWidth: 0,
+                marginTop: Spacing.sm,
+                paddingTop: Spacing.md,
+                borderTopWidth: StyleSheet.hairlineWidth,
+                borderTopColor: colors.borderLight,
+              },
+            ]}
+          >
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.roaming.title') || 'Permitir em roaming'}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {t('settings.roaming.desc') || 'Permite baixar mídia quando estiver em roaming. Desligue pra economizar dados internacionais.'}
+              </Text>
+            </View>
+            <Switch
+              value={mediaRoaming}
+              onValueChange={(v) => {
+                setMediaRoaming(v);
+                setStorage('media_auto_dl_roaming', String(v));
+                try {
+                  const mc = require('../services/mediaCache');
+                  mc.setMediaDownloadPrefs?.({ media_auto_dl_roaming: v });
+                } catch {}
+              }}
+              trackColor={{ false: colors.divider, true: colors.primaryLight }}
+              thumbColor={mediaRoaming ? colors.primary : '#fff'}
+            />
+          </View>
         </View>
         )}
 
@@ -2455,6 +3122,74 @@ function SettingsScreenInner() {
       <FilterRuleEditor visible={showFilters} onClose={() => setShowFilters(false)} />
       <PrivacyModal visible={showPrivacy} onClose={() => setShowPrivacy(false)} />
       <TermsModal visible={showTerms} onClose={() => setShowTerms(false)} />
+
+      {/* Login history modal — last 30d of sign-ins (device + ip + timestamp).
+          Data is fetched lazily when the Alertas de login row is tapped so we
+          don't roundtrip the server until the user actually asks. Stays
+          read-only — revoking a session lives in /activity-log. */}
+      <Modal
+        visible={loginHistoryOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setLoginHistoryOpen(false)}
+      >
+        <Pressable
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}
+          onPress={() => setLoginHistoryOpen(false)}
+        >
+          <Pressable
+            onPress={(e) => e.stopPropagation()}
+            style={{
+              backgroundColor: colors.surface,
+              borderTopLeftRadius: 20, borderTopRightRadius: 20,
+              padding: Spacing.lg,
+              maxHeight: '70%',
+            }}
+          >
+            <Text style={{ color: colors.text, fontSize: 18, fontWeight: '700', marginBottom: Spacing.md }}>
+              {t('settings.loginAlerts.history') || 'Histórico de logins'}
+            </Text>
+            {loginHistoryLoading ? (
+              <ActivityIndicator color={colors.primary} style={{ marginVertical: Spacing.lg }} />
+            ) : loginHistory.length === 0 ? (
+              <Text style={{ color: colors.textTertiary, textAlign: 'center', paddingVertical: Spacing.lg }}>
+                {t('settings.loginAlerts.empty') || 'Nenhum login recente'}
+              </Text>
+            ) : (
+              <ScrollView style={{ maxHeight: 400 }}>
+                {loginHistory.map((ev, idx) => {
+                  const device = ev.device || ev.user_agent || ev.client || '—';
+                  const ip = ev.ip || ev.ip_address || '';
+                  const when = ev.created_at || ev.timestamp || ev.ts || '';
+                  return (
+                    <View
+                      key={ev.id || ev.session_id || idx}
+                      style={{
+                        paddingVertical: Spacing.md,
+                        borderBottomWidth: 1,
+                        borderBottomColor: colors.borderLight,
+                      }}
+                    >
+                      <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }} numberOfLines={1}>
+                        {device}
+                      </Text>
+                      <Text style={{ color: colors.textTertiary, fontSize: 12, marginTop: 2 }}>
+                        {ip}{ip && when ? ' • ' : ''}{when}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </ScrollView>
+            )}
+            <TouchableOpacity
+              style={{ marginTop: Spacing.md, alignSelf: 'center', paddingVertical: Spacing.md, paddingHorizontal: Spacing.xl }}
+              onPress={() => setLoginHistoryOpen(false)}
+            >
+              <Text style={{ color: colors.primary, fontWeight: '600' }}>{t('common.close') || 'Fechar'}</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       {/* Auto-lock interval picker. Each row tags the active choice so the
           user sees what's currently in effect; tapping a row persists the
@@ -3120,6 +3855,194 @@ function SettingsScreenInner() {
                     {t('settings.registrationLockEnable') || 'Ativar PIN'}
                   </Text>
                 )}
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* About modal — version + build + legal links. Read-only surface;
+          the user can deep-link to Terms / Privacy (reuses the existing
+          modals) or to a licenses route. We keep it dependency-light:
+          read Constants.expoConfig.version/buildNumber/versionCode for
+          the displayed build label. */}
+      <Modal
+        visible={aboutOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setAboutOpen(false)}
+      >
+        <Pressable
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}
+          onPress={() => setAboutOpen(false)}
+        >
+          <Pressable
+            onPress={e => e.stopPropagation?.()}
+            style={{ backgroundColor: colors.surface, borderRadius: 18, padding: 22 }}
+          >
+            <Text style={{ color: colors.text, fontWeight: '800', fontSize: 20, marginBottom: 6 }}>
+              {t('settings.about.title') || 'Sobre'}
+            </Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 16 }}>
+              {(() => {
+                const ver = Constants?.expoConfig?.version || Constants?.manifest?.version || '?';
+                const build = Constants?.expoConfig?.ios?.buildNumber
+                  || Constants?.expoConfig?.android?.versionCode
+                  || '';
+                const label = (t('settings.about.version') || 'Versão {ver}').replace('{ver}', ver);
+                return build ? `${label} • build ${build}` : label;
+              })()}
+            </Text>
+
+            <TouchableOpacity
+              onPress={() => { setAboutOpen(false); setTimeout(() => setShowTerms(true), 200); }}
+              style={{ paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
+            >
+              <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>{t('settings.about.terms') || 'Termos de uso'}</Text>
+              <Text style={{ color: colors.textTertiary }}>›</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => { setAboutOpen(false); setTimeout(() => setShowPrivacy(true), 200); }}
+              style={{ paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
+            >
+              <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>{t('settings.about.privacy') || 'Política de privacidade'}</Text>
+              <Text style={{ color: colors.textTertiary }}>›</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => { Linking.openURL('https://chatyy.com.br/licenses').catch(() => {}); }}
+              style={{ paddingVertical: 12, borderBottomWidth: 0, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
+            >
+              <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>{t('settings.about.licenses') || 'Licenças de código aberto'}</Text>
+              <Text style={{ color: colors.textTertiary }}>›</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => setAboutOpen(false)}
+              style={{ marginTop: 16, paddingVertical: 12, borderRadius: 10, backgroundColor: colors.primary, alignItems: 'center' }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700' }}>{t('common.close') || 'Fechar'}</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Backup key rotation modal — re-uses the passphrase-pair UX from
+          the original E2E backup flow. On submit we call the same
+          e2eeBackupEscrowPut endpoint but flag the request as a rotation
+          (server invalidates previous escrow blobs). Lightweight here —
+          the real crypto lives in services/e2e on submit. */}
+      <Modal
+        visible={backupKeyOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setBackupKeyOpen(false)}
+      >
+        <Pressable
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }}
+          onPress={() => !backupKeyBusy && setBackupKeyOpen(false)}
+        >
+          <Pressable
+            onPress={e => e.stopPropagation?.()}
+            style={{ backgroundColor: colors.surface, borderRadius: 18, padding: 22 }}
+          >
+            <Text style={{ color: colors.text, fontWeight: '800', fontSize: 18, marginBottom: 6 }}>
+              {t('settings.backupKey.rotate') || 'Redefinir senha do backup'}
+            </Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 14 }}>
+              {t('settings.backupKey.warning') || 'Atenção: backups antigos deixarão de ser restauráveis com a senha anterior. Anote a nova senha em local seguro.'}
+            </Text>
+            <TextInput
+              value={backupKeyPass}
+              onChangeText={setBackupKeyPass}
+              secureTextEntry
+              placeholder={t('settings.backupKey.newPass') || 'Nova frase secreta'}
+              placeholderTextColor={colors.textTertiary}
+              style={{
+                borderWidth: 1, borderColor: colors.borderLight,
+                borderRadius: 10, padding: 12, marginBottom: 10,
+                color: colors.text, backgroundColor: colors.background,
+              }}
+              editable={!backupKeyBusy}
+            />
+            <TextInput
+              value={backupKeyPass2}
+              onChangeText={setBackupKeyPass2}
+              secureTextEntry
+              placeholder={t('settings.backupKey.repeatPass') || 'Repita a frase'}
+              placeholderTextColor={colors.textTertiary}
+              style={{
+                borderWidth: 1, borderColor: colors.borderLight,
+                borderRadius: 10, padding: 12, marginBottom: 12,
+                color: colors.text, backgroundColor: colors.background,
+              }}
+              editable={!backupKeyBusy}
+            />
+            {backupKeyMsg ? (
+              <Text style={{ color: backupKeyMsg.startsWith('OK') ? '#16a34a' : '#dc2626', fontSize: 13, marginBottom: 10 }}>
+                {backupKeyMsg}
+              </Text>
+            ) : null}
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <TouchableOpacity
+                onPress={() => !backupKeyBusy && setBackupKeyOpen(false)}
+                style={{ flex: 1, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: colors.borderLight, alignItems: 'center' }}
+              >
+                <Text style={{ color: colors.text, fontWeight: '600' }}>{t('common.cancel') || 'Cancelar'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={async () => {
+                  setBackupKeyMsg('');
+                  if (!backupKeyPass || backupKeyPass.length < 8) {
+                    setBackupKeyMsg(t('settings.backupKey.tooShort') || 'Use ao menos 8 caracteres'); return;
+                  }
+                  if (backupKeyPass !== backupKeyPass2) {
+                    setBackupKeyMsg(t('settings.backupKey.mismatch') || 'As frases nao coincidem'); return;
+                  }
+                  setBackupKeyBusy(true);
+                  try {
+                    // Re-use the same XSalsa20-Poly1305 escrow flow as the
+                    // initial backup. Flagging `rotate: true` lets the server
+                    // version the new blob and revoke prior ones.
+                    const nacl = require('tweetnacl');
+                    const naclUtil = require('tweetnacl-util');
+                    const e2e = require('../services/e2e');
+                    const ikPub = (await e2e.getPublicKeyBase64?.()) || '';
+                    const blob = JSON.stringify({ v: 1, ik_pub: ikPub, ts: Date.now() });
+                    let key = naclUtil.decodeUTF8(backupKeyPass);
+                    for (let i = 0; i < 100000; i++) key = nacl.hash(key);
+                    key = key.slice(0, nacl.secretbox.keyLength);
+                    const nonce = nacl.randomBytes(nacl.secretbox.nonceLength);
+                    const ct = nacl.secretbox(naclUtil.decodeUTF8(blob), nonce, key);
+                    const ciphertextB64 = naclUtil.encodeBase64(ct);
+                    const nonceB64 = naclUtil.encodeBase64(nonce);
+                    const passBytes = naclUtil.decodeUTF8(backupKeyPass);
+                    const passHash = Array.from(nacl.hash(passBytes).slice(0, 32))
+                      .map((b) => b.toString(16).padStart(2, '0')).join('');
+                    const salt = naclUtil.encodeBase64(nacl.randomBytes(16));
+                    const r = await api.e2eeBackupEscrowPut?.({
+                      ciphertext: ciphertextB64, salt, nonce: nonceB64,
+                      kdfIters: 100000, passphraseHash: passHash,
+                      deviceLabel: Platform.OS, rotate: true,
+                    });
+                    if (r?.success) {
+                      setBackupKeyMsg('OK ' + (t('settings.backupKey.rotated') || 'Senha redefinida'));
+                      setBackupKeyPass(''); setBackupKeyPass2('');
+                      setTimeout(() => setBackupKeyOpen(false), 1200);
+                    } else {
+                      setBackupKeyMsg(r?.message || (t('settings.backupKey.failed') || 'Falha ao redefinir'));
+                    }
+                  } catch (err) {
+                    setBackupKeyMsg(String(err?.message || err));
+                  } finally {
+                    setBackupKeyBusy(false);
+                  }
+                }}
+                disabled={backupKeyBusy}
+                style={{ flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: colors.primary, alignItems: 'center', opacity: backupKeyBusy ? 0.5 : 1 }}
+              >
+                {backupKeyBusy
+                  ? <ActivityIndicator size="small" color="#fff" />
+                  : <Text style={{ color: '#fff', fontWeight: '700' }}>{t('common.save') || 'Salvar'}</Text>}
               </TouchableOpacity>
             </View>
           </Pressable>

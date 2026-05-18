@@ -87,6 +87,80 @@ let SmartRepliesBar = null; try { SmartRepliesBar = require('../components/chat/
 let ChatBubbleSkeleton = null; try { ChatBubbleSkeleton = require('../components/SkeletonLoader').ChatBubbleSkeleton; } catch {}
 
 // ============================================================
+// MARKDOWN-LITE RENDERER (group description, etc.)
+// ============================================================
+// Tiny inline-markdown parser used wherever we surface user-authored
+// freeform text that should support light formatting: **bold**, *italic*
+// or _italic_, ~strike~, and bare http(s)://… URLs. Anything else is
+// rendered as plain text. Not a full markdown engine — no headings,
+// lists, code, escapes, links with custom text. Just enough so a group
+// admin's "**Bem-vindos** ao grupo! Detalhes em https://…" renders
+// the way they wrote it.
+function renderMarkdownLite(text, baseStyle) {
+  if (!text || typeof text !== 'string') return null;
+  // Linkify FIRST so URL boundaries aren't confused with markdown chars
+  // (e.g. underscores inside a URL would otherwise look like italic).
+  const segments = [];
+  const urlRe = /(https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"])/gi;
+  let lastIdx = 0;
+  let m;
+  while ((m = urlRe.exec(text)) !== null) {
+    if (m.index > lastIdx) segments.push({ kind: 'text', value: text.slice(lastIdx, m.index) });
+    segments.push({ kind: 'url', value: m[0] });
+    lastIdx = m.index + m[0].length;
+  }
+  if (lastIdx < text.length) segments.push({ kind: 'text', value: text.slice(lastIdx) });
+
+  // Now expand markdown inside the text segments. Order matters: **bold**
+  // before *italic* so `**a**` doesn't get mis-parsed as `<i>*a*</i>`.
+  const expandText = (s) => {
+    const out = [];
+    const re = /(\*\*[^\*\n]+?\*\*|\*[^\*\n]+?\*|_[^_\n]+?_|~[^~\n]+?~)/g;
+    let li = 0; let tm;
+    while ((tm = re.exec(s)) !== null) {
+      if (tm.index > li) out.push({ type: 'plain', text: s.slice(li, tm.index) });
+      const tok = tm[0];
+      if (tok.startsWith('**')) out.push({ type: 'bold', text: tok.slice(2, -2) });
+      else if (tok.startsWith('*')) out.push({ type: 'italic', text: tok.slice(1, -1) });
+      else if (tok.startsWith('_')) out.push({ type: 'italic', text: tok.slice(1, -1) });
+      else if (tok.startsWith('~')) out.push({ type: 'strike', text: tok.slice(1, -1) });
+      li = tm.index + tok.length;
+    }
+    if (li < s.length) out.push({ type: 'plain', text: s.slice(li) });
+    return out;
+  };
+
+  const nodes = [];
+  let keyN = 0;
+  for (const seg of segments) {
+    if (seg.kind === 'url') {
+      nodes.push(
+        <Text
+          key={`u${keyN++}`}
+          style={{ color: '#3b82f6', textDecorationLine: 'underline' }}
+          onPress={() => { try { Linking.openURL(seg.value); } catch {} }}
+        >
+          {seg.value}
+        </Text>
+      );
+      continue;
+    }
+    for (const tok of expandText(seg.value)) {
+      if (tok.type === 'bold') {
+        nodes.push(<Text key={`b${keyN++}`} style={{ fontWeight: '700' }}>{tok.text}</Text>);
+      } else if (tok.type === 'italic') {
+        nodes.push(<Text key={`i${keyN++}`} style={{ fontStyle: 'italic' }}>{tok.text}</Text>);
+      } else if (tok.type === 'strike') {
+        nodes.push(<Text key={`s${keyN++}`} style={{ textDecorationLine: 'line-through' }}>{tok.text}</Text>);
+      } else {
+        nodes.push(<Text key={`p${keyN++}`}>{tok.text}</Text>);
+      }
+    }
+  }
+  return <Text style={baseStyle}>{nodes}</Text>;
+}
+
+// ============================================================
 // ANIMATED PRESSABLE (scale-on-press micro-interaction)
 // ============================================================
 function AnimatedPressable({ children, onPress, onLongPress, delayLongPress, style, activeOpacity = 0.9, ...props }) {
@@ -179,6 +253,147 @@ function formatDateSeparator(dateStr, t) {
   const locale = t('_locale') || undefined;
   if (diffDays < 7) return d.toLocaleDateString(locale, { weekday: 'long' });
   return d.toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// ============================================================
+// Natural-language date range parser for in-chat search.
+// Supports a small but useful grammar (pt-BR + en + es) — enough to
+// cover the common cases users type without forcing a date picker:
+//   "hoje" / "today" / "hoy"
+//   "ontem" / "yesterday" / "ayer"
+//   "essa semana" / "this week" / "esta semana"
+//   "semana passada" / "last week" / "semana pasada"
+//   "esse mes" / "this month" / "este mes"
+//   "mes passado" / "last month" / "mes pasado"
+//   "antes de <data>" / "before <date>"
+//   "depois de <data>" / "after <date>"
+//   "entre <data> e <data>" / "between <date> and <date>"
+// Returns ISO strings for dateFrom / dateTo, or undefined for the
+// fields the input didn't mention (so caller can preserve current).
+// ============================================================
+function parseNlDateRange(input) {
+  const out = {};
+  const raw = String(input || '').toLowerCase().trim();
+  if (!raw) return out;
+
+  const now = new Date();
+  const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+  const endOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+
+  // Quick aliases ----------------------------------------------------------
+  if (/\b(hoje|today|hoy)\b/.test(raw)) {
+    out.dateFrom = startOfDay(now).toISOString();
+    out.dateTo = endOfDay(now).toISOString();
+    return out;
+  }
+  if (/\b(ontem|yesterday|ayer)\b/.test(raw)) {
+    const y = new Date(now.getTime() - 86400000);
+    out.dateFrom = startOfDay(y).toISOString();
+    out.dateTo = endOfDay(y).toISOString();
+    return out;
+  }
+  if (/\b(essa semana|esta semana|this week)\b/.test(raw)) {
+    const dow = now.getDay(); // 0=Sun
+    const monOffset = (dow === 0) ? 6 : dow - 1;
+    const monday = new Date(now.getTime() - monOffset * 86400000);
+    out.dateFrom = startOfDay(monday).toISOString();
+    out.dateTo = endOfDay(now).toISOString();
+    return out;
+  }
+  if (/\b(semana passada|last week|semana pasada)\b/.test(raw)) {
+    const dow = now.getDay();
+    const monOffset = (dow === 0) ? 6 : dow - 1;
+    const thisMon = new Date(now.getTime() - monOffset * 86400000);
+    const lastMon = new Date(thisMon.getTime() - 7 * 86400000);
+    const lastSun = new Date(thisMon.getTime() - 86400000);
+    out.dateFrom = startOfDay(lastMon).toISOString();
+    out.dateTo = endOfDay(lastSun).toISOString();
+    return out;
+  }
+  if (/\b(esse mes|este mes|this month|esse mês|este mês)\b/.test(raw)) {
+    out.dateFrom = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+    out.dateTo = endOfDay(now).toISOString();
+    return out;
+  }
+  if (/\b(mes passado|last month|mês passado|mes pasado)\b/.test(raw)) {
+    const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const last = new Date(now.getFullYear(), now.getMonth(), 0); // day 0 = last of prev
+    out.dateFrom = startOfDay(first).toISOString();
+    out.dateTo = endOfDay(last).toISOString();
+    return out;
+  }
+
+  // Month-name parsing — accepts pt-BR/en/es first-3 chars
+  const MONTHS = {
+    jan: 0, fev: 1, feb: 1, mar: 2, abr: 3, apr: 3, mai: 4, may: 4,
+    jun: 5, jul: 6, ago: 7, aug: 7, set: 8, sep: 8, out: 9, oct: 9,
+    nov: 10, dez: 11, dec: 11,
+  };
+  // "5 fev", "5 de fev", "5/2", "5/2/2026", "2026-02-05"
+  const parseOneDate = (s) => {
+    if (!s) return null;
+    const trimmed = s.trim();
+    // ISO
+    const iso = trimmed.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (iso) {
+      const d = new Date(+iso[1], +iso[2] - 1, +iso[3]);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    // d/m or d/m/yyyy (and m/d as fallback if first num > 12)
+    const slash = trimmed.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
+    if (slash) {
+      let a = +slash[1], b = +slash[2];
+      const y = slash[3] ? (+slash[3] < 100 ? 2000 + +slash[3] : +slash[3]) : now.getFullYear();
+      // pt-BR default = d/m; flip to m/d if day field is impossible.
+      let day = a, month = b - 1;
+      if (a > 12 && b <= 12) { day = a; month = b - 1; }
+      else if (b > 12 && a <= 12) { day = b; month = a - 1; }
+      const d = new Date(y, month, day);
+      return isNaN(d.getTime()) ? null : d;
+    }
+    // "5 fev" / "5 de fev" / "fev 5"
+    const mName = trimmed.match(/^(?:(\d{1,2})\s+(?:de\s+)?([a-zç]+)|([a-zç]+)\s+(\d{1,2}))(?:\s+(?:de\s+)?(\d{2,4}))?$/i);
+    if (mName) {
+      const day = +(mName[1] || mName[4]);
+      const monStr = String(mName[2] || mName[3] || '').slice(0, 3).toLowerCase();
+      const y = mName[5] ? (+mName[5] < 100 ? 2000 + +mName[5] : +mName[5]) : now.getFullYear();
+      if (monStr in MONTHS && day >= 1 && day <= 31) {
+        return new Date(y, MONTHS[monStr], day);
+      }
+    }
+    return null;
+  };
+
+  // "entre X e Y" / "between X and Y"
+  const between = raw.match(/(?:entre|between)\s+(.+?)\s+(?:e|and|y)\s+(.+)$/);
+  if (between) {
+    const a = parseOneDate(between[1]);
+    const b = parseOneDate(between[2]);
+    if (a) out.dateFrom = startOfDay(a).toISOString();
+    if (b) out.dateTo = endOfDay(b).toISOString();
+    return out;
+  }
+  // "antes de X" / "before X"
+  const before = raw.match(/(?:antes\s+de|before|antes\s+del)\s+(.+)$/);
+  if (before) {
+    const a = parseOneDate(before[1]);
+    if (a) out.dateTo = endOfDay(a).toISOString();
+    return out;
+  }
+  // "depois de X" / "after X"
+  const after = raw.match(/(?:depois\s+de|after|despu[eé]s\s+de|despu[eé]s\s+del)\s+(.+)$/);
+  if (after) {
+    const a = parseOneDate(after[1]);
+    if (a) out.dateFrom = startOfDay(a).toISOString();
+    return out;
+  }
+  // Bare date — treat as the whole day.
+  const single = parseOneDate(raw);
+  if (single) {
+    out.dateFrom = startOfDay(single).toISOString();
+    out.dateTo = endOfDay(single).toISOString();
+  }
+  return out;
 }
 
 // ============================================================
@@ -1066,9 +1281,9 @@ function FormattedText({ text, style, colors }) {
     // a single <Text> with inline <Image> children works on both native and
     // web (RN supports <Image> as <Text> child since 0.71+).
     const ce = _splitCustomEmoji(text);
-    if (ce.length === 1 && ce[0].text) return <Text style={style}>{text}</Text>;
+    if (ce.length === 1 && ce[0].text) return <Text style={style} selectable={true}>{text}</Text>;
     return (
-      <Text style={style}>
+      <Text style={style} selectable={true}>
         {ce.map((seg, i) =>
           seg.ce ? (
             <Image key={i} source={{ uri: seg.ce }}
@@ -1102,7 +1317,7 @@ function FormattedText({ text, style, colors }) {
   }
 
   return (
-    <Text style={style}>
+    <Text style={style} selectable={true}>
       {parts.map((p, i) => {
         if (p.spoiler) return <SpoilerText key={i} style={style}>{p.text}</SpoilerText>;
         // Inline custom emoji rendering for non-formatted segments.
@@ -1334,7 +1549,7 @@ function TextWithLinks({ text, style, linkColor, colors, mentionColor, router: r
     );
   };
   return (
-    <Text style={style}>
+    <Text style={style} selectable={true}>
       {urlParts.map((part, i) =>
         /^https?:\/\//.test(part) ? (
           <Text key={i} style={{ color: linkColor, textDecorationLine: 'underline' }}
@@ -1397,6 +1612,11 @@ function LinkPreview({ url, colors }) {
   // `false` means "we tried, no data" → render nothing this session.
   const cached = _lpCacheGet(url);
   const [preview, setPreview] = useState(cached === undefined ? null : cached);
+  // Favicon load state — flips true on Image onError so we drop back to
+  // the IconGlobe SVG fallback. Reset when the URL changes (otherwise a
+  // recycled row would keep showing the SVG for a different domain).
+  const [faviconFailed, setFaviconFailed] = useState(false);
+  useEffect(() => { setFaviconFailed(false); }, [url]);
 
   useEffect(() => {
     if (cached !== undefined) return; // already resolved
@@ -1448,9 +1668,32 @@ function LinkPreview({ url, colors }) {
       )}
       <View style={linkPreviewStyles.textContainer}>
         {domain ? (
-          <Text style={[linkPreviewStyles.domain, { color: colors.textTertiary }]} numberOfLines={1}>
-            {domain}
-          </Text>
+          // Favicon + domain row — Telegram/iMessage parity. Backend may
+          // return preview.favicon; otherwise we derive `<origin>/favicon.ico`
+          // (most sites serve one even when their og:icon meta is missing).
+          // If the <Image> 404s we silently fall back to the IconGlobe SVG
+          // so the row keeps its visual weight either way.
+          <View style={linkPreviewStyles.domainRow}>
+            {(() => {
+              let favUrl = preview.favicon || null;
+              if (!favUrl) {
+                try { favUrl = (url.match(/^https?:\/\/[^/]+/i) || [])[0] + '/favicon.ico'; } catch {}
+              }
+              if (favUrl && !faviconFailed) {
+                return (
+                  <Image
+                    source={{ uri: favUrl }}
+                    style={linkPreviewStyles.favicon}
+                    onError={() => setFaviconFailed(true)}
+                  />
+                );
+              }
+              return <IconGlobe size={12} color={colors.textTertiary} />;
+            })()}
+            <Text style={[linkPreviewStyles.domain, { color: colors.textTertiary }]} numberOfLines={1}>
+              {domain}
+            </Text>
+          </View>
         ) : null}
         {preview.title ? (
           <Text style={[linkPreviewStyles.title, { color: colors.text }]} numberOfLines={2}>
@@ -1480,7 +1723,9 @@ const linkPreviewStyles = StyleSheet.create({
     textShadowColor: 'rgba(0,0,0,0.25)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2,
   },
   textContainer: { paddingHorizontal: 12, paddingVertical: 8 },
-  domain: { fontSize: 10, textTransform: 'uppercase', marginBottom: 3, letterSpacing: 0.5, fontWeight: '600' },
+  domainRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },
+  favicon: { width: 14, height: 14, borderRadius: 3, backgroundColor: 'transparent' },
+  domain: { fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: '600', flex: 1 },
   title: { fontSize: 13, fontWeight: '600', marginBottom: 2, lineHeight: 18 },
   desc: { fontSize: 12, lineHeight: 16, opacity: 0.85 },
 });
@@ -2272,6 +2517,37 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
     if (intervalRef.current) clearInterval(intervalRef.current);
   }, []);
 
+  // Skip ±15s — podcast-style. WhatsApp added this in 2024 for voice notes,
+  // useful for retrying a missed sentence in a long voice message. Uses the
+  // same plumbing as the waveform onSeek above: HTMLAudioElement.currentTime
+  // on web, AudioPlayer.seekTo on native. Clamps to [0, duration] so we
+  // never seek past the file. Updates progress+currentTime so the waveform
+  // bars repaint immediately even when paused.
+  const skipBy = useCallback(async (deltaSec) => {
+    const snd = soundRef.current;
+    if (!snd) return;
+    try {
+      if (Platform.OS === 'web') {
+        const dur = snd.duration;
+        const cur = snd.currentTime || 0;
+        if (!isFinite(dur) || dur <= 0) return;
+        const next = Math.max(0, Math.min(dur, cur + deltaSec));
+        snd.currentTime = next;
+        setCurrentTime(next);
+        setProgress(next / dur);
+      } else {
+        const dur = duration || 0;
+        if (dur <= 0) return;
+        const cur = currentTime || 0;
+        const next = Math.max(0, Math.min(dur, cur + deltaSec));
+        if (typeof snd.seekTo === 'function') await snd.seekTo(next);
+        else if ('currentTime' in snd) snd.currentTime = next;
+        setCurrentTime(next);
+        setProgress(next / dur);
+      }
+    } catch {}
+  }, [duration, currentTime]);
+
   // Pre-cache audio on mount
   useEffect(() => {
     const unregister = registerAudioPlayer(stopPlayback);
@@ -2547,8 +2823,25 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
   const playedBarIdx = Math.floor(progress * waveformBars.length);
   const displayTime = playing ? currentTime : (duration || 0);
 
+  // Skip controls only render once playback has started — otherwise the
+  // skip buttons would compete with the play button visually and add
+  // clutter to short voice notes that the user can just listen straight
+  // through. Once `played` is true (or playing now), they fade in.
+  const showSkipBtns = playing || played;
+
   return (
     <View style={audioStyles.container}>
+      {showSkipBtns && (
+        <TouchableOpacity
+          onPress={() => skipBy(-15)}
+          style={audioStyles.skipBtn}
+          accessibilityLabel={t('chatConv.skipBack15') || 'Voltar 15 segundos'}
+          accessibilityRole="button"
+        >
+          <IconRotateCcw size={16} color={isOwn ? 'rgba(255,255,255,0.85)' : '#7C3AED'} />
+          <Text style={[audioStyles.skipLabel, { color: isOwn ? 'rgba(255,255,255,0.85)' : '#7C3AED' }]}>15</Text>
+        </TouchableOpacity>
+      )}
       <View style={{ position: 'relative' }}>
         <TouchableOpacity onPress={togglePlay} style={[audioStyles.playBtn, { backgroundColor: isOwn ? 'rgba(255,255,255,0.25)' : '#7C3AED' }]} accessibilityLabel={caching ? (t('common.downloading') || 'Baixando') : playing ? (t('common.pause') || 'Pausar') : (t('common.play') || 'Reproduzir')} accessibilityRole="button">
           {caching ? (
@@ -2565,6 +2858,17 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
           </View>
         )}
       </View>
+      {showSkipBtns && (
+        <TouchableOpacity
+          onPress={() => skipBy(15)}
+          style={audioStyles.skipBtn}
+          accessibilityLabel={t('chatConv.skipForward15') || 'Avançar 15 segundos'}
+          accessibilityRole="button"
+        >
+          <IconRotateCw size={16} color={isOwn ? 'rgba(255,255,255,0.85)' : '#7C3AED'} />
+          <Text style={[audioStyles.skipLabel, { color: isOwn ? 'rgba(255,255,255,0.85)' : '#7C3AED' }]}>15</Text>
+        </TouchableOpacity>
+      )}
       <View style={audioStyles.trackWrap}>
         {(() => {
           // Seek handler — map touch X within the waveform to a playback
@@ -2672,6 +2976,14 @@ const audioStyles = StyleSheet.create({
       web: { boxShadow: '0 1px 4px rgba(0,0,0,0.08)' },
     }),
   },
+  // Skip buttons flanking the play button: tight 28x32 hit target with a
+  // tiny "15" label so the icon by itself isn't ambiguous.
+  skipBtn: {
+    width: 28, height: 32,
+    alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 2,
+  },
+  skipLabel: { fontSize: 8, fontWeight: '800', marginTop: -2, letterSpacing: 0.2 },
   trackWrap: { flex: 1, marginLeft: 10 },
   waveformRow: { flexDirection: 'row', alignItems: 'center', gap: 1.5, height: 36, flex: 1 },
   duration: { fontSize: 10, marginTop: 4, fontWeight: '600', letterSpacing: 0.3 },
@@ -6492,12 +6804,89 @@ export default function ChatConversationScreen() {
   }, [messages.length, user]);
 
   const [replyTo, setReplyTo] = useState(null);
+  // Hydrate the reply preview bar from a navigation param — used by the
+  // "Reply privately" action in group chats, which navigates here with a
+  // JSON-encoded snapshot of the original message so this DM starts with
+  // a quote header pre-populated. We consume + clear the param after
+  // first read so re-mounts (e.g. navigation back+forward) don't re-show
+  // the stale quote.
+  useEffect(() => {
+    if (!params?.replyTo) return;
+    try {
+      const decoded = decodeURIComponent(String(params.replyTo));
+      const parsed = JSON.parse(decoded);
+      if (parsed && typeof parsed === 'object') {
+        setReplyTo(parsed);
+        // Clear the param so a later mount doesn't re-apply it.
+        try { router.setParams?.({ replyTo: undefined }); } catch {}
+      }
+    } catch {}
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params?.replyTo]);
+
   // Telegram-style partial-text reply. When set, shows a modal with the
   // source message rendered in a TextInput so the user can highlight the
   // exact phrase to quote. Confirm → setReplyTo with `quoteText` populated.
   const [quoteSelectModal, setQuoteSelectModal] = useState(null); // { msg, draft }
   const [editingMsg, setEditingMsg] = useState(null);
   const [selectedMsg, setSelectedMsg] = useState(null);
+
+  // Web-only floating "Citar" pill — when the user drags-selects a span of
+  // text inside any message bubble, a small popover appears near the cursor
+  // letting them quote that exact snippet without opening the modal.
+  // Mobile keeps the existing modal flow since OS-level Text selection is
+  // unreliable across iOS/Android RN versions.
+  // Shape: { x, y, text } or null when no selection.
+  const [quotePill, setQuotePill] = useState(null);
+  useEffect(() => {
+    if (Platform.OS !== 'web') return undefined;
+    let raf = 0;
+    const onMouseUp = () => {
+      // Defer one frame so the browser has committed the new selection
+      // before we read it.
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        try {
+          const sel = window.getSelection?.();
+          const txt = sel && sel.toString();
+          if (!txt || !txt.trim()) { setQuotePill(null); return; }
+          // Skip selections entirely inside an input/textarea (compose box).
+          const anchor = sel.anchorNode;
+          const focusNode = sel.focusNode;
+          const inputAncestor = (node) => {
+            let n = node && node.nodeType === 3 ? node.parentElement : node;
+            while (n) {
+              const tag = n.tagName;
+              if (tag === 'INPUT' || tag === 'TEXTAREA') return true;
+              if (n.isContentEditable) return true;
+              n = n.parentElement;
+            }
+            return false;
+          };
+          if (inputAncestor(anchor) || inputAncestor(focusNode)) { setQuotePill(null); return; }
+          const rng = sel.getRangeAt(0);
+          const rect = rng.getBoundingClientRect();
+          if (!rect || (rect.width === 0 && rect.height === 0)) { setQuotePill(null); return; }
+          // Position above the selection. Pill is ~80×30 — center it on
+          // the selection's horizontal midpoint, 38px above the top edge.
+          setQuotePill({
+            x: Math.max(8, rect.left + rect.width / 2 - 40),
+            y: Math.max(40, rect.top - 38),
+            text: txt.trim().slice(0, 240),
+          });
+        } catch { setQuotePill(null); }
+      });
+    };
+    const onMouseDown = () => { setQuotePill(null); };
+    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('mousedown', onMouseDown);
+    return () => {
+      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('mousedown', onMouseDown);
+      cancelAnimationFrame(raf);
+    };
+  }, []);
+
   // 1-second tick used to repaint the "Apagar para todos · Disponível por X
   // mais" countdown inside the long-press menu while it's open. Without this
   // the subtitle would freeze on the value at open time and never tick down.
@@ -6967,6 +7356,26 @@ export default function ChatConversationScreen() {
   // server-side via chat_group_admin (the backend may add the flag separately;
   // for now we only persist + reflect the toggle locally).
   const [hideMembers, setHideMembers] = useState(false);
+
+  // ── Member search + role filter inside the Group Info modal ──
+  // Tracks the live search box + a 3-way role chip (all/admins/members).
+  // Lives at the screen-level state so the input doesn't reset across
+  // re-renders triggered by member-list refreshes.
+  const [memberSearchQuery, setMemberSearchQuery] = useState('');
+  const [memberRoleFilter, setMemberRoleFilter] = useState('all'); // 'all' | 'admins' | 'members'
+
+  // ── Approval-required toggle ──
+  // Optimistic local mirror of the conversation.require_approval flag.
+  // Persisted via api.chatGroupSetApprovalRequired (alias of the legacy
+  // chatGroupSetRequireApproval call). Surfaced as a row in the admin
+  // settings block of the group info modal.
+  const [approvalRequired, setApprovalRequired] = useState(false);
+
+  // ── Group description ──
+  // Plain-text or lightly-marked-up description shipped by the backend on
+  // chat_group_info. Rendered with a tiny markdown helper so **bold**,
+  // *italic*, ~strike~, and bare URLs come through as the user expects.
+  const [conversationDescription, setConversationDescription] = useState('');
   const [burst, setBurst] = useState(null); // { emoji, key, premium }
   const [isPremium, setIsPremium] = useState(false);
   const [e2eBannerDismissed, setE2eBannerDismissed] = useState(false);
@@ -9200,16 +9609,56 @@ export default function ChatConversationScreen() {
         if (!mountedRef.current) return;
         const m = _extractWsMsg(payload);
         if (!m || String(m.conversation_id) !== String(conversationId)) return;
+        // Snapshot the pre-delete row so we can evict its media URL from
+        // the on-disk cache. If we don't drop the local file, tapping the
+        // tombstone could still surface the original image/video via a
+        // cached file:// URI even after backend strip.
+        let priorFileUrl = '';
         setMessages(prev => prev.map(row => {
           if (row.id !== m.id) return row;
+          priorFileUrl = row.file_url || '';
           return {
             ...row,
             deleted_at: m.deleted_at || new Date().toISOString(),
             content: '',
             file_url: '',
+            file_name: '',
+            file_size: 0,
+            thumb_b64: null,
+            hls_url: null,
+            waveform: null,
             deleted_by: m.deleted_by || '',
           };
         }));
+        // Cache invalidation: drop the deleted row from every persistence
+        // layer so a chat reopen can't restore content/file_url. Without
+        // this, the WS handler updates JS state only — chatCache, SmartCache,
+        // and native SQLite keep the pre-delete copy and re-hydrate it on
+        // next mount.
+        try {
+          const { deleteCachedMessage: delCache } = require('../services/chatCache');
+          delCache?.(conversationId, m.id)?.catch?.(() => {});
+        } catch {}
+        try {
+          const SmartCache = require('../services/smartChatCache');
+          SmartCache.updateCachedMessage?.(conversationId, m.id, {
+            deleted_at: m.deleted_at || new Date().toISOString(),
+            content: '', file_url: '', file_name: '', file_size: 0, thumb_b64: null,
+          });
+        } catch {}
+        try {
+          const nativeDb = require('../services/db');
+          nativeDb.dbDeleteMessage?.(conversationId, m.id);
+        } catch {}
+        // Evict the local media cache so a cached file:// can't replay the
+        // image/video after delete. Best-effort — if the file isn't cached
+        // the call no-ops.
+        if (priorFileUrl) {
+          try {
+            const mc = require('../services/mediaCache');
+            mc.deleteCachedUrl?.(priorFileUrl)?.catch?.(() => {});
+          } catch {}
+        }
       };
       wsUnsubs.push(mailWs.on('delete', onWsDelete));
 
@@ -9875,17 +10324,52 @@ export default function ChatConversationScreen() {
           const mode = data?.mode || 'for_all';
           if (mode === 'for_all') {
             const now = new Date().toISOString();
+            let priorFileUrl = '';
             setMessages(prev => prev.map(m => {
               if (m.id === mid) {
-                return { ...m, deleted_at: now, content: '', file_url: '', deleted_by: data.deleted_by || '' };
+                priorFileUrl = m.file_url || '';
+                return {
+                  ...m,
+                  deleted_at: now,
+                  content: '',
+                  file_url: '',
+                  file_name: '',
+                  file_size: 0,
+                  thumb_b64: null,
+                  hls_url: null,
+                  waveform: null,
+                  deleted_by: data.deleted_by || '',
+                };
               }
               // Reply previews pointing at a now-deleted message should
               // show the "apagada" tombstone instead of stale content.
               if (m.reply_to && Number(m.reply_to.id) === Number(mid)) {
-                return { ...m, reply_to: { ...m.reply_to, content: '', deleted_at: now } };
+                return { ...m, reply_to: { ...m.reply_to, content: '', file_url: null, deleted_at: now } };
               }
               return m;
             }));
+            // Mirror the WS handler — strip every cache layer + the local
+            // media file so the deleted content can't resurface from disk.
+            try {
+              const { deleteCachedMessage: delCache } = require('../services/chatCache');
+              delCache?.(conversationId, mid)?.catch?.(() => {});
+            } catch {}
+            try {
+              const SmartCache = require('../services/smartChatCache');
+              SmartCache.updateCachedMessage?.(conversationId, mid, {
+                deleted_at: now, content: '', file_url: '', file_name: '', file_size: 0, thumb_b64: null,
+              });
+            } catch {}
+            try {
+              const nativeDb = require('../services/db');
+              nativeDb.dbDeleteMessage?.(conversationId, mid);
+            } catch {}
+            if (priorFileUrl) {
+              try {
+                const mc = require('../services/mediaCache');
+                mc.deleteCachedUrl?.(priorFileUrl)?.catch?.(() => {});
+              } catch {}
+            }
           } else {
             // "Delete for me" — animated fade-out then remove
             animateDeleteThenRemove(mid);
@@ -12424,13 +12908,15 @@ export default function ChatConversationScreen() {
     if (!msg) return;
     const isMine = msg.sender_email === user?.email;
 
-    // Delete-for-everyone window — WhatsApp parity:
-    //   • personal (direct) chats:  5 minutes
+    // Delete-for-everyone window — bumped to 1h in DMs (was 5 min, 2026-05-18)
+    // so users have a more forgiving retraction window. Lines up with the
+    // group-chat window and matches WhatsApp's extended retraction policy.
+    //   • personal (direct) chats:  1 hour
     //   • group chats:              1 hour
     // Helps surface a "(expirado)" hint in the alert + a countdown subtitle
     // when within the window so users know how long they have left.
     const isGroupChat = conversationType === 'group';
-    const deleteForAllWindowMs = isGroupChat ? 3600 * 1000 : 300 * 1000;
+    const deleteForAllWindowMs = 3600 * 1000;
     const createdMs = (() => {
       try {
         if (!msg?.created_at) return 0;
@@ -12458,9 +12944,25 @@ export default function ChatConversationScreen() {
       try {
         const r = await api.chatDelete(msgId, 'for_all');
         if (r?.success) {
-          setMessages(prev => prev.map(m =>
-            String(m.id) === String(msgId) ? { ...m, deleted_at: new Date().toISOString(), content: '', file_url: '', deleted_by: user?.email } : m
-          ));
+          let priorFileUrl = '';
+          setMessages(prev => prev.map(m => {
+            if (String(m.id) === String(msgId)) {
+              priorFileUrl = m.file_url || '';
+              return {
+                ...m,
+                deleted_at: new Date().toISOString(),
+                content: '',
+                file_url: '',
+                file_name: '',
+                file_size: 0,
+                thumb_b64: null,
+                hls_url: null,
+                waveform: null,
+                deleted_by: user?.email,
+              };
+            }
+            return m;
+          }));
           // Invalidate ALL cache layers so the stale pre-delete copy can't
           // resurrect on the next chat open. Previously only the legacy
           // chatCache was cleared — SmartCache kept the non-deleted row
@@ -12471,12 +12973,21 @@ export default function ChatConversationScreen() {
           } catch {}
           try {
             const SmartCache = require('../services/smartChatCache');
-            SmartCache.updateCachedMessage?.(conversationId, msgId, { deleted_at: new Date().toISOString(), content: '', file_url: '' });
+            SmartCache.updateCachedMessage?.(conversationId, msgId, { deleted_at: new Date().toISOString(), content: '', file_url: '', file_name: '', file_size: 0, thumb_b64: null });
           } catch {}
           try {
             const nativeDb = require('../services/db');
             nativeDb.dbDeleteMessage?.(conversationId, msgId);
           } catch {}
+          // Drop the on-disk media so re-tap can't resurface the local cached
+          // copy (mediaCache returns a file:// for previously downloaded URLs,
+          // independent of the server's file_url scrub).
+          if (priorFileUrl) {
+            try {
+              const mc = require('../services/mediaCache');
+              mc.deleteCachedUrl?.(priorFileUrl)?.catch?.(() => {});
+            } catch {}
+          }
         } else if (r?.message) {
           safeAlert(t('common.error'), r.message);
         }
@@ -12754,6 +13265,11 @@ export default function ChatConversationScreen() {
   }, []);
 
   const handleDoubleTap = useCallback((msg) => {
+    // Privacy guard: never react/open a deleted message. Even if the outer
+    // bubble handler accidentally lets the tap through (e.g. stale Stack
+    // listener after a delete-for-everyone race), this short-circuits
+    // before setMediaViewer or handleReact can run.
+    if (!msg || msg.deleted_at) return;
     const now = Date.now();
     const lastTap = lastTapRef.current[msg.id] || 0;
     // Prune stale entries to keep the map from growing unbounded in long
@@ -12797,8 +13313,9 @@ export default function ChatConversationScreen() {
   }, [handleReact]);
 
   // ---- Search within conversation with filters ----
-  // ★ Advanced search: query + date range + message type
-  const [searchFilters, setSearchFilters] = useState({ dateFrom: null, dateTo: null, type: null });
+  // ★ Advanced search: query + date range + message type + sender (groups) + starred-only + NL date input
+  const [searchFilters, setSearchFilters] = useState({ dateFrom: null, dateTo: null, type: null, senderEmail: null, starredOnly: false });
+  const [searchDateTextInput, setSearchDateTextInput] = useState('');
 
   // 1. Local search first (instant) on loaded messages
   // 2. If query >= 3 chars and local results < 3, fall back to server-side FTS
@@ -12812,6 +13329,12 @@ export default function ChatConversationScreen() {
     const searchSeq = ++searchSeqRef.current;
     const isFreshSearch = () => searchSeq === searchSeqRef.current;
 
+    // Helpers for synthetic filters (links / docs) — reused across local +
+    // FTS + server merge so the predicate stays consistent everywhere.
+    const DOC_EXT_RE = /\.(pdf|docx?|xlsx?|pptx?|zip|txt|rtf|odt|ods|odp|csv)$/i;
+    const isLinkMsg = (m) => /https?:\/\//i.test(m?.content || '');
+    const isDocMsg = (m) => m?.type === 'file' || DOC_EXT_RE.test(m?.file_name || '');
+
     let localResults = messages.filter(m => {
       // Text filter
       if (!m.content || m._type || m.type === 'system') return false;
@@ -12824,8 +13347,18 @@ export default function ChatConversationScreen() {
         if (filters.dateTo && msgTime > new Date(filters.dateTo).getTime()) return false;
       }
 
-      // Type filter (text, image, video, audio, etc)
-      if (filters.type && m.type !== filters.type) return false;
+      // Type filter (text, image, video, audio, link, doc)
+      if (filters.type) {
+        if (filters.type === 'link') { if (!isLinkMsg(m)) return false; }
+        else if (filters.type === 'doc') { if (!isDocMsg(m)) return false; }
+        else if (m.type !== filters.type) return false;
+      }
+
+      // Sender filter (group chats only — sender_email is set per message)
+      if (filters.senderEmail && (m.sender_email || '').toLowerCase() !== String(filters.senderEmail).toLowerCase()) return false;
+
+      // Starred-only filter
+      if (filters.starredOnly && !m.starred) return false;
 
       return true;
     }).reverse();
@@ -12855,7 +13388,13 @@ export default function ChatConversationScreen() {
               // Apply same filters the in-memory pass uses.
               if (filters.dateFrom && new Date(row.created_at).getTime() < new Date(filters.dateFrom).getTime()) continue;
               if (filters.dateTo && new Date(row.created_at).getTime() > new Date(filters.dateTo).getTime()) continue;
-              if (filters.type && row.type !== filters.type) continue;
+              if (filters.type) {
+                if (filters.type === 'link') { if (!isLinkMsg(row)) continue; }
+                else if (filters.type === 'doc') { if (!isDocMsg(row)) continue; }
+                else if (row.type !== filters.type) continue;
+              }
+              if (filters.senderEmail && (row.sender_email || '').toLowerCase() !== String(filters.senderEmail).toLowerCase()) continue;
+              if (filters.starredOnly && !row.starred) continue;
               merged.push(row);
               seen.add(row.id);
             }
@@ -12888,7 +13427,22 @@ export default function ChatConversationScreen() {
               type: m.type || 'text',
               created_at: m.created_at,
               sender_name: m.sender_name,
-            }));
+              file_name: m.file_name || null,
+              starred: !!m.starred,
+            }))
+            .filter(m => {
+              // Re-apply non-text filters to server rows (chat_search ignores them).
+              if (filters.dateFrom && new Date(m.created_at).getTime() < new Date(filters.dateFrom).getTime()) return false;
+              if (filters.dateTo && new Date(m.created_at).getTime() > new Date(filters.dateTo).getTime()) return false;
+              if (filters.type) {
+                if (filters.type === 'link') { if (!isLinkMsg(m)) return false; }
+                else if (filters.type === 'doc') { if (!isDocMsg(m)) return false; }
+                else if (m.type !== filters.type) return false;
+              }
+              if (filters.senderEmail && (m.sender_email || '').toLowerCase() !== String(filters.senderEmail).toLowerCase()) return false;
+              if (filters.starredOnly && !m.starred) return false;
+              return true;
+            });
           if (serverNew.length > 0) {
             // Merge: local first (already in view), then server-only
             const merged = [...localResults, ...serverNew];
@@ -12989,6 +13543,27 @@ export default function ChatConversationScreen() {
         }
         if (typeof conv.forwarding_disabled !== 'undefined') {
           setForwardingDisabled(!!conv.forwarding_disabled);
+        }
+        // require_approval — surfaces the admin-set gate for invite-link joins.
+        // TODO(backend): buildConversationData() in chat.php doesn't emit
+        // `require_approval` today, so this branch is no-op until the server
+        // adds it to the chat_group_info response. The endpoint
+        // chat_group_set_require_approval persists correctly and
+        // chat_group_join_via_link already enforces the gate (chat.php
+        // ~14760); the only gap is surfacing the current value back to the
+        // UI on modal open. Until then, the toggle reflects the last
+        // optimistic state set during this session.
+        if (typeof conv.require_approval !== 'undefined' || typeof conv.approval_required !== 'undefined') {
+          setApprovalRequired(!!(conv.require_approval ?? conv.approval_required));
+        }
+        // Group description (markdown-lite). Backend stores up to 500 chars
+        // on the chat_conversations.description column.
+        // TODO(backend): same gap as require_approval — chat_group_info
+        // doesn't currently include `description` in the conversation
+        // payload. Once buildConversationData passes it through, this will
+        // hydrate automatically.
+        if (typeof conv.description === 'string') {
+          setConversationDescription(conv.description);
         }
       }
       // Pending join requests count — admins only. Silent on non-admin (403).
@@ -14694,7 +15269,13 @@ export default function ChatConversationScreen() {
           <TouchableOpacity
             key={m.id || keyIdx}
             activeOpacity={0.9}
-            onPress={() => m.file_url && setMediaViewer({ visible: true, fileUrl: m.file_url, fileName: m.file_name || m.type, fileSize: m.file_size || 0, type: m.type })}
+            onPress={() => {
+              // Privacy guard: an album row whose individual item was deleted
+              // (or whose entire bundle is tombstoned) must never re-open
+              // the original media via tap on the cell.
+              if (m.deleted_at) return;
+              if (m.file_url) setMediaViewer({ visible: true, fileUrl: m.file_url, fileName: m.file_name || m.type, fileSize: m.file_size || 0, type: m.type });
+            }}
             style={cellStyle(w, h)}
           >
             <Image source={{ uri: poster }} style={{ width: w, height: h }} resizeMode="cover" />
@@ -17418,6 +17999,13 @@ export default function ChatConversationScreen() {
         <TouchableOpacity
           activeOpacity={0.8}
           onPress={() => {
+            // Privacy guard: a deleted message renders the "Esta mensagem foi
+            // apagada" tombstone via renderDeletedLabel(), but its msg.type
+            // (image/video/etc) + msg.file_url still live in memory until the
+            // row is refetched. Without this gate, tapping the tombstone
+            // hits handleDoubleTap → setMediaViewer and re-opens the
+            // original photo/video. Block ALL taps on deleted bubbles.
+            if (isDeleted) return;
             if (selectionMode) {
               toggleSelection(msg.id);
             } else if (msg._failed && isOwn) {
@@ -18726,7 +19314,7 @@ export default function ChatConversationScreen() {
             />
             {/* ★ Filter button */}
             <TouchableOpacity onPress={() => setShowSearchBar('filters')} style={{ padding: 4 }}>
-              <IconFilter size={18} color={searchFilters.dateFrom || searchFilters.dateTo || searchFilters.type ? '#3b82f6' : colors.textSecondary} />
+              <IconFilter size={18} color={searchFilters.dateFrom || searchFilters.dateTo || searchFilters.type || searchFilters.senderEmail || searchFilters.starredOnly ? '#3b82f6' : colors.textSecondary} />
             </TouchableOpacity>
             {searchResults.length > 0 && (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
@@ -18750,7 +19338,14 @@ export default function ChatConversationScreen() {
               <View>
                 <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginBottom: 6 }}>Type</Text>
                 <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
-                  {['text', 'image', 'video', 'audio'].map(type => (
+                  {[
+                    { id: 'text', label: 'text' },
+                    { id: 'image', label: 'image' },
+                    { id: 'video', label: 'video' },
+                    { id: 'audio', label: 'audio' },
+                    { id: 'link', label: t('search.filter.type.links') || 'Links' },
+                    { id: 'doc', label: t('search.filter.type.docs') || 'Documentos' },
+                  ].map(({ id: type, label }) => (
                     <TouchableOpacity
                       key={type}
                       onPress={() => {
@@ -18765,7 +19360,7 @@ export default function ChatConversationScreen() {
                       }}
                     >
                       <Text style={{ fontSize: 12, color: searchFilters.type === type ? '#fff' : colors.text, fontWeight: searchFilters.type === type ? '600' : '500' }}>
-                        {type}
+                        {label}
                       </Text>
                     </TouchableOpacity>
                   ))}
@@ -18827,10 +19422,99 @@ export default function ChatConversationScreen() {
                   </TouchableOpacity>
                 </View>
               </View>
+              {/* Sender filter (group chats only). */}
+              {conversationType === 'group' && members.length > 0 && (
+                <View>
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginBottom: 6 }}>
+                    {t('search.filter.sender') || 'Remetente'}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      const memberOpts = members.slice(0, 20).map(m => ({
+                        label: (m.display_name || (m.email || '').split('@')[0] || m.email || '').toString(),
+                        email: m.email,
+                      })).filter(o => o.email);
+                      Alert.alert(t('search.filter.sender') || 'Remetente', '', [
+                        { text: t('chat.searchAll') || 'Todos', onPress: () => {
+                          const nx = { ...searchFilters, senderEmail: null };
+                          setSearchFilters(nx);
+                          handleSearchMessages(searchQuery, nx);
+                        } },
+                        ...memberOpts.map(o => ({ text: o.label, onPress: () => {
+                          const nx = { ...searchFilters, senderEmail: o.email };
+                          setSearchFilters(nx);
+                          handleSearchMessages(searchQuery, nx);
+                        } })),
+                        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+                      ]);
+                    }}
+                    style={{ paddingHorizontal: 10, paddingVertical: 8, backgroundColor: colors.border, borderRadius: 8 }}
+                  >
+                    <Text style={{ fontSize: 13, color: searchFilters.senderEmail ? colors.text : colors.textTertiary }}>
+                      {searchFilters.senderEmail
+                        ? (() => {
+                            const mem = members.find(m => (m.email || '').toLowerCase() === String(searchFilters.senderEmail).toLowerCase());
+                            return (mem?.display_name || (mem?.email || '').split('@')[0] || searchFilters.senderEmail).toString();
+                          })()
+                        : (t('chat.searchAll') || 'Todos')}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* Starred-only toggle. */}
               <TouchableOpacity
                 onPress={() => {
-                  setSearchFilters({ dateFrom: null, dateTo: null, type: null });
-                  handleSearchMessages(searchQuery, { dateFrom: null, dateTo: null, type: null });
+                  const nx = { ...searchFilters, starredOnly: !searchFilters.starredOnly };
+                  setSearchFilters(nx);
+                  handleSearchMessages(searchQuery, nx);
+                }}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 }}
+              >
+                <View style={{
+                  width: 18, height: 18, borderRadius: 4,
+                  borderWidth: 1.5, borderColor: searchFilters.starredOnly ? '#3b82f6' : colors.border,
+                  backgroundColor: searchFilters.starredOnly ? '#3b82f6' : 'transparent',
+                  alignItems: 'center', justifyContent: 'center',
+                }}>
+                  {searchFilters.starredOnly && <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>✓</Text>}
+                </View>
+                <Text style={{ fontSize: 13, color: colors.text, fontWeight: '500' }}>
+                  {t('search.filter.starredOnly') || 'Apenas favoritos'}
+                </Text>
+              </TouchableOpacity>
+
+              {/* NL date parser — free-text input. Parses on submit. */}
+              <View>
+                <Text style={{ fontSize: 12, fontWeight: '600', color: colors.textSecondary, marginBottom: 6 }}>
+                  {t('search.filter.dateInput.placeholder') || 'Ex: ontem, antes de 10 jan'}
+                </Text>
+                <TextInput
+                  value={searchDateTextInput}
+                  onChangeText={setSearchDateTextInput}
+                  placeholder={t('search.filter.dateInput.placeholder') || 'Ex: ontem, antes de 10 jan'}
+                  placeholderTextColor={colors.textTertiary}
+                  onSubmitEditing={() => {
+                    const parsed = parseNlDateRange(searchDateTextInput || '');
+                    const nx = {
+                      ...searchFilters,
+                      dateFrom: (parsed.dateFrom !== undefined) ? parsed.dateFrom : searchFilters.dateFrom,
+                      dateTo: (parsed.dateTo !== undefined) ? parsed.dateTo : searchFilters.dateTo,
+                    };
+                    setSearchFilters(nx);
+                    handleSearchMessages(searchQuery, nx);
+                  }}
+                  returnKeyType="done"
+                  style={{ fontSize: 13, color: colors.text, paddingVertical: 8, paddingHorizontal: 10, backgroundColor: colors.border, borderRadius: 8 }}
+                />
+              </View>
+
+              <TouchableOpacity
+                onPress={() => {
+                  const cleared = { dateFrom: null, dateTo: null, type: null, senderEmail: null, starredOnly: false };
+                  setSearchFilters(cleared);
+                  setSearchDateTextInput('');
+                  handleSearchMessages(searchQuery, cleared);
                 }}
                 style={{ paddingVertical: 8, alignItems: 'center' }}
               >
@@ -18966,6 +19650,12 @@ export default function ChatConversationScreen() {
             const id = e?.nativeEvent?.messageId;
             const msg = messages.find(m => m.id === id);
             if (!msg) return;
+            // Privacy guard: deleted messages render the tombstone in the
+            // native list, but msg.file_url + msg.type still exist in the
+            // JS messages array until the row is purged. Without this gate,
+            // tapping the tombstone in the native view → setMediaViewer →
+            // re-opens the deleted media. Drop the event for deleted rows.
+            if (msg.deleted_at) return;
             // Selection mode: tap toggles selection instead of opening media
             if (selectionMode) {
               setSelectedIds(prev => {
@@ -19608,6 +20298,45 @@ export default function ChatConversationScreen() {
           />
         </View>
       </Modal>
+
+      {/* Floating "Citar" pill — web-only. Appears above the user's text
+          selection so they can quote an arbitrary substring of a bubble
+          without long-pressing first. Tapping it pre-fills the reply
+          preview with the selected fragment; mobile keeps the modal. */}
+      {Platform.OS === 'web' && quotePill && (
+        <View
+          // eslint-disable-next-line react-native/no-inline-styles
+          style={{
+            position: 'fixed',
+            left: quotePill.x, top: quotePill.y,
+            zIndex: 9999, elevation: 9999,
+            backgroundColor: colors.primary,
+            paddingHorizontal: 12, paddingVertical: 6,
+            borderRadius: 16,
+            flexDirection: 'row', alignItems: 'center', gap: 6,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
+          }}
+        >
+          <TouchableOpacity
+            onPress={() => {
+              const snippet = quotePill.text;
+              setQuotePill(null);
+              // Without a source-message reference we just stamp the text
+              // into a minimal replyTo so the compose preview bar renders.
+              setReplyTo({ content: snippet, quoteText: snippet, type: 'text' });
+              try { window.getSelection?.()?.removeAllRanges?.(); } catch {}
+              inputRef.current?.focus();
+            }}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}
+            activeOpacity={0.8}
+          >
+            <IconReply size={14} color="#fff" />
+            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+              {t('chatConv.quote') || 'Citar'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Quote-selection modal — Telegram-style partial reply.
           Shows the source bubble's text in a regular TextInput (so the
@@ -21461,6 +22190,82 @@ export default function ChatConversationScreen() {
                 </TouchableOpacity>
               )}
 
+              {/* Reply privately — WhatsApp/Telegram parity for group chats.
+                  Surfaces only when the long-pressed message was sent by
+                  another member (no point "replying privately" to yourself)
+                  AND we're inside a group. Tap opens (or reuses) a DM with
+                  that author, pre-loaded with the original message as a
+                  reply quote so the recipient sees context. */}
+              {!selectedMsg?.deleted_at && conversationType === 'group'
+                && selectedMsg?.sender_email
+                && selectedMsg.sender_email !== currentEmail && (
+                <TouchableOpacity
+                  style={styles.ctxIconBtn}
+                  onPress={async () => {
+                    const srcMsg = selectedMsg;
+                    setSelectedMsg(null);
+                    if (!srcMsg) return;
+                    try {
+                      // Build a quote payload — we ship `quoteText` so the
+                      // DM's reply preview renders as a partial-quote header.
+                      // Passing the raw message id would point at the group
+                      // conversation which the DM can't reference.
+                      const previewSource = (() => {
+                        const c = String(srcMsg.content || '').trim();
+                        if (c) return c.slice(0, 240);
+                        if (srcMsg.type === 'image')   return '📷 Foto';
+                        if (srcMsg.type === 'video')   return '🎥 Vídeo';
+                        if (srcMsg.type === 'audio')   return '🎤 Áudio';
+                        if (srcMsg.type === 'voice')   return '🎤 Áudio';
+                        if (srcMsg.type === 'file')    return '📄 ' + (srcMsg.file_name || '');
+                        if (srcMsg.type === 'gif')     return '🎞️ GIF';
+                        if (srcMsg.type === 'sticker') return '💟 Figurinha';
+                        if (srcMsg.type === 'location') return '📍 Localização';
+                        if (srcMsg.type === 'contact')  return '👤 Contato';
+                        return '';
+                      })();
+                      const payload = {
+                        sender_email: srcMsg.sender_email,
+                        sender_name: srcMsg.sender_name || emailToDisplayName(srcMsg.sender_email),
+                        content: previewSource,
+                        quoteText: previewSource,
+                        type: srcMsg.type || 'text',
+                      };
+                      // chatCreate upserts the DM via direct_key dedup —
+                      // returns existing id if a conversation already exists.
+                      const r = await api.chatCreate([srcMsg.sender_email], '', 'direct');
+                      const newId = r?.data?.id || r?.data?.conversation_id;
+                      if (!newId) {
+                        safeAlert(t('common.error') || 'Erro', t('chatConv.replyPrivatelyFailed') || 'Não foi possível abrir a conversa.');
+                        return;
+                      }
+                      router.push({
+                        pathname: '/chat-conversation',
+                        params: {
+                          id: newId,
+                          email: srcMsg.sender_email,
+                          name: payload.sender_name,
+                          // Replicate replyTo through a JSON-encoded param
+                          // so the destination screen can hydrate its reply
+                          // preview bar on mount.
+                          replyTo: encodeURIComponent(JSON.stringify(payload)),
+                        },
+                      });
+                    } catch (e) {
+                      safeAlert(t('common.error') || 'Erro', String(e?.message || e));
+                    }
+                  }}
+                  activeOpacity={0.6}
+                >
+                  <View style={[styles.ctxIconCircle, { backgroundColor: '#7C3AED20' }]}>
+                    <IconMessageSquare size={20} color="#7C3AED" />
+                  </View>
+                  <Text style={[styles.ctxIconLabel, { color: colors.textSecondary }]} numberOfLines={1}>
+                    {t('chatConv.replyPrivately') || 'Responder em privado'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+
               {/* Send email — when the message content is an email address */}
               {(() => {
                 const content = selectedMsg?.content || '';
@@ -21591,8 +22396,10 @@ export default function ChatConversationScreen() {
                   Out of window: shows greyed-out "(expirado)" label so the
                   user understands retraction is no longer possible. */}
               {!selectedMsg?.deleted_at && selectedMsg?.sender_email === currentEmail && (() => {
+                // 1h delete-for-everyone window in both DMs and groups
+                // (DM was 5 min before 2026-05-18 — see handleDelete).
                 const isGroupChat = conversationType === 'group';
-                const winMs = isGroupChat ? 3600 * 1000 : 300 * 1000;
+                const winMs = 3600 * 1000;
                 const cAt = (() => {
                   try {
                     if (!selectedMsg?.created_at) return 0;
@@ -22889,7 +23696,12 @@ export default function ChatConversationScreen() {
                 disabled={!isGroupAdmin || changingGroupPhoto}
                 accessibilityLabel={isGroupAdmin ? (t('chatConv.changeGroupPhoto') || 'Alterar foto do grupo') : undefined}
               >
-                <AvatarCircle name={conversationName} size={108} uri={conversationAvatar} />
+                <AvatarCircle
+                  name={conversationName}
+                  size={108}
+                  uri={conversationAvatar}
+                  members={!conversationAvatar && Array.isArray(members) && members.length >= 2 ? members : undefined}
+                />
                 {isGroupAdmin && (
                   <View style={{
                     position: 'absolute', right: 0, bottom: 0,
@@ -22937,6 +23749,15 @@ export default function ChatConversationScreen() {
                   <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 6 }}>{mutedUntil ? (t('chatConv.muted') || 'Mudo') : (t('chatConv.muteChat') || 'Silenciar')}</Text>
                 </TouchableOpacity>
               </View>
+              {/* Group description — surfaced just below the action row so it
+                  reads like a "bio" under the avatar. Markdown-lite parsing
+                  so **bold** / *italic* / ~strike~ / bare URLs render the
+                  way the admin wrote them. Hidden when empty. */}
+              {!!conversationDescription && (
+                <View style={{ marginTop: 18, paddingHorizontal: 14, alignItems: 'center' }}>
+                  {renderMarkdownLite(conversationDescription, { color: colors.textSecondary, fontSize: 13, lineHeight: 19, textAlign: 'center' })}
+                </View>
+              )}
             </View>
 
             <View style={{ padding: Spacing.md }}>
@@ -23023,11 +23844,88 @@ export default function ChatConversationScreen() {
                 </TouchableOpacity>
               )}
             </View>
+            {/* Member search box — only renders when there are enough members
+                to make filtering useful (4+). Below that, a search row is more
+                visual chrome than help. */}
+            {members.length >= 4 && (
+              <View style={{ marginTop: Spacing.sm }}>
+                <View style={{
+                  flexDirection: 'row', alignItems: 'center', gap: 8,
+                  backgroundColor: colors.surface,
+                  borderWidth: 1, borderColor: colors.border,
+                  borderRadius: 10, paddingHorizontal: 10,
+                }}>
+                  <IconSearch size={16} color={colors.textTertiary} />
+                  <TextInput
+                    value={memberSearchQuery}
+                    onChangeText={setMemberSearchQuery}
+                    placeholder={t('group.search.placeholder') || 'Buscar membros'}
+                    placeholderTextColor={colors.textTertiary}
+                    style={{ flex: 1, color: colors.text, paddingVertical: 8, fontSize: FontSize.sm }}
+                    autoCorrect={false}
+                    autoCapitalize="none"
+                  />
+                  {!!memberSearchQuery && (
+                    <TouchableOpacity onPress={() => setMemberSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                      <IconX size={14} color={colors.textTertiary} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+                {/* Role filter chips — keeps the picker compact for big groups
+                    where finding admins among 200+ members is otherwise painful. */}
+                <View style={{ flexDirection: 'row', gap: 6, marginTop: 8 }}>
+                  {[
+                    { key: 'all', label: t('group.filter.all') || 'Todos' },
+                    { key: 'admins', label: t('group.filter.admins') || 'Admins' },
+                    { key: 'members', label: t('group.filter.members') || 'Membros' },
+                  ].map(chip => {
+                    const active = memberRoleFilter === chip.key;
+                    return (
+                      <TouchableOpacity
+                        key={chip.key}
+                        onPress={() => setMemberRoleFilter(chip.key)}
+                        style={{
+                          paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14,
+                          backgroundColor: active ? colors.primary : colors.surface,
+                          borderWidth: 1, borderColor: active ? colors.primary : colors.border,
+                        }}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: '600', color: active ? '#fff' : colors.text }}>
+                          {chip.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
             {/* Sort members: current user first, then admins, then others alphabetically by display name.
                 Server ordering is creation-time which is stable but not particularly helpful — putting
                 "você" at the top mirrors WhatsApp/Telegram convention and makes it easier to spot
                 your role in big groups. */}
-            {[...members].sort((a, b) => {
+            {(() => {
+              // Filter pipeline: substring match on display_name OR email,
+              // then role chip narrow-down. Done BEFORE the sort so the
+              // role-first ordering still works on the filtered subset.
+              const q = (memberSearchQuery || '').trim().toLowerCase();
+              const filtered = (members || []).filter(m => {
+                if (memberRoleFilter === 'admins' && m.role !== 'admin') return false;
+                if (memberRoleFilter === 'members' && m.role === 'admin') return false;
+                if (!q) return true;
+                const dn = String(m.display_name || '').toLowerCase();
+                const em = String(m.email || '').toLowerCase();
+                return dn.includes(q) || em.includes(q);
+              });
+              if (filtered.length === 0 && (q || memberRoleFilter !== 'all')) {
+                return (
+                  <View style={{ paddingVertical: Spacing.lg, alignItems: 'center' }}>
+                    <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm }}>
+                      {t('group.search.empty') || 'Nenhum membro encontrado'}
+                    </Text>
+                  </View>
+                );
+              }
+              return filtered.sort((a, b) => {
               const aIsMe = a.email === user?.email;
               const bIsMe = b.email === user?.email;
               if (aIsMe !== bIsMe) return aIsMe ? -1 : 1;
@@ -23106,7 +24004,8 @@ export default function ChatConversationScreen() {
                   )}
                 </View>
               );
-            })}
+            });
+            })()}
 
             {/* Group Invite Link (admin only) */}
             {isGroupAdmin && (
@@ -23429,6 +24328,44 @@ export default function ChatConversationScreen() {
                     </View>
                     <View style={{ width: 44, height: 26, borderRadius: 13, backgroundColor: forwardingDisabled ? '#dc2626' : colors.border, justifyContent: 'center', padding: 3 }}>
                       <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff', alignSelf: forwardingDisabled ? 'flex-end' : 'flex-start' }} />
+                    </View>
+                  </TouchableOpacity>
+                  {/* Approval-required toggle — when ON, joining via invite
+                      link drops the user into chat_pending_members instead of
+                      adding them to the group. Backend already enforces this
+                      gate in chat_group_join_via_link (chat.php ~14760).
+                      Admin-only — wrapped in the isAdmin branch above. */}
+                  <TouchableOpacity
+                    onPress={async () => {
+                      const next = !approvalRequired;
+                      setApprovalRequired(next);
+                      try {
+                        const r = await api.chatGroupSetApprovalRequired(conversationId, next);
+                        if (!r?.success) {
+                          setApprovalRequired(!next);
+                        }
+                      } catch {
+                        setApprovalRequired(!next);
+                      }
+                    }}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.md, gap: 10 }}
+                    accessibilityRole="switch"
+                    accessibilityState={{ checked: approvalRequired }}
+                    accessibilityLabel={t('group.approval.title') || 'Aprovar novos membros'}
+                  >
+                    <IconUserPlus size={20} color={approvalRequired ? '#22c55e' : colors.textSecondary} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: FontSize.md, color: colors.text, fontWeight: '600' }}>
+                        {t('group.approval.title') || 'Aprovar novos membros'}
+                      </Text>
+                      <Text style={{ fontSize: 12, color: colors.textSecondary }}>
+                        {approvalRequired
+                          ? (t('group.approval.subtitle') || 'Você decide quem entra no grupo')
+                          : (t('group.approval.off') || 'Qualquer um com o link entra direto')}
+                      </Text>
+                    </View>
+                    <View style={{ width: 44, height: 26, borderRadius: 13, backgroundColor: approvalRequired ? '#22c55e' : colors.border, justifyContent: 'center', padding: 3 }}>
+                      <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff', alignSelf: approvalRequired ? 'flex-end' : 'flex-start' }} />
                     </View>
                   </TouchableOpacity>
                 </View>
