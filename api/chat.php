@@ -8816,6 +8816,31 @@ function handleChatAction($action) {
             if (!is_array($statusIds)) $statusIds = [];
             $statusIds = array_values(array_unique(array_map('intval', $statusIds)));
             $statusIds = array_slice($statusIds, 0, 100);
+            // [#1134, 2026-05-18 — true root cause for "highlights não funciona"]
+            // Reject creates with empty status_ids. Pre-fix this silently
+            // inserted a zombie row that `status_highlight_list` then
+            // filtered out (active_count===0 continue), so the user saw an
+            // empty destaque row and concluded the system was broken. The 5
+            // pre-existing zombies in PG were created 2026-05-09..15 when
+            // the OLD cleanup (no soft-archive) hard-deleted the underlying
+            // status rows during the 24h expires sweep — leaving the
+            // highlight pointing to nothing. Surface a real 400 so the
+            // frontend can show the actual upload/publish failure instead
+            // of creating a corpse.
+            if (empty($statusIds)) jsonResponse(false, null, 'No statuses to highlight — upload + publish first', 400);
+            // Validate that the status_ids actually exist + belong to the
+            // caller. Drops unknown ids (e.g. caller race with the 24h GC)
+            // before they become zombies. We accept archived rows too — they
+            // are still viewable via status_highlight_items.
+            try {
+                $placeholders = implode(',', array_fill(0, count($statusIds), '?'));
+                $vq = $db->prepare("SELECT id FROM chat_user_status WHERE id IN ($placeholders) AND LOWER(email) = LOWER(?)");
+                $vq->execute(array_merge($statusIds, [$user['email']]));
+                $alive = array_map(fn($r) => (int)$r['id'], $vq->fetchAll(PDO::FETCH_ASSOC));
+                if (empty($alive)) jsonResponse(false, null, 'None of the provided statuses exist for this user', 400);
+                $aliveSet = array_flip($alive);
+                $statusIds = array_values(array_filter($statusIds, fn($sid) => isset($aliveSet[$sid])));
+            } catch (Throwable $_) { /* fall through — preserve original ids on probe failure */ }
             try {
                 @$db->exec("CREATE TABLE IF NOT EXISTS chat_status_highlights (
                     id BIGSERIAL PRIMARY KEY,
@@ -8913,6 +8938,28 @@ function handleChatAction($action) {
                     // if we expose one — for now, empties are invisible.
                     if ($r['active_count'] === 0) continue;
                     $cleaned[] = $r;
+                }
+                // [#1134, 2026-05-18] Auto-GC zombie highlights — rows whose
+                // status_ids array is empty (either originally or after the
+                // tombstone-prune above) AND whose created_at is older than
+                // 5 minutes. The 5-min grace covers fresh creates whose
+                // referenced status row hasn't propagated through pgbouncer
+                // yet, but anything older is by definition a corpse and
+                // wastes a query budget on every list call. Only the owner
+                // gets to GC (viewers reading someone else's profile should
+                // not mutate the owner's table). Pre-fix the user had 5
+                // such corpses from the pre-soft-archive era cluttering
+                // their PG row but never showing in the UI — the user saw
+                // an empty destaque row and concluded the feature was
+                // broken. Now the corpses self-vacate on the next list call
+                // from the owner's device.
+                if (strtolower($user['email']) === $target) {
+                    try {
+                        $db->exec("DELETE FROM chat_status_highlights
+                                   WHERE LOWER(owner_email) = LOWER(" . $db->quote($target) . ")
+                                     AND (status_ids = '[]'::jsonb OR status_ids IS NULL)
+                                     AND created_at < (now() - interval '5 minutes')");
+                    } catch (Throwable $e) { error_log('[status_highlight_list.gc] ' . $e->getMessage()); }
                 }
                 jsonResponse(true, ['highlights' => $cleaned]);
             } catch (Throwable $e) {

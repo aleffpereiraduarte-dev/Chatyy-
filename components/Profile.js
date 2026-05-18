@@ -1088,7 +1088,25 @@ export default function Profile({
           active_count: ac,
         };
       }).filter(h => h.active_count > 0);
-      setHighlights(normalized);
+      // [#1134, 2026-05-18] Merge instead of replace — preserves optimistic
+      // adds whose underlying status_ids may not have propagated through
+      // pgbouncer to the read side yet. Without this, a freshly created
+      // highlight could disappear from local state on the very next refetch
+      // call (which runs ~immediately after create), even though the row is
+      // valid in PG. The next AppState-triggered refetch will reconcile.
+      setHighlights(prev => {
+        if (!Array.isArray(prev) || prev.length === 0) return normalized;
+        const backendIds = new Set(normalized.map(h => h.id));
+        const pendingOptimistic = prev.filter(h =>
+          !backendIds.has(h.id)
+          && Array.isArray(h.status_ids) && h.status_ids.length > 0
+          // Only keep optimistic adds — anything we read from backend before
+          // should have been in normalized; if it's not, the backend chose
+          // to hide it (true zombie) and we respect that.
+          && (typeof h._optimistic === 'boolean' ? h._optimistic : true)
+        );
+        return [...pendingOptimistic, ...normalized];
+      });
     } catch {}
   }, [identity?.email]);
 
@@ -1587,6 +1605,12 @@ export default function Profile({
                 // simples (mais robusto que um modal full-screen aqui).
                 const statusIds = [];
                 let coverUrl = '';
+                // [#1134] Capture the last upload/publish error so we can
+                // surface it instead of the generic "Não consegui enviar"
+                // when nothing succeeds. Was masking real failures
+                // (e.g. statusPublish returning success without an id, or a
+                // 401/quota error) → user just saw "tente de novo" forever.
+                let lastErr = '';
                 for (let i = 0; i < assets.length; i++) {
                   const a = assets[i];
                   if (!a?.uri) continue;
@@ -1598,14 +1622,24 @@ export default function Profile({
                     };
                     const up = await api.statusUpload(fileLike);
                     const url = up?.data?.url || up?.data?.cdn_url || up?.url || '';
-                    if (!url) continue;
+                    if (!url) {
+                      lastErr = up?.message || up?.data?.message || 'upload_no_url';
+                      continue;
+                    }
                     if (!coverUrl) coverUrl = url;
                     const pub = await api.statusPublish(url, 'image', '#7C3AED');
                     const sid = pub?.id || pub?.data?.id || pub?.status_id;
-                    if (sid) statusIds.push(sid);
-                  } catch (e) { /* skip foto problemática, continua o resto */ }
+                    if (sid) {
+                      statusIds.push(sid);
+                    } else {
+                      lastErr = pub?.message || pub?.data?.message || 'publish_no_id';
+                    }
+                  } catch (e) { lastErr = e?.message || 'exception'; }
                 }
                 if (statusIds.length === 0) {
+                  // Surface the actual failure mode in dev/test builds.
+                  // Production users still see the friendly fallback.
+                  try { console.warn('[highlight.create] all photos failed:', lastErr); } catch {}
                   Alert.alert(t?.('common.error') || 'Erro', t?.('profile.highlightUploadFail') || 'Não consegui enviar as fotos. Tente de novo.');
                   return;
                 }
@@ -1621,6 +1655,11 @@ export default function Profile({
                       status_ids: statusIds,
                       count: statusIds.length,
                       active_count: statusIds.length,
+                      // [#1134] Flag so refetchHighlights preserves this row
+                      // across the immediate reconciliation pass (pgbouncer
+                      // read lag could miss it). Next AppState refresh will
+                      // converge to the backend's truth.
+                      _optimistic: true,
                     };
                     setHighlights(prev => {
                       // Dedup just in case refetchHighlights raced ahead.
@@ -1634,8 +1673,15 @@ export default function Profile({
                   // but the *next* profile_get revalidation (pre-2026-05-18
                   // shared state) wiped it.
                   refetchHighlights();
-                } else if (r?.message) {
-                  Alert.alert(t?.('common.error') || 'Erro', r.message);
+                } else {
+                  // Backend rejected the create (e.g. 400 "No statuses to
+                  // highlight"). Surface the real reason so the user
+                  // understands what went wrong. Pre-#1134 the backend
+                  // silently inserted an empty zombie on create-with-no-ids
+                  // and the user got success → invisible row → "doesn't
+                  // work". Now we get a 400 with a clear message.
+                  const msg = r?.message || r?.data?.message || (t?.('profile.highlightUploadFail') || 'Não consegui criar o destaque.');
+                  Alert.alert(t?.('common.error') || 'Erro', msg);
                 }
               } catch (e) {
                 Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Falhou');
