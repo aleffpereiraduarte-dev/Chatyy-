@@ -992,7 +992,16 @@ export default function PhotosScreen() {
     // Bug 2026-05-14: threshold de 5 fazia status='complete' coexistir com
     // pendingCount=1-5 — usuário via "todas backed up" E "N pendentes" ao
     // mesmo tempo. Se há QUALQUER pendente real, status deve refletir isso.
-    if (dc > 0 && realPending > 0 && backupStatus === 'complete') {
+    //
+    // 2026-05-18 (#1126): if we just completed a run with uploaded=0 AND
+    // remaining>0 (phantom drift the engine can't reconcile), DON'T flip
+    // back to 'needs_backup' — that re-triggers the pending-photo effect
+    // which auto-starts another engine pass (blocked by cooldown but
+    // still ping-pongs the status state). Keep 'complete' visible until
+    // the cooldown expires or the user manually taps "Reparar".
+    const inCompletedCooldown = backupCompletedAtRef.current > 0 &&
+      (Date.now() - backupCompletedAtRef.current) < COMPLETED_COOLDOWN_MS;
+    if (dc > 0 && realPending > 0 && backupStatus === 'complete' && !inCompletedCooldown) {
       setBackupStatus('needs_backup');
     }
   }, [deviceTotalCount, backedUpTotal, backupStatus]);
@@ -3646,7 +3655,12 @@ export default function PhotosScreen() {
                     <Text style={{ color: isDark ? '#fde68a' : '#78350f', fontSize: 12, marginTop: 2 }}>Sem progresso há alguns minutos.</Text>
                   </View>
                   <TouchableOpacity
-                    onPress={() => { setBackupStatus('idle'); startBackup(); }}
+                    onPress={() => {
+                      // User-initiated "Continuar" — bypass post-complete cooldown (#1126)
+                      backupCompletedAtRef.current = 0;
+                      setBackupStatus('idle');
+                      startBackup();
+                    }}
                     style={{ backgroundColor: '#d97706', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
                     accessibilityLabel="Continuar backup"
                     accessibilityRole="button"
@@ -4026,7 +4040,11 @@ export default function PhotosScreen() {
             <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: Spacing.md }]}>
               <TouchableOpacity
                 style={[s.actionBtn, { borderBottomWidth: 1, borderBottomColor: colors.border }]}
-                onPress={startBackup}
+                onPress={() => {
+                  // User-initiated "Backup agora" — bypass post-complete cooldown (#1126)
+                  backupCompletedAtRef.current = 0;
+                  startBackup();
+                }}
                 disabled={Platform.OS === 'web'}
               >
                 <IconCloudUpload size={20} color={colors.primary} />
