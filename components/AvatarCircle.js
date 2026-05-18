@@ -85,6 +85,40 @@ function getAvatarVersion(email) {
   return _avatarVersions.get(String(email).toLowerCase()) || 0;
 }
 
+// ─── Defensive daily-bust for backend-supplied avatar URLs ────────
+// Backend payloads (chat conversations, message lists, profile metadata,
+// channels, family, etc.) frequently embed a pre-built URL like
+//   `/api/email.php?action=get_avatar&email=X`
+// without any `?v=` cache-bust. When AvatarCircle receives that URL via
+// the `uri` prop, the explicit `member.avatar_url` field in _CollageTile,
+// or the `imageUrl` prop it would render the stale image cached during the
+// 2026-05-18 ACL outage (or any prior 404) and the user would see no photo
+// for OTHER people — only their own (which renders via getAvatarUrlForEmail,
+// which already appends the daily-bust).
+//
+// This helper normalizes ANY URL that points at our `get_avatar` endpoint:
+// strip any existing `v=` param, then append the current `?v=YYYYMMDD`.
+// External URLs (R2/CDN, https://, data:) and non-avatar paths pass through
+// untouched so we don't accidentally cache-bust unrelated images.
+function _todayBust() {
+  const d = new Date();
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}${m}${day}`;
+}
+function normalizeAvatarUrl(url) {
+  if (!url || typeof url !== 'string') return url;
+  // Only target our own avatar endpoint — leave R2/CDN/data: URLs alone.
+  if (url.indexOf('get_avatar') === -1) return url;
+  // Strip any existing v= (could be stale from backend or a prior session).
+  let cleaned = url.replace(/([?&])v=[^&]*(&|$)/g, (_, pre, post) => post ? pre : '');
+  // Trailing ? or & left over after the strip — tidy them.
+  cleaned = cleaned.replace(/[?&]$/, '');
+  const sep = cleaned.indexOf('?') === -1 ? '?' : '&';
+  return `${cleaned}${sep}v=${_todayBust()}`;
+}
+
 // Bug 2026-05-12 v2: initials flipped after restart (JA→AU, ML→OF, N→NO).
 // Previous attempt forced email-first, but the actual symptom is that the
 // `email` prop arriving at this component is sometimes WRONG during cold
@@ -154,6 +188,11 @@ function _CollageTile({ member, size, width, height }) {
   } else if (baseUrl) {
     uri = baseUrl;
   }
+  // Defensive: backend-supplied avatar_url has no cache-bust → roll it
+  // through normalizeAvatarUrl so the daily ?v= applies. baseUrl already
+  // has the bust (it comes from getAvatarUrlForEmail), so this is a no-op
+  // for that branch but it normalizes any stale `v=` from a prior day.
+  uri = normalizeAvatarUrl(uri);
   const initials = getInitials(memberName, memberEmail);
   const bg = hashColor((memberName || memberEmail || '').toLowerCase());
   // Allow non-square tiles (WhatsApp 1+2 layout has a full-height left tile).
@@ -333,7 +372,14 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
   const explicitUri = uri
     ? (/^https?:\/\//i.test(uri) ? uri : `https://chatyy.com.br${uri.startsWith('/') ? '' : '/'}${uri}`)
     : null;
-  const avatarUrl = explicitUri || nativeLocal || remoteAvatarUrl;
+  // Defensive daily-bust: when callers pass a backend-built URL like
+  //   /api/email.php?action=get_avatar&email=X
+  // (e.g. chat-conversation's `conversationAvatar` or any consumer relaying
+  // `conv.avatar_url`), it has no `?v=` and would otherwise serve whatever
+  // expo-image cached during the 2026-05-18 ACL outage. Normalize so every
+  // get_avatar URL carries today's bust, regardless of how it got here.
+  const normalizedExplicit = normalizeAvatarUrl(explicitUri);
+  const avatarUrl = normalizedExplicit || nativeLocal || remoteAvatarUrl;
   const showImage = avatarUrl && !imgError;
 
   const displayName = name || email || '';
