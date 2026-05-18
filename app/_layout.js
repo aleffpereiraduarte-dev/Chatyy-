@@ -264,6 +264,7 @@ const DeclineWithMessageSheet = React.lazy(() => import('../components/DeclineWi
 const ActiveCallBar = React.lazy(() => import('../components/ActiveCallBar').then(m => ({ default: () => { const B = m.ActiveCallBridge; return React.createElement(B, null); } })));
 import LoginChallengePrompt from '../components/LoginChallengePrompt';
 import LocationRequestModal from '../components/LocationRequestModal';
+import PushLoginRequestModal from '../components/PushLoginRequestModal';
 import PWAPrompts from '../components/PWAPrompts';
 import WhatsNewSheet, { shouldShowWhatsNew } from '../components/WhatsNewSheet';
 // Stage 6 — surface "Phone offline" UI when web's relay reads fall back to
@@ -1302,6 +1303,7 @@ export default function RootLayout() {
                 </Suspense>
                 <LoginChallengePrompt />
                 <LocationRequestModal />
+                <PushLoginRequestModal />
                 <WhatsNewGate />
                 <PWAPromptsThemed />
                 <NotificationToast

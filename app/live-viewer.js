@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, memo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Animated,
-  Dimensions, Share, Modal, Pressable, ScrollView, Keyboard,
+  Dimensions, Share, Modal, Pressable, ScrollView, Keyboard, StatusBar,
 } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -2296,6 +2296,11 @@ export default function LiveViewerScreen() {
 
   return (
     <View style={styles.fullScreen} ref={screenRef} collapsable={false}>
+      {/* Round 64 (2026-05-18) — translucent status bar so the soft top scrim
+          in LiveTopBar bleeds the host video right up to the notch instead of
+          competing with a system-painted black/white status bar. Light icons
+          on top of the dark video so they stay readable. */}
+      <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
       {/* Remote video — wrapped in Pressable so double-tap fires a love-bomb
           burst over the stream without stealing taps from controls overlaid
           on top (those have higher zIndex). */}
@@ -2777,16 +2782,13 @@ export default function LiveViewerScreen() {
               hasMore={chatMessages.length > 5}
               seeAllLabel={t('live.seeAllComments') || 'Ver todos os comentários'}
             />
-            {/* Native top-fade — 3-band manual gradient so the first/oldest
-                row gently melts into the video frame. Web uses the mask gradient
-                inside LiveChatOverlay; we skip on web to avoid double-darkening. */}
-            {Platform.OS !== 'web' ? (
-              <View pointerEvents="none" style={styles.chatTopFade}>
-                <View style={styles.chatTopFadeBand1} />
-                <View style={styles.chatTopFadeBand2} />
-                <View style={styles.chatTopFadeBand3} />
-              </View>
-            ) : null}
+            {/* Round 64 (2026-05-18) — removed the 3-band manual gradient that
+                stacked on top of LiveChatOverlay's internal SVG TopFadeGradient,
+                which caused a literal black strip ("mancha preta") because both
+                fades rendered together on native. The SVG fade inside
+                LiveChatOverlay already paints the soft melt; this redundant
+                layer was the culprit. Web uses the WebkitMaskImage gradient
+                inside LiveChatOverlay — also no extra layer needed. */}
           </View>
         ) : null}
 
@@ -3527,39 +3529,42 @@ const styles = StyleSheet.create({
   },
   // Soft gradient sheen above the input — pure CSS on web, transparent
   // overlay on native (avoids extra LinearGradient dep for one stripe).
+  // Round 64 (2026-05-18) — softened the bottom gradient. Native used to
+  // stack a flat 32% black BASE under the 3 step bands → 32%+35%=67% opaque
+  // bottom 60px ("mancha preta" reported). Removed the base on native so only
+  // the 3 graduated bands paint; web keeps its smooth CSS gradient (now
+  // slightly lighter too: 0.55 → 0.15 → transparent for a softer fade).
   bottomGradient: {
     position: 'absolute',
     left: 0, right: 0, bottom: 0,
     height: 110,
     zIndex: -1,
     ...(Platform.OS === 'web' ? {
-      background: 'linear-gradient(to top, rgba(0,0,0,0.7), rgba(0,0,0,0.2) 60%, transparent)',
-    } : {
-      backgroundColor: 'rgba(0,0,0,0.32)',
-    }),
+      background: 'linear-gradient(to top, rgba(0,0,0,0.55), rgba(0,0,0,0.15) 60%, transparent)',
+    } : null),
   },
   // 3-step manual gradient for native — bottom is darkest, top is lightest.
   // Each layer is positioned absolutely so they stack without affecting
-  // layout. Tuned to fade the dark blend cleanly past the comments column.
+  // layout. Slightly softened in round 64 to feel less heavy on the eye.
   bottomGradientStep1: {
     position: 'absolute',
     left: 0, right: 0, bottom: 0,
     height: 60,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    backgroundColor: 'rgba(0,0,0,0.28)',
     zIndex: -1,
   },
   bottomGradientStep2: {
     position: 'absolute',
     left: 0, right: 0, bottom: 60,
     height: 50,
-    backgroundColor: 'rgba(0,0,0,0.18)',
+    backgroundColor: 'rgba(0,0,0,0.14)',
     zIndex: -1,
   },
   bottomGradientStep3: {
     position: 'absolute',
     left: 0, right: 0, bottom: 110,
     height: 40,
-    backgroundColor: 'rgba(0,0,0,0.08)',
+    backgroundColor: 'rgba(0,0,0,0.06)',
     zIndex: -1,
   },
   // Top-center toast for screenshot save feedback.

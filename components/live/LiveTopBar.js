@@ -192,13 +192,18 @@ const styles = StyleSheet.create({
       WebkitBackdropFilter: 'blur(14px)',
     } : {}),
   },
+  // Round 64 polish (2026-05-18) — softened the native top scrim. Previous
+  // 0.42 / 0.18 stack painted a visible black band over the status bar area
+  // on iOS/Android even when there was nothing under it (status bar is
+  // translucent). Halved the opacity so the host video bleeds through the
+  // header subtly instead of being capped by a hard dark strip.
   scrimStep1: {
     position: 'absolute', top: 0, left: 0, right: 0, height: 50,
-    backgroundColor: 'rgba(0,0,0,0.42)', zIndex: -1,
+    backgroundColor: 'rgba(0,0,0,0.22)', zIndex: -1,
   },
   scrimStep2: {
     position: 'absolute', top: 50, left: 0, right: 0, height: 30,
-    backgroundColor: 'rgba(0,0,0,0.18)', zIndex: -1,
+    backgroundColor: 'rgba(0,0,0,0.08)', zIndex: -1,
   },
 
   hostBlock: {

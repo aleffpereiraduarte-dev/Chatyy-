@@ -864,6 +864,13 @@ export default function Profile({
   // highlight doesn't clobber the live-stories starting index. items[] mirrors
   // the shape StoryViewer expects (id, media_url, type, bg_color, ...).
   const [highlightViewer, setHighlightViewer] = useState({ open: false, items: [], title: '', startIdx: 0, highlightId: null });
+  // [2026-05-18] Highlights moved to dedicated state so a profile_get
+  // revalidation can't wipe them. Pre-fix: highlights lived inside
+  // `data.highlights`, but profile_get never returns that key, so any time
+  // setData(r.data) ran after an optimistic create, the new destaque
+  // disappeared until the next mount (user report: "adicionei o destaque
+  // e some, não deixa ver"). Independent state survives those overwrites.
+  const [highlights, setHighlights] = useState([]);
   // [feat-11] Avatar tap action sheet + StatusCamera visibility. The avatar
   // is the single, most-tapped surface on the profile and was overloaded:
   //   - with stories → view stories
@@ -1048,45 +1055,59 @@ export default function Profile({
   }, [identity?.email, hideStatusFromContact, hideStatusSaving]);
 
   // [feat-10, 2026-05-15] Story highlights — fetch persisted highlights from
-  // chat_status_highlights and merge into data.highlights. The render row
-  // was already wired but `data.highlights` was never populated, so on
-  // refresh users saw only the "+ Novo" tile (highlights they just created
-  // in-session disappeared the next time they opened the profile). Backend
-  // endpoint `status_highlight_list` is in chat.php since the previous push.
-  useEffect(() => {
+  // chat_status_highlights into dedicated `highlights` state. Was previously
+  // merged into `data.highlights`, but profile_get (which never returns
+  // highlights) would overwrite the merge via setData(r.data), making
+  // freshly-created destaques vanish — user report "add destaque, some".
+  //
+  // refetchHighlights is exposed so create/delete handlers can pull the
+  // authoritative list right after mutating, instead of doing optimistic
+  // splices that get clobbered. Wrapped in useCallback so the focus +
+  // AppState effects below get a stable identity.
+  const refetchHighlights = useCallback(async () => {
     if (!identity?.email) return;
+    try {
+      const r = await api.statusHighlightList?.(identity.email);
+      const list = r?.data?.highlights || r?.highlights || [];
+      if (!Array.isArray(list)) return;
+      // Normalize shape — cover_url is what the row renderer expects.
+      // Backend returns `active_count` (real count of still-resolvable
+      // status rows). Trust active_count when present — status_ids.length
+      // is a tombstone-prone fallback for old backends. Also hide
+      // highlights with active_count=0 client-side as a defense in depth.
+      const normalized = list.map((h) => {
+        const ac = (typeof h.active_count === 'number') ? h.active_count
+                  : (typeof h.count === 'number') ? h.count
+                  : (Array.isArray(h.status_ids) ? h.status_ids.length : 0);
+        return {
+          id: h.id,
+          title: h.name || h.title || '',
+          cover_url: h.cover_url || '',
+          status_ids: Array.isArray(h.status_ids) ? h.status_ids : [],
+          count: ac,
+          active_count: ac,
+        };
+      }).filter(h => h.active_count > 0);
+      setHighlights(normalized);
+    } catch {}
+  }, [identity?.email]);
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
-      try {
-        const r = await api.statusHighlightList?.(identity.email);
-        if (cancelled) return;
-        const list = r?.data?.highlights || r?.highlights || [];
-        if (!Array.isArray(list)) return;
-        // Normalize shape — cover_url is what the row renderer expects.
-        // [2026-05-18] Backend now returns `active_count` (real count of
-        // still-resolvable status rows). Trust active_count when present —
-        // status_ids.length is a tombstone-prone fallback for old backends.
-        // Also hide highlights with active_count=0 client-side as a defense
-        // in depth (backend already filters them, but mid-deploy old responses
-        // can leak through).
-        const normalized = list.map((h) => {
-          const ac = (typeof h.active_count === 'number') ? h.active_count
-                    : (typeof h.count === 'number') ? h.count
-                    : (Array.isArray(h.status_ids) ? h.status_ids.length : 0);
-          return {
-            id: h.id,
-            title: h.name || h.title || '',
-            cover_url: h.cover_url || '',
-            status_ids: Array.isArray(h.status_ids) ? h.status_ids : [],
-            count: ac,
-            active_count: ac,
-          };
-        }).filter(h => h.active_count > 0);
-        setData((prev) => (prev ? { ...prev, highlights: normalized } : prev));
-      } catch {}
+      await refetchHighlights();
+      if (cancelled) return;
     })();
-    return () => { cancelled = true; };
-  }, [identity?.email]);
+    // Refetch on app foreground — covers the case where user backgrounded
+    // after creating a destaque on another device, then reopened here.
+    let appSub;
+    try {
+      appSub = AppState.addEventListener('change', (s) => {
+        if (s === 'active') { refetchHighlights(); }
+      });
+    } catch {}
+    return () => { cancelled = true; try { appSub?.remove?.(); } catch {} };
+  }, [refetchHighlights]);
 
   // Live detection — Instagram parity. When the profile owner is currently
   // broadcasting (active row in chat_live_sessions), we paint a red AO VIVO
@@ -1460,7 +1481,6 @@ export default function Profile({
   // to start curating. Backend doesn't expose highlights yet so we mock
   // gracefully off `data.highlights` (array of {id, title, cover_url}).
   const renderHighlights = () => {
-    const highlights = Array.isArray(data?.highlights) ? data.highlights : [];
     const isSelf = !!actions?.is_self;
     if (highlights.length === 0 && !isSelf) return null;
     const SIZE = 64;
@@ -1557,8 +1577,29 @@ export default function Profile({
                 }
                 const r = await api.statusHighlightCreate(name, statusIds, coverUrl);
                 if (r?.success) {
-                  const newH = { id: r.id || r.data?.id, title: name, cover_url: coverUrl, status_ids: statusIds };
-                  setData(prev => prev ? { ...prev, highlights: [...(prev.highlights || []), newH] } : prev);
+                  const newId = r.id || r.data?.id;
+                  // Optimistic add so the tile appears instantly...
+                  if (newId) {
+                    const newH = {
+                      id: newId,
+                      title: name,
+                      cover_url: coverUrl,
+                      status_ids: statusIds,
+                      count: statusIds.length,
+                      active_count: statusIds.length,
+                    };
+                    setHighlights(prev => {
+                      // Dedup just in case refetchHighlights raced ahead.
+                      if (prev.some(h => h.id === newId)) return prev;
+                      return [newH, ...prev];
+                    });
+                  }
+                  // ...then reconcile against the backend (covers cover_url
+                  // normalization, race with cache, etc.). Was the missing
+                  // piece — without this the optimistic add would survive
+                  // but the *next* profile_get revalidation (pre-2026-05-18
+                  // shared state) wiped it.
+                  refetchHighlights();
                 } else if (r?.message) {
                   Alert.alert(t?.('common.error') || 'Erro', r.message);
                 }
@@ -1606,14 +1647,14 @@ export default function Profile({
                         style: 'destructive',
                         onPress: async () => {
                           try { await api.statusHighlightDelete?.(h.id); } catch {}
-                          setData(prev => prev ? { ...prev, highlights: (prev.highlights || []).filter(x => x.id !== h.id) } : prev);
+                          setHighlights(prev => prev.filter(x => x.id !== h.id));
                         },
                       },
                     ]
                   );
                 } else {
                   // Hide it from the viewer's local state too — keeps the row tidy.
-                  setData(prev => prev ? { ...prev, highlights: (prev.highlights || []).filter(x => x.id !== h.id) } : prev);
+                  setHighlights(prev => prev.filter(x => x.id !== h.id));
                 }
                 return;
               }

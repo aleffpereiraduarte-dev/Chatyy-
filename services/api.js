@@ -8475,3 +8475,33 @@ export async function linkedPhonesRemove(phone) {
     return { success: true, stub: true };
   }
 }
+
+// Push login (SuperBora-style cross-app sign-in). Direct fetch instead of
+// apiCall() because this endpoint lives outside /api/email.php — it's a
+// standalone PHP at /api/push/login-approve that the user approves via
+// the global PushLoginRequestModal.
+async function _pushLoginRespond(challengeId, action) {
+  if (!challengeId) throw new Error('missing_challenge_id');
+  const r = await fetch(`${BASE_URL}/api/push/login-approve`, {
+    method: 'POST',
+    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ challenge_id: challengeId, action }),
+  });
+  let json = null;
+  try { json = await r.json(); } catch {}
+  if (!r.ok) {
+    const err = new Error((json && json.error) || `http_${r.status}`);
+    err.status = r.status;
+    err.response = json;
+    throw err;
+  }
+  return json || { ok: true };
+}
+
+export async function pushLoginApprove(challengeId) {
+  return _pushLoginRespond(challengeId, 'approve');
+}
+
+export async function pushLoginReject(challengeId) {
+  return _pushLoginRespond(challengeId, 'reject');
+}

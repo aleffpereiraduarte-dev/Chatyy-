@@ -890,6 +890,16 @@ export async function setupNotificationListeners() {
         try { Notifications.dismissNotificationAsync(notification.request.identifier); } catch {}
       } catch {}
     }
+    // SuperBora (and future sibling apps): cross-app sign-in approval. The
+    // backend already shipped all fields in the data payload, so just hand
+    // the whole blob to the modal. Background-tap path mirrors this below.
+    if (data?.type === 'push_login' && data.challenge_id) {
+      try {
+        const { triggerPushLoginModal } = require('../components/PushLoginRequestModal');
+        triggerPushLoginModal(data);
+        try { Notifications.dismissNotificationAsync(notification.request.identifier); } catch {}
+      } catch {}
+    }
   });
 
   const responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
@@ -1138,6 +1148,16 @@ function handleNotificationNavigation(data) {
       const nameParam = data.requester_name ? `&requester_name=${encodeURIComponent(data.requester_name)}` : '';
       const msgParam = data.message ? `&message=${encodeURIComponent(data.message)}` : '';
       router.push(`/snap-map?incoming_request=${encodeURIComponent(data.requester_email)}${nameParam}${msgParam}`);
+      return;
+    }
+    // SuperBora cross-app sign-in (background tap). The notification payload
+    // is self-contained, so we render the same modal instead of routing to a
+    // dedicated screen that would just re-fetch the same data.
+    if (data.type === 'push_login' && data.challenge_id) {
+      try {
+        const { triggerPushLoginModal } = require('../components/PushLoginRequestModal');
+        triggerPushLoginModal(data);
+      } catch {}
       return;
     }
     // Feed/social notifications → open the relevant post

@@ -10,23 +10,33 @@
 //   3. Live updates via WS `location_update` + `location_share_revoked`
 //      events; the 30s poll is a fallback for WS reconnects.
 //
-// Rendering: real Google Maps via WebView
-// ---------------------------------------
+// Rendering: Leaflet + CartoCDN tiles inside a WebView
+// ----------------------------------------------------
 // User feedback 2026-05-18: "amigos no mapa não tá abrindo o google maps".
-// We dropped the Geoapify static-tile + projected-pin overlay approach and
-// switched to Google Maps JS API rendered inside a WebView (native) / iframe
-// (web). That gives real pan/zoom, smooth markers, and matches the in-chat
-// live-location modal style (see chat-conversation.js gmapsHtml block).
+// Investigation showed that:
+//   1. The in-chat location bubble (LocationMessage.js + chat-conversation
+//      live-location modal) is NOT actually Google Maps either — it's our
+//      own backend proxy `api/static_map.php` that composes **CartoCDN**
+//      OSM tiles. The user perceives it as Google because the look is
+//      similar, but no Google billing is consumed by chat.
+//   2. The configured GOOGLE_MAPS_KEY (app.json) is bound to a GCP
+//      project where billing is **disabled**. Probed via curl:
+//        Static Maps → 403 "You must enable Billing on the Google
+//                       Cloud Project"
+//        JS API      → 200 OK but renders the diagonal
+//                       "For development purposes only" watermark.
+//      No WebView/referrer trick fixes this — it's a Cloud Console toggle.
+//
+// So this screen uses Leaflet (no key, no billing) layered over **the same
+// CartoCDN tile source the chat bubble uses**, so the visual language
+// matches across the app. When the user eventually turns billing on we
+// can flip the loader at the bottom of buildMapHtml() to use bootGmaps()
+// — the AvatarOverlay/MeOverlay code paths are kept ready.
 //
 // Why WebView and not react-native-maps:
 //   react-native-maps is a NATIVE module → TestFlight build + Play re-submit
 //   on every change. WebView is core-bundled with react-native-webview
-//   (already installed, used by ~15 screens) and ships as OTA. No native
-//   rebuild required.
-//
-// Fallback: if Google rejects the key (billing flap, quota), the HTML
-// auto-falls back to a Leaflet/OSM map so users still see something usable
-// — same strategy chat-conversation.js uses for the live-location modal.
+//   (already installed, used by ~15 screens) and ships as OTA.
 //
 // Privacy contract (matches backend chat.php BEGIN FRIEND_LOCATION_TRACKING):
 //   - Backend never returns shares without an active grant. Frontend
@@ -279,9 +289,31 @@ function bootGmaps() {
   if (INITIAL_ME) window.__renderMe(INITIAL_ME);
 }
 
-// ──────────────────────────── Leaflet fallback ───────────────────────────
-// Loaded only if (a) no API key, or (b) Google Maps script tag errors out
-// (key rejected, billing not enabled, network blocked). Renders OSM tiles.
+// ──────────────────────────── Leaflet (CartoCDN tiles) ─────────────────────
+// This is the production renderer for snap-map.
+//
+// Why not Google Maps:
+//   The configured key (app.json extra.GOOGLE_MAPS_KEY) is bound to a GCP
+//   project where **billing is disabled**. Probed 2026-05-18:
+//     - Static Maps  → HTTP 403 "You must enable Billing on the Google
+//       Cloud Project at https://console.cloud.google.com/project/_/billing/enable"
+//     - Maps JS API  → HTTP 200 but renders the "For development purposes
+//       only" diagonal watermark + a "This page can't load Google Maps
+//       correctly" red overlay at runtime (gm_authFailure signal).
+//   No referrer/restriction fix in code can bypass billing — it's a Cloud
+//   Console toggle. Until billing is turned on we MUST use a non-Google
+//   tile provider.
+//
+// Why CartoCDN `light_all`/`dark_all` (not raw OSM):
+//   This is the SAME tile source the in-chat location bubble uses (via the
+//   backend `static_map.php` proxy → CartoCDN). Using it here makes the
+//   snap-map background visually match what users see in chat — which is
+//   what the user asked for ("o google maps tá funcionando no chat"; in
+//   reality chat is CartoCDN, not Google, but the look is the same and
+//   that's what matters).
+//   CartoCDN is free, no key, no billing, CORS-friendly, has light + dark
+//   variants we can theme-switch, and renders {a,b,c,d} subdomains.
+//   Falls back to tile.openstreetmap.org if Carto is blocked.
 function bootLeaflet() {
   if (__backend) return;  // gmaps won the race — skip
   __backend = 'leaflet';
@@ -294,7 +326,28 @@ function bootLeaflet() {
   js.onload = function() {
     var map = L.map('map', { zoomControl: true, attributionControl: false })
       .setView([INITIAL_CENTER.lat, INITIAL_CENTER.lng], INITIAL_ZOOM);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, subdomains: 'abc' }).addTo(map);
+    // Theme-aware Carto tiles. light_all = clean white/gray base used by
+    // static_map.php (the chat bubble preview proxy). dark_all swaps in
+    // the inverted palette so dark-mode users get a coherent look.
+    var tileBase = USE_DARK
+      ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
+      : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png';
+    var carto = L.tileLayer(tileBase, {
+      maxZoom: 19,
+      subdomains: 'abcd',
+      // 404 → swap to OSM. Carto rate-limits very aggressively if the
+      // referrer is missing (which the WebView srcDoc case hits); OSM
+      // accepts wider traffic and is the safety net.
+      errorTileUrl: '',
+    }).addTo(map);
+    carto.on('tileerror', function() {
+      try {
+        map.removeLayer(carto);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 19, subdomains: 'abc',
+        }).addTo(map);
+      } catch (e) {}
+    });
 
     var lOverlays = {};
     var lMe = null;
@@ -367,20 +420,24 @@ window.addEventListener('message', function(ev) {
 });
 
 // ──────────────────────────── Loader ─────────────────────────────────────
-// Race: load gmaps script; if it errors OR doesn't fire initMap in 5s,
-// fall back to Leaflet so the screen never sits blank.
+// `initMap` exists as the Google Maps JS callback contract. The bootGmaps
+// path is intentionally NOT reachable today because the GCP project tied
+// to GOOGLE_MAPS_KEY has billing disabled — Static Maps 403s and JS API
+// paints the "For development purposes only" watermark. When billing is
+// turned on, flip the loader below to load the gmaps script tag and the
+// existing bootGmaps() (AvatarOverlay + MeOverlay) will take over with
+// the exact same pin/me/pan bridge contract — no RN changes needed.
 function initMap() { try { bootGmaps(); } catch (e) { bootLeaflet(); } }
-// Snap-map é sempre Leaflet/OSM. Google Maps JS API via WebView pinta o
-// watermark "For development purposes only" porque o referrer enviado por
-// WebView srcDoc (iOS) ou intent (Android) não bate com o domain restriction
-// da API key — mesmo com baseUrl: https://chatyy.com.br/. Static Maps API
-// (usado em LocationMessage.js) funciona porque não checa referrer.
-// Leaflet é grátis, sem key, sem billing — qualidade ótima pra friend tracking.
-// O bootGmaps continua existindo se alguém shippar uma key cross-platform OK
-// no futuro, mas por padrão usamos Leaflet.
+
+// Canonical path: Leaflet over CartoCDN tiles. Matches the in-chat
+// location bubble (static_map.php → CartoCDN) so snap-map and chat share
+// the same visual language. Free, no key, no billing, no watermark.
 bootLeaflet();
-// Also catch the "billing not enabled" runtime banner Google paints over
-// the map — when it fires, gmAuthFailure is the only signal we get.
+
+// gm_authFailure is the runtime signal Google fires when the JS API
+// loads but is rejected for billing/quota. Kept defensive in case
+// someone flips the loader on prematurely — we tear down whatever
+// half-rendered gmaps state exists and fall back to Leaflet.
 window.gm_authFailure = function() {
   Object.keys(__overlays).forEach(function(e){ try { __overlays[e].setMap(null); } catch(_){} });
   __overlays = {};

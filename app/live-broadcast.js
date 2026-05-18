@@ -2883,6 +2883,10 @@ export default function LiveBroadcastScreen() {
   // Live broadcasting screen
   return (
     <View style={styles.fullScreen}>
+      {/* Round 64 (2026-05-18) — translucent status bar so the host's video
+          fills the notch area instead of being capped by a system-painted
+          black status bar (the "mancha preta" reported on the host stage). */}
+      <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
       {renderLocalVideo()}
 
       {/* Guest co-broadcast PiP card (#921 colab mode). Renders the approved
