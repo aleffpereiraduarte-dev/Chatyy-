@@ -2577,6 +2577,10 @@ export default function PhotosScreen() {
           <TouchableOpacity
             style={[s.backupBtn, { backgroundColor: colors.primary }]}
             onPress={async () => {
+              // User explicitly tapped — bypass the post-complete cooldown
+              // (#1126) so they can force a fresh attempt even if we
+              // believed nothing was pending.
+              backupCompletedAtRef.current = 0;
               // Trigger native scan first if available — instant Google-Photos UX
               if (Platform.OS === 'ios') {
                 try {

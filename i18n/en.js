@@ -4641,6 +4641,11 @@ export default {
   'wallet.myDiamonds': 'My diamonds',
   'wallet.topupCta': 'Tap to buy diamonds',
   'wallet.diamondsLabel': 'diamonds',
+  'diamondShop.title': 'Diamond Shop',
+  'diamondShop.heroSubtitle': 'Buy diamonds to send to friends, tip creators, and unlock content.',
+  'diamondShop.bestValue': 'Best value',
+  'diamondShop.viewHistory': 'View history & send diamonds',
+  'diamondShop.wallet': 'Wallet',
   // 2026-05-18 — Send-diamond peer-to-peer + wallet history strings.
   'wallet.history': 'History',
   'wallet.historyEmpty': 'No transactions yet. Buy diamonds to get started.',
