@@ -992,10 +992,11 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
       'live_session_info', 'live_session_list', 'live_status',
       'status_list', 'status_view',
       'feed_list', 'feed_likes', 'feed_comments',
-      'feed_explore', 'feed_set_topics', 'feed_get_topics',
-      'feed_analytics', 'trending_hashtags',
+      'feed_explore', 'feed_explore_nearby', 'feed_set_topics', 'feed_get_topics',
+      'feed_analytics', 'trending_hashtags', 'feed_ads_list',
       'chat_feed_hide_post', 'feed_hide_post',
       'feed_muted_words_list', 'feed_muted_words_add', 'feed_muted_words_remove',
+      'hashtag_followed_list',
       'reels_list', 'reels_view',
       'get_avatar', 'get_avatar_initials',
       'send_health', 'send_ping',
@@ -3329,6 +3330,26 @@ export async function chatSetConvSettings(conversationId, settings = {}) {
   }, 'POST');
 }
 
+// Per-conversation custom ringtone picker (gap_notifications #4).
+// Stored as filename string in chat_user_conv_settings.ringtone and
+// propagated through the push payload as `ringtone`.
+export async function chatSetConvRingtone(conversationId, ringtone = 'default') {
+  return apiCall('chat_user_conv_ringtone_set', {
+    conversation_id: conversationId,
+    ringtone,
+  }, 'POST');
+}
+
+// Global notification preferences (DND schedule, preview privacy,
+// lockscreen visibility, respect-system-DND, snooze, mention_only).
+// Closes gap_notifications #7 + #10.
+export async function chatGetNotifPrefs() {
+  return apiCall('chat_user_notif_prefs_get', {}, 'POST');
+}
+export async function chatSetNotifPrefs(prefs = {}) {
+  return apiCall('chat_user_notif_prefs_set', prefs, 'POST');
+}
+
 export async function chatTyping(conversationId, recording = false) {
   const params = { conversation_id: conversationId };
   if (recording) params.recording = true;
@@ -3495,6 +3516,46 @@ export async function getFriendsLocations() { return apiCall('get_friends_locati
 export async function feedCollectionCreate(name) { return apiCall('feed_collection_create', { name }, 'POST'); }
 export async function feedCollectionList() { return apiCall('feed_collection_list', {}); }
 export async function feedCollectionAdd(collectionId, postId) { return apiCall('feed_collection_add', { collection_id: collectionId, post_id: postId }, 'POST'); }
+// Wave 15: remove an item from a collection + list a collection's items.
+export async function feedCollectionRemoveItem(collectionId, postId) {
+  return apiCall('feed_collection_remove_item', { collection_id: collectionId, post_id: postId }, 'POST');
+}
+export async function feedCollectionItems(collectionId) {
+  return apiCall('feed_collection_items', { collection_id: collectionId }, 'POST');
+}
+
+// ── Wave 15: ads (placeholder for future ad SDK) ───────────────────────
+// Returns active ad posts. `topic` / `region` are optional filters that
+// the backend matches against the caption and free-text location.
+export async function feedAdsList({ topic, region, limit = 6 } = {}) {
+  return apiCall('feed_ads_list', { topic: topic || '', region: region || '', limit }, 'POST');
+}
+
+// ── Wave 15: hashtag follow / unfollow / list ──────────────────────────
+// Posts whose caption matches a followed hashtag get a 1.3× ranking
+// boost in feed_explore_nearby.
+export async function hashtagFollow(tag) {
+  return apiCall('hashtag_follow', { tag: String(tag || '').replace(/^#/, '') }, 'POST');
+}
+export async function hashtagUnfollow(tag) {
+  return apiCall('hashtag_unfollow', { tag: String(tag || '').replace(/^#/, '') }, 'POST');
+}
+export async function hashtagFollowedList() {
+  return apiCall('hashtag_followed_list', {}, 'POST');
+}
+
+// ── Wave 15: feed_explore_nearby — Discover "Próximos" tab ─────────────
+// City-match (chat_user_profile.city) + followed-hashtag boost ranker.
+export async function feedExploreNearby(page = 1, limit = 20) {
+  return apiCall('feed_explore_nearby', { page, limit }, 'POST');
+}
+
+// ── Wave 15: promote post (paid boost stub) ────────────────────────────
+// Marks an owned post as is_promoted = TRUE for `hours` (default 24,
+// cap 168). Ranker applies a 1.4× score boost while active.
+export async function feedPromotePost(postId, hours = 24) {
+  return apiCall('feed_promote_post', { post_id: postId, hours }, 'POST');
+}
 // Creator analytics. If postId is provided, returns per-post stats (views,
 // likes, comments, shares + 7-day view series). Otherwise returns the
 // creator-wide rollup.
@@ -3693,6 +3754,26 @@ export async function statusDelete(statusId) {
 
 export async function statusViewers(statusId) {
   return apiCall('status_viewers', { status_id: statusId }, 'POST');
+}
+
+// statusAnalytics — per-status creator analytics. Owner-only.
+// Returns: impressions, exit_rate, completion_rate, reactions, replies,
+// completed. Surfaced in the own-status long-press menu under
+// "Estatisticas". Backend lives in api/chat.php case 'status_analytics'.
+export async function statusAnalytics(statusId) {
+  return apiCall('status_analytics', { status_id: statusId }, 'POST');
+}
+
+// statusRepost — repost an existing status (archived or live) as a NEW
+// status. Server-side this is just status_create with the same media_url
+// + caption and a fresh expires_at. Mirrors Instagram's "Compartilhar
+// como story" flow. Returns the new status row payload.
+export async function statusRepost(statusId, { caption = '', privacy = 'all' } = {}) {
+  return apiCall('status_repost', {
+    status_id: statusId,
+    caption,
+    privacy,
+  }, 'POST');
 }
 
 // Wave 4: Archive own status — hides it from the home strip + chat list
@@ -4701,6 +4782,20 @@ export async function chatBackupRestore(backupId) {
   return apiCall('chat_backup_restore', { backup_id: backupId }, 'POST');
 }
 
+// chat_restore_from_blob — cross-provider cloud restore. Called by
+// services/chatBackupCloud.js after the client decrypts a backup from
+// iCloud/Drive. Server-side: re-inserts rows into chat_messages skipping
+// duplicates by (conversation_id, client_msg_id). Idempotent.
+export async function chatRestoreFromBlob({ manifest, conversations, messages, chunkIndex = 0, totalChunks = 1 }) {
+  return apiCall('chat_restore_from_blob', {
+    manifest: manifest || {},
+    conversations: conversations || [],
+    messages: messages || [],
+    chunk_index: chunkIndex,
+    total_chunks: totalChunks,
+  }, 'POST');
+}
+
 // E2E backup escrow — fatter ciphertext envelope (master key + chat keys +
 // device fingerprints) encrypted client-side with the user's passphrase.
 // The server never sees the passphrase or the encryption key; it stores
@@ -5437,6 +5532,58 @@ export async function photoSuggestTags() {
   return apiCall('photo_suggest_tags', {}, 'POST');
 }
 
+// ============================================================
+// Wave 14 — real face recognition (FaceNet embeddings + clustering)
+// ============================================================
+
+// Upsert per-file face boxes + 128-dim embeddings. The on-device pipeline
+// (MediaPipe FaceLandmarker -> FaceNet ONNX) computes these locally and
+// posts them after each photo finishes backing up. Server clusters via cosine.
+export async function photosFaceEmbed(fileId, faces) {
+  return apiCall('photos_face_embed', { file_id: fileId, faces }, 'POST');
+}
+
+// "Pessoas" tab: list every cluster the user has built up.
+export async function photosFaceClusters() {
+  return apiCall('photos_face_clusters', {}, 'POST');
+}
+
+// Tap a cluster -> all photos containing that face.
+export async function photosFaceClusterPhotos(clusterId) {
+  return apiCall('photos_face_cluster_photos', { cluster_id: clusterId }, 'POST');
+}
+
+// Long-press "Nomear pessoa" -> label the cluster.
+export async function photosFaceClusterName(clusterId, personName) {
+  return apiCall('photos_face_cluster_name', { cluster_id: clusterId, person_name: personName }, 'POST');
+}
+
+// ============================================================
+// Wave 14 — photobook PDF generator
+// ============================================================
+export async function photosPhotobookCreate(ids, layout = 'grid', title = '') {
+  return apiCall('photos_photobook_create', { ids, layout, title }, 'POST');
+}
+
+// ============================================================
+// Wave 14 — AI enhancement / inpaint / sky / bokeh (Replicate-backed)
+// ============================================================
+export async function photosAiEnhance(photoId, mode = 'upscale') {
+  return apiCall('photos_ai_enhance', { photo_id: photoId, mode }, 'POST');
+}
+
+export async function photosInpaint(photoId, maskBase64) {
+  return apiCall('photos_inpaint', { photo_id: photoId, mask_base64: maskBase64 }, 'POST');
+}
+
+export async function photosSkyReplace(photoId, preset = 'sunset') {
+  return apiCall('photos_sky_replace', { photo_id: photoId, preset }, 'POST');
+}
+
+export async function photosBokeh(photoId, strength = 0.7) {
+  return apiCall('photos_bokeh', { photo_id: photoId, strength }, 'POST');
+}
+
 export async function fileSearch(query) {
   return apiCall('drive_search', { q: query });
 }
@@ -5882,8 +6029,20 @@ export async function feedView(postId) {
   return apiCall('feed_view', { post_id: postId }, 'POST');
 }
 
-export async function feedComment(postId, content, replyToId) {
-  return apiCall('feed_comment', { post_id: postId, content, reply_to_id: replyToId }, 'POST');
+export async function feedComment(postId, content, replyToId, opts = {}) {
+  // Reels P1 — sticker / video / image comment reply. When the user
+  // taps the GIF icon or compact-camera icon in FeedComments, we pass
+  // { attachmentUrl|mediaUrl, mediaType } so the backend stores it on
+  // chat_feed_comments.media_url + media_type. Text content can be
+  // empty when a media reply is sent.
+  const body = { post_id: postId, content: content || '', reply_to_id: replyToId };
+  const m = opts.mediaUrl || opts.attachmentUrl || '';
+  if (m) {
+    body.media_url = m;
+    body.attachment_url = m; // legacy alias older clients read
+    body.media_type = opts.mediaType || 'sticker';
+  }
+  return apiCall('feed_comment', body, 'POST');
 }
 
 export async function feedComments(postId, page = 1) {
@@ -6179,6 +6338,75 @@ export async function liveSubscribeCreator(creator, months = 1) {
   return apiCall('live_subscribe_creator', { creator, months: Number(months) || 1 }, 'POST');
 }
 
+// ─── Reels — Rights-cleared music catalog (Pixabay-backed) ───
+// Backend proxies https://pixabay.com/api/?category=music with a 1h cache.
+// Each track returned has { id, title, artist, preview_url, duration_sec,
+// image_url }. id is "pixabay/<numeric_id>".
+//
+// `mode` selects the popular catalog vs. a search query:
+//   - 'catalog'  → reels_music_catalog (order=popular)
+//   - 'search'   → reels_music_search  (q=…)
+// Alternative (free): YouTube Audio Library — no machine-readable feed,
+// requires manual download/ingest, not wired here.
+export async function reelsMusicCatalog({ page = 1, perPage = 24 } = {}) {
+  return apiCall('reels_music_catalog', { page, per_page: perPage }, 'POST');
+}
+export async function reelsMusicSearch(q, { page = 1, perPage = 24 } = {}) {
+  return apiCall('reels_music_search', { q, page, per_page: perPage }, 'POST');
+}
+
+// ─── Reels — Tip a creator directly on a reel post (outside Live) ───
+// Debits sender wallet, credits 70% to creator's pending_payout_cents.
+// Same diamond catalog as Live gifts (gift_rose..gift_legend).
+export async function feedPostTip(postId, giftSku) {
+  return apiCall('feed_post_tip', { post_id: postId, gift_sku: giftSku }, 'POST');
+}
+
+// ─── Reels — Promote a post (paid boost via diamond wallet) ───
+// Budget tiers: 500/1000/2500/5000/10000 cents ($5/$10/$25/$50/$100).
+// Duration: 1..30 days. Inserts chat_feed_promotions row; the FYP ranker
+// boosts the post score by 1.5x while is_active=1 and ends_at > now().
+export async function feedPostPromote(postId, budgetCents, durationDays) {
+  return apiCall('feed_post_promote', {
+    post_id: postId,
+    budget_cents: Number(budgetCents) || 0,
+    duration_days: Number(durationDays) || 7,
+  }, 'POST');
+}
+
+// ─── Reels — Save / unsave / list favorite sounds ───
+// Powers the "Meus salvos" tab in CreatePostModal music picker and the
+// 💾 button on the music marquee inside ReelsViewer.
+export async function reelsSoundFavoriteSave(soundId, soundLabel, opts = {}) {
+  return apiCall('reels_sound_favorite_save', {
+    sound_id: soundId,
+    sound_label: soundLabel,
+    preview_url: opts.previewUrl || '',
+    image_url: opts.imageUrl || '',
+    duration_sec: Number(opts.durationSec) || 30,
+  }, 'POST');
+}
+export async function reelsSoundFavoriteUnsave(soundId) {
+  return apiCall('reels_sound_favorite_unsave', { sound_id: soundId }, 'POST');
+}
+export async function reelsSoundFavoriteList() {
+  return apiCall('reels_sound_favorite_list', {}, 'POST');
+}
+
+// ─── Reels — Trending sounds (last 7d) ───
+// Surfaces a "Trending sons" list on /search Sons tab + Discover page.
+export async function reelsTrendingSounds(limit = 20) {
+  return apiCall('reels_trending_sounds', { limit }, 'POST');
+}
+
+// ─── Creator dashboard (Pro tier) ───
+// Aggregates subscriber_count + monthly_revenue_cents (subscriptions) +
+// weekly/monthly tip revenue + top tippers + 7-day sparkline series for
+// the logged-in creator. Surfaced as "Painel de criador" on /profile.
+export async function creatorDashboard() {
+  return apiCall('creator_dashboard', {}, 'POST');
+}
+
 // ─── Live shopping product cards (P1) ───
 // Host adds a card to their active live. Up to 5 active per session.
 export async function liveProductAdd(sessionId, { title, priceCents = 0, imageUrl = '', linkUrl }) {
@@ -6286,6 +6514,53 @@ export async function chatLivePollClose(sessionId, pollId) {
     session_id: sessionId,
     poll_id: pollId,
   }, 'POST');
+}
+
+// ─── Live scheduling (Calendar parity, 2026-05-17) ───
+// Host pre-announces a live broadcast. Backend inserts chat_live_scheduled +
+// the cron tick fans push to followers at start-15min and start+0.
+export async function liveSchedule(startAt, title, opts = {}) {
+  const payload = {
+    start_at: typeof startAt === 'string' ? startAt : new Date(startAt).toISOString(),
+    title: String(title || '').slice(0, 200),
+  };
+  if (opts.description) payload.description = String(opts.description).slice(0, 1000);
+  if (opts.audience) payload.audience = opts.audience;
+  if (opts.category) payload.category = opts.category;
+  return apiCall('live_schedule', payload, 'POST');
+}
+export async function liveScheduleList(scope = 'mine') {
+  return apiCall('live_schedule_list', { scope }, 'POST');
+}
+export async function liveScheduleCancel(id) {
+  return apiCall('live_schedule_cancel', { id: Number(id) }, 'POST');
+}
+
+// ─── Multistream (RTMP fan-out to YouTube/Twitch/FB, 2026-05-17) ───
+// Host adds an RTMP destination. Backend persists + calls LK Egress
+// StartRoomCompositeEgress if broadcastId is set (live is hot). Returns
+// { id, started, egress_id }.
+export async function liveMultistreamAdd(rtmpUrl, streamKey, opts = {}) {
+  return apiCall('live_multistream_add', {
+    rtmp_url: String(rtmpUrl || '').trim(),
+    stream_key: String(streamKey || '').trim(),
+    broadcast_id: opts.broadcastId || '',
+    label: opts.label || '',
+  }, 'POST');
+}
+export async function liveMultistreamList(broadcastId = '') {
+  return apiCall('live_multistream_list', { broadcast_id: broadcastId }, 'POST');
+}
+export async function liveMultistreamRemove(id) {
+  return apiCall('live_multistream_remove', { id: Number(id) }, 'POST');
+}
+
+// ─── Diamond reaction (1 diamond = 1 paid floating heart, 2026-05-17) ───
+// Debits caller's wallet, credits creator, broadcasts a gold heart particle.
+// Returns { code: 'insufficient_diamonds' } on empty wallet — frontend opens
+// the diamond top-up sheet.
+export async function liveDiamondReaction(sessionId) {
+  return apiCall('chat_live_diamond_reaction', { session_id: sessionId }, 'POST');
 }
 
 // ============================================================
@@ -7309,6 +7584,50 @@ export async function chatPrivacySet(settings) {
   return apiCall('chat_privacy_set', settings, 'POST');
 }
 
+// ─── Unified audit log (Settings → Segurança → Histórico de atividades) ───
+// Backend records security-relevant events automatically (login, logout,
+// password change, BYOK set, chat delete, message delete-for-all, spam
+// report, discoverable toggle). The _add helper exists for the client to
+// record events that the server can't observe directly (e.g. unlock).
+export async function userActivityLogList(limit = 100, offset = 0) {
+  return apiCall('user_activity_log_list', { limit, offset }, 'POST');
+}
+export async function userActivityLogAdd(action, deviceLabel = '') {
+  return apiCall('user_activity_log_add', { action, device_label: deviceLabel }, 'POST');
+}
+
+// ─── Contact-discovery opt-out (Settings → Privacidade → "Permitir que
+// outros me encontrem pelo número"). Default ON. When OFF, the backend
+// filters this user from chat_sync_contacts and skips the "X entrou no
+// Chatyy" push to existing contacts on phone register. ───
+export async function chatDiscoverableGet() {
+  return apiCall('chat_discoverable_get', {}, 'POST');
+}
+export async function chatDiscoverableSet(discoverable) {
+  return apiCall('chat_discoverable_set', { discoverable: !!discoverable }, 'POST');
+}
+
+// ─── BYOK — Bring Your Own Key. Master key is generated client-side and
+// NEVER sent to the server. The server only stores the SHA-256 fingerprint
+// so other devices can verify a restored key matches.
+// (services/byok.js handles the local key generation + Keychain/Keystore.) ───
+export async function chatMasterKeyFingerprintGet() {
+  return apiCall('chat_master_key_fingerprint_get', {}, 'POST');
+}
+export async function chatMasterKeyFingerprintSet(fingerprintHex) {
+  return apiCall('chat_master_key_fingerprint_set', { fingerprint: fingerprintHex }, 'POST');
+}
+export async function chatMasterKeyFingerprintClear() {
+  return apiCall('chat_master_key_fingerprint_clear', {}, 'POST');
+}
+
+// ─── Spam reporting (long-press chat in list → "Reportar como spam") ───
+// Backend counts reports per sender — >10 in 24h auto-shadowbans them
+// from chat_sync_contacts search results.
+export async function chatReportSpam(convId, reason = '') {
+  return apiCall('chat_report_spam', { conv_id: convId, reason }, 'POST');
+}
+
 // ─── Channel threading ───
 export async function chatThreadMessages(parentMessageId) {
   return apiCall('chat_thread_messages', { parent_message_id: parentMessageId }, 'POST');
@@ -7600,4 +7919,74 @@ export async function labelCreateNested(name, color = '#1a73e8', parentLabel = n
 }
 export async function labelDeleteNested({ id = 0, name = '' } = {}) {
   return apiCall('label_delete_nested', { id, name }, 'POST');
+}
+
+// ──────────────────────────────────────────────────────────────────
+// OAuth import (Gmail / Outlook). Frontend obtains the access_token
+// via expo-auth-session and posts it here; the backend pages through
+// the provider's API and APPENDs each message into a sub-folder under
+// the user's maildir via IMAP. Sync is chunked (25/call) so the UI
+// shows a smooth progress bar without one giant 60-second request.
+// ──────────────────────────────────────────────────────────────────
+export async function emailOauthImportStart(provider, accessToken, maxEmails = 1000) {
+  return apiCall('email_oauth_import_start', { provider, access_token: accessToken, max_emails: maxEmails }, 'POST');
+}
+export async function emailOauthImportStep(importId) {
+  return apiCall('email_oauth_import_step', { import_id: importId }, 'POST');
+}
+export async function emailOauthImportList() {
+  return apiCall('email_oauth_import_list');
+}
+
+// ──────────────────────────────────────────────────────────────────
+// PGP key registry — public keys go to PG; private keys live ONLY
+// on the device in SecureStore (encrypted with the user passphrase
+// the openpgpjs lib applies). Body-encryption happens client-side
+// via OpenPGP.js; we just shuttle armored blocks around.
+// ──────────────────────────────────────────────────────────────────
+export async function pgpKeyUpload(publicKeyArmor, fingerprint) {
+  return apiCall('pgp_key_upload', { public_key_armor: publicKeyArmor, fingerprint }, 'POST');
+}
+export async function pgpKeyGet(email) {
+  return apiCall('pgp_key_get', { email });
+}
+export async function pgpKeyDelete() {
+  return apiCall('pgp_key_delete', {}, 'POST');
+}
+export async function pgpSendPassphraseSms(phone, passphrase) {
+  return apiCall('pgp_send_passphrase_sms', { phone, passphrase }, 'POST');
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Tasks — PG-backed user task list with optional backref to an email.
+// ──────────────────────────────────────────────────────────────────
+export async function taskList(filter = 'pending') {
+  return apiCall('task_list', { filter });
+}
+export async function taskCreate(payload) {
+  return apiCall('task_create', payload, 'POST');
+}
+export async function taskUpdate(id, fields) {
+  return apiCall('task_update', { id, ...fields }, 'POST');
+}
+export async function taskDelete(id) {
+  return apiCall('task_delete', { id }, 'POST');
+}
+export async function taskCreateFromEmail(uid, folder = 'INBOX', extra = {}) {
+  return apiCall('task_create_from_email', { uid, folder, ...extra }, 'POST');
+}
+
+// ──────────────────────────────────────────────────────────────────
+// Gmail-style bundles for the active folder (default INBOX). The
+// response shape mirrors CategoryTabs so the inbox screen can render
+// them with the same component.
+// ──────────────────────────────────────────────────────────────────
+export async function emailBundles(folder = 'INBOX', limit = 80) {
+  return apiCall('email_bundles', { folder, limit });
+}
+
+// Mark every unread in the entire current folder as read in one IMAP
+// command (not just the visible UIDs in the email list).
+export async function bulkMarkReadFolder(folder = 'INBOX') {
+  return apiCall('bulk_mark_read_folder', { folder }, 'POST');
 }

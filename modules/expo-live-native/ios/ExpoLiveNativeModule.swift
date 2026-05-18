@@ -112,6 +112,23 @@ public class ExpoLiveNativeModule: Module {
         self.sendEvent("onLiveEnded", ["roomName": "", "reason": "closeLive"])
       }
     }
+
+    // ─── AR/Beauty/Greenscreen filter (wave 16, 2026-05-17) ─────────
+    // Hands off to the host VC, which owns the MediaPipe pipeline. The
+    // FaceLandmarker + SelfieSegmentation graph processes each LK video
+    // frame on a background queue, composites the active overlay (sticker
+    // PNG / Gaussian skin smooth / virtual background), and re-publishes
+    // the result to the LK Room. Stage 1 here just stores the preset on
+    // the VC; the pipeline plumbing is the next deliverable.
+    AsyncFunction("setArFilter") { (presetKey: String, wallpaperId: Int) -> Void in
+      await MainActor.run {
+        if let host = self.currentLiveVC as? LiveHostViewController {
+          host.applyArFilter(presetKey: presetKey, wallpaperId: wallpaperId)
+        } else {
+          NSLog("[ExpoLiveNative] setArFilter — no host VC active (preset=\(presetKey))")
+        }
+      }
+    }
   }
 
   // MARK: - Helpers

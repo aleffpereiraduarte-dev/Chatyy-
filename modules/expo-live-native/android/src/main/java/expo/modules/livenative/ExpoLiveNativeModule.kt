@@ -183,5 +183,28 @@ class ExpoLiveNativeModule : Module() {
       Log.d(TAG, "closeLive")
       emitLiveEnded(null, "closeLive")
     }
+
+    /**
+     * Apply an AR/Beauty/Greenscreen filter to the host's published track.
+     * Pipeline owner is LiveHostActivity (MediaPipe FaceLandmarker +
+     * SelfieSegmentation tasks hook the LK camera video track before
+     * encode). Stage 1 just stores the preset on the activity; the actual
+     * MediaPipe init + frame processing is the next deliverable.
+     *
+     * presetKey: 'none' | 'dog' | 'sunglasses' | 'hearts' | 'beauty' |
+     *            'slim' | 'blur' | 'greenscreen'
+     * wallpaperId: 0 for non-greenscreen, 1..6 for greenscreen backgrounds.
+     */
+    AsyncFunction("setArFilter") {
+      presetKey: String,
+      wallpaperId: Int
+      ->
+      try {
+        Log.d(TAG, "setArFilter preset=$presetKey wallpaper=$wallpaperId")
+        LiveHostActivity.applyArFilter(presetKey, wallpaperId)
+      } catch (t: Throwable) {
+        Log.w(TAG, "setArFilter failed: ${t.message}")
+      }
+    }
   }
 }

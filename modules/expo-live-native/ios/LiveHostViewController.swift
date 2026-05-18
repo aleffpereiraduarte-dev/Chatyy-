@@ -221,6 +221,48 @@ final class LiveHostViewController: UIViewController {
         }
     }
 
+    // ────────────────────────────────────────────────────────────────────
+    //  AR / Beauty / Greenscreen filter pipeline (wave 16, 2026-05-17)
+    //
+    //  Pipeline overview (when fully wired):
+    //   1. LK camera publish track → custom VideoSource that hooks each
+    //      CMSampleBuffer before it hits the WebRTC encoder.
+    //   2. CMSampleBuffer → CVPixelBuffer → MediaPipe FaceLandmarker (478
+    //      landmarks + face bbox) + SelfieSegmentation (alpha mask).
+    //   3. Composite the active preset onto the buffer via Core Image:
+    //        - 'dog' / 'sunglasses' / 'hearts': overlay sticker PNG aligned
+    //          to face landmarks (left/right ear, eyes, mouth corners).
+    //        - 'beauty': Gaussian blur (radius 4) clipped to the face mask
+    //          from FaceLandmarker bbox + edge-preserving filter.
+    //        - 'slim': geometric warp pulling cheek landmarks inward 6-12%.
+    //        - 'blur': Gaussian blur (radius 18) of the inverse selfie mask,
+    //          composited under the foreground (person stays sharp).
+    //        - 'greenscreen': selfie alpha mask composited over wallpaper
+    //          UIImage from the bundle (`live_wallpaper_<id>.jpg`).
+    //   4. Result re-encoded as a CVPixelBuffer and pushed to the LK
+    //      RTCVideoSource.
+    //
+    //  Stage 1 here just records the active preset. The pipeline + MediaPipe
+    //  graph init lives in a follow-up commit (MediaPipe pods + .task files
+    //  need to be vendored, and the LK VideoSource swap needs Xcode work).
+    // ────────────────────────────────────────────────────────────────────
+
+    private var activeArPreset: String = "none"
+    private var activeArWallpaperId: Int = 0
+
+    func applyArFilter(presetKey: String, wallpaperId: Int) {
+        let preset = presetKey.isEmpty ? "none" : presetKey
+        self.activeArPreset = preset
+        self.activeArWallpaperId = wallpaperId
+        NSLog("[LiveHostVC] AR filter set: preset=\(preset) wallpaper=\(wallpaperId)")
+        // Forward to the MediaPipe processor when wired. For now the host's
+        // own preview can apply a CIFilter overlay so the host sees a hint
+        // of "filter is active" before the full pipeline ships.
+        DispatchQueue.main.async { [weak self] in
+            self?.session.status = preset == "none" ? "AO VIVO" : "AO VIVO · \(preset)"
+        }
+    }
+
     private func shareLive() {
         let text = "Tô ao vivo no Chatyy! https://chatyy.com.br/live/\(roomName)"
         let av = UIActivityViewController(activityItems: [text], applicationActivities: nil)

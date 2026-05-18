@@ -654,7 +654,7 @@ function EmptyStatusIllustration({ isDark }) {
 }
 
 /** Renders a segmented ring around an avatar (one arc per status item) */
-function SegmentedRing({ items, size, viewed }) {
+function SegmentedRing({ items, size, viewed, closeFriends = false }) {
   const count = items?.length || 1;
   const ringSize = size + 10;
   const radius = (ringSize / 2) - 3;
@@ -664,15 +664,19 @@ function SegmentedRing({ items, size, viewed }) {
   const segmentDeg = (360 - totalGapDeg) / count;
   const segmentLen = (segmentDeg / 360) * circumference;
   const gapLen = (gapDeg / 360) * circumference;
+  // Close-friends ring: bright IG-style green gradient. Default is the
+  // brand purple. ID is parameterized so multiple rings on the same
+  // screen with different palettes don't collide on the Defs registry.
+  const gradId = closeFriends ? 'ringGradCF' : 'ringGrad';
 
   return (
     <View style={{ position: 'absolute', top: -5, left: -5 }}>
       <Svg width={ringSize} height={ringSize}>
         <Defs>
-          <LinearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
-            <Stop offset="0" stopColor="#7C3AED" />
-            <Stop offset="0.5" stopColor="#6D28D9" />
-            <Stop offset="1" stopColor="#6D28D9" />
+          <LinearGradient id={gradId} x1="0" y1="0" x2="1" y2="1">
+            <Stop offset="0" stopColor={closeFriends ? '#34D399' : '#7C3AED'} />
+            <Stop offset="0.5" stopColor={closeFriends ? '#10B981' : '#6D28D9'} />
+            <Stop offset="1" stopColor={closeFriends ? '#047857' : '#6D28D9'} />
           </LinearGradient>
         </Defs>
         {Array.from({ length: count }).map((_, i) => {
@@ -684,7 +688,7 @@ function SegmentedRing({ items, size, viewed }) {
               cx={ringSize / 2}
               cy={ringSize / 2}
               r={radius}
-              stroke={isViewed ? 'rgba(150,150,150,0.35)' : 'url(#ringGrad)'}
+              stroke={isViewed ? 'rgba(150,150,150,0.35)' : `url(#${gradId})`}
               strokeWidth={3}
               fill="none"
               strokeDasharray={`${segmentLen} ${circumference - segmentLen}`}
@@ -727,6 +731,14 @@ function StoryScroller({ statuses, myStatuses, currentEmail, currentName, onOpen
             segments={hasMyStatus ? myStatuses.length : 1}
             itemsViewed={hasMyStatus ? myStatuses.map(it => !!it.viewed) : null}
             badge={!hasMyStatus ? 'plus' : null}
+            // Mirror the close-friends green ring on the owner's own row
+            // so it's a consistent visual signal. We're the author, so we
+            // always pass the privacy through.
+            closeFriends={
+              hasMyStatus && myStatuses.some(
+                (it) => (it?.meta?.privacy || it?.privacy) === 'close_friends'
+              )
+            }
             isDark={isDark}
             colors={colors}
           />
@@ -739,6 +751,16 @@ function StoryScroller({ statuses, myStatuses, currentEmail, currentName, onOpen
       {/* Contact statuses */}
       {statuses.map((group) => {
         const allViewed = group.items.every((item) => item.viewed);
+        // Close-friends ring (IG parity): if ANY item in the group carries
+        // meta.privacy === 'close_friends', paint the whole row's ring
+        // green so the restricted audience scope is visible at a glance.
+        // Backend only surfaces close-friends statuses to the owner +
+        // people on the close-friends list, so by the time we see one
+        // here we KNOW we're an authorized viewer — the green ring is
+        // safe to surface.
+        const isCloseFriends = group.items.some(
+          (it) => (it?.meta?.privacy || it?.privacy) === 'close_friends'
+        );
         return (
           <TouchableOpacity
             key={group.ownerEmail}
@@ -755,6 +777,7 @@ function StoryScroller({ statuses, myStatuses, currentEmail, currentName, onOpen
                 segments={group.items.length}
                 itemsViewed={group.items.map(it => !!it.viewed)}
                 allViewed={allViewed}
+                closeFriends={isCloseFriends}
                 isDark={isDark}
                 colors={colors}
               />
@@ -833,6 +856,26 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   // Viewers modal state
   const [viewersModal, setViewersModal] = useState(false);
   const [viewersList, setViewersList] = useState([]);
+
+  // Per-status analytics modal (creator-only). Opened from the own-status
+  // long-press menu under "Estatísticas". `analyticsData` carries the
+  // backend payload (impressions, reactions, replies, completion/exit
+  // rates) — null while loading or before first open. Errors fall back
+  // to a "Não foi possível carregar" message but keep the modal open
+  // so the user can tap "Tentar novamente".
+  const [analyticsModalOpen, setAnalyticsModalOpen] = useState(false);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsData, setAnalyticsData] = useState(null);
+  const [analyticsError, setAnalyticsError] = useState(null);
+  const [analyticsStatusId, setAnalyticsStatusId] = useState(null);
+
+  // Archive browser sheet — opened from "Arquivo" pill above the strip.
+  // Long-press an archived row inside the sheet to repost it as a fresh
+  // 24h story (mirrors Instagram archive). Lazy-loaded on open so we
+  // don't pay the round-trip until the user actually wants to browse.
+  const [archiveSheetOpen, setArchiveSheetOpen] = useState(false);
+  const [archiveItems, setArchiveItems] = useState([]);
+  const [archiveLoading, setArchiveLoading] = useState(false);
 
   // Pull-to-refresh state — feeds RefreshControl on the home scroll.
   const [refreshing, setRefreshing] = useState(false);
@@ -2067,6 +2110,67 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     } catch {}
   }, [hookRemoveStatus]);
 
+  // Open the per-status analytics panel. Loads backend payload lazily;
+  // shows a spinner until the response lands. Owner-only — caller must
+  // gate on isOwnStatus. We don't block the open on the network so the
+  // panel mounts instantly with skeleton numbers.
+  const openAnalytics = useCallback(async (statusId) => {
+    if (!statusId) return;
+    setAnalyticsStatusId(statusId);
+    setAnalyticsData(null);
+    setAnalyticsError(null);
+    setAnalyticsLoading(true);
+    setAnalyticsModalOpen(true);
+    try {
+      const res = await api.statusAnalytics?.(statusId);
+      if (res?.success && res.data) {
+        setAnalyticsData(res.data);
+      } else {
+        setAnalyticsError(res?.message || 'Não foi possível carregar estatísticas');
+      }
+    } catch (e) {
+      setAnalyticsError(e?.message || 'Erro de rede');
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  }, []);
+
+  // Open the archive sheet (list of archived own statuses). Lazy-loads
+  // on first open so we don't pay the round-trip up front.
+  const openArchiveSheet = useCallback(async () => {
+    setArchiveSheetOpen(true);
+    setArchiveLoading(true);
+    try {
+      const res = await api.statusArchiveList?.();
+      const items = res?.data?.items || res?.items || [];
+      setArchiveItems(Array.isArray(items) ? items : []);
+    } catch {
+      setArchiveItems([]);
+    } finally {
+      setArchiveLoading(false);
+    }
+  }, []);
+
+  // Repost an own (live or archived) status as a new 24h story. Server
+  // copies media + caption and assigns a fresh expires_at. We refetch the
+  // home strip after success so the new row appears at the top.
+  const repostMyStatus = useCallback(async (statusId, { privacy = 'all', caption = '' } = {}) => {
+    if (!statusId) return null;
+    try {
+      const res = await api.statusRepost?.(statusId, { privacy, caption });
+      if (res?.success) {
+        // Trigger a refetch so the new row lands in the strip; the hook
+        // owns disk persistence so we don't need to mutate state here.
+        try { loadStatuses?.(); } catch {}
+        return res.data;
+      }
+    } catch (e) {
+      console.warn('[repostMyStatus] failed:', e?.message);
+    }
+    return null;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadStatuses]);
+
   // ─── Labels ───
   const hasMyStatus = myStatuses.length > 0;
   const myStatusGroup = hasMyStatus
@@ -2089,6 +2193,12 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     const time = timeAgo(latestItem?.timestamp, t);
     const allViewed = statusGroup.items.every((item) => item.viewed);
     const count = statusGroup.items.length;
+    // Close-friends ring: any item with privacy === 'close_friends' flips
+    // the whole row's ring green. Mirrors the StoryScroller behavior so
+    // the parity holds between the horizontal top strip and the list rows.
+    const rowCloseFriends = statusGroup.items.some(
+      (item) => (item?.meta?.privacy || item?.privacy) === 'close_friends'
+    );
 
     return (
       <TouchableOpacity
@@ -2134,7 +2244,12 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
         <Animated.View style={[styles.avatarWrapper, {
           transform: [{ scale: getPulseFor(statusGroup.ownerEmail) }],
         }]}>
-          <SegmentedRing items={statusGroup.items} size={52} viewed={allViewed} />
+          <SegmentedRing
+            items={statusGroup.items}
+            size={52}
+            viewed={allViewed}
+            closeFriends={rowCloseFriends}
+          />
           <AvatarCircle name={statusGroup.ownerName} email={statusGroup.ownerEmail} size={52} />
         </Animated.View>
         <View style={styles.statusInfo}>
@@ -2367,6 +2482,17 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                   <IconArchive size={18} color="#3b82f6" />
                 </TouchableOpacity>
               )}
+              {/* "Ver arquivo" — opens the archive sheet so users can browse
+                  past archived stories and repost any of them as a fresh
+                  24h story. Lives next to the archive trash so the two
+                  archive actions are co-located. */}
+              <TouchableOpacity
+                style={[styles.actionCircle, { backgroundColor: isDark ? '#1e2a3a' : '#e8f0fe', marginRight: 10 }]}
+                onPress={openArchiveSheet}
+                accessibilityLabel={t?.('status.openArchive') || 'Abrir arquivo'}
+              >
+                <IconBookmark size={18} color="#3b82f6" />
+              </TouchableOpacity>
               {hasMyStatus && (
                 <TouchableOpacity
                   style={[styles.actionCircle, { backgroundColor: isDark ? '#3a1c1e' : '#fce4ec' }]}
@@ -2851,6 +2977,47 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                     accessibilityLabel={t?.('status.saveToHighlight') || 'Salvar em destaques'}
                   >
                     <IconBookmark size={22} color="#fff" />
+                  </TouchableOpacity>
+                  {/* Per-status analytics (impressions, exit rate, etc).
+                      Lazily fetched on tap. Backend returns the aggregate
+                      shape; the modal renders skeleton numbers while we
+                      wait so the panel doesn't feel laggy on slow links. */}
+                  <TouchableOpacity
+                    onPress={() => openAnalytics(currentViewerItem.id)}
+                    style={[styles.viewerClose, { marginRight: 4 }]}
+                    accessibilityLabel={t?.('status.analytics') || 'Estatísticas'}
+                  >
+                    <IconBarChart size={22} color="#fff" />
+                  </TouchableOpacity>
+                  {/* Repost own status — generates a fresh 24h row from
+                      the same media + caption. Wrapped in a confirm so the
+                      user doesn't double-post by accident. */}
+                  <TouchableOpacity
+                    onPress={() => {
+                      const id = currentViewerItem.id;
+                      const doRepost = async () => {
+                        const out = await repostMyStatus(id);
+                        if (out?.status_id) {
+                          closeViewer();
+                        }
+                      };
+                      if (Platform.OS === 'web') {
+                        if (window.confirm(t?.('status.repostConfirm') || 'Repostar este status?')) doRepost();
+                      } else {
+                        Alert.alert(
+                          t?.('status.repostTitle') || 'Repostar',
+                          t?.('status.repostConfirm') || 'Publicar este status de novo por mais 24h?',
+                          [
+                            { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+                            { text: t?.('status.repost') || 'Repostar', onPress: doRepost },
+                          ]
+                        );
+                      }
+                    }}
+                    style={[styles.viewerClose, { marginRight: 4 }]}
+                    accessibilityLabel={t?.('status.repost') || 'Repostar'}
+                  >
+                    <IconRotateCw size={22} color="#fff" />
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => {
@@ -3516,6 +3683,227 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                     </View>
                   ));
                 })()}
+              </ScrollView>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* ─── Per-Status Analytics Modal (creator-only) ─── */}
+      {/* Renders impressions, reactions, replies, exit/completion rate.
+          Skeleton shimmers under each KPI tile while the request flies.
+          Numbers are rounded to 1 decimal on the rates so the layout
+          stays clean; reactions/replies/impressions are integer. */}
+      <Modal
+        visible={analyticsModalOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setAnalyticsModalOpen(false)}
+      >
+        <Pressable
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}
+          onPress={() => setAnalyticsModalOpen(false)}
+        >
+          <Pressable style={{
+            backgroundColor: isDark ? '#1a1a2e' : '#fff',
+            borderTopLeftRadius: 20, borderTopRightRadius: 20,
+            paddingHorizontal: 20, paddingTop: 12, paddingBottom: 36,
+            minHeight: 360,
+          }}>
+            <View style={{ alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : '#d1d5db', marginBottom: 18 }} />
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 18 }}>
+              <IconBarChart size={20} color={isDark ? '#fff' : '#111'} />
+              <Text style={{ fontSize: 18, fontWeight: '800', color: isDark ? '#fff' : '#111' }}>
+                {t?.('status.analytics') || 'Estatísticas'}
+              </Text>
+            </View>
+            {analyticsLoading ? (
+              <View style={{ paddingVertical: 32, alignItems: 'center' }}>
+                <ActivityIndicator size="large" color={ACCENT} />
+                <Text style={{ marginTop: 12, color: isDark ? '#9ca3af' : '#6b7280', fontSize: 13 }}>
+                  {t?.('status.analyticsLoading') || 'Carregando...'}
+                </Text>
+              </View>
+            ) : analyticsError ? (
+              <View style={{ paddingVertical: 24, alignItems: 'center', gap: 10 }}>
+                <Text style={{ color: isDark ? '#f87171' : '#dc2626', fontSize: 14, textAlign: 'center' }}>
+                  {analyticsError}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => analyticsStatusId && openAnalytics(analyticsStatusId)}
+                  style={{ paddingHorizontal: 18, paddingVertical: 10, borderRadius: 18, backgroundColor: ACCENT }}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '700' }}>
+                    {t?.('common.retry') || 'Tentar novamente'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : analyticsData ? (
+              <View>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between' }}>
+                  {/* Each KPI tile — two per row on phones, four on tablets.
+                      Layout is flex-wrap so the panel adapts naturally to
+                      width without media queries. */}
+                  {[
+                    { label: t?.('status.kpiImpressions') || 'Visualizações', value: analyticsData.impressions, kind: 'int' },
+                    { label: t?.('status.kpiReactions') || 'Reações', value: analyticsData.reactions, kind: 'int' },
+                    { label: t?.('status.kpiReplies') || 'Respostas', value: analyticsData.replies, kind: 'int' },
+                    { label: t?.('status.kpiCompletion') || 'Concluíram', value: analyticsData.completion_rate, kind: 'pct' },
+                    { label: t?.('status.kpiExitRate') || 'Saídas', value: analyticsData.exit_rate, kind: 'pct' },
+                  ].map((k, i) => (
+                    <View
+                      key={i}
+                      style={{
+                        flexBasis: '48%',
+                        padding: 14,
+                        borderRadius: 14,
+                        backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#f3f4f6',
+                      }}
+                    >
+                      <Text style={{ fontSize: 12, color: isDark ? '#9ca3af' : '#6b7280', marginBottom: 6, fontWeight: '600' }} numberOfLines={1}>
+                        {k.label}
+                      </Text>
+                      <Text style={{ fontSize: 22, fontWeight: '900', color: isDark ? '#fff' : '#111' }}>
+                        {k.kind === 'pct' ? `${k.value}%` : k.value}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+                <Text style={{ marginTop: 16, fontSize: 11, color: isDark ? '#6b7280' : '#9ca3af', textAlign: 'center', lineHeight: 16 }}>
+                  {t?.('status.analyticsNote') || 'Atualizado em tempo real. Estatísticas privadas — só você vê.'}
+                </Text>
+              </View>
+            ) : null}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* ─── Archive Sheet (own old statuses, long-press to repost) ─── */}
+      <Modal
+        visible={archiveSheetOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setArchiveSheetOpen(false)}
+      >
+        <Pressable
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}
+          onPress={() => setArchiveSheetOpen(false)}
+        >
+          <Pressable style={{
+            backgroundColor: isDark ? '#1a1a2e' : '#fff',
+            borderTopLeftRadius: 20, borderTopRightRadius: 20,
+            paddingHorizontal: 16, paddingTop: 12, paddingBottom: 28,
+            maxHeight: '78%',
+          }}>
+            <View style={{ alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : '#d1d5db', marginBottom: 14 }} />
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 4, marginBottom: 12 }}>
+              <IconArchive size={20} color={isDark ? '#fff' : '#111'} />
+              <Text style={{ fontSize: 18, fontWeight: '800', color: isDark ? '#fff' : '#111' }}>
+                {t?.('status.archiveTitle2') || 'Arquivo'}
+              </Text>
+            </View>
+            <Text style={{ fontSize: 12, color: isDark ? '#9ca3af' : '#6b7280', marginBottom: 12, paddingHorizontal: 4 }}>
+              {t?.('status.archiveHint') || 'Toque longo em um status para repostar.'}
+            </Text>
+            {archiveLoading ? (
+              <ActivityIndicator size="large" color={ACCENT} style={{ marginVertical: 32 }} />
+            ) : archiveItems.length === 0 ? (
+              <Text style={{ textAlign: 'center', color: isDark ? '#6b7280' : '#9ca3af', marginVertical: 32, fontSize: 14 }}>
+                {t?.('status.archiveEmpty') || 'Nenhum status arquivado'}
+              </Text>
+            ) : (
+              <ScrollView>
+                {/* Grid of archived rows — 3 cols on phone, more on
+                    tablet. Each tile shows the media thumb (or bg color
+                    for text statuses) + a tiny date. Long-press fires
+                    repost confirm; short-press is a no-op (we don't
+                    want to re-publish on accident from a tap). */}
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  {archiveItems.map((item) => {
+                    const isVideo = item.type === 'video';
+                    const isText = item.type === 'text';
+                    const mediaUrl = (item.media_url || '').split('\n')[0];
+                    const fullUrl = mediaUrl.startsWith('/') ? `${BASE_URL}${mediaUrl}` : mediaUrl;
+                    const dt = item.archived_at || item.created_at || '';
+                    const dateLabel = (() => {
+                      try {
+                        const d = new Date(dt);
+                        return d.toLocaleDateString();
+                      } catch { return ''; }
+                    })();
+                    return (
+                      <TouchableOpacity
+                        key={item.id}
+                        onLongPress={() => {
+                          const doRepost = async () => {
+                            const out = await repostMyStatus(item.id);
+                            if (out?.status_id) {
+                              setArchiveSheetOpen(false);
+                            }
+                          };
+                          if (Platform.OS === 'web') {
+                            if (typeof window !== 'undefined' && window.confirm(t?.('status.repostConfirm') || 'Repostar este status?')) doRepost();
+                          } else {
+                            Alert.alert(
+                              t?.('status.repostTitle') || 'Repostar',
+                              t?.('status.repostConfirm') || 'Publicar este status de novo por mais 24h?',
+                              [
+                                { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+                                { text: t?.('status.repost') || 'Repostar', onPress: doRepost },
+                              ]
+                            );
+                          }
+                        }}
+                        delayLongPress={300}
+                        activeOpacity={0.7}
+                        style={{
+                          width: '31%',
+                          aspectRatio: 0.6,
+                          borderRadius: 12,
+                          overflow: 'hidden',
+                          backgroundColor: isText ? (item.background || '#6D28D9') : (isDark ? '#0f0f1e' : '#f3f4f6'),
+                          position: 'relative',
+                        }}
+                      >
+                        {isText ? (
+                          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 8 }}>
+                            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700', textAlign: 'center' }} numberOfLines={6}>
+                              {item.content || ''}
+                            </Text>
+                          </View>
+                        ) : fullUrl ? (
+                          <Image
+                            source={{ uri: fullUrl }}
+                            style={{ flex: 1 }}
+                            resizeMode="cover"
+                          />
+                        ) : null}
+                        {/* Date stripe at bottom — gives the user the
+                            same chronological context Instagram archive
+                            grid has. */}
+                        <View style={{
+                          position: 'absolute', bottom: 0, left: 0, right: 0,
+                          paddingHorizontal: 6, paddingVertical: 4,
+                          backgroundColor: 'rgba(0,0,0,0.55)',
+                        }}>
+                          <Text style={{ color: '#fff', fontSize: 10, fontWeight: '600' }} numberOfLines={1}>
+                            {dateLabel}
+                          </Text>
+                        </View>
+                        {isVideo ? (
+                          <View style={{
+                            position: 'absolute', top: 6, right: 6,
+                            width: 18, height: 18, borderRadius: 9,
+                            backgroundColor: 'rgba(0,0,0,0.55)',
+                            alignItems: 'center', justifyContent: 'center',
+                          }}>
+                            <IconPlay size={10} color="#fff" />
+                          </View>
+                        ) : null}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
               </ScrollView>
             )}
           </Pressable>

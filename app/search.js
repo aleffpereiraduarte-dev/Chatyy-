@@ -33,6 +33,10 @@ export default function SearchScreen() {
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState({ people: [], hashtags: [], sounds: [], lives: [] });
   const [trendingTags, setTrendingTags] = useState([]);
+  // Reels P1 — trending sounds (last 7d). Shown on the Sons tab empty
+  // state, mirroring how Hashtags surfaces trending hashtags. Backed by
+  // reels_trending_sounds which aggregates chat_feed_posts.sound_id.
+  const [trendingSounds, setTrendingSounds] = useState([]);
   const debounceRef = useRef(null);
   const reqIdRef = useRef(0);
 
@@ -44,6 +48,21 @@ export default function SearchScreen() {
         const r = await api.trendingHashtags(30);
         if (alive && r?.success && Array.isArray(r.data?.tags)) {
           setTrendingTags(r.data.tags);
+        }
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // Initial trending sounds — surfaced on the Sons tab empty-state, same
+  // shape as the Hashtags trending list.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await api.reelsTrendingSounds?.(20);
+        if (alive && r?.success && Array.isArray(r.data?.sounds)) {
+          setTrendingSounds(r.data.sounds);
         }
       } catch {}
     })();
@@ -199,36 +218,65 @@ export default function SearchScreen() {
     );
   };
 
-  const renderSounds = () => (
-    <FlatList
-      data={results.sounds}
-      keyExtractor={(s, i) => String(s.id || s.track_id || s.title || i)}
-      contentContainerStyle={{ padding: 12 }}
-      keyboardShouldPersistTaps="handled"
-      renderItem={({ item: s }) => (
-        <View style={[styles.row, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff' }]}>
-          {s.artwork_url ? (
-            <Image source={{ uri: s.artwork_url }} style={{ width: 46, height: 46, borderRadius: 8 }} />
-          ) : (
-            <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)', borderRadius: 8 }]}>
-              <Text style={{ fontSize: 20 }}>♫</Text>
-            </View>
-          )}
-          <View style={styles.rowText}>
-            <Text style={[styles.rowTitle, { color: colors.text }]} numberOfLines={1}>
-              {s.title || s.name || '?'}
-            </Text>
-            <Text style={[styles.rowSub, { color: colors.textSecondary }]} numberOfLines={1}>
-              {s.artist || ''}
-            </Text>
-          </View>
-        </View>
-      )}
-      ListEmptyComponent={!loading && query.trim().length >= 2 ? (
-        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>{t('feed.noResults') || 'Sem resultados'}</Text>
-      ) : null}
-    />
-  );
+  const renderSounds = () => {
+    // When there's no query, fall back to "Trending sons" (top sounds from
+    // the last 7d), mirroring how Hashtags surfaces #trending on empty.
+    const useTrending = query.trim().length < 2;
+    const showList = useTrending ? trendingSounds : results.sounds;
+    return (
+      <FlatList
+        data={showList}
+        keyExtractor={(s, i) => String(s.id || s.sound_id || s.track_id || s.title || i)}
+        contentContainerStyle={{ padding: 12 }}
+        keyboardShouldPersistTaps="handled"
+        ListHeaderComponent={useTrending ? (
+          <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
+            {t('search.trendingSounds') || 'Sons em alta'}
+          </Text>
+        ) : null}
+        renderItem={({ item: s }) => {
+          const sid = String(s.id || s.sound_id || s.track_id || '');
+          const label = s.sound_label || `${s.title || s.name || '?'} — ${s.artist || ''}`.replace(/^ — /, '').replace(/ — $/, '');
+          return (
+            <TouchableOpacity
+              style={[styles.row, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff' }]}
+              activeOpacity={0.75}
+              onPress={() => {
+                if (!sid) return;
+                try { router.push(`/reels-sound?sound_id=${encodeURIComponent(sid)}&label=${encodeURIComponent(label)}`); } catch {}
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={label}
+            >
+              {s.image_url || s.artwork_url ? (
+                <Image source={{ uri: s.image_url || s.artwork_url }} style={{ width: 46, height: 46, borderRadius: 8 }} />
+              ) : (
+                <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)', borderRadius: 8 }]}>
+                  <Text style={{ fontSize: 20 }}>♫</Text>
+                </View>
+              )}
+              <View style={styles.rowText}>
+                <Text style={[styles.rowTitle, { color: colors.text }]} numberOfLines={1}>
+                  {s.title || s.name || (label || '?')}
+                </Text>
+                <Text style={[styles.rowSub, { color: colors.textSecondary }]} numberOfLines={1}>
+                  {s.artist || ''}
+                  {typeof s.post_count === 'number' ? ` · ${(t('search.posts') || '{n} posts').replace('{n}', s.post_count)}` : ''}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          );
+        }}
+        ListEmptyComponent={!loading ? (
+          <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+            {useTrending
+              ? (t('search.noTrendingSounds') || 'Sem sons em alta no momento.')
+              : (t('feed.noResults') || 'Sem resultados')}
+          </Text>
+        ) : null}
+      />
+    );
+  };
 
   const renderLives = () => (
     <FlatList

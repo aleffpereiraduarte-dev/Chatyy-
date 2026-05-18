@@ -3453,6 +3453,18 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       // Sheet only surfaces this entry when conv.pinned, so we don't need a
       // guard here.
       onReorderPinned: () => setPinnedEditMode(true),
+      // Spam report — confirm-then-fire. Optimistic: we don't change list state,
+      // just notify backend and rely on shadowban tally server-side.
+      onReportSpam: async (conv) => {
+        const ok = await confirm?.({
+          title: t('chat.reportSpam') || 'Reportar como spam',
+          message: t('chat.reportSpamConfirm') || 'O remetente será marcado e poderá ter sua busca por número desativada se houver mais relatos.',
+          confirmLabel: t('chat.report') || 'Reportar',
+          destructive: true,
+        });
+        if (ok === false) return; // confirm may be undefined in legacy paths
+        try { await api.chatReportSpam(conv.id, ''); } catch (e) { console.warn('[chatReportSpam]', e?.message); }
+      },
     };
   }, [t, handlePinConversation, handleMuteConversation, handleMarkUnreadConversation, handleArchiveConversation, handleDeleteConversation, enterSelectionMode, router]);
 
@@ -5681,6 +5693,9 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
     { label: t('chat.selectMore') || 'Selecionar várias', icon: Ic.Users, color: text, onPress: () => actions.onSelect?.(conv) },
     { divider: true },
     ...(peerEmail ? [{ label: `${t('chat.block') || 'Bloquear'} ${firstName}`.trim(), icon: Ic.Ban, color: danger, onPress: () => actions.onBlock?.(conv) }] : []),
+    // Spam report — fires chat_report_spam. Server tally per sender; >10
+    // reports in 24h auto-shadowbans them from contact search.
+    { label: t('chat.reportSpam') || 'Reportar como spam', icon: Ic.AlertTriangle || Ic.Ban, color: danger, onPress: () => actions.onReportSpam?.(conv) },
     { label: t('chat.clearChat') || 'Limpar conversa', icon: Ic.XCircle, color: danger, onPress: () => actions.onClear?.(conv) },
     { label: t('chat.delete') || 'Excluir', icon: Ic.Trash, color: danger, onPress: () => actions.onDelete?.(conv) },
   ];

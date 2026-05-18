@@ -155,6 +155,34 @@ export default function ReadScreen() {
     router.push(`/compose?forward_uid=${uid}&folder=${encodeURIComponent(folder)}&subject=${encodeURIComponent('Fwd: ' + (email?.subject || ''))}`);
   };
 
+  // Forward as attachment (round-6 gap-closer): drops the original .eml
+  // into compose as a real attachment via the attach_eml_uid hint.
+  const handleForwardAsAttachment = () => {
+    router.push(
+      `/compose?attach_eml_uid=${uid}` +
+      `&attach_eml_folder=${encodeURIComponent(folder)}` +
+      `&subject=${encodeURIComponent('Fwd: ' + (email?.subject || ''))}`,
+    );
+  };
+
+  // Email → Task (round-6 gap-closer).
+  const handleAddAsTask = async () => {
+    try {
+      const { taskCreateFromEmail } = await import('../services/api');
+      const r = await taskCreateFromEmail(uid, folder);
+      if (r?.success) {
+        Alert.alert(
+          t('tasks.added') || 'Tarefa criada',
+          t('tasks.addedTo') || 'Veja em Configurações → Tarefas.',
+          [
+            { text: t('common.ok') || 'OK', style: 'default' },
+            { text: t('tasks.openList') || 'Ver tarefas', onPress: () => router.push('/tasks') },
+          ],
+        );
+      }
+    } catch {}
+  };
+
   const handleDelete = async () => {
     const doDelete = async () => {
       await apiDelete(uid, folder);
@@ -381,6 +409,8 @@ export default function ReadScreen() {
           onReply={handleReply}
           onReplyAll={handleReplyAll}
           onForward={handleForward}
+          onForwardAsAttachment={handleForwardAsAttachment}
+          onAddAsTask={handleAddAsTask}
           onDelete={handleDelete}
           onStar={handleStar}
           onAddLabel={handleAddLabel}

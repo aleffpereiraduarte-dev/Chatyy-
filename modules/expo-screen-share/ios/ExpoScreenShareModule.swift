@@ -69,10 +69,34 @@ public class ExpoScreenShareModule: Module {
             if self.sharedContainerURL == nil {
                 print("[ExpoScreenShare] WARNING: App Group container missing — entitlement not configured?")
             }
+            // [2026-05-17 Stage 4 bridge] expo-callkit's `startScreenshare`
+            // bridges through this NotificationCenter event so JS callers
+            // can hit one entry regardless of which native module owns the
+            // platform-specific picker. We register inside OnCreate so the
+            // observer lives for the lifetime of the module instance.
+            NotificationCenter.default.addObserver(
+                forName: Notification.Name("ExpoCallKitRequestScreenshare"),
+                object: nil,
+                queue: .main
+            ) { _ in
+                // Present the picker on the main thread, reuse the existing
+                // path. We pass a noop Promise wrapper — the JS side doesn't
+                // await this notification path; it relies on the
+                // onBroadcastStarted / onBroadcastError event surface.
+                self.presentPickerNoopPromise()
+            }
+            NotificationCenter.default.addObserver(
+                forName: Notification.Name("ExpoCallKitRequestStopScreenshare"),
+                object: nil,
+                queue: .main
+            ) { _ in
+                self.writeStopRequest()
+            }
         }
 
         OnDestroy {
             self.stopObserving()
+            NotificationCenter.default.removeObserver(self)
         }
 
         AsyncFunction("presentBroadcastPicker") { (promise: Promise) in
@@ -146,9 +170,43 @@ public class ExpoScreenShareModule: Module {
             // Darwin notification we post here. Saves the disk round-trip but
             // is a bigger refactor since CFNotification listeners can't be
             // installed inside the extension's CMSampleBuffer thread.
-            guard let url = self.sharedContainerURL?.appendingPathComponent(ExpoScreenShareModule.stopRequestFile) else { return }
-            try? "stop".write(to: url, atomically: true, encoding: .utf8)
+            self.writeStopRequest()
         }
+    }
+
+    // [2026-05-17 Stage 4 bridge] Present the broadcast picker without a JS
+    // Promise sink. Called from the ExpoCallKitRequestScreenshare bridge so
+    // the existing JS event surface (onBroadcastStarted / onBroadcastError)
+    // is the source of truth for the picker outcome.
+    private func presentPickerNoopPromise() {
+        DispatchQueue.main.async {
+            guard let rootVC = ExpoScreenShareModule.topViewController() else {
+                self.sendEvent("onBroadcastError", ["message": "No root view controller for picker"])
+                return
+            }
+            let picker = RPSystemBroadcastPickerView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
+            picker.preferredExtension = ExpoScreenShareModule.extensionBundleId
+            picker.showsMicrophoneButton = false
+            rootVC.view.addSubview(picker)
+            for sub in picker.subviews {
+                if let button = sub as? UIButton {
+                    button.sendActions(for: .touchUpInside)
+                    break
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                picker.removeFromSuperview()
+            }
+            if let url = self.sharedContainerURL?.appendingPathComponent(ExpoScreenShareModule.stopRequestFile) {
+                try? FileManager.default.removeItem(at: url)
+            }
+            self.startObserving()
+        }
+    }
+
+    private func writeStopRequest() {
+        guard let url = self.sharedContainerURL?.appendingPathComponent(ExpoScreenShareModule.stopRequestFile) else { return }
+        try? "stop".write(to: url, atomically: true, encoding: .utf8)
     }
 
     // MARK: - Darwin notification pump

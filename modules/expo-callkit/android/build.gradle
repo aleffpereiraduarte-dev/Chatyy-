@@ -79,6 +79,23 @@ dependencies {
   // screenshare would create a cycle if it ever called back into callkit).
   implementation project(':expo-screen-share')
 
+  // [2026-05-17 RNNoise ML noise suppression] LiveKit's open-source Android
+  // build of Xiph RNNoise (Apache 2 wrapper over a BSD-licensed model). The
+  // AAR ships libRNNoise.so per ABI plus a tiny JNI shim at
+  // `org.xiph.rnnoise.RNNoise`. We load it via reflection in
+  // expo.modules.callkit.audio.RNNoiseProcessor so a missing classpath entry
+  // degrades to a pass-through instead of crashing. Pin to a known tag.
+  implementation 'com.github.livekit:rnnoise-android:0.1.0'
+
+  // [2026-05-17 MediaPipe background blur / virtual background] Google
+  // MediaPipe Tasks Vision (Apache 2). Provides SelfieSegmentation that we
+  // wrap in expo.modules.callkit.video.BackgroundProcessor. The .tflite
+  // model itself lives under src/main/assets/mediapipe/ (see the manual
+  // setup notes in MEMORY) and is fetched at first use via
+  // ImageSegmenter.createFromOptions(...). Reflection-loaded too so a build
+  // without the asset still ships, just with the toggles disabled.
+  implementation 'com.google.mediapipe:tasks-vision:0.10.14'
+
   // [2026-05-17 Stage #994] Jetpack Compose stack for CallActivity /
   // GroupCallActivity Compose UI rewrite. BOM 2024.09.03 pins the
   // ui/material3/foundation/animation matrix to a single tested set so

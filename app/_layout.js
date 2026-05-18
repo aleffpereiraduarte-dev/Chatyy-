@@ -671,6 +671,19 @@ function AppInit({ onNotification, setOtaToast }) {
       initGlobalErrorHandlers();
     }
 
+    // Privacy/security global init — hydrates saved proxy/Tor config + screen
+    // capture block setting from AsyncStorage and applies them to the native
+    // HTTP / screen layers. Best-effort: missing native modules are logged
+    // but never throw. Runs after first paint so cold start cost is hidden.
+    if (Platform.OS !== 'web') {
+      InteractionManager.runAfterInteractions(() => {
+        try {
+          import('../services/proxyConfig').then(m => m.initProxyConfig?.()).catch(() => {});
+          import('../services/screenCaptureGate').then(m => m.initScreenCaptureGate?.()).catch(() => {});
+        } catch {}
+      });
+    }
+
     // Inject CSS animations for auth background decorations
     if (Platform.OS === 'web' && typeof document !== 'undefined') {
       const id = 'auth-bg-animations';
@@ -1125,11 +1138,18 @@ export default function RootLayout() {
                   <Stack.Screen name="call-schedule" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="close-friends" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="profile-insights" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
+                  <Stack.Screen name="profile-creator-dashboard" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="starred-messages" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="linked-devices" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="companion-qr" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
+                  <Stack.Screen name="activity-log" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
+                  <Stack.Screen name="advanced-key" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
+                  <Stack.Screen name="advanced-privacy" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="profile-qr" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="email-signatures" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
+                  <Stack.Screen name="email-import" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
+                  <Stack.Screen name="pgp-keys" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
+                  <Stack.Screen name="tasks" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="notification-preferences" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="spotlight" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 180 }} />
                   <Stack.Screen name="bots" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />

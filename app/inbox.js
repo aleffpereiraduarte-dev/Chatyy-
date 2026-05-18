@@ -234,6 +234,10 @@ export default function InboxScreen() {
 
   // --- Server-side keyword categorization + AI smart categorization ---
   const [categoryCounts, setCategoryCounts] = useState({});
+  // Gmail-style bundles (round-6 gap-closer). Backend returns extra
+  // category groupings like compras/viagens/financas based on sender
+  // domain heuristics — we surface them as additional tabs.
+  const [bundles, setBundles] = useState([]);
   const [aiCategories, setAiCategories] = useState({}); // { uid: 'work'|'personal'|... }
   const aiCategorizingRef = useRef(false);
 
@@ -373,21 +377,56 @@ export default function InboxScreen() {
       try {
         const apiSvc = await import('../services/api');
         await apiSvc.bulkMarkRead(unreadUids, currentFolder);
-        // Optimistic local update so the badge clears immediately.
         refresh();
       } catch (e) { console.warn('markAllRead failed', e); }
     };
+    // Round-6 gap-closer: when 50+ are visible the user almost certainly
+    // wants to mark EVERY unread in the folder (not just the page they
+    // can see). Offer the folder-wide IMAP sweep as a second button so
+    // they can pick the broader action without having to scroll.
+    const doMarkFolder = async () => {
+      try {
+        const apiSvc = await import('../services/api');
+        await apiSvc.bulkMarkReadFolder(currentFolder);
+        refresh();
+      } catch (e) { console.warn('bulkMarkReadFolder failed', e); }
+    };
     const title = t('contextMenu.markRead') || 'Marcar como lido';
     const msg = `${unreadUids.length} ${unreadUids.length > 1 ? (t('inbox.unreadPlural', { count: unreadUids.length }) || 'mensagens') : (t('inbox.unread', { count: unreadUids.length }) || 'mensagem')}?`;
+    const buttons = [
+      { text: t('common.cancel'), style: 'cancel' },
+      { text: t('contextMenu.markRead') || 'Marcar', onPress: doMark },
+    ];
+    if (unreadUids.length >= 50) {
+      buttons.push({
+        text: t('inbox.markAllInFolder') || 'Marcar tudo na pasta',
+        onPress: doMarkFolder,
+      });
+    }
     try {
-      Alert.alert(title, msg, [
-        { text: t('common.cancel'), style: 'cancel' },
-        { text: t('contextMenu.markRead') || 'Marcar', onPress: doMark },
-      ]);
+      Alert.alert(title, msg, buttons);
     } catch {
-      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.confirm(`${title}\n\n${msg}`)) doMark();
+      if (Platform.OS === 'web' && typeof window !== 'undefined' && window.confirm(`${title}\n\n${msg}`)) {
+        (unreadUids.length >= 50 ? doMarkFolder : doMark)();
+      }
     }
   }, [emails, currentFolder, refresh, t]);
+
+  // Bundles fetch (round-6 gap-closer). Only INBOX gets bundles — other
+  // folders surface flat lists. Refreshed when the folder changes or the
+  // user pulls to refresh.
+  useEffect(() => {
+    if (currentFolder !== 'INBOX') { setBundles([]); return; }
+    let alive = true;
+    (async () => {
+      try {
+        const apiSvc = await import('../services/api');
+        const r = await apiSvc.emailBundles('INBOX', 80);
+        if (alive && r?.success) setBundles(r.data?.bundles || []);
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, [currentFolder, emails.length]);
 
   // Auto-generate AI briefing once per day on first INBOX load with emails
   useEffect(() => {
@@ -946,6 +985,36 @@ export default function InboxScreen() {
     router.push(`/compose?forward_uid=${email.uid}&folder=${encodeURIComponent(currentFolder)}&subject=${encodeURIComponent('Fwd: ' + (email.subject || ''))}`);
   };
 
+  // Forward as attachment — Gmail-style. Opens compose blank + flags it
+  // to attach the original .eml on mount.
+  const handleForwardAsAttachment = (email) => {
+    if (!email) return;
+    router.push(
+      `/compose?attach_eml_uid=${email.uid}` +
+      `&attach_eml_folder=${encodeURIComponent(currentFolder)}` +
+      `&subject=${encodeURIComponent('Fwd: ' + (email.subject || ''))}`,
+    );
+  };
+
+  // Email → Task. Creates the row via task_create_from_email and confirms.
+  const handleAddAsTask = async (email) => {
+    if (!email) return;
+    try {
+      const apiSvc = await import('../services/api');
+      const r = await apiSvc.taskCreateFromEmail(email.uid, currentFolder);
+      if (r?.success) {
+        Alert.alert(
+          t('tasks.added') || 'Tarefa criada',
+          (t('tasks.addedTo') || 'Veja em Configurações → Tarefas.'),
+          [
+            { text: t('common.ok') || 'OK', style: 'default' },
+            { text: t('tasks.openList') || 'Ver tarefas', onPress: () => router.push('/tasks') },
+          ],
+        );
+      }
+    } catch {}
+  };
+
   const handleDelete = async (uid) => {
     await deleteEmail(uid);
   };
@@ -1446,7 +1515,7 @@ export default function InboxScreen() {
             </View>
           )}
           {currentFolder === 'INBOX' && (
-            <CategoryTabs activeCategory={activeCategory} onCategoryChange={setActiveCategory} counts={categoryCounts} />
+            <CategoryTabs activeCategory={activeCategory} onCategoryChange={setActiveCategory} counts={categoryCounts} bundles={bundles} />
           )}
         </>
       )}
@@ -1601,6 +1670,8 @@ export default function InboxScreen() {
               onReply={(e) => handleReply(e || selectedEmail)}
               onReplyAll={(e) => handleReplyAll(e || selectedEmail)}
               onForward={() => handleForward(selectedEmail)}
+              onForwardAsAttachment={() => handleForwardAsAttachment(selectedEmail)}
+              onAddAsTask={() => handleAddAsTask(selectedEmail)}
               onDelete={() => selectedEmail && handleDelete(selectedEmail.uid)}
               onStar={() => handleStar(selectedEmail)}
               onClose={() => setSelectedEmail(null)}
@@ -1631,6 +1702,8 @@ export default function InboxScreen() {
                   onReply={(e) => handleReply(e || selectedEmail)}
                   onReplyAll={(e) => handleReplyAll(e || selectedEmail)}
                   onForward={() => handleForward(selectedEmail)}
+              onForwardAsAttachment={() => handleForwardAsAttachment(selectedEmail)}
+              onAddAsTask={() => handleAddAsTask(selectedEmail)}
                   onDelete={() => selectedEmail && handleDelete(selectedEmail.uid)}
                   onStar={() => handleStar(selectedEmail)}
                   onClose={() => setSelectedEmail(null)}

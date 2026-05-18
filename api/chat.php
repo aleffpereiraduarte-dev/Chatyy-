@@ -384,23 +384,147 @@ function chatSendPushToMembers($db, $conversationId, $messageId, $senderEmail, $
         } catch (\Throwable $e) { error_log('[push.mute_lookup] ' . $e->getMessage()); }
 
         // Per-conversation user notification settings (mute, mute_until,
-        // mention_exception, preview). Honors the user's choice in
-        // chat_user_conv_settings — skips push entirely when notify_messages
-        // is false or mute_until is in the future, unless mention_exception
-        // is set AND the recipient is mentioned.
+        // mention_exception, preview, sound, vibration_pattern, ringtone).
+        // Honors the user's choice in chat_user_conv_settings — skips push
+        // entirely when notify_messages is false or mute_until is in the
+        // future, unless mention_exception is set AND the recipient is
+        // mentioned. The sound/vibration_pattern/ringtone fields ride
+        // through to the FCM payload so the OS plays the right tone.
         $convSettings = [];
         try {
-            $ss = $pg->prepare("SELECT email, notify_messages, mute_until, mention_exception, preview FROM chat_user_conv_settings WHERE conversation_id = :cid");
+            // Defensive ALTER: ringtone column may not exist on a cold
+            // install — silently skip and fall through to defaults.
+            @$pg->exec("ALTER TABLE chat_user_conv_settings ADD COLUMN IF NOT EXISTS ringtone TEXT NULL");
+            $ss = $pg->prepare("SELECT email, notify_messages, mute_until, mention_exception, preview, sound, vibration_pattern, ringtone FROM chat_user_conv_settings WHERE conversation_id = :cid");
             $ss->execute([':cid' => $conversationId]);
             foreach ($ss->fetchAll(\PDO::FETCH_ASSOC) as $row) {
                 $convSettings[strtolower($row['email'])] = $row;
             }
         } catch (\Throwable $e) { /* settings table may be missing on cold installs */ }
 
+        // Smart batching refinement (gap_notifications #9) — count how
+        // many messages this conversation has emitted in the last 60s
+        // including the current one. When >=5, rewrite the body to a
+        // grouped summary instead of N independent banners. The OS
+        // collapse via apns-collapse-id / Android `tag` still happens
+        // downstream — this is the title/body refinement on top.
+        $burstCount = 1;
+        try {
+            $bStmt = $pg->prepare(
+                "SELECT COUNT(*)::int FROM chat_messages
+                 WHERE conversation_id = :cid
+                   AND created_at >= NOW() - INTERVAL '60 seconds'"
+            );
+            $bStmt->execute([':cid' => $conversationId]);
+            $burstCount = max(1, (int)$bStmt->fetchColumn());
+        } catch (\Throwable $e) { /* fall back to single-msg framing */ }
+
+        // ─── Global per-user notification preferences (mention_only, DND,
+        //     snooze, preview_global, lockscreen_visibility, respect_system_dnd)
+        //     plus keyword highlights. One query per fanout, batched by the
+        //     recipient list. Cold installs return empty maps → defaults.
+        $userDefaults = [];
+        $userKeywords = [];
+        try {
+            $emails = array_unique(array_map(fn($e) => strtolower($e), $recipients));
+            if (!empty($emails)) {
+                $placeholders = [];
+                $params = [];
+                $i = 0;
+                foreach ($emails as $e) {
+                    $k = ':e' . $i++;
+                    $placeholders[] = "LOWER($k)";
+                    $params[$k] = $e;
+                }
+                $inClause = implode(',', $placeholders);
+                try {
+                    $udSt = $pg->prepare("SELECT email, mention_only, snooze_until, dnd_enabled, dnd_start_time, dnd_end_time, preview_global, lockscreen_visibility, respect_system_dnd FROM chat_user_defaults WHERE LOWER(email) IN ($inClause)");
+                    $udSt->execute($params);
+                    foreach ($udSt->fetchAll(\PDO::FETCH_ASSOC) as $row) {
+                        $userDefaults[strtolower($row['email'])] = $row;
+                    }
+                } catch (\Throwable $e) { /* table missing on cold install */ }
+                try {
+                    $kwSt = $pg->prepare("SELECT email, keyword, sound FROM chat_user_keywords WHERE LOWER(email) IN ($inClause)");
+                    $kwSt->execute($params);
+                    foreach ($kwSt->fetchAll(\PDO::FETCH_ASSOC) as $row) {
+                        $em = strtolower($row['email']);
+                        if (!isset($userKeywords[$em])) $userKeywords[$em] = [];
+                        $userKeywords[$em][] = $row;
+                    }
+                } catch (\Throwable $e) { /* table missing */ }
+            }
+        } catch (\Throwable $e) { error_log('[push.user_defaults_lookup] ' . $e->getMessage()); }
+
+        // Local-time DND-in-window helper — defaults to server tz (America/
+        // Sao_Paulo for prod) since we don't track per-user tz yet. Compares
+        // HH:MM strings; supports overnight windows (start > end).
+        $isDndInWindow = function ($start, $end) {
+            if (!$start || !$end) return false;
+            // Validate HH:MM shape one more time at use site so a corrupted
+            // row never trips strtotime() into surprising values.
+            if (!preg_match('/^([01]\d|2[0-3]):([0-5]\d)$/', $start) ||
+                !preg_match('/^([01]\d|2[0-3]):([0-5]\d)$/', $end)) return false;
+            $now = (int)(date('H') * 60) + (int)date('i');
+            [$sh, $sm] = array_map('intval', explode(':', $start));
+            [$eh, $em] = array_map('intval', explode(':', $end));
+            $sMin = $sh * 60 + $sm;
+            $eMin = $eh * 60 + $em;
+            if ($sMin === $eMin) return false;
+            if ($sMin < $eMin) return ($now >= $sMin && $now < $eMin);
+            // Overnight window (22:00 → 07:00)
+            return ($now >= $sMin || $now < $eMin);
+        };
+
+        // Match plaintext body against any of the user's keyword rules.
+        // Case-insensitive substring — Slack/iOS Mail VIP-keyword parity.
+        $matchKeyword = function ($email, $bodyText) use ($userKeywords) {
+            if (empty($bodyText)) return null;
+            $kws = $userKeywords[strtolower($email)] ?? null;
+            if (empty($kws)) return null;
+            $bodyLc = mb_strtolower($bodyText);
+            foreach ($kws as $row) {
+                $kw = mb_strtolower((string)($row['keyword'] ?? ''));
+                if ($kw === '') continue;
+                if (mb_strpos($bodyLc, $kw) !== false) return $row;
+            }
+            return null;
+        };
+
         foreach ($recipients as $r) {
             $rLc = strtolower($r);
             $isMentioned = in_array($rLc, $mentionedLower, true);
             $cs = $convSettings[$rLc] ?? null;
+            $ud = $userDefaults[$rLc] ?? null;
+
+            // Keyword match (plaintext content only — never matches against
+            // encrypted blobs since we only see ciphertext server-side).
+            $kwMatch = $isEncryptedBlob ? null : $matchKeyword($rLc, $rawContent);
+
+            // Global "mention_only" — skip non-mention pushes entirely UNLESS
+            // a keyword matched (keyword still pierces, same as Slack).
+            if ($ud && !empty($ud['mention_only']) && !$isMentioned && !$kwMatch) {
+                continue;
+            }
+
+            // Global snooze — fold ALL pushes into silent badge bumps for the
+            // snooze window. Mentions still pierce since they're high-signal.
+            // Keyword matches also pierce.
+            if ($ud && !empty($ud['snooze_until'])) {
+                $snTs = strtotime((string)$ud['snooze_until']);
+                if ($snTs !== false && $snTs > time() && !$isMentioned && !$kwMatch) {
+                    continue;
+                }
+            }
+
+            // Global DND window — same gating as snooze. Mentions / keywords
+            // pierce. Note we don't push a silent_sync here; the chat list
+            // refreshes via WS regardless, so the badge already increments.
+            if ($ud && !empty($ud['dnd_enabled']) && !$isMentioned && !$kwMatch) {
+                if ($isDndInWindow($ud['dnd_start_time'] ?? null, $ud['dnd_end_time'] ?? null)) {
+                    continue;
+                }
+            }
 
             // Presence-aware skip: if recipient is currently online AND viewing
             // this exact conversation (active_conversation_id mirrors what the
@@ -451,9 +575,24 @@ function chatSendPushToMembers($db, $conversationId, $messageId, $senderEmail, $
             $rTitle = $title;
             $rBody = $body;
             $rData = $data;
-            // preview=false → strip the body so the OS notification only
-            // shows the conversation name (privacy on lock screen).
-            if ($cs && array_key_exists('preview', $cs) && $cs['preview'] !== null && !$cs['preview']) {
+            // Smart batching (gap_notifications #9) — when 5+ messages
+            // arrived in the last 60s, collapse to "N novas mensagens de
+            // X". OS-level collapse via apns-collapse-id still groups the
+            // banner, but the body now SUMMARIZES instead of showing the
+            // 5th message's preview alone.
+            if ($burstCount >= 5 && !$isMentioned) {
+                $rBody = $burstCount . ' novas mensagens de ' . $senderName;
+                $rData['burst_count'] = (string)$burstCount;
+            }
+            // Per-conv preview=false → strip the body so the OS notification
+            // only shows the conversation name (privacy on lock screen).
+            $perConvHidePreview = ($cs && array_key_exists('preview', $cs) && $cs['preview'] !== null && !$cs['preview']);
+            // Global preview privacy: 'never' → always strip; 'unlocked' →
+            // hint to client via flag (UN content-on-locked vs Android
+            // VISIBILITY_PRIVATE map this client-side); 'always' → no-op.
+            $previewGlobal = $ud['preview_global'] ?? 'always';
+            $shouldHidePreview = $perConvHidePreview || ($previewGlobal === 'never');
+            if ($shouldHidePreview) {
                 $rBody = $isGroup ? ($msg['cname'] ?: 'Grupo') : ($senderName . ' enviou uma mensagem');
             }
             if ($isMentioned) {
@@ -466,10 +605,59 @@ function chatSendPushToMembers($db, $conversationId, $messageId, $senderEmail, $
                 $rData['category_id'] = 'chat_mention'; // kept for clients that already read snake_case
                 $rData['mentioned'] = '1';
                 $rTitle = ($isGroup ? $convDisplayName : $senderName) . ' · @' . ($isGroup ? $senderName : 'voce');
+            } else if ($kwMatch) {
+                // Keyword highlight — route through the MAX-importance
+                // chat_keyword channel and use the per-keyword sound the
+                // user picked. Slack/iOS Mail VIP-keyword parity (gap #3).
+                $rData['type'] = 'chat_keyword';
+                $rData['categoryId'] = 'chat_message';
+                $rData['category_id'] = 'chat_message';
+                $rData['channelId'] = 'chat_keyword';
+                $rData['keyword'] = (string)$kwMatch['keyword'];
+                $rTitle = $senderName . ' · ' . (string)$kwMatch['keyword'];
             } else {
                 // Non-mention chat messages: register the chat_message category
                 // so Reply / Mark-as-read action buttons surface on the banner.
                 $rData['categoryId'] = 'chat_message';
+            }
+            // ── Sound / ringtone / vibration plumb-through ──────────────
+            // Priority order: per-keyword sound > per-conv ringtone (call
+            // path) > per-conv sound (chat msg) > default. firebase_push.php
+            // reads the `sound` field and sets the APNs payload aps.sound
+            // plus the Android FCM notification.sound.
+            if ($kwMatch && !empty($kwMatch['sound']) && $kwMatch['sound'] !== 'default') {
+                $rData['sound'] = (string)$kwMatch['sound'];
+            } else if ($cs && !empty($cs['sound']) && $cs['sound'] !== 'default') {
+                $rData['sound'] = (string)$cs['sound'];
+            }
+            // Per-conv ringtone — used when this is a CALL notification
+            // (type === 'incoming_call'). For now we forward it as a hint;
+            // the call_invite path overrides $data['sound'] explicitly.
+            if ($cs && !empty($cs['ringtone']) && $cs['ringtone'] !== 'default') {
+                $rData['ringtone'] = (string)$cs['ringtone'];
+            }
+            // Custom vibration pattern (Android only — iOS doesn't expose
+            // vibration patterns via UN). String JSON blob; client parses.
+            if ($cs && !empty($cs['vibration_pattern'])) {
+                $rData['vibration_pattern'] = (string)$cs['vibration_pattern'];
+            }
+            // Lockscreen visibility (Android NotificationCompat.VISIBILITY_*).
+            // Mirrors to APNs `notificationContentVisibility` extra so the
+            // NSE can decide whether to redact body on lock screen too.
+            $lockVis = $ud['lockscreen_visibility'] ?? 'public';
+            if ($lockVis !== 'public') {
+                $rData['lockscreen_visibility'] = $lockVis;
+            }
+            if ($previewGlobal === 'unlocked') {
+                $rData['preview_when'] = 'unlocked';
+            } else if ($previewGlobal === 'never') {
+                $rData['preview_when'] = 'never';
+            }
+            // Respect-system-DND toggle — when ON, firebase_push.php drops
+            // APNs interruptionLevel to 'passive' for non-mention, non-
+            // keyword pushes so iOS Focus suppresses them.
+            if ($ud && !empty($ud['respect_system_dnd']) && !$isMentioned && !$kwMatch) {
+                $rData['_respect_system_dnd'] = '1';
             }
             // Pass mute flag through so APNs interruption-level drops to
             // passive when the recipient muted this conversation. Mentions
@@ -1421,6 +1609,12 @@ function handleChatAction($action) {
         } catch (\Throwable $e) { error_log('[chat.schema] ' . $e->getMessage()); }
         $_migrated = true;
     }
+
+    // Privacy/Security endpoints live in a separate file so we can ship
+    // them as a focused module. Handles: user_activity_log_*, discoverable,
+    // BYOK fingerprint, spam reporting. Returns true if it handled $action.
+    require_once __DIR__ . '/privacy_endpoints.php';
+    if (handle_privacy_action($db, $action, $input)) return;
 
     switch ($action) {
 
@@ -2466,6 +2660,321 @@ function handleChatAction($action) {
         }
 
         // ============================================================
+        // chat_user_conv_ringtone_set — per-conversation custom ringtone
+        // (gap_notifications #4). Stored as filename string in
+        // chat_user_conv_settings.ringtone; this is a thin alias so the
+        // picker UI can target a single field without the noise of the
+        // full chat_user_conv_settings_set contract.
+        // ============================================================
+        case 'chat_user_conv_ringtone_set': {
+            $user = requireChatAuth();
+            $cid = (int)($input['conversation_id'] ?? 0);
+            $ringtone = mb_substr(trim((string)($input['ringtone'] ?? 'default')), 0, 100) ?: 'default';
+            if (!$cid) jsonResponse(false, null, 'conversation_id required', 400);
+            requireConversationMember($db, $cid, $user['email']);
+            try {
+                @$db->exec("ALTER TABLE chat_user_conv_settings ADD COLUMN IF NOT EXISTS ringtone TEXT NULL");
+                $st = $db->prepare("INSERT INTO chat_user_conv_settings (email, conversation_id, ringtone)
+                                    VALUES (:e, :c, :r)
+                                    ON CONFLICT (email, conversation_id) DO UPDATE SET ringtone = EXCLUDED.ringtone");
+                $st->execute([':e' => $user['email'], ':c' => $cid, ':r' => $ringtone]);
+                jsonResponse(true, ['ringtone' => $ringtone]);
+            } catch (\Throwable $e) {
+                error_log('[chat_user_conv_ringtone_set] ' . $e->getMessage());
+                jsonResponse(false, null, 'Failed', 500);
+            }
+            break;
+        }
+
+        // ============================================================
+        // chat_user_keywords_* — global per-user keyword highlight rules.
+        // Each row matches any inbound chat message body; on match, the
+        // push fanout below upgrades the notification channel
+        // (Android `chat_keyword`, MAX importance) and routes the alert
+        // through the per-keyword sound the user chose. Slack/iOS mail
+        // "VIP keywords" parity. Closes gap_notifications #3.
+        // Schema created on-demand so a cold prod install picks it up the
+        // first time the user opens NotificationPreferences.
+        // ============================================================
+        case 'chat_user_keywords_list': {
+            $user = requireChatAuth();
+            try {
+                @$db->exec("CREATE TABLE IF NOT EXISTS chat_user_keywords (
+                    id BIGSERIAL PRIMARY KEY,
+                    email TEXT NOT NULL,
+                    keyword TEXT NOT NULL,
+                    sound TEXT DEFAULT 'default',
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )");
+                @$db->exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_user_keywords_email_kw ON chat_user_keywords(LOWER(email), LOWER(keyword))");
+                @$db->exec("CREATE INDEX IF NOT EXISTS idx_chat_user_keywords_email ON chat_user_keywords(LOWER(email))");
+                $st = $db->prepare("SELECT id, keyword, sound, created_at FROM chat_user_keywords WHERE LOWER(email) = LOWER(:e) ORDER BY created_at DESC LIMIT 200");
+                $st->execute([':e' => $user['email']]);
+                $rows = $st->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+                foreach ($rows as &$r) { $r['id'] = (int)$r['id']; }
+                jsonResponse(true, ['keywords' => $rows]);
+            } catch (\Throwable $e) {
+                error_log('[chat_user_keywords_list] ' . $e->getMessage());
+                jsonResponse(true, ['keywords' => []]);
+            }
+            break;
+        }
+        case 'chat_user_keywords_add': {
+            $user = requireChatAuth();
+            $kw = trim((string)($input['keyword'] ?? ''));
+            $sound = trim((string)($input['sound'] ?? 'default'));
+            if ($kw === '' || mb_strlen($kw) > 64) jsonResponse(false, null, 'invalid keyword', 400);
+            // Strip control bytes so a pathological value can't bypass the
+            // LIKE matcher in the push fanout below.
+            $kw = preg_replace('/[\x00-\x1F\x7F]/', '', $kw);
+            $sound = mb_substr($sound ?: 'default', 0, 100);
+            try {
+                @$db->exec("CREATE TABLE IF NOT EXISTS chat_user_keywords (
+                    id BIGSERIAL PRIMARY KEY,
+                    email TEXT NOT NULL,
+                    keyword TEXT NOT NULL,
+                    sound TEXT DEFAULT 'default',
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+                )");
+                @$db->exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_user_keywords_email_kw ON chat_user_keywords(LOWER(email), LOWER(keyword))");
+                $st = $db->prepare("INSERT INTO chat_user_keywords (email, keyword, sound) VALUES (:e, :k, :s)
+                                    ON CONFLICT (LOWER(email), LOWER(keyword))
+                                    DO UPDATE SET sound = EXCLUDED.sound
+                                    RETURNING id, keyword, sound");
+                $st->execute([':e' => $user['email'], ':k' => $kw, ':s' => $sound]);
+                $row = $st->fetch(\PDO::FETCH_ASSOC);
+                if ($row) {
+                    jsonResponse(true, ['id' => (int)$row['id'], 'keyword' => $row['keyword'], 'sound' => $row['sound']]);
+                } else {
+                    jsonResponse(true, ['skipped' => 'duplicate']);
+                }
+            } catch (\Throwable $e) {
+                error_log('[chat_user_keywords_add] ' . $e->getMessage());
+                jsonResponse(false, null, 'Failed to add', 500);
+            }
+            break;
+        }
+        case 'chat_user_keywords_remove': {
+            $user = requireChatAuth();
+            $id = (int)($input['id'] ?? 0);
+            if (!$id) jsonResponse(false, null, 'id required', 400);
+            try {
+                $st = $db->prepare("DELETE FROM chat_user_keywords WHERE id = :id AND LOWER(email) = LOWER(:e)");
+                $st->execute([':id' => $id, ':e' => $user['email']]);
+                jsonResponse(true, ['removed' => (int)$st->rowCount()]);
+            } catch (\Throwable $e) {
+                error_log('[chat_user_keywords_remove] ' . $e->getMessage());
+                jsonResponse(false, null, 'Failed to remove', 500);
+            }
+            break;
+        }
+        case 'chat_user_keywords_update_sound': {
+            // Per-keyword sound picker refinement (gap_notifications #3).
+            $user = requireChatAuth();
+            $id = (int)($input['id'] ?? 0);
+            $sound = mb_substr(trim((string)($input['sound'] ?? 'default')), 0, 100) ?: 'default';
+            if (!$id) jsonResponse(false, null, 'id required', 400);
+            try {
+                $st = $db->prepare("UPDATE chat_user_keywords SET sound = :s WHERE id = :id AND LOWER(email) = LOWER(:e)");
+                $st->execute([':s' => $sound, ':id' => $id, ':e' => $user['email']]);
+                jsonResponse(true, ['updated' => (int)$st->rowCount()]);
+            } catch (\Throwable $e) {
+                error_log('[chat_user_keywords_update_sound] ' . $e->getMessage());
+                jsonResponse(false, null, 'Failed to update', 500);
+            }
+            break;
+        }
+
+        // ============================================================
+        // chat_user_mention_only_* — "Receber só de menções" toggle.
+        // When ON, only @mention / @everyone pushes pierce. Other inbound
+        // messages still arrive at the WS / chat list (read state preserved)
+        // but no OS notification is emitted. Closes gap_notifications #7.
+        // ============================================================
+        case 'chat_user_mention_only_get': {
+            $user = requireChatAuth();
+            try {
+                @$db->exec("CREATE TABLE IF NOT EXISTS chat_user_defaults (email TEXT PRIMARY KEY, updated_at TIMESTAMP NOT NULL DEFAULT NOW())");
+                @$db->exec("ALTER TABLE chat_user_defaults ADD COLUMN IF NOT EXISTS mention_only BOOLEAN DEFAULT FALSE");
+                $st = $db->prepare("SELECT mention_only FROM chat_user_defaults WHERE LOWER(email) = LOWER(:e)");
+                $st->execute([':e' => $user['email']]);
+                $row = $st->fetch(\PDO::FETCH_ASSOC);
+                jsonResponse(true, ['mention_only' => $row ? (bool)$row['mention_only'] : false]);
+            } catch (\Throwable $e) {
+                error_log('[chat_user_mention_only_get] ' . $e->getMessage());
+                jsonResponse(true, ['mention_only' => false]);
+            }
+            break;
+        }
+        case 'chat_user_mention_only_set': {
+            $user = requireChatAuth();
+            $val = !empty($input['mention_only']);
+            try {
+                @$db->exec("CREATE TABLE IF NOT EXISTS chat_user_defaults (email TEXT PRIMARY KEY, updated_at TIMESTAMP NOT NULL DEFAULT NOW())");
+                @$db->exec("ALTER TABLE chat_user_defaults ADD COLUMN IF NOT EXISTS mention_only BOOLEAN DEFAULT FALSE");
+                $st = $db->prepare("INSERT INTO chat_user_defaults (email, mention_only, updated_at)
+                                    VALUES (:e, :mo, NOW())
+                                    ON CONFLICT (email) DO UPDATE SET mention_only = EXCLUDED.mention_only, updated_at = NOW()");
+                $st->execute([':e' => $user['email'], ':mo' => $val]);
+                jsonResponse(true, ['mention_only' => $val]);
+            } catch (\Throwable $e) {
+                error_log('[chat_user_mention_only_set] ' . $e->getMessage());
+                jsonResponse(false, null, 'Failed to save', 500);
+            }
+            break;
+        }
+
+        // ============================================================
+        // chat_user_snooze_set / clear — fold all pushes into silent
+        // data syncs for the next N minutes. Used by the "Soneca 1h"
+        // notification action button. Smart batching tail (gaps #4).
+        // ============================================================
+        case 'chat_user_snooze_set': {
+            $user = requireChatAuth();
+            $minutes = max(1, min(720, (int)($input['minutes'] ?? 60)));
+            try {
+                @$db->exec("CREATE TABLE IF NOT EXISTS chat_user_defaults (email TEXT PRIMARY KEY, updated_at TIMESTAMP NOT NULL DEFAULT NOW())");
+                @$db->exec("ALTER TABLE chat_user_defaults ADD COLUMN IF NOT EXISTS snooze_until TIMESTAMP NULL");
+                $until = gmdate('Y-m-d H:i:s', time() + $minutes * 60);
+                $st = $db->prepare("INSERT INTO chat_user_defaults (email, snooze_until, updated_at)
+                                    VALUES (:e, :su, NOW())
+                                    ON CONFLICT (email) DO UPDATE SET snooze_until = EXCLUDED.snooze_until, updated_at = NOW()");
+                $st->execute([':e' => $user['email'], ':su' => $until]);
+                jsonResponse(true, ['snooze_until' => $until]);
+            } catch (\Throwable $e) {
+                error_log('[chat_user_snooze_set] ' . $e->getMessage());
+                jsonResponse(false, null, 'Failed to save', 500);
+            }
+            break;
+        }
+        case 'chat_user_snooze_clear': {
+            $user = requireChatAuth();
+            try {
+                @$db->exec("ALTER TABLE chat_user_defaults ADD COLUMN IF NOT EXISTS snooze_until TIMESTAMP NULL");
+                $st = $db->prepare("UPDATE chat_user_defaults SET snooze_until = NULL WHERE LOWER(email) = LOWER(:e)");
+                $st->execute([':e' => $user['email']]);
+                jsonResponse(true, ['cleared' => true]);
+            } catch (\Throwable $e) {
+                error_log('[chat_user_snooze_clear] ' . $e->getMessage());
+                jsonResponse(false, null, 'Failed', 500);
+            }
+            break;
+        }
+
+        // ============================================================
+        // chat_user_notif_prefs_* — global notification preferences for
+        // the "Preferências avançadas" screen. Covers DND schedule,
+        // preview privacy ('always' | 'unlocked' | 'never'), lockscreen
+        // visibility ('public' | 'private' | 'secret'), and the respect-
+        // system-DND toggle. Closes gap_notifications #7 + #10.
+        // ============================================================
+        case 'chat_user_notif_prefs_get': {
+            $user = requireChatAuth();
+            $defaults = [
+                'mention_only'          => false,
+                'snooze_until'          => null,
+                'dnd_enabled'           => false,
+                'dnd_start_time'        => null,
+                'dnd_end_time'          => null,
+                'preview_global'        => 'always',
+                'lockscreen_visibility' => 'public',
+                'respect_system_dnd'    => false,
+            ];
+            try {
+                @$db->exec("CREATE TABLE IF NOT EXISTS chat_user_defaults (email TEXT PRIMARY KEY, updated_at TIMESTAMP NOT NULL DEFAULT NOW())");
+                foreach (['mention_only' => 'BOOLEAN DEFAULT FALSE',
+                          'snooze_until' => 'TIMESTAMP NULL',
+                          'dnd_enabled' => 'BOOLEAN DEFAULT FALSE',
+                          'dnd_start_time' => 'TEXT NULL',
+                          'dnd_end_time' => 'TEXT NULL',
+                          'preview_global' => "TEXT DEFAULT 'always'",
+                          'lockscreen_visibility' => "TEXT DEFAULT 'public'",
+                          'respect_system_dnd' => 'BOOLEAN DEFAULT FALSE'] as $c => $def) {
+                    @$db->exec("ALTER TABLE chat_user_defaults ADD COLUMN IF NOT EXISTS $c $def");
+                }
+                $st = $db->prepare("SELECT mention_only, snooze_until, dnd_enabled, dnd_start_time, dnd_end_time, preview_global, lockscreen_visibility, respect_system_dnd FROM chat_user_defaults WHERE LOWER(email) = LOWER(:e)");
+                $st->execute([':e' => $user['email']]);
+                $row = $st->fetch(\PDO::FETCH_ASSOC);
+                if ($row) {
+                    $defaults = [
+                        'mention_only'          => (bool)($row['mention_only'] ?? false),
+                        'snooze_until'          => $row['snooze_until'] ?? null,
+                        'dnd_enabled'           => (bool)($row['dnd_enabled'] ?? false),
+                        'dnd_start_time'        => $row['dnd_start_time'] ?? null,
+                        'dnd_end_time'          => $row['dnd_end_time'] ?? null,
+                        'preview_global'        => $row['preview_global'] ?? 'always',
+                        'lockscreen_visibility' => $row['lockscreen_visibility'] ?? 'public',
+                        'respect_system_dnd'    => (bool)($row['respect_system_dnd'] ?? false),
+                    ];
+                }
+            } catch (\Throwable $e) { error_log('[chat_user_notif_prefs_get] ' . $e->getMessage()); }
+            jsonResponse(true, $defaults);
+            break;
+        }
+        case 'chat_user_notif_prefs_set': {
+            $user = requireChatAuth();
+            $cols = [];
+            $vals = [];
+            $params = [':e' => $user['email']];
+            $hhmm = function ($v) {
+                if (!is_string($v)) return null;
+                $v = trim($v);
+                if ($v === '') return null;
+                return preg_match('/^([01]\d|2[0-3]):([0-5]\d)$/', $v) ? $v : null;
+            };
+            if (array_key_exists('mention_only', $input)) {
+                $cols[] = 'mention_only'; $vals[] = ':mo'; $params[':mo'] = !empty($input['mention_only']);
+            }
+            if (array_key_exists('dnd_enabled', $input)) {
+                $cols[] = 'dnd_enabled'; $vals[] = ':de'; $params[':de'] = !empty($input['dnd_enabled']);
+            }
+            if (array_key_exists('dnd_start_time', $input)) {
+                $cols[] = 'dnd_start_time'; $vals[] = ':ds'; $params[':ds'] = $hhmm($input['dnd_start_time']);
+            }
+            if (array_key_exists('dnd_end_time', $input)) {
+                $cols[] = 'dnd_end_time'; $vals[] = ':df'; $params[':df'] = $hhmm($input['dnd_end_time']);
+            }
+            if (array_key_exists('preview_global', $input)) {
+                $v = (string)$input['preview_global'];
+                if (!in_array($v, ['always', 'unlocked', 'never'], true)) $v = 'always';
+                $cols[] = 'preview_global'; $vals[] = ':pg'; $params[':pg'] = $v;
+            }
+            if (array_key_exists('lockscreen_visibility', $input)) {
+                $v = (string)$input['lockscreen_visibility'];
+                if (!in_array($v, ['public', 'private', 'secret'], true)) $v = 'public';
+                $cols[] = 'lockscreen_visibility'; $vals[] = ':lv'; $params[':lv'] = $v;
+            }
+            if (array_key_exists('respect_system_dnd', $input)) {
+                $cols[] = 'respect_system_dnd'; $vals[] = ':rsd'; $params[':rsd'] = !empty($input['respect_system_dnd']);
+            }
+            if (empty($cols)) jsonResponse(false, null, 'No settings provided', 400);
+            try {
+                @$db->exec("CREATE TABLE IF NOT EXISTS chat_user_defaults (email TEXT PRIMARY KEY, updated_at TIMESTAMP NOT NULL DEFAULT NOW())");
+                foreach (['mention_only' => 'BOOLEAN DEFAULT FALSE',
+                          'dnd_enabled' => 'BOOLEAN DEFAULT FALSE',
+                          'dnd_start_time' => 'TEXT NULL',
+                          'dnd_end_time' => 'TEXT NULL',
+                          'preview_global' => "TEXT DEFAULT 'always'",
+                          'lockscreen_visibility' => "TEXT DEFAULT 'public'",
+                          'respect_system_dnd' => 'BOOLEAN DEFAULT FALSE'] as $c => $def) {
+                    @$db->exec("ALTER TABLE chat_user_defaults ADD COLUMN IF NOT EXISTS $c $def");
+                }
+                $insertCols = array_merge(['email'], $cols);
+                $insertVals = array_merge([':e'], $vals);
+                $excluded = implode(', ', array_map(fn($c) => "$c = EXCLUDED.$c", $cols));
+                $sql = "INSERT INTO chat_user_defaults (" . implode(', ', $insertCols) . ", updated_at)
+                        VALUES (" . implode(', ', $insertVals) . ", NOW())
+                        ON CONFLICT (email) DO UPDATE SET " . $excluded . ", updated_at = NOW()";
+                $db->prepare($sql)->execute($params);
+                jsonResponse(true, ['saved' => true]);
+            } catch (\Throwable $e) {
+                error_log('[chat_user_notif_prefs_set] ' . $e->getMessage());
+                jsonResponse(false, null, 'Failed to save', 500);
+            }
+            break;
+        }
+
+        // ============================================================
         // chat_leave — Leave a conversation
         // ============================================================
         case 'chat_leave': {
@@ -2541,6 +3050,11 @@ function handleChatAction($action) {
                 jsonResponse(false, null, 'Failed to delete conversation: ' . $e->getMessage(), 500);
             }
 
+            // Audit log: this is a security-relevant action surfaced in
+            // Settings → Segurança → Histórico de atividades.
+            if (function_exists('logUserActivity')) {
+                try { logUserActivity($db, $user['email'], 'chat_delete', 'conv:' . $conversationId); } catch (\Throwable $_) {}
+            }
             jsonResponse(true, null, 'Conversation deleted');
             break;
         }
@@ -3656,6 +4170,17 @@ function handleChatAction($action) {
 
             _chatSendInsertDone:
 
+            // ML moderation hook (best-effort, never blocks delivery). Calls
+            // OpenAI moderations on TEXT content only (skips media/system).
+            // Flagged users with >=5 harassment hits in 24h get shadowbanned
+            // (filtered from chat_sync_contacts search). Wrapped in try/catch
+            // — moderation MUST NOT fail-send. See privacy_endpoints.php.
+            try {
+                if ($type === 'text' && $content !== '' && function_exists('moderateMessageContent')) {
+                    moderateMessageContent($db, $user['email'], $content);
+                }
+            } catch (\Throwable $_) {}
+
             // Fetch the created message BEFORE firing any push/broadcast — the
             // client needs this row to render. Everything else can run after
             // we've flushed the response to the user.
@@ -3895,6 +4420,12 @@ function handleChatAction($action) {
             try { broadcastChatMessage($db, (int)$msg['conversation_id'], $messageId, $user['email'], 'delete'); }
             catch (Throwable $e) { error_log('[chat_delete.ws] ' . $e->getMessage()); }
             try { touchConversation($db, (int)$msg['conversation_id']); } catch (Throwable $e) {}
+            // Audit: only the "delete for all" path (sender deleting own
+            // message) is interesting from a security view — recipient-side
+            // hides are not security-relevant.
+            if ($isMine && function_exists('logUserActivity')) {
+                try { logUserActivity($db, $user['email'], 'message_delete_for_all', 'msg:' . $messageId); } catch (\Throwable $_) {}
+            }
             jsonResponse(true, null, 'Message deleted');
             break;
         }
@@ -4250,11 +4781,26 @@ function handleChatAction($action) {
                 jsonResponse(true, ['matches' => []]);
                 break;
             }
+            // Ensure the discoverable column exists (privacy_endpoints.php
+            // also creates it on toggle, but this path can fire first if
+            // the user never touched the setting). Same for shadowban table.
+            try { @$db->exec("ALTER TABLE chat_user_privacy ADD COLUMN IF NOT EXISTS discoverable BOOLEAN DEFAULT TRUE"); } catch (\Throwable $_) {}
+            try { @$db->exec("CREATE TABLE IF NOT EXISTS chat_shadowbanned_users (
+                email TEXT PRIMARY KEY, reason TEXT, reports_24h INT,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now())"); } catch (\Throwable $_) {}
+
             $placeholders = implode(',', array_fill(0, count($clean), '?'));
+            // LEFT JOIN chat_user_privacy so users without a row default to
+            // discoverable=true (matches the column default). EXCLUDE rows
+            // that are explicitly discoverable=false OR shadowbanned.
             $sql = "SELECT r.phone_hash, r.email, COALESCE(LOWER(r.email), '') AS email_norm
                     FROM chat_phone_registry r
+                    LEFT JOIN chat_user_privacy p ON LOWER(p.email) = LOWER(r.email)
+                    LEFT JOIN chat_shadowbanned_users sb ON LOWER(sb.email) = LOWER(r.email)
                     WHERE r.phone_hash IN ($placeholders)
-                      AND LOWER(r.email) <> LOWER(?)";
+                      AND LOWER(r.email) <> LOWER(?)
+                      AND COALESCE(p.discoverable, TRUE) = TRUE
+                      AND sb.email IS NULL";
             $params = array_keys($clean);
             $params[] = $user['email'];
             $stmt = $db->prepare($sql);
@@ -4316,7 +4862,13 @@ function handleChatAction($action) {
             //   - WS /notify → real-time UI update (when app foregrounded)
             //   - fcmSendToUser → push notification (when app closed/background)
             // WhatsApp-style "João entrou no Chatyy".
-            if ($isNew) {
+            //
+            // Honor the discoverable opt-out — users with discoverable=false
+            // don't broadcast a join event (contact_discovery_opt_out req).
+            $allowDiscoveryBroadcast = function_exists('isDiscoverable')
+                ? isDiscoverable($db, $user['email'])
+                : true;
+            if ($isNew && $allowDiscoveryBroadcast) {
                 try {
                     $wsKey = getenv('MAIL_WS_KEY') ?: '';
                     $waiters = $db->prepare("SELECT email FROM chat_contact_lookups WHERE phone_hash = :h AND LOWER(email) <> LOWER(:me)");
@@ -8329,6 +8881,232 @@ function handleChatAction($action) {
         }
 
         // ============================================================
+        // status_analytics — Per-status creator analytics. Returns:
+        //   impressions     → distinct viewer count (chat_status_views)
+        //   reactions       → emoji reaction count (chat_status_reactions)
+        //   replies         → DM reply count (chat_messages WHERE type='status_reply')
+        //   exit_rate       → % of viewers who closed before progress complete
+        //                     (chat_status_views.completed boolean — 1 = finished)
+        //   completion_rate → 100 - exit_rate, surfaced separately so the UI
+        //                     doesn't have to compute it twice.
+        //
+        // Only the status owner can read this; mirrors status_viewers auth.
+        // ============================================================
+        case 'status_analytics': {
+            $user = requireChatAuth();
+            $statusId = (int)($input['status_id'] ?? 0);
+            if (!$statusId) jsonResponse(false, null, 'status_id required', 400);
+
+            // Auth: only the status owner can pull analytics.
+            $own = $db->prepare("SELECT email FROM chat_user_status WHERE id = :id");
+            $own->execute([':id' => $statusId]);
+            $row = $own->fetch(PDO::FETCH_ASSOC);
+            if (!$row) jsonResponse(false, null, 'Status not found', 404);
+            if (strcasecmp($row['email'], $user['email']) !== 0) {
+                jsonResponse(false, null, 'Forbidden', 403);
+            }
+
+            // Make sure the columns/tables we need exist — backfilled lazily
+            // so fresh installs don't blow up on the first analytics call.
+            // `completed` defaults to FALSE; status_view will start writing
+            // TRUE once playback reaches 100%, so existing rows count as
+            // "didn't complete" — a conservative reading that the UI can
+            // re-paint upward as more viewers naturally finish stories.
+            try {
+                @$db->exec("ALTER TABLE chat_status_views ADD COLUMN IF NOT EXISTS completed BOOLEAN DEFAULT FALSE");
+            } catch (Throwable $_) {}
+            try {
+                @$db->exec("CREATE TABLE IF NOT EXISTS chat_status_reactions (
+                    id SERIAL PRIMARY KEY,
+                    status_id INTEGER NOT NULL,
+                    reactor_email TEXT NOT NULL,
+                    emoji TEXT NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )");
+            } catch (Throwable $_) {}
+
+            // Impressions = distinct viewers excluding the owner themselves.
+            // We pull both `total` and `completed` in one query so the rate
+            // math below is a single round-trip.
+            $impressions = 0;
+            $completed = 0;
+            try {
+                $q = $db->prepare("
+                    SELECT
+                        COUNT(*) AS total,
+                        SUM(CASE WHEN COALESCE(completed, FALSE) THEN 1 ELSE 0 END) AS completed
+                    FROM chat_status_views
+                    WHERE status_id = :id
+                      AND LOWER(viewer_email) <> LOWER(:owner)
+                ");
+                $q->execute([':id' => $statusId, ':owner' => $user['email']]);
+                $r = $q->fetch(PDO::FETCH_ASSOC) ?: [];
+                $impressions = (int)($r['total'] ?? 0);
+                $completed = (int)($r['completed'] ?? 0);
+            } catch (Throwable $_) {}
+
+            // Reactions count — every row counts (a viewer can switch emoji,
+            // each tap inserts a new row so the total reflects engagement,
+            // not unique reactors).
+            $reactions = 0;
+            try {
+                $q = $db->prepare("SELECT COUNT(*) FROM chat_status_reactions WHERE status_id = :id");
+                $q->execute([':id' => $statusId]);
+                $reactions = (int)$q->fetchColumn();
+            } catch (Throwable $_) {}
+
+            // Replies: DM messages of type 'status_reply' that quote this
+            // status_id. The status_reply path writes the status_id into the
+            // message meta JSON so we scan there. We keep the match loose
+            // (LIKE) so older payloads that only put the id in `content`
+            // still count.
+            $replies = 0;
+            try {
+                $q = $db->prepare("
+                    SELECT COUNT(*) FROM chat_messages
+                    WHERE type = 'status_reply'
+                      AND (meta::text LIKE :idJson OR content LIKE :idTxt)
+                ");
+                $q->execute([
+                    ':idJson' => '%"status_id":' . $statusId . '%',
+                    ':idTxt'  => '%status_id=' . $statusId . '%',
+                ]);
+                $replies = (int)$q->fetchColumn();
+            } catch (Throwable $_) {}
+
+            // Rate math: completion_rate is completed/impressions, exit_rate
+            // is the complement. When there are no impressions, surface 0
+            // for both so the UI doesn't paint NaN%. Round to 1 decimal so
+            // the panel reads cleanly.
+            $completionRate = ($impressions > 0)
+                ? round(($completed / $impressions) * 100, 1)
+                : 0.0;
+            $exitRate = ($impressions > 0)
+                ? round(100 - $completionRate, 1)
+                : 0.0;
+
+            jsonResponse(true, [
+                'status_id'       => $statusId,
+                'impressions'     => $impressions,
+                'reactions'       => $reactions,
+                'replies'         => $replies,
+                'completed'       => $completed,
+                'completion_rate' => $completionRate,
+                'exit_rate'       => $exitRate,
+            ]);
+            break;
+        }
+
+        // ============================================================
+        // status_repost — Repost a previous own status as a fresh row.
+        // Mirrors Instagram's "Share as story" of an archived item. We
+        // copy media_url, type, bg_color, and the relevant meta keys
+        // (filter, stickers, music). expires_at gets a brand new 24h
+        // window; created_at is now(). The new status_id goes back to
+        // the client so it can navigate to its viewer.
+        //
+        // Input:
+        //   status_id (int)   — source status row (must be owner-owned)
+        //   caption  (string) — optional override; falls back to source
+        //   privacy  (string) — all|contacts|close_friends|except
+        // ============================================================
+        case 'status_repost': {
+            $user = requireChatAuth();
+            $statusId = (int)($input['status_id'] ?? 0);
+            $caption  = trim((string)($input['caption'] ?? ''));
+            $privacy  = strtolower(trim((string)($input['privacy'] ?? 'all')));
+            if (!in_array($privacy, ['all', 'contacts', 'close_friends', 'except'], true)) {
+                $privacy = 'all';
+            }
+            if (!$statusId) jsonResponse(false, null, 'status_id required', 400);
+
+            // Auth + load source row. Owner check matches archive/delete.
+            $stmt = $db->prepare("SELECT * FROM chat_user_status WHERE id = :id");
+            $stmt->execute([':id' => $statusId]);
+            $src = $stmt->fetch(PDO::FETCH_ASSOC);
+            if (!$src) jsonResponse(false, null, 'Status not found', 404);
+            if (strcasecmp($src['email'], $user['email']) !== 0) {
+                jsonResponse(false, null, 'Forbidden', 403);
+            }
+
+            // Carry through the source's meta but strip transient flags
+            // (viewers, view_count) that get re-derived on the new row.
+            // Privacy is overridden by the caller — otherwise the repost
+            // would silently inherit the original's audience, which may
+            // not be what the user wants from the archive.
+            $srcMeta = [];
+            if (!empty($src['meta'])) {
+                $srcMeta = is_string($src['meta']) ? json_decode($src['meta'], true) : $src['meta'];
+                if (!is_array($srcMeta)) $srcMeta = [];
+            }
+            $newMeta = $srcMeta;
+            $newMeta['privacy'] = $privacy;
+            $newMeta['reposted_from'] = $statusId;
+            unset($newMeta['except_emails']); // require explicit re-pick
+
+            // Carry caption: prefer the explicit override, otherwise reuse
+            // the source's content text. Image/video statuses store the
+            // caption in `content`; text statuses store the full text there
+            // too — so re-using is safe.
+            $newContent = $caption !== '' ? $caption : ($src['content'] ?? '');
+
+            $ins = $db->prepare("
+                INSERT INTO chat_user_status
+                    (email, type, content, media_url, bg_color, meta, created_at, expires_at)
+                VALUES
+                    (:e, :t, :c, :m, :bg, :meta, now()::text, (now() + interval '24 hours')::text)
+                RETURNING id, created_at, expires_at
+            ");
+            $ins->execute([
+                ':e'    => $user['email'],
+                ':t'    => $src['type'],
+                ':c'    => $newContent,
+                ':m'    => $src['media_url'],
+                ':bg'   => $src['bg_color'] ?? '',
+                ':meta' => json_encode($newMeta, JSON_UNESCAPED_UNICODE),
+            ]);
+            $newRow = $ins->fetch(PDO::FETCH_ASSOC);
+            $newId = (int)($newRow['id'] ?? 0);
+
+            // Best-effort WS broadcast so the home strip refreshes on the
+            // owner's other devices immediately. Mirrors status_create's
+            // notify path; failures are silent so the repost still
+            // succeeds even when the WS server is down.
+            try {
+                $wsKey = getenv('MAIL_WS_KEY') ?: '';
+                if ($wsKey) {
+                    $cu = curl_init('http://127.0.0.1:8081/notify');
+                    curl_setopt_array($cu, [
+                        CURLOPT_POST => true,
+                        CURLOPT_POSTFIELDS => json_encode([
+                            'email' => $user['email'],
+                            'event' => 'status_new',
+                            'data'  => [
+                                'status_id' => $newId,
+                                'owner_email' => $user['email'],
+                                'reposted_from' => $statusId,
+                            ],
+                        ]),
+                        CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'X-API-Key: ' . $wsKey],
+                        CURLOPT_RETURNTRANSFER => true,
+                        CURLOPT_TIMEOUT_MS => 500,
+                        CURLOPT_CONNECTTIMEOUT_MS => 200,
+                    ]);
+                    curl_exec($cu);
+                    curl_close($cu);
+                }
+            } catch (\Throwable $_) {}
+
+            jsonResponse(true, [
+                'status_id'     => $newId,
+                'created_at'    => $newRow['created_at'] ?? null,
+                'expires_at'    => $newRow['expires_at'] ?? null,
+                'reposted_from' => $statusId,
+            ]);
+            break;
+        }
+
+        // ============================================================
         // chat_create_poll — Create a poll message in a conversation
         // ============================================================
         case 'chat_media_gallery': {
@@ -9686,6 +10464,134 @@ function handleChatAction($action) {
         case 'chat_message_history': {
             requireChatAuth();
             jsonResponse(true, ['items' => [], 'list' => [], 'backups' => []]);
+            break;
+        }
+
+        // ─── chat_restore_from_blob — cross-provider (iCloud/Drive) restore ───
+        // Companion to services/chatBackupCloud.js. Client decrypts the blob
+        // locally (we never see the passphrase) and POSTs the JSON in chunks
+        // of up to 1000 messages. We re-insert into chat_messages, skipping
+        // duplicates by (conversation_id, client_msg_id) so retries and
+        // overlapping ranges are idempotent.
+        case 'chat_restore_from_blob': {
+            $user = requireChatAuth();
+            $manifest      = $input['manifest']      ?? [];
+            $conversations = $input['conversations'] ?? [];
+            $messages      = $input['messages']      ?? [];
+            $chunkIndex    = (int)($input['chunk_index']  ?? 0);
+            $totalChunks   = (int)($input['total_chunks'] ?? 1);
+
+            if (!is_array($messages)) jsonResponse(false, null, 'messages array required', 400);
+            if (count($messages) > 2000) jsonResponse(false, null, 'chunk too large (max 2000)', 413);
+
+            try {
+                require_once __DIR__ . '/db.php';
+                $pg = getPGDB();
+            } catch (\Throwable $e) {
+                jsonResponse(false, null, 'PG unavailable', 503);
+            }
+
+            // Lazy schema evolution — the cloud restore needs a per-message
+            // unique dedup key. Production schema didn't have it yet, so
+            // create the column + unique index on first call. IF NOT EXISTS
+            // is idempotent across restarts and concurrent calls.
+            try {
+                $pg->exec("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS client_msg_id TEXT");
+                $pg->exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_msg_cmid ON chat_messages(conversation_id, client_msg_id) WHERE client_msg_id IS NOT NULL");
+            } catch (\Throwable $e) {
+                error_log('[chat_restore_from_blob schema] ' . $e->getMessage());
+            }
+
+            $email    = strtolower($user['email']);
+            $inserted = 0;
+            $skipped  = 0;
+            $rejected = 0;
+
+            // Membership cache — restore only into conversations the user
+            // belongs to. Other conversation_ids are silently rejected.
+            $memberCache = [];
+            try {
+                $mStmt = $pg->prepare("SELECT conversation_id FROM chat_conversation_members WHERE LOWER(email) = :e");
+                $mStmt->execute([':e' => $email]);
+                foreach ($mStmt->fetchAll(\PDO::FETCH_ASSOC) as $r) {
+                    $memberCache[(int)$r['conversation_id']] = true;
+                }
+            } catch (\Throwable $e) {}
+
+            $pg->beginTransaction();
+            try {
+                $ins = $pg->prepare("
+                    INSERT INTO chat_messages
+                        (conversation_id, sender_email, content, type, file_name, file_url,
+                         reply_to_id, client_msg_id, created_at)
+                    VALUES (:cid, :se, :content, :type, :fname, :furl, :rid, :cmid, :ca)
+                    ON CONFLICT (conversation_id, client_msg_id) DO NOTHING
+                    RETURNING id
+                ");
+                foreach ($messages as $m) {
+                    $cid = (int)($m['conversation_id'] ?? 0);
+                    if ($cid <= 0) { $rejected++; continue; }
+                    if (!isset($memberCache[$cid])) { $rejected++; continue; }
+                    $cmid = (string)($m['client_msg_id'] ?? '');
+                    if ($cmid === '') { $skipped++; continue; }
+                    try {
+                        $ins->execute([
+                            ':cid'     => $cid,
+                            ':se'      => (string)($m['sender_email'] ?? $email),
+                            ':content' => (string)($m['content'] ?? ''),
+                            ':type'    => (string)($m['type'] ?? 'text'),
+                            ':fname'   => $m['file_name'] ?? null,
+                            ':furl'    => $m['file_url']  ?? null,
+                            ':rid'     => $m['reply_to_id'] ? (int)$m['reply_to_id'] : null,
+                            ':cmid'    => $cmid,
+                            ':ca'      => $m['created_at'] ?? date('c'),
+                        ]);
+                        $row = $ins->fetch(\PDO::FETCH_ASSOC);
+                        if ($row && !empty($row['id'])) $inserted++; else $skipped++;
+                    } catch (\Throwable $e) {
+                        // Fallback when ON CONFLICT can't bind (no unique idx).
+                        try {
+                            $probe = $pg->prepare("SELECT 1 FROM chat_messages WHERE conversation_id = :cid AND client_msg_id = :cmid LIMIT 1");
+                            $probe->execute([':cid' => $cid, ':cmid' => $cmid]);
+                            if ($probe->fetchColumn()) { $skipped++; continue; }
+                            $ins2 = $pg->prepare("
+                                INSERT INTO chat_messages
+                                    (conversation_id, sender_email, content, type, file_name, file_url,
+                                     reply_to_id, client_msg_id, created_at)
+                                VALUES (:cid, :se, :content, :type, :fname, :furl, :rid, :cmid, :ca)
+                            ");
+                            $ins2->execute([
+                                ':cid'     => $cid,
+                                ':se'      => (string)($m['sender_email'] ?? $email),
+                                ':content' => (string)($m['content'] ?? ''),
+                                ':type'    => (string)($m['type'] ?? 'text'),
+                                ':fname'   => $m['file_name'] ?? null,
+                                ':furl'    => $m['file_url']  ?? null,
+                                ':rid'     => $m['reply_to_id'] ? (int)$m['reply_to_id'] : null,
+                                ':cmid'    => $cmid,
+                                ':ca'      => $m['created_at'] ?? date('c'),
+                            ]);
+                            $inserted++;
+                        } catch (\Throwable $e2) {
+                            $rejected++;
+                            error_log('[chat_restore_from_blob] ' . $e2->getMessage());
+                        }
+                    }
+                }
+                $pg->commit();
+            } catch (\Throwable $e) {
+                try { $pg->rollBack(); } catch (\Throwable $e2) {}
+                jsonResponse(false, null, 'restore failed: ' . $e->getMessage(), 500);
+            }
+
+            jsonResponse(true, [
+                'inserted'      => $inserted,
+                'skipped'       => $skipped,
+                'rejected'      => $rejected,
+                'chunk_index'   => $chunkIndex,
+                'total_chunks'  => $totalChunks,
+                'manifest_seen' => (bool)$manifest,
+            ]);
             break;
         }
 
@@ -16622,6 +17528,21 @@ function handleChatAction($action) {
                 }
             }
 
+            // Stop any RTMP multistream egresses tied to this broadcast — keeps
+            // YouTube/Twitch from showing a frozen frame after we go offline.
+            try {
+                $ms = $db->prepare("SELECT id, egress_id FROM chat_live_multistream_destinations WHERE broadcast_id = :b AND status = 'live'");
+                $ms->execute([':b' => $sessionId]);
+                foreach ($ms->fetchAll(\PDO::FETCH_ASSOC) as $msrow) {
+                    $eid = (string)($msrow['egress_id'] ?? '');
+                    if ($eid !== '') {
+                        try { _lkStopEgress($eid); } catch (\Throwable $_) {}
+                    }
+                }
+                $db->prepare("UPDATE chat_live_multistream_destinations SET status = 'ended', stopped_at = NOW() WHERE broadcast_id = :b AND status = 'live'")
+                   ->execute([':b' => $sessionId]);
+            } catch (\Throwable $e) { error_log('[live_cf.end.egress_stop] ' . $e->getMessage()); }
+
             // WS broadcast: tell viewers the live ended so they bail. Hit
             // both Node (8081) and Go (8084) hubs — whichever the client is
             // on receives it. Same pattern used everywhere else in chat.php.
@@ -17521,10 +18442,680 @@ function handleChatAction($action) {
         }
 
         // ============================================================
+        // live_schedule — Create a scheduled live (Calendar integration).
+        // Inserts chat_live_scheduled row. cron-worker fans out push to followers
+        // at start_at - 15min and again at start_at (00:00).
+        //
+        // Payload: { start_at: ISO8601, title, description?, audience?, category? }
+        // Returns: { id, start_at, title }
+        // ============================================================
+        case 'live_schedule': {
+            $user = requireChatAuth();
+            $startAt = trim((string)($input['start_at'] ?? ''));
+            $title = trim((string)($input['title'] ?? ''));
+            $description = trim((string)($input['description'] ?? ''));
+            $audience = trim((string)($input['audience'] ?? 'public'));
+            $category = trim((string)($input['category'] ?? ''));
+            if ($startAt === '' || $title === '') {
+                jsonResponse(false, null, 'start_at and title required', 400);
+            }
+            // Validate start_at: parse to UTC, must be at least 5min in the future
+            // and at most 30 days out. Loose tolerance — strtotime accepts many
+            // formats (ISO8601, RFC2822, "+1 hour", etc.).
+            $startTs = strtotime($startAt);
+            if (!$startTs || $startTs < time() + 300) {
+                jsonResponse(false, null, 'start_at must be >=5min in the future', 400);
+            }
+            if ($startTs > time() + (30 * 86400)) {
+                jsonResponse(false, null, 'start_at must be <=30 days out', 400);
+            }
+            $startUtc = gmdate('Y-m-d\TH:i:s', $startTs);
+
+            try {
+                @$db->exec("CREATE TABLE IF NOT EXISTS chat_live_scheduled (
+                    id SERIAL PRIMARY KEY,
+                    host_email TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    audience TEXT DEFAULT 'public',
+                    category TEXT,
+                    start_at TIMESTAMPTZ NOT NULL,
+                    notified_15min BOOLEAN DEFAULT FALSE,
+                    notified_start BOOLEAN DEFAULT FALSE,
+                    cancelled_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )");
+                @$db->exec("CREATE INDEX IF NOT EXISTS idx_chat_live_scheduled_host ON chat_live_scheduled(host_email)");
+                @$db->exec("CREATE INDEX IF NOT EXISTS idx_chat_live_scheduled_start ON chat_live_scheduled(start_at) WHERE cancelled_at IS NULL");
+            } catch (\Throwable $e) { error_log('[live_schedule.schema] ' . $e->getMessage()); }
+
+            try {
+                $ins = $db->prepare("
+                    INSERT INTO chat_live_scheduled (host_email, title, description, audience, category, start_at)
+                    VALUES (:e, :t, :d, :a, :c, :s)
+                    RETURNING id, start_at
+                ");
+                $ins->execute([
+                    ':e' => $user['email'],
+                    ':t' => mb_substr($title, 0, 200),
+                    ':d' => mb_substr($description, 0, 1000),
+                    ':a' => in_array($audience, ['public', 'friends', 'private']) ? $audience : 'public',
+                    ':c' => mb_substr($category, 0, 60),
+                    ':s' => $startUtc,
+                ]);
+                $row = $ins->fetch(\PDO::FETCH_ASSOC);
+                jsonResponse(true, [
+                    'id'       => (int)$row['id'],
+                    'start_at' => $row['start_at'],
+                    'title'    => $title,
+                ]);
+            } catch (\Throwable $e) {
+                error_log('[live_schedule.insert] ' . $e->getMessage());
+                jsonResponse(false, null, 'schedule_failed', 500);
+            }
+            break;
+        }
+
+        // ============================================================
+        // live_schedule_list — List the caller's upcoming scheduled lives,
+        // plus those of followed hosts (for the discover/calendar surfaces).
+        // ============================================================
+        case 'live_schedule_list': {
+            $user = requireChatAuth();
+            $scope = trim((string)($input['scope'] ?? 'mine')); // 'mine' | 'followed'
+            try {
+                if ($scope === 'followed') {
+                    // Lives scheduled by hosts the caller follows, future-only.
+                    $stmt = $db->prepare("
+                        SELECT s.id, s.host_email, s.title, s.description, s.audience, s.category, s.start_at
+                          FROM chat_live_scheduled s
+                          JOIN chat_follows f
+                            ON LOWER(f.following_email) = LOWER(s.host_email)
+                         WHERE LOWER(f.follower_email) = LOWER(:e)
+                           AND s.start_at > NOW()
+                           AND s.cancelled_at IS NULL
+                         ORDER BY s.start_at ASC
+                         LIMIT 100
+                    ");
+                    $stmt->execute([':e' => $user['email']]);
+                } else {
+                    $stmt = $db->prepare("
+                        SELECT id, host_email, title, description, audience, category, start_at,
+                               notified_15min, notified_start
+                          FROM chat_live_scheduled
+                         WHERE LOWER(host_email) = LOWER(:e)
+                           AND start_at > NOW()
+                           AND cancelled_at IS NULL
+                         ORDER BY start_at ASC
+                         LIMIT 100
+                    ");
+                    $stmt->execute([':e' => $user['email']]);
+                }
+                jsonResponse(true, ['items' => $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: []]);
+            } catch (\Throwable $e) {
+                error_log('[live_schedule_list] ' . $e->getMessage());
+                jsonResponse(true, ['items' => []]);
+            }
+            break;
+        }
+
+        // ============================================================
+        // live_schedule_cancel — Cancel an upcoming scheduled live.
+        // ============================================================
+        case 'live_schedule_cancel': {
+            $user = requireChatAuth();
+            $id = (int)($input['id'] ?? 0);
+            if (!$id) jsonResponse(false, null, 'id required', 400);
+            try {
+                $upd = $db->prepare("
+                    UPDATE chat_live_scheduled
+                       SET cancelled_at = NOW()
+                     WHERE id = :i AND LOWER(host_email) = LOWER(:e)
+                       AND cancelled_at IS NULL
+                ");
+                $upd->execute([':i' => $id, ':e' => $user['email']]);
+                jsonResponse(true, ['cancelled' => $upd->rowCount() > 0]);
+            } catch (\Throwable $e) {
+                error_log('[live_schedule_cancel] ' . $e->getMessage());
+                jsonResponse(false, null, 'cancel_failed', 500);
+            }
+            break;
+        }
+
+        // ============================================================
+        // live_schedule_cron_tick — Internal cron endpoint. Iterates upcoming
+        // scheduled lives and sends 15min-ahead + at-start push fan-outs to
+        // followers. Idempotent via notified_15min / notified_start flags.
+        // Authenticated via X-CRON-KEY header == MAIL_WS_KEY (shared with WS).
+        // Expected to be hit every minute by the systemd timer.
+        // ============================================================
+        case 'live_schedule_cron_tick': {
+            $cronKey = $_SERVER['HTTP_X_CRON_KEY'] ?? '';
+            $expected = getenv('MAIL_WS_KEY') ?: '';
+            if ($expected && $cronKey && hash_equals($expected, $cronKey)) {
+                // ok
+            } else {
+                // Also accept loopback (cron-worker.php on same box).
+                $remote = $_SERVER['REMOTE_ADDR'] ?? '';
+                if ($remote !== '127.0.0.1' && $remote !== '::1') {
+                    jsonResponse(false, null, 'forbidden', 403);
+                }
+            }
+            $sent15 = 0;
+            $sentStart = 0;
+            try {
+                // 15-min ahead nudge — fires once per scheduled row.
+                $stmt = $db->query("
+                    SELECT id, host_email, title, start_at
+                      FROM chat_live_scheduled
+                     WHERE notified_15min = FALSE
+                       AND cancelled_at IS NULL
+                       AND start_at BETWEEN NOW() + INTERVAL '14 minutes' AND NOW() + INTERVAL '16 minutes'
+                     LIMIT 50
+                ");
+                $upcoming15 = $stmt ? $stmt->fetchAll(\PDO::FETCH_ASSOC) : [];
+                if (!function_exists('fcmSendToUser') && file_exists(__DIR__ . '/firebase_push.php')) {
+                    require_once __DIR__ . '/firebase_push.php';
+                }
+                foreach ($upcoming15 as $row) {
+                    $hostEmail = (string)$row['host_email'];
+                    $rid = (int)$row['id'];
+                    $followers = _liveFollowerEmails($db, $hostEmail);
+                    if (!$followers) {
+                        $db->prepare("UPDATE chat_live_scheduled SET notified_15min = TRUE WHERE id = :i")
+                           ->execute([':i' => $rid]);
+                        continue;
+                    }
+                    $title = (string)($row['title'] ?? 'Live');
+                    $hostName = _liveHostDisplayName($db, $hostEmail);
+                    foreach ($followers as $em) {
+                        try {
+                            if (function_exists('fcmSendToUser')) {
+                                fcmSendToUser($em, $hostName . ' vai começar em 15 min', $title, [
+                                    'type'        => 'live_scheduled',
+                                    'category_id' => 'live_scheduled',
+                                    'scheduled_id'=> (string)$rid,
+                                    'host_email'  => $hostEmail,
+                                    'host_name'   => $hostName,
+                                    'title'       => $title,
+                                    'when'        => '15min',
+                                ]);
+                            }
+                        } catch (\Throwable $e) { error_log('[live_sched.15.push] ' . $e->getMessage()); }
+                    }
+                    $db->prepare("UPDATE chat_live_scheduled SET notified_15min = TRUE WHERE id = :i")
+                       ->execute([':i' => $rid]);
+                    $sent15++;
+                }
+                // At-start nudge — fires once at start_at±1min.
+                $stmt2 = $db->query("
+                    SELECT id, host_email, title, start_at
+                      FROM chat_live_scheduled
+                     WHERE notified_start = FALSE
+                       AND cancelled_at IS NULL
+                       AND start_at BETWEEN NOW() - INTERVAL '1 minute' AND NOW() + INTERVAL '1 minute'
+                     LIMIT 50
+                ");
+                $startNow = $stmt2 ? $stmt2->fetchAll(\PDO::FETCH_ASSOC) : [];
+                foreach ($startNow as $row) {
+                    $hostEmail = (string)$row['host_email'];
+                    $rid = (int)$row['id'];
+                    $followers = _liveFollowerEmails($db, $hostEmail);
+                    if (!$followers) {
+                        $db->prepare("UPDATE chat_live_scheduled SET notified_start = TRUE WHERE id = :i")
+                           ->execute([':i' => $rid]);
+                        continue;
+                    }
+                    $title = (string)($row['title'] ?? 'Live');
+                    $hostName = _liveHostDisplayName($db, $hostEmail);
+                    foreach ($followers as $em) {
+                        try {
+                            if (function_exists('fcmSendToUser')) {
+                                fcmSendToUser($em, $hostName . ' começou a live agora', $title, [
+                                    'type'        => 'live_scheduled',
+                                    'category_id' => 'live_scheduled',
+                                    'scheduled_id'=> (string)$rid,
+                                    'host_email'  => $hostEmail,
+                                    'host_name'   => $hostName,
+                                    'title'       => $title,
+                                    'when'        => 'start',
+                                ]);
+                            }
+                        } catch (\Throwable $e) { error_log('[live_sched.start.push] ' . $e->getMessage()); }
+                    }
+                    $db->prepare("UPDATE chat_live_scheduled SET notified_start = TRUE WHERE id = :i")
+                       ->execute([':i' => $rid]);
+                    $sentStart++;
+                }
+            } catch (\Throwable $e) {
+                error_log('[live_schedule_cron_tick] ' . $e->getMessage());
+            }
+            jsonResponse(true, ['sent_15min' => $sent15, 'sent_start' => $sentStart]);
+            break;
+        }
+
+        // ============================================================
+        // live_multistream_add — Register an RTMP destination (YouTube/Twitch/FB)
+        // for a live broadcast. Stored in chat_live_multistream_destinations.
+        // When the host's broadcast starts, broadcast_id is tied to the LK
+        // session; we kick off LK Egress (StartRoomCompositeEgress) targeting
+        // each destination. egress_id stored for tear-down.
+        //
+        // Payload: { broadcast_id?, rtmp_url, stream_key, label? }
+        // Returns: { id, rtmp_url, label, started } (started=true if LK egress fired)
+        // ============================================================
+        case 'live_multistream_add': {
+            $user = requireChatAuth();
+            $broadcastId = trim((string)($input['broadcast_id'] ?? $input['session_id'] ?? ''));
+            $rtmpUrl = trim((string)($input['rtmp_url'] ?? ''));
+            $streamKey = trim((string)($input['stream_key'] ?? ''));
+            $label = trim((string)($input['label'] ?? ''));
+            if ($rtmpUrl === '' || $streamKey === '') {
+                jsonResponse(false, null, 'rtmp_url and stream_key required', 400);
+            }
+            // Validate URL — must be rtmp:// or rtmps://. Reject anything else
+            // so we don't accidentally hand LK an http URL it'll reject.
+            if (!preg_match('#^rtmps?://[^\s]+$#i', $rtmpUrl)) {
+                jsonResponse(false, null, 'rtmp_url must be rtmp:// or rtmps://', 400);
+            }
+            // Build the full RTMP target (server URL + key joined with /).
+            $target = rtrim($rtmpUrl, '/') . '/' . $streamKey;
+
+            try {
+                @$db->exec("CREATE TABLE IF NOT EXISTS chat_live_multistream_destinations (
+                    id SERIAL PRIMARY KEY,
+                    host_email TEXT NOT NULL,
+                    broadcast_id TEXT,
+                    rtmp_url TEXT NOT NULL,
+                    stream_key TEXT NOT NULL,
+                    label TEXT,
+                    egress_id TEXT,
+                    status TEXT DEFAULT 'pending',
+                    started_at TIMESTAMPTZ,
+                    stopped_at TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )");
+                @$db->exec("CREATE INDEX IF NOT EXISTS idx_chat_live_multistream_host ON chat_live_multistream_destinations(host_email)");
+                @$db->exec("CREATE INDEX IF NOT EXISTS idx_chat_live_multistream_broadcast ON chat_live_multistream_destinations(broadcast_id) WHERE broadcast_id IS NOT NULL");
+            } catch (\Throwable $e) { error_log('[live_multistream.schema] ' . $e->getMessage()); }
+
+            // Try to kick off LK Egress immediately if we have a broadcast_id
+            // (the broadcast is already live or about to be). Egress targets
+            // the room `live_<broadcast_id>` (same naming used by chat_live_*).
+            $egressId = '';
+            $started = false;
+            if ($broadcastId !== '') {
+                $egressResult = _lkStartRoomCompositeEgress('live_' . $broadcastId, [$target]);
+                if (is_array($egressResult) && !empty($egressResult['egress_id'])) {
+                    $egressId = (string)$egressResult['egress_id'];
+                    $started = true;
+                }
+            }
+
+            try {
+                $ins = $db->prepare("
+                    INSERT INTO chat_live_multistream_destinations
+                        (host_email, broadcast_id, rtmp_url, stream_key, label, egress_id, status, started_at)
+                    VALUES
+                        (:e, :b, :u, :k, :l, :g, :s, :ts)
+                    RETURNING id
+                ");
+                $ins->execute([
+                    ':e'  => $user['email'],
+                    ':b'  => $broadcastId !== '' ? $broadcastId : null,
+                    ':u'  => $rtmpUrl,
+                    ':k'  => $streamKey,
+                    ':l'  => mb_substr($label, 0, 60),
+                    ':g'  => $egressId,
+                    ':s'  => $started ? 'live' : 'pending',
+                    ':ts' => $started ? gmdate('Y-m-d\TH:i:s') : null,
+                ]);
+                $row = $ins->fetch(\PDO::FETCH_ASSOC);
+                jsonResponse(true, [
+                    'id'        => (int)$row['id'],
+                    'rtmp_url'  => $rtmpUrl,
+                    'label'     => $label,
+                    'started'   => $started,
+                    'egress_id' => $egressId,
+                ]);
+            } catch (\Throwable $e) {
+                error_log('[live_multistream_add.insert] ' . $e->getMessage());
+                jsonResponse(false, null, 'multistream_add_failed', 500);
+            }
+            break;
+        }
+
+        // ============================================================
+        // live_multistream_list — List the caller's saved RTMP destinations.
+        // ============================================================
+        case 'live_multistream_list': {
+            $user = requireChatAuth();
+            $broadcastId = trim((string)($input['broadcast_id'] ?? ''));
+            try {
+                if ($broadcastId !== '') {
+                    $stmt = $db->prepare("
+                        SELECT id, rtmp_url, label, status, egress_id, started_at
+                          FROM chat_live_multistream_destinations
+                         WHERE LOWER(host_email) = LOWER(:e)
+                           AND broadcast_id = :b
+                         ORDER BY created_at DESC
+                    ");
+                    $stmt->execute([':e' => $user['email'], ':b' => $broadcastId]);
+                } else {
+                    // All destinations for the user — saved presets.
+                    $stmt = $db->prepare("
+                        SELECT id, rtmp_url, label, status
+                          FROM chat_live_multistream_destinations
+                         WHERE LOWER(host_email) = LOWER(:e)
+                         ORDER BY created_at DESC
+                         LIMIT 50
+                    ");
+                    $stmt->execute([':e' => $user['email']]);
+                }
+                jsonResponse(true, ['items' => $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: []]);
+            } catch (\Throwable $e) {
+                error_log('[live_multistream_list] ' . $e->getMessage());
+                jsonResponse(true, ['items' => []]);
+            }
+            break;
+        }
+
+        // ============================================================
+        // live_multistream_remove — Stop & delete a destination. Calls
+        // LK StopEgress when an egress_id is recorded.
+        // ============================================================
+        case 'live_multistream_remove': {
+            $user = requireChatAuth();
+            $id = (int)($input['id'] ?? 0);
+            if (!$id) jsonResponse(false, null, 'id required', 400);
+            try {
+                $sel = $db->prepare("SELECT egress_id FROM chat_live_multistream_destinations WHERE id = :i AND LOWER(host_email) = LOWER(:e)");
+                $sel->execute([':i' => $id, ':e' => $user['email']]);
+                $row = $sel->fetch(\PDO::FETCH_ASSOC);
+                if (!$row) jsonResponse(false, null, 'destination not found', 404);
+                $egressId = (string)($row['egress_id'] ?? '');
+                if ($egressId !== '') {
+                    _lkStopEgress($egressId);
+                }
+                $del = $db->prepare("DELETE FROM chat_live_multistream_destinations WHERE id = :i AND LOWER(host_email) = LOWER(:e)");
+                $del->execute([':i' => $id, ':e' => $user['email']]);
+                jsonResponse(true, ['removed' => true]);
+            } catch (\Throwable $e) {
+                error_log('[live_multistream_remove] ' . $e->getMessage());
+                jsonResponse(false, null, 'remove_failed', 500);
+            }
+            break;
+        }
+
+        // ============================================================
+        // chat_live_diamond_reaction — 1-diamond paid floating heart.
+        // Debits the wallet 1 diamond, broadcasts a `live_reaction` with
+        // emoji='💎' + isDiamond flag so all viewers see the special particle.
+        // Falls back to a normal heart if wallet balance is insufficient.
+        // ============================================================
+        case 'chat_live_diamond_reaction': {
+            $user = requireChatAuth();
+            $sessionId = trim((string)($input['session_id'] ?? $input['live_id'] ?? ''));
+            if ($sessionId === '') jsonResponse(false, null, 'session_id required', 400);
+
+            // Verify session exists (defensive — same pattern as send_gift).
+            $sStmt = $db->prepare("SELECT id, host_email FROM chat_live_sessions WHERE id = :id");
+            $sStmt->execute([':id' => $sessionId]);
+            $session = $sStmt->fetch(\PDO::FETCH_ASSOC);
+            if (!$session) jsonResponse(false, null, 'Live session not found', 404);
+
+            // Wallet debit — best-effort table. If wallet_balances doesn't
+            // exist yet (early adopters), we treat as 0 and reject.
+            $balance = 0;
+            try {
+                @$db->exec("CREATE TABLE IF NOT EXISTS wallet_balances (
+                    email TEXT PRIMARY KEY,
+                    diamonds INT NOT NULL DEFAULT 0,
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                )");
+                $bs = $db->prepare("SELECT diamonds FROM wallet_balances WHERE LOWER(email) = LOWER(:e)");
+                $bs->execute([':e' => $user['email']]);
+                $bRow = $bs->fetch(\PDO::FETCH_ASSOC);
+                $balance = (int)($bRow['diamonds'] ?? 0);
+            } catch (\Throwable $e) { error_log('[diamond_reaction.bal] ' . $e->getMessage()); }
+
+            if ($balance < 1) {
+                jsonResponse(false, ['balance' => $balance], 'insufficient_diamonds', 402);
+            }
+
+            try {
+                $db->prepare("UPDATE wallet_balances SET diamonds = diamonds - 1, updated_at = NOW() WHERE LOWER(email) = LOWER(:e) AND diamonds >= 1")
+                   ->execute([':e' => $user['email']]);
+            } catch (\Throwable $e) {
+                error_log('[diamond_reaction.debit] ' . $e->getMessage());
+                jsonResponse(false, null, 'debit_failed', 500);
+            }
+
+            // Credit creator 1 diamond. host_email gets a soft credit for now;
+            // the tip pipeline can route this to pending_payout later.
+            try {
+                $db->prepare("INSERT INTO wallet_balances (email, diamonds) VALUES (:e, 1) ON CONFLICT (email) DO UPDATE SET diamonds = wallet_balances.diamonds + 1, updated_at = NOW()")
+                   ->execute([':e' => $session['host_email']]);
+            } catch (\Throwable $e) { error_log('[diamond_reaction.credit] ' . $e->getMessage()); }
+
+            // Broadcast over WS — same channel as regular reactions, but with
+            // emoji=💎 + isDiamond so clients render the gold sparkle variant.
+            try {
+                $wsKey = getenv('MAIL_WS_KEY') ?: '';
+                if ($wsKey) {
+                    $payload = [
+                        'session_id' => $sessionId,
+                        'emoji'      => '💎',
+                        'color'      => '#FFD700',
+                        'isDiamond'  => true,
+                        'sender_email' => $user['email'],
+                        'sender_name'  => $user['name'] ?? explode('@', $user['email'])[0],
+                    ];
+                    $body = json_encode([
+                        'channel' => 'live_' . $sessionId,
+                        'event'   => 'live_reaction',
+                        'data'    => $payload,
+                    ], JSON_UNESCAPED_UNICODE);
+                    foreach (['http://127.0.0.1:8081/broadcast', 'http://127.0.0.1:8084/broadcast'] as $endpoint) {
+                        $cu = curl_init($endpoint);
+                        curl_setopt_array($cu, [
+                            CURLOPT_POST            => true,
+                            CURLOPT_POSTFIELDS      => $body,
+                            CURLOPT_HTTPHEADER      => ['Content-Type: application/json', 'X-API-Key: ' . $wsKey],
+                            CURLOPT_RETURNTRANSFER  => true,
+                            CURLOPT_TIMEOUT_MS      => 1500,
+                            CURLOPT_CONNECTTIMEOUT_MS => 500,
+                        ]);
+                        curl_exec($cu); curl_close($cu);
+                    }
+                }
+            } catch (\Throwable $e) { error_log('[diamond_reaction.ws] ' . $e->getMessage()); }
+
+            jsonResponse(true, [
+                'balance' => $balance - 1,
+                'tipped'  => true,
+            ]);
+            break;
+        }
+
+        // ============================================================
         // Default — unknown action
         // ============================================================
         default:
             jsonResponse(false, null, 'Unknown chat action: ' . $action, 400);
             break;
     }
+}
+
+/**
+ * Resolve follower emails (push-eligible) for a host. Used by
+ * live_schedule_cron_tick to send 15min + at-start nudges.
+ */
+function _liveFollowerEmails(\PDO $db, string $hostEmail): array {
+    try {
+        $stmt = $db->prepare("
+            SELECT LOWER(follower_email) AS email
+              FROM chat_follows
+             WHERE LOWER(following_email) = LOWER(:h)
+               AND LOWER(follower_email) <> LOWER(:h2)
+               AND LOWER(follower_email) NOT IN (
+                   SELECT LOWER(blocked_email) FROM chat_blocked_users WHERE LOWER(blocker_email) = LOWER(:bh)
+                   UNION
+                   SELECT LOWER(blocker_email) FROM chat_blocked_users WHERE LOWER(blocked_email) = LOWER(:bh2)
+               )
+             LIMIT 5000
+        ");
+        $stmt->execute([':h' => $hostEmail, ':h2' => $hostEmail, ':bh' => $hostEmail, ':bh2' => $hostEmail]);
+        $rows = $stmt->fetchAll(\PDO::FETCH_COLUMN) ?: [];
+        return array_values(array_filter($rows));
+    } catch (\Throwable $e) {
+        error_log('[live._liveFollowerEmails] ' . $e->getMessage());
+        return [];
+    }
+}
+
+/**
+ * Cheap display-name resolver — falls back to email local-part.
+ */
+function _liveHostDisplayName(\PDO $db, string $email): string {
+    try {
+        $stmt = $db->prepare("SELECT name FROM chat_users WHERE LOWER(email) = LOWER(:e) LIMIT 1");
+        $stmt->execute([':e' => $email]);
+        $n = $stmt->fetchColumn();
+        if (is_string($n) && trim($n) !== '') return trim($n);
+    } catch (\Throwable $e) { /* table may not exist on older deploys */ }
+    return explode('@', $email)[0] ?: $email;
+}
+
+// ============================================================
+// LiveKit Egress helpers — used by live_multistream_add / _remove.
+// Egress API: POST /twirp/livekit.Egress/StartRoomCompositeEgress
+// auth: Bearer JWT signed with LIVEKIT_API_SECRET (HS256). The JWT
+// has a `video` grant with `roomRecord=true` on the room. We compose
+// it inline so we don't need the livekit-server-sdk PHP package.
+// ============================================================
+
+/**
+ * Build a LiveKit server JWT with the requested grants.
+ * @param array $grants  e.g. ['roomRecord' => true, 'room' => 'live_xyz']
+ */
+function _lkServerJwt(array $grants): ?string {
+    $apiKey = getenv('LIVEKIT_API_KEY') ?: '';
+    $apiSecret = getenv('LIVEKIT_API_SECRET') ?: '';
+    if ((!$apiKey || !$apiSecret) && file_exists('/etc/mail-api.env')) {
+        foreach (@file('/etc/mail-api.env', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+            if ($line === '' || $line[0] === '#') continue;
+            $parts = explode('=', $line, 2);
+            if (count($parts) !== 2) continue;
+            if ($parts[0] === 'LIVEKIT_API_KEY' && !$apiKey) $apiKey = trim($parts[1]);
+            if ($parts[0] === 'LIVEKIT_API_SECRET' && !$apiSecret) $apiSecret = trim($parts[1]);
+        }
+    }
+    if (!$apiKey || !$apiSecret) return null;
+    $now = time();
+    $payload = [
+        'iss' => $apiKey,
+        'sub' => $apiKey, // self — server-side token
+        'iat' => $now,
+        'nbf' => $now - 10,
+        'exp' => $now + 600, // 10min — egress is a single-shot call
+        'video' => $grants,
+    ];
+    $b64 = static fn($s) => rtrim(strtr(base64_encode($s), '+/', '-_'), '=');
+    $headerB = $b64(json_encode(['alg' => 'HS256', 'typ' => 'JWT'], JSON_UNESCAPED_SLASHES));
+    $payloadB = $b64(json_encode($payload, JSON_UNESCAPED_SLASHES));
+    $sig = hash_hmac('sha256', "{$headerB}.{$payloadB}", $apiSecret, true);
+    return "{$headerB}.{$payloadB}." . $b64($sig);
+}
+
+/**
+ * Resolve the LiveKit HTTP (not wss) host for the Egress API.
+ * `LIVEKIT_HOST` (wss://livekit.chatyy.com.br) gets rewritten to https://.
+ */
+function _lkHttpHost(): string {
+    $host = getenv('LIVEKIT_HOST') ?: '';
+    if ($host === '' && file_exists('/etc/mail-api.env')) {
+        foreach (@file('/etc/mail-api.env', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+            if (strpos($line, 'LIVEKIT_HOST=') === 0) { $host = trim(substr($line, 13)); break; }
+        }
+    }
+    if ($host === '') $host = 'wss://livekit.chatyy.com.br';
+    return preg_replace('#^wss?://#i', 'https://', $host);
+}
+
+/**
+ * Start a Room Composite Egress targeting one or more RTMP URLs.
+ * Used by live_multistream_add. Returns ['egress_id' => 'EG_xxx'] or null on failure.
+ */
+function _lkStartRoomCompositeEgress(string $room, array $rtmpUrls): ?array {
+    $token = _lkServerJwt(['roomRecord' => true, 'room' => $room]);
+    if ($token === null) {
+        error_log('[lk_egress] no LIVEKIT credentials configured');
+        return null;
+    }
+    $endpoint = _lkHttpHost() . '/twirp/livekit.Egress/StartRoomCompositeEgress';
+    $body = json_encode([
+        'room_name' => $room,
+        'layout'    => 'speaker',  // single-host stream; 'grid' for cohost scenes
+        'audio_only' => false,
+        'video_only' => false,
+        'stream' => [
+            'protocol' => 1, // RTMP
+            'urls'     => array_values($rtmpUrls),
+        ],
+    ], JSON_UNESCAPED_SLASHES);
+    $ch = curl_init($endpoint);
+    curl_setopt_array($ch, [
+        CURLOPT_POST            => true,
+        CURLOPT_POSTFIELDS      => $body,
+        CURLOPT_HTTPHEADER      => [
+            'Content-Type: application/json',
+            'Authorization: Bearer ' . $token,
+        ],
+        CURLOPT_RETURNTRANSFER  => true,
+        CURLOPT_TIMEOUT         => 10,
+    ]);
+    $raw = curl_exec($ch);
+    $http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $err = curl_error($ch);
+    curl_close($ch);
+    if ($raw === false || $http < 200 || $http >= 300) {
+        error_log('[lk_egress.start] http=' . $http . ' err=' . $err . ' body=' . substr((string)$raw, 0, 400));
+        return null;
+    }
+    $resp = json_decode((string)$raw, true);
+    if (!is_array($resp)) return null;
+    $eid = (string)($resp['egress_id'] ?? '');
+    return $eid !== '' ? ['egress_id' => $eid, 'raw' => $resp] : null;
+}
+
+/**
+ * Stop a running egress (best-effort). Used by live_multistream_remove and
+ * live_end_cf cleanup.
+ */
+function _lkStopEgress(string $egressId): bool {
+    if ($egressId === '') return false;
+    $token = _lkServerJwt(['roomRecord' => true]);
+    if ($token === null) return false;
+    $endpoint = _lkHttpHost() . '/twirp/livekit.Egress/StopEgress';
+    $body = json_encode(['egress_id' => $egressId], JSON_UNESCAPED_SLASHES);
+    $ch = curl_init($endpoint);
+    curl_setopt_array($ch, [
+        CURLOPT_POST            => true,
+        CURLOPT_POSTFIELDS      => $body,
+        CURLOPT_HTTPHEADER      => [
+            'Content-Type: application/json',
+            'Authorization: Bearer ' . $token,
+        ],
+        CURLOPT_RETURNTRANSFER  => true,
+        CURLOPT_TIMEOUT         => 8,
+    ]);
+    $raw = curl_exec($ch);
+    $http = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if ($http < 200 || $http >= 300) {
+        error_log('[lk_egress.stop] http=' . $http . ' eid=' . $egressId . ' body=' . substr((string)$raw, 0, 300));
+        return false;
+    }
+    return true;
 }

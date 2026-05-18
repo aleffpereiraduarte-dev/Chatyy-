@@ -33,6 +33,19 @@
       "bundleIdentifier": "com.onemundo.mail",
       "buildNumber": "501",
       "googleServicesFile": "./GoogleService-Info.plist",
+      "usesIcloudStorage": true,
+      "icloudContainerEnvironment": "Production",
+      "entitlements": {
+        "com.apple.developer.icloud-container-identifiers": [
+          "iCloud.com.onemundo.mail"
+        ],
+        "com.apple.developer.icloud-services": [
+          "CloudDocuments"
+        ],
+        "com.apple.developer.ubiquity-container-identifiers": [
+          "iCloud.com.onemundo.mail"
+        ]
+      },
       "privacyManifests": {
         "NSPrivacyAccessedAPITypes": [
           {
@@ -84,8 +97,16 @@
         "UIRequiresFullScreen": false,
         "BGTaskSchedulerPermittedIdentifiers": [
           "com.onemundo.mail.backup.refresh",
-          "com.onemundo.mail.backup.processing"
+          "com.onemundo.mail.backup.processing",
+          "chatyy-cloud-backup"
         ],
+        "NSUbiquitousContainers": {
+          "iCloud.com.onemundo.mail": {
+            "NSUbiquitousContainerIsDocumentScopePublic": true,
+            "NSUbiquitousContainerSupportedFolderLevels": "Any",
+            "NSUbiquitousContainerName": "Chatyy"
+          }
+        },
         "CFBundleURLTypes": [
           {
             "CFBundleURLSchemes": [
@@ -312,7 +333,11 @@
       "eas": {
         "projectId": "7175af93-5113-4bd7-85d7-1ae78e5762b4"
       },
-      "GOOGLE_MAPS_KEY": "AIzaSyBulyR8pRvCX3pGxMBs_9zt0FIjOFZVnEk"
+      "GOOGLE_MAPS_KEY": "AIzaSyBulyR8pRvCX3pGxMBs_9zt0FIjOFZVnEk",
+      "oauthGoogleClientIdWeb": "",
+      "oauthGoogleClientIdIos": "",
+      "oauthGoogleClientIdAndroid": "",
+      "oauthMicrosoftClientId": ""
     },
     "assetBundlePatterns": [
       "**/*"

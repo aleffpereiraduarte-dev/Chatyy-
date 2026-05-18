@@ -46,6 +46,7 @@ export default function LiveRightRail({
   chatHidden = false,
   onHeartPress,
   onHeartLongPress,
+  onDiamondPress,
   onToggleChat,
   onSnapshot,
   onShare,
@@ -108,6 +109,21 @@ export default function LiveRightRail({
           </Animated.Text>
         ) : null}
       </View>
+
+      {/* Diamond tip — wave 16 (2026-05-17). 1 diamond = 1 paid heart with
+          a gold-sparkle particle on all viewers' screens. Falls back silently
+          to a toast if the wallet is empty. */}
+      {typeof onDiamondPress === 'function' ? (
+        <TouchableOpacity
+          style={[styles.btn, styles.btnDiamond]}
+          onPress={onDiamondPress}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel={i18n.diamond || 'Diamante'}
+        >
+          <Text style={{ fontSize: 20 }}>💎</Text>
+        </TouchableOpacity>
+      ) : null}
 
       {/* Chat toggle */}
       <TouchableOpacity
@@ -188,6 +204,10 @@ const styles = StyleSheet.create({
   },
   btnDim: {
     opacity: 0.72,
+  },
+  btnDiamond: {
+    backgroundColor: 'rgba(255,215,0,0.18)',
+    borderColor: 'rgba(255,215,0,0.45)',
   },
   countText: {
     color: '#fff',

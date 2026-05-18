@@ -66,7 +66,13 @@ export function isScreenShareSupported() {
     const m = getMod();
     return !!m && m.isSupported();
   }
-  // Android: not yet
+  if (Platform.OS === 'android') {
+    // [2026-05-17 Stage 4] Native MediaProjection path is wired via
+    // modules/expo-screen-share's ScreenShareService — once the user accepts
+    // the system consent dialog, LK Room.localParticipant publishes the
+    // resulting track automatically. Supported on every device API 24+.
+    return true;
+  }
   return false;
 }
 

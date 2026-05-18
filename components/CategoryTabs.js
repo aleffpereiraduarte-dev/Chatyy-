@@ -16,9 +16,37 @@ const CATEGORIES = [
   { key: 'updates', i18nKey: 'category.updates', icon: IconBell, color: '#3b82f6' },
 ];
 
-export default function CategoryTabs({ activeCategory = 'all', onCategoryChange, counts = {} }) {
+// Color/icon palette for backend-supplied bundles (Gmail-style category
+// grouping — compras / viagens / financas / foruns / notificacoes / …).
+const BUNDLE_COLORS = {
+  compras: '#0ea5e9',
+  viagens: '#06b6d4',
+  financas: '#16a34a',
+  foruns: '#a855f7',
+  notificacoes: '#3b82f6',
+};
+function defaultBundleIcon() { return IconTag; }
+
+export default function CategoryTabs({ activeCategory = 'all', onCategoryChange, counts = {}, bundles = [] }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
+
+  // Merge in dynamic bundles supplied by the backend (email_bundles).
+  // We dedupe against the static categories so primary/social/etc. don't
+  // duplicate when the backend returns them too.
+  const dedup = new Set(CATEGORIES.map(c => c.key));
+  const extraBundles = (bundles || [])
+    .filter(b => b && b.id && !dedup.has(b.id))
+    .slice(0, 8) // soft cap so the scroll row stays usable
+    .map(b => ({
+      key: b.id,
+      label: b.label || b.id,
+      icon: defaultBundleIcon(),
+      color: BUNDLE_COLORS[b.id] || '#94a3b8',
+      isBundle: true,
+      bundleCount: b.count || 0,
+    }));
+  const merged = [...CATEGORIES, ...extraBundles];
 
   return (
     <ScrollView
@@ -27,11 +55,12 @@ export default function CategoryTabs({ activeCategory = 'all', onCategoryChange,
       contentContainerStyle={s.container}
       style={s.scroll}
     >
-      {CATEGORIES.map((cat) => {
+      {merged.map((cat) => {
         const isActive = activeCategory === cat.key;
-        const count = counts[cat.key];
+        const count = counts[cat.key] != null ? counts[cat.key] : (cat.isBundle ? cat.bundleCount : undefined);
         const Icon = cat.icon;
         const activeColor = cat.color;
+        const labelText = cat.i18nKey ? t(cat.i18nKey) : (cat.label || cat.key);
         return (
           <TouchableOpacity
             key={cat.key}
@@ -67,7 +96,7 @@ export default function CategoryTabs({ activeCategory = 'all', onCategoryChange,
                 isActive && s.tabTextActive,
               ]}
             >
-              {t(cat.i18nKey)}
+              {labelText}
             </Text>
             {count > 0 && (
               <View style={[

@@ -113,7 +113,10 @@ const BRAND_DARK = '#5B21B6';
 // adjust/rotate/blur paths still exist under the hood and are reachable from
 // the redesigned toolbar — `draw` / `music` / `tag` are placeholders that
 // surface UI but no-op for now (per task spec).
-const TABS = ['filters', 'text', 'sticker', 'draw', 'crop', 'adjust', 'music', 'tag'];
+// Wave 14 — added 'ai' tab for AI-driven enhance / sky / bokeh / inpaint.
+// Only enabled when the caller passes a `photoId` so the editor knows which
+// cloud-side asset to act on; chat-side picker invocations skip it.
+const TABS = ['filters', 'text', 'sticker', 'draw', 'crop', 'adjust', 'ai', 'music', 'tag'];
 
 // Pen/text colors — expanded to 10 swatches per the design brief, plus a
 // trailing "+" custom slot. The "+" entry is a sentinel; tapping it just
@@ -209,7 +212,7 @@ function DraggableOverlay({ responder, active, onDelete, style, children }) {
 
 // ── Main Component ──
 
-export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
+export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoId }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
   const { width: screenW, height: screenH } = useWindowDimensions();
@@ -262,6 +265,48 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
   const dragStartRef = useRef(null);
   const cropStartRef = useRef(null);
   const overlayDragStartRef = useRef(null);
+
+  // ── Wave 14 — AI enhancement / inpaint / sky / bokeh state ──
+  // The AI tab is only useful when the editor knows which cloud asset it's
+  // editing (otherwise we have no `photo_id` to pass server-side). When the
+  // host passes `photoId` (photos.js viewer), we surface the AI buttons; the
+  // chat-side picker doesn't, so the tab still renders but explains why.
+  const [aiBusyMode, setAiBusyMode] = useState(null); // 'upscale'|'denoise'|'colorize'|'sky'|'bokeh'|'inpaint'|null
+  const [aiResultUrl, setAiResultUrl] = useState(null);
+  const [aiNotice, setAiNotice] = useState('');
+  const _runAi = useCallback(async (kind, extra = {}) => {
+    if (!photoId) {
+      setAiNotice('Salve a foto na nuvem antes para usar IA.');
+      return;
+    }
+    setAiBusyMode(kind);
+    setAiNotice('');
+    setAiResultUrl(null);
+    try {
+      const api = require('../services/api');
+      let res;
+      if (kind === 'upscale' || kind === 'denoise' || kind === 'colorize') {
+        res = await api.photosAiEnhance(photoId, kind);
+        const url = res?.data?.enhanced_url;
+        if (res?.success && url) setAiResultUrl(url);
+        else setAiNotice(res?.data?.reason === 'no_api_key' ? 'Funcao IA em breve.' : 'IA indisponivel agora.');
+      } else if (kind === 'sky') {
+        res = await api.photosSkyReplace(photoId, extra.preset || 'sunset');
+        const url = res?.data?.sky_url;
+        if (res?.success && url) setAiResultUrl(url);
+        else setAiNotice('Troca de ceu indisponivel agora.');
+      } else if (kind === 'bokeh') {
+        res = await api.photosBokeh(photoId, 0.7);
+        const url = res?.data?.bokeh_url;
+        if (res?.success && url) setAiResultUrl(url);
+        else setAiNotice('Modo retrato indisponivel agora.');
+      }
+    } catch (e) {
+      setAiNotice('Erro na IA: ' + (e?.message || ''));
+    } finally {
+      setAiBusyMode(null);
+    }
+  }, [photoId]);
 
   // ── Editor-depth state (round 2026-05-17) ──
   // Music track attached to the photo. Set by the music picker sheet; the
@@ -970,6 +1015,16 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
         <Circle cx="12" cy="7" r="4" />
       </Svg>
     ),
+    // Wave 14: AI sparkle for the new tab
+    ai: (
+      <Svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke={tabIconColor('ai')} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+        <Path d="M5 3v4" />
+        <Path d="M19 17v4" />
+        <Path d="M3 5h4" />
+        <Path d="M17 19h4" />
+        <Path d="M12 7l2.5 5 5 2.5-5 2.5L12 22l-2.5-5L4.5 14.5l5-2.5L12 7z" />
+      </Svg>
+    ),
   };
 
   // Reuse photos.* keys when present, fall back to PT-BR label inline (no
@@ -983,6 +1038,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
     adjust: 'Brilho',
     music: 'Música',
     tag: 'Marcar',
+    ai: 'IA',
   };
 
   const canUndo = historyRef.current.past.length > 0;
@@ -1649,6 +1705,73 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
                       <Text style={s.textAddBtnLabel}>+</Text>
                     </TouchableOpacity>
                   </View>
+                )}
+              </View>
+            )}
+
+            {activeTab === 'ai' && (
+              <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+                {!photoId ? (
+                  <Text style={{ color: '#bbb', fontSize: 13, textAlign: 'center', paddingVertical: 16 }}>
+                    Salve esta foto na nuvem para liberar Melhorar IA, Apagar objeto, Trocar ceu e Modo retrato.
+                  </Text>
+                ) : (
+                  <>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+                      {[
+                        { k: 'upscale', label: 'Melhorar' },
+                        { k: 'denoise', label: 'Reduzir ruido' },
+                        { k: 'colorize', label: 'Colorir P&B' },
+                        { k: 'bokeh', label: 'Modo retrato' },
+                      ].map(b => (
+                        <TouchableOpacity
+                          key={b.k}
+                          disabled={!!aiBusyMode}
+                          onPress={() => _runAi(b.k)}
+                          style={{
+                            paddingHorizontal: 14, paddingVertical: 10,
+                            borderRadius: 18, backgroundColor: aiBusyMode === b.k ? '#7C3AED' : 'rgba(255,255,255,0.08)',
+                            opacity: aiBusyMode && aiBusyMode !== b.k ? 0.5 : 1,
+                          }}
+                        >
+                          <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>
+                            {aiBusyMode === b.k ? 'Processando...' : b.label}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                    <Text style={{ color: '#888', fontSize: 12, marginTop: 4, marginBottom: 6 }}>Trocar ceu</Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                      {['sunset', 'clearblue', 'starry', 'aurora', 'cloudy', 'golden'].map(p => (
+                        <TouchableOpacity
+                          key={p}
+                          disabled={!!aiBusyMode}
+                          onPress={() => _runAi('sky', { preset: p })}
+                          style={{
+                            paddingHorizontal: 12, paddingVertical: 8, borderRadius: 14,
+                            backgroundColor: 'rgba(255,255,255,0.06)',
+                          }}
+                        >
+                          <Text style={{ color: '#ddd', fontSize: 12 }}>{p}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                    {aiNotice ? (
+                      <Text style={{ color: '#fbbf24', fontSize: 12, marginTop: 12 }}>{aiNotice}</Text>
+                    ) : null}
+                    {aiResultUrl ? (
+                      <View style={{ marginTop: 12 }}>
+                        <Text style={{ color: '#10B981', fontSize: 12, fontWeight: '600' }}>IA processou:</Text>
+                        <Text numberOfLines={1} style={{ color: '#bbb', fontSize: 11, marginTop: 2 }}>{aiResultUrl}</Text>
+                        <TouchableOpacity
+                          onPress={() => { onSave?.({ uri: aiResultUrl, ai_enhanced: true }); }}
+                          style={{ marginTop: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 14, backgroundColor: '#7C3AED', alignSelf: 'flex-start' }}
+                        >
+                          <Text style={{ color: '#fff', fontWeight: '600', fontSize: 13 }}>Usar resultado</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ) : null}
+                  </>
                 )}
               </View>
             )}

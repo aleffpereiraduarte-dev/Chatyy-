@@ -71,6 +71,17 @@ declare class ExpoLiveNativeModuleType extends NativeModule<ExpoLiveNativeEvents
     hostAvatarUrl: string | null
   ): Promise<void>;
   closeLive(): Promise<void>;
+  /**
+   * Apply an AR/Beauty/Greenscreen filter to the host's published track.
+   * Pipeline: LK video frame → MediaPipe FaceLandmarker + SelfieSegmentation
+   * → composite overlay (sticker / smooth-skin / blur bg / wallpaper bg) →
+   * back to LK publisher. `presetKey` is one of:
+   *   'none' | 'dog' | 'sunglasses' | 'hearts' | 'beauty' | 'slim' | 'blur'
+   *   | 'greenscreen'
+   * `wallpaperId` is 0 for non-greenscreen presets, 1..6 for greenscreen
+   * backgrounds.
+   */
+  setArFilter(presetKey: string, wallpaperId: number): Promise<void>;
 }
 
 let mod: ExpoLiveNativeModuleType | null = null;
@@ -154,6 +165,22 @@ export async function closeLive(): Promise<void> {
   } catch {}
 }
 
+/**
+ * Switch the host's AR/Beauty/Greenscreen filter. Returns false silently if
+ * the native module isn't loaded (web / Expo Go) — JS overlay covers fallback.
+ */
+export async function setArFilter(presetKey: string, wallpaperId = 0): Promise<boolean> {
+  const m = getModule();
+  if (!m || typeof (m as any).setArFilter !== 'function') return false;
+  try {
+    await (m as any).setArFilter(presetKey || 'none', Number(wallpaperId) || 0);
+    return true;
+  } catch (e) {
+    console.warn('[ExpoLiveNative] setArFilter error:', e);
+    return false;
+  }
+}
+
 // ─── Event helpers ───────────────────────────────────────────────────────────
 
 function on<K extends keyof ExpoLiveNativeEvents>(
@@ -190,6 +217,7 @@ export default {
   openHost,
   openViewer,
   closeLive,
+  setArFilter,
   onLiveEnded,
   onLiveError,
   onViewerJoined,

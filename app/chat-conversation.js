@@ -15064,6 +15064,29 @@ export default function ChatConversationScreen() {
                     src={videoUrl} preload="metadata" muted playsInline
                     style={{ width: 280, height: 200, objectFit: 'cover', backgroundColor: '#000', opacity: vidUploading ? 0.7 : 1 }}
                     onLoadedData={(e) => { try { e.target.currentTime = 0.5; } catch {} }}
+                    // Wave 14: animated thumbnail on hover. Seek to 3s, autoplay
+                    // muted for 2s, then reset to the static 0.5s poster frame.
+                    // Falls back gracefully on touch devices (no hover event).
+                    onMouseEnter={(e) => {
+                      try {
+                        const v = e.currentTarget;
+                        if (!v || !isFinite(v.duration) || v.duration < 2) return;
+                        v.currentTime = Math.min(3, v.duration - 0.1);
+                        const p = v.play(); if (p?.catch) p.catch(() => {});
+                        clearTimeout(v.__previewTimer);
+                        v.__previewTimer = setTimeout(() => {
+                          try { v.pause(); v.currentTime = 0.5; } catch {}
+                        }, 2000);
+                      } catch {}
+                    }}
+                    onMouseLeave={(e) => {
+                      try {
+                        const v = e.currentTarget;
+                        if (!v) return;
+                        clearTimeout(v.__previewTimer);
+                        v.pause(); v.currentTime = 0.5;
+                      } catch {}
+                    }}
                   />
                   {vidUploading ? (
                     <View pointerEvents="box-none" style={[styles.videoOverlayAbsolute, { backgroundColor: 'rgba(0,0,0,0.45)' }]}>
@@ -17031,8 +17054,41 @@ export default function ChatConversationScreen() {
           // translation block become the primary surface. Manual one-off
           // translates keep the legacy stacked layout.
           const autoHideOriginal = !!(msgTranslation && msgTranslation._auto && !msgTranslation._showOriginal && msgTranslation.text);
+          // Sensitive-mention indicator: when this message @-mentions the
+          // current user AND the message isn't from the user, render a
+          // small purple pill at the top of the bubble. Mentions are
+          // persisted as a JSON array of lowercase emails on the message
+          // row (backend chat_send), so we just parse + includes-check.
+          // Pill stays out of own-messages because mentioning oneself is
+          // never a "you got pinged" event.
+          let _myMentions = null;
+          try {
+            const m = msg.mentions;
+            const arr = Array.isArray(m) ? m : (typeof m === 'string' && m ? JSON.parse(m) : null);
+            if (Array.isArray(arr) && currentEmail) {
+              const meLower = String(currentEmail).toLowerCase();
+              _myMentions = arr.some(e => String(e || '').toLowerCase() === meLower)
+                         || arr.includes('@everyone')
+                         || arr.includes('@admins');
+            }
+          } catch { _myMentions = null; }
+          const showMentionPill = !isOwn && !!_myMentions;
           return (
             <View>
+              {showMentionPill && (
+                <View style={{
+                  flexDirection: 'row', alignItems: 'center', gap: 4,
+                  alignSelf: 'flex-start',
+                  paddingHorizontal: 8, paddingVertical: 3,
+                  borderRadius: 999, marginBottom: 4,
+                  backgroundColor: isDark ? 'rgba(124, 58, 237, 0.18)' : '#ede9fe',
+                }}>
+                  <Text style={{ color: '#7C3AED', fontSize: 11, fontWeight: '700' }}>@</Text>
+                  <Text style={{ color: '#7C3AED', fontSize: 11, fontWeight: '700' }}>
+                    {t?.('chat.youWereMentioned') || 'Você foi mencionado'}
+                  </Text>
+                </View>
+              )}
               {msg._filtered && msg._hidden && (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
                   <IconLock size={12} color="#f59e0b" />

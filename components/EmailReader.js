@@ -30,7 +30,7 @@ import {
   IconForward, IconTrash, IconPaperclip, IconFileText, IconBarChart,
   IconImage, IconPackage, IconMusic, IconFilm, IconDownload, IconTag, IconAlertTriangle,
   IconShield, IconArchive, IconPrint, IconChevronDown, IconChevronUp, IconEye, IconSend, IconMarkUnread, IconGlobe, IconCalendar,
-  IconReceipt, IconUser,
+  IconReceipt, IconUser, IconCheck,
 } from './Icons';
 
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
@@ -144,7 +144,7 @@ function getAttachIconComponent(filename) {
   return ATTACH_ICON_MAP[ext] || IconPaperclip;
 }
 
-export default function EmailReader({ email, onReply, onReplyAll, onForward, onDelete, onClose, onStar, onAddLabel, onRemoveLabel, folder, onReportSpam, onReportHam, onScrollProgress, onMarkUnread }) {
+export default function EmailReader({ email, onReply, onReplyAll, onForward, onForwardAsAttachment, onDelete, onClose, onStar, onAddLabel, onRemoveLabel, folder, onReportSpam, onReportHam, onScrollProgress, onMarkUnread, onAddAsTask }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
   const { user } = useAuth();
@@ -479,12 +479,9 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
     return { main: html, quoted: '' };
   };
 
-  const handlePrint = () => {
-    if (Platform.OS !== 'web') return;
+  const handlePrint = async () => {
     const esc = (str) => (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    const printWin = window.open('', '_blank');
-    if (!printWin) return;
-    printWin.document.write(`<!DOCTYPE html><html><head><title>${esc(email.subject || 'Email')}</title>
+    const html = `<!DOCTYPE html><html><head><title>${esc(email.subject || 'Email')}</title>
       <style>body{font-family:-apple-system,system-ui,sans-serif;padding:40px;max-width:800px;margin:0 auto}
       .header{border-bottom:1px solid #ddd;padding-bottom:16px;margin-bottom:16px}
       .from{font-weight:600;font-size:16px}.meta{color:#666;font-size:13px;margin-top:4px}
@@ -495,9 +492,22 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
       <div class="meta">${esc(email.date || '')}</div>
       <div style="font-size:18px;margin-top:12px">${esc(email.subject || t('reader.noSubject'))}</div></div>
       <div class="body">${sanitizeHtml(email.body_html) || esc(email.body_text || email.body || '').replace(/\n/g, '<br>')}</div>
-      </body></html>`);
-    printWin.document.close();
-    setTimeout(() => { printWin.print(); }, 300);
+      </body></html>`;
+    if (Platform.OS === 'web') {
+      const printWin = window.open('', '_blank');
+      if (!printWin) return;
+      printWin.document.write(html);
+      printWin.document.close();
+      setTimeout(() => { printWin.print(); }, 300);
+      return;
+    }
+    // Native: route through expo-print so iOS uses its share/AirPrint sheet
+    // and Android falls through to the system print spooler. The module is
+    // a dynamic import so it doesn't pull weight on web.
+    try {
+      const Print = await import('expo-print');
+      await Print.printAsync({ html });
+    } catch (e) { console.warn('print', e); }
   };
 
   const renderBody = () => {
@@ -1365,15 +1375,46 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
             )}
           </TouchableOpacity>
         )}
-        {Platform.OS === 'web' && (
+        {/* Print works on both web (window.print via popup) and native
+            (expo-print → AirPrint on iOS, print spooler on Android). */}
+        <TouchableOpacity
+          style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
+          onPress={handlePrint}
+          accessibilityLabel={t('reader.print')}
+          accessibilityRole="button"
+        >
+          <IconPrint size={14} color={colors.textSecondary} style={{ marginRight: 6 }} />
+          <Text style={[s.secBtnText, { color: colors.textSecondary }]}>{t('reader.print')}</Text>
+        </TouchableOpacity>
+        {/* Forward as attachment — wraps the original message as .eml and
+            attaches it to a fresh compose. Surfaced as a discrete secondary
+            action (Gmail puts it under the kebab menu; same effect). */}
+        {onForwardAsAttachment && (
           <TouchableOpacity
             style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
-            onPress={handlePrint}
-            accessibilityLabel={t('reader.print')}
+            onPress={() => onForwardAsAttachment(email)}
+            accessibilityLabel={t('reader.forwardAsAttachment') || 'Encaminhar como anexo'}
             accessibilityRole="button"
           >
-            <IconPrint size={14} color={colors.textSecondary} style={{ marginRight: 6 }} />
-            <Text style={[s.secBtnText, { color: colors.textSecondary }]}>{t('reader.print')}</Text>
+            <IconPaperclip size={14} color={colors.textSecondary} style={{ marginRight: 6 }} />
+            <Text style={[s.secBtnText, { color: colors.textSecondary }]}>
+              {t('reader.forwardAsAttachment') || 'Encaminhar como anexo'}
+            </Text>
+          </TouchableOpacity>
+        )}
+        {/* Email → Task. Creates a row in chat_user_tasks with backref to
+            the email so /tasks can deep-link back here. */}
+        {onAddAsTask && (
+          <TouchableOpacity
+            style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
+            onPress={() => onAddAsTask(email)}
+            accessibilityLabel={t('reader.addAsTask') || 'Adicionar como tarefa'}
+            accessibilityRole="button"
+          >
+            <IconCheck size={14} color={colors.textSecondary} style={{ marginRight: 6 }} />
+            <Text style={[s.secBtnText, { color: colors.textSecondary }]}>
+              {t('reader.addAsTask') || 'Adicionar como tarefa'}
+            </Text>
           </TouchableOpacity>
         )}
         {onMarkUnread && (

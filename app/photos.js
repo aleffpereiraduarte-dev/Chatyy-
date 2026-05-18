@@ -30,7 +30,7 @@ import {
   IconTrash, IconDownload, IconShare, IconStar, IconStarFilled,
   IconMoreVert, IconCamera, IconGrid, IconPlay, IconInfo, IconRefresh,
   IconChevronLeft, IconChevronRight, IconSettings, IconCheckCircle, IconEdit,
-  IconPlus,
+  IconPlus, IconUsers,
 } from '../components/Icons';
 import PhotoEditor from '../components/PhotoEditor';
 import BrandFab from '../components/BrandFab';
@@ -132,7 +132,10 @@ function IconMap({ size = 24, color = '#666' }) {
 // Tabs include 'map' — surfaces geo-tagged photos on a clustered Google Maps
 // WebView (no extra dep, uses the bundled gmaps embed). 'backup' stays last
 // since users hit it least often during a normal session.
-const TABS = ['photos', 'albums', 'search', 'map', 'backup'];
+// Wave 14: 'people' (Pessoas) tab surfaces real face clusters built from
+// on-device FaceNet embeddings (see services/faceEmbeddings.js + backend
+// photos_face_clusters action).
+const TABS = ['photos', 'albums', 'people', 'search', 'map', 'backup'];
 const PAGE_SIZE = Platform.OS === 'web' ? 200 : 60;
 
 function formatGB(bytes) {
@@ -333,6 +336,37 @@ export default function PhotosScreen() {
   const [viewingAlbum, setViewingAlbum] = useState(null); // album object when viewing album photos
   const [albumPhotos, setAlbumPhotos] = useState([]);
   const [albumLoading, setAlbumLoading] = useState(false);
+
+  // Wave 14 — photobook PDF generator
+  const [photobookVisible, setPhotobookVisible] = useState(false);
+  const [photobookLayout, setPhotobookLayout] = useState('grid');
+  const [photobookSelectedIds, setPhotobookSelectedIds] = useState([]);
+  const [photobookGenerating, setPhotobookGenerating] = useState(false);
+  const [photobookResult, setPhotobookResult] = useState(null);
+  const photobookSelectedCount = photobookSelectedIds.length;
+  const openPhotobookForSelection = useCallback((ids) => {
+    setPhotobookSelectedIds(ids);
+    setPhotobookResult(null);
+    setPhotobookLayout('grid');
+    setPhotobookVisible(true);
+  }, []);
+  const generatePhotobook = useCallback(async () => {
+    if (photobookSelectedIds.length === 0) return;
+    setPhotobookGenerating(true);
+    setPhotobookResult(null);
+    try {
+      const res = await api.photosPhotobookCreate(photobookSelectedIds, photobookLayout, 'Photobook');
+      if (res?.success && res.data?.pdf_url) {
+        setPhotobookResult(res.data);
+      } else {
+        safeAlert?.('Erro', res?.error || 'Falha ao gerar PDF');
+      }
+    } catch (e) {
+      safeAlert?.('Erro', String(e?.message || e));
+    } finally {
+      setPhotobookGenerating(false);
+    }
+  }, [photobookSelectedIds, photobookLayout]);
 
   // Upload quality
   const [uploadQuality, setUploadQuality] = useState('economy'); // 'original' | 'economy'
@@ -3062,6 +3096,159 @@ export default function PhotosScreen() {
   const [searchTabLoading, setSearchTabLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
 
+  // ============================================================
+  // PEOPLE TAB (Wave 14 — real face recognition via FaceNet embeddings)
+  // ============================================================
+  // Distinct from `faceClusters` (which is a coarse "1/2/3+ people" bucket
+  // from the OpenAI vision pass). `realFaceClusters` is the cosine-clustered
+  // FaceNet output the on-device pipeline + backend build over time.
+  const [realFaceClusters, setRealFaceClusters] = useState([]);
+  const [peopleLoading, setPeopleLoading] = useState(false);
+  const [viewingCluster, setViewingCluster] = useState(null);     // {cluster_id, person_name}
+  const [clusterPhotos, setClusterPhotos] = useState([]);
+  const [clusterLoading, setClusterLoading] = useState(false);
+  const [renameClusterTarget, setRenameClusterTarget] = useState(null);
+  const [renameValue, setRenameValue] = useState('');
+
+  useEffect(() => {
+    if (activeTab !== 'people') return;
+    setPeopleLoading(true);
+    api.photosFaceClusters().then(res => {
+      if (res?.success && res.data) {
+        setRealFaceClusters(res.data.clusters || []);
+      } else {
+        setRealFaceClusters([]);
+      }
+    }).catch(() => setRealFaceClusters([])).finally(() => setPeopleLoading(false));
+  }, [activeTab]);
+
+  const openCluster = useCallback(async (cluster) => {
+    setViewingCluster(cluster);
+    setClusterLoading(true);
+    setClusterPhotos([]);
+    try {
+      const res = await api.photosFaceClusterPhotos(cluster.cluster_id);
+      if (res?.success && res.data) setClusterPhotos(res.data.photos || []);
+    } catch {}
+    setClusterLoading(false);
+  }, []);
+
+  const submitClusterRename = useCallback(async () => {
+    if (!renameClusterTarget) return;
+    const name = renameValue.trim();
+    try {
+      await api.photosFaceClusterName(renameClusterTarget.cluster_id, name);
+      setRealFaceClusters(prev => prev.map(c =>
+        c.cluster_id === renameClusterTarget.cluster_id ? { ...c, person_name: name || null } : c
+      ));
+      if (viewingCluster?.cluster_id === renameClusterTarget.cluster_id) {
+        setViewingCluster({ ...viewingCluster, person_name: name || null });
+      }
+    } catch {}
+    setRenameClusterTarget(null);
+    setRenameValue('');
+  }, [renameClusterTarget, renameValue, viewingCluster]);
+
+  const renderPeopleTab = useCallback(() => {
+    if (viewingCluster) {
+      const title = viewingCluster.person_name || `Pessoa ${viewingCluster.cluster_id?.slice(2, 6) || ''}`;
+      return (
+        <View style={{ flex: 1 }}>
+          <View style={[s.albumDetailHeader, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+            <TouchableOpacity onPress={() => { setViewingCluster(null); setClusterPhotos([]); }} style={s.albumBackBtn}>
+              <IconArrowLeft size={24} color={colors.text} />
+            </TouchableOpacity>
+            <View style={{ flex: 1 }}>
+              <Text style={[s.albumDetailTitle, { color: colors.text }]} numberOfLines={1}>{title}</Text>
+              <Text style={[s.albumDetailCount, { color: colors.textSecondary }]}>
+                {clusterPhotos.length} {t('photos.items') || 'fotos'}
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => { setRenameClusterTarget(viewingCluster); setRenameValue(viewingCluster.person_name || ''); }}
+              style={{ padding: 8 }}
+              accessibilityLabel="Renomear"
+            >
+              <IconEdit size={20} color={colors.text} />
+            </TouchableOpacity>
+          </View>
+          {clusterLoading ? (
+            <GridSkeleton count={9} columns={3} />
+          ) : (
+            <FlatList
+              data={clusterPhotos}
+              numColumns={3}
+              keyExtractor={(item) => `cp_${item.id}`}
+              contentContainerStyle={{ paddingBottom: 80 + insets.bottom }}
+              renderItem={({ item, index }) => renderPhotoItem({ item, index })}
+              windowSize={10}
+              maxToRenderPerBatch={15}
+              initialNumToRender={18}
+            />
+          )}
+        </View>
+      );
+    }
+    return (
+      <FlatList
+        data={[1]}
+        keyExtractor={() => 'people-content'}
+        contentContainerStyle={{ paddingBottom: 80 + insets.bottom }}
+        renderItem={() => (
+          <View style={{ padding: Spacing.lg }}>
+            <Text style={[s.cardTitle, { color: colors.text, marginBottom: 12 }]}>
+              {t('photos.people') || 'Pessoas'}
+            </Text>
+            {peopleLoading ? (
+              <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+                <ActivityIndicator color={colors.primary} />
+              </View>
+            ) : realFaceClusters.length === 0 ? (
+              <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+                <IconUsers size={48} color={colors.textTertiary} />
+                <Text style={{ color: colors.textSecondary, fontSize: 13, marginTop: 12, textAlign: 'center' }}>
+                  {t('photos.peopleEmpty') || 'Conforme suas fotos forem analisadas, rostos similares vao agrupar aqui automaticamente.'}
+                </Text>
+              </View>
+            ) : (
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 14 }}>
+                {realFaceClusters.map((cluster) => {
+                  const label = cluster.person_name || `Pessoa ${cluster.cluster_id?.slice(2, 6) || ''}`;
+                  return (
+                    <TouchableOpacity
+                      key={cluster.cluster_id}
+                      onPress={() => openCluster(cluster)}
+                      onLongPress={() => { setRenameClusterTarget(cluster); setRenameValue(cluster.person_name || ''); }}
+                      style={{ alignItems: 'center', width: 92 }}
+                      accessibilityLabel={label}
+                    >
+                      {cluster.sample_url ? (
+                        <Image
+                          source={{ uri: cluster.sample_url }}
+                          style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: '#1a1a2e' }}
+                        />
+                      ) : (
+                        <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }}>
+                          <IconUsers size={32} color={colors.textTertiary} />
+                        </View>
+                      )}
+                      <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, fontWeight: '600', marginTop: 6, textAlign: 'center' }}>
+                        {label}
+                      </Text>
+                      <Text style={{ color: colors.textSecondary, fontSize: 11 }}>
+                        {cluster.photo_count} {t('photos.items') || 'fotos'}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+        )}
+      />
+    );
+  }, [viewingCluster, clusterPhotos, clusterLoading, peopleLoading, realFaceClusters, colors, insets.bottom, t, openCluster]);
+
   // Load suggestions and faces when search tab is opened
   useEffect(() => {
     if (activeTab !== 'search') return;
@@ -4195,6 +4382,7 @@ export default function PhotosScreen() {
             const Ico = tab === 'photos' ? IconImage
               : tab === 'search' ? IconSearch
               : tab === 'albums' ? IconAlbum
+              : tab === 'people' ? IconUsers
               : tab === 'map' ? IconMap
               : IconCloud;
             return (
@@ -4289,6 +4477,7 @@ export default function PhotosScreen() {
             {activeTab === 'photos' && renderPhotosTab()}
             {activeTab === 'search' && renderSearchTab()}
             {activeTab === 'albums' && renderAlbumsTab()}
+            {activeTab === 'people' && renderPeopleTab()}
             {activeTab === 'map' && (
               <ErrorBoundary>
                 <PhotosMapTab
@@ -4420,6 +4609,27 @@ export default function PhotosScreen() {
             </View>
             <Text style={[s.batchActionText, { color: colors.text }]}>{t('photos.download') || 'Baixar'}</Text>
           </TouchableOpacity>
+          {/* Wave 14: photobook PDF */}
+          <TouchableOpacity
+            style={s.batchAction}
+            onPress={() => {
+              const ids = filteredPhotos
+                .filter(p => selectedItems.has(p.id) && !p.isDevice)
+                .map(p => p.id);
+              if (ids.length === 0) return;
+              if (ids.length > 100) {
+                safeAlert?.('Limite 100', 'Selecione ate 100 fotos por album.');
+                return;
+              }
+              openPhotobookForSelection(ids);
+            }}
+            accessibilityLabel="Criar album"
+          >
+            <View style={[s.batchActionPill, { backgroundColor: 'rgba(16,185,129,0.14)' }]}>
+              <IconAlbum size={20} color="#10B981" />
+            </View>
+            <Text style={[s.batchActionText, { color: colors.text }]}>{t('photos.photobook') || 'Album'}</Text>
+          </TouchableOpacity>
           <TouchableOpacity
             style={s.batchAction}
             onPress={async () => {
@@ -4496,6 +4706,119 @@ export default function PhotosScreen() {
         </Pressable>
       </Modal>
 
+      {/* Wave 14 — rename face cluster modal */}
+      <Modal visible={!!renameClusterTarget} transparent animationType="fade" onRequestClose={() => setRenameClusterTarget(null)}>
+        <Pressable style={s.modalOverlay} onPress={() => setRenameClusterTarget(null)}>
+          <Pressable style={[s.modalContent, { backgroundColor: colors.surface }]} onPress={e => e.stopPropagation()}>
+            <Text style={[s.modalTitle, { color: colors.text }]}>
+              {t('photos.namePerson') || 'Nomear pessoa'}
+            </Text>
+            <TextInput
+              style={[s.modalInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.background }]}
+              placeholder={t('photos.personNamePlaceholder') || 'Nome da pessoa'}
+              placeholderTextColor={colors.textTertiary}
+              value={renameValue}
+              onChangeText={setRenameValue}
+              autoFocus
+              onSubmitEditing={submitClusterRename}
+            />
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 16 }}>
+              <TouchableOpacity onPress={() => setRenameClusterTarget(null)} style={s.modalBtn}>
+                <Text style={{ color: colors.textSecondary }}>{t('common.cancel') || 'Cancelar'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={submitClusterRename} style={[s.modalBtn, { backgroundColor: colors.primary, borderRadius: 8 }]}>
+                <Text style={{ color: '#fff', fontWeight: '600' }}>{t('common.save') || 'Salvar'}</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Wave 14 — photobook layout picker + progress */}
+      <Modal visible={photobookVisible} transparent animationType="fade" onRequestClose={() => !photobookGenerating && setPhotobookVisible(false)}>
+        <Pressable
+          style={s.modalOverlay}
+          onPress={() => !photobookGenerating && setPhotobookVisible(false)}
+        >
+          <Pressable style={[s.modalContent, { backgroundColor: colors.surface, width: 320 }]} onPress={e => e.stopPropagation()}>
+            <Text style={[s.modalTitle, { color: colors.text }]}>
+              {t('photos.createPhotobook') || 'Criar album'}
+            </Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 12 }}>
+              {photobookSelectedCount} {t('photos.items') || 'fotos'} {t('photos.selected') || 'selecionadas'}
+            </Text>
+            {/* Layout choice */}
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 12 }}>
+              {['grid', 'magazine', 'minimal'].map(layout => (
+                <TouchableOpacity
+                  key={layout}
+                  disabled={photobookGenerating}
+                  onPress={() => setPhotobookLayout(layout)}
+                  style={[
+                    {
+                      flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: 'center',
+                      backgroundColor: photobookLayout === layout ? colors.primary : (isDark ? 'rgba(255,255,255,0.06)' : '#F3F4F6'),
+                    },
+                  ]}
+                >
+                  <Text style={{
+                    color: photobookLayout === layout ? '#fff' : colors.text,
+                    fontWeight: '600', fontSize: 13,
+                  }}>
+                    {layout === 'grid' ? (t('photos.layoutGrid') || 'Grade')
+                      : layout === 'magazine' ? (t('photos.layoutMagazine') || 'Revista')
+                      : (t('photos.layoutMinimal') || 'Minimal')}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {photobookGenerating ? (
+              <View style={{ paddingVertical: 16, alignItems: 'center' }}>
+                <ActivityIndicator color={colors.primary} />
+                <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 8 }}>
+                  {t('photos.generatingPdf') || 'Gerando PDF...'}
+                </Text>
+              </View>
+            ) : photobookResult?.pdf_url ? (
+              <View style={{ paddingVertical: 8 }}>
+                <Text style={{ color: colors.textSecondary, fontSize: 12, marginBottom: 10 }}>
+                  {(photobookResult.page_count || 0)} {t('photos.pages') || 'paginas'} · {Math.round((photobookResult.size_bytes || 0) / 1024)} KB
+                </Text>
+                <TouchableOpacity
+                  onPress={async () => {
+                    try {
+                      const url = photobookResult.pdf_url.startsWith('http')
+                        ? photobookResult.pdf_url
+                        : `https://chatyy.com.br${photobookResult.pdf_url}`;
+                      if (Platform.OS === 'web') { window.open(url, '_blank'); }
+                      else {
+                        const WB = require('expo-web-browser');
+                        await WB.openBrowserAsync(url);
+                      }
+                    } catch (e) { console.warn('[photobook] open failed:', e); }
+                  }}
+                  style={[s.modalBtn, { backgroundColor: colors.primary, borderRadius: 8, paddingHorizontal: 16 }]}
+                >
+                  <Text style={{ color: '#fff', fontWeight: '600' }}>
+                    {t('photos.downloadPdf') || 'Baixar PDF'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 8 }}>
+                <TouchableOpacity onPress={() => setPhotobookVisible(false)} style={s.modalBtn}>
+                  <Text style={{ color: colors.textSecondary }}>{t('common.cancel') || 'Cancelar'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={generatePhotobook} style={[s.modalBtn, { backgroundColor: colors.primary, borderRadius: 8 }]}>
+                  <Text style={{ color: '#fff', fontWeight: '600' }}>{t('photos.generate') || 'Gerar'}</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       {/* Viewer modal */}
       {renderViewer()}
 
@@ -4503,6 +4826,7 @@ export default function PhotosScreen() {
       <PhotoEditor
         visible={editorVisible}
         imageUri={viewerPhoto ? getFullUrl(viewerPhoto) : null}
+        photoId={viewerPhoto?.id}
         onSave={handleEditorSave}
         onClose={() => setEditorVisible(false)}
       />

@@ -56,6 +56,12 @@ export default function StoryRingAvatar({
   // anchored to the bottom of the avatar (Instagram parity).
   isLive = false,
   liveLabel = 'AO VIVO',
+  // closeFriends: when true, swap the brand purple gradient for an
+  // Instagram-style green gradient. Mirrors IG's behavior for
+  // close-friends stories — viewers instantly know it's a restricted
+  // post without having to open it. Applies to both `solid` and
+  // `segmented` ring styles. No effect when allViewed (dim grey wins).
+  closeFriends = false,
 }) {
   const _dim = dimmedColor || (isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)');
   const _badgeBorder = isDark ? '#0d0d0d' : '#fff';
@@ -130,27 +136,38 @@ export default function StoryRingAvatar({
         alignItems: 'center', justifyContent: 'center',
         transform: [{ scale: pulseScale }],
       }}>
-        {!allViewed && (
+        {!allViewed && (() => {
+          // Suffix the gradient id with the palette + size so we never get
+          // an id collision between a close-friends green ring and a brand
+          // purple ring on the same screen at the same size (only the LAST
+          // rendered Defs would win otherwise).
+          const gid = `solidRing_${closeFriends ? 'cf' : 'br'}_${size}`;
+          return (
           <View style={{ position: 'absolute', top: 0, left: 0 }}>
             <Svg width={ringSize} height={ringSize}>
               <Defs>
-                <LinearGradient id={`solidRing_${size}`} x1="0" y1="0" x2="1" y2="1">
-                  <Stop offset="0" stopColor="#A855F7" />
-                  <Stop offset="0.5" stopColor={ringColor} />
-                  <Stop offset="1" stopColor="#6D28D9" />
+                {/* Close-friends ring (IG parity): bright green gradient,
+                    swapped in whenever `closeFriends` is true so the viewer
+                    knows at a glance the post is restricted. Default is the
+                    brand purple gradient. */}
+                <LinearGradient id={gid} x1="0" y1="0" x2="1" y2="1">
+                  <Stop offset="0" stopColor={closeFriends ? '#34D399' : '#A855F7'} />
+                  <Stop offset="0.5" stopColor={closeFriends ? '#10B981' : ringColor} />
+                  <Stop offset="1" stopColor={closeFriends ? '#047857' : '#6D28D9'} />
                 </LinearGradient>
               </Defs>
               <SvgCircle
                 cx={ringSize / 2}
                 cy={ringSize / 2}
                 r={radius}
-                stroke={`url(#solidRing_${size})`}
+                stroke={`url(#${gid})`}
                 strokeWidth={2.5}
                 fill="none"
               />
             </Svg>
           </View>
-        )}
+          );
+        })()}
         {allViewed && (
           <View style={{
             position: 'absolute',
@@ -173,6 +190,10 @@ export default function StoryRingAvatar({
     const segmentDeg = (360 - totalGapDeg) / count;
     const segmentLen = (segmentDeg / 360) * circumference;
     const gapLen = (gapDeg / 360) * circumference;
+    // Suffix the gradient id with the palette + size so a green close-
+    // friends ring rendered next to a purple ring at the same size
+    // doesn't share its Defs (only the LAST rendered Defs would win).
+    const segGid = `segRing_${closeFriends ? 'cf' : 'br'}_${size}`;
     inner = (
       <Animated.View style={{
         width: ringSize, height: ringSize,
@@ -182,10 +203,14 @@ export default function StoryRingAvatar({
         <View style={{ position: 'absolute', top: 0, left: 0 }}>
           <Svg width={ringSize} height={ringSize}>
             <Defs>
-              <LinearGradient id={`segRing_${size}`} x1="0" y1="0" x2="1" y2="1">
-                <Stop offset="0" stopColor="#A855F7" />
-                <Stop offset="0.5" stopColor={ringColor} />
-                <Stop offset="1" stopColor="#6D28D9" />
+              {/* Close-friends ring (IG parity): swap to bright green
+                  gradient when `closeFriends` is set so the restricted
+                  audience scope is visible at a glance — same per-segment
+                  dimming as the purple variant once that item is viewed. */}
+              <LinearGradient id={segGid} x1="0" y1="0" x2="1" y2="1">
+                <Stop offset="0" stopColor={closeFriends ? '#34D399' : '#A855F7'} />
+                <Stop offset="0.5" stopColor={closeFriends ? '#10B981' : ringColor} />
+                <Stop offset="1" stopColor={closeFriends ? '#047857' : '#6D28D9'} />
               </LinearGradient>
             </Defs>
             {Array.from({ length: count }).map((_, i) => {
@@ -197,7 +222,9 @@ export default function StoryRingAvatar({
                   cx={ringSize / 2}
                   cy={ringSize / 2}
                   r={radius}
-                  stroke={segViewed ? 'rgba(124,58,237,0.22)' : `url(#segRing_${size})`}
+                  stroke={segViewed
+                    ? (closeFriends ? 'rgba(16,185,129,0.22)' : 'rgba(124,58,237,0.22)')
+                    : `url(#${segGid})`}
                   strokeWidth={3}
                   fill="none"
                   strokeDasharray={`${segmentLen} ${circumference - segmentLen}`}

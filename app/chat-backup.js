@@ -23,6 +23,28 @@ import {
   restoreFromBackup,
   scheduleAutomaticBackup,
 } from 'expo-chat-backup';
+// New cloud-provider engine (closes the WhatsApp parity gap "iCloud / Google
+// Drive backup"). The native expo-chat-backup module above still works as
+// the fast path; this JS engine is the cross-platform fallback that talks
+// straight to the providers via REST.
+import {
+  backupToICloudNow,
+  backupToGoogleDriveNow,
+  listGoogleDriveBackups,
+  downloadGoogleDriveBackup,
+  pickBundleFromICloud,
+  decryptChatBundle,
+  restoreBundle,
+  formatManifestSummary,
+  signInGoogleDrive,
+  getBackupFrequency,
+  setBackupFrequency,
+  getWifiOnly,
+  setWifiOnly,
+  getLastBackupAt,
+  rememberPassphrase,
+  BACKUP_FREQUENCIES,
+} from '../services/chatBackupCloud';
 
 const AUTO_KEY = '@chatyy_backup_auto';
 
@@ -44,9 +66,28 @@ export default function ChatBackupScreen() {
 
   const [password, setPassword] = useState('');
   const [working, setWorking] = useState(false);
-  const [busyAction, setBusyAction] = useState(null); // 'backup' | 'restore' | 'list'
+  const [busyAction, setBusyAction] = useState(null); // 'backup' | 'restore' | 'list' | 'icloud' | 'drive' | 'driveList'
   const [backups, setBackups] = useState([]);
   const [autoSchedule, setAutoSchedule] = useState(false);
+
+  // ─── Cloud-provider state (iCloud / Google Drive via JS engine) ──────
+  const [frequency, setFrequency] = useState('off');
+  const [wifiOnly, setWifiOnlyState] = useState(true);
+  const [lastBackupAt, setLastBackupAt] = useState(null);
+  // Drive backup list cached transiently during restore — not surfaced in UI.
+  // eslint-disable-next-line no-unused-vars
+  const [driveBackups, setDriveBackups] = useState([]);
+
+  // Load cloud-side prefs on mount.
+  useEffect(() => {
+    (async () => {
+      try {
+        setFrequency(await getBackupFrequency());
+        setWifiOnlyState(await getWifiOnly());
+        setLastBackupAt(await getLastBackupAt());
+      } catch {}
+    })();
+  }, []);
 
   const fmtBytes = (n) => {
     if (!n && n !== 0) return '';
@@ -178,6 +219,154 @@ export default function ChatBackupScreen() {
     );
   };
 
+  // ─── iCloud handlers ───────────────────────────────────────────────
+  const handleICloudBackup = useCallback(async () => {
+    if (password.length < 8) {
+      Alert.alert(
+        t('backup.weakPassTitle') || 'Senha muito curta',
+        t('backup.weakPassMsg') || 'Use pelo menos 8 caracteres.'
+      );
+      return;
+    }
+    setWorking(true);
+    setBusyAction('icloud');
+    try {
+      const r = await backupToICloudNow(password, { rememberPassphrase: true });
+      setLastBackupAt(new Date().toISOString());
+      Alert.alert(
+        t('backup.cloud.icloudOkTitle') || 'Backup enviado ao iCloud',
+        (t('backup.cloud.icloudOkMsg') || 'Backup salvo em ') + `${r.filename}`
+      );
+    } catch (e) {
+      Alert.alert(t('backup.failedTitle') || 'Falha no backup', String(e?.message || e));
+    } finally {
+      setWorking(false);
+      setBusyAction(null);
+    }
+  }, [password, t]);
+
+  const handleDriveBackup = useCallback(async () => {
+    if (password.length < 8) {
+      Alert.alert(
+        t('backup.weakPassTitle') || 'Senha muito curta',
+        t('backup.weakPassMsg') || 'Use pelo menos 8 caracteres.'
+      );
+      return;
+    }
+    setWorking(true);
+    setBusyAction('drive');
+    try {
+      // Make sure we have an access token before exporting (avoids wasting
+      // a big export call if the user cancels the OAuth screen).
+      try { await signInGoogleDrive(); } catch (e) {
+        const code = e?.code || '';
+        if (code === 'ERR_GOOGLE_SIGNIN') {
+          Alert.alert(
+            t('backup.googleSignInTitle') || 'Entrar no Google',
+            t('backup.googleSignInMsg') || 'Faça login na sua conta Google para continuar.'
+          );
+          return;
+        }
+        throw e;
+      }
+      const r = await backupToGoogleDriveNow(password, { rememberPassphrase: true });
+      setLastBackupAt(new Date().toISOString());
+      Alert.alert(
+        t('backup.cloud.driveOkTitle') || 'Backup enviado ao Drive',
+        (t('backup.cloud.driveOkMsg') || 'Backup salvo como ') + `${r.filename}`
+      );
+    } catch (e) {
+      Alert.alert(t('backup.failedTitle') || 'Falha no backup', String(e?.message || e));
+    } finally {
+      setWorking(false);
+      setBusyAction(null);
+    }
+  }, [password, t]);
+
+  // ─── Restore from cloud — picks the latest blob and pushes to backend ─
+  const handleRestoreFromCloud = useCallback(async (source) => {
+    if (password.length < 8) {
+      Alert.alert(
+        t('backup.needPassTitle') || 'Senha obrigatória',
+        t('backup.needPassMsg') || 'Digite a senha do backup para restaurar.'
+      );
+      return;
+    }
+    setWorking(true);
+    setBusyAction('restore');
+    try {
+      let bundle = null;
+      if (source === 'icloud') {
+        const picked = await pickBundleFromICloud();
+        if (!picked) return; // user cancelled
+        bundle = decryptChatBundle(picked.encrypted, password);
+      } else {
+        // List latest 5, let the user tap one. For the "auto-latest" path we
+        // pick the first.
+        const list = await listGoogleDriveBackups(5);
+        setDriveBackups(list);
+        if (!list.length) {
+          Alert.alert(
+            t('backup.noBackups') || 'Nenhum backup',
+            t('backup.cloud.noDriveBackups') || 'Nenhum backup encontrado no seu Google Drive.'
+          );
+          return;
+        }
+        bundle = await downloadGoogleDriveBackup(list[0].fileId, password);
+      }
+
+      const summary = formatManifestSummary(bundle.manifest, t);
+      Alert.alert(
+        t('backup.cloud.restoreFoundTitle') || 'Backup encontrado',
+        summary + '\n\n' + (t('backup.cloud.restoreNowQ') || 'Restaurar agora?'),
+        [
+          { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+          {
+            text: t('backup.restoreConfirmCta') || 'Restaurar',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                const r = await restoreBundle(bundle);
+                Alert.alert(
+                  t('backup.restoredTitle') || 'Restaurado',
+                  (t('backup.cloud.restoreDoneMsg') ||
+                    'Restauradas {n} mensagens ({skip} já presentes).')
+                    .replace('{n}', r.inserted)
+                    .replace('{skip}', r.skipped)
+                );
+              } catch (e) {
+                Alert.alert(t('backup.restoreFailed') || 'Falha ao restaurar', String(e?.message || e));
+              }
+            },
+          },
+        ]
+      );
+    } catch (e) {
+      Alert.alert(t('backup.restoreFailed') || 'Falha ao restaurar', String(e?.message || e));
+    } finally {
+      setWorking(false);
+      setBusyAction(null);
+    }
+  }, [password, t]);
+
+  // ─── Frequency picker — cycles off → daily → weekly → monthly → off ──
+  const handleCycleFrequency = useCallback(async () => {
+    const idx = BACKUP_FREQUENCIES.indexOf(frequency);
+    const next = BACKUP_FREQUENCIES[(idx + 1) % BACKUP_FREQUENCIES.length];
+    setFrequency(next);
+    try { await setBackupFrequency(next); } catch {}
+    if (next !== 'off' && password.length >= 8) {
+      // Pre-cache passphrase so the background task can run unattended.
+      await rememberPassphrase(password);
+    }
+  }, [frequency, password]);
+
+  const handleToggleWifiOnly = useCallback(async () => {
+    const next = !wifiOnly;
+    setWifiOnlyState(next);
+    try { await setWifiOnly(next); } catch {}
+  }, [wifiOnly]);
+
   return (
     <View style={[styles.root, { backgroundColor: colors.background, paddingTop: insets.top }]}>
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
@@ -232,6 +421,114 @@ export default function ChatBackupScreen() {
             </>
           )}
         </TouchableOpacity>
+
+        {/* ─── Cloud-provider section: iCloud + Google Drive direct ─── */}
+        <Text style={[styles.sectionHeader, { color: colors.text }]}>
+          {t('backup.cloud.providersHeader') || 'Backup em nuvem'}
+        </Text>
+        <Text style={[styles.cardBody, { color: colors.textMuted, marginBottom: Spacing.sm }]}>
+          {t('backup.cloud.providersDesc') ||
+            'Salve uma cópia cifrada do seu chat na sua iCloud (iOS) ou Google Drive. Em troca de celular, restaure pelo botão Restaurar abaixo.'}
+        </Text>
+
+        {Platform.OS === 'ios' && (
+          <TouchableOpacity
+            onPress={handleICloudBackup}
+            disabled={working}
+            style={[styles.secondaryBtn, { borderColor: colors.primary, opacity: working ? 0.5 : 1 }]}
+          >
+            {busyAction === 'icloud' ? (
+              <ActivityIndicator color={colors.primary} />
+            ) : (
+              <Text style={[styles.secondaryBtnText, { color: colors.primary }]}>
+                {t('backup.cloud.saveToICloud') || 'Salvar no iCloud'}
+              </Text>
+            )}
+          </TouchableOpacity>
+        )}
+
+        <TouchableOpacity
+          onPress={handleDriveBackup}
+          disabled={working}
+          style={[styles.secondaryBtn, { borderColor: colors.primary, opacity: working ? 0.5 : 1 }]}
+        >
+          {busyAction === 'drive' ? (
+            <ActivityIndicator color={colors.primary} />
+          ) : (
+            <Text style={[styles.secondaryBtnText, { color: colors.primary }]}>
+              {t('backup.cloud.saveToGoogleDrive') || 'Salvar no Google Drive'}
+            </Text>
+          )}
+        </TouchableOpacity>
+
+        <View style={styles.restoreRow}>
+          {Platform.OS === 'ios' && (
+            <TouchableOpacity
+              onPress={() => handleRestoreFromCloud('icloud')}
+              disabled={working}
+              style={[styles.restoreSmallBtn, { borderColor: colors.border }]}
+            >
+              <Text style={[styles.restoreBtnText, { color: colors.text }]}>
+                {t('backup.cloud.restoreFromICloud') || 'Restaurar do iCloud'}
+              </Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            onPress={() => handleRestoreFromCloud('drive')}
+            disabled={working}
+            style={[styles.restoreSmallBtn, { borderColor: colors.border }]}
+          >
+            <Text style={[styles.restoreBtnText, { color: colors.text }]}>
+              {t('backup.cloud.restoreFromDrive') || 'Restaurar do Drive'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Frequency cycler: off → daily → weekly → monthly → off */}
+        <TouchableOpacity
+          onPress={handleCycleFrequency}
+          style={[styles.toggleRow, { borderColor: colors.border }]}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.toggleLabel, { color: colors.text }]}>
+              {t('backup.cloud.frequencyLabel') || 'Frequência do backup automático'}
+            </Text>
+            <Text style={[styles.toggleHelp, { color: colors.textMuted }]}>
+              {t(`backup.cloud.freq.${frequency}`) ||
+                (frequency === 'off' ? 'Desativado' :
+                 frequency === 'daily' ? 'Diariamente' :
+                 frequency === 'weekly' ? 'Semanalmente' : 'Mensalmente')}
+            </Text>
+          </View>
+          <Text style={[styles.toggleState, { color: frequency === 'off' ? colors.textMuted : colors.primary }]}>
+            {(t(`backup.cloud.freq.${frequency}`) || frequency).toUpperCase()}
+          </Text>
+        </TouchableOpacity>
+
+        {/* Wifi-only — protect mobile data */}
+        <TouchableOpacity
+          onPress={handleToggleWifiOnly}
+          style={[styles.toggleRow, { borderColor: colors.border, borderTopWidth: 0 }]}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.toggleLabel, { color: colors.text }]}>
+              {t('backup.cloud.wifiOnly') || 'Somente em Wi-Fi'}
+            </Text>
+            <Text style={[styles.toggleHelp, { color: colors.textMuted }]}>
+              {t('backup.cloud.wifiOnlyDesc') ||
+                'Evita usar dados móveis durante o backup automático.'}
+            </Text>
+          </View>
+          <Text style={[styles.toggleState, { color: wifiOnly ? colors.primary : colors.textMuted }]}>
+            {wifiOnly ? (t('common.on') || 'ON') : (t('common.off') || 'OFF')}
+          </Text>
+        </TouchableOpacity>
+
+        {lastBackupAt && (
+          <Text style={[styles.privacyNote, { color: colors.textMuted }]}>
+            {t('backup.cloud.lastBackupAt') || 'Último backup:'} {fmtDate(lastBackupAt)}
+          </Text>
+        )}
 
         <TouchableOpacity
           onPress={handleToggleAutoSchedule}
@@ -334,6 +631,29 @@ const styles = StyleSheet.create({
     gap: Spacing.sm,
   },
   primaryBtnText: { color: '#fff', fontWeight: '700', fontSize: FontSize.md, marginLeft: Spacing.sm },
+  secondaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    marginTop: Spacing.sm,
+  },
+  secondaryBtnText: { fontWeight: '700', fontSize: FontSize.md },
+  restoreRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    marginTop: Spacing.sm,
+  },
+  restoreSmallBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: BorderRadius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   toggleRow: {
     flexDirection: 'row',
     alignItems: 'center',

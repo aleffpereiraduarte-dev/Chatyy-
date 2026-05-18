@@ -1653,11 +1653,59 @@ function CallScreenInner() {
   }, [resetControlsTimer, sendData]);
 
   const handleToggleNoiseCancellation = useCallback(() => {
-    // LiveKit always has echoCancellation + noiseSuppression + AGC enabled
-    // via audioCaptureDefaults. The toggle is now a cosmetic switch (we
-    // surface it in the UI but the real path is config-time only). Keep the
-    // setter so the icon flips, and haptic feedback.
-    setNoiseCancellation(v => !v);
+    // [2026-05-17] RNNoise ML noise suppression. LiveKit's default WebRTC AEC/AGC/NS
+    // remains on (via audioCaptureDefaults) — this toggle controls the additional
+    // RNNoise pass via modules/expo-callkit's setNoiseSuppression bridge. Default ON.
+    // The bridge persists the user choice per-device.
+    setNoiseCancellation(prev => {
+      const next = !prev;
+      try {
+        const mod = require('../modules/expo-callkit');
+        if (typeof mod.setNoiseSuppression === 'function') {
+          mod.setNoiseSuppression(next);
+        }
+      } catch (e) {
+        // Native module missing (web / older build) — UI toggle still flips.
+        console.log('[Call] setNoiseSuppression bridge unavailable:', e?.message);
+      }
+      return next;
+    });
+    _hapticTap('light');
+    resetControlsTimer();
+  }, [resetControlsTimer]);
+
+  // [2026-05-17] Background blur / virtual background. Cycle through:
+  //   off → blur_medium → blur_high → image → off
+  // Mode is persisted per-device on the native side. Hidden for audio-only calls
+  // since there's no camera frame to process.
+  const [backgroundMode, setBackgroundMode] = useState('off');
+  useEffect(() => {
+    try {
+      const mod = require('../modules/expo-callkit');
+      const cur = mod.getBackgroundMode?.();
+      if (cur?.mode) setBackgroundMode(cur.mode);
+    } catch {}
+  }, []);
+  const handleCycleBackground = useCallback(() => {
+    const order = ['off', 'blur_medium', 'blur_high', 'image'];
+    setBackgroundMode(prev => {
+      const idx = Math.max(0, order.indexOf(prev));
+      const next = order[(idx + 1) % order.length];
+      try {
+        const mod = require('../modules/expo-callkit');
+        if (typeof mod.setBackgroundMode === 'function') {
+          let imageAsset = null;
+          if (next === 'image') {
+            const list = mod.getBackgroundWallpapers?.() || [];
+            imageAsset = list[0] || null;
+          }
+          mod.setBackgroundMode(next, imageAsset);
+        }
+      } catch (e) {
+        console.log('[Call] setBackgroundMode bridge unavailable:', e?.message);
+      }
+      return next;
+    });
     _hapticTap('light');
     resetControlsTimer();
   }, [resetControlsTimer]);
@@ -2827,6 +2875,38 @@ function CallScreenInner() {
                 </View>
                 <Text style={styles.controlLabel} numberOfLines={1}>
                   {handRaised ? (t('call.handLower') || 'Abaixar') : (t('call.handRaise') || 'Mão')}
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {/* [2026-05-17 MediaPipe] Background blur / virtual background pill.
+                Video-only — audio calls have no camera frame to process. The
+                native module cycles the mode and persists it per-device. */}
+            {isVideoCall && (
+              <TouchableOpacity
+                style={styles.controlBtn}
+                onPress={handleCycleBackground}
+                activeOpacity={0.7}
+                accessibilityLabel={backgroundMode === 'off' ? (t('call.backgroundBlur') || 'Desfocar') : (t('call.backgroundChange') || 'Trocar fundo')}
+                accessibilityRole="button"
+              >
+                <View style={[styles.controlBtnCircle, backgroundMode !== 'off' && styles.controlBtnCircleActive]}>
+                  <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
+                    {/* Stylized "blur circles" — represents the SelfieSegmenter
+                        background-blur effect without using emoji. */}
+                    <SvgCircleHand cx="8" cy="12" r="3" stroke="#fff" strokeWidth={1.6} />
+                    <SvgCircleHand cx="14" cy="9" r="2" stroke="#fff" strokeWidth={1.4} opacity={0.7} />
+                    <SvgCircleHand cx="16" cy="15" r="2.5" stroke="#fff" strokeWidth={1.4} opacity={0.7} />
+                  </Svg>
+                </View>
+                <Text style={styles.controlLabel} numberOfLines={1}>
+                  {backgroundMode === 'image'
+                    ? (t('call.backgroundImage') || 'Fundo')
+                    : backgroundMode === 'blur_high'
+                      ? (t('call.backgroundHigh') || 'Forte')
+                      : backgroundMode === 'blur_medium'
+                        ? (t('call.backgroundMedium') || 'Desfocar')
+                        : (t('call.backgroundOff') || 'Fundo')}
                 </Text>
               </TouchableOpacity>
             )}

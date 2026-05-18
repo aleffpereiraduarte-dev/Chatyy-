@@ -82,7 +82,33 @@ const DEFAULT_SETTINGS = {
   preview: true,
   mention_exception: true,
   mute_until: null,
+  ringtone: 'default', // per-conversation call ringtone (gap_notifications #4)
 };
+
+// System-supplied ringtone identifiers. The 16 names match Android system
+// ringtones (Default, Argon, Beat Plucker, Caffeinated Rattlesnake, etc.)
+// plus iOS-equivalents that we ship as bundle resources. Native push
+// handlers map these strings to the actual sound URI / asset name.
+//
+// 'default' falls through to the OS default ringtone.
+const SYSTEM_RINGTONES = [
+  { value: 'default',          label: 'Padrão' },
+  { value: 'argon',            label: 'Argon' },
+  { value: 'beat',             label: 'Beat' },
+  { value: 'bellbird',         label: 'Bellbird' },
+  { value: 'bottle',           label: 'Bottle' },
+  { value: 'cesium',           label: 'Cesium' },
+  { value: 'chime',            label: 'Chime' },
+  { value: 'classic',          label: 'Clássico' },
+  { value: 'crystal',          label: 'Crystal' },
+  { value: 'flutey',           label: 'Flautim' },
+  { value: 'hello',            label: 'Hello' },
+  { value: 'kuiper',           label: 'Kuiper' },
+  { value: 'machina',          label: 'Machina' },
+  { value: 'over_the_horizon', label: 'Over the Horizon' },
+  { value: 'pixie',            label: 'Pixie' },
+  { value: 'tinkle',           label: 'Tinkle' },
+];
 
 export default function ChatNotificationSettingsSheet({
   visible, onClose, conversationId, conversationType, colors, isDark, t,
@@ -223,6 +249,19 @@ export default function ChatNotificationSettingsSheet({
               ]}
               value={settings.sound}
               onChange={(v) => saveField({ sound: v })}
+              colors={colors}
+            />
+
+            {/* Toque personalizado (ringtone) — per-conversation call
+                ringtone. Picker shows 16 system ringtones; the chosen
+                filename is written to chat_user_conv_settings.ringtone
+                and propagated through the push payload as `ringtone`
+                (gap_notifications #4). */}
+            <SectionHeader text={t?.('chatConv.ringtone') || 'Toque personalizado'} colors={colors} />
+            <PickerRow
+              options={SYSTEM_RINGTONES.map(r => ({ value: r.value, label: r.label }))}
+              value={settings.ringtone || 'default'}
+              onChange={(v) => saveField({ ringtone: v })}
               colors={colors}
             />
 

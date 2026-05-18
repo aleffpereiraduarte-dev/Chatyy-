@@ -380,6 +380,10 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
   const [bookmarked, setBookmarked] = useState(!!post.user_bookmarked);
   const [pinned, setPinned] = useState(!!post.is_pinned);
   const [showMenu, setShowMenu] = useState(false);
+  // Reels P2 — paid boost ("Impulsionar") modal. Budget tiers in cents
+  // map to diamond costs in the backend (1000 diamonds ≈ $9.99).
+  const [showPromoteModal, setShowPromoteModal] = useState(false);
+  const [promoteSubmitting, setPromoteSubmitting] = useState(false);
   // Non-owner "more options" menu — hide / not interested / see less.
   // Separate state from showMenu (owner menu) so they don't overlap visually.
   const [showViewerMenu, setShowViewerMenu] = useState(false);
@@ -803,16 +807,48 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
             <AvatarCircle email={post.author_email} name={post.author_name} size={34} />
           </View>
           <View style={styles.headerInfo}>
-            <Text style={[styles.authorName, { color: colors.text }]} numberOfLines={1}>
-              {authorDisplay}
-            </Text>
-            {post.location ? (
-              <View style={styles.locationRow}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' }}>
+              <Text style={[styles.authorName, { color: colors.text }]} numberOfLines={1}>
+                {authorDisplay}
+              </Text>
+              {/* Wave 15: "Patrocinado" badge for ads + paid boosts. Backend
+                  sets sponsored=true when is_ad OR active is_promoted. */}
+              {(post.is_ad || post.sponsored || post.is_promoted) ? (
+                <View style={{
+                  marginLeft: 6,
+                  paddingHorizontal: 6,
+                  paddingVertical: 1,
+                  borderRadius: 4,
+                  backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)',
+                }}>
+                  <Text style={{ color: ACCENT, fontSize: 10, fontWeight: '700' }}>
+                    {t?.('feed.sponsored') || 'Patrocinado'}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+            {(post.location_name || post.location) ? (
+              <TouchableOpacity
+                style={styles.locationRow}
+                activeOpacity={0.7}
+                onPress={(e) => {
+                  // Wave 15: tappable location chip — opens map if we have
+                  // coords, otherwise just falls back to a no-op.
+                  e?.stopPropagation?.();
+                  const lat = post.location_lat, lon = post.location_lon;
+                  if (lat != null && lon != null) {
+                    const url = `https://www.google.com/maps/search/?api=1&query=${lat},${lon}`;
+                    try { Linking.openURL(url); } catch {}
+                  }
+                }}
+                accessibilityRole="link"
+                accessibilityLabel={post.location_name || post.location}
+              >
                 <IconMapPin size={10} color={colors.textSecondary} />
                 <Text style={[styles.location, { color: colors.textSecondary }]} numberOfLines={1}>
-                  {post.location}
+                  {post.location_name || post.location}
                 </Text>
-              </View>
+              </TouchableOpacity>
             ) : null}
           </View>
         </TouchableOpacity>
@@ -949,6 +985,27 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                         {t('feed.analytics') || 'Análises'}
                       </Text>
                     </TouchableOpacity>
+                    {/* Reels P2 — paid boost ("Impulsionar"). Opens a modal with
+                        budget tiers ($5/$10/$25/$50/$100) + duration picker.
+                        Payment deducts from diamond wallet (1000 diamonds =
+                        $9.99). Backend feed_post_promote inserts into
+                        chat_feed_promotions and the FYP ranker boosts the
+                        score by 1.5x for the active window. */}
+                    {!post.is_promoted ? (
+                      <TouchableOpacity
+                        style={styles.menuItem}
+                        onPress={() => { setShowMenu(false); setShowPromoteModal(true); }}
+                        accessibilityLabel={t('feed.promote') || 'Impulsionar post'}
+                        accessibilityRole="button"
+                      >
+                        <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={colors.text} strokeWidth="2">
+                          <Path d="M12 2l3 7h7l-5.5 4 2 7-6.5-4.5L5.5 20l2-7L2 9h7z" />
+                        </Svg>
+                        <Text style={[styles.menuItemText, { color: colors.text }]}>
+                          {t('feed.promote') || 'Impulsionar'}
+                        </Text>
+                      </TouchableOpacity>
+                    ) : null}
                     <TouchableOpacity
                       style={styles.menuItem}
                       onPress={handleDelete}
@@ -1346,6 +1403,37 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
         </View>
       ) : null}
 
+      {/* Wave 15: tagged-people chips. Each chip is a tappable shortcut to
+          the user's profile. Hidden when tagged_users is empty. We strip
+          the email domain so chips look like @handle (matches the
+          @mention rendering in the caption). */}
+      {Array.isArray(post.tagged_users) && post.tagged_users.length > 0 ? (
+        <View style={styles.taggedRow}>
+          <Text style={[styles.taggedLabel, { color: colors.textSecondary }]}>
+            {t?.('feed.with') || 'com'}
+          </Text>
+          {post.tagged_users.slice(0, 4).map((em) => {
+            const handle = String(em || '').split('@')[0];
+            return (
+              <TouchableOpacity
+                key={em}
+                onPress={() => onPressUser?.(em, handle)}
+                style={[styles.taggedChip, { backgroundColor: isDark ? 'rgba(124,58,237,0.15)' : 'rgba(124,58,237,0.08)' }]}
+                accessibilityRole="link"
+                accessibilityLabel={'@' + handle}
+              >
+                <Text style={{ color: ACCENT, fontSize: 12, fontWeight: '600' }}>@{handle}</Text>
+              </TouchableOpacity>
+            );
+          })}
+          {post.tagged_users.length > 4 ? (
+            <Text style={[styles.taggedLabel, { color: colors.textSecondary }]}>
+              +{post.tagged_users.length - 4}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+
       {/* Comments link */}
       {commentCount > 0 && (
         <TouchableOpacity
@@ -1608,7 +1696,184 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* Reels P2 — Promote modal (budget tiers + duration). */}
+      <PromotePostModal
+        visible={showPromoteModal}
+        onClose={() => setShowPromoteModal(false)}
+        post={post}
+        onPromoted={(data) => {
+          setShowPromoteModal(false);
+          onPostUpdated?.({ ...post, is_promoted: true, sponsored: true, promotion: data });
+          try { Alert.alert(t?.('feed.promoteDoneTitle') || 'Post impulsionado', t?.('feed.promoteDoneBody') || `Seu post ficará em destaque por ${data?.duration_days || 7} dias.`); } catch {}
+        }}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+        submitting={promoteSubmitting}
+        setSubmitting={setPromoteSubmitting}
+      />
     </View>
+  );
+}
+
+// ── Promote post modal ──
+// Renders the budget tier picker + duration slider + diamond-cost preview.
+// Wallet balance is fetched once when the modal opens; if it's below the
+// required diamond cost we surface a soft warning (the backend will still
+// reject with 402 on submit). The tip / diamond top-up flow is reused via
+// LivePaidGiftSheet's existing buy-pack UI — but threading that here would
+// add too much surface; for v1 we just show the shortfall.
+function PromotePostModal({ visible, onClose, post, onPromoted, colors, isDark, t, submitting, setSubmitting }) {
+  const [tier, setTier] = useState(1000); // cents
+  const [days, setDays] = useState(7);
+  const [balance, setBalance] = useState(0);
+
+  // Same diamond cost formula as the backend: 1000 diamonds ≈ $9.99 →
+  // diamondsCost = ceil((cents/100) * 100.1). Keep in lockstep with
+  // feed_post_promote so the preview matches what's actually charged.
+  const diamondsCost = Math.ceil((tier / 100) * 100.1);
+
+  useEffect(() => {
+    if (!visible) return;
+    (async () => {
+      try {
+        const b = await api.walletBalance?.();
+        if (b?.success && b.data) setBalance(Number(b.data.diamond_balance) || 0);
+      } catch {}
+    })();
+  }, [visible]);
+
+  const submit = useCallback(async () => {
+    if (submitting || !post?.id) return;
+    setSubmitting(true);
+    try {
+      const r = await api.feedPostPromote?.(post.id, tier, days);
+      if (r?.success) {
+        onPromoted?.(r.data);
+      } else if (r?.data?.code === 'insufficient_diamonds') {
+        try { Alert.alert(t?.('feed.promoteInsufficientTitle') || 'Diamantes insuficientes', t?.('feed.promoteInsufficientBody') || 'Compre mais diamantes para impulsionar este post.'); } catch {}
+      } else {
+        try { Alert.alert(t?.('common.error') || 'Erro', r?.message || 'Promote failed'); } catch {}
+      }
+    } catch {} finally {
+      setSubmitting(false);
+    }
+  }, [post, tier, days, submitting, setSubmitting, onPromoted, t]);
+
+  const TIERS = [
+    { cents: 500,   label: '$5'   },
+    { cents: 1000,  label: '$10'  },
+    { cents: 2500,  label: '$25'  },
+    { cents: 5000,  label: '$50'  },
+    { cents: 10000, label: '$100' },
+  ];
+  const DAYS = [3, 7, 14, 30];
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable
+        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}
+        onPress={onClose}
+      >
+        <Pressable
+          onPress={(e) => e.stopPropagation && e.stopPropagation()}
+          style={{
+            backgroundColor: isDark ? '#0F172A' : '#fff',
+            borderTopLeftRadius: 18, borderTopRightRadius: 18,
+            paddingHorizontal: 18, paddingTop: 14, paddingBottom: 28,
+          }}
+        >
+          <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.20)' : 'rgba(0,0,0,0.18)', alignSelf: 'center', marginBottom: 12 }} />
+          <Text style={{ color: colors.text, fontSize: 18, fontWeight: '700', marginBottom: 6 }}>
+            {t?.('feed.promoteTitle') || 'Impulsionar post'}
+          </Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 16 }}>
+            {t?.('feed.promoteSubtitle') || 'Apareça para mais pessoas. Pague com diamantes.'}
+          </Text>
+
+          <Text style={{ color: colors.textTertiary, fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
+            {t?.('feed.promoteBudget') || 'Orçamento'}
+          </Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>
+            {TIERS.map(tr => {
+              const active = tier === tr.cents;
+              return (
+                <TouchableOpacity
+                  key={tr.cents}
+                  onPress={() => setTier(tr.cents)}
+                  style={{
+                    paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12,
+                    borderWidth: StyleSheet.hairlineWidth,
+                    borderColor: active ? '#7C3AED' : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)'),
+                    backgroundColor: active ? (isDark ? 'rgba(124,58,237,0.22)' : 'rgba(124,58,237,0.10)') : 'transparent',
+                  }}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                >
+                  <Text style={{ color: active ? '#7C3AED' : colors.text, fontWeight: active ? '800' : '600' }}>{tr.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <Text style={{ color: colors.textTertiary, fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 8 }}>
+            {t?.('feed.promoteDuration') || 'Duração'}
+          </Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 18 }}>
+            {DAYS.map(d => {
+              const active = days === d;
+              return (
+                <TouchableOpacity
+                  key={d}
+                  onPress={() => setDays(d)}
+                  style={{
+                    paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12,
+                    borderWidth: StyleSheet.hairlineWidth,
+                    borderColor: active ? '#7C3AED' : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)'),
+                    backgroundColor: active ? (isDark ? 'rgba(124,58,237,0.22)' : 'rgba(124,58,237,0.10)') : 'transparent',
+                  }}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                >
+                  <Text style={{ color: active ? '#7C3AED' : colors.text, fontWeight: active ? '800' : '600' }}>
+                    {(t?.('feed.daysN') || '{n} dias').replace('{n}', d)}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <View style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12, backgroundColor: isDark ? 'rgba(124,58,237,0.10)' : 'rgba(124,58,237,0.06)', marginBottom: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
+              {t?.('feed.promoteCost') || 'Custo'}
+            </Text>
+            <Text style={{ color: colors.text, fontSize: 15, fontWeight: '800' }}>
+              {diamondsCost} ◆
+            </Text>
+          </View>
+          <Text style={{ color: balance >= diamondsCost ? colors.textTertiary : '#ef4444', fontSize: 12, marginBottom: 14 }}>
+            {(t?.('feed.promoteBalance') || 'Seu saldo: {n} ◆').replace('{n}', balance)}
+          </Text>
+
+          <TouchableOpacity
+            onPress={submit}
+            disabled={submitting}
+            style={{ backgroundColor: '#7C3AED', paddingVertical: 14, borderRadius: 12, alignItems: 'center', opacity: submitting ? 0.6 : 1 }}
+            accessibilityRole="button"
+            accessibilityLabel={t?.('feed.promoteConfirm') || 'Confirmar impulsionamento'}
+          >
+            {submitting ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={{ color: '#fff', fontSize: 15, fontWeight: '800' }}>
+                {t?.('feed.promoteConfirm') || 'Impulsionar agora'}
+              </Text>
+            )}
+          </TouchableOpacity>
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 
@@ -1880,6 +2145,24 @@ const styles = StyleSheet.create({
   },
   commentsPreviewText: {
     fontSize: 14,
+  },
+  // Wave 15: tagged-people chip row below the caption.
+  taggedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    paddingHorizontal: 14,
+    paddingTop: 6,
+    gap: 6,
+  },
+  taggedLabel: {
+    fontSize: 12,
+    marginRight: 2,
+  },
+  taggedChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
   },
   timestamp: {
     fontSize: 10,

@@ -23,6 +23,12 @@ import {
   getSettings, saveSettings, getBackedUpMap, saveBackedUpMap,
   markAssetBackedUp, setLastSync, KEYS,
 } from './backup/backupStorage';
+import * as uploadNotification from './uploadNotification';
+
+// Notification id used for the persistent ongoing backup progress
+// notification. Same id is reused across progress ticks so the OS
+// replaces the previous row in place (Android setOngoing + setProgress).
+const BACKUP_NOTIF_ID = 'chatyy_photo_backup';
 
 // Native module for iOS background uploads (PHCachingImageManager + NSURLSession)
 let NativeUpload = null;
@@ -267,7 +273,33 @@ export async function startForegroundBackup(onProgress) {
 
   if (!acquireLock('foreground')) return { uploaded: 0, total: 0, error: 'lock_contention' };
 
-  progressCallback = onProgress || null;
+  // Wrap the caller's progress callback so we ALSO drive the persistent
+  // ongoing notification on every tick. Cheap — the wrapper is created once
+  // per backup session and reused across all native/engine emit events.
+  const _userProgressCb = onProgress || null;
+  progressCallback = (p) => {
+    try {
+      uploadNotification.update(BACKUP_NOTIF_ID, {
+        current: p?.current || 0,
+        total: p?.total || 0,
+      });
+    } catch {}
+    if (_userProgressCb) {
+      try { _userProgressCb(p); } catch {}
+    }
+  };
+
+  // Surface the ongoing notification — sticky on Android, passive on iOS.
+  // Cancel action calls requestStop() so the user can halt without opening
+  // the app.
+  try {
+    await uploadNotification.start({
+      id: BACKUP_NOTIF_ID,
+      title: 'Backup do Chatyy',
+      total: 0,
+      onCancel: () => { requestStop(); },
+    });
+  } catch {}
 
   // Refresh BG creds — ensures the next BGTaskScheduler wake-up has a fresh
   // token, even if the user never opens the Photos screen explicitly.
@@ -283,6 +315,7 @@ export async function startForegroundBackup(onProgress) {
     const { status } = await ML.getPermissionsAsync();
     if (status !== 'granted') {
       releaseLock();
+      try { await uploadNotification.fail(BACKUP_NOTIF_ID, { errorMessage: 'Permissão de fotos negada' }); } catch {}
       return { uploaded: 0, total: 0, error: 'permission_denied' };
     }
 
@@ -509,6 +542,7 @@ export async function startForegroundBackup(onProgress) {
           if (uploaded > 0) await setLastSync(new Date().toISOString());
           releaseLock();
           progressCallback = null;
+          try { await uploadNotification.complete(BACKUP_NOTIF_ID, { successCount: uploaded, total: done }); } catch {}
           return { success: true, uploaded, total: done, nativeMode: true };
         }
 
@@ -595,6 +629,7 @@ export async function startForegroundBackup(onProgress) {
       if (uploaded > 0) await setLastSync(new Date().toISOString());
       releaseLock();
       progressCallback = null;
+      try { await uploadNotification.complete(BACKUP_NOTIF_ID, { successCount: uploaded, total: done }); } catch {}
       return { uploaded, total: done };
     }
 
@@ -626,6 +661,12 @@ export async function startForegroundBackup(onProgress) {
 
     releaseLock();
     progressCallback = null;
+    try {
+      await uploadNotification.complete(BACKUP_NOTIF_ID, {
+        successCount: uploaded,
+        total: result?.totalFiles || uploaded,
+      });
+    } catch {}
     console.log(`[backup] Foreground complete: ${uploaded} uploaded`);
     return {
       uploaded,
@@ -635,6 +676,7 @@ export async function startForegroundBackup(onProgress) {
   } catch (err) {
     releaseLock();
     progressCallback = null;
+    try { await uploadNotification.fail(BACKUP_NOTIF_ID, { errorMessage: err?.message || 'Falha no envio' }); } catch {}
     return { uploaded: 0, total: 0, error: err?.message || 'unknown' };
   }
 }

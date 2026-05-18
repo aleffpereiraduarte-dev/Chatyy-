@@ -1,6 +1,8 @@
 package expo.modules.livenative
 
+import android.app.PictureInPictureParams
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -10,6 +12,7 @@ import android.os.Handler
 import android.os.Looper
 import android.text.InputType
 import android.util.Log
+import android.util.Rational
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -652,6 +655,45 @@ class LiveViewerActivity : ComponentActivity() {
   // ────────────────────────────────────────────────────────────────────────
 
   override fun onBackPressed() { finishViewer("back") }
+
+  // ────────────────────────────────────────────────────────────────────────
+  //  Picture-in-Picture — wave 16 (2026-05-17)
+  //
+  // When the user presses Home or navigates away from the activity, drop
+  // into PiP so the live keeps playing in a floating window. AndroidManifest
+  // declares `supportsPictureInPicture` + resizeable on this activity.
+  // ────────────────────────────────────────────────────────────────────────
+
+  override fun onUserLeaveHint() {
+    super.onUserLeaveHint()
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !isFinishing && !isDestroyed) {
+      try {
+        val params = PictureInPictureParams.Builder()
+          .setAspectRatio(Rational(9, 16))  // portrait live aspect
+          .build()
+        enterPictureInPictureMode(params)
+      } catch (t: Throwable) {
+        Log.w(TAG, "enterPictureInPictureMode failed: ${t.message}")
+      }
+    }
+  }
+
+  override fun onPictureInPictureModeChanged(
+    isInPictureInPictureMode: Boolean,
+    newConfig: Configuration
+  ) {
+    super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+    // Hide UI chrome when entering PiP (comments overlay, top bar, composer)
+    // so the floating window is just the video. Restore on exit.
+    val chromeVis = if (isInPictureInPictureMode) View.GONE else View.VISIBLE
+    // Guard each `lateinit var` field — onPictureInPictureModeChanged can fire
+    // during config-change before buildRootView wired them up.
+    try { commentsScroll.visibility = chromeVis } catch (_: Throwable) {}
+    try { commentInput.visibility = chromeVis } catch (_: Throwable) {}
+    try { livePill.visibility = chromeVis } catch (_: Throwable) {}
+    try { viewerCountText.visibility = chromeVis } catch (_: Throwable) {}
+    try { hostNameText.visibility = chromeVis } catch (_: Throwable) {}
+  }
 
   private fun finishViewer(reason: String) {
     Log.d(TAG, "finishViewer reason=$reason room=$roomName")

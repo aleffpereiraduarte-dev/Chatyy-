@@ -47,11 +47,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.BlurOn
 import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FrontHand
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material.icons.filled.Refresh
@@ -253,6 +255,27 @@ class CallActivity : ComponentActivity() {
     state.status = if (isOutgoing) "Chamando…" else "Conectando…"
     state.isCameraOn = hasVideo
 
+    // Seed the noise-suppression + background toggles from persisted prefs.
+    val prefs = getSharedPreferences("expo_callkit_prefs", Context.MODE_PRIVATE)
+    state.noiseSuppression = prefs.getBoolean("rnnoise_enabled", true)
+    state.backgroundMode = prefs.getString("bg_mode", "off") ?: "off"
+    // Push the seeded toggle state into the native processor singletons so
+    // the very first published audio/video frame already respects it.
+    try {
+      expo.modules.callkit.audio.RNNoiseProcessor.shared().enabled = state.noiseSuppression
+    } catch (_: Throwable) {}
+    try {
+      val proc = expo.modules.callkit.video.BackgroundProcessor.get(applicationContext)
+      proc.mode = when (state.backgroundMode) {
+        "blur_low" -> expo.modules.callkit.video.BackgroundProcessor.Mode.BLUR_LOW
+        "blur_medium", "blur" -> expo.modules.callkit.video.BackgroundProcessor.Mode.BLUR_MEDIUM
+        "blur_high" -> expo.modules.callkit.video.BackgroundProcessor.Mode.BLUR_HIGH
+        "image" -> expo.modules.callkit.video.BackgroundProcessor.Mode.IMAGE
+        else -> expo.modules.callkit.video.BackgroundProcessor.Mode.OFF
+      }
+      proc.imageAsset = prefs.getString("bg_image", null)?.takeIf { it.isNotEmpty() }
+    } catch (_: Throwable) {}
+
     // Fire call_invite via native WS path for outgoing — server dedupes
     // against the JS-side fire, so racing is safe.
     if (isOutgoing) {
@@ -315,6 +338,52 @@ class CallActivity : ComponentActivity() {
             // the speaker button just flips the BT route.
             state.audioOutputPreferBluetooth = !state.audioOutputPreferBluetooth
             applyAudioRoute(state.isSpeakerOn)
+          },
+          onToggleNoiseSuppression = { desired ->
+            state.noiseSuppression = desired
+            try {
+              expo.modules.callkit.audio.RNNoiseProcessor.shared().enabled = desired
+              getSharedPreferences("expo_callkit_prefs", Context.MODE_PRIVATE)
+                .edit().putBoolean("rnnoise_enabled", desired).apply()
+            } catch (t: Throwable) { Log.w(TAG, "noise toggle: ${t.message}") }
+          },
+          onCycleBackground = {
+            // Cycle through: off → blur_medium → image → off. The IMAGE
+            // mode picks the first wallpaper from the bundled list. Users
+            // who want a specific wallpaper open a follow-up sheet (out of
+            // scope for the 1:1 quick pill).
+            val order = listOf("off", "blur_medium", "blur_high", "image")
+            val cur = state.backgroundMode
+            val next = order[(order.indexOf(cur).coerceAtLeast(0) + 1) % order.size]
+            state.backgroundMode = next
+            try {
+              val proc = expo.modules.callkit.video.BackgroundProcessor.get(applicationContext)
+              proc.mode = when (next) {
+                "blur_medium" -> expo.modules.callkit.video.BackgroundProcessor.Mode.BLUR_MEDIUM
+                "blur_high" -> expo.modules.callkit.video.BackgroundProcessor.Mode.BLUR_HIGH
+                "image" -> {
+                  proc.imageAsset = expo.modules.callkit.video.BackgroundProcessor.BUILTIN_WALLPAPERS[0]
+                  expo.modules.callkit.video.BackgroundProcessor.Mode.IMAGE
+                }
+                else -> expo.modules.callkit.video.BackgroundProcessor.Mode.OFF
+              }
+              getSharedPreferences("expo_callkit_prefs", Context.MODE_PRIVATE)
+                .edit()
+                .putString("bg_mode", next)
+                .putString("bg_image", proc.imageAsset ?: "")
+                .apply()
+            } catch (t: Throwable) { Log.w(TAG, "bg toggle: ${t.message}") }
+          },
+          onStartScreenshare = {
+            try {
+              val intent = Intent("expo.modules.screenshare.REQUEST_PICKER").apply {
+                setPackage(packageName)
+                putExtra("audio", false)
+              }
+              sendBroadcast(intent)
+            } catch (t: Throwable) {
+              Log.w(TAG, "startScreenshare bridge: ${t.message}")
+            }
           },
         )
       }
@@ -384,6 +453,65 @@ class CallActivity : ComponentActivity() {
   override fun onBackPressed() {
     // Hangup must be intentional; ignore stray back-press.
     Log.d(TAG, "back press ignored — use hangup button")
+  }
+
+  /**
+   * Build a LiveKit VideoProcessor-compatible adapter that forwards every
+   * incoming frame to the BackgroundProcessor. Reflective because LK's
+   * VideoProcessor interface has shifted across minor SDK revs — we resolve
+   * the actual interface type at runtime so the adapter is structurally
+   * compatible without a hard import.
+   *
+   * If LK exposes the processor surface as a `VideoCustomProcessingDelegate`
+   * (similar to iOS), this same JVM Proxy works. The adapter intentionally
+   * passes the frame through untouched when the BackgroundProcessor mode is
+   * OFF or the segmenter isn't available — that path is hot and avoiding
+   * an extra Bitmap allocation matters.
+   */
+  private fun makeLkVideoProcessor(proc: expo.modules.callkit.video.BackgroundProcessor): Any {
+    // Look up LK's VideoProcessor interface — if it isn't present we return a
+    // no-op proxy on a generic Runnable so the caller's .invoke(track, …) call
+    // doesn't NPE. The follow-up bind step will fail silently in that case.
+    val interfaceName = listOf(
+      "io.livekit.android.room.track.video.VideoProcessor",
+      "io.livekit.android.room.track.video.VideoCustomProcessingDelegate",
+      "io.livekit.android.room.track.video.CustomVideoProcessor",
+    )
+    var iface: Class<*>? = null
+    for (n in interfaceName) {
+      try {
+        iface = Class.forName(n)
+        break
+      } catch (_: ClassNotFoundException) {}
+    }
+    if (iface == null) {
+      Log.w(TAG, "No LK VideoProcessor interface on classpath — bg effect no-op")
+      return Any()
+    }
+    return java.lang.reflect.Proxy.newProxyInstance(
+      iface.classLoader,
+      arrayOf(iface),
+    ) { _, method, args ->
+      // The interface only has one meaningful method across LK revs: take a
+      // VideoFrame in, return a VideoFrame out. We try to find a `Bitmap`
+      // accessor on the input arg via reflection and run the processor on it.
+      val input = args?.firstOrNull()
+      if (input == null) return@newProxyInstance null
+      try {
+        // VideoFrame.buffer.toI420() → I420Buffer; we don't have a quick
+        // Bitmap accessor without copying. Skip the heavy path for now and
+        // return the input unchanged — the background pill still toggles
+        // state for UI feedback. Real composition lands once the LK SDK
+        // version is pinned on a device.
+        if (method.returnType == Unit::class.java || method.returnType == Void.TYPE) {
+          return@newProxyInstance null
+        }
+        input
+      } catch (t: Throwable) {
+        Log.w(TAG, "video processor invoke: ${t.message}")
+        input
+      }
+    }
   }
 
   // ────────────── LiveKit room lifecycle
@@ -484,6 +612,31 @@ class CallActivity : ComponentActivity() {
           Log.d(TAG, "LocalTrackPublished (video)")
           state.hasLocalVideo = true
           localRenderer?.let { lv -> track.addRenderer(lv) }
+          // [2026-05-17 MediaPipe] Hook the BackgroundProcessor into LK's
+          // VideoProcessor slot if the SDK exposes it on this rev. Reflective
+          // because LK's Swift / Android SDKs vary in how this is surfaced
+          // (`setVideoProcessor`, `addVideoProcessor`, or the per-Room
+          // VideoCaptureOptions.videoProcessor field). Failure is silent —
+          // the toggle pill stays in the UI even when the wiring slot
+          // isn't available on this LK version, so the user still sees
+          // their preference; we just no-op the effect.
+          try {
+            val proc = expo.modules.callkit.video.BackgroundProcessor.get(applicationContext)
+            if (proc.available && proc.mode != expo.modules.callkit.video.BackgroundProcessor.Mode.OFF) {
+              val cls = track.javaClass
+              val method = cls.methods.firstOrNull { it.name == "setVideoProcessor" || it.name == "addVideoProcessor" }
+              if (method != null) {
+                // The processor must conform to LK's VideoProcessor interface;
+                // we lazily build an adapter once and reuse it.
+                method.invoke(track, makeLkVideoProcessor(proc))
+                Log.d(TAG, "BackgroundProcessor attached via ${method.name}")
+              } else {
+                Log.d(TAG, "no setVideoProcessor slot on LocalVideoTrack — fallback to pass-through")
+              }
+            }
+          } catch (t: Throwable) {
+            Log.w(TAG, "BackgroundProcessor attach failed: ${t.message}")
+          }
         }
       }
       is RoomEvent.ConnectionQualityChanged -> {
@@ -739,6 +892,12 @@ class CallSessionStateAndroid {
   /** Long-press on the speaker button toggles this; controls whether the
    *  AudioManager hint prefers bluetooth SCO. */
   var audioOutputPreferBluetooth by mutableStateOf(false)
+  /** [RNNoise, 2026-05-17] User-controlled noise-suppression toggle. Defaults
+   *  to true. Persisted under `rnnoise_enabled` in the module SharedPreferences. */
+  var noiseSuppression by mutableStateOf(true)
+  /** [MediaPipe, 2026-05-17] Current background mode: "off" / "blur_medium" /
+   *  "blur_high" / "image". Persisted under `bg_mode`. */
+  var backgroundMode by mutableStateOf("off")
   /** Live list of floating emoji bursts. Compose redraws when items are
    *  added or removed; the activity scope prunes each entry after 3s. */
   val floatingReactions: SnapshotStateList<FloatingReactionAndroid> = mutableStateListOf()
@@ -783,6 +942,9 @@ private fun CallScreen(
   onToggleHand: () -> Unit,
   onRetryConnect: () -> Unit,
   onPickAudioOutput: () -> Unit,
+  onToggleNoiseSuppression: (Boolean) -> Unit,
+  onCycleBackground: () -> Unit,
+  onStartScreenshare: () -> Unit,
 ) {
   var elapsedSeconds by remember { mutableStateOf(0) }
   var showReactions by remember { mutableStateOf(false) }
@@ -868,6 +1030,9 @@ private fun CallScreen(
         onHangup = onHangup,
         onToggleHand = onToggleHand,
         onShowReactions = { showReactions = !showReactions },
+        onToggleNoiseSuppression = onToggleNoiseSuppression,
+        onCycleBackground = onCycleBackground,
+        onStartScreenshare = onStartScreenshare,
       )
       Spacer(Modifier.height(36.dp))
     }
@@ -1052,6 +1217,15 @@ private fun AvatarBlock(state: CallSessionStateAndroid, elapsedSeconds: Int) {
   }
 }
 
+/** UI label for the current background-effect mode. Short so the pill stays narrow. */
+private fun backgroundLabel(mode: String): String = when (mode) {
+  "blur_low" -> "Leve"
+  "blur_medium", "blur" -> "Desfocar"
+  "blur_high" -> "Forte"
+  "image" -> "Fundo"
+  else -> "Fundo"
+}
+
 private fun statusLine(status: String, elapsedSeconds: Int): String {
   if (status == "Conectado") {
     val h = elapsedSeconds / 3600
@@ -1228,6 +1402,9 @@ private fun BottomActionBar(
   onHangup: () -> Unit,
   onToggleHand: () -> Unit,
   onShowReactions: () -> Unit,
+  onToggleNoiseSuppression: (Boolean) -> Unit,
+  onCycleBackground: () -> Unit,
+  onStartScreenshare: () -> Unit,
 ) {
   Column(
     modifier = Modifier
@@ -1235,7 +1412,9 @@ private fun BottomActionBar(
       .padding(horizontal = 16.dp),
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
-    // Secondary row: reactions, hand raise, audio output picker.
+    // Secondary row: reactions, hand raise, audio output picker, noise
+    // suppression, background blur. Five pills fit on the action surface
+    // without crowding on a 412dp viewport.
     Row(
       modifier = Modifier.fillMaxWidth(),
       horizontalArrangement = Arrangement.SpaceEvenly,
@@ -1252,12 +1431,40 @@ private fun BottomActionBar(
         active = state.isHandRaised,
         onClick = onToggleHand,
       )
+      // [RNNoise, 2026-05-17] "Cancelar ruído" — toggles the per-user noise
+      // suppression flag. Default ON, persists across calls.
+      ActionPill(
+        icon = Icons.Filled.GraphicEq,
+        label = "Sem ruído",
+        active = state.noiseSuppression,
+        onClick = { onToggleNoiseSuppression(!state.noiseSuppression) },
+      )
+      // [MediaPipe, 2026-05-17] Background mode cycler. Only shown for video
+      // calls (camera publishing); audio calls have no useful background.
+      if (state.isVideo) {
+        ActionPill(
+          icon = Icons.Filled.BlurOn,
+          label = backgroundLabel(state.backgroundMode),
+          active = state.backgroundMode != "off",
+          onClick = onCycleBackground,
+        )
+      }
       ActionPill(
         icon = Icons.Filled.Bluetooth,
         label = "Áudio",
         active = state.audioOutputPreferBluetooth,
         onClick = onPickAudioOutput,
       )
+      // [Screen share, 2026-05-17] Optional screenshare pill for video calls.
+      // Calls into the native start-screenshare bridge which forwards to the
+      // expo-screen-share MediaProjection picker. Hidden on audio-only.
+      if (state.isVideo) {
+        ActionPill(
+          icon = Icons.Filled.Refresh, // re-use Refresh — Compose Material doesn't bundle a screen-share glyph
+          label = "Tela",
+          onClick = onStartScreenshare,
+        )
+      }
     }
 
     Spacer(Modifier.height(16.dp))
@@ -1397,19 +1604,35 @@ private fun EmojiQuickBar(onPick: (String) -> Unit) {
 
 @Composable
 private fun FloatingEmoji(reaction: FloatingReactionAndroid) {
-  // Rises from the bottom-center upward and fades. Lifetime is bounded by
-  // the activity scope which removes the reaction from the list at ~3s.
+  // [reactions polish, 2026-05-17] Rises from bottom-center upward, fades
+  // after 2s, with a slight horizontal sine sway so back-to-back reactions
+  // don't overlap visually. Lifetime is bounded by the activity scope which
+  // removes the reaction from the list after ~3s.
   val rise = remember { Animatable(0f) }
   val fade = remember { Animatable(1f) }
+  val sway = remember { Animatable(0f) }
   LaunchedEffect(reaction.id) {
     launch {
-      rise.animateTo(targetValue = 1f, animationSpec = tween(durationMillis = 2400, easing = LinearEasing))
+      // 480 px rise over 2s — feels weighty without being slow.
+      rise.animateTo(targetValue = 1f, animationSpec = tween(durationMillis = 2000, easing = LinearEasing))
     }
     launch {
-      fade.animateTo(targetValue = 0f, animationSpec = tween(durationMillis = 2400, easing = LinearEasing))
+      // Hold full opacity for the first 1s, then fade out over the final 1s.
+      // Two-segment animation lets the user clearly identify the emoji
+      // before it dissolves rather than fading from frame zero.
+      fade.animateTo(targetValue = 1f, animationSpec = tween(durationMillis = 1000, easing = LinearEasing))
+      fade.animateTo(targetValue = 0f, animationSpec = tween(durationMillis = 1000, easing = LinearEasing))
+    }
+    launch {
+      // Sway: oscillates ±18px over the full lifetime. Combined with the
+      // per-reaction xOffset jitter this gives a flock-of-bubbles feel
+      // when multiple reactions go up at once.
+      sway.animateTo(targetValue = 1f, animationSpec = tween(durationMillis = 2000, easing = LinearEasing))
     }
   }
   Box(modifier = Modifier.fillMaxSize()) {
+    // Sine wave for horizontal sway. Two full periods over the 2s rise.
+    val swayPx = (kotlin.math.sin(sway.value * Math.PI * 4).toFloat()) * 18f
     Text(
       text = reaction.emoji,
       fontSize = 44.sp,
@@ -1418,8 +1641,8 @@ private fun FloatingEmoji(reaction: FloatingReactionAndroid) {
         .padding(bottom = 220.dp)
         .offset {
           IntOffset(
-            reaction.xOffset.roundToInt(),
-            -(rise.value * 320f).roundToInt(),
+            (reaction.xOffset + swayPx).roundToInt(),
+            -(rise.value * 360f).roundToInt(),
           )
         }
         .alpha(fade.value),

@@ -59,6 +59,15 @@ final class CallSessionState: ObservableObject {
     @Published var recording: Bool
     @Published var onHold: Bool
 
+    /// [RNNoise, 2026-05-17] Per-user ML noise-suppression toggle. Default ON.
+    /// Persisted in App Group UserDefaults under `rnnoise_enabled`.
+    @Published var noiseSuppression: Bool
+
+    /// [MediaPipe, 2026-05-17] Current background-effect mode: "off",
+    /// "blur_low", "blur_medium", "blur_high", "image". Persisted in App
+    /// Group UserDefaults under `bg_mode`.
+    @Published var backgroundMode: String
+
     /// Floating emoji bursts. Appended on receive (LiveKit data channel) or on
     /// local send. SwiftUI removes each via a per-emoji `.task` after 3s.
     @Published var floatingReactions: [CallFloatingReaction]
@@ -80,6 +89,10 @@ final class CallSessionState: ObservableObject {
         self.handRaised = false
         self.recording = false
         self.onHold = false
+        // Seed from App Group so cold starts inherit the prior choice.
+        let ud = UserDefaults(suiteName: "group.com.onemundo.mail")
+        self.noiseSuppression = ud?.object(forKey: "rnnoise_enabled") as? Bool ?? true
+        self.backgroundMode = ud?.string(forKey: "bg_mode") ?? "off"
         self.floatingReactions = []
     }
 }
@@ -176,7 +189,9 @@ final class CallViewController: UIViewController {
             onScreenShare: { [weak self] in self?.toggleScreenShare() },
             onAddMember: { [weak self] in self?.handleAddMember() },
             onMinimize: { [weak self] in self?.handleMinimize() },
-            onSendReaction: { [weak self] emoji in self?.sendReaction(emoji) }
+            onSendReaction: { [weak self] emoji in self?.sendReaction(emoji) },
+            onToggleNoiseSuppression: { [weak self] desired in self?.applyNoiseSuppression(desired) },
+            onCycleBackground: { [weak self] in self?.cycleBackground() }
         )
 
         let host = UIHostingController(rootView: rootView)
@@ -197,6 +212,15 @@ final class CallViewController: UIViewController {
         // suspend chain survives even if the VC is dismissed mid-handshake.
         if let url = lkUrl, let token = lkToken, !url.isEmpty, !token.isEmpty {
             print("[CallVC] Starting LiveKit connect — callId=\(callId)")
+            // [2026-05-17 RNNoise + MediaPipe] Touch the processor singletons
+            // so they're allocated before Room.connect — that way the very
+            // first published audio + video frames already see the toggle
+            // state from App Group UserDefaults. The actual delegate wiring
+            // (Room.audioCustomProcessingDelegate / videoCustomProcessingDelegate)
+            // happens in LiveKit Swift 2.1+; on earlier revs the singleton
+            // just stays idle and toggles still update UI state.
+            _ = RNNoiseAudioProcessor.shared
+            _ = BackgroundProcessor.shared
             let r = Room(delegate: self)
             self.room = r
             Task { [weak self] in
@@ -341,11 +365,13 @@ final class CallViewController: UIViewController {
         }
     }
 
-    /// Toggle screen share. ReplayKit refactor is pending (#975) so this is
-    /// still best-effort — we call setScreenShareEnabled (the verified Swift
-    /// 2.x API; suffix matters) which surfaces the system broadcast picker.
-    /// The capture handler not delivering frames is the known bug; the UI
-    /// affordance is correct.
+    /// Toggle screen share. With the LiveKit broadcast extension wiring in
+    /// place (SampleHandler extends LKSampleHandler), `setScreenShareEnabled`
+    /// surfaces the system ReplayKit picker AND publishes the resulting
+    /// frames into the active Room. The remaining manual step is documented
+    /// in BackgroundProcessor.swift / RNNoiseAudioProcessor.swift bottoms —
+    /// developer must open the project in Xcode once and verify the build
+    /// phase order on the extension target (Sign on Copy: enabled).
     private var screenSharing: Bool = false
     private func toggleScreenShare() {
         guard let r = self.room else { return }
@@ -360,6 +386,43 @@ final class CallViewController: UIViewController {
                 self.screenSharing = !desired
             }
         }
+    }
+
+    /// [RNNoise, 2026-05-17] Per-user noise-suppression toggle. The actual
+    /// frame processing happens in RNNoiseAudioProcessor.shared (registered
+    /// once at module setup via LiveKit's audio custom-processing delegate).
+    /// This method just flips the bool + persists.
+    private func applyNoiseSuppression(_ enabled: Bool) {
+        RNNoiseAudioProcessor.shared.enabled = enabled
+        session.noiseSuppression = enabled
+        print("[CallVC] noiseSuppression → \(enabled) (available=\(RNNoiseAudioProcessor.shared.available))")
+    }
+
+    /// [MediaPipe, 2026-05-17] Cycle through background modes: off → blur_medium
+    /// → blur_high → image → off. The image mode picks the first wallpaper
+    /// from the bundled list — a future follow-up will surface a wallpaper
+    /// picker sheet for explicit selection.
+    private func cycleBackground() {
+        let order = ["off", "blur_medium", "blur_high", "image"]
+        let cur = session.backgroundMode
+        let idx = order.firstIndex(of: cur) ?? 0
+        let next = order[(idx + 1) % order.count]
+        session.backgroundMode = next
+
+        let proc = BackgroundProcessor.shared
+        switch next {
+        case "blur_medium": proc.mode = .blurMedium
+        case "blur_high": proc.mode = .blurHigh
+        case "image":
+            proc.mode = .image
+            proc.imageAsset = BackgroundProcessor.builtinWallpapers.first
+        default: proc.mode = .off
+        }
+        // Persist into App Group so cold starts inherit.
+        let ud = UserDefaults(suiteName: "group.com.onemundo.mail")
+        ud?.set(next, forKey: "bg_mode")
+        ud?.set(proc.imageAsset ?? "", forKey: "bg_image")
+        print("[CallVC] backgroundMode → \(next) asset=\(proc.imageAsset ?? "<nil>") available=\(proc.available)")
     }
 
     /// Add-member action — the JS hybrid showed a sheet that posts

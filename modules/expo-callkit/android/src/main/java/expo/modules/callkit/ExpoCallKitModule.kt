@@ -247,6 +247,29 @@ class ExpoCallKitModule : Module() {
       } catch (t: Throwable) {
         Log.w(TAG, "registerPhoneAccount failed: ${t.message}")
       }
+
+      // [2026-05-17 RNNoise + MediaPipe] Touch processor singletons so the
+      // reflective class lookups + native lib loads run at setup time, not
+      // at first frame (which would block the audio thread for ~200ms).
+      try {
+        val n = expo.modules.callkit.audio.RNNoiseProcessor.shared()
+        val v = expo.modules.callkit.video.BackgroundProcessor.get(context.applicationContext)
+        // Apply persisted toggle states so the very first Room inherits them.
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        n.enabled = prefs.getBoolean("rnnoise_enabled", true)
+        val mode = prefs.getString("bg_mode", "off")
+        v.mode = when (mode) {
+          "blur_low" -> expo.modules.callkit.video.BackgroundProcessor.Mode.BLUR_LOW
+          "blur_medium", "blur" -> expo.modules.callkit.video.BackgroundProcessor.Mode.BLUR_MEDIUM
+          "blur_high" -> expo.modules.callkit.video.BackgroundProcessor.Mode.BLUR_HIGH
+          "image" -> expo.modules.callkit.video.BackgroundProcessor.Mode.IMAGE
+          else -> expo.modules.callkit.video.BackgroundProcessor.Mode.OFF
+        }
+        v.imageAsset = prefs.getString("bg_image", null)?.takeIf { it.isNotEmpty() }
+        Log.d(TAG, "setup: processors ready — rnnoise.available=${n.available} bg.available=${v.available}")
+      } catch (t: Throwable) {
+        Log.w(TAG, "processor preload failed: ${t.message}")
+      }
     }
 
     AsyncFunction("displayIncomingCall") { callId: String, callerName: String, hasVideo: Boolean, callerEmail: String?, conversationId: String? ->
@@ -501,6 +524,144 @@ class ExpoCallKitModule : Module() {
     AsyncFunction("muteParticipant") { roomName: String, identity: String ->
       android.util.Log.i(TAG, "muteParticipant room=$roomName identity=$identity — JS owns the HTTP path, this is a no-op shim")
       true
+    }
+
+    // ─── RNNoise ML noise suppression (2026-05-17) ─────────────────────────
+    //
+    // Per-user toggle, default ON. The actual frame-by-frame processing lives
+    // in expo.modules.callkit.audio.RNNoiseProcessor (loaded reflectively
+    // from the prebuilt livekit/rnnoise-android AAR). The processor is a
+    // singleton — flipping the toggle here flips it for any active Room.
+    //
+    // Per-user persistence lives in SharedPreferences (KEY_RNNOISE) so a
+    // returning user inherits their last choice. JS bridges
+    // services/api.js login/restore should call setNoiseSuppression(true)
+    // once on first launch to seed the default.
+    Function("setNoiseSuppression") { enabled: Boolean ->
+      try {
+        val proc = expo.modules.callkit.audio.RNNoiseProcessor.shared()
+        proc.enabled = enabled
+        // Persist per-user. The actual user-id key would be account email,
+        // but the toggle is per-device today (matches Krisp's UX where the
+        // setting is also tied to the install, not the account).
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putBoolean("rnnoise_enabled", enabled).apply()
+        Log.d(TAG, "setNoiseSuppression: $enabled (rnnoise.available=${proc.available})")
+        true
+      } catch (t: Throwable) {
+        Log.w(TAG, "setNoiseSuppression failed: ${t.message}")
+        false
+      }
+    }
+
+    Function("getNoiseSuppression") {
+      try {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        // Default to true — match the JS-side `noiseSuppression: true`
+        // constraint and the iOS default.
+        prefs.getBoolean("rnnoise_enabled", true)
+      } catch (_: Throwable) { true }
+    }
+
+    Function("isNoiseSuppressionAvailable") {
+      try { expo.modules.callkit.audio.RNNoiseProcessor.shared().available }
+      catch (_: Throwable) { false }
+    }
+
+    // ─── MediaPipe background blur / virtual background (2026-05-17) ──────
+    //
+    // Mode + asset are state on the singleton BackgroundProcessor; the
+    // actual VideoProcessor binding lives on LiveKit's LocalVideoTrack and
+    // is registered when CallActivity attaches its local camera. UI sets
+    // the mode here; the processor picks it up on the next frame.
+    Function("setBackgroundMode") { mode: String, imageAsset: String? ->
+      try {
+        val proc = expo.modules.callkit.video.BackgroundProcessor.get(context.applicationContext)
+        proc.mode = when (mode.lowercase()) {
+          "off", "none" -> expo.modules.callkit.video.BackgroundProcessor.Mode.OFF
+          "blur_low", "blur-low" -> expo.modules.callkit.video.BackgroundProcessor.Mode.BLUR_LOW
+          "blur_medium", "blur-medium", "blur" -> expo.modules.callkit.video.BackgroundProcessor.Mode.BLUR_MEDIUM
+          "blur_high", "blur-high" -> expo.modules.callkit.video.BackgroundProcessor.Mode.BLUR_HIGH
+          "image", "wallpaper" -> expo.modules.callkit.video.BackgroundProcessor.Mode.IMAGE
+          else -> expo.modules.callkit.video.BackgroundProcessor.Mode.OFF
+        }
+        proc.imageAsset = imageAsset
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit()
+          .putString("bg_mode", mode)
+          .putString("bg_image", imageAsset ?: "")
+          .apply()
+        Log.d(TAG, "setBackgroundMode: $mode asset=$imageAsset available=${proc.available}")
+        true
+      } catch (t: Throwable) {
+        Log.w(TAG, "setBackgroundMode failed: ${t.message}")
+        false
+      }
+    }
+
+    Function("getBackgroundMode") {
+      try {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        mapOf(
+          "mode" to (prefs.getString("bg_mode", "off") ?: "off"),
+          "imageAsset" to (prefs.getString("bg_image", "") ?: ""),
+        )
+      } catch (_: Throwable) {
+        mapOf("mode" to "off", "imageAsset" to "")
+      }
+    }
+
+    Function("isBackgroundProcessorAvailable") {
+      try { expo.modules.callkit.video.BackgroundProcessor.get(context.applicationContext).available }
+      catch (_: Throwable) { false }
+    }
+
+    Function("getBackgroundWallpapers") {
+      expo.modules.callkit.video.BackgroundProcessor.BUILTIN_WALLPAPERS
+    }
+
+    // ─── Screen share native trigger (Stage 4, 2026-05-17) ───────────────
+    //
+    // Higher-level screen-share entry exposed to JS. Internally just delegates
+    // to expo-screen-share (which already owns the MediaProjection dance), but
+    // gives JS a single bridge to call regardless of platform. `audioShare` is
+    // accepted for parity with iOS — on Android system-audio capture requires
+    // AudioPlaybackCaptureConfiguration which we haven't wired yet, so it's
+    // logged + ignored for now.
+    AsyncFunction("startScreenshare") { audioShare: Boolean ->
+      try {
+        // Look up the expo-screen-share module by name via the host appContext
+        // registry. We avoid a hard import to keep this module compilable
+        // even if expo-screen-share is excluded from a build variant.
+        val cls = Class.forName("expo.modules.screenshare.ExpoScreenShareModule")
+        val nameField = cls.getDeclaredMethod("definition")
+        // The actual presentBroadcastPicker AsyncFunction is on the module's
+        // Expo runtime registration — we cannot invoke it via Java reflection
+        // without the Promise infrastructure. Instead we send an intent the
+        // app's RN bridge already knows how to handle: ScreenShareService
+        // ACTION_REQUEST_PICKER. Falls back gracefully if missing.
+        val intent = Intent("expo.modules.screenshare.REQUEST_PICKER")
+        intent.setPackage(context.packageName)
+        intent.putExtra("audio", audioShare)
+        context.sendBroadcast(intent)
+        Log.d(TAG, "startScreenshare: dispatched picker request audio=$audioShare ref=${nameField.name}")
+        true
+      } catch (t: Throwable) {
+        Log.w(TAG, "startScreenshare failed: ${t.message}")
+        false
+      }
+    }
+
+    AsyncFunction("stopScreenshare") {
+      try {
+        val intent = Intent("expo.modules.screenshare.REQUEST_STOP")
+        intent.setPackage(context.packageName)
+        context.sendBroadcast(intent)
+        true
+      } catch (t: Throwable) {
+        Log.w(TAG, "stopScreenshare failed: ${t.message}")
+        false
+      }
     }
 
     // [2026-05-15 Day 1 full-native] Launch the native call screen (CallActivity)

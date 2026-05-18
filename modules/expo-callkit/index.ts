@@ -91,6 +91,33 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
     participantsJson: string,
     hasVideo: boolean
   ): Promise<void>;
+
+  // [2026-05-17 RNNoise] Per-user ML noise suppression toggle. Default ON.
+  // Returns the current state from native SharedPreferences (Android) /
+  // App Group UserDefaults (iOS). Setting the value applies immediately to
+  // any active Room.
+  setNoiseSuppression(enabled: boolean): boolean;
+  getNoiseSuppression(): boolean;
+  isNoiseSuppressionAvailable(): boolean;
+
+  // [2026-05-17 Background blur / virtual background] Per-user background
+  // effect. `mode` is one of: 'off', 'blur_low', 'blur_medium', 'blur_high',
+  // 'image'. `imageAsset` is required when mode === 'image' (one of the
+  // built-in wallpapers from getBackgroundWallpapers()).
+  setBackgroundMode(mode: string, imageAsset?: string | null): boolean;
+  getBackgroundMode(): { mode: string; imageAsset: string };
+  isBackgroundProcessorAvailable(): boolean;
+  getBackgroundWallpapers(): string[];
+
+  // [2026-05-17 screen share] Native screen-share entry. On iOS this pops the
+  // ReplayKit broadcast picker; on Android the MediaProjection consent dialog.
+  // `audioShare` only respected on iOS today — Android system-audio capture
+  // requires AudioPlaybackCaptureConfiguration which is pending. Returns true
+  // when the system dialog was displayed; the actual broadcast lifecycle is
+  // observed via the existing onBroadcastStarted / onBroadcastStopped events
+  // on modules/expo-screen-share.
+  startScreenshare(audioShare: boolean): Promise<boolean>;
+  stopScreenshare(): Promise<boolean>;
 }
 
 export interface OpenNativeCallParams {
@@ -459,4 +486,79 @@ export function onLkEvent<K extends LkEventName>(
   if (!e) return () => {};
   const sub = e.addListener(event, cb);
   return () => sub.remove();
+}
+
+// ─── RNNoise (2026-05-17) ────────────────────────────────────────────────────
+// Per-user ML noise suppression toggle. Defaults to ON. Persistence is owned
+// by the native side (SharedPreferences on Android, App Group UserDefaults on
+// iOS). JS wrappers swallow failures so a missing native module degrades to
+// "always on, no-op" rather than crashing the call screen.
+
+export function setNoiseSuppression(enabled: boolean): boolean {
+  const m = getModule();
+  if (!m) return false;
+  try { return !!m.setNoiseSuppression(!!enabled); } catch { return false; }
+}
+
+export function getNoiseSuppression(): boolean {
+  const m = getModule();
+  if (!m) return true; // sensible default — match the JS-side mediaTrack constraint
+  try { return !!m.getNoiseSuppression(); } catch { return true; }
+}
+
+export function isNoiseSuppressionAvailable(): boolean {
+  const m = getModule();
+  if (!m) return false;
+  try { return !!m.isNoiseSuppressionAvailable(); } catch { return false; }
+}
+
+// ─── Background blur / virtual background (2026-05-17) ───────────────────────
+
+export type BackgroundMode = 'off' | 'blur_low' | 'blur_medium' | 'blur_high' | 'image';
+
+export function setBackgroundMode(mode: BackgroundMode, imageAsset?: string | null): boolean {
+  const m = getModule();
+  if (!m) return false;
+  try { return !!m.setBackgroundMode(mode, imageAsset ?? null); } catch { return false; }
+}
+
+export function getBackgroundMode(): { mode: BackgroundMode; imageAsset: string } {
+  const m = getModule();
+  const fallback = { mode: 'off' as BackgroundMode, imageAsset: '' };
+  if (!m) return fallback;
+  try {
+    const r = m.getBackgroundMode();
+    return { mode: ((r?.mode as BackgroundMode) || 'off'), imageAsset: (r?.imageAsset || '') };
+  } catch { return fallback; }
+}
+
+export function isBackgroundProcessorAvailable(): boolean {
+  const m = getModule();
+  if (!m) return false;
+  try { return !!m.isBackgroundProcessorAvailable(); } catch { return false; }
+}
+
+export function getBackgroundWallpapers(): string[] {
+  const m = getModule();
+  if (!m) return [];
+  try { return Array.isArray(m.getBackgroundWallpapers()) ? m.getBackgroundWallpapers() : []; } catch { return []; }
+}
+
+// ─── Screen share (2026-05-17 Stage 4) ───────────────────────────────────────
+// Top-level bridge wrapping both platforms' screen-share entry points. On iOS
+// this presents the ReplayKit broadcast picker (LiveKit's SampleHandler picks
+// up frames inside its extension process); on Android it triggers the
+// MediaProjection consent dialog via expo-screen-share. The actual frame
+// publish path is owned by LiveKit's LocalParticipant.setScreenShareEnabled.
+
+export async function startScreenshare(audioShare: boolean = false): Promise<boolean> {
+  const m = getModule();
+  if (!m) return false;
+  try { return !!(await m.startScreenshare(!!audioShare)); } catch { return false; }
+}
+
+export async function stopScreenshare(): Promise<boolean> {
+  const m = getModule();
+  if (!m) return false;
+  try { return !!(await m.stopScreenshare()); } catch { return false; }
 }

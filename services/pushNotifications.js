@@ -187,6 +187,23 @@ async function loadModules() {
           }
         } catch {}
 
+        // Global preview privacy gate — when the backend says
+        // preview_when='never', strip body even before we get to the
+        // per-conversation cache lookup. The same flag pre-redacts on
+        // backend so this is belt-and-suspenders. 'unlocked' is a hint
+        // the OS-level handler enforces (Android VISIBILITY_PRIVATE +
+        // iOS Notification Content Setting); we don't strip in JS for
+        // 'unlocked' because the user expects to see the body once they
+        // unlock.
+        if (data?.preview_when === 'never' && notification?.request?.content) {
+          try {
+            // Mutate the body to a generic safe value. Backend already
+            // does this — covered here only for clients that received a
+            // push from an older backend that hadn't propagated yet.
+            notification.request.content.body = '🔒 Nova mensagem';
+          } catch {}
+        }
+
         // Per-conversation notification settings (set in
         // ChatNotificationSettingsSheet → cached locally as JSON in
         // AsyncStorage so we can read it sync-ish from this handler).
@@ -1015,6 +1032,17 @@ function handleNotificationNavigation(data) {
     }
     if ((data.type === 'live' || data.type === 'live_start') && data.session_id) {
       router.push(`/live-viewer?session_id=${data.session_id}`);
+      return;
+    }
+    // Ongoing broadcast pill (host's own session) — tap returns to studio.
+    if (data.type === 'live_broadcast_self' && data.session_id) {
+      router.push(`/live-broadcast?session_id=${data.session_id}`);
+      return;
+    }
+    // Upload progress notification: tap surfaces the photos backup screen
+    // so the user can pause / inspect status without digging through Settings.
+    if (data.type === 'upload_progress' || data.type === 'upload_complete' || data.type === 'upload_error') {
+      router.push('/photos');
       return;
     }
     if (data.type === 'incoming_call' && (data.room_id || data.call_id)) {

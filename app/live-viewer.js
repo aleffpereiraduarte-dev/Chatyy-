@@ -1005,15 +1005,20 @@ export default function LiveViewerScreen() {
           // Remote tap-spam: msg.x is normalized 0..1 (sender's screen
           // fraction). We map it back to local pixels so the column
           // shows up on the same side of the screen the sender tapped.
-          if (msg.emoji && msg.emoji !== '❤️') {
+          if (msg.emoji && msg.emoji !== '❤️' && !msg.isDiamond) {
             spawnHeart(msg.emoji);
           } else {
             const xPx = (typeof msg.x === 'number' && isFinite(msg.x))
               ? Math.max(8, Math.min(SCREEN_W - 8, msg.x * SCREEN_W))
               : undefined;
+            // Diamond reactions: gold color forced + emoji glyph passed via
+            // arg.emoji so the heart particle renders as 💎 with a gold tint.
+            // Falls back to normal heart color when sender wasn't a diamond tip.
+            const isDiamondReact = !!msg.isDiamond || msg.emoji === '💎';
             spawnHeart({
               x: xPx,
-              color: (typeof msg.color === 'string') ? msg.color : null,
+              color: isDiamondReact ? '#FFD700' : ((typeof msg.color === 'string') ? msg.color : null),
+              emoji: isDiamondReact ? '💎' : null,
             });
           }
           break;
@@ -1610,6 +1615,32 @@ export default function LiveViewerScreen() {
       Animated.spring(heartScale, { toValue: 1, friction: 4, tension: 180, useNativeDriver: true }),
     ]).start();
   }, [heartScale]);
+
+  // Diamond reaction — wave 16 (2026-05-17). 1 diamond = 1 paid gold heart
+  // that animates on all viewers' screens. Server debits caller's wallet,
+  // credits creator, broadcasts live_reaction with isDiamond=true. On empty
+  // wallet (code: insufficient_diamonds) we toast a "buy diamonds" hint.
+  const handleDiamondTap = useCallback(async () => {
+    if (!paramSessionId) return;
+    try {
+      const r = await api.liveDiamondReaction(paramSessionId);
+      if (r?.success) {
+        // Local immediate spawn (gold), other viewers see via WS broadcast.
+        spawnHeart({ color: '#FFD700' });
+        popHeartButton();
+      } else if (r?.message === 'insufficient_diamonds') {
+        try {
+          const { Alert: AL, ToastAndroid } = require('react-native');
+          const hint = t('live.diamondsEmpty') || 'Sem diamantes. Toque em Mais → comprar.';
+          if (Platform.OS === 'android' && ToastAndroid?.show) {
+            ToastAndroid.show(hint, ToastAndroid.SHORT);
+          } else if (AL?.alert) AL.alert(hint);
+        } catch {}
+      }
+    } catch (e) {
+      console.warn('[Live] diamond tap failed:', e?.message);
+    }
+  }, [paramSessionId, spawnHeart, popHeartButton, t]);
 
   const handleHeartTap = useCallback(() => {
     // Right-rail tap: spawn locally with a randomized brand color, then
@@ -2484,6 +2515,7 @@ export default function LiveViewerScreen() {
         chatHidden={chatHidden}
         onHeartPress={handleHeartTap}
         onHeartLongPress={handleHeartLongPress}
+        onDiamondPress={handleDiamondTap}
         onToggleChat={() => setChatHidden(h => !h)}
         onSnapshot={handleScreenshot}
         onShare={handleShare}
@@ -2494,6 +2526,7 @@ export default function LiveViewerScreen() {
           hideChat: t('live.hideChat') || 'Ocultar chat',
           snapshot: t('live.screenshotBtn') || 'Snap',
           share: t('live.share') || 'Compartilhar',
+          diamond: t('live.diamondTip') || 'Diamante',
         }}
       />
 

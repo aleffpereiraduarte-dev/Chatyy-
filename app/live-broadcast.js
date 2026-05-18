@@ -18,6 +18,7 @@ import AnimatedViewerCount from '../components/AnimatedViewerCount';
 import LiveTopGifters from '../components/LiveTopGifters';
 import LiveGiftAnimation from '../components/LiveGiftAnimation';
 import LivePollOverlay from '../components/live/LivePollOverlay';
+import * as liveBroadcastNotification from '../services/liveBroadcastNotification';
 
 // Cross-platform WebRTC — same pattern as call.js
 let RTC_PeerConnection, RTC_SessionDescription, RTC_IceCandidate, getUserMediaFn, NativeRTCView;
@@ -126,6 +127,39 @@ export default function LiveBroadcastScreen() {
   const [activeFilter, setActiveFilter] = useState('none');
   // Sparkle/heart particle effect — toggled by the Effects button.
   const [effectsOn, setEffectsOn] = useState(false);
+
+  // ─── AR / Beauty / Greenscreen filter carousel (wave 16, 2026-05-17) ───
+  // The native LiveHostViewController (iOS) and LiveHostActivity (Android)
+  // own the actual MediaPipe pipeline; JS just owns the carousel UI and the
+  // selected preset key, which gets handed to the native module on entry.
+  // Presets (8): none | dog | sunglasses | hearts | beauty | slim | blur |
+  // greenscreen (with sub-pick `wallpaperId` 1..6 for greenscreen backgrounds).
+  // `activeARFilter` is the currently-applied preset key.
+  const [activeARFilter, setActiveARFilter] = useState('none');
+  const [arWallpaper, setArWallpaper] = useState(1); // greenscreen background 1..6
+  const [arCarouselOpen, setArCarouselOpen] = useState(false);
+
+  // ─── Multistream destinations (wave 16, 2026-05-17) ───
+  // Host configures RTMP fan-out targets (YouTube/Twitch/Facebook). Persisted
+  // in chat_live_multistream_destinations. Active list shown as "🔴 Transmitindo
+  // para N destinos" pill once the live is hot.
+  const [multistreamOpen, setMultistreamOpen] = useState(false);
+  const [multistreamDests, setMultistreamDests] = useState([]); // [{id, rtmp_url, label, status}]
+  const [multistreamForm, setMultistreamForm] = useState({ rtmpUrl: '', streamKey: '', label: '' });
+  const [multistreamSaving, setMultistreamSaving] = useState(false);
+
+  // ─── Schedule live (wave 16, 2026-05-17) ───
+  // Pre-screen modal — pick date/time, persists to chat_live_scheduled.
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [scheduleDate, setScheduleDate] = useState(() => {
+    // Default to "tomorrow 19:00 local" — same default Instagram uses.
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    d.setHours(19, 0, 0, 0);
+    return d;
+  });
+  const [scheduleSaving, setScheduleSaving] = useState(false);
+
   const [hideChat, setHideChat] = useState(false);
   const [muteReactions, setMuteReactions] = useState(false);
   // Slow-mode (host moderation). 0 = disabled, otherwise N seconds the
@@ -522,6 +556,12 @@ export default function LiveBroadcastScreen() {
           if (typeof msg.count === 'number') {
             viewerCountRef.current = msg.count;
             setViewerCount(msg.count);
+            // Tick the ongoing broadcast notification body so the system
+            // shade always reflects the current audience size. No-op when
+            // notification was never started (no session id).
+            if (sessionIdRef.current) {
+              try { liveBroadcastNotification.updateViewers(sessionIdRef.current, msg.count); } catch {}
+            }
           }
           break;
         case 'live_viewer_left':
@@ -1174,6 +1214,18 @@ export default function LiveBroadcastScreen() {
         setSessionId(sid);
         sessionIdRef.current = sid;
 
+        // Surface the ongoing-broadcast pill (sticky on Android, passive on
+        // iOS). Tapping returns to /live-broadcast via the deep_link the
+        // notification handler in services/pushNotifications.js routes on
+        // type=live_broadcast_self. Viewer-count ticks land below in the WS
+        // live_viewer_count handler.
+        try {
+          liveBroadcastNotification.start({
+            sessionId: sid,
+            title: titleInput.trim() || (t('live.title') || 'Live'),
+          });
+        } catch {}
+
         // Codex root cause #2 — warn if backend created a Cloudflare live input
         // but exposes no rtmp_url/stream_key. Without those, the host has no
         // way to publish RTMP and HLS viewers will sit on "Stream indisponível"
@@ -1278,6 +1330,8 @@ export default function LiveBroadcastScreen() {
     setEndedReplayRequested(replayRequested);
     setEndedReplayStatus(replayRequested ? 'processing' : 'none');
     if (endedSessionId) {
+      // Dismiss the ongoing-broadcast pill — broadcast is over.
+      try { liveBroadcastNotification.stop(endedSessionId); } catch {}
       // Capture has_recording from the live_end response so the end-card
       // knows whether to surface "Ver Lives Salvas" (CF Stream pipeline)
       // vs a plain "Concluído" (legacy P2P — no VOD will materialize).
@@ -1501,6 +1555,122 @@ export default function LiveBroadcastScreen() {
       flipInFlightRef.current = false;
     }
   }, [t]);
+
+  // ─── AR Filter handler ───
+  // Picks a preset, persists in state, and pokes the native module so the
+  // MediaPipe pipeline (FaceLandmarker + SelfieSegmentation) swaps the
+  // active overlay. Native bridge (modules/expo-live-native) accepts the
+  // preset key + wallpaper sub-id.
+  const applyArFilter = useCallback((presetKey, wallpaperId = arWallpaper) => {
+    setActiveARFilter(presetKey);
+    if (presetKey === 'greenscreen') setArWallpaper(wallpaperId);
+    // Hand to native — best-effort; the native host owns the actual pipeline.
+    try {
+      const liveNative = require('../modules/expo-live-native/src').default;
+      if (liveNative && typeof liveNative.setArFilter === 'function') {
+        liveNative.setArFilter(presetKey, presetKey === 'greenscreen' ? wallpaperId : 0);
+      }
+    } catch {
+      // Native module not loaded (web / Expo Go) — JS-only overlay path
+      // handles the visual hint via the styles.arFilterOverlay tint.
+    }
+  }, [arWallpaper]);
+
+  // ─── Multistream handlers ───
+  // Loads previously-saved RTMP destinations into state. Called when the
+  // multistream sheet first opens.
+  const loadMultistreamDests = useCallback(async () => {
+    try {
+      const sid = sessionIdRef.current || '';
+      const r = await api.liveMultistreamList(sid);
+      if (r?.success && Array.isArray(r.data?.items)) {
+        setMultistreamDests(r.data.items);
+      }
+    } catch (e) {
+      console.warn('[Live] liveMultistreamList failed:', e?.message);
+    }
+  }, []);
+
+  const addMultistreamDest = useCallback(async () => {
+    const { rtmpUrl, streamKey, label } = multistreamForm;
+    if (!rtmpUrl || !streamKey) {
+      try { Alert.alert(t('common.error') || 'Erro', t('live.multistreamMissing') || 'URL e chave são obrigatórios'); } catch {}
+      return;
+    }
+    if (!/^rtmps?:\/\//i.test(rtmpUrl)) {
+      try { Alert.alert(t('common.error') || 'Erro', t('live.multistreamInvalidUrl') || 'URL deve começar com rtmp:// ou rtmps://'); } catch {}
+      return;
+    }
+    setMultistreamSaving(true);
+    try {
+      const sid = sessionIdRef.current || '';
+      const r = await api.liveMultistreamAdd(rtmpUrl, streamKey, {
+        broadcastId: sid,
+        label: label || rtmpUrl.replace(/^rtmps?:\/\//i, '').split('/')[0],
+      });
+      if (r?.success) {
+        setMultistreamForm({ rtmpUrl: '', streamKey: '', label: '' });
+        await loadMultistreamDests();
+        try {
+          const { ToastAndroid } = require('react-native');
+          if (Platform.OS === 'android' && ToastAndroid?.show) {
+            ToastAndroid.show(
+              r.data?.started
+                ? (t('live.multistreamStarted') || 'Transmitindo')
+                : (t('live.multistreamSaved') || 'Destino salvo'),
+              ToastAndroid.SHORT
+            );
+          }
+        } catch {}
+      } else {
+        try { Alert.alert(t('common.error') || 'Erro', r?.message || 'Falha'); } catch {}
+      }
+    } catch (e) {
+      console.warn('[Live] liveMultistreamAdd failed:', e?.message);
+    } finally {
+      setMultistreamSaving(false);
+    }
+  }, [multistreamForm, loadMultistreamDests, t]);
+
+  const removeMultistreamDest = useCallback(async (id) => {
+    try {
+      await api.liveMultistreamRemove(id);
+      setMultistreamDests(prev => prev.filter(d => d.id !== id));
+    } catch (e) {
+      console.warn('[Live] liveMultistreamRemove failed:', e?.message);
+    }
+  }, []);
+
+  // ─── Schedule live handler ───
+  const saveScheduledLive = useCallback(async () => {
+    const titleVal = titleInput.trim() || (t('live.untitled') || 'Live');
+    if (scheduleDate.getTime() < Date.now() + 5 * 60 * 1000) {
+      try { Alert.alert(t('common.error') || 'Erro', t('live.scheduleTooSoon') || 'Escolha um horário pelo menos 5 minutos no futuro'); } catch {}
+      return;
+    }
+    setScheduleSaving(true);
+    try {
+      const r = await api.liveSchedule(scheduleDate, titleVal, {
+        audience,
+        category: liveCategory,
+      });
+      if (r?.success) {
+        setScheduleOpen(false);
+        try {
+          Alert.alert(
+            t('live.scheduled') || 'Agendada',
+            t('live.scheduledOk') || 'Seguidores receberão um lembrete 15 min antes e no início.'
+          );
+        } catch {}
+      } else {
+        try { Alert.alert(t('common.error') || 'Erro', r?.message || 'Falha'); } catch {}
+      }
+    } catch (e) {
+      console.warn('[Live] liveSchedule failed:', e?.message);
+    } finally {
+      setScheduleSaving(false);
+    }
+  }, [titleInput, scheduleDate, audience, liveCategory, t]);
 
   // Send chat message
   const handleSendChat = useCallback((text) => {
@@ -2093,6 +2263,9 @@ export default function LiveBroadcastScreen() {
         // closure survives unmount since it doesn't read any unmounted
         // refs after this point.
         const sid = sessionIdRef.current;
+        // Dismiss ongoing-broadcast pill on unmount too (covers crash /
+        // back-press paths where performEndLive didn't run).
+        try { liveBroadcastNotification.stop(sid); } catch {}
         const tryEnd = (attempt) => {
           api.liveEnd(sid).catch((err) => {
             console.warn('[Live] liveEnd attempt ' + attempt + ' failed:', err?.message || err);
@@ -2490,6 +2663,40 @@ export default function LiveBroadcastScreen() {
               </View>
             </TouchableOpacity>
 
+            {/* Multistream + Schedule row — wave 16 (2026-05-17). Twin
+                actions to configure RTMP fan-out and pre-announce the live. */}
+            <View style={styles.preExtrasRow}>
+              <TouchableOpacity
+                onPress={() => { setMultistreamOpen(true); loadMultistreamDests(); }}
+                style={styles.preExtraBtn}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel={t('live.multistream') || 'Multistream'}
+              >
+                <Text style={styles.preExtraBtnIcon}>🔁</Text>
+                <Text style={styles.preExtraBtnText} numberOfLines={1}>
+                  {t('live.multistream') || 'Multistream'}
+                </Text>
+                {multistreamDests.length > 0 ? (
+                  <View style={styles.preExtraBtnBadge}>
+                    <Text style={styles.preExtraBtnBadgeText}>{multistreamDests.length}</Text>
+                  </View>
+                ) : null}
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setScheduleOpen(true)}
+                style={styles.preExtraBtn}
+                activeOpacity={0.85}
+                accessibilityRole="button"
+                accessibilityLabel={t('live.scheduleTitle') || 'Agendar live'}
+              >
+                <Text style={styles.preExtraBtnIcon}>📅</Text>
+                <Text style={styles.preExtraBtnText} numberOfLines={1}>
+                  {t('live.scheduleLive') || 'Agendar'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
             {/* CTA — wrapped in an Animated.View so the red glow loops behind
                 the button (web only via boxShadow). On native, the live dot
                 pulses inside the button instead (same red-heartbeat rhythm). */}
@@ -2798,6 +3005,19 @@ export default function LiveBroadcastScreen() {
         >
           <IconFilter size={18} color={activeFilter !== 'none' ? '#facc15' : '#fff'} />
         </TouchableOpacity>
+        {/* AR/Beauty/Greenscreen carousel — wave 16 (2026-05-17). 8 presets
+            (dog ears, sunglasses, hearts, beauty smooth, slim face, blur bg,
+            greenscreen 6 wallpapers). Native MediaPipe pipeline owns the
+            actual effect; this button just toggles the carousel sheet. */}
+        <TouchableOpacity
+          onPress={() => setArCarouselOpen(v => !v)}
+          style={[styles.rightBtn, activeARFilter !== 'none' && { backgroundColor: 'rgba(236,72,153,0.4)' }]}
+          activeOpacity={0.7}
+          accessibilityLabel={t('live.arFilters') || 'AR Filters'}
+          accessibilityRole="button"
+        >
+          <Text style={{ color: activeARFilter !== 'none' ? '#facc15' : '#fff', fontSize: 10, fontWeight: '900', letterSpacing: 0.5 }}>AR</Text>
+        </TouchableOpacity>
         <TouchableOpacity
           // Bug #978-6 — surface a clear confirmation when toggling. Before
           // the only feedback was the icon swap (Star ↔ StarFilled) which the
@@ -2920,6 +3140,88 @@ export default function LiveBroadcastScreen() {
           </Animated.View>
         );
       })}
+
+      {/* AR filter carousel — wave 16 (2026-05-17). Horizontal scroll of 8
+          preset chips. Bottom row, above mic/cam controls. Tap to apply; the
+          native MediaPipe pipeline (modules/expo-live-native) renders the
+          effect onto the LK publish track. Greenscreen has 6 sub-wallpapers
+          which appear as a 2nd row when greenscreen is the active preset. */}
+      {arCarouselOpen ? (
+        <View style={[styles.arCarouselWrap, { bottom: insets.bottom + 280 }]} pointerEvents="box-none">
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: 12, gap: 8 }}
+          >
+            {[
+              { key: 'none',        icon: '⊘',  label: t('live.arNone')        || 'Nenhum' },
+              { key: 'dog',         icon: '🐶', label: t('live.arDogEars')     || 'Cachorro' },
+              { key: 'sunglasses',  icon: '😎', label: t('live.arSunglasses')  || 'Óculos' },
+              { key: 'hearts',      icon: '💕', label: t('live.arHearts')      || 'Corações' },
+              { key: 'beauty',      icon: '✨', label: t('live.arBeauty')      || 'Suavizar' },
+              { key: 'slim',        icon: '🪞', label: t('live.arSlimFace')    || 'Afinar' },
+              { key: 'blur',        icon: '🌫️', label: t('live.arBlurBg')      || 'Desfocar' },
+              { key: 'greenscreen', icon: '🟢', label: t('live.arGreenscreen') || 'Cenário' },
+            ].map(p => {
+              const active = activeARFilter === p.key;
+              return (
+                <TouchableOpacity
+                  key={p.key}
+                  onPress={() => applyArFilter(p.key)}
+                  style={[styles.arChip, active && styles.arChipActive]}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel={p.label}
+                  accessibilityState={{ selected: active }}
+                >
+                  <Text style={{ fontSize: 22 }}>{p.icon}</Text>
+                  <Text style={[styles.arChipLabel, active && { color: '#fff', fontWeight: '800' }]} numberOfLines={1}>
+                    {p.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+          {activeARFilter === 'greenscreen' ? (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ paddingHorizontal: 12, gap: 6, paddingTop: 6 }}
+            >
+              {[1, 2, 3, 4, 5, 6].map(wid => {
+                const active = arWallpaper === wid;
+                return (
+                  <TouchableOpacity
+                    key={wid}
+                    onPress={() => applyArFilter('greenscreen', wid)}
+                    style={[styles.arWallpaperChip, active && { borderColor: '#ec4899', borderWidth: 2 }]}
+                    activeOpacity={0.85}
+                    accessibilityRole="button"
+                    accessibilityLabel={(t('live.arWallpaper') || 'Cenário') + ' ' + wid}
+                  >
+                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{wid}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          ) : null}
+        </View>
+      ) : null}
+
+      {/* Multistream "Transmitindo para N" pill — bottom-left of top bar.
+          Only renders when at least one destination is in `live` status. */}
+      {multistreamDests.filter(d => d.status === 'live').length > 0 ? (
+        <View style={[styles.multistreamPill, { top: insets.top + 64 }]} pointerEvents="none">
+          <View style={styles.multistreamPillDot} />
+          <Text style={styles.multistreamPillText}>
+            {(t('live.multistreamingTo') || 'Transmitindo para').replace('{n}', String(multistreamDests.filter(d => d.status === 'live').length))}
+            {' '}
+            {multistreamDests.filter(d => d.status === 'live').length}
+            {' '}
+            {(t('live.destinations') || 'destinos')}
+          </Text>
+        </View>
+      ) : null}
 
       {/* Bottom: scrolling chat overlay (bottom→up, fades at top), composer
           row with invite pill + text input + heart + share + flip. */}
@@ -3423,6 +3725,149 @@ export default function LiveBroadcastScreen() {
             >
               <Text style={liveSheetStyles.closeText}>
                 {inviteSending ? (t('common.sending') || 'Enviando...') : `${t('live.sendInvite') || 'Enviar convite'}${inviteSelected.size > 0 ? ` (${inviteSelected.size})` : ''}`}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
+
+      {/* Multistream sheet — host adds RTMP destinations (YouTube/Twitch/FB).
+          Backend persists in chat_live_multistream_destinations and calls
+          LK StartRoomCompositeEgress if the broadcast is live. */}
+      {multistreamOpen ? (
+        <View style={liveSheetStyles.backdrop}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setMultistreamOpen(false)} />
+          <View style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16, maxHeight: '85%' }]}>
+            <View style={liveSheetStyles.grabber} />
+            <Text style={liveSheetStyles.title}>{t('live.multistream') || 'Multistream'}</Text>
+            <Text style={liveSheetStyles.subtitle}>
+              {t('live.multistreamHint') || 'Transmita simultaneamente para YouTube, Twitch e Facebook'}
+            </Text>
+            {multistreamDests.length > 0 ? (
+              <View style={{ marginTop: 8, marginBottom: 12 }}>
+                {multistreamDests.map(d => (
+                  <View key={d.id} style={styles.multistreamDestRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.multistreamDestLabel} numberOfLines={1}>
+                        {d.label || d.rtmp_url}
+                      </Text>
+                      <Text style={styles.multistreamDestStatus}>
+                        {d.status === 'live'
+                          ? (t('live.multistreamLive') || 'Transmitindo')
+                          : (t('live.multistreamReady') || 'Pronto')}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => removeMultistreamDest(d.id)}
+                      style={styles.multistreamDestRemove}
+                      activeOpacity={0.7}
+                      accessibilityLabel={t('common.remove') || 'Remover'}
+                    >
+                      <IconX size={14} color="rgba(255,255,255,0.8)" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+            <Text style={[liveSheetStyles.subtitle, { marginTop: 8 }]}>
+              {t('live.multistreamAddTitle') || 'Adicionar destino'}
+            </Text>
+            <TextInput
+              value={multistreamForm.label}
+              onChangeText={(v) => setMultistreamForm(f => ({ ...f, label: v }))}
+              placeholder={t('live.multistreamLabel') || 'Nome (ex: YouTube)'}
+              placeholderTextColor="rgba(255,255,255,0.45)"
+              style={styles.multistreamInput}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <TextInput
+              value={multistreamForm.rtmpUrl}
+              onChangeText={(v) => setMultistreamForm(f => ({ ...f, rtmpUrl: v }))}
+              placeholder="rtmp://a.rtmp.youtube.com/live2"
+              placeholderTextColor="rgba(255,255,255,0.45)"
+              style={styles.multistreamInput}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="url"
+            />
+            <TextInput
+              value={multistreamForm.streamKey}
+              onChangeText={(v) => setMultistreamForm(f => ({ ...f, streamKey: v }))}
+              placeholder={t('live.multistreamKey') || 'Chave de transmissão'}
+              placeholderTextColor="rgba(255,255,255,0.45)"
+              style={styles.multistreamInput}
+              autoCapitalize="none"
+              autoCorrect={false}
+              secureTextEntry
+            />
+            <TouchableOpacity
+              onPress={addMultistreamDest}
+              disabled={multistreamSaving || !multistreamForm.rtmpUrl || !multistreamForm.streamKey}
+              style={[liveSheetStyles.closeBtn, (multistreamSaving || !multistreamForm.rtmpUrl || !multistreamForm.streamKey) && { opacity: 0.5 }]}
+              activeOpacity={0.85}
+            >
+              <Text style={liveSheetStyles.closeText}>
+                {multistreamSaving ? (t('common.saving') || 'Salvando...') : (t('live.multistreamAddBtn') || 'Adicionar destino')}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
+
+      {/* Schedule live sheet — pre-screen modal. Date+time picker + button. */}
+      {scheduleOpen ? (
+        <View style={liveSheetStyles.backdrop}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setScheduleOpen(false)} />
+          <View style={[liveSheetStyles.sheet, { paddingBottom: insets.bottom + 16 }]}>
+            <View style={liveSheetStyles.grabber} />
+            <Text style={liveSheetStyles.title}>{t('live.scheduleTitle') || 'Agendar live'}</Text>
+            <Text style={liveSheetStyles.subtitle}>
+              {t('live.scheduleHint') || 'Seguidores recebem lembrete 15 min antes e no início.'}
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+              <TextInput
+                value={scheduleDate.toISOString().slice(0, 10)}
+                onChangeText={(v) => {
+                  const parts = v.split('-').map(p => parseInt(p, 10));
+                  if (parts.length === 3 && parts.every(n => !isNaN(n))) {
+                    const d = new Date(scheduleDate);
+                    d.setFullYear(parts[0], parts[1] - 1, parts[2]);
+                    setScheduleDate(d);
+                  }
+                }}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor="rgba(255,255,255,0.45)"
+                style={[styles.multistreamInput, { flex: 1 }]}
+                autoCapitalize="none"
+              />
+              <TextInput
+                value={scheduleDate.toTimeString().slice(0, 5)}
+                onChangeText={(v) => {
+                  const parts = v.split(':').map(p => parseInt(p, 10));
+                  if (parts.length === 2 && parts.every(n => !isNaN(n))) {
+                    const d = new Date(scheduleDate);
+                    d.setHours(parts[0], parts[1], 0, 0);
+                    setScheduleDate(d);
+                  }
+                }}
+                placeholder="HH:MM"
+                placeholderTextColor="rgba(255,255,255,0.45)"
+                style={[styles.multistreamInput, { flex: 1 }]}
+                autoCapitalize="none"
+              />
+            </View>
+            <Text style={[liveSheetStyles.subtitle, { marginTop: 8 }]}>
+              {scheduleDate.toLocaleString()}
+            </Text>
+            <TouchableOpacity
+              onPress={saveScheduledLive}
+              disabled={scheduleSaving}
+              style={[liveSheetStyles.closeBtn, scheduleSaving && { opacity: 0.5 }]}
+              activeOpacity={0.85}
+            >
+              <Text style={liveSheetStyles.closeText}>
+                {scheduleSaving ? (t('common.saving') || 'Salvando...') : (t('live.scheduleSave') || 'Agendar')}
               </Text>
             </TouchableOpacity>
           </View>
@@ -4671,6 +5116,112 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   preSubKnobOn: { transform: [{ translateX: 18 }] },
+
+  // ----- Pre-screen extras row (Multistream + Schedule) -----
+  preExtrasRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 14,
+    paddingHorizontal: 2,
+  },
+  preExtraBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  preExtraBtnIcon: { fontSize: 16 },
+  preExtraBtnText: { color: '#fff', fontSize: 13, fontWeight: '700', flex: 1 },
+  preExtraBtnBadge: {
+    minWidth: 18, height: 18, borderRadius: 9,
+    paddingHorizontal: 5,
+    backgroundColor: '#F59E0B',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  preExtraBtnBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800' },
+
+  // ----- AR filter carousel -----
+  arCarouselWrap: {
+    position: 'absolute',
+    left: 0, right: 0,
+    zIndex: 9,
+  },
+  arChip: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderWidth: 1.5,
+    borderColor: 'transparent',
+    minWidth: 64,
+  },
+  arChipActive: { borderColor: '#ec4899', backgroundColor: 'rgba(236,72,153,0.25)' },
+  arChipLabel: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 10,
+    marginTop: 2,
+    fontWeight: '600',
+  },
+  arWallpaperChip: {
+    width: 40, height: 40, borderRadius: 8,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+
+  // ----- Multistream pill + sheet -----
+  multistreamPill: {
+    position: 'absolute',
+    left: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    backgroundColor: 'rgba(220,38,38,0.85)',
+    zIndex: 30,
+  },
+  multistreamPillDot: {
+    width: 6, height: 6, borderRadius: 3,
+    backgroundColor: '#fff',
+  },
+  multistreamPillText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  multistreamDestRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 10,
+    marginBottom: 6,
+  },
+  multistreamDestLabel: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  multistreamDestStatus: { color: 'rgba(255,255,255,0.55)', fontSize: 11, marginTop: 2 },
+  multistreamDestRemove: {
+    width: 28, height: 28, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    marginLeft: 8,
+  },
+  multistreamInput: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 10,
+    paddingHorizontal: 12, paddingVertical: 10,
+    color: '#fff',
+    fontSize: 14,
+    marginTop: 8,
+  },
+
   preFlipBtn: {
     position: 'absolute',
     left: 20,

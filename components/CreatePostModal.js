@@ -12,6 +12,10 @@ import {
 } from './Icons';
 import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
+// Wave 15: structured location picker — same WhatsApp-style sheet used
+// for sharing GPS in chat. Returns { latitude, longitude, address } so
+// we can post `location_lat / _lon / _name` alongside the free-text.
+import LocationPickerSheet from './LocationPickerSheet';
 import * as api from '../services/api';
 
 // Generate video thumbnail on native
@@ -530,6 +534,15 @@ export default function CreatePostModal({
   const [showSoundPicker, setShowSoundPicker] = useState(false);
   const [savedSounds, setSavedSounds] = useState([]);
   const [savedSoundsLoading, setSavedSoundsLoading] = useState(false);
+  // Reels — Pixabay catalog + tab state for the music picker. The
+  // bottom sheet has three tabs: "Catálogo" (Pixabay royalty-free),
+  // "Meus salvos" (chat_user_saved_sounds), and "Original" (no sound).
+  // Catalog rows are { id: "pixabay/<n>", title, artist, preview_url,
+  // duration_sec, image_url }.
+  const [soundPickerTab, setSoundPickerTab] = useState('catalog');
+  const [catalogSounds, setCatalogSounds] = useState([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogQuery, setCatalogQuery] = useState('');
   const duetMode = duetOf ? 'split' : (stitchOf ? 'stitch' : null);
 
   // Bootstrap the parent-post payload when Duet/Stitch mode is active.
@@ -562,20 +575,58 @@ export default function CreatePostModal({
     return () => { alive = false; };
   }, [visible, duetOf, stitchOf]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Lazy-load saved sounds when the picker opens.
+  // Lazy-load saved sounds (per-user favorites from chat_user_saved_sounds).
+  // Hits the new reels_sound_favorite_list endpoint, falls back to the old
+  // chat_status_music_search ('saved' source) so users with no migrated
+  // favorites still see their legacy Status music picks.
   const loadSavedSounds = useCallback(async () => {
     if (savedSoundsLoading) return;
     setSavedSoundsLoading(true);
     try {
-      const r = await api.apiCall?.('chat_status_music_search', { source: 'saved' }, 'POST')
-        ?? await fetch(''); // graceful no-op if helper missing
+      let r = null;
+      try { r = await api.reelsSoundFavoriteList?.(); } catch {}
+      if (!r?.success || !Array.isArray(r?.data?.tracks) || r.data.tracks.length === 0) {
+        try { r = await api.apiCall?.('chat_status_music_search', { source: 'saved' }, 'POST'); } catch {}
+      }
       if (r?.success && r.data?.tracks) setSavedSounds(r.data.tracks);
       else if (Array.isArray(r?.data)) setSavedSounds(r.data);
     } catch {}
     setSavedSoundsLoading(false);
   }, [savedSoundsLoading]);
+
+  // Lazy-load Pixabay catalog (royalty-free music). When a query is set
+  // (search mode) we hit reels_music_search; otherwise the catalog feed
+  // (order=popular). 1h backend cache means hot queries are free.
+  const loadCatalogSounds = useCallback(async (q = '') => {
+    if (catalogLoading) return;
+    setCatalogLoading(true);
+    try {
+      const r = q
+        ? await api.reelsMusicSearch?.(q)
+        : await api.reelsMusicCatalog?.();
+      if (r?.success && Array.isArray(r.data?.tracks)) {
+        setCatalogSounds(r.data.tracks);
+      } else {
+        setCatalogSounds([]);
+      }
+    } catch { setCatalogSounds([]); }
+    setCatalogLoading(false);
+  }, [catalogLoading]);
+
+  // Open the picker → hydrate the active tab.
+  useEffect(() => {
+    if (!showSoundPicker) return;
+    if (soundPickerTab === 'catalog' && catalogSounds.length === 0 && !catalogLoading) loadCatalogSounds('');
+    if (soundPickerTab === 'saved'  && savedSounds.length   === 0 && !savedSoundsLoading) loadSavedSounds();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showSoundPicker, soundPickerTab]);
   const [caption, setCaption] = useState('');
   const [location, setLocation] = useState('');
+  // Wave 15: structured location coords (lat/lon). Set by the
+  // LocationPickerSheet — kept separate from `location` so users can
+  // also free-type a name without losing the coords (or vice-versa).
+  const [locationCoords, setLocationCoords] = useState(null);
+  const [showLocationSheet, setShowLocationSheet] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [activePreviewIndex, setActivePreviewIndex] = useState(0);
   const [error, setError] = useState('');
@@ -625,6 +676,8 @@ export default function CreatePostModal({
     setMediaFiles([]);
     setCaption('');
     setLocation('');
+    setLocationCoords(null);
+    setShowLocationSheet(false);
     setPublishing(false);
     setActivePreviewIndex(0);
     setError('');
@@ -899,6 +952,16 @@ export default function CreatePostModal({
       const formData = new FormData();
       formData.append('caption', caption.trim());
       if (location.trim()) formData.append('location', location.trim());
+      // Wave 15: structured location coords + name. The picker fills
+      // these; we also fall back to free-typed `location` when only a
+      // name is available.
+      if (locationCoords?.latitude != null && locationCoords?.longitude != null) {
+        formData.append('location_lat', String(locationCoords.latitude));
+        formData.append('location_lon', String(locationCoords.longitude));
+      }
+      if ((locationCoords?.address || location).trim()) {
+        formData.append('location_name', (locationCoords?.address || location).trim());
+      }
       if (audience !== AUDIENCE_EVERYONE) formData.append('audience', audience);
       if (scheduleDate) formData.append('scheduled_at', scheduleDate);
       if (taggedPeople.length > 0) formData.append('tagged', JSON.stringify(taggedPeople.map(p => p.email)));
@@ -948,7 +1011,7 @@ export default function CreatePostModal({
       setError(t('feed.publishError') || 'Failed to publish');
       setPublishing(false);
     }
-  }, [publishing, mediaFiles, caption, location, audience, scheduleDate, taggedPeople, isWeb, handleClose, onPostCreated, t, activeFilter, repostOf, postAsReel, duetMode, duetParent, stitchTrim, selectedSound]);
+  }, [publishing, mediaFiles, caption, location, locationCoords, audience, scheduleDate, taggedPeople, isWeb, handleClose, onPostCreated, t, activeFilter, repostOf, postAsReel, duetMode, duetParent, stitchTrim, selectedSound]);
 
   const bgColor = isDark ? '#0f172a' : '#ffffff';
   const surfaceColor = isDark ? '#1e293b' : '#f8fafc';
@@ -1358,32 +1421,45 @@ export default function CreatePostModal({
 
             {/* ---- OPTIONS ---- */}
 
-            {/* Location */}
-            <TouchableOpacity
+            {/* Location — Wave 15: tapping opens LocationPickerSheet to
+                grab GPS coords; the user can still free-type the label
+                via the inline TextInput when offline / no GPS. */}
+            <View
               style={[gs.optionRow, { borderTopColor: borderColor }]}
-              activeOpacity={0.7}
-              onPress={() => {
-                // Focus location input - just toggle visibility
-              }}
             >
-              <IconMapPin size={22} color={colors.textSecondary} />
+              <TouchableOpacity
+                onPress={() => setShowLocationSheet(true)}
+                hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                accessibilityRole="button"
+                accessibilityLabel={t('post.addLocation') || 'Adicionar local'}
+              >
+                <IconMapPin size={22} color={locationCoords ? ACCENT : colors.textSecondary} />
+              </TouchableOpacity>
               <TextInput
                 style={[gs.optionInput, { color: colors.text }]}
-                placeholder={t('post.addLocation') || 'Add location'}
+                placeholder={t('post.addLocation') || 'Adicionar local'}
                 placeholderTextColor={colors.textTertiary}
                 value={location}
                 onChangeText={setLocation}
                 maxLength={100}
-                accessibilityLabel={t('post.addLocation') || 'Add location'}
+                accessibilityLabel={t('post.addLocation') || 'Adicionar local'}
               />
-              {location ? (
-                <TouchableOpacity onPress={() => setLocation('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              {(location || locationCoords) ? (
+                <TouchableOpacity
+                  onPress={() => { setLocation(''); setLocationCoords(null); }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
                   <IconX size={16} color={colors.textTertiary} />
                 </TouchableOpacity>
               ) : (
-                <IconChevronRight size={18} color={colors.textTertiary} />
+                <TouchableOpacity
+                  onPress={() => setShowLocationSheet(true)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <IconChevronRight size={18} color={colors.textTertiary} />
+                </TouchableOpacity>
               )}
-            </TouchableOpacity>
+            </View>
 
             {/* Tag people */}
             <TouchableOpacity
@@ -1618,8 +1694,27 @@ export default function CreatePostModal({
         t={t}
       />
 
-      {/* Reels P0 — Sound picker. Lists saved tracks + an
-          "Original sound" option (creator's own mic-only audio). */}
+      {/* Wave 15: WhatsApp-style location sheet. Returns coords + a
+          reverse-geocoded address. We store both — coords go to
+          location_lat/_lon, address to location_name + the visible
+          textbox so the user can edit before posting. */}
+      <LocationPickerSheet
+        visible={showLocationSheet}
+        onClose={() => setShowLocationSheet(false)}
+        onSend={({ latitude, longitude, address }) => {
+          setLocationCoords({ latitude, longitude, address: address || '' });
+          if (address) setLocation(address);
+          setShowLocationSheet(false);
+        }}
+        colors={colors}
+        t={t}
+      />
+
+      {/* Reels P0 — Sound picker (3 tabs: Catálogo / Meus salvos / Original).
+          Catálogo proxies Pixabay's royalty-free music endpoint via
+          reels_music_catalog / reels_music_search. Meus salvos lists the
+          user's chat_user_saved_sounds. Original = no sound_id (backend
+          synthesizes "<email>/<post_id>" for the creator's audio). */}
       <Modal
         visible={showSoundPicker}
         transparent
@@ -1636,7 +1731,7 @@ export default function CreatePostModal({
               borderTopLeftRadius: 18,
               borderTopRightRadius: 18,
               paddingBottom: 28,
-              maxHeight: SCREEN_HEIGHT * 0.7,
+              maxHeight: SCREEN_HEIGHT * 0.78,
             }}
             onPress={(e) => e.stopPropagation && e.stopPropagation()}
           >
@@ -1645,75 +1740,180 @@ export default function CreatePostModal({
               {t('post.chooseSound') || 'Escolha um som'}
             </Text>
 
-            {/* Original sound — always available, mic-only audio. The
-                backend will auto-derive a sound_id of "<email>/<post_id>"
-                when no sound_id is sent for a video post. */}
-            <TouchableOpacity
-              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12, gap: 12 }}
-              activeOpacity={0.7}
-              onPress={() => { setSelectedSound(null); setShowSoundPicker(false); }}
-            >
-              <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: ACCENT, alignItems: 'center', justifyContent: 'center' }}>
-                <IconMusic size={20} color="#fff" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>
-                  {t('post.originalSound') || 'Som original'}
-                </Text>
-                <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
-                  {t('post.originalSoundHint') || 'Áudio gravado com o vídeo'}
-                </Text>
-              </View>
-              {!selectedSound ? <IconCheck size={20} color={ACCENT} /> : null}
-            </TouchableOpacity>
+            {/* Tabs */}
+            <View style={{ flexDirection: 'row', paddingHorizontal: 16, gap: 8, marginBottom: 8 }}>
+              {[
+                { key: 'catalog', label: t('post.catalog') || 'Catálogo' },
+                { key: 'saved',   label: t('post.mySaved') || 'Meus salvos' },
+                { key: 'original',label: t('post.originalSound') || 'Original' },
+              ].map(tb => {
+                const active = soundPickerTab === tb.key;
+                return (
+                  <TouchableOpacity
+                    key={tb.key}
+                    onPress={() => setSoundPickerTab(tb.key)}
+                    activeOpacity={0.75}
+                    style={{
+                      paddingHorizontal: 14, paddingVertical: 7, borderRadius: 999,
+                      borderWidth: StyleSheet.hairlineWidth,
+                      borderColor: active ? ACCENT : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)'),
+                      backgroundColor: active ? (isDark ? 'rgba(124,58,237,0.22)' : 'rgba(124,58,237,0.10)') : 'transparent',
+                    }}
+                    accessibilityRole="tab"
+                    accessibilityState={{ selected: active }}
+                  >
+                    <Text style={{ color: active ? ACCENT : colors.text, fontWeight: active ? '700' : '500', fontSize: 13 }}>
+                      {tb.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
 
-            {/* Saved tracks list */}
-            {savedSoundsLoading ? (
-              <View style={{ paddingVertical: 18, alignItems: 'center' }}>
-                <ActivityIndicator size="small" color={ACCENT} />
-              </View>
-            ) : savedSounds.length === 0 ? (
-              <View style={{ paddingVertical: 18, paddingHorizontal: 20 }}>
-                <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
-                  {t('post.noSavedSounds') || 'Sem sons salvos ainda. Toque "Salvar som" nos reels que você curtir.'}
-                </Text>
-              </View>
-            ) : (
-              <FlatList
-                data={savedSounds}
-                keyExtractor={(it) => String(it.id || it.track_id)}
-                renderItem={({ item: trk }) => {
-                  const trackId = String(trk.id || trk.track_id);
-                  const active = selectedSound?.id === trackId;
-                  return (
-                    <TouchableOpacity
-                      style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12, gap: 12 }}
-                      activeOpacity={0.7}
-                      onPress={() => {
-                        setSelectedSound({ id: trackId, label: `${trk.artist || ''} — ${trk.title || ''}`.replace(/^ — /, '') });
-                        setShowSoundPicker(false);
-                      }}
-                    >
-                      {trk.artwork_url ? (
-                        <Image source={{ uri: trk.artwork_url }} style={{ width: 40, height: 40, borderRadius: 4 }} />
-                      ) : (
-                        <View style={{ width: 40, height: 40, borderRadius: 4, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', alignItems: 'center', justifyContent: 'center' }}>
-                          <IconMusic size={20} color={colors.textSecondary} />
+            {/* Catalog (Pixabay royalty-free) */}
+            {soundPickerTab === 'catalog' && (
+              <>
+                <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, marginBottom: 8, gap: 8 }}>
+                  <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', borderRadius: 10, paddingHorizontal: 10 }}>
+                    <IconMusic size={16} color={colors.textSecondary} />
+                    <TextInput
+                      style={{ flex: 1, color: colors.text, fontSize: 14, paddingVertical: 8, marginLeft: 6, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}
+                      placeholder={t('post.searchSounds') || 'Buscar sons…'}
+                      placeholderTextColor={colors.textTertiary}
+                      value={catalogQuery}
+                      onChangeText={setCatalogQuery}
+                      onSubmitEditing={() => loadCatalogSounds(catalogQuery.trim())}
+                      returnKeyType="search"
+                      autoCorrect={false}
+                      autoCapitalize="none"
+                    />
+                  </View>
+                </View>
+                {catalogLoading ? (
+                  <View style={{ paddingVertical: 18, alignItems: 'center' }}>
+                    <ActivityIndicator size="small" color={ACCENT} />
+                  </View>
+                ) : catalogSounds.length === 0 ? (
+                  <View style={{ paddingVertical: 18, paddingHorizontal: 20 }}>
+                    <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
+                      {t('post.noCatalogSounds') || 'Sem resultados. Tente outra busca.'}
+                    </Text>
+                  </View>
+                ) : (
+                  <FlatList
+                    data={catalogSounds}
+                    keyExtractor={(it) => String(it.id)}
+                    renderItem={({ item: trk }) => {
+                      const trackId = String(trk.id);
+                      const label = `${trk.title || ''} — ${trk.artist || ''}`.replace(/^ — /, '').replace(/ — $/, '');
+                      const active = selectedSound?.id === trackId;
+                      return (
+                        <TouchableOpacity
+                          style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 10, gap: 12 }}
+                          activeOpacity={0.7}
+                          onPress={() => {
+                            setSelectedSound({ id: trackId, label });
+                            setShowSoundPicker(false);
+                          }}
+                        >
+                          {trk.image_url ? (
+                            <Image source={{ uri: trk.image_url }} style={{ width: 40, height: 40, borderRadius: 4 }} />
+                          ) : (
+                            <View style={{ width: 40, height: 40, borderRadius: 4, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', alignItems: 'center', justifyContent: 'center' }}>
+                              <IconMusic size={20} color={colors.textSecondary} />
+                            </View>
+                          )}
+                          <View style={{ flex: 1 }}>
+                            <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }} numberOfLines={1}>
+                              {trk.title || 'Untitled'}
+                            </Text>
+                            <Text style={{ color: colors.textSecondary, fontSize: 12 }} numberOfLines={1}>
+                              {trk.artist || 'Pixabay'} · {trk.duration_sec || 30}s
+                            </Text>
+                          </View>
+                          {active ? <IconCheck size={20} color={ACCENT} /> : null}
+                        </TouchableOpacity>
+                      );
+                    }}
+                  />
+                )}
+              </>
+            )}
+
+            {/* Saved tab */}
+            {soundPickerTab === 'saved' && (
+              savedSoundsLoading ? (
+                <View style={{ paddingVertical: 18, alignItems: 'center' }}>
+                  <ActivityIndicator size="small" color={ACCENT} />
+                </View>
+              ) : savedSounds.length === 0 ? (
+                <View style={{ paddingVertical: 18, paddingHorizontal: 20 }}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
+                    {t('post.noSavedSounds') || 'Sem sons salvos ainda. Toque "Salvar som" nos reels que você curtir.'}
+                  </Text>
+                </View>
+              ) : (
+                <FlatList
+                  data={savedSounds}
+                  keyExtractor={(it) => String(it.id || it.sound_id || it.track_id)}
+                  renderItem={({ item: trk }) => {
+                    const trackId = String(trk.id || trk.sound_id || trk.track_id);
+                    const active = selectedSound?.id === trackId;
+                    const label = trk.sound_label || `${trk.title || ''} — ${trk.artist || ''}`.replace(/^ — /, '').replace(/ — $/, '');
+                    const img = trk.image_url || trk.artwork_url;
+                    return (
+                      <TouchableOpacity
+                        style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12, gap: 12 }}
+                        activeOpacity={0.7}
+                        onPress={() => {
+                          setSelectedSound({ id: trackId, label });
+                          setShowSoundPicker(false);
+                        }}
+                      >
+                        {img ? (
+                          <Image source={{ uri: img }} style={{ width: 40, height: 40, borderRadius: 4 }} />
+                        ) : (
+                          <View style={{ width: 40, height: 40, borderRadius: 4, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', alignItems: 'center', justifyContent: 'center' }}>
+                            <IconMusic size={20} color={colors.textSecondary} />
+                          </View>
+                        )}
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }} numberOfLines={1}>
+                            {trk.title || label || 'Sem título'}
+                          </Text>
+                          <Text style={{ color: colors.textSecondary, fontSize: 12 }} numberOfLines={1}>
+                            {trk.artist || ''}
+                          </Text>
                         </View>
-                      )}
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }} numberOfLines={1}>
-                          {trk.title || 'Sem título'}
-                        </Text>
-                        <Text style={{ color: colors.textSecondary, fontSize: 12 }} numberOfLines={1}>
-                          {trk.artist || ''}
-                        </Text>
-                      </View>
-                      {active ? <IconCheck size={20} color={ACCENT} /> : null}
-                    </TouchableOpacity>
-                  );
-                }}
-              />
+                        {active ? <IconCheck size={20} color={ACCENT} /> : null}
+                      </TouchableOpacity>
+                    );
+                  }}
+                />
+              )
+            )}
+
+            {/* Original (Reels P0 — no sound_id, backend uses creator's
+                mic-only audio and synthesizes "<email>/<post_id>"). */}
+            {soundPickerTab === 'original' && (
+              <TouchableOpacity
+                style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 12 }}
+                activeOpacity={0.7}
+                onPress={() => { setSelectedSound(null); setShowSoundPicker(false); }}
+              >
+                <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: ACCENT, alignItems: 'center', justifyContent: 'center' }}>
+                  <IconMusic size={20} color="#fff" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>
+                    {t('post.originalSound') || 'Som original do criador'}
+                  </Text>
+                  <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
+                    {t('post.originalSoundHint') || 'Áudio gravado com o vídeo'}
+                  </Text>
+                </View>
+                {!selectedSound ? <IconCheck size={20} color={ACCENT} /> : null}
+              </TouchableOpacity>
             )}
           </Pressable>
         </Pressable>

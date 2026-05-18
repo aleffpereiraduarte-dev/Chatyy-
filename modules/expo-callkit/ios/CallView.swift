@@ -69,6 +69,10 @@ struct CallView: View {
     let onAddMember: () -> Void
     let onMinimize: () -> Void
     let onSendReaction: (String) -> Void
+    /// [RNNoise, 2026-05-17] Flip the per-user noise-suppression toggle.
+    let onToggleNoiseSuppression: (Bool) -> Void
+    /// [MediaPipe, 2026-05-17] Cycle background-effect mode.
+    let onCycleBackground: () -> Void
 
     // MARK: - Local UI state
     //
@@ -417,45 +421,80 @@ struct CallView: View {
 
     private var bottomActionBar: some View {
         VStack(spacing: 16) {
-            // Top row: secondary actions (screen share, add member, more)
-            HStack(spacing: 16) {
-                actionPillButton(
-                    icon: "rectangle.on.rectangle",
-                    label: "Compartilhar",
-                    enabled: session.remoteVideoTrack != nil || session.status == "Conectado",
-                    action: { hapticTap(); onScreenShare() }
-                )
+            // Top row: secondary actions (screen share, add member, more,
+            // react, RNNoise, background blur). Two rows when needed — the
+            // HStack wraps via ScrollView so 6+ pills don't crowd a small
+            // screen.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 16) {
+                    actionPillButton(
+                        icon: "rectangle.on.rectangle",
+                        label: "Compartilhar",
+                        enabled: session.remoteVideoTrack != nil || session.status == "Conectado",
+                        action: { hapticTap(); onScreenShare() }
+                    )
 
-                actionPillButton(
-                    icon: "person.badge.plus",
-                    label: "Adicionar",
-                    enabled: true,
-                    action: { hapticTap(); onAddMember() }
-                )
+                    actionPillButton(
+                        icon: "person.badge.plus",
+                        label: "Adicionar",
+                        enabled: true,
+                        action: { hapticTap(); onAddMember() }
+                    )
 
-                actionPillButton(
-                    icon: "ellipsis",
-                    label: "Mais",
-                    enabled: true,
-                    action: {
-                        hapticTap()
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            showMoreSheet.toggle()
+                    // [RNNoise, 2026-05-17] Cancelar ruído — flips the
+                    // per-user ML noise-suppression toggle. Default ON.
+                    actionPillButton(
+                        icon: session.noiseSuppression ? "waveform.path.ecg" : "waveform.slash",
+                        label: "Sem ruído",
+                        enabled: true,
+                        active: session.noiseSuppression,
+                        action: {
+                            hapticTap()
+                            onToggleNoiseSuppression(!session.noiseSuppression)
                         }
-                    }
-                )
+                    )
 
-                actionPillButton(
-                    icon: "face.smiling",
-                    label: "Reagir",
-                    enabled: true,
-                    action: {
-                        hapticTap()
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                            showEmojiBar.toggle()
-                        }
+                    // [MediaPipe, 2026-05-17] Desfocar — cycles through
+                    // blur / image background effects. Hidden when the call
+                    // is audio-only (no camera frame to process).
+                    if hasVideo {
+                        actionPillButton(
+                            icon: backgroundIconSymbol(session.backgroundMode),
+                            label: backgroundLabel(session.backgroundMode),
+                            enabled: true,
+                            active: session.backgroundMode != "off",
+                            action: {
+                                hapticTap()
+                                onCycleBackground()
+                            }
+                        )
                     }
-                )
+
+                    actionPillButton(
+                        icon: "ellipsis",
+                        label: "Mais",
+                        enabled: true,
+                        action: {
+                            hapticTap()
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showMoreSheet.toggle()
+                            }
+                        }
+                    )
+
+                    actionPillButton(
+                        icon: "face.smiling",
+                        label: "Reagir",
+                        enabled: true,
+                        action: {
+                            hapticTap()
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                showEmojiBar.toggle()
+                            }
+                        }
+                    )
+                }
+                .padding(.horizontal, 4)
             }
 
             // Primary row: mute, camera (video calls), speaker, hangup
@@ -542,18 +581,22 @@ struct CallView: View {
 
     /// Pill button used for secondary actions (Screen share, Add member, More).
     /// Each is a 60×64 capsule with icon over label, dimmed when disabled.
+    /// When `active` is true (e.g. noise suppression ON, background blur ON)
+    /// the pill renders with a green tint so users can see the toggle state
+    /// without opening a menu.
     @ViewBuilder
     private func actionPillButton(
         icon: String,
         label: String,
         enabled: Bool,
+        active: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
             VStack(spacing: 4) {
                 Image(systemName: icon)
                     .font(.system(size: 18, weight: .medium))
-                    .foregroundColor(.white)
+                    .foregroundColor(active ? speakerRingColor : .white)
                 Text(label)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(.white.opacity(0.9))
@@ -561,11 +604,34 @@ struct CallView: View {
             .frame(width: 70, height: 56)
             .background(
                 RoundedRectangle(cornerRadius: 14)
-                    .fill(chipColor.opacity(enabled ? 0.85 : 0.4))
+                    .fill(
+                        active
+                            ? Color.white.opacity(0.18)
+                            : chipColor.opacity(enabled ? 0.85 : 0.4)
+                    )
             )
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
+    }
+
+    // [MediaPipe, 2026-05-17] Helpers for the background pill label + icon.
+    private func backgroundLabel(_ mode: String) -> String {
+        switch mode {
+        case "blur_low": return "Leve"
+        case "blur_medium", "blur": return "Desfocar"
+        case "blur_high": return "Forte"
+        case "image": return "Fundo"
+        default: return "Fundo"
+        }
+    }
+
+    private func backgroundIconSymbol(_ mode: String) -> String {
+        switch mode {
+        case "image": return "photo.fill"
+        case "off": return "circle.dashed"
+        default: return "circle.dotted"
+        }
     }
 
     /// Generic circular control button. Used for mic, cam, speaker, hangup,
@@ -874,24 +940,51 @@ struct ConnectionQualityBars: View {
 
 // MARK: - Floating emoji
 
-/// One floating emoji that rises from below the controls and fades. Lives
-/// independent of the session so animation timing is isolated — the parent
-/// just appends to the array; we clean up via a `.task` per reaction.
+/// [reactions polish, 2026-05-17] One floating emoji bubble. Rises from the
+/// bottom-center upward with a sinusoidal horizontal sway and fades after
+/// 2 s. Lives independent of the session so animation timing is isolated;
+/// the parent just appends to the array and removes it on a .task at ~3 s.
+///
+/// Why two animations instead of one: SwiftUI's `withAnimation(.easeOut)`
+/// would tie both rise and opacity to the same curve, so the emoji starts
+/// fading immediately. We want a 1-second clear hold + 1-second fade so the
+/// user can identify the emoji before it dissolves — the way WhatsApp /
+/// Messenger reactions feel. Sway uses a TimelineView to follow a sine wave
+/// without needing repeating animation tokens.
 struct FloatingEmojiView: View {
     let reaction: CallFloatingReaction
     @State private var rise: CGFloat = 0
-    @State private var fadeOpacity: Double = 1.0
+    @State private var fadeOpacity: Double = 0
+    @State private var swayPhase: Double = 0
 
     var body: some View {
-        Text(reaction.emoji)
-            .font(.system(size: 44))
-            .offset(x: reaction.xOffset, y: -rise)
-            .opacity(fadeOpacity)
-            .onAppear {
-                withAnimation(.easeOut(duration: 2.4)) {
-                    rise = 320
+        TimelineView(.animation) { timeline in
+            // Phase 0..1 over 2.0 seconds. Two full sine periods produce a
+            // visible sway without making the emoji feel like it's flailing.
+            let elapsed = max(0, timeline.date.timeIntervalSince(reaction.spawnedAt))
+            let phase = min(1.0, elapsed / 2.0)
+            let swayPx = CGFloat(sin(phase * .pi * 4)) * 14
+            Text(reaction.emoji)
+                .font(.system(size: 44))
+                .offset(x: reaction.xOffset + swayPx, y: -rise)
+                .opacity(fadeOpacity)
+        }
+        .onAppear {
+            // Rise: 380 pt over 2 s. Slightly more than before so the emoji
+            // clearly leaves the bottom action area.
+            withAnimation(.easeOut(duration: 2.0)) {
+                rise = 380
+            }
+            // Pop in (200 ms) then 1 s hold then 1 s fade. Three discrete
+            // segments give the bubble its WhatsApp "punch" feel.
+            withAnimation(.easeIn(duration: 0.2)) {
+                fadeOpacity = 1
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                withAnimation(.easeOut(duration: 1.0)) {
                     fadeOpacity = 0
                 }
             }
+        }
     }
 }

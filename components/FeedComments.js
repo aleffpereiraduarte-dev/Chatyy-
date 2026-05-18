@@ -7,7 +7,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 // FlashList reverted to FlatList
 import AvatarCircle from './AvatarCircle';
-import { IconX, IconSend, IconTrash, IconHeart, IconHeartOutline, IconMic, IconPlay, IconPause, IconMessageCircle } from './Icons';
+import { IconX, IconSend, IconTrash, IconHeart, IconHeartOutline, IconMic, IconPlay, IconPause, IconMessageCircle, IconImage, IconVideo } from './Icons';
 import ModalHeader from './ModalHeader';
 import * as api from '../services/api';
 
@@ -86,6 +86,13 @@ const CommentItem = memo(function CommentItem({
       ? item.audio_url
       : 'https://chatyy.com.br' + (String(item.audio_url).startsWith('/') ? '' : '/') + item.audio_url
   ) : '';
+  // Reels P1 — sticker / GIF / video reply media. Backend stores it on
+  // chat_feed_comments.media_url (legacy alias attachment_url). Whichever
+  // arrives first wins.
+  const mediaUrl = item.media_url || item.attachment_url || '';
+  const mediaType = String(item.media_type || '').toLowerCase();
+  const isStickerComment = !!mediaUrl && (mediaType === 'sticker' || mediaType === 'gif' || mediaType === 'image');
+  const isVideoComment   = !!mediaUrl && mediaType === 'video';
   const [voicePlaying, setVoicePlaying] = useState(false);
   const voiceRef = useRef(null);
   const toggleVoice = useCallback(async () => {
@@ -155,6 +162,39 @@ const CommentItem = memo(function CommentItem({
                     ))}
                   </View>
                 </Pressable>
+              </View>
+            ) : isStickerComment ? (
+              <View>
+                <Text style={[styles.commentAuthor, { color: colors.text, marginBottom: 4 }]}>{authorName}</Text>
+                {Platform.OS === 'web' ? (
+                  // eslint-disable-next-line jsx-a11y/alt-text
+                  <img src={mediaUrl} style={{ maxWidth: 160, maxHeight: 160, borderRadius: 10 }} />
+                ) : (() => {
+                  const RNImage = require('react-native').Image;
+                  return <RNImage source={{ uri: mediaUrl }} style={{ width: 140, height: 140, borderRadius: 10 }} resizeMode="cover" />;
+                })()}
+              </View>
+            ) : isVideoComment ? (
+              <View>
+                <Text style={[styles.commentAuthor, { color: colors.text, marginBottom: 4 }]}>{authorName}</Text>
+                {Platform.OS === 'web' ? (
+                  <video src={mediaUrl} controls playsInline style={{ maxWidth: 200, borderRadius: 10, backgroundColor: '#000' }} />
+                ) : (
+                  <Pressable
+                    onPress={() => {
+                      // Best-effort fullscreen open via WebBrowser. If
+                      // expo-web-browser isn't available we fall back to
+                      // Linking.openURL.
+                      try { require('expo-web-browser').openBrowserAsync(mediaUrl); }
+                      catch { try { require('react-native').Linking.openURL(mediaUrl); } catch {} }
+                    }}
+                    style={{ width: 160, height: 160, borderRadius: 10, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' }}
+                    accessibilityRole="button"
+                    accessibilityLabel={t?.('feed.playVideo') || 'Play video'}
+                  >
+                    <IconPlay size={32} color="#fff" />
+                  </Pressable>
+                )}
               </View>
             ) : (
               <Text style={[styles.commentText, { color: colors.text }]}>
@@ -265,6 +305,12 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
   const recRef = useRef(null);
   const recStartRef = useRef(0);
   const recMediaRef = useRef(null); // web MediaRecorder + chunks
+  // Reels P1 — sticker / GIF / video comment replies. Sticker picks come
+  // from the same GifPicker (Tenor proxy) we use in chat-conversation.
+  // Video replies pick up to 15s of footage on native via expo-image-picker,
+  // or fall back to a file input on web.
+  const [showStickerPicker, setShowStickerPicker] = useState(false);
+  const [videoUploading, setVideoUploading] = useState(false);
 
   useEffect(() => {
     if (post) {
@@ -472,6 +518,126 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
       setSending(false);
     }
   }, [recording, post, replyTo, onCommentCountChange]);
+
+  // Sticker / GIF comment — picks the GIF URL from the GifPicker (Tenor)
+  // and posts as a comment with media_type=sticker. The backend stores it
+  // on chat_feed_comments.media_url so the comment row can render the GIF
+  // inline (FeedComments.CommentRow already reads attachment_url).
+  const handleStickerPick = useCallback(async (item) => {
+    setShowStickerPicker(false);
+    if (!item || !post?.id) return;
+    // Prefer `url` (full-size GIF) then `preview` (small), then `image_url`.
+    const mediaUrl = String(item.url || item.image_url || item.preview || '');
+    if (!mediaUrl) return;
+    setSending(true);
+    try {
+      const r = await api.feedComment(post.id, '', replyTo?.id || null, {
+        mediaUrl,
+        mediaType: 'sticker',
+      });
+      if (r.success) {
+        const newComment = r.data?.comment || r.data || {
+          id: Date.now(),
+          author_email: user?.email,
+          email: user?.email,
+          author_name: user?.name || user?.email?.split('@')[0],
+          name: user?.name || user?.email?.split('@')[0],
+          content: '',
+          media_url: mediaUrl,
+          attachment_url: mediaUrl,
+          media_type: 'sticker',
+          created_at: new Date().toISOString(),
+          reply_to_id: replyTo?.id,
+        };
+        setComments(prev => [newComment, ...prev]);
+        setReplyTo(null);
+        currentCountRef.current += 1;
+        onCommentCountChange?.(currentCountRef.current);
+        setTimeout(() => listRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 100);
+      }
+    } catch {} finally {
+      setSending(false);
+    }
+  }, [post, replyTo, user, onCommentCountChange]);
+
+  // Video reply — picks a clip via expo-image-picker (native) or file
+  // input (web), uploads it via the existing feed-files endpoint, and
+  // posts the URL as media_type=video on the comment.
+  const pickVideoReply = useCallback(async () => {
+    if (videoUploading || sending || !post?.id) return;
+    let asset = null;
+    try {
+      if (Platform.OS === 'web') {
+        await new Promise((resolve) => {
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = 'video/*';
+          input.onchange = (e) => {
+            const f = e.target.files && e.target.files[0];
+            if (f) asset = { file: f, uri: URL.createObjectURL(f), name: f.name, type: f.type || 'video/mp4' };
+            resolve();
+          };
+          input.click();
+        });
+      } else {
+        const ImagePicker = require('expo-image-picker');
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) return;
+        const r = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+          allowsEditing: true,
+          videoMaxDuration: 15,
+          quality: 0.7,
+        });
+        if (r.canceled || !r.assets?.[0]) return;
+        asset = { uri: r.assets[0].uri, name: 'reply.mp4', type: 'video/mp4' };
+      }
+    } catch {}
+    if (!asset) return;
+    setVideoUploading(true);
+    try {
+      // Upload via chatUploadFile (returns { url }) — same pipeline used by
+      // chat-conversation video messages. Falls back to a multipart POST
+      // to feed_voice_comment if chatUploadFile isn't available.
+      let url = '';
+      try {
+        const up = await api.chatUploadFile?.(asset.file || asset);
+        if (up?.success && up.data?.url) url = String(up.data.url);
+      } catch {}
+      if (!url) {
+        // Last-ditch: skip and let the user pick again. We don't have a
+        // generic feed-files upload helper for video, so the chat-upload
+        // path is the canonical route.
+        throw new Error('upload failed');
+      }
+      const r = await api.feedComment(post.id, '', replyTo?.id || null, {
+        mediaUrl: url,
+        mediaType: 'video',
+      });
+      if (r.success) {
+        const newComment = r.data?.comment || r.data || {
+          id: Date.now(),
+          author_email: user?.email,
+          email: user?.email,
+          author_name: user?.name || user?.email?.split('@')[0],
+          name: user?.name || user?.email?.split('@')[0],
+          content: '',
+          media_url: url,
+          attachment_url: url,
+          media_type: 'video',
+          created_at: new Date().toISOString(),
+          reply_to_id: replyTo?.id,
+        };
+        setComments(prev => [newComment, ...prev]);
+        setReplyTo(null);
+        currentCountRef.current += 1;
+        onCommentCountChange?.(currentCountRef.current);
+        setTimeout(() => listRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 100);
+      }
+    } catch {} finally {
+      setVideoUploading(false);
+    }
+  }, [post, replyTo, user, sending, videoUploading, onCommentCountChange]);
 
   const handleDelete = useCallback(async (commentId) => {
     try {
@@ -704,6 +870,30 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
             backgroundColor: isDark ? '#0f172a' : '#fafafa',
             paddingBottom: Math.max(10, insets.bottom),
           }]}>
+            {/* Sticker / GIF reply — Reels P1. Opens GifPicker (Tenor-backed)
+                and posts the picked GIF as a comment with media_type=sticker
+                + media_url=<gif_url>. */}
+            <TouchableOpacity
+              onPress={() => setShowStickerPicker(true)}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              style={{ paddingHorizontal: 4, paddingVertical: 4 }}
+              accessibilityRole="button"
+              accessibilityLabel={t('feed.replyWithSticker') || 'Reply with GIF'}
+            >
+              <IconImage size={20} color={ACCENT} />
+            </TouchableOpacity>
+            {/* Video reply — Reels P1. Records 15s clip and posts as a
+                comment with media_type=video. On web we fall back to the
+                file picker so users can still attach an existing clip. */}
+            <TouchableOpacity
+              onPress={pickVideoReply}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              style={{ paddingHorizontal: 4, paddingVertical: 4 }}
+              accessibilityRole="button"
+              accessibilityLabel={t('feed.replyWithVideo') || 'Reply with video'}
+            >
+              <IconVideo size={20} color={ACCENT} />
+            </TouchableOpacity>
             <AvatarCircle email={user?.email} name={user?.name} size={32} />
             <View style={[styles.inputWrapper, {
               backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
@@ -770,6 +960,54 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
           </View>
         </View>
       </KeyboardAvoidingView>
+
+      {/* Sticker / GIF picker — Reels P1 comment reply. Mounted as a
+          stacked modal so it can sit on top of the comments sheet. The
+          GifPicker (Tenor proxy) returns { url, preview }; we use `url`
+          as media_url + media_type=sticker. */}
+      <Modal
+        visible={showStickerPicker}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowStickerPicker(false)}
+      >
+        <Pressable
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}
+          onPress={() => setShowStickerPicker(false)}
+        >
+          <Pressable onPress={(e) => e.stopPropagation && e.stopPropagation()}>
+            {(() => {
+              try {
+                const GifPicker = require('./GifPicker').default;
+                return (
+                  <GifPicker
+                    onSelect={handleStickerPick}
+                    onClose={() => setShowStickerPicker(false)}
+                    colors={colors}
+                    t={t}
+                  />
+                );
+              } catch {
+                return (
+                  <View style={{ padding: 20, backgroundColor: isDark ? '#0f172a' : '#fff' }}>
+                    <Text style={{ color: colors.text }}>{t('feed.stickerPickerUnavailable') || 'Sticker picker unavailable'}</Text>
+                  </View>
+                );
+              }
+            })()}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Tiny inline indicator while a video reply is uploading. */}
+      {videoUploading ? (
+        <View pointerEvents="none" style={{ position: 'absolute', top: 24, left: 0, right: 0, alignItems: 'center' }}>
+          <View style={{ backgroundColor: 'rgba(0,0,0,0.8)', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <ActivityIndicator size="small" color="#fff" />
+            <Text style={{ color: '#fff', fontSize: 12 }}>{t('feed.uploadingVideo') || 'Enviando vídeo…'}</Text>
+          </View>
+        </View>
+      ) : null}
     </Modal>
   );
 }

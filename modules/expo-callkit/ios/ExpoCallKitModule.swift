@@ -175,6 +175,13 @@ public class ExpoCallKitModule: Module {
           }
         }
       }
+      // [2026-05-17] Touch the processor singletons so they're allocated
+      // (and their dlsym / pod-load probe runs) ahead of the first Room.
+      // The wiring into LiveKit's audio/video custom-processing pipeline is
+      // done on the Room itself in CallViewController.bringUpRoom — these
+      // singletons just need to exist before that fires.
+      _ = RNNoiseAudioProcessor.shared
+      _ = BackgroundProcessor.shared
     }
 
     // JS calls this on mount to get any events that fired before JS was ready
@@ -296,6 +303,100 @@ public class ExpoCallKitModule: Module {
     // when NativeCallRoom v2 lands, do the SFU mute directly here.
     AsyncFunction("muteParticipant") { (roomName: String, identity: String) -> Bool in
       NSLog("[ExpoCallKit] muteParticipant room=\(roomName) identity=\(identity) — JS owns the HTTP path, this is a no-op shim")
+      return true
+    }
+
+    // ─── RNNoise (2026-05-17) ────────────────────────────────────────────
+    //
+    // Per-user ML noise suppression toggle. Default ON. The actual frame
+    // processing happens inside RNNoiseAudioProcessor (loaded via dlsym so
+    // the app links even when the Swift Package isn't added yet — see the
+    // MANUAL STEPS at the bottom of RNNoiseAudioProcessor.swift).
+    Function("setNoiseSuppression") { (enabled: Bool) -> Bool in
+      RNNoiseAudioProcessor.shared.enabled = enabled
+      NSLog("[ExpoCallKit] setNoiseSuppression: \(enabled) (available=\(RNNoiseAudioProcessor.shared.available))")
+      return true
+    }
+
+    Function("getNoiseSuppression") { () -> Bool in
+      return RNNoiseAudioProcessor.shared.enabled
+    }
+
+    Function("isNoiseSuppressionAvailable") { () -> Bool in
+      return RNNoiseAudioProcessor.shared.available
+    }
+
+    // ─── MediaPipe Background blur / virtual background (2026-05-17) ────
+    Function("setBackgroundMode") { (mode: String, imageAsset: String?) -> Bool in
+      let proc = BackgroundProcessor.shared
+      switch mode.lowercased() {
+      case "off", "none": proc.mode = .off
+      case "blur_low", "blur-low": proc.mode = .blurLow
+      case "blur_medium", "blur-medium", "blur": proc.mode = .blurMedium
+      case "blur_high", "blur-high": proc.mode = .blurHigh
+      case "image", "wallpaper": proc.mode = .image
+      default: proc.mode = .off
+      }
+      proc.imageAsset = imageAsset
+      // Persist to App Group UserDefaults so cold launches inherit.
+      if let ud = UserDefaults(suiteName: kAppGroupId) {
+        ud.set(mode, forKey: "bg_mode")
+        ud.set(imageAsset ?? "", forKey: "bg_image")
+      }
+      NSLog("[ExpoCallKit] setBackgroundMode: \(mode) asset=\(imageAsset ?? "<nil>") available=\(proc.available)")
+      return true
+    }
+
+    Function("getBackgroundMode") { () -> [String: Any] in
+      if let ud = UserDefaults(suiteName: kAppGroupId) {
+        return [
+          "mode": ud.string(forKey: "bg_mode") ?? "off",
+          "imageAsset": ud.string(forKey: "bg_image") ?? "",
+        ]
+      }
+      return ["mode": "off", "imageAsset": ""]
+    }
+
+    Function("isBackgroundProcessorAvailable") { () -> Bool in
+      return BackgroundProcessor.shared.available
+    }
+
+    Function("getBackgroundWallpapers") { () -> [String] in
+      return BackgroundProcessor.builtinWallpapers
+    }
+
+    // ─── Screen share (Stage 4 / 2026-05-17) ─────────────────────────────
+    //
+    // Top-level entry that JS calls when the user taps the screen-share pill.
+    // On iOS we forward to the existing modules/expo-screen-share which owns
+    // the ReplayKit broadcast picker. The actual frame transmission is the
+    // ChatyyBroadcastExtension target (SampleHandler.swift) which already
+    // extends LKSampleHandler — LiveKit pipes those frames into the screen
+    // share track without any further wiring here.
+    //
+    // `audioShare` is honoured per ReplayKit's API: the picker exposes an
+    // "Include microphone" toggle automatically; system-audio (app audio)
+    // requires the extension to call AVAudioSession.sharedInstance().setCategory(.playAndRecord)
+    // with .mixWithOthers — handled in SampleHandler.swift when LKSampleHandler
+    // sees a non-zero `broadcastDelayMillis`.
+    AsyncFunction("startScreenshare") { (audioShare: Bool) -> Bool in
+      // Forward via NotificationCenter so the existing ExpoScreenShare module
+      // owns the picker presentation. Keeps native + JS call sites symmetric
+      // (the bridge into the LK Room is the same on both platforms).
+      NotificationCenter.default.post(
+        name: Notification.Name("ExpoCallKitRequestScreenshare"),
+        object: nil,
+        userInfo: ["audioShare": audioShare]
+      )
+      NSLog("[ExpoCallKit] startScreenshare: dispatched (audioShare=\(audioShare))")
+      return true
+    }
+
+    AsyncFunction("stopScreenshare") { () -> Bool in
+      NotificationCenter.default.post(
+        name: Notification.Name("ExpoCallKitRequestStopScreenshare"),
+        object: nil
+      )
       return true
     }
 

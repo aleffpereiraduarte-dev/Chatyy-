@@ -27,7 +27,7 @@ import {
   IconCopy, IconCheckCircle, IconMail, IconSparkles, IconFilter, IconEdit,
   IconForward, IconFileText, IconUsers,
   IconClock, IconImage, IconStar, IconMapPin, IconSearch,
-  IconSmartphone, IconMonitor, IconShield,
+  IconSmartphone, IconMonitor, IconShield, IconBarChart,
 } from './Icons';
 import * as api from '../services/api';
 import { useTheme, ACCENT_PRESETS } from '../context/ThemeContext';
@@ -358,6 +358,12 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
         { icon: IconClock,    label: t?.('settings.timeOnApp') || 'Tempo no app',                  tint: ICON_TEAL, onPress: () => push('about') },
         { icon: IconUsers,    label: t?.('settings.linkedDevices') || 'Aparelhos conectados',  tint: ICON_TEAL, onPress: () => push('devices') },
         { icon: IconDatabase, label: t?.('settings.exportData') || 'Baixar meus dados',           tint: ICON_TEAL, onPress: () => push('export') },
+        // Reels P1 — Painel de criador (creator monetization dashboard).
+        // Surfaces subscriber_count, monthly revenue, tip totals, and
+        // top tippers for the logged-in creator. Routes to
+        // /profile-creator-dashboard which calls the creator_dashboard
+        // backend action.
+        { icon: IconBarChart, label: t?.('profile.creatorDashboard') || 'Painel de criador', tint: ICON_PURPLE, onPress: () => closeAndRun(() => { try { router?.push?.('/profile-creator-dashboard'); } catch {} }) },
       ],
     },
     {

@@ -1283,6 +1283,15 @@ try {
                 }
             } catch (\Throwable $_e) { /* non-fatal */ }
 
+            // Audit log: surfaced in Settings → Segurança → Histórico de atividades.
+            // Wrapped in try/catch so audit-failure never breaks login.
+            try {
+                require_once __DIR__ . '/privacy_endpoints.php';
+                if (function_exists('logUserActivity') && function_exists('getPGDB')) {
+                    logUserActivity(getPGDB(), $email, 'login');
+                }
+            } catch (\Throwable $_e) {}
+
             jsonResponse(true, [
                 'email' => $email,
                 'name' => $_SESSION['name'],
@@ -1317,6 +1326,16 @@ try {
                     } catch (\Throwable $e) { error_log('[logout_pg_revoke_err] ' . $e->getMessage()); }
                 }
             } catch (\Throwable $e) { error_log('[logout_revoke_err] ' . $e->getMessage()); }
+            // Audit (best-effort — pull email from session before destroy).
+            try {
+                $logEmail = $_SESSION['email'] ?? '';
+                if ($logEmail) {
+                    require_once __DIR__ . '/privacy_endpoints.php';
+                    if (function_exists('logUserActivity') && function_exists('getPGDB')) {
+                        logUserActivity(getPGDB(), $logEmail, 'logout');
+                    }
+                }
+            } catch (\Throwable $_e) {}
             session_destroy();
             jsonResponse(true, null, 'Logout realizado');
             break;
@@ -8508,6 +8527,14 @@ try {
             $_SESSION['password_enc'] = encryptSessionPassword($newPwd);
             unset($_SESSION['password']); // remove any legacy plaintext
 
+            // Audit log: high-signal security event.
+            try {
+                require_once __DIR__ . '/privacy_endpoints.php';
+                if (function_exists('logUserActivity') && function_exists('getPGDB')) {
+                    logUserActivity(getPGDB(), $auth['email'], 'password_change');
+                }
+            } catch (\Throwable $_e) {}
+
             jsonResponse(true, null, 'Senha alterada com sucesso');
             break;
 
@@ -10069,9 +10096,18 @@ try {
                 // added the share route should start enforcing followers-only
                 // checks here.
                 @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS subtitles TEXT");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS is_ad BOOLEAN DEFAULT FALSE");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS is_promoted BOOLEAN DEFAULT FALSE");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS promoted_until TIMESTAMP");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS tagged_users TEXT");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS location_lat DOUBLE PRECISION");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS location_lon DOUBLE PRECISION");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS location_name TEXT");
                 $stmt = $pg->prepare("
                     SELECT id, author_email, author_name, caption, media_type, media_urls,
-                           thumbnail_url, location, created_at, video_hls_url, subtitles,
+                           thumbnail_url, location, location_lat, location_lon, location_name,
+                           tagged_users, is_ad, is_promoted, promoted_until,
+                           created_at, video_hls_url, subtitles,
                            repost_of_id
                     FROM chat_feed_posts
                     WHERE id = :id AND is_deleted = 0 AND (published IS NULL OR published = TRUE)
@@ -10088,6 +10124,19 @@ try {
                     $dec = json_decode($post['subtitles'], true);
                     if (is_array($dec)) $post['subtitles'] = $dec;
                 }
+                // Wave 15 surface
+                if (!empty($post['tagged_users'])) {
+                    $tu = json_decode($post['tagged_users'], true);
+                    $post['tagged_users'] = is_array($tu) ? $tu : [];
+                } else {
+                    $post['tagged_users'] = [];
+                }
+                $post['is_ad'] = !empty($post['is_ad']);
+                $promoActive = !empty($post['is_promoted']) && (!$post['promoted_until'] || strtotime($post['promoted_until']) > time());
+                $post['is_promoted'] = (bool)$promoActive;
+                $post['sponsored'] = $post['is_ad'] || $promoActive;
+                if ($post['location_lat'] !== null) $post['location_lat'] = (float)$post['location_lat'];
+                if ($post['location_lon'] !== null) $post['location_lon'] = (float)$post['location_lon'];
                 // Embed the original post when this row is a repost so the
                 // frontend can render the quoted card without a second roundtrip.
                 if (!empty($post['repost_of_id'])) {
@@ -10280,12 +10329,52 @@ try {
                 if (file_exists($localCandidate)) $thumbUrl = $candidate;
             }
 
+            // ── Wave 15: tagged people + structured location ──
+            // tagged_users → JSON array of emails so we can fan-out pushes
+            // to each tagged person (and later render @chips in the
+            // frontend without re-parsing the caption).
+            $taggedEmails = [];
+            if ($taggedJson !== '') {
+                $dec = json_decode($taggedJson, true);
+                if (is_array($dec)) {
+                    foreach ($dec as $em) {
+                        $em = strtolower(trim((string)$em));
+                        if ($em !== '' && filter_var($em, FILTER_VALIDATE_EMAIL)) {
+                            $taggedEmails[] = $em;
+                            if (count($taggedEmails) >= 30) break; // sanity cap
+                        }
+                    }
+                    $taggedEmails = array_values(array_unique($taggedEmails));
+                }
+            }
+            // Structured location (lat/lon/name). Optional — frontend may
+            // send only `location` (free-text) or all three. Round-trip
+            // both so reposts/cards keep the free-text label as a fallback.
+            $locLat = isset($_POST['location_lat']) && $_POST['location_lat'] !== '' ? (float)$_POST['location_lat'] : null;
+            $locLon = isset($_POST['location_lon']) && $_POST['location_lon'] !== '' ? (float)$_POST['location_lon'] : null;
+            $locName = trim((string)($_POST['location_name'] ?? ''));
+            if ($locName === '' && $location !== '') $locName = $location;
+            // Guard: latitude in [-90,90] and longitude in [-180,180] —
+            // anything else means a buggy client, drop the coords.
+            if ($locLat !== null && ($locLat < -90 || $locLat > 90)) $locLat = null;
+            if ($locLon !== null && ($locLon < -180 || $locLon > 180)) $locLon = null;
+
             try {
                 require_once __DIR__ . '/db.php';
                 $pg = getPGDB();
                 @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS repost_caption TEXT");
-                $ins = $pg->prepare("INSERT INTO chat_feed_posts (author_email, author_name, caption, media_type, media_urls, thumbnail_url, location, created_at, updated_at, repost_of_id, repost_caption)
-                    VALUES (:ae, :an, :c, :t, :m, :th, :loc, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, :ro, :rc) RETURNING id");
+                // Wave 15 columns. ADD COLUMN IF NOT EXISTS is idempotent so
+                // we run them on every feed_create_post — same pattern the
+                // rest of the file uses for forward-compatible schema bumps.
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS is_ad BOOLEAN DEFAULT FALSE");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS tagged_users TEXT");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS location_lat DOUBLE PRECISION");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS location_lon DOUBLE PRECISION");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS location_name TEXT");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS is_promoted BOOLEAN DEFAULT FALSE");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS promoted_until TIMESTAMP");
+                $ins = $pg->prepare("INSERT INTO chat_feed_posts (author_email, author_name, caption, media_type, media_urls, thumbnail_url, location, location_lat, location_lon, location_name, tagged_users, created_at, updated_at, repost_of_id, repost_caption)
+                    VALUES (:ae, :an, :c, :t, :m, :th, :loc, :lat, :lon, :lname, :tag, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, :ro, :rc) RETURNING id");
                 $ins->execute([
                     ':ae' => $auth['email'],
                     ':an' => $auth['name'] ?? explode('@', $auth['email'])[0],
@@ -10294,6 +10383,10 @@ try {
                     ':m'  => json_encode($mediaUrls),
                     ':th' => $thumbUrl,
                     ':loc'=> mb_substr($location, 0, 200),
+                    ':lat'=> $locLat,
+                    ':lon'=> $locLon,
+                    ':lname'=> mb_substr($locName, 0, 200),
+                    ':tag'=> $taggedEmails ? json_encode($taggedEmails) : null,
                     ':ro' => $isRepost ? $repostOfId : null,
                     ':rc' => $isRepost ? mb_substr($caption, 0, 2200) : null,
                 ]);
@@ -10307,6 +10400,87 @@ try {
             // (cache 60s). User reportou: "feed n puxa o que postei".
             try { require_once __DIR__ . '/cache.php'; cacheInvalidate("profile:v1:" . strtolower($auth['email'])); } catch (Throwable $_) {}
 
+            // ── Wave 15: push fan-out ────────────────────────────────────
+            // 1) Tagged users ("X marcou você em uma publicação").
+            // 2) Followers ("X postou um novo reel/foto") — skipping anyone
+            //    who muted this creator. Fire-and-forget; push failures
+            //    don't block the response.
+            if (!function_exists('fcmSendToUser')) {
+                @require_once __DIR__ . '/firebase_push.php';
+            }
+            $authorName = $auth['name'] ?? explode('@', $auth['email'])[0];
+            if (function_exists('fcmSendToUser')) {
+                try {
+                    foreach ($taggedEmails as $tEmail) {
+                        if (strcasecmp($tEmail, $auth['email']) === 0) continue;
+                        try {
+                            fcmSendToUser(
+                                $tEmail,
+                                $authorName,
+                                $authorName . ' marcou você em uma publicação',
+                                [
+                                    'type'        => 'feed_tagged',
+                                    'categoryId'  => 'feed_tagged',
+                                    'post_id'     => (string)$postId,
+                                    'author_email'=> $auth['email'],
+                                    'route'       => '/feed/' . $postId,
+                                ]
+                            );
+                        } catch (Throwable $_e) { error_log('[feed_create.push.tag] ' . $_e->getMessage()); }
+                    }
+                } catch (Throwable $_e) {}
+
+                try {
+                    require_once __DIR__ . '/db.php';
+                    $pg2 = getPGDB();
+                    $followers = [];
+                    try {
+                        $fs = $pg2->prepare("SELECT follower_email FROM chat_follows WHERE LOWER(following_email) = LOWER(:e)");
+                        $fs->execute([':e' => $auth['email']]);
+                        foreach ($fs->fetchAll(PDO::FETCH_COLUMN) as $em) $followers[] = $em;
+                    } catch (Throwable $_e) { /* table may not exist on dev */ }
+                    // Drop muted-creator subscribers. Best-effort lookup —
+                    // table may not exist in old environments.
+                    $muted = [];
+                    try {
+                        @$pg2->exec("CREATE TABLE IF NOT EXISTS chat_user_muted_creators (
+                            email TEXT NOT NULL,
+                            muted_email TEXT NOT NULL,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            PRIMARY KEY (email, muted_email)
+                        )");
+                        $mq = $pg2->prepare("SELECT email FROM chat_user_muted_creators WHERE LOWER(muted_email) = LOWER(:e)");
+                        $mq->execute([':e' => $auth['email']]);
+                        foreach ($mq->fetchAll(PDO::FETCH_COLUMN) as $em) $muted[strtolower($em)] = true;
+                    } catch (Throwable $_e) {}
+                    $pushTitle = $authorName;
+                    $kind = ($isReel || $mediaType === 'video') ? 'reel' : 'foto';
+                    $pushBody = $authorName . ' postou um novo ' . $kind;
+                    $pushData = [
+                        'type'        => 'feed_post_new',
+                        'categoryId'  => 'feed_post_new',
+                        'post_id'     => (string)$postId,
+                        'author_email'=> $auth['email'],
+                        'author_name' => $authorName,
+                        'media_type'  => $mediaType,
+                        'is_reel'     => $isReel ? '1' : '0',
+                        'route'       => '/feed/' . $postId,
+                        'thread_id'   => 'feed_post_' . $postId,
+                    ];
+                    foreach ($followers as $fEmail) {
+                        if (!$fEmail) continue;
+                        if (strcasecmp($fEmail, $auth['email']) === 0) continue;
+                        if (isset($muted[strtolower($fEmail)])) continue;
+                        // Skip if the user was already pinged as a tagged person.
+                        if (in_array(strtolower($fEmail), $taggedEmails, true)) continue;
+                        try { fcmSendToUser($fEmail, $pushTitle, $pushBody, $pushData); }
+                        catch (Throwable $e) { error_log('[feed_create.push.follower] ' . $e->getMessage()); }
+                    }
+                } catch (Throwable $_e) {
+                    error_log('[feed_create.fanout] ' . $_e->getMessage());
+                }
+            }
+
             jsonResponse(true, [
                 'post' => [
                     'id' => $postId,
@@ -10317,6 +10491,10 @@ try {
                     'media_urls' => $mediaUrls,
                     'thumbnail_url' => $thumbUrl,
                     'location' => $location,
+                    'location_lat' => $locLat,
+                    'location_lon' => $locLon,
+                    'location_name' => $locName ?: $location,
+                    'tagged_users' => $taggedEmails,
                     'is_reel' => (bool)$isReel,
                     'audience' => $audience,
                 ],
@@ -10414,9 +10592,18 @@ try {
                 }
 
                 @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS subtitles TEXT");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS is_ad BOOLEAN DEFAULT FALSE");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS is_promoted BOOLEAN DEFAULT FALSE");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS promoted_until TIMESTAMP");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS tagged_users TEXT");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS location_lat DOUBLE PRECISION");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS location_lon DOUBLE PRECISION");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS location_name TEXT");
                 $stmt = $pg->prepare("
                     SELECT p.id, p.author_email, p.author_name, p.caption, p.media_type,
-                           p.media_urls, p.thumbnail_url, p.location, p.created_at,
+                           p.media_urls, p.thumbnail_url, p.location, p.location_lat, p.location_lon, p.location_name,
+                           p.tagged_users, p.is_ad, p.is_promoted, p.promoted_until,
+                           p.created_at,
                            p.video_hls_url, p.video_duration_ms, p.blurhash, p.image_variants,
                            p.subtitles, p.repost_of_id
                     FROM chat_feed_posts p
@@ -10474,6 +10661,21 @@ try {
                         $dec = json_decode($p['subtitles'], true);
                         if (is_array($dec)) $p['subtitles'] = $dec;
                     }
+                    // Wave 15: surface tagged_users as a proper array + sponsored flag.
+                    if (!empty($p['tagged_users'])) {
+                        $tu = json_decode($p['tagged_users'], true);
+                        $p['tagged_users'] = is_array($tu) ? $tu : [];
+                    } else {
+                        $p['tagged_users'] = [];
+                    }
+                    $p['is_ad'] = !empty($p['is_ad']);
+                    // is_promoted is only "active" while promoted_until is in
+                    // the future; expired boosts go back to organic ranking.
+                    $promoActive = !empty($p['is_promoted']) && (!$p['promoted_until'] || strtotime($p['promoted_until']) > time());
+                    $p['is_promoted'] = (bool)$promoActive;
+                    $p['sponsored'] = $p['is_ad'] || $promoActive;
+                    if ($p['location_lat'] !== null) $p['location_lat'] = (float)$p['location_lat'];
+                    if ($p['location_lon'] !== null) $p['location_lon'] = (float)$p['location_lon'];
                     $likeCount = $likeCounts[$p['id']] ?? 0;
                     $commentCount = $commentCounts[$p['id']] ?? 0;
                     $p['likes'] = $likeCount;
@@ -10486,6 +10688,62 @@ try {
                         $p['original_post'] = $origMap[(int)$p['repost_of_id']];
                     }
                 }
+                unset($p);
+
+                // ── Wave 15: ads insertion ────────────────────────────────
+                // Inject 1 active ad every FEED_AD_INTERVAL posts (default 7).
+                // Ads are stored in the same chat_feed_posts table with
+                // is_ad = TRUE. We pull a small candidate pool (12 latest
+                // active ads) and round-robin them through the slots so
+                // the user doesn't see the same ad 5x in a single page.
+                // No ads on author-filtered pages (profile/grid views).
+                if ($authorFilter === '' && !empty($posts)) {
+                    try {
+                        $adStmt = $pg->prepare("
+                            SELECT p.id, p.author_email, p.author_name, p.caption, p.media_type,
+                                   p.media_urls, p.thumbnail_url, p.location, p.location_lat, p.location_lon, p.location_name,
+                                   p.tagged_users, p.created_at, p.video_hls_url,
+                                   p.video_duration_ms, p.blurhash, p.image_variants, p.subtitles
+                            FROM chat_feed_posts p
+                            WHERE p.is_deleted = 0 AND p.is_ad = TRUE
+                              AND (p.published IS NULL OR p.published = TRUE)
+                            ORDER BY p.created_at DESC
+                            LIMIT 12
+                        ");
+                        $adStmt->execute();
+                        $adRows = $adStmt->fetchAll(PDO::FETCH_ASSOC);
+                        if (!empty($adRows)) {
+                            foreach ($adRows as &$ad) {
+                                $ad['id'] = (int)$ad['id'];
+                                $ad['media_urls'] = _cdnifyArray(json_decode($ad['media_urls'] ?: '[]', true) ?: []);
+                                $ad['is_ad'] = true;
+                                $ad['sponsored'] = true;
+                                $ad['is_promoted'] = false;
+                                $ad['tagged_users'] = [];
+                                $ad['likes'] = $ad['likes_count'] = $ad['like_count'] = 0;
+                                $ad['comments'] = $ad['comments_count'] = 0;
+                                $ad['user_liked'] = false;
+                            }
+                            unset($ad);
+                            $interval = (int)(getenv('FEED_AD_INTERVAL') ?: 7);
+                            if ($interval < 3) $interval = 7;
+                            $withAds = [];
+                            $adIdx = 0;
+                            foreach ($posts as $idx => $row) {
+                                $withAds[] = $row;
+                                // Insert ad slot AFTER every $interval organic posts.
+                                if (($idx + 1) % $interval === 0 && $adIdx < count($adRows)) {
+                                    $withAds[] = $adRows[$adIdx];
+                                    $adIdx++;
+                                }
+                            }
+                            $posts = $withAds;
+                        }
+                    } catch (Throwable $_adE) {
+                        error_log('[feed_list ads] ' . $_adE->getMessage());
+                    }
+                }
+
                 jsonResponse(true, ['posts' => $posts, 'page' => $page, 'has_more' => count($posts) === $limit]);
             } catch (Throwable $e) {
                 error_log('[feed_list PG] ' . $e->getMessage());
@@ -10576,24 +10834,42 @@ try {
             $postId = (int)($input['post_id'] ?? 0);
             $content = trim((string)($input['content'] ?? ''));
             $replyTo = !empty($input['reply_to_id']) ? (int)$input['reply_to_id'] : null;
+            // Reels P1 — sticker / video reply support. When attachment_url or
+            // media_url is present, content can be empty. media_type is one of
+            // 'sticker', 'gif', 'image', 'video'. attachment_url is the legacy
+            // alias the frontend uses for sticker URLs; media_url is the new
+            // unified column. Both fall through to the same column on the row.
+            $attachmentUrl = trim((string)($input['attachment_url'] ?? ''));
+            $mediaUrl      = trim((string)($input['media_url'] ?? ''));
+            $mediaType     = strtolower(trim((string)($input['media_type'] ?? '')));
+            $finalMedia    = $mediaUrl !== '' ? $mediaUrl : $attachmentUrl;
+            if (!in_array($mediaType, ['sticker', 'gif', 'image', 'video'], true)) {
+                $mediaType = $finalMedia !== '' ? 'sticker' : '';
+            }
             if (!$postId) jsonResponse(false, null, 'post_id required', 400);
-            if ($content === '') jsonResponse(false, null, 'content required', 400);
+            if ($content === '' && $finalMedia === '') jsonResponse(false, null, 'content or media required', 400);
             $content = mb_substr($content, 0, 1000);
             try {
                 require_once __DIR__ . '/db.php';
                 $pg = getPGDB();
+                // Lazy add the comment attachment columns so older deployments
+                // get them on first comment_with_media write. Idempotent.
+                @$pg->exec("ALTER TABLE chat_feed_comments ADD COLUMN IF NOT EXISTS media_url TEXT");
+                @$pg->exec("ALTER TABLE chat_feed_comments ADD COLUMN IF NOT EXISTS media_type TEXT");
                 $p = $pg->prepare("SELECT author_email FROM chat_feed_posts WHERE id = :id AND is_deleted = 0");
                 $p->execute([':id' => $postId]);
                 $post = $p->fetch(PDO::FETCH_ASSOC);
                 if (!$post) jsonResponse(false, null, 'Post not found', 404);
 
-                $ins = $pg->prepare("INSERT INTO chat_feed_comments (post_id, email, name, content, reply_to_id) VALUES (:p, :e, :n, :c, :r) RETURNING id, created_at");
+                $ins = $pg->prepare("INSERT INTO chat_feed_comments (post_id, email, name, content, reply_to_id, media_url, media_type) VALUES (:p, :e, :n, :c, :r, :mu, :mt) RETURNING id, created_at");
                 $ins->execute([
                     ':p' => $postId,
                     ':e' => $auth['email'],
                     ':n' => $auth['name'] ?? explode('@', $auth['email'])[0],
                     ':c' => $content,
                     ':r' => $replyTo,
+                    ':mu' => $finalMedia,
+                    ':mt' => $mediaType,
                 ]);
                 $row = $ins->fetch(PDO::FETCH_ASSOC);
 
@@ -10618,6 +10894,10 @@ try {
                     'name' => $auth['name'] ?? explode('@', $auth['email'])[0],
                     'content' => $content,
                     'reply_to_id' => $replyTo,
+                    'media_url' => $finalMedia,
+                    'media_type' => $mediaType,
+                    // Legacy alias retained so older clients keep rendering stickers.
+                    'attachment_url' => $finalMedia,
                     'created_at' => $row['created_at'],
                 ];
 
@@ -10677,13 +10957,15 @@ try {
                     PRIMARY KEY (comment_id, email)
                 )");
                 @$pg->exec("ALTER TABLE chat_feed_comments ADD COLUMN IF NOT EXISTS audio_url TEXT");
+                @$pg->exec("ALTER TABLE chat_feed_comments ADD COLUMN IF NOT EXISTS media_url TEXT");
+                @$pg->exec("ALTER TABLE chat_feed_comments ADD COLUMN IF NOT EXISTS media_type TEXT");
                 // Threaded comments (1 level deep): pull all top-level rows
                 // for this page, then attach their replies as a `replies`
                 // array. We don't paginate replies — they're capped at 50 per
                 // parent which is plenty for IG-style threading without
                 // adding a second round-trip per parent.
                 $stmt = $pg->prepare("
-                    SELECT c.id, c.post_id, c.email, c.name, c.content, c.audio_url, c.reply_to_id, c.created_at,
+                    SELECT c.id, c.post_id, c.email, c.name, c.content, c.audio_url, c.media_url, c.media_type, c.reply_to_id, c.created_at,
                            COALESCE((SELECT COUNT(*) FROM chat_feed_comment_likes WHERE comment_id = c.id), 0) AS likes_count,
                            EXISTS(SELECT 1 FROM chat_feed_comment_likes WHERE comment_id = c.id AND email = :me) AS liked_by_me
                     FROM chat_feed_comments c
@@ -10700,7 +10982,7 @@ try {
                 if (!empty($parentIds)) {
                     $in = implode(',', $parentIds);
                     $rep = $pg->prepare("
-                        SELECT c.id, c.post_id, c.email, c.name, c.content, c.audio_url, c.reply_to_id, c.created_at,
+                        SELECT c.id, c.post_id, c.email, c.name, c.content, c.audio_url, c.media_url, c.media_type, c.reply_to_id, c.created_at,
                                COALESCE((SELECT COUNT(*) FROM chat_feed_comment_likes WHERE comment_id = c.id), 0) AS likes_count,
                                EXISTS(SELECT 1 FROM chat_feed_comment_likes WHERE comment_id = c.id AND email = :me) AS liked_by_me
                         FROM chat_feed_comments c
@@ -10721,6 +11003,9 @@ try {
                             'name' => $r2['name'],
                             'content' => $r2['content'],
                             'audio_url' => $r2['audio_url'],
+                            'media_url' => $r2['media_url'] ?? '',
+                            'media_type' => $r2['media_type'] ?? '',
+                            'attachment_url' => $r2['media_url'] ?? '',
                             'reply_to_id' => (int)$r2['reply_to_id'],
                             'created_at' => $r2['created_at'],
                             'likes_count' => (int)$r2['likes_count'],
@@ -10733,6 +11018,11 @@ try {
                     $r['post_id'] = (int)$r['post_id'];
                     $r['likes_count'] = (int)$r['likes_count'];
                     $r['liked_by_me'] = !empty($r['liked_by_me']);
+                    // Surface sticker / GIF / video reply attachments uniformly.
+                    // attachment_url is the legacy alias older clients read.
+                    $r['media_url'] = $r['media_url'] ?? '';
+                    $r['media_type'] = $r['media_type'] ?? '';
+                    $r['attachment_url'] = $r['media_url'];
                     $r['replies'] = $repliesByParent[(int)$r['id']] ?? [];
                 }
                 jsonResponse(true, ['comments' => $rows, 'page' => $page, 'has_more' => count($rows) === $limit]);
@@ -11020,6 +11310,688 @@ try {
             break;
         }
 
+        // ============================================================
+        // Reels — Pixabay rights-cleared music catalog (free).
+        // ------------------------------------------------------------
+        // Pixabay's `category=music` endpoint returns free, royalty-free
+        // tracks with preview audio + cover image. We proxy the call so
+        // the API key never leaks to clients, and cache responses for 1h
+        // to stay well under the free-tier rate limit (100 req / 60s).
+        //
+        // Alternative (free, no API): YouTube Audio Library —
+        //   https://www.youtube.com/audiolibrary  (downloadable .mp3s,
+        //   licensed for any use). We chose Pixabay because it serves
+        //   JSON + preview URLs out-of-the-box; YT Audio Library has
+        //   no machine-readable feed, so it would require a manual
+        //   ingest pipeline.
+        //
+        // Response shape (normalized):
+        //   { id, title, artist, preview_url, duration_sec, image_url }
+        //
+        // Cache files live in /tmp/music_cache/. Filename = md5 of the
+        // upstream URL. TTL: 3600s. We use serve-stale-on-error so
+        // network blips don't surface as 5xx to the client.
+        // ============================================================
+        case 'reels_music_catalog':
+        case 'reels_music_search': {
+            requireAuth();
+            $input = getInput();
+            $q = trim((string)($input['q'] ?? $input['query'] ?? ''));
+            $page = max(1, min(50, (int)($input['page'] ?? 1)));
+            $perPage = max(3, min(50, (int)($input['per_page'] ?? 24)));
+
+            $apiKey = trim((string)(getenv('PIXABAY_API_KEY') ?: ''));
+            $cacheDir = '/tmp/music_cache';
+            if (!is_dir($cacheDir)) @mkdir($cacheDir, 0775, true);
+
+            // Build upstream URL. Force category=music to honor the
+            // "music only, no SFX" constraint from the spec.
+            $params = [
+                'key' => $apiKey,
+                'category' => 'music',
+                'per_page' => $perPage,
+                'page' => $page,
+            ];
+            if ($action === 'reels_music_search' && $q !== '') {
+                $params['q'] = $q;
+            } else {
+                $params['order'] = 'popular';
+            }
+            $upstream = 'https://pixabay.com/api/?' . http_build_query($params);
+            $cacheKey = md5($upstream);
+            $cachePath = $cacheDir . '/' . $cacheKey . '.json';
+
+            // Serve from cache when fresh (<1h).
+            if (file_exists($cachePath) && (time() - filemtime($cachePath)) < 3600) {
+                $cached = @file_get_contents($cachePath);
+                if ($cached !== false) {
+                    header('Content-Type: application/json; charset=utf-8');
+                    echo $cached;
+                    exit;
+                }
+            }
+
+            // If the key isn't configured, return a curated empty payload
+            // so the UI renders the "Meus salvos" + "Original" tabs cleanly
+            // instead of erroring. Production sets PIXABAY_API_KEY in
+            // /etc/mail-api.env.
+            if ($apiKey === '') {
+                $payload = json_encode([
+                    'success' => true,
+                    'data' => [
+                        'tracks' => [],
+                        'page' => $page,
+                        'has_more' => false,
+                        'source' => 'pixabay',
+                        'note' => 'PIXABAY_API_KEY not set on server',
+                    ],
+                ]);
+                @file_put_contents($cachePath, $payload, LOCK_EX);
+                header('Content-Type: application/json; charset=utf-8');
+                echo $payload;
+                exit;
+            }
+
+            // Hit upstream. 6s timeout — Pixabay typically replies in <500ms.
+            $ch = curl_init($upstream);
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT => 6,
+                CURLOPT_CONNECTTIMEOUT => 3,
+                CURLOPT_USERAGENT => 'ChatyyReelsMusic/1.0',
+            ]);
+            $resp = curl_exec($ch);
+            $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            curl_close($ch);
+
+            $tracks = [];
+            $hasMore = false;
+            if ($resp && $code === 200) {
+                $data = json_decode($resp, true);
+                if (is_array($data) && !empty($data['hits']) && is_array($data['hits'])) {
+                    foreach ($data['hits'] as $h) {
+                        // Pixabay's music payload exposes either `audio`
+                        // (newer rollout) or no preview field on some
+                        // photo-mode rows. Skip rows without any preview.
+                        $preview = (string)($h['audio'] ?? $h['previewURL'] ?? '');
+                        if ($preview === '') continue;
+                        $tracks[] = [
+                            'id' => 'pixabay/' . (int)($h['id'] ?? 0),
+                            'title' => (string)($h['tags'] ?? $h['title'] ?? 'Untitled'),
+                            'artist' => (string)($h['user'] ?? 'Pixabay'),
+                            'preview_url' => $preview,
+                            'duration_sec' => (int)($h['duration'] ?? 30),
+                            'image_url' => (string)($h['userImageURL'] ?? $h['previewURL'] ?? ''),
+                        ];
+                    }
+                    $totalHits = (int)($data['totalHits'] ?? 0);
+                    $hasMore = ($page * $perPage) < $totalHits;
+                }
+                $payload = json_encode([
+                    'success' => true,
+                    'data' => [
+                        'tracks' => $tracks,
+                        'page' => $page,
+                        'has_more' => $hasMore,
+                        'source' => 'pixabay',
+                    ],
+                ]);
+                @file_put_contents($cachePath, $payload, LOCK_EX);
+                header('Content-Type: application/json; charset=utf-8');
+                echo $payload;
+                exit;
+            }
+
+            // Upstream error — serve stale cache if any, else empty list.
+            if (file_exists($cachePath)) {
+                header('Content-Type: application/json; charset=utf-8');
+                readfile($cachePath);
+                exit;
+            }
+            jsonResponse(true, ['tracks' => [], 'page' => $page, 'has_more' => false, 'source' => 'pixabay']);
+            break;
+        }
+
+        // ============================================================
+        // Reels — Tip a creator directly on a reel post (outside Live).
+        // ------------------------------------------------------------
+        // Reuses the same diamond wallet ledger as wave-6 Live gifts:
+        // debits sender, credits 70% to creator's pending_payout_cents,
+        // platform retains 30%. Same gift catalog (`live_gift_catalog`)
+        // is reused so the sheet shows the same SKUs.
+        //
+        // After insert we broadcast a `feed_post_tip` WS event on
+        // channel `feed_post_{id}` so the floating "💎" animation can
+        // fan out to anyone currently watching the reel.
+        // ============================================================
+        case 'feed_post_tip': {
+            $auth = requireAuth();
+            $input = getInput();
+            $postId = (int)($input['post_id'] ?? 0);
+            $giftSku = strtolower(trim((string)($input['gift_sku'] ?? $input['gift_type'] ?? '')));
+            if (!$postId || $giftSku === '') {
+                jsonResponse(false, null, 'post_id and gift_sku required', 400);
+            }
+            // Same catalog as live_gift_catalog (diamond costs).
+            $catalog = [
+                'gift_rose'   => 100,
+                'gift_star'   => 300,
+                'gift_crown'  => 1000,
+                'gift_rocket' => 2000,
+                'gift_galaxy' => 5000,
+                'gift_legend' => 10000,
+            ];
+            if (!isset($catalog[$giftSku])) {
+                jsonResponse(false, null, 'Unknown gift_sku', 400);
+            }
+            $diamonds = (int)$catalog[$giftSku];
+
+            try {
+                require_once __DIR__ . '/db.php';
+                $pg = getPGDB();
+                // Reuse wave-6 wallet ledger schema. Lazy-create to keep
+                // this endpoint deployable without a separate migration.
+                @$pg->exec("CREATE TABLE IF NOT EXISTS chat_wallet_balances (
+                    email TEXT PRIMARY KEY,
+                    diamond_balance BIGINT NOT NULL DEFAULT 0,
+                    pending_payout_cents BIGINT NOT NULL DEFAULT 0,
+                    updated_at TIMESTAMPTZ DEFAULT now()
+                )");
+                @$pg->exec("CREATE TABLE IF NOT EXISTS chat_wallet_ledger (
+                    id BIGSERIAL PRIMARY KEY,
+                    email TEXT NOT NULL,
+                    direction TEXT NOT NULL,
+                    amount BIGINT NOT NULL,
+                    kind TEXT NOT NULL,
+                    ref_kind TEXT,
+                    ref_id BIGINT,
+                    counterparty TEXT,
+                    created_at TIMESTAMPTZ DEFAULT now()
+                )");
+                @$pg->exec("CREATE INDEX IF NOT EXISTS idx_wallet_ledger_email_created ON chat_wallet_ledger (email, created_at DESC)");
+                @$pg->exec("CREATE TABLE IF NOT EXISTS chat_feed_tips (
+                    id BIGSERIAL PRIMARY KEY,
+                    post_id BIGINT NOT NULL,
+                    sender_email TEXT NOT NULL,
+                    creator_email TEXT NOT NULL,
+                    gift_sku TEXT NOT NULL,
+                    diamonds BIGINT NOT NULL,
+                    creator_payout_cents BIGINT NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT now()
+                )");
+                @$pg->exec("CREATE INDEX IF NOT EXISTS idx_feed_tips_post ON chat_feed_tips (post_id, created_at DESC)");
+                @$pg->exec("CREATE INDEX IF NOT EXISTS idx_feed_tips_creator ON chat_feed_tips (creator_email, created_at DESC)");
+
+                $stP = $pg->prepare("SELECT author_email FROM chat_feed_posts WHERE id = :id AND is_deleted = 0");
+                $stP->execute([':id' => $postId]);
+                $row = $stP->fetch(PDO::FETCH_ASSOC);
+                if (!$row) jsonResponse(false, null, 'Post not found', 404);
+                $creator = strtolower($row['author_email']);
+                if ($creator === strtolower($auth['email'])) {
+                    jsonResponse(false, null, 'Cannot tip your own post', 400);
+                }
+
+                $pg->beginTransaction();
+                // Lock + check balance.
+                $bal = $pg->prepare("SELECT diamond_balance FROM chat_wallet_balances WHERE email = :e FOR UPDATE");
+                $bal->execute([':e' => $auth['email']]);
+                $current = (int)($bal->fetchColumn() ?: 0);
+                if ($current < $diamonds) {
+                    $pg->rollBack();
+                    jsonResponse(false, ['code' => 'insufficient_diamonds', 'diamond_balance' => $current], 'Insufficient diamonds', 402);
+                }
+                // Debit sender.
+                $pg->prepare("UPDATE chat_wallet_balances SET diamond_balance = diamond_balance - :d, updated_at = now() WHERE email = :e")
+                   ->execute([':d' => $diamonds, ':e' => $auth['email']]);
+                // 70% to creator pending_payout_cents (using $0.0099 per diamond — matches wave 6).
+                $payoutCents = (int)floor($diamonds * 0.0099 * 100 * 0.70);
+                $pg->prepare("INSERT INTO chat_wallet_balances (email, diamond_balance, pending_payout_cents) VALUES (:e, 0, :c) ON CONFLICT (email) DO UPDATE SET pending_payout_cents = chat_wallet_balances.pending_payout_cents + :c2, updated_at = now()")
+                   ->execute([':e' => $creator, ':c' => $payoutCents, ':c2' => $payoutCents]);
+                // Ledger rows (debit + credit).
+                $pg->prepare("INSERT INTO chat_wallet_ledger (email, direction, amount, kind, ref_kind, ref_id, counterparty) VALUES (:e, 'debit', :d, 'tip_send', 'feed_post', :p, :cp)")
+                   ->execute([':e' => $auth['email'], ':d' => $diamonds, ':p' => $postId, ':cp' => $creator]);
+                $pg->prepare("INSERT INTO chat_wallet_ledger (email, direction, amount, kind, ref_kind, ref_id, counterparty) VALUES (:e, 'credit', :c, 'tip_recv', 'feed_post', :p, :cp)")
+                   ->execute([':e' => $creator, ':c' => $payoutCents, ':p' => $postId, ':cp' => $auth['email']]);
+                $tipIns = $pg->prepare("INSERT INTO chat_feed_tips (post_id, sender_email, creator_email, gift_sku, diamonds, creator_payout_cents) VALUES (:p, :s, :c, :g, :d, :pc) RETURNING id, created_at");
+                $tipIns->execute([
+                    ':p' => $postId,
+                    ':s' => $auth['email'],
+                    ':c' => $creator,
+                    ':g' => $giftSku,
+                    ':d' => $diamonds,
+                    ':pc' => $payoutCents,
+                ]);
+                $tipRow = $tipIns->fetch(PDO::FETCH_ASSOC);
+                $pg->commit();
+
+                // WS fan-out: floating diamond animation on the reel.
+                try {
+                    $wsKey = getenv('MAIL_WS_KEY') ?: '';
+                    if ($wsKey) {
+                        $payloadWs = json_encode([
+                            'channel' => 'feed_post_' . $postId,
+                            'event'   => 'feed_post_tip',
+                            'data'    => [
+                                'id'             => (int)$tipRow['id'],
+                                'post_id'        => $postId,
+                                'sender_email'   => $auth['email'],
+                                'sender_name'    => $auth['name'] ?? explode('@', $auth['email'])[0],
+                                'gift_sku'       => $giftSku,
+                                'diamonds'       => $diamonds,
+                                'created_at'     => $tipRow['created_at'],
+                            ],
+                        ]);
+                        foreach (['http://127.0.0.1:8081/broadcast', 'http://127.0.0.1:8084/broadcast'] as $endpoint) {
+                            $cu = curl_init($endpoint);
+                            curl_setopt_array($cu, [
+                                CURLOPT_POST => true,
+                                CURLOPT_POSTFIELDS => $payloadWs,
+                                CURLOPT_HTTPHEADER => ['Content-Type: application/json', 'X-API-Key: ' . $wsKey],
+                                CURLOPT_RETURNTRANSFER => true,
+                                CURLOPT_TIMEOUT_MS => 600,
+                                CURLOPT_CONNECTTIMEOUT_MS => 200,
+                            ]);
+                            curl_exec($cu);
+                            curl_close($cu);
+                        }
+                    }
+                } catch (Throwable $_) {}
+
+                jsonResponse(true, [
+                    'tip_id'         => (int)$tipRow['id'],
+                    'post_id'        => $postId,
+                    'gift_sku'       => $giftSku,
+                    'diamonds'       => $diamonds,
+                    'diamond_balance' => $current - $diamonds,
+                ]);
+            } catch (Throwable $e) {
+                try { if ($pg && $pg->inTransaction()) $pg->rollBack(); } catch (Throwable $_) {}
+                error_log('[feed_post_tip] ' . $e->getMessage());
+                jsonResponse(false, null, 'Tip failed', 500);
+            }
+            break;
+        }
+
+        // ============================================================
+        // Reels — Promote a post (paid boost).
+        // ------------------------------------------------------------
+        // Inserts a row in chat_feed_promotions; the FYP ranker
+        // (feed-ranked.php) JOINs this and boosts the post's score by
+        // 1.5x for the active window, surfacing it to non-followers at
+        // a higher rate.
+        //
+        // Payment: deducts from the diamond wallet (1000 diamonds = $9.99
+        // matches the wallet IAP rate). Budget tiers are caller-supplied
+        // in *cents* — we convert to diamonds via the same rate.
+        // ============================================================
+        case 'feed_post_promote': {
+            $auth = requireAuth();
+            $input = getInput();
+            $postId = (int)($input['post_id'] ?? 0);
+            $budgetCents = (int)($input['budget_cents'] ?? 0);
+            $durationDays = max(1, min(30, (int)($input['duration_days'] ?? 7)));
+            if (!$postId || $budgetCents <= 0) {
+                jsonResponse(false, null, 'post_id and budget_cents required', 400);
+            }
+            // Tiers we surface in the UI: $5/$10/$25/$50/$100. Reject
+            // anything off-grid so the FYP boost stays predictable.
+            $allowedCents = [500, 1000, 2500, 5000, 10000];
+            if (!in_array($budgetCents, $allowedCents, true)) {
+                jsonResponse(false, null, 'Invalid budget tier', 400);
+            }
+            // Diamond cost: 1000 diamonds = $9.99 → $1 ≈ 100.1 diamonds.
+            $diamondsCost = (int)ceil(($budgetCents / 100) * 100.1);
+
+            try {
+                require_once __DIR__ . '/db.php';
+                $pg = getPGDB();
+                @$pg->exec("CREATE TABLE IF NOT EXISTS chat_feed_promotions (
+                    id BIGSERIAL PRIMARY KEY,
+                    post_id BIGINT NOT NULL,
+                    sponsor_email TEXT NOT NULL,
+                    budget_cents BIGINT NOT NULL,
+                    diamonds_spent BIGINT NOT NULL,
+                    duration_days INT NOT NULL,
+                    starts_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    ends_at TIMESTAMPTZ NOT NULL,
+                    boost_factor REAL NOT NULL DEFAULT 1.5,
+                    is_active SMALLINT NOT NULL DEFAULT 1,
+                    created_at TIMESTAMPTZ DEFAULT now()
+                )");
+                @$pg->exec("CREATE INDEX IF NOT EXISTS idx_feed_promotions_active ON chat_feed_promotions (post_id, is_active, ends_at)");
+                @$pg->exec("CREATE TABLE IF NOT EXISTS chat_wallet_balances (
+                    email TEXT PRIMARY KEY,
+                    diamond_balance BIGINT NOT NULL DEFAULT 0,
+                    pending_payout_cents BIGINT NOT NULL DEFAULT 0,
+                    updated_at TIMESTAMPTZ DEFAULT now()
+                )");
+
+                // Verify post ownership — only the author can promote.
+                $stP = $pg->prepare("SELECT author_email FROM chat_feed_posts WHERE id = :id AND is_deleted = 0");
+                $stP->execute([':id' => $postId]);
+                $row = $stP->fetch(PDO::FETCH_ASSOC);
+                if (!$row) jsonResponse(false, null, 'Post not found', 404);
+                if (strcasecmp($row['author_email'], $auth['email']) !== 0) {
+                    jsonResponse(false, null, 'Not the author', 403);
+                }
+
+                $pg->beginTransaction();
+                $bal = $pg->prepare("SELECT diamond_balance FROM chat_wallet_balances WHERE email = :e FOR UPDATE");
+                $bal->execute([':e' => $auth['email']]);
+                $current = (int)($bal->fetchColumn() ?: 0);
+                if ($current < $diamondsCost) {
+                    $pg->rollBack();
+                    jsonResponse(false, ['code' => 'insufficient_diamonds', 'diamond_balance' => $current, 'diamonds_required' => $diamondsCost], 'Insufficient diamonds', 402);
+                }
+                $pg->prepare("UPDATE chat_wallet_balances SET diamond_balance = diamond_balance - :d, updated_at = now() WHERE email = :e")
+                   ->execute([':d' => $diamondsCost, ':e' => $auth['email']]);
+                $pg->prepare("INSERT INTO chat_wallet_ledger (email, direction, amount, kind, ref_kind, ref_id, counterparty) VALUES (:e, 'debit', :d, 'promote', 'feed_post', :p, '')")
+                   ->execute([':e' => $auth['email'], ':d' => $diamondsCost, ':p' => $postId]);
+
+                $ins = $pg->prepare("INSERT INTO chat_feed_promotions (post_id, sponsor_email, budget_cents, diamonds_spent, duration_days, starts_at, ends_at, boost_factor, is_active) VALUES (:p, :s, :b, :d, :dd, now(), now() + (:dd2 * INTERVAL '1 day'), 1.5, 1) RETURNING id, starts_at, ends_at");
+                $ins->execute([
+                    ':p' => $postId,
+                    ':s' => $auth['email'],
+                    ':b' => $budgetCents,
+                    ':d' => $diamondsCost,
+                    ':dd' => $durationDays,
+                    ':dd2' => $durationDays,
+                ]);
+                $pRow = $ins->fetch(PDO::FETCH_ASSOC);
+                $pg->commit();
+
+                jsonResponse(true, [
+                    'promotion_id'   => (int)$pRow['id'],
+                    'post_id'        => $postId,
+                    'budget_cents'   => $budgetCents,
+                    'diamonds_spent' => $diamondsCost,
+                    'duration_days'  => $durationDays,
+                    'starts_at'      => $pRow['starts_at'],
+                    'ends_at'        => $pRow['ends_at'],
+                    'boost_factor'   => 1.5,
+                    'diamond_balance' => $current - $diamondsCost,
+                ]);
+            } catch (Throwable $e) {
+                try { if ($pg && $pg->inTransaction()) $pg->rollBack(); } catch (Throwable $_) {}
+                error_log('[feed_post_promote] ' . $e->getMessage());
+                jsonResponse(false, null, 'Promotion failed', 500);
+            }
+            break;
+        }
+
+        // ============================================================
+        // Reels — Save / unsave a sound from the music marquee.
+        // ------------------------------------------------------------
+        // Persists per-user favorited tracks (Pixabay + Original) so the
+        // CreatePostModal's "Meus salvos" tab can hydrate them on open.
+        // Lazy-creates chat_user_saved_sounds. sound_id format matches
+        // what's stored on chat_feed_posts.sound_id (e.g. "pixabay/12345"
+        // or "<email>/<post_id>" for an original sound).
+        // ============================================================
+        case 'reels_sound_favorite_save': {
+            $auth = requireAuth();
+            $input = getInput();
+            $soundId = trim((string)($input['sound_id'] ?? ''));
+            $soundLabel = trim((string)($input['sound_label'] ?? ''));
+            $previewUrl = trim((string)($input['preview_url'] ?? ''));
+            $imageUrl = trim((string)($input['image_url'] ?? ''));
+            $durationSec = (int)($input['duration_sec'] ?? 30);
+            if ($soundId === '') jsonResponse(false, null, 'sound_id required', 400);
+            try {
+                require_once __DIR__ . '/db.php';
+                $pg = getPGDB();
+                @$pg->exec("CREATE TABLE IF NOT EXISTS chat_user_saved_sounds (
+                    owner_email TEXT NOT NULL,
+                    sound_id TEXT NOT NULL,
+                    sound_label TEXT NOT NULL DEFAULT '',
+                    preview_url TEXT,
+                    image_url TEXT,
+                    duration_sec INT NOT NULL DEFAULT 30,
+                    saved_at TIMESTAMPTZ DEFAULT now(),
+                    PRIMARY KEY (owner_email, sound_id)
+                )");
+                $pg->prepare("INSERT INTO chat_user_saved_sounds (owner_email, sound_id, sound_label, preview_url, image_url, duration_sec) VALUES (:e, :s, :l, :p, :i, :d) ON CONFLICT (owner_email, sound_id) DO UPDATE SET sound_label = EXCLUDED.sound_label, preview_url = EXCLUDED.preview_url, image_url = EXCLUDED.image_url, duration_sec = EXCLUDED.duration_sec, saved_at = now()")
+                   ->execute([
+                       ':e' => $auth['email'],
+                       ':s' => $soundId,
+                       ':l' => $soundLabel,
+                       ':p' => $previewUrl,
+                       ':i' => $imageUrl,
+                       ':d' => $durationSec,
+                   ]);
+                jsonResponse(true, ['saved' => true, 'sound_id' => $soundId]);
+            } catch (Throwable $e) {
+                error_log('[reels_sound_favorite_save] ' . $e->getMessage());
+                jsonResponse(false, null, 'Save failed', 500);
+            }
+            break;
+        }
+
+        case 'reels_sound_favorite_unsave': {
+            $auth = requireAuth();
+            $input = getInput();
+            $soundId = trim((string)($input['sound_id'] ?? ''));
+            if ($soundId === '') jsonResponse(false, null, 'sound_id required', 400);
+            try {
+                require_once __DIR__ . '/db.php';
+                $pg = getPGDB();
+                $pg->prepare("DELETE FROM chat_user_saved_sounds WHERE owner_email = :e AND sound_id = :s")
+                   ->execute([':e' => $auth['email'], ':s' => $soundId]);
+                jsonResponse(true, ['saved' => false, 'sound_id' => $soundId]);
+            } catch (Throwable $_) {
+                jsonResponse(true, ['saved' => false]);
+            }
+            break;
+        }
+
+        case 'reels_sound_favorite_list': {
+            $auth = requireAuth();
+            try {
+                require_once __DIR__ . '/db.php';
+                $pg = getPGDB();
+                @$pg->exec("CREATE TABLE IF NOT EXISTS chat_user_saved_sounds (
+                    owner_email TEXT NOT NULL,
+                    sound_id TEXT NOT NULL,
+                    sound_label TEXT NOT NULL DEFAULT '',
+                    preview_url TEXT,
+                    image_url TEXT,
+                    duration_sec INT NOT NULL DEFAULT 30,
+                    saved_at TIMESTAMPTZ DEFAULT now(),
+                    PRIMARY KEY (owner_email, sound_id)
+                )");
+                $st = $pg->prepare("SELECT sound_id, sound_label, preview_url, image_url, duration_sec, saved_at FROM chat_user_saved_sounds WHERE owner_email = :e ORDER BY saved_at DESC LIMIT 200");
+                $st->execute([':e' => $auth['email']]);
+                $rows = $st->fetchAll(PDO::FETCH_ASSOC) ?: [];
+                // Split the label back into title/artist when it follows the
+                // "Title — Artist" convention used at save-time.
+                foreach ($rows as &$r) {
+                    $parts = preg_split('/\s+[—–-]\s+/u', (string)$r['sound_label'], 2) ?: [];
+                    $r['title']  = (string)($parts[0] ?? $r['sound_label'] ?? '');
+                    $r['artist'] = (string)($parts[1] ?? '');
+                    $r['id'] = $r['sound_id'];
+                }
+                jsonResponse(true, ['tracks' => $rows]);
+            } catch (Throwable $e) {
+                error_log('[reels_sound_favorite_list] ' . $e->getMessage());
+                jsonResponse(true, ['tracks' => []]);
+            }
+            break;
+        }
+
+        // ============================================================
+        // Reels — Trending sounds (last 7d, by reel count).
+        // ------------------------------------------------------------
+        // Aggregates chat_feed_posts.sound_id over the past 7 days so the
+        // /search "Sons" tab and Discover hub can surface what's popular.
+        // Skips empty sound_ids (original-only posts that never set one).
+        // ============================================================
+        case 'reels_trending_sounds': {
+            requireAuth();
+            $input = getInput();
+            $limit = max(5, min(50, (int)($input['limit'] ?? 20)));
+            try {
+                require_once __DIR__ . '/db.php';
+                $pg = getPGDB();
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS sound_id TEXT");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS sound_label TEXT");
+                $stmt = $pg->prepare("
+                    SELECT sound_id,
+                           COALESCE(MAX(sound_label), '') AS sound_label,
+                           COUNT(*) AS post_count,
+                           MAX(created_at) AS last_used
+                    FROM chat_feed_posts
+                    WHERE is_deleted = 0
+                      AND sound_id IS NOT NULL AND sound_id <> ''
+                      AND created_at >= now() - INTERVAL '7 days'
+                    GROUP BY sound_id
+                    ORDER BY post_count DESC, last_used DESC
+                    LIMIT :lim
+                ");
+                $stmt->bindValue(':lim', $limit, PDO::PARAM_INT);
+                $stmt->execute();
+                $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+                $sounds = [];
+                foreach ($rows as $r) {
+                    $parts = preg_split('/\s+[—–-]\s+/u', (string)$r['sound_label'], 2) ?: [];
+                    $sounds[] = [
+                        'id'         => (string)$r['sound_id'],
+                        'sound_id'   => (string)$r['sound_id'],
+                        'title'      => (string)($parts[0] ?? $r['sound_label'] ?? ''),
+                        'artist'     => (string)($parts[1] ?? ''),
+                        'sound_label'=> (string)$r['sound_label'],
+                        'post_count' => (int)$r['post_count'],
+                        'last_used'  => (string)$r['last_used'],
+                    ];
+                }
+                jsonResponse(true, ['sounds' => $sounds]);
+            } catch (Throwable $e) {
+                error_log('[reels_trending_sounds] ' . $e->getMessage());
+                jsonResponse(true, ['sounds' => []]);
+            }
+            break;
+        }
+
+        // ============================================================
+        // Creator dashboard — Pro tier surface.
+        // ------------------------------------------------------------
+        // Extends wave-6 chat_creator_subscriptions with weekly/monthly
+        // revenue + subscriber_count + top tippers. Only the creator can
+        // hit this for their own email (no peeking at someone else's).
+        // ============================================================
+        case 'creator_dashboard': {
+            $auth = requireAuth();
+            $me = strtolower($auth['email']);
+            try {
+                require_once __DIR__ . '/db.php';
+                $pg = getPGDB();
+                // Lazy-create chat_creator_subscriptions with the new
+                // monthly_revenue_cents + subscriber_count columns. If
+                // wave 6 already created the table, the ALTERs are
+                // idempotent.
+                @$pg->exec("CREATE TABLE IF NOT EXISTS chat_creator_subscriptions (
+                    id BIGSERIAL PRIMARY KEY,
+                    creator_email TEXT NOT NULL,
+                    subscriber_email TEXT NOT NULL,
+                    tier TEXT NOT NULL DEFAULT 'basic',
+                    monthly_cents BIGINT NOT NULL DEFAULT 0,
+                    started_at TIMESTAMPTZ DEFAULT now(),
+                    expires_at TIMESTAMPTZ,
+                    is_active SMALLINT NOT NULL DEFAULT 1,
+                    UNIQUE (creator_email, subscriber_email)
+                )");
+                @$pg->exec("ALTER TABLE chat_creator_subscriptions ADD COLUMN IF NOT EXISTS monthly_revenue_cents BIGINT NOT NULL DEFAULT 0");
+                @$pg->exec("ALTER TABLE chat_creator_subscriptions ADD COLUMN IF NOT EXISTS subscriber_count INT NOT NULL DEFAULT 0");
+                @$pg->exec("CREATE TABLE IF NOT EXISTS chat_feed_tips (
+                    id BIGSERIAL PRIMARY KEY,
+                    post_id BIGINT NOT NULL,
+                    sender_email TEXT NOT NULL,
+                    creator_email TEXT NOT NULL,
+                    gift_sku TEXT NOT NULL,
+                    diamonds BIGINT NOT NULL,
+                    creator_payout_cents BIGINT NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT now()
+                )");
+                @$pg->exec("CREATE TABLE IF NOT EXISTS chat_wallet_balances (
+                    email TEXT PRIMARY KEY,
+                    diamond_balance BIGINT NOT NULL DEFAULT 0,
+                    pending_payout_cents BIGINT NOT NULL DEFAULT 0,
+                    updated_at TIMESTAMPTZ DEFAULT now()
+                )");
+
+                // Subscriber count (active rows).
+                $subCount = 0;
+                try {
+                    $sc = $pg->prepare("SELECT COUNT(*) FROM chat_creator_subscriptions WHERE LOWER(creator_email) = :e AND is_active = 1");
+                    $sc->execute([':e' => $me]);
+                    $subCount = (int)$sc->fetchColumn();
+                } catch (Throwable $_) {}
+
+                // Monthly revenue = sum of active subs' monthly_cents.
+                $monthlyRev = 0;
+                try {
+                    $mr = $pg->prepare("SELECT COALESCE(SUM(monthly_cents), 0) FROM chat_creator_subscriptions WHERE LOWER(creator_email) = :e AND is_active = 1");
+                    $mr->execute([':e' => $me]);
+                    $monthlyRev = (int)$mr->fetchColumn();
+                } catch (Throwable $_) {}
+
+                // Tip revenue last 7/30 days (in payout cents).
+                $week = (int)$pg->query("SELECT COALESCE(SUM(creator_payout_cents),0) FROM chat_feed_tips WHERE LOWER(creator_email) = " . $pg->quote($me) . " AND created_at >= now() - INTERVAL '7 days'")->fetchColumn();
+                $month = (int)$pg->query("SELECT COALESCE(SUM(creator_payout_cents),0) FROM chat_feed_tips WHERE LOWER(creator_email) = " . $pg->quote($me) . " AND created_at >= now() - INTERVAL '30 days'")->fetchColumn();
+
+                // Top tippers (last 30d). LEFT JOIN to accounts for display name.
+                $top = [];
+                try {
+                    $tt = $pg->prepare("SELECT sender_email, SUM(diamonds) AS total_diamonds, SUM(creator_payout_cents) AS total_cents, COUNT(*) AS tip_count FROM chat_feed_tips WHERE LOWER(creator_email) = :e AND created_at >= now() - INTERVAL '30 days' GROUP BY sender_email ORDER BY total_diamonds DESC LIMIT 10");
+                    $tt->execute([':e' => $me]);
+                    foreach ($tt->fetchAll(PDO::FETCH_ASSOC) ?: [] as $r) {
+                        $top[] = [
+                            'email'           => (string)$r['sender_email'],
+                            'name'            => explode('@', (string)$r['sender_email'])[0],
+                            'total_diamonds'  => (int)$r['total_diamonds'],
+                            'total_cents'     => (int)$r['total_cents'],
+                            'tip_count'       => (int)$r['tip_count'],
+                        ];
+                    }
+                } catch (Throwable $_) {}
+
+                // Pending payout (lifetime balance, reset on actual disbursement).
+                $pending = 0;
+                try {
+                    $pp = $pg->prepare("SELECT pending_payout_cents FROM chat_wallet_balances WHERE email = :e");
+                    $pp->execute([':e' => $me]);
+                    $pending = (int)($pp->fetchColumn() ?: 0);
+                } catch (Throwable $_) {}
+
+                // 7-day daily tip cents series for sparkline.
+                $series = [];
+                try {
+                    $st7 = $pg->prepare("SELECT date_trunc('day', created_at)::date::text AS d, COALESCE(SUM(creator_payout_cents),0) AS n FROM chat_feed_tips WHERE LOWER(creator_email) = :e AND created_at >= now() - INTERVAL '6 days' GROUP BY 1 ORDER BY 1 ASC");
+                    $st7->execute([':e' => $me]);
+                    $byDay = [];
+                    foreach ($st7->fetchAll(PDO::FETCH_ASSOC) as $r) $byDay[$r['d']] = (int)$r['n'];
+                    for ($i = 6; $i >= 0; $i--) {
+                        $d = date('Y-m-d', strtotime("-$i days"));
+                        $series[] = ['date' => $d, 'tip_cents' => (int)($byDay[$d] ?? 0)];
+                    }
+                } catch (Throwable $_) {}
+
+                jsonResponse(true, [
+                    'creator_email'         => $me,
+                    'subscriber_count'      => $subCount,
+                    'monthly_revenue_cents' => $monthlyRev,
+                    'weekly_tip_cents'      => $week,
+                    'monthly_tip_cents'     => $month,
+                    'pending_payout_cents'  => $pending,
+                    'top_tippers'           => $top,
+                    'tip_series_7d'         => $series,
+                ]);
+            } catch (Throwable $e) {
+                error_log('[creator_dashboard] ' . $e->getMessage());
+                jsonResponse(false, null, 'Dashboard failed', 500);
+            }
+            break;
+        }
+
         // Voice comment on a feed post. Multipart upload (audio + post_id).
         // Mirrors `feed_comment` shape — reply_to_id optional.
         case 'feed_voice_comment': {
@@ -11234,6 +12206,372 @@ try {
             } catch (Throwable $e) {
                 error_log('[feed_collection_add] ' . $e->getMessage());
                 jsonResponse(false, null, 'Save failed', 500);
+            }
+            break;
+        }
+
+        // ─── Wave 15: collection_remove_item ────────────────────────────
+        // Pinterest-style "Remove from collection" — opposite of
+        // feed_collection_add. Caller must own the collection. The
+        // underlying chat_feed_bookmarks row stays so the post is still
+        // bookmarked overall (matches Pinterest semantics).
+        case 'feed_collection_remove_item':
+        case 'collection_remove_item': {
+            $auth = requireAuth();
+            $input = getInput();
+            $collectionId = (int)($input['collection_id'] ?? 0);
+            $postId = (int)($input['post_id'] ?? 0);
+            if (!$collectionId || !$postId) jsonResponse(false, null, 'collection_id + post_id required', 400);
+            try {
+                require_once __DIR__ . '/db.php';
+                $pg = getPGDB();
+                $own = $pg->prepare("SELECT 1 FROM feed_collections WHERE id = :id AND LOWER(email) = LOWER(:e)");
+                $own->execute([':id' => $collectionId, ':e' => $auth['email']]);
+                if (!$own->fetchColumn()) jsonResponse(false, null, 'collection not found', 404);
+                $pg->prepare("DELETE FROM feed_collection_items WHERE collection_id = :c AND post_id = :p")
+                   ->execute([':c' => $collectionId, ':p' => $postId]);
+                jsonResponse(true, ['removed' => true]);
+            } catch (Throwable $e) {
+                error_log('[feed_collection_remove_item] ' . $e->getMessage());
+                jsonResponse(false, null, 'Remove failed', 500);
+            }
+            break;
+        }
+
+        // ─── Wave 15: collection_items ──────────────────────────────────
+        // List posts in a specific collection.
+        case 'feed_collection_items': {
+            $auth = requireAuth();
+            $input = getInput();
+            $collectionId = (int)($input['collection_id'] ?? 0);
+            if (!$collectionId) jsonResponse(false, null, 'collection_id required', 400);
+            try {
+                require_once __DIR__ . '/db.php';
+                $pg = getPGDB();
+                $own = $pg->prepare("SELECT name FROM feed_collections WHERE id = :id AND LOWER(email) = LOWER(:e)");
+                $own->execute([':id' => $collectionId, ':e' => $auth['email']]);
+                $col = $own->fetch(PDO::FETCH_ASSOC);
+                if (!$col) jsonResponse(false, null, 'collection not found', 404);
+                $stmt = $pg->prepare("
+                    SELECT p.id, p.author_email, p.author_name, p.caption, p.media_type, p.media_urls,
+                           p.thumbnail_url, p.location, p.created_at, i.added_at
+                    FROM feed_collection_items i
+                    JOIN chat_feed_posts p ON p.id = i.post_id
+                    WHERE i.collection_id = :c AND p.is_deleted = 0
+                    ORDER BY i.added_at DESC
+                ");
+                $stmt->execute([':c' => $collectionId]);
+                $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                foreach ($rows as &$r) {
+                    $r['id'] = (int)$r['id'];
+                    $r['media_urls'] = _cdnifyArray(json_decode($r['media_urls'] ?: '[]', true) ?: []);
+                }
+                jsonResponse(true, ['collection' => ['id' => $collectionId, 'name' => $col['name']], 'posts' => $rows]);
+            } catch (Throwable $e) {
+                error_log('[feed_collection_items] ' . $e->getMessage());
+                jsonResponse(true, ['posts' => []]);
+            }
+            break;
+        }
+
+        // ─── Wave 15: ads listing ───────────────────────────────────────
+        // Returns active ad posts targeted by topic / region. Ads are just
+        // chat_feed_posts rows with is_ad = TRUE (we co-locate ads with
+        // organic content so the existing feed/profile renderers work
+        // without forks). topic/region optional filters.
+        case 'feed_ads_list': {
+            $auth = requireAuth();
+            $input = getInput();
+            $topic = trim((string)($input['topic'] ?? ''));
+            $region = trim((string)($input['region'] ?? ''));
+            $limit = min(20, max(1, (int)($input['limit'] ?? 6)));
+            try {
+                require_once __DIR__ . '/db.php';
+                $pg = getPGDB();
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS is_ad BOOLEAN DEFAULT FALSE");
+                $where = "p.is_deleted = 0 AND p.is_ad = TRUE AND (p.published IS NULL OR p.published = TRUE)";
+                $params = [];
+                if ($topic !== '') {
+                    $where .= " AND p.caption ~* :topic";
+                    $params[':topic'] = '#?' . preg_replace('/[^\w]/u', '', $topic);
+                }
+                if ($region !== '') {
+                    $where .= " AND LOWER(p.location) ILIKE :region";
+                    $params[':region'] = '%' . strtolower($region) . '%';
+                }
+                $sql = "SELECT id, author_email, author_name, caption, media_type, media_urls,
+                               thumbnail_url, location, created_at, video_hls_url
+                        FROM chat_feed_posts p
+                        WHERE {$where}
+                        ORDER BY created_at DESC
+                        LIMIT {$limit}";
+                $stmt = $pg->prepare($sql);
+                $stmt->execute($params);
+                $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                foreach ($rows as &$r) {
+                    $r['id'] = (int)$r['id'];
+                    $r['media_urls'] = _cdnifyArray(json_decode($r['media_urls'] ?: '[]', true) ?: []);
+                    $r['is_ad'] = true;
+                    $r['sponsored'] = true;
+                    $r['tagged_users'] = [];
+                }
+                jsonResponse(true, ['ads' => $rows]);
+            } catch (Throwable $e) {
+                error_log('[feed_ads_list] ' . $e->getMessage());
+                jsonResponse(true, ['ads' => []]);
+            }
+            break;
+        }
+
+        // ─── Wave 15: hashtag follow/unfollow/list ──────────────────────
+        // Lets a user "follow" a hashtag — posts with followed hashtags
+        // get a 1.3× ranking boost in feed_explore. Storage is the
+        // chat_user_followed_hashtags table (created on first call).
+        case 'hashtag_follow': {
+            $auth = requireAuth();
+            $input = getInput();
+            $tag = ltrim(trim((string)($input['tag'] ?? '')), '#');
+            $tag = strtolower($tag);
+            if ($tag === '' || mb_strlen($tag) > 50) jsonResponse(false, null, 'tag required (1-50 chars)', 400);
+            if (!preg_match('/^[\w\x{00C0}-\x{024F}]+$/u', $tag)) jsonResponse(false, null, 'invalid tag', 400);
+            try {
+                require_once __DIR__ . '/db.php';
+                $pg = getPGDB();
+                @$pg->exec("CREATE TABLE IF NOT EXISTS chat_user_followed_hashtags (
+                    email TEXT NOT NULL,
+                    tag TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (email, tag)
+                )");
+                $pg->prepare("INSERT INTO chat_user_followed_hashtags (email, tag) VALUES (LOWER(:e), :t) ON CONFLICT DO NOTHING")
+                   ->execute([':e' => $auth['email'], ':t' => $tag]);
+                jsonResponse(true, ['tag' => $tag, 'following' => true]);
+            } catch (Throwable $e) {
+                error_log('[hashtag_follow] ' . $e->getMessage());
+                jsonResponse(false, null, 'follow failed', 500);
+            }
+            break;
+        }
+
+        case 'hashtag_unfollow': {
+            $auth = requireAuth();
+            $input = getInput();
+            $tag = ltrim(trim((string)($input['tag'] ?? '')), '#');
+            $tag = strtolower($tag);
+            if ($tag === '') jsonResponse(false, null, 'tag required', 400);
+            try {
+                require_once __DIR__ . '/db.php';
+                $pg = getPGDB();
+                @$pg->exec("CREATE TABLE IF NOT EXISTS chat_user_followed_hashtags (
+                    email TEXT NOT NULL,
+                    tag TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (email, tag)
+                )");
+                $pg->prepare("DELETE FROM chat_user_followed_hashtags WHERE LOWER(email) = LOWER(:e) AND tag = :t")
+                   ->execute([':e' => $auth['email'], ':t' => $tag]);
+                jsonResponse(true, ['tag' => $tag, 'following' => false]);
+            } catch (Throwable $e) {
+                error_log('[hashtag_unfollow] ' . $e->getMessage());
+                jsonResponse(false, null, 'unfollow failed', 500);
+            }
+            break;
+        }
+
+        case 'hashtag_followed_list': {
+            $auth = requireAuth();
+            try {
+                require_once __DIR__ . '/db.php';
+                $pg = getPGDB();
+                @$pg->exec("CREATE TABLE IF NOT EXISTS chat_user_followed_hashtags (
+                    email TEXT NOT NULL,
+                    tag TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (email, tag)
+                )");
+                $stmt = $pg->prepare("SELECT tag, created_at FROM chat_user_followed_hashtags WHERE LOWER(email) = LOWER(:e) ORDER BY created_at DESC");
+                $stmt->execute([':e' => $auth['email']]);
+                $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                jsonResponse(true, ['tags' => $rows]);
+            } catch (Throwable $e) {
+                error_log('[hashtag_followed_list] ' . $e->getMessage());
+                jsonResponse(true, ['tags' => []]);
+            }
+            break;
+        }
+
+        // ─── Wave 15: feed_explore_nearby ───────────────────────────────
+        // City-match ranking. Reads the caller's city from chat_user_profile
+        // and boosts posts authored by users in the same city. Falls back
+        // to "Próximos" semantics: when city is missing, returns the same
+        // contact-aware feed as feed_list but sorted by location proximity
+        // signals when available, else recency.
+        case 'feed_explore_nearby': {
+            $auth = requireAuth();
+            $input = getInput();
+            $page = max(1, (int)($input['page'] ?? 1));
+            $limit = min(50, max(1, (int)($input['limit'] ?? 20)));
+            $offset = ($page - 1) * $limit;
+            try {
+                require_once __DIR__ . '/db.php';
+                $pg = getPGDB();
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS is_ad BOOLEAN DEFAULT FALSE");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS is_promoted BOOLEAN DEFAULT FALSE");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS promoted_until TIMESTAMP");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS tagged_users TEXT");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS location_lat DOUBLE PRECISION");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS location_lon DOUBLE PRECISION");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS location_name TEXT");
+
+                // Lookup caller's city (best-effort; chat_user_profile may not
+                // exist in all environments).
+                $city = '';
+                try {
+                    $cq = $pg->prepare("SELECT city FROM chat_user_profile WHERE LOWER(email) = LOWER(:e) LIMIT 1");
+                    $cq->execute([':e' => $auth['email']]);
+                    $city = trim((string)($cq->fetchColumn() ?: ''));
+                } catch (Throwable $_e) { /* table may be missing */ }
+
+                // Followed hashtag boost: collect this user's followed tags
+                // and apply 1.3× score boost to posts whose caption matches
+                // any of them.
+                $followedTags = [];
+                try {
+                    $tq = $pg->prepare("SELECT tag FROM chat_user_followed_hashtags WHERE LOWER(email) = LOWER(:e)");
+                    $tq->execute([':e' => $auth['email']]);
+                    $followedTags = $tq->fetchAll(PDO::FETCH_COLUMN);
+                } catch (Throwable $_e) {}
+
+                // Pull a wide candidate pool (200 latest non-deleted posts)
+                // then rank in PHP. Avoids needing a stored procedure.
+                $stmt = $pg->prepare("
+                    SELECT p.id, p.author_email, p.author_name, p.caption, p.media_type,
+                           p.media_urls, p.thumbnail_url, p.location, p.location_lat, p.location_lon, p.location_name,
+                           p.tagged_users, p.is_ad, p.is_promoted, p.promoted_until, p.created_at,
+                           p.video_hls_url, p.video_duration_ms, p.blurhash
+                    FROM chat_feed_posts p
+                    WHERE p.is_deleted = 0 AND (p.published IS NULL OR p.published = TRUE)
+                      AND LOWER(p.author_email) <> LOWER(:me)
+                      AND (p.is_ad IS NULL OR p.is_ad = FALSE)
+                    ORDER BY p.created_at DESC
+                    LIMIT 200
+                ");
+                $stmt->execute([':me' => $auth['email']]);
+                $pool = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+                // Pre-fetch authors' cities so we can apply the 1.2× boost
+                // without N+1 queries.
+                $authorEmails = array_values(array_unique(array_map(fn($p) => strtolower($p['author_email']), $pool)));
+                $cityMap = [];
+                if ($city !== '' && !empty($authorEmails)) {
+                    try {
+                        $in = implode(',', array_fill(0, count($authorEmails), '?'));
+                        $cs = $pg->prepare("SELECT LOWER(email) AS email, city FROM chat_user_profile WHERE LOWER(email) IN ($in)");
+                        $cs->execute($authorEmails);
+                        foreach ($cs->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                            if (!empty($r['city'])) $cityMap[$r['email']] = $r['city'];
+                        }
+                    } catch (Throwable $_e) {}
+                }
+
+                // Score each candidate. Base = recency decay (0..1).
+                $now = time();
+                $scored = [];
+                foreach ($pool as $row) {
+                    $ts = strtotime($row['created_at'] ?? '');
+                    if (!$ts) $ts = $now;
+                    $ageHours = max(0, ($now - $ts) / 3600);
+                    // Half-life of ~36h: score = 1 / (1 + ageHours/36).
+                    $score = 1.0 / (1.0 + $ageHours / 36.0);
+                    // 1.2× city match.
+                    if ($city !== '' && isset($cityMap[strtolower($row['author_email'])])) {
+                        if (strcasecmp(trim($cityMap[strtolower($row['author_email'])]), $city) === 0) {
+                            $score *= 1.2;
+                        }
+                    }
+                    // 1.3× per followed hashtag match (only apply once even
+                    // if multiple followed tags appear in the same caption).
+                    if (!empty($followedTags)) {
+                        $caption = (string)($row['caption'] ?? '');
+                        foreach ($followedTags as $ft) {
+                            if (preg_match('/(^|[^\w])#' . preg_quote($ft, '/') . '($|[^\w])/iu', $caption)) {
+                                $score *= 1.3;
+                                break;
+                            }
+                        }
+                    }
+                    // 1.4× boost for is_promoted posts (active boost).
+                    $promoActive = !empty($row['is_promoted']) && (!$row['promoted_until'] || strtotime($row['promoted_until']) > $now);
+                    if ($promoActive) $score *= 1.4;
+                    $row['_score'] = $score;
+                    $row['_promoActive'] = $promoActive;
+                    $scored[] = $row;
+                }
+                usort($scored, fn($a, $b) => $b['_score'] <=> $a['_score']);
+                $page_slice = array_slice($scored, $offset, $limit);
+
+                $hasMore = (count($scored) > $offset + $limit);
+                foreach ($page_slice as &$p) {
+                    $p['id'] = (int)$p['id'];
+                    $p['media_urls'] = _cdnifyArray(json_decode($p['media_urls'] ?: '[]', true) ?: []);
+                    if (!empty($p['tagged_users'])) {
+                        $tu = json_decode($p['tagged_users'], true);
+                        $p['tagged_users'] = is_array($tu) ? $tu : [];
+                    } else {
+                        $p['tagged_users'] = [];
+                    }
+                    $p['is_ad'] = !empty($p['is_ad']);
+                    $p['is_promoted'] = !empty($p['_promoActive']);
+                    $p['sponsored'] = $p['is_ad'] || $p['is_promoted'];
+                    if ($p['location_lat'] !== null) $p['location_lat'] = (float)$p['location_lat'];
+                    if ($p['location_lon'] !== null) $p['location_lon'] = (float)$p['location_lon'];
+                    unset($p['_score'], $p['_promoActive']);
+                }
+                unset($p);
+
+                jsonResponse(true, [
+                    'posts'    => $page_slice,
+                    'page'     => $page,
+                    'has_more' => $hasMore,
+                    'city'     => $city,
+                ]);
+            } catch (Throwable $e) {
+                error_log('[feed_explore_nearby] ' . $e->getMessage());
+                jsonResponse(true, ['posts' => [], 'page' => 1, 'has_more' => false, 'city' => '']);
+            }
+            break;
+        }
+
+        // ─── Wave 15: feed_promote_post ─────────────────────────────────
+        // Paid boost. Marks a post as is_promoted = TRUE for
+        // promote_hours (default 24h). The ranker (feed_explore_nearby,
+        // feed-ranked.php) multiplies its score by 1.4×. Only works for
+        // posts owned by the caller. Cost / billing is a stub — actual
+        // payment integration lives upstream.
+        case 'feed_promote_post':
+        case 'feed_promote': {
+            $auth = requireAuth();
+            $input = getInput();
+            $postId = (int)($input['post_id'] ?? 0);
+            $hours = (int)($input['hours'] ?? 24);
+            if ($hours < 1) $hours = 24;
+            if ($hours > 168) $hours = 168; // cap at 7d
+            if (!$postId) jsonResponse(false, null, 'post_id required', 400);
+            try {
+                require_once __DIR__ . '/db.php';
+                $pg = getPGDB();
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS is_promoted BOOLEAN DEFAULT FALSE");
+                @$pg->exec("ALTER TABLE chat_feed_posts ADD COLUMN IF NOT EXISTS promoted_until TIMESTAMP");
+                $own = $pg->prepare("SELECT 1 FROM chat_feed_posts WHERE id = :id AND LOWER(author_email) = LOWER(:e) AND is_deleted = 0");
+                $own->execute([':id' => $postId, ':e' => $auth['email']]);
+                if (!$own->fetchColumn()) jsonResponse(false, null, 'post not found or not yours', 404);
+                $until = date('Y-m-d H:i:s', time() + $hours * 3600);
+                $pg->prepare("UPDATE chat_feed_posts SET is_promoted = TRUE, promoted_until = :u WHERE id = :id")
+                   ->execute([':u' => $until, ':id' => $postId]);
+                jsonResponse(true, ['post_id' => $postId, 'is_promoted' => true, 'promoted_until' => $until]);
+            } catch (Throwable $e) {
+                error_log('[feed_promote_post] ' . $e->getMessage());
+                jsonResponse(false, null, 'Promote failed', 500);
             }
             break;
         }
@@ -12119,6 +13457,12 @@ try {
         case 'photo_analyze': case 'photo_analyze_batch':
         case 'photo_search_ml': case 'photo_faces': case 'photo_suggest_tags':
         case 'drive_memories':
+        // Wave 14: real face recognition + photobook + AI enhancement
+        case 'photos_face_embed': case 'photos_face_clusters':
+        case 'photos_face_cluster_photos': case 'photos_face_cluster_name':
+        case 'photos_photobook_create':
+        case 'photos_ai_enhance': case 'photos_inpaint':
+        case 'photos_sky_replace': case 'photos_bokeh':
             // Bearer-only auth path: photo-ml.php expects $_SESSION['email'].
             // Bridge requireAuth() into the session so the include sees it.
             if (empty($_SESSION['email'])) {
@@ -12128,6 +13472,22 @@ try {
             require_once __DIR__ . '/photo-ml.php';
             handlePhotoMlAction($action);
             break;
+
+        // Local PDF download fallback when R2 upload fails for photobook
+        case 'photobook_download': {
+            $auth = requireAuth();
+            $name = basename((string)($_GET['name'] ?? ''));
+            if ($name === '' || !preg_match('/^[A-Za-z0-9_.-]+\.pdf$/', $name)) {
+                http_response_code(400); echo 'bad name'; exit;
+            }
+            $path = '/var/www/mail/data/photobooks/' . $name;
+            if (!is_file($path)) { http_response_code(404); echo 'not found'; exit; }
+            header('Content-Type: application/pdf');
+            header('Content-Disposition: attachment; filename="' . $name . '"');
+            header('Content-Length: ' . filesize($path));
+            readfile($path);
+            exit;
+        }
         // --- NOTES & NOTEBOOKS (Chatyy) ---
         case 'notes_list': case 'notes_create': case 'notes_update': case 'notes_delete':
         case 'notes_export_pdf': case 'notes_send_email':
@@ -13638,6 +14998,16 @@ try {
             jsonResponse(true, null, 'Account deletion requested. Your account will be deleted within 30 days.');
             break;
         default:
+            // Email gap-closer (round 6, 2026-05-17): OAuth import, PGP keys,
+            // tasks, bundles, bulk-mark-folder. Lives in email-gaps.php so the
+            // 13k-line monolith stays readable. Dispatcher returns true after
+            // it served the action (and called jsonResponse), false otherwise.
+            if (is_file(__DIR__ . '/email-gaps.php')) {
+                require_once __DIR__ . '/email-gaps.php';
+                if (function_exists('handleEmailGapsAction') && handleEmailGapsAction($action)) {
+                    break;
+                }
+            }
             // Catchall: any unrecognized chat_* action is forwarded to chat.php.
             if (strpos($action, 'chat_') === 0) {
                 require_once __DIR__ . '/chat.php';

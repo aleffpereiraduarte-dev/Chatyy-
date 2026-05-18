@@ -1018,6 +1018,67 @@ function SettingsScreenInner() {
         </View>
         )}
 
+        {/* Email tools — Importar / PGP / Tarefas (round-6 gap-closer) */}
+        {sectionMatches(
+          t('settings.emailToolsTitle') || 'Ferramentas de email',
+          t('settings.importFromOthers') || 'Importar de outras contas',
+          t('settings.pgpKeys') || 'Chave PGP',
+          t('settings.tasks') || 'Tarefas',
+        ) && (
+        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+          <Text style={[s.sectionTitle, { color: colors.text }]}>
+            {t('settings.emailToolsTitle') || 'Ferramentas de email'}
+          </Text>
+          <TouchableOpacity
+            style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
+            onPress={() => router.push('/email-import')}
+            accessibilityRole="button"
+          >
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>
+                {t('settings.importFromOthers') || 'Importar de outras contas'}
+              </Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {t('settings.importFromOthersDesc') || 'Gmail, Outlook ou Microsoft 365'}
+              </Text>
+            </View>
+            <Text style={{ color: colors.textTertiary, fontSize: 18 }}>›</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
+            onPress={() => router.push('/pgp-keys')}
+            accessibilityRole="button"
+          >
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>
+                {t('settings.pgpKeys') || 'Chave PGP'}
+              </Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {t('settings.pgpKeysDesc') || 'Criptografia ponta-a-ponta de emails'}
+              </Text>
+            </View>
+            <Text style={{ color: colors.textTertiary, fontSize: 18 }}>›</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
+            onPress={() => router.push('/tasks')}
+            accessibilityRole="button"
+          >
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>
+                {t('settings.tasks') || 'Tarefas'}
+              </Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {t('settings.tasksDesc') || 'Tarefas pessoais e convertidas de emails'}
+              </Text>
+            </View>
+            <Text style={{ color: colors.textTertiary, fontSize: 18 }}>›</Text>
+          </TouchableOpacity>
+        </View>
+        )}
+
         {/* Language */}
         {sectionMatches(t('settings.language'), t('settings.languageLabel')) && (
         <View ref={registerSectionRef('language')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
@@ -1471,6 +1532,74 @@ function SettingsScreenInner() {
                   </Text>
                   <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
                     {t('settings.changePhoneDesc') || 'Migre sua conta para um novo número mantendo seus chats e contatos.'}
+                  </Text>
+                </View>
+              </View>
+              <Text style={{ color: colors.textTertiary, fontSize: 20 }}>›</Text>
+            </TouchableOpacity>
+
+            {/* Histórico de atividades — unified audit log surface. The list
+                screen reads user_activity_log_list and renders security-
+                relevant events (login, password change, 2FA, device link,
+                BYOK set, chat delete, message delete-for-all, etc.). */}
+            <TouchableOpacity
+              style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
+              onPress={() => router.push('/activity-log')}
+              activeOpacity={0.65}
+            >
+              <View style={[s.settingInfo, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
+                <IconShield size={18} color={colors.primary} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.settingLabel, { color: colors.text }]}>
+                    {t('settings.activityLog') || 'Histórico de atividades'}
+                  </Text>
+                  <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                    {t('settings.activityLogDesc') || 'Veja logins, mudanças de senha, novos dispositivos e outras ações de segurança.'}
+                  </Text>
+                </View>
+              </View>
+              <Text style={{ color: colors.textTertiary, fontSize: 20 }}>›</Text>
+            </TouchableOpacity>
+
+            {/* Chave avançada (BYOK) — opt-in per-user master key, generated
+                client-side. Server stores only the fingerprint. Power-user
+                feature surfaced here so it's a "Segurança" decision, not a
+                privacy preference. */}
+            <TouchableOpacity
+              style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
+              onPress={() => router.push('/advanced-key')}
+              activeOpacity={0.65}
+            >
+              <View style={[s.settingInfo, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
+                <IconShield size={18} color={colors.primary} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.settingLabel, { color: colors.text }]}>
+                    {t('settings.advancedKey') || 'Chave avançada (BYOK)'}
+                  </Text>
+                  <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                    {t('settings.advancedKeyDesc') || 'Gere uma chave mestre que só existe no seu aparelho. Frase de segurança mostrada uma única vez.'}
+                  </Text>
+                </View>
+              </View>
+              <Text style={{ color: colors.textTertiary, fontSize: 20 }}>›</Text>
+            </TouchableOpacity>
+
+            {/* Privacidade avançada — proxy/Tor, screen-capture block,
+                discoverable opt-out, VPN suggestion. Grouped behind one
+                row so the main Security section stays scannable. */}
+            <TouchableOpacity
+              style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
+              onPress={() => router.push('/advanced-privacy')}
+              activeOpacity={0.65}
+            >
+              <View style={[s.settingInfo, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
+                <IconShield size={18} color={colors.primary} />
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.settingLabel, { color: colors.text }]}>
+                    {t('settings.advancedPrivacy') || 'Privacidade avançada'}
+                  </Text>
+                  <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                    {t('settings.advancedPrivacyDesc') || 'Proxy/Tor, bloqueio de captura de tela, descoberta por número, sugestão de VPN.'}
                   </Text>
                 </View>
               </View>

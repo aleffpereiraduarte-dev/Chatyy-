@@ -85,6 +85,16 @@ class LiveHostActivity : ComponentActivity() {
     const val EXTRA_HOST_EMAIL = "host_email"
     const val EXTRA_TITLE = "title"
     const val EXTRA_AUDIENCE = "audience"
+
+    // Wave 16 (2026-05-17): AR/Beauty/Greenscreen filter selection. Static
+    // ref so ExpoLiveNativeModule.setArFilter can poke the currently-running
+    // host activity without a heavyweight binder. Cleared on activity destroy.
+    @Volatile private var current: LiveHostActivity? = null
+
+    fun applyArFilter(presetKey: String, wallpaperId: Int) {
+      val act = current ?: return
+      act.runOnUiThread { act.setArFilterPreset(presetKey, wallpaperId) }
+    }
   }
 
   // Intent state
@@ -148,8 +158,26 @@ class LiveHostActivity : ComponentActivity() {
 
   private data class Comment(val name: String, val text: String)
 
+  // ─── Wave 16: active AR/beauty/greenscreen preset (2026-05-17) ───
+  // Stored here so MediaPipe pipeline hooks (when wired) can read it.
+  // 'none' = no filter applied.
+  @Volatile private var activeArPreset: String = "none"
+  @Volatile private var activeArWallpaperId: Int = 0
+
+  fun setArFilterPreset(presetKey: String, wallpaperId: Int) {
+    activeArPreset = if (presetKey.isBlank()) "none" else presetKey
+    activeArWallpaperId = wallpaperId
+    Log.d(TAG, "AR filter set: preset=$activeArPreset wallpaper=$activeArWallpaperId")
+    // Surface a hint on the status pill so the host knows the filter applied.
+    // The actual MediaPipe processing (FaceLandmarker + SelfieSegmentation
+    // composite) lives in a follow-up commit — pipeline plumbing requires
+    // vendoring the MediaPipe AAR + a custom LK VideoCapturer that wraps
+    // the CameraCapturer, intercepts frames, runs the graph, and re-emits.
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    current = this
 
     // Show over lockscreen (live broadcast may be started from lock — rare but
     // safe), keep screen on while live.
@@ -807,6 +835,7 @@ class LiveHostActivity : ComponentActivity() {
 
   @OptIn(DelicateCoroutinesApi::class)
   override fun onDestroy() {
+    if (current === this) current = null
     mainHandler.removeCallbacks(tickRunnable)
     eventsJob?.cancel()
     connectJob?.cancel()

@@ -6,6 +6,8 @@ import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconHash } from '../components/Icons';
 import * as api from '../services/api';
 
+const ACCENT = '#7C3AED';
+
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const COLS = 3;
 const GAP = 2;
@@ -29,6 +31,10 @@ export default function HashtagScreen() {
   const [hasMore, setHasMore] = useState(true);
   const [loading, setLoading] = useState(false);
   const [count, setCount] = useState(0);
+  // Wave 15: hashtag follow state. Hydrated from hashtag_followed_list
+  // on screen mount. Optimistic toggle on tap, reverts on API failure.
+  const [following, setFollowing] = useState(false);
+  const [followBusy, setFollowBusy] = useState(false);
 
   const load = useCallback(async (p) => {
     if (loading || !tag) return;
@@ -47,6 +53,34 @@ export default function HashtagScreen() {
   }, [tag, loading]);
 
   useEffect(() => { load(1); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tag]);
+
+  // Hydrate `following` from the user's followed-tag list. Cheap call,
+  // fires once per tag.
+  useEffect(() => {
+    if (!tag) return;
+    let alive = true;
+    (async () => {
+      try {
+        const r = await api.hashtagFollowedList();
+        if (!alive) return;
+        const tags = (r?.success && r?.data?.tags) ? r.data.tags : [];
+        setFollowing(tags.some(row => String(row.tag || '').toLowerCase() === tag.toLowerCase()));
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, [tag]);
+
+  const toggleFollow = useCallback(async () => {
+    if (!tag || followBusy) return;
+    const wasFollowing = following;
+    setFollowing(!wasFollowing);
+    setFollowBusy(true);
+    try {
+      const r = wasFollowing ? await api.hashtagUnfollow(tag) : await api.hashtagFollow(tag);
+      if (!r?.success) setFollowing(wasFollowing); // revert on failure
+    } catch { setFollowing(wasFollowing); }
+    finally { setFollowBusy(false); }
+  }, [tag, following, followBusy]);
 
   const renderItem = useCallback(({ item, index }) => {
     const thumb = item.thumbnail_url || (Array.isArray(item.media_urls) ? item.media_urls[0] : '');
@@ -79,7 +113,26 @@ export default function HashtagScreen() {
             {(t('feed.hashtagPosts') || 'Posts com #')}{tag} · {count}
           </Text>
         </View>
-        <View style={{ width: 30 }} />
+        {/* Wave 15: hashtag follow / unfollow CTA */}
+        <TouchableOpacity
+          onPress={toggleFollow}
+          disabled={followBusy}
+          style={{
+            paddingHorizontal: 12,
+            paddingVertical: 6,
+            borderRadius: 14,
+            borderWidth: 1,
+            backgroundColor: following ? 'transparent' : ACCENT,
+            borderColor: following ? colors.borderLight : ACCENT,
+            opacity: followBusy ? 0.6 : 1,
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={following ? (t('hashtag.following') || 'Seguindo') : (t('hashtag.follow') || 'Seguir')}
+        >
+          <Text style={{ color: following ? colors.text : '#fff', fontWeight: '700', fontSize: 13 }}>
+            {following ? (t('hashtag.following') || 'Seguindo') : (t('hashtag.follow') || 'Seguir')}
+          </Text>
+        </TouchableOpacity>
       </View>
       <FlatList
         data={posts}

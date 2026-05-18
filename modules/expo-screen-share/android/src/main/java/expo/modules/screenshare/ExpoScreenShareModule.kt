@@ -46,10 +46,65 @@ class ExpoScreenShareModule : Module() {
 
   private var pendingPromise: Promise? = null
 
+  // [2026-05-17 Stage 4 bridge] expo-callkit's startScreenshare() dispatches
+  // a broadcast that we observe here. Lifecycle is tied to the module
+  // instance via OnCreate/OnDestroy in the ModuleDefinition.
+  private val bridgeReceiver = object : android.content.BroadcastReceiver() {
+    override fun onReceive(ctx: Context?, intent: Intent?) {
+      val action = intent?.action ?: return
+      Log.d(TAG, "bridgeReceiver: $action")
+      when (action) {
+        "expo.modules.screenshare.REQUEST_PICKER" -> {
+          val activity = appContext.currentActivity ?: return
+          if (ScreenShareService.isRunning) return
+          val mpm = activity.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+          val pickerIntent = mpm.createScreenCaptureIntent()
+          try {
+            activity.startActivityForResult(pickerIntent, SCREEN_CAPTURE_REQUEST_CODE)
+          } catch (t: Throwable) {
+            Log.w(TAG, "bridgeReceiver picker launch failed: ${t.message}")
+            sendEvent("onBroadcastError", mapOf("message" to (t.message ?: "picker launch failed")))
+          }
+        }
+        "expo.modules.screenshare.REQUEST_STOP" -> {
+          val ctxOk = appContext.reactContext ?: return
+          val stopIntent = Intent(ctxOk, ScreenShareService::class.java).apply {
+            this.action = ScreenShareService.ACTION_STOP
+          }
+          try { ContextCompat.startForegroundService(ctxOk, stopIntent) } catch (_: Throwable) {}
+        }
+      }
+    }
+  }
+
   override fun definition() = ModuleDefinition {
     Name("ExpoScreenShare")
 
     Events("onBroadcastStarted", "onBroadcastFrame", "onBroadcastStopped", "onBroadcastError")
+
+    OnCreate {
+      try {
+        val ctx = appContext.reactContext ?: return@OnCreate
+        val filter = android.content.IntentFilter().apply {
+          addAction("expo.modules.screenshare.REQUEST_PICKER")
+          addAction("expo.modules.screenshare.REQUEST_STOP")
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+          ctx.registerReceiver(bridgeReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+          @Suppress("UnspecifiedRegisterReceiverFlag")
+          ctx.registerReceiver(bridgeReceiver, filter)
+        }
+      } catch (t: Throwable) {
+        Log.w(TAG, "bridgeReceiver register failed: ${t.message}")
+      }
+    }
+
+    OnDestroy {
+      try {
+        appContext.reactContext?.unregisterReceiver(bridgeReceiver)
+      } catch (_: Throwable) {}
+    }
 
     Function("isSupported") {
       // MediaProjectionManager.createScreenCaptureIntent is API 21+. minSdk=24

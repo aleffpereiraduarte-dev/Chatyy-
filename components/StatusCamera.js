@@ -11,6 +11,13 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import CachedImage from './CachedImage';
 import { IconRefresh } from './Icons';
+// AR face-filter pipeline (MediaPipe FaceLandmarker — Apache 2.0).
+// Filter overlay is graceful: when the native binding isn't loaded
+// (web, debug sim without the pod installed), each preset falls back
+// to a centered static overlay. The carousel + preset switching still
+// works for UI testing without the binding.
+import FaceFilterOverlay from './status/FaceFilterOverlay';
+import { FACE_FILTER_PRESETS } from './status/FaceFilters';
 
 // Haptics (graceful — `expo-haptics` may not be present in every build)
 let _Haptics = null;
@@ -119,6 +126,17 @@ const BRAND_PINK = '#EC4899';
 // Max video duration (TikTok-style 60s cap)
 const MAX_RECORD_MS = 60000;
 
+// Slow-mo speed presets for IMPORTED video (the live-capture speed
+// cycle is SPEED_CYCLE; this list is a subset that excludes 0.3x
+// because Instagram doesn't expose that for imports — users find it
+// unwatchable in practice).
+const IMPORT_SPEED_LIST = [0.5, 1, 2, 3];
+
+// Voiceover max duration matches Instagram (30s). The OS will stop
+// recording automatically when the cap is hit so we don't need a
+// separate timer.
+const VOICEOVER_MAX_MS = 30000;
+
 // ─── Filter overlay component (native) ───
 export function FilterOverlay({ filter, style }) {
   if (!filter?.layers?.length) return null;
@@ -200,6 +218,30 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
   const MAX_SEGMENTS = 3;
   const MAX_SEGMENT_MS = 20000;
 
+  // AR face filter (MediaPipe FaceLandmarker — Apache 2.0). null = off.
+  // Active when captureMode is 'photo' or 'video' on the front camera.
+  // Six bundled presets in components/status/FaceFilters.js; the carousel
+  // below the preview lets the user swipe between them.
+  const [arFilterIdx, setArFilterIdx] = useState(0);
+  const [previewLayoutSize, setPreviewLayoutSize] = useState({ width: 0, height: 0 });
+  // ffmpeg stitching progress (multi-clip concat). 0..1 — drives the
+  // progress pill above the segment bar so the user sees the merge
+  // happening. Falls to carousel-publish if ffmpeg fails (logged).
+  const [stitchProgress, setStitchProgress] = useState(0);
+  const [stitching, setStitching] = useState(false);
+  // Slow-mo speed picker for imported gallery videos. Default 1x; user
+  // can override via the pill above the preview retake/use bar. Applied
+  // via ffmpeg `-filter_complex setpts=PTS/N` (audio re-pitched with
+  // atempo so it stays in sync — atempo chained for > 2x because each
+  // chain link is capped at 2x).
+  const [importSpeed, setImportSpeed] = useState(1);
+  // Voiceover state — when active, we record a 30s mic-only audio track
+  // and ffmpeg-mux it onto the existing video before publish. The video
+  // keeps its original audio (mixed) unless `voiceMute` is set.
+  const [voiceoverRecording, setVoiceoverRecording] = useState(false);
+  const [voiceoverUri, setVoiceoverUri] = useState(null);
+  const voiceoverRecRef = useRef(null);
+
   const cameraRef = useRef(null);
   const recordTimerRef = useRef(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -212,6 +254,174 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
   const hintFadeAnim = useRef(new Animated.Value(0)).current;
 
   const activeFilter = FILTERS[filterIdx] || FILTERS[0];
+
+  // ─── ffmpeg-kit helpers ───
+  // Lazy-loaded so web builds (and debug simulators without the pod) don't
+  // explode on import. The native module ships under `ffmpeg-kit-react-native`
+  // and is LGPL 3.0 (link-time license — no source disclosure required if we
+  // use the prebuilt frameworks, which we do).
+  const _getFFmpegKit = useCallback(() => {
+    if (Platform.OS === 'web') return null;
+    try {
+      // Dynamic require so the binding being absent doesn't block JS bundle eval.
+      // We accept the entire export shape and unwrap below.
+      const mod = require('ffmpeg-kit-react-native');
+      return mod;
+    } catch { return null; }
+  }, []);
+
+  // Build the concat filter string for N input clips. The video and audio
+  // streams are interleaved (`[0:v][0:a][1:v][1:a]...concat=n=N:v=1:a=1[v][a]`)
+  // so the output keeps a single AV stream. We also force a -shortest tail
+  // trim so a stray clip with extra audio frames doesn't introduce a hiccup.
+  const buildConcatFilter = useCallback((count) => {
+    let inputs = '';
+    for (let i = 0; i < count; i++) inputs += `[${i}:v:0][${i}:a:0]`;
+    return `${inputs}concat=n=${count}:v=1:a=1[v][a]`;
+  }, []);
+
+  // Stitch the current `segments` stack into a single mp4 via ffmpeg-kit.
+  // Resolves to the output file URI on success, or null on failure (caller
+  // falls back to status_carousel_publish so the user is never blocked).
+  const stitchSegmentsToFile = useCallback(async () => {
+    const FFK = _getFFmpegKit();
+    if (!FFK || segments.length < 2) return null;
+    const FFmpegKit = FFK.FFmpegKit || FFK.default?.FFmpegKit;
+    const ReturnCode = FFK.ReturnCode || FFK.default?.ReturnCode;
+    if (!FFmpegKit || !ReturnCode) return null;
+    setStitching(true);
+    setStitchProgress(0);
+    // Output lives in expo-file-system's cache so it gets garbage-collected
+    // when the OS reclaims space — we don't need it after publish.
+    let outUri = null;
+    try {
+      const FS = require('expo-file-system');
+      const cacheDir = FS.cacheDirectory || FS.documentDirectory || '';
+      outUri = `${cacheDir}status_stitch_${Date.now()}.mp4`;
+      const inputs = segments.map(s => `-i "${s.uri.replace(/^file:\/\//, '')}"`).join(' ');
+      const filter = buildConcatFilter(segments.length);
+      // -movflags +faststart so the result streams cleanly when uploaded
+      // to R2 (web client can begin playback before download completes).
+      const cmd = `${inputs} -filter_complex "${filter}" -map "[v]" -map "[a]" -c:v libx264 -preset veryfast -crf 23 -c:a aac -b:a 128k -movflags +faststart "${outUri.replace(/^file:\/\//, '')}"`;
+      const session = await FFmpegKit.executeAsync(cmd, async (s) => {
+        try {
+          const code = await s.getReturnCode();
+          if (ReturnCode.isSuccess(code)) setStitchProgress(1);
+        } catch {}
+      }, undefined, (stat) => {
+        // statistics callback — surfaces time progress so we can drive the
+        // progress pill. We approximate progress as elapsed/totalDurationMs
+        // (sum of segment durations).
+        try {
+          const totalMs = segments.reduce((a, s) => a + (s.durationMs || 0), 0) || 1;
+          const elapsedMs = stat?.getTime?.() || 0;
+          setStitchProgress(Math.min(1, elapsedMs / totalMs));
+        } catch {}
+      });
+      // Poll for return code — executeAsync may resolve before the success
+      // callback if the session is short. The 30s timeout matches the
+      // longest plausible 3-clip stitch at 1080p on a 2-year-old phone.
+      const start = Date.now();
+      while (Date.now() - start < 30000) {
+        await new Promise(r => setTimeout(r, 200));
+        try {
+          const code = await session.getReturnCode();
+          if (code != null && ReturnCode.isSuccess(code)) {
+            setStitchProgress(1);
+            setStitching(false);
+            return outUri;
+          }
+          if (code != null && !ReturnCode.isSuccess(code)) {
+            console.warn('[StatusCamera] ffmpeg stitch failed code:', code);
+            break;
+          }
+        } catch {}
+      }
+    } catch (e) {
+      console.warn('[StatusCamera] stitch error:', e?.message);
+    }
+    setStitching(false);
+    return null;
+  }, [segments, _getFFmpegKit, buildConcatFilter]);
+
+  // Apply a speed change to a single imported video via ffmpeg. setpts
+  // scales the video presentation timestamps (PTS/N where N>1 = faster).
+  // Audio gets the same factor via atempo (chained when > 2x because the
+  // filter is capped per-link at 2.0). Returns the output URI or null on
+  // failure (caller falls back to original clip).
+  const applySpeedToVideo = useCallback(async (uri, factor) => {
+    const FFK = _getFFmpegKit();
+    if (!FFK || !factor || factor === 1) return uri;
+    const FFmpegKit = FFK.FFmpegKit || FFK.default?.FFmpegKit;
+    const ReturnCode = FFK.ReturnCode || FFK.default?.ReturnCode;
+    if (!FFmpegKit || !ReturnCode) return uri;
+    try {
+      const FS = require('expo-file-system');
+      const cacheDir = FS.cacheDirectory || FS.documentDirectory || '';
+      const out = `${cacheDir}status_speed_${factor}x_${Date.now()}.mp4`;
+      // Compose atempo chain: each link capped 0.5..2.0. For 0.5x we use one
+      // 0.5 link; for 3x we chain 2.0 * 1.5; for 0.25x we'd chain 0.5*0.5.
+      const atempoChain = (f) => {
+        if (f >= 0.5 && f <= 2.0) return `atempo=${f}`;
+        if (f > 2.0) {
+          // 3x = 2.0 * 1.5 ; 4x = 2.0 * 2.0
+          return `atempo=2.0,atempo=${(f / 2.0).toFixed(3)}`;
+        }
+        // < 0.5 (rare here; UI only exposes 0.5x lower bound)
+        return `atempo=0.5,atempo=${(f / 0.5).toFixed(3)}`;
+      };
+      const setpts = `setpts=PTS/${factor}`;
+      const cmd = `-i "${uri.replace(/^file:\/\//, '')}" -filter_complex "[0:v]${setpts}[v];[0:a]${atempoChain(factor)}[a]" -map "[v]" -map "[a]" -c:v libx264 -preset veryfast -crf 23 -c:a aac -movflags +faststart "${out.replace(/^file:\/\//, '')}"`;
+      const session = await FFmpegKit.executeAsync(cmd);
+      // 30s timeout matches the upper bound for a 60s 1080p clip on phone-grade HW.
+      const start = Date.now();
+      while (Date.now() - start < 30000) {
+        await new Promise(r => setTimeout(r, 200));
+        try {
+          const code = await session.getReturnCode();
+          if (code != null && ReturnCode.isSuccess(code)) return out;
+          if (code != null && !ReturnCode.isSuccess(code)) break;
+        } catch {}
+      }
+    } catch (e) {
+      console.warn('[StatusCamera] speed apply error:', e?.message);
+    }
+    return uri;
+  }, [_getFFmpegKit]);
+
+  // Mux a separately-recorded voiceover audio track onto a video. The
+  // input video's original audio is mixed at 0.3 gain so the voiceover
+  // dominates (Instagram parity). Returns the muxed URI or null on
+  // failure.
+  const muxVoiceoverOntoVideo = useCallback(async (videoUri, audioUri, { keepOriginal = true } = {}) => {
+    const FFK = _getFFmpegKit();
+    if (!FFK) return videoUri;
+    const FFmpegKit = FFK.FFmpegKit || FFK.default?.FFmpegKit;
+    const ReturnCode = FFK.ReturnCode || FFK.default?.ReturnCode;
+    if (!FFmpegKit || !ReturnCode) return videoUri;
+    try {
+      const FS = require('expo-file-system');
+      const cacheDir = FS.cacheDirectory || FS.documentDirectory || '';
+      const out = `${cacheDir}status_voiceover_${Date.now()}.mp4`;
+      const filter = keepOriginal
+        ? `[0:a]volume=0.3[a0];[1:a]volume=1.6[a1];[a0][a1]amix=inputs=2:dropout_transition=0[a]`
+        : `[1:a]volume=1.6[a]`;
+      const cmd = `-i "${videoUri.replace(/^file:\/\//, '')}" -i "${audioUri.replace(/^file:\/\//, '')}" -filter_complex "${filter}" -map 0:v -map "[a]" -c:v copy -c:a aac -shortest -movflags +faststart "${out.replace(/^file:\/\//, '')}"`;
+      const session = await FFmpegKit.executeAsync(cmd);
+      const start = Date.now();
+      while (Date.now() - start < 30000) {
+        await new Promise(r => setTimeout(r, 200));
+        try {
+          const code = await session.getReturnCode();
+          if (code != null && ReturnCode.isSuccess(code)) return out;
+          if (code != null && !ReturnCode.isSuccess(code)) break;
+        } catch {}
+      }
+    } catch (e) {
+      console.warn('[StatusCamera] voiceover mux error:', e?.message);
+    }
+    return videoUri;
+  }, [_getFFmpegKit]);
 
   // ─── Record animation (pulse + purple glow halo) ───
   useEffect(() => {
@@ -429,12 +639,47 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
     setRecording(false);
   }, [recording, segments.length]);
 
-  // Publish the accumulated segment stack as a CAROUSEL. Each segment
-  // travels as one carousel item (type: 'video'); the viewer already
-  // paints a segmented progress ring across multi-item groups so the
-  // playback feels continuous even without a real native stitch.
-  const publishSegments = useCallback(() => {
+  // Publish the accumulated segment stack. Preferred path: ffmpeg-kit
+  // stitches all N clips into a single seamless mp4 (native concat
+  // filter), then emits a SINGLE video status. Fallback path (ffmpeg
+  // unavailable or stitch failed): emit as CAROUSEL so the viewer
+  // still gets the segmented progress ring and the user doesn't lose
+  // the recording.
+  const publishSegments = useCallback(async () => {
     if (segments.length === 0) return;
+    // Single segment? Just emit it as one video — no concat needed.
+    if (segments.length === 1) {
+      onCapture?.({
+        uri: segments[0].uri,
+        type: 'video',
+        filter: activeFilter.key !== 'normal' ? activeFilter.key : undefined,
+        filterAdjust: activeFilter.adjust || undefined,
+        speed: speed !== 1 ? speed : undefined,
+        beauty: beauty || undefined,
+        music: musicTrack || undefined,
+      });
+      setSegments([]);
+      return;
+    }
+    // Try native stitch first. Falls through to carousel on failure.
+    const stitched = await stitchSegmentsToFile();
+    if (stitched) {
+      onCapture?.({
+        uri: stitched,
+        type: 'video',
+        // Mark the source so backend telemetry can track stitch success
+        // rate. No effect on viewer rendering.
+        stitched: true,
+        filter: activeFilter.key !== 'normal' ? activeFilter.key : undefined,
+        filterAdjust: activeFilter.adjust || undefined,
+        speed: speed !== 1 ? speed : undefined,
+        beauty: beauty || undefined,
+        music: musicTrack || undefined,
+      });
+      setSegments([]);
+      return;
+    }
+    // Fallback: publish as carousel so the user's clips don't get lost.
     onCapture?.({
       multi: true,
       items: segments.map(s => ({
@@ -449,7 +694,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
       music: musicTrack || undefined,
     });
     setSegments([]);
-  }, [segments, onCapture, activeFilter, speed, beauty, musicTrack]);
+  }, [segments, onCapture, activeFilter, speed, beauty, musicTrack, stitchSegmentsToFile]);
 
   const handleLongPress = useCallback(() => {
     haptic('medium');
@@ -524,19 +769,119 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
     }
   }, []);
 
+  // ─── Voiceover (long-press record button in preview) ───
+  // Records mic-only audio for up to 30s using `expo-audio`. The result
+  // gets muxed onto the preview video by handleConfirm via ffmpeg
+  // before publish. The original video audio is mixed in at 30% gain
+  // so the voiceover dominates without erasing the scene's audio.
+  const startVoiceover = useCallback(async () => {
+    if (voiceoverRecording || preview?.type !== 'video') return;
+    try {
+      const Audio = require('expo-audio');
+      // Request mic permission. iOS shows the OS prompt the first time;
+      // on subsequent runs the permission is cached.
+      const perm = await Audio.requestRecordingPermissionsAsync?.();
+      if (perm && perm.granted === false) {
+        try { Linking.openSettings?.(); } catch {}
+        return;
+      }
+      await Audio.setAudioModeAsync?.({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      // High-quality recording preset — matches Instagram's voiceover
+      // bitrate so the muxed audio doesn't sound noticeably worse than
+      // the captured camera audio.
+      // expo-audio (newer SDKs) exposes a class-based AudioRecorder; older
+      // SDKs expose Audio.Recording. We probe for the class first, then
+      // fall back below. The `new` invocation can't sit inside an optional
+      // chain (JS spec) so we guard with a plain check.
+      const Rec = Audio.AudioRecorder;
+      const recording = Rec
+        ? new Rec(Audio.RECORDING_PRESETS?.HIGH_QUALITY || undefined)
+        : null;
+      if (recording?.prepareToRecordAsync) {
+        await recording.prepareToRecordAsync();
+        await recording.startAsync?.();
+        voiceoverRecRef.current = recording;
+      } else {
+        // Older expo-audio API surface (function-based) — fall back.
+        const rec = await Audio.Audio?.Recording?.createAsync?.(Audio.RecordingOptionsPresets?.HIGH_QUALITY);
+        voiceoverRecRef.current = rec?.recording || null;
+      }
+      setVoiceoverRecording(true);
+      haptic('medium');
+      // Auto-stop after VOICEOVER_MAX_MS so the user can release the
+      // button after the cap is hit without re-triggering recording.
+      setTimeout(() => {
+        if (voiceoverRecRef.current) stopVoiceover();
+      }, VOICEOVER_MAX_MS);
+    } catch (e) {
+      console.warn('[StatusCamera] voiceover start error:', e?.message);
+      setVoiceoverRecording(false);
+    }
+  }, [voiceoverRecording, preview]);
+
+  const stopVoiceover = useCallback(async () => {
+    if (!voiceoverRecRef.current) return;
+    try {
+      const rec = voiceoverRecRef.current;
+      if (rec.stopAndUnloadAsync) await rec.stopAndUnloadAsync();
+      else if (rec.stopAsync) await rec.stopAsync();
+      const uri = (rec.getURI && rec.getURI()) || rec.uri || null;
+      voiceoverRecRef.current = null;
+      setVoiceoverRecording(false);
+      if (uri) {
+        setVoiceoverUri(uri);
+        haptic('light');
+      }
+    } catch (e) {
+      console.warn('[StatusCamera] voiceover stop error:', e?.message);
+      setVoiceoverRecording(false);
+      voiceoverRecRef.current = null;
+    }
+  }, []);
+
   // ─── Confirm ───
-  const handleConfirm = useCallback(() => {
+  // For imported videos: if the user picked a non-1x speed via the slow-mo
+  // pill OR recorded a voiceover, run ffmpeg post-processing here before
+  // emitting the capture. Both operations are best-effort; on failure we
+  // forward the original uri so the user never loses media.
+  const handleConfirm = useCallback(async () => {
     if (!preview) return;
+    let finalUri = preview.uri;
+    let appliedSpeed = undefined;
+    if (preview.type === 'video' && importSpeed !== 1) {
+      try {
+        const sped = await applySpeedToVideo(preview.uri, importSpeed);
+        if (sped) { finalUri = sped; appliedSpeed = importSpeed; }
+      } catch (e) { console.warn('[StatusCamera] speed apply failed:', e?.message); }
+    }
+    if (preview.type === 'video' && voiceoverUri) {
+      try {
+        const muxed = await muxVoiceoverOntoVideo(finalUri, voiceoverUri, { keepOriginal: true });
+        if (muxed) finalUri = muxed;
+      } catch (e) { console.warn('[StatusCamera] voiceover mux failed:', e?.message); }
+    }
     onCapture?.({
-      uri: preview.uri,
+      uri: finalUri,
       type: preview.type,
       isBoomerang: !!preview.isBoomerang,
       filter: activeFilter.key !== 'normal' ? activeFilter.key : undefined,
       filterAdjust: activeFilter.adjust || undefined,
+      // Persist `speed` meta only when actually applied so existing
+      // downstream code (caption translation, telemetry) doesn't see a
+      // stray 1x value.
+      speed: appliedSpeed,
+      // AR face filter — passes the preset key downstream so the viewer
+      // can re-render the overlay during playback (web/native respect
+      // this in `currentViewerItem.meta.face_filter`).
+      face_filter: FACE_FILTER_PRESETS[arFilterIdx]?.key !== 'none'
+        ? FACE_FILTER_PRESETS[arFilterIdx]?.key
+        : undefined,
     });
     setPreview(null);
     setFilterIdx(0);
-  }, [preview, activeFilter, onCapture]);
+    setImportSpeed(1);
+    setVoiceoverUri(null);
+  }, [preview, activeFilter, onCapture, importSpeed, voiceoverUri, applySpeedToVideo, muxVoiceoverOntoVideo, arFilterIdx]);
 
   // ─── Guards ───
   if (!visible) return null;
@@ -612,9 +957,57 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
           </View>
         )}
 
+        {/* Slow-mo speed pill — only shown for imported video. Cycles
+            through IMPORT_SPEED_LIST so users can tap to flip between
+            0.5x / 1x / 2x / 3x. ffmpeg-kit applies the speed via setpts
+            during handleConfirm. */}
+        {preview.type === 'video' && (
+          <View style={s.previewSpeedRow}>
+            {IMPORT_SPEED_LIST.map((sp) => (
+              <TouchableOpacity
+                key={sp}
+                onPress={() => { haptic('light'); setImportSpeed(sp); }}
+                style={[s.previewSpeedPill, importSpeed === sp && s.previewSpeedPillActive]}
+                accessibilityLabel={`Speed ${sp}x`}
+              >
+                <Text style={[s.previewSpeedTxt, importSpeed === sp && s.previewSpeedTxtActive]}>
+                  {sp}x
+                </Text>
+              </TouchableOpacity>
+            ))}
+            {/* Voiceover capture button — hold to record up to 30s of
+                mic-only audio that ffmpeg muxes onto the video. Visual
+                state goes red while the recorder is active. */}
+            <Pressable
+              onPressIn={() => { startVoiceover(); }}
+              onPressOut={() => { stopVoiceover(); }}
+              style={[s.voiceoverBtn, voiceoverRecording && s.voiceoverBtnActive]}
+              accessibilityLabel={t?.('status.voiceover') || 'Voz over'}
+            >
+              {/* Voiceover label — text-only per project "no emoji in UI"
+                  rule. State machine: idle → REC → DONE. Holding the button
+                  starts recording; releasing stops it and toggles to DONE. */}
+              <Text style={[s.voiceoverTxt, voiceoverRecording && { color: '#fff' }]}>
+                {voiceoverUri ? 'VOZ OK' : (voiceoverRecording ? 'GRAVANDO' : (t?.('status.voiceover') || 'Voz over'))}
+              </Text>
+            </Pressable>
+          </View>
+        )}
+
+        {/* Stitch progress pill — shown while ffmpeg is concat-ing
+            multi-clip segments. Goes from 0 to 100% along the bottom
+            edge. Falls back silently to carousel publish if it fails. */}
+        {stitching && (
+          <View style={s.stitchProgressWrap}>
+            <Text style={s.stitchProgressTxt}>
+              {`${Math.round(stitchProgress * 100)}%`}
+            </Text>
+          </View>
+        )}
+
         {/* Bottom action bar */}
         <View style={s.previewActions}>
-          <TouchableOpacity onPress={() => { setPreview(null); setFilterIdx(0); }} style={s.actionBtn}>
+          <TouchableOpacity onPress={() => { setPreview(null); setFilterIdx(0); setImportSpeed(1); setVoiceoverUri(null); }} style={s.actionBtn}>
             <Text style={s.actionBtnTxt}>{t?.('status.retake') || 'Refazer'}</Text>
           </TouchableOpacity>
 
@@ -638,13 +1031,32 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
   // ═══════════════════════════════
   return (
     <View style={s.container}>
-      <CameraView
-        ref={cameraRef}
+      <View
         style={s.camera}
-        facing={facing}
-        flash={flash}
-        mode={captureMode === 'video' ? 'video' : 'picture'}
-      />
+        onLayout={(e) => {
+          const { width, height } = e.nativeEvent.layout;
+          if (width !== previewLayoutSize.width || height !== previewLayoutSize.height) {
+            setPreviewLayoutSize({ width, height });
+          }
+        }}
+      >
+        <CameraView
+          ref={cameraRef}
+          style={s.camera}
+          facing={facing}
+          flash={flash}
+          mode={captureMode === 'video' ? 'video' : 'picture'}
+        />
+        {/* AR face filter overlay (MediaPipe FaceLandmarker). Sits on
+            top of the camera preview, below the UI chrome so the user's
+            touches don't get intercepted. Renders nothing when the
+            preset is 'none'. */}
+        <FaceFilterOverlay
+          filterKey={FACE_FILTER_PRESETS[arFilterIdx]?.key}
+          previewSize={previewLayoutSize}
+          facing={facing}
+        />
+      </View>
 
       {/* Top-left close (TikTok pattern, Feature 5) */}
       <TouchableOpacity
@@ -832,6 +1244,52 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
           re-apply on playback. */}
       <FilterOverlay filter={activeFilter} />
 
+      {/* AR face filter carousel — sits just above the color filter strip.
+          Six bundled presets (none/dog/cat/sunglasses/heart eyes/party hat/
+          vampire). Swipe horizontally to switch; tap to apply. Each preset
+          PNG ships in assets/ar-filters/. */}
+      <View style={s.arFilterStrip} pointerEvents="box-none">
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={{ paddingHorizontal: 14, gap: 10 }}
+        >
+          {FACE_FILTER_PRESETS.map((p, i) => {
+            const sel = arFilterIdx === i;
+            return (
+              <TouchableOpacity
+                key={p.key}
+                onPress={() => { haptic('light'); setArFilterIdx(i); }}
+                style={[s.arFilterTile, sel && s.arFilterTileActive]}
+                accessibilityLabel={`AR ${p.label}`}
+              >
+                {/* The 'none' preset has no asset — render a circle slash
+                    glyph (∅) so it still reads as "no filter" without
+                    needing a dedicated icon component. All other presets
+                    render the bundled PNG overlay scaled to fit the tile. */}
+                {p.asset ? (
+                  <Image source={p.asset} style={s.arFilterIcon} resizeMode="contain" />
+                ) : (
+                  <View style={{
+                    width: 30, height: 30, borderRadius: 15,
+                    borderWidth: 2, borderColor: 'rgba(255,255,255,0.6)',
+                    transform: [{ rotate: '-45deg' }],
+                  }}>
+                    <View style={{
+                      position: 'absolute', top: 13, left: -1, right: -1,
+                      height: 2, backgroundColor: 'rgba(255,255,255,0.6)',
+                    }} />
+                  </View>
+                )}
+                <Text style={[s.arFilterLabel, sel && s.arFilterLabelActive]} numberOfLines={1}>
+                  {p.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+      </View>
+
       {/* Live filter chip strip (Feature E) — horizontal scroll above the
           mode bar so users can pick a look while framing. Tap = apply. */}
       <View style={s.liveFilterStrip} pointerEvents="box-none">
@@ -975,6 +1433,65 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   camera: { flex: 1 },
+
+  // AR face filter carousel (above color filter strip in camera view)
+  arFilterStrip: {
+    position: 'absolute', bottom: 235,
+    left: 0, right: 0, height: 60,
+  },
+  arFilterTile: {
+    width: 56, height: 56, borderRadius: 28,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderWidth: 2, borderColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center', justifyContent: 'center',
+    overflow: 'hidden', paddingHorizontal: 4,
+  },
+  arFilterTileActive: {
+    borderColor: '#fff', borderWidth: 3,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+  },
+  arFilterIcon: { width: 30, height: 30 },
+  arFilterLabel: {
+    color: 'rgba(255,255,255,0.75)', fontSize: 9, fontWeight: '700',
+  },
+  arFilterLabelActive: { color: '#fff', fontWeight: '900' },
+
+  // Slow-mo speed row (preview mode, imported video only)
+  previewSpeedRow: {
+    position: 'absolute', bottom: 100,
+    left: 0, right: 0,
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
+    gap: 8,
+  },
+  previewSpeedPill: {
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 18,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+  },
+  previewSpeedPillActive: {
+    backgroundColor: '#fff', borderColor: '#fff',
+  },
+  previewSpeedTxt: { color: 'rgba(255,255,255,0.8)', fontSize: 13, fontWeight: '800' },
+  previewSpeedTxtActive: { color: '#000' },
+
+  // Voiceover capture button (preview mode, video only)
+  voiceoverBtn: {
+    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 18,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+  },
+  voiceoverBtnActive: { backgroundColor: '#dc2626', borderColor: '#dc2626' },
+  voiceoverTxt: { color: '#fff', fontSize: 13, fontWeight: '700' },
+
+  // ffmpeg stitch progress pill (multi-clip merge feedback)
+  stitchProgressWrap: {
+    position: 'absolute', bottom: 78,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingHorizontal: 18, paddingVertical: 6,
+    borderRadius: 14,
+  },
+  stitchProgressTxt: { color: '#fff', fontSize: 13, fontWeight: '800' },
 
   // Top-left close (Feature 5)
   closeBtn: {

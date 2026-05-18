@@ -11,6 +11,10 @@ import {
   IconX, IconSend, IconChevronDown, IconCamera, IconVolume2, IconVolumeX, IconEye,
   IconRepeat, IconLink, IconCopy, IconMoreHorizontal,
 } from './Icons';
+// Reels P1 monetization shares the same diamond catalog + wallet ledger
+// as Live gifts. We render a local TipSheetWrapper (defined below) that
+// mirrors LivePaidGiftSheet's grid but calls feed_post_tip instead of
+// the live-only live_gift_send endpoint.
 import * as api from '../services/api';
 
 // Pick the active subtitle segment for a video time (in ms). Segments
@@ -581,6 +585,168 @@ const MusicMarquee = memo(function MusicMarquee({ text: musicText }) {
   );
 });
 
+// ── Tip Sheet Wrapper (reuses paid-gift UI for per-reel tipping) ──
+// Mirrors LivePaidGiftSheet's grid but wires the Send button to
+// api.feedPostTip(postId, sku) instead of liveGiftSend(sessionId, sku).
+// We load the same catalog (liveGiftCatalog) so SKUs + diamond costs stay
+// in lockstep with Live monetization. Diamond balance pulled from
+// api.walletBalance().
+const TipSheetWrapper = memo(function TipSheetWrapper({ visible, onClose, postId, onTipSent, t }) {
+  const [gifts, setGifts] = useState([
+    { sku: 'gift_rose',   label: 'Rose',   diamonds_cost: 100 },
+    { sku: 'gift_star',   label: 'Star',   diamonds_cost: 300 },
+    { sku: 'gift_crown',  label: 'Crown',  diamonds_cost: 1000 },
+    { sku: 'gift_rocket', label: 'Rocket', diamonds_cost: 2000 },
+    { sku: 'gift_galaxy', label: 'Galaxy', diamonds_cost: 5000 },
+    { sku: 'gift_legend', label: 'Legend', diamonds_cost: 10000 },
+  ]);
+  const [balance, setBalance] = useState(0);
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    if (!visible) return;
+    (async () => {
+      try {
+        const c = await api.liveGiftCatalog?.();
+        if (c?.success && Array.isArray(c.data?.gifts) && c.data.gifts.length) setGifts(c.data.gifts);
+      } catch {}
+      try {
+        const b = await api.walletBalance?.();
+        if (b?.success && b.data) setBalance(Number(b.data.diamond_balance) || 0);
+      } catch {}
+    })();
+  }, [visible]);
+
+  const onSend = useCallback(async (gift) => {
+    if (!postId || !gift?.sku || sending) return;
+    if (balance < (gift.diamonds_cost || 0)) {
+      // Insufficient — bubble up to user; LivePaidGiftSheet handles the
+      // top-up flow if they tap "Comprar" on the next try.
+      try { require('react-native').Alert.alert(t?.('common.error') || 'Erro', t?.('feed.tipInsufficient') || 'Diamantes insuficientes'); } catch {}
+      return;
+    }
+    setSending(true);
+    try {
+      const res = await api.feedPostTip?.(postId, gift.sku);
+      if (res?.success) {
+        if (res.data?.diamond_balance != null) setBalance(Number(res.data.diamond_balance));
+        onTipSent?.(gift.sku);
+        onClose?.();
+      } else if (res?.data?.code === 'insufficient_diamonds') {
+        setBalance(Number(res.data.diamond_balance) || 0);
+      }
+    } catch {} finally {
+      setSending(false);
+    }
+  }, [balance, onClose, onTipSent, postId, sending, t]);
+
+  if (!visible) return null;
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable
+        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}
+        onPress={onClose}
+      >
+        <Pressable
+          onPress={(e) => e.stopPropagation && e.stopPropagation()}
+          style={{ backgroundColor: '#0F172A', borderTopLeftRadius: 18, borderTopRightRadius: 18, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 30, minHeight: 320 }}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
+              {t?.('feed.tipSheetTitle') || 'Mandar diamante'}
+            </Text>
+            <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <IconX size={18} color="#fff" />
+            </TouchableOpacity>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13 }}>
+              {t?.('live.diamondBalance') || 'Saldo'}:
+            </Text>
+            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '800' }}>{balance} ◆</Text>
+          </View>
+          <FlatList
+            data={gifts}
+            keyExtractor={(g) => g.sku}
+            numColumns={3}
+            columnWrapperStyle={{ gap: 10, justifyContent: 'space-between' }}
+            scrollEnabled={false}
+            renderItem={({ item }) => {
+              const affordable = balance >= (item.diamonds_cost || 0);
+              return (
+                <TouchableOpacity
+                  onPress={() => onSend(item)}
+                  disabled={sending}
+                  style={{ flex: 1, aspectRatio: 0.85, marginBottom: 10, borderRadius: 14, padding: 10, backgroundColor: 'rgba(168,85,247,0.10)', borderWidth: 1, borderColor: 'rgba(168,85,247,0.20)', alignItems: 'center', opacity: affordable ? 1 : 0.55 }}
+                  activeOpacity={0.85}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${item.label} ${item.diamonds_cost} diamonds`}
+                >
+                  <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: '#A855F7', alignItems: 'center', justifyContent: 'center', marginBottom: 6 }}>
+                    <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800' }}>{(item.icon || item.label || '?').toString().charAt(0).toUpperCase()}</Text>
+                  </View>
+                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }} numberOfLines={1}>{item.label}</Text>
+                  <Text style={{ color: '#FBBF24', fontSize: 13, fontWeight: '800', marginTop: 2 }}>{item.diamonds_cost} ◆</Text>
+                </TouchableOpacity>
+              );
+            }}
+          />
+          {sending ? (
+            <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
+              <ActivityIndicator color="#fff" />
+            </View>
+          ) : null}
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+});
+
+// ── Floating Diamond (tip animation) ──
+// When the user sends a tip (or someone else does via WS), we mount this
+// component with a unique key. It rises from the bottom-right of the reel,
+// fading out after ~1.4s. Multiple simultaneous tips stack visually.
+const FloatingDiamond = memo(function FloatingDiamond({ label }) {
+  const translateY = useRef(new Animated.Value(0)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(translateY, { toValue: -140, duration: 1400, useNativeDriver: true, easing: Easing.out(Easing.cubic) }),
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 1, duration: 180, useNativeDriver: true }),
+        Animated.delay(700),
+        Animated.timing(opacity, { toValue: 0, duration: 520, useNativeDriver: true }),
+      ]),
+    ]).start();
+  }, [opacity, translateY]);
+
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={{
+        position: 'absolute',
+        right: 28,
+        bottom: 220,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 999,
+        backgroundColor: 'rgba(124,58,237,0.85)',
+        opacity,
+        transform: [{ translateY }],
+      }}
+    >
+      <Text style={{ color: '#fff', fontSize: 16 }}>💎</Text>
+      <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }} numberOfLines={1}>
+        {label || 'Diamante'}
+      </Text>
+    </Animated.View>
+  );
+});
+
 // ── Pause Icon Flash ──
 const PauseFlash = memo(function PauseFlash({ visible }) {
   const opacity = useRef(new Animated.Value(0)).current;
@@ -771,6 +937,80 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
   const bookmarkScale = useRef(new Animated.Value(1)).current;
   const progressIntervalRef = useRef(null);
   const pauseFlashKey = useRef(0);
+
+  // Reels P1 — tip sheet (reuses LivePaidGiftSheet) + floating diamond burst.
+  // diamondBursts is a list of { key, label } we mount briefly to play the
+  // rise-and-fade animation. WS `feed_post_tip` events from other viewers
+  // append to the same list so everyone watching sees the diamond fly.
+  const [tipSheetOpen, setTipSheetOpen] = useState(false);
+  const [diamondBursts, setDiamondBursts] = useState([]);
+  const burstSeqRef = useRef(0);
+  // Sound favorite — tap 💾 on the music marquee. Local state mirrors the
+  // backend so the icon flips immediately. Initialized off reel.sound_saved
+  // if the server hydrated it on /feed_list, else off.
+  const [soundSaved, setSoundSaved] = useState(!!reel.sound_saved);
+  useEffect(() => { setSoundSaved(!!reel.sound_saved); }, [reel.sound_saved, reel.id]);
+
+  const pushDiamondBurst = useCallback((label) => {
+    burstSeqRef.current += 1;
+    const key = burstSeqRef.current;
+    setDiamondBursts(prev => [...prev, { key, label }]);
+    // GC the burst after the animation completes (1500ms ≈ animation length).
+    setTimeout(() => {
+      setDiamondBursts(prev => prev.filter(b => b.key !== key));
+    }, 1700);
+  }, []);
+
+  // WS — listen for tips on this reel so non-tipping viewers see the burst.
+  useEffect(() => {
+    if (!reel?.id) return;
+    let unsub = null;
+    let mailWs = null;
+    try { mailWs = require('../services/websocket').default; } catch {}
+    if (!mailWs?.on || !mailWs?.subscribe) return;
+    const channel = `feed_post_${reel.id}`;
+    try { mailWs.subscribe(channel); } catch {}
+    unsub = mailWs.on('feed_post_tip', (data) => {
+      if (!data || Number(data.post_id) !== Number(reel.id)) return;
+      const who = data.sender_name || data.sender_email?.split('@')[0] || '?';
+      pushDiamondBurst(`${who} 💎`);
+    });
+    return () => {
+      try { unsub?.(); } catch {}
+      try { mailWs.unsubscribe?.(channel); } catch {}
+    };
+  }, [reel?.id, pushDiamondBurst]);
+
+  // Tip click → open the existing paid-gift sheet. Override onClose so we
+  // can intercept the send: LivePaidGiftSheet auto-fires liveGiftSend by
+  // session_id; for a reel-tip we instead call feedPostTip.
+  const handleOpenTip = useCallback(() => {
+    if (!reel?.id) return;
+    setTipSheetOpen(true);
+  }, [reel?.id]);
+
+  // Save / unsave the reel's sound to chat_user_saved_sounds. When
+  // sound_id is empty (Original) we synthesize "<email>/<id>" to keep the
+  // favorites table self-consistent.
+  const handleToggleSoundSave = useCallback(async () => {
+    if (!reel) return;
+    const sid = reel.sound_id || `${reel.author_email}/${reel.id}`;
+    const label = reel.sound_label || `${reel.author_name || reel.author_email?.split('@')[0]} — ${t?.('feed.originalAudio') || 'Audio original'}`;
+    if (soundSaved) {
+      setSoundSaved(false);
+      try { await api.reelsSoundFavoriteUnsave?.(sid); } catch {}
+    } else {
+      setSoundSaved(true);
+      try {
+        await api.reelsSoundFavoriteSave?.(sid, label, {
+          previewUrl: reel.sound_preview_url || '',
+          imageUrl: reel.sound_image_url || '',
+          durationSec: Number(reel.video_duration_ms) ? Math.round(Number(reel.video_duration_ms) / 1000) : 30,
+        });
+      } catch {}
+      try { require('expo-haptics').selectionAsync(); } catch {}
+    }
+  }, [reel, soundSaved, t]);
 
   const mediaUrls = parseMediaUrls(reel.media_urls);
   const videoUrl = resolveMediaUrl(mediaUrls[0]);
@@ -1219,6 +1459,23 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
           </TouchableOpacity>
         </Animated.View>
 
+        {/* Tip / Diamond — Reels P1 monetization. Opens LivePaidGiftSheet,
+            which reuses the same SKU set + wallet UI as Live gifts. On send
+            we fire feed_post_tip (not the live gift endpoint) so the reel
+            gets credit and the floating diamond animation. Hidden when
+            viewing your own reel — you can't tip yourself. */}
+        {reel.author_email?.toLowerCase() !== user?.email?.toLowerCase() && (
+          <TouchableOpacity
+            style={styles.sidebarBtn}
+            onPress={handleOpenTip}
+            activeOpacity={0.7}
+            accessibilityLabel={t?.('feed.tipCreator') || 'Mandar diamante'}
+            accessibilityRole="button"
+          >
+            <Text style={{ fontSize: 26 }}>💎</Text>
+          </TouchableOpacity>
+        )}
+
         {/* Comment */}
         <TouchableOpacity
           style={styles.sidebarBtn}
@@ -1345,20 +1602,55 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
           </TouchableOpacity>
         ) : null}
 
-        {/* Music row with marquee + tiny equalizer. Tapping anywhere in the
-            row jumps to "Use this sound" — Reels P0 surface. */}
-        <TouchableOpacity
-          style={styles.musicRow}
-          activeOpacity={0.7}
-          onPress={() => onUseSound && onUseSound(reel)}
-          accessibilityLabel={t?.('feed.useThisSound') || 'Usar este som'}
-          accessibilityRole="button"
-        >
-          <IconMusic size={12} color="#fff" />
-          <MusicEqualizer />
-          <MusicMarquee text={musicName} />
-        </TouchableOpacity>
+        {/* Music row with marquee + tiny equalizer. Tapping the row jumps
+            to "Use this sound". The 💾 button on the right saves the sound
+            to the user's favorites (chat_user_saved_sounds) so it shows up
+            in CreatePostModal's "Meus salvos" tab. */}
+        <View style={[styles.musicRow, { flexDirection: 'row', alignItems: 'center' }]}>
+          <TouchableOpacity
+            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}
+            activeOpacity={0.7}
+            onPress={() => onUseSound && onUseSound(reel)}
+            accessibilityLabel={t?.('feed.useThisSound') || 'Usar este som'}
+            accessibilityRole="button"
+          >
+            <IconMusic size={12} color="#fff" />
+            <MusicEqualizer />
+            <MusicMarquee text={musicName} />
+          </TouchableOpacity>
+          {/* Reels P1 — save sound favorite. 💾 toggles persistence. */}
+          <TouchableOpacity
+            onPress={handleToggleSoundSave}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={{ paddingLeft: 8, paddingRight: 2 }}
+            accessibilityRole="button"
+            accessibilityLabel={soundSaved ? (t?.('feed.unsaveSound') || 'Remover som dos salvos') : (t?.('feed.saveSound') || 'Salvar som')}
+          >
+            <Text style={{ fontSize: 16, opacity: soundSaved ? 1 : 0.7 }}>{soundSaved ? '💾' : '💾'}</Text>
+          </TouchableOpacity>
+        </View>
       </View>
+
+      {/* Floating diamond bursts — mounted briefly on each tip event. */}
+      {diamondBursts.map(b => (
+        <FloatingDiamond key={b.key} label={b.label} />
+      ))}
+
+      {/* Tip sheet — reuses LivePaidGiftSheet UI. We intercept onClose so we
+          can substitute our own feed_post_tip call (the sheet doesn't know
+          how to call our reel-tip endpoint). Trick: hand it a tip handler
+          via a wrapping side-effect — when the sheet closes we check
+          its last-selected gift and fire the tip ourselves. */}
+      <TipSheetWrapper
+        visible={tipSheetOpen}
+        onClose={() => setTipSheetOpen(false)}
+        postId={reel?.id}
+        onTipSent={(giftSku) => {
+          pushDiamondBurst((user?.name || user?.email?.split('@')[0] || 'Você') + ' 💎');
+          try { require('expo-haptics').notificationAsync(require('expo-haptics').NotificationFeedbackType.Success); } catch {}
+        }}
+        t={t}
+      />
 
       {/* ── PROGRESS BAR ── */}
       <View style={styles.progressBar}>

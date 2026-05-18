@@ -1131,6 +1131,10 @@ export class BackupEngine {
           // Register the row in drive_files so the photo shows up in the Cloud.
           // Pass asset_id so the server can disambiguate photos that share a filename
           // (iOS reuses IMG_xxxx names a lot — without asset_id they collide on UPSERT).
+          // Wave 14: capture the returned file_id and kick off on-device face
+          // embedding extraction in the background. The embedding pipeline is
+          // a no-op when MediaPipe / ONNX deps are missing, so this is safe
+          // to call unconditionally.
           api.apiCall('drive_register_uploaded', {
             filename: uploadFilename,
             cdn_url: cdn,
@@ -1138,7 +1142,23 @@ export class BackupEngine {
             mime_type: r.mime_type || mimeType,
             content_hash: r.content_hash || item.hash || '',
             asset_id: item.id || item.asset?.id || '',
-          }, 'POST').catch(() => {});
+          }, 'POST').then((regRes) => {
+            try {
+              const fileId = regRes?.data?.id || regRes?.data?.file_id;
+              const isPhoto = String(mimeType || '').startsWith('image/');
+              if (fileId && isPhoto && Platform.OS !== 'web') {
+                // Defer to next idle frame so it doesn't compete with the
+                // uploader's CPU budget. Fire-and-forget — the embedding
+                // pipeline retries on its own next backup pass.
+                setTimeout(() => {
+                  try {
+                    const fe = require('./faceEmbeddings');
+                    fe.extractAndUploadEmbeddings?.(fileId, uploadUri).catch(() => {});
+                  } catch {}
+                }, 250);
+              }
+            } catch {}
+          }).catch(() => {});
 
           this.stats.uploadedBytes += fileSize;
           this._updateSpeed(fileSize);

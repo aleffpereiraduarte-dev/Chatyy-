@@ -5,6 +5,12 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconX, IconDownload, IconPlay, IconPause, IconLock, IconCheck } from './Icons';
+// Wave 14: 3D / depth-photo parallax view. Lazy-loaded so web stays green
+// (expo-sensors isn't available in the web bundle).
+let ParallaxPortraitView = null;
+if (Platform.OS !== 'web') {
+  try { ParallaxPortraitView = require('./ParallaxPortraitView').default; } catch {}
+}
 
 // expo-screen-capture: prevent screenshots & screen recordings while a
 // view-once media is on screen. Android sets FLAG_SECURE (black thumbnail
@@ -279,16 +285,55 @@ function NativeVideoPlayer({ url }) {
     const player = useVideoPlayer(url, (p) => {
       try { p.loop = false; p.muted = false; p.play(); } catch {}
     });
+
+    // Wave 14 — pinch-to-scrub. Uses react-native-gesture-handler's
+    // PinchGestureHandler so the gesture composes cleanly with the
+    // existing horizontal swipe-between-photos paging gesture; the
+    // pinch's velocity * duration gives us a delta seek per frame.
+    // Two-finger spread = scrub forward, pinch = scrub back. Falls back
+    // to native controls when RNGH isn't on the path.
+    let PinchHandler = null;
+    let GH = null;
+    try { GH = require('react-native-gesture-handler'); PinchHandler = GH?.PinchGestureHandler; } catch {}
+
+    const pinchState = useRef({ baseTime: 0 });
+    const onPinchEvent = useCallback((ev) => {
+      try {
+        const dur = player?.duration || 0;
+        if (!dur || dur < 1) return;
+        if (pinchState.current.baseTime <= 0) pinchState.current.baseTime = player.currentTime || 0;
+        // scale ranges roughly 0.5..3 — map to delta of ±0.5 * duration
+        const delta = (ev.nativeEvent.scale - 1) * dur * 0.5;
+        const next = Math.max(0, Math.min(dur, pinchState.current.baseTime + delta));
+        try { player.currentTime = next; } catch {}
+      } catch {}
+    }, [player]);
+    const onPinchStateChange = useCallback((ev) => {
+      if (ev.nativeEvent.state === GH?.State?.END || ev.nativeEvent.state === GH?.State?.CANCELLED) {
+        pinchState.current.baseTime = 0;
+      } else if (ev.nativeEvent.state === GH?.State?.BEGAN) {
+        pinchState.current.baseTime = player?.currentTime || 0;
+      }
+    }, [player]);
+
+    const videoNode = (
+      <ExpoVideo
+        player={player}
+        style={s.fullVideo}
+        allowsFullscreen
+        allowsPictureInPicture
+        nativeControls
+        contentFit="contain"
+      />
+    );
+
     return (
       <View style={s.mediaContainer}>
-        <ExpoVideo
-          player={player}
-          style={s.fullVideo}
-          allowsFullscreen
-          allowsPictureInPicture
-          nativeControls
-          contentFit="contain"
-        />
+        {PinchHandler ? (
+          <PinchHandler onGestureEvent={onPinchEvent} onHandlerStateChange={onPinchStateChange}>
+            {videoNode}
+          </PinchHandler>
+        ) : videoNode}
       </View>
     );
   }
@@ -1175,7 +1220,24 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
           />
         ) : (
           isImage ? (
-            <ImageViewer url={url} />
+            // Wave 14: iOS portrait photos render with 3D parallax. Backend
+            // tags `media_kind: 'portrait'` when the iOS backup pipeline
+            // detects the depth aux channel; `depthUrl` is the masked
+            // foreground subject (generated server-side from the AVDepthData
+            // map). When either is missing we fall back to the regular pan-
+            // and-zoom image viewer.
+            (_activeMediaKind === 'portrait' && ParallaxPortraitView) ? (
+              <View style={s.mediaContainer}>
+                <ParallaxPortraitView
+                  fileUrl={url}
+                  depthUrl={_active?.depthUrl || _active?.depth_url || url}
+                  width={SCREEN_W}
+                  height={SCREEN_H * 0.75}
+                />
+              </View>
+            ) : (
+              <ImageViewer url={url} />
+            )
           ) : isVideo ? (
             <VideoPlayer url={url} />
           ) : isPreviewable ? (
