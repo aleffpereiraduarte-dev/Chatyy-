@@ -1127,21 +1127,49 @@ export default function Profile({
   // Fix: encurta poll pra 20s, refetch ao voltar app pro foreground, e
   // escuta `profile:live_ended` (DeviceEventEmitter) emitido pelo
   // live-broadcast.js no momento exato do endBroadcast — zero round-trip.
+  //
+  // [Bug #1133, 2026-05-18 — REGRESSION] AO VIVO still sticking even with
+  // all the listeners wired up. Root cause is a stale-response race:
+  //   T=0  tick() fires → live_list HTTP request leaves
+  //   T=2  user ends the broadcast → performEndLive emits DeviceEvent
+  //        AND backend live_end{,_cf} broadcasts live_ended on lives_global
+  //        → both listeners clear setLiveSessionId(null)
+  //   T=3  the T=0 in-flight tick() response finally lands carrying the
+  //        still-live session (snapshot taken before live_end committed)
+  //        → setLiveSessionId('xxx') RE-STICKS the badge
+  // Belt-and-suspenders: track the moment we saw an end signal in
+  // `liveEndedAtRef`. Any tick() response that landed AFTER an end is
+  // ignored for 30s (covers backend write→read lag + WS broadcast race).
+  // Also drop duplicate setState when value unchanged so no re-render
+  // storms during the close/reopen flicker.
   const [liveSessionId, setLiveSessionId] = useState(null);
+  const liveEndedAtRef = useRef(0);
+  const liveTickStartedAtRef = useRef(0);
   useEffect(() => {
     if (!identity?.email) { setLiveSessionId(null); return undefined; }
     let cancelled = false;
     const target = identity.email.toLowerCase();
     const tick = async () => {
+      const startedAt = Date.now();
+      liveTickStartedAtRef.current = startedAt;
       try {
         const r = await api.apiCall?.('live_list', null, 'POST');
         if (cancelled) return;
+        // Stale-response guard — if an end signal fired AFTER this tick
+        // started, the response is taking a DB snapshot from before the
+        // end committed. Trust the end signal and drop the response.
+        if (liveEndedAtRef.current >= startedAt) return;
         const lives = r?.data?.lives || r?.lives || [];
         const found = lives.find(l => (l?.host_email || '').toLowerCase() === target);
-        setLiveSessionId(found?.id || null);
+        const nextId = found?.id || null;
+        setLiveSessionId(prev => (prev === nextId ? prev : nextId));
       } catch {
-        if (!cancelled) setLiveSessionId(null);
+        if (!cancelled) setLiveSessionId(prev => (prev === null ? prev : null));
       }
+    };
+    const markEnded = () => {
+      liveEndedAtRef.current = Date.now();
+      setLiveSessionId(prev => (prev === null ? prev : null));
     };
     tick();
     const iv = setInterval(tick, 20000);
@@ -1153,11 +1181,17 @@ export default function Profile({
       mailWs.subscribe?.('lives_global');
       unsubOn = mailWs.on?.('live_started', (payload) => {
         const d = payload?.data || payload || {};
-        if ((d.host_email || '').toLowerCase() === target) setLiveSessionId(d.session_id || null);
+        if ((d.host_email || '').toLowerCase() === target) {
+          // Don't paint AO VIVO from a stale live_started echo that arrives
+          // AFTER an end signal (server can replay a buffered event during
+          // reconnect). 30s grace mirrors the stale-tick guard above.
+          if (Date.now() - liveEndedAtRef.current < 30000) return;
+          setLiveSessionId(d.session_id || null);
+        }
       });
       unsubOff = mailWs.on?.('live_ended', (payload) => {
         const d = payload?.data || payload || {};
-        if ((d.host_email || '').toLowerCase() === target) setLiveSessionId(null);
+        if ((d.host_email || '').toLowerCase() === target) markEnded();
       });
     } catch {}
     // Local fast-path — the host's own endBroadcast() emits this so the
@@ -1170,7 +1204,7 @@ export default function Profile({
     try {
       localSub = DeviceEventEmitter.addListener('profile:live_ended', (d) => {
         const he = (d?.host_email || '').toLowerCase();
-        if (he && he === target) setLiveSessionId(null);
+        if (he && he === target) markEnded();
       });
     } catch {}
     // Foreground refetch — covers the case where the host backgrounded the

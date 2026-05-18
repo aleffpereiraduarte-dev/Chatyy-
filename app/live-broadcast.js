@@ -258,6 +258,14 @@ export default function LiveBroadcastScreen() {
   const cfPublisherRef = useRef(null);
   const cfModeRef = useRef(false);
   const cfIngestRef = useRef(null); // { cf_input_uid, hls_url, rtmps_url, rtmps_key }
+  // Single-flight gate for handleStartLive — without this a double-tap
+  // (or a re-render that immediately re-fires the press) calls live_start
+  // twice in <1s, creating TWO chat_live_sessions rows. The host's UI only
+  // tracks the SECOND session id; the FIRST sits stuck on status='live'
+  // until the 5-min/6-h auto-end heuristic kills it. During that window
+  // live_list returns the ghost session, lighting AO VIVO on the host's
+  // profile long after the host thinks they're done (bug #1133).
+  const startingRef = useRef(false);
 
   // Stage 3 of #929 — host subscribes to LK room `live_{sessionId}` so
   // any approved cohort publishing into it can be rendered alongside the
@@ -1223,10 +1231,16 @@ export default function LiveBroadcastScreen() {
 
   // Start the live broadcast
   const handleStartLive = useCallback(async () => {
+    // Single-flight guard — see startingRef declaration for the ghost-session
+    // bug this prevents. The flag is released on success (in the catch +
+    // success terminus below) so the host can retry after a failed start.
+    if (startingRef.current) return;
+    if (sessionIdRef.current) return; // already live
+    startingRef.current = true;
     try {
       // Ask for camera + mic only now — the user actively tapped Go Live.
       const ok = await ensureCameraStream();
-      if (!ok) return;
+      if (!ok) { startingRef.current = false; return; }
       // When the host opted into "Salvar live" we go through the Cloudflare
       // Stream pipeline (live_start_cf → WHIP publish → live_end_cf) so the
       // recording lands as a managed VOD. Otherwise we keep the legacy P2P
@@ -1371,6 +1385,10 @@ export default function LiveBroadcastScreen() {
       console.warn('[live] start failed:', e?.message || e);
       const detail = e?.message ? ` (${e.message})` : '';
       setError((t('live.connectionFailed') || 'Connection failed') + detail);
+    } finally {
+      // Release the single-flight gate. If the start succeeded sessionIdRef
+      // is now set so the early-return at the top still blocks re-entry.
+      startingRef.current = false;
     }
   }, [titleInput, connectSignaling, t, animateCountdown, ensureCameraStream, saveReplay, audience, liveCategory, subscribersOnly]);
 
