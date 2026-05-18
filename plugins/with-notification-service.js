@@ -255,7 +255,7 @@ function withNotificationServiceTarget(config) {
       if (c.buildSettings && c.buildSettings.PRODUCT_NAME === `"${EXT_NAME}"`) {
         c.buildSettings.INFOPLIST_FILE = `"${EXT_NAME}/Info.plist"`;
         c.buildSettings.CODE_SIGN_ENTITLEMENTS = `"${EXT_NAME}/${EXT_NAME}.entitlements"`;
-        c.buildSettings.IPHONEOS_DEPLOYMENT_TARGET = '"15.0"';
+        c.buildSettings.IPHONEOS_DEPLOYMENT_TARGET = '"15.1"';
         c.buildSettings.SWIFT_VERSION = '5.0';
         c.buildSettings.PRODUCT_BUNDLE_IDENTIFIER = `"${EXT_BUNDLE_ID}"`;
         c.buildSettings.CODE_SIGN_STYLE = '"Automatic"';
@@ -293,7 +293,7 @@ function withNotificationServicePodTarget(config) {
       }
       if (chatyyLine === -1) {
         // Fall back to plain top-level append — better to compile than to skip.
-        pod += `\n\ntarget '${EXT_NAME}' do\n  platform :ios, '15.0'\nend\n`;
+        pod += `\n\ntarget '${EXT_NAME}' do\n  platform :ios, '15.1'\nend\n`;
         fs.writeFileSync(podfilePath, pod);
         return cfg;
       }
@@ -311,7 +311,7 @@ function withNotificationServicePodTarget(config) {
         }
       }
       if (endLine === -1) {
-        pod += `\n\ntarget '${EXT_NAME}' do\n  platform :ios, '15.0'\nend\n`;
+        pod += `\n\ntarget '${EXT_NAME}' do\n  platform :ios, '15.1'\nend\n`;
         fs.writeFileSync(podfilePath, pod);
         return cfg;
       }
@@ -320,7 +320,7 @@ function withNotificationServicePodTarget(config) {
         `  # Inherits :search_paths so we don't link the main app's heavy pods.`,
         `  target '${EXT_NAME}' do`,
         `    inherit! :search_paths`,
-        `    platform :ios, '15.0'`,
+        `    platform :ios, '15.1'`,
         `  end`,
       ];
       lines.splice(endLine, 0, ...nested);
