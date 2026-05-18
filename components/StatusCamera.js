@@ -261,13 +261,22 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
   // and is LGPL 3.0 (link-time license — no source disclosure required if we
   // use the prebuilt frameworks, which we do).
   const _getFFmpegKit = useCallback(() => {
-    if (Platform.OS === 'web') return null;
-    try {
-      // Dynamic require so the binding being absent doesn't block JS bundle eval.
-      // We accept the entire export shape and unwrap below.
-      const mod = require('ffmpeg-kit-react-native');
-      return mod;
-    } catch { return null; }
+    // [2026-05-18] ffmpeg-kit dependency removed — arthenica/ffmpeg-kit was
+    // retired in 2025 and all binaries (iOS xcframework + Android Maven AAR)
+    // were pulled from CocoaPods / Maven Central / GitHub Releases. The only
+    // maintained fork (yspreen/spreen) is GPL-only, which is incompatible
+    // with App Store distribution.
+    //
+    // Returning null degrades stitchSegmentsToFile() gracefully — the caller
+    // (StatusComposer) already falls back to status_carousel_publish, which
+    // uploads each clip individually and lets the server stitch (or the
+    // viewer plays them as a carousel).
+    //
+    // Long-term fix: write a tiny native module using AVMutableComposition
+    // (iOS, AVFoundation) + MediaMuxer (Android, NDK) — the same APIs
+    // WhatsApp / Instagram / TikTok use. Tracked separately. No third-party
+    // FFmpeg binary required.
+    return null;
   }, []);
 
   // Build the concat filter string for N input clips. The video and audio

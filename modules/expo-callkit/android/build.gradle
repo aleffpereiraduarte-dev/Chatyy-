@@ -102,13 +102,15 @@ dependencies {
   // screenshare would create a cycle if it ever called back into callkit).
   implementation project(':expo-screen-share')
 
-  // [2026-05-17 RNNoise ML noise suppression] LiveKit's open-source Android
-  // build of Xiph RNNoise (Apache 2 wrapper over a BSD-licensed model). The
-  // AAR ships libRNNoise.so per ABI plus a tiny JNI shim at
-  // `org.xiph.rnnoise.RNNoise`. We load it via reflection in
-  // expo.modules.callkit.audio.RNNoiseProcessor so a missing classpath entry
-  // degrades to a pass-through instead of crashing. Pin to a known tag.
-  implementation 'com.github.livekit:rnnoise-android:0.1.0'
+  // [2026-05-18] RNNoise dep removed — `com.github.livekit:rnnoise-android`
+  // 0.1.0 is published only via JitPack and that artifact now returns 401
+  // (the underlying tag was either deleted or auth-gated). RNNoiseProcessor
+  // already loads `org.xiph.rnnoise.RNNoise` via reflection — when the class
+  // isn't on the classpath it degrades to identity (no noise suppression).
+  // Behavior is functionally equivalent to the binary failing to load on a
+  // user's device, which we already handle. WhatsApp/Telegram pattern uses
+  // Android's built-in `android.media.audiofx.NoiseSuppressor` AudioEffect
+  // anyway — switching to that is the right long-term move (see TaskCreate).
 
   // [2026-05-17 MediaPipe background blur / virtual background] Google
   // MediaPipe Tasks Vision (Apache 2). Provides SelfieSegmentation that we
