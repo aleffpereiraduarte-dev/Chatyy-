@@ -167,7 +167,11 @@ jobs:
           retention-days: 7
 
       - name: Commit bumped versionCode back to repo
-        if: ${{ success() && (github.event_name == 'push' || inputs.submit == 'true') }}
+        # SEMPRE commita o bump se o build do AAB foi success — mesmo que o Submit
+        # falhe depois. Sem isso, o app.json fica com versionCode velho, próxima
+        # build bumpa pro mesmo número, e o Submit dá "version already submitted"
+        # eternamente (incidente 2026-05-18: 3 builds em loop com versionCode 353).
+        if: ${{ always() && steps.bump.outputs.build != '' && hashFiles('build.aab') != '' }}
         run: |
           git config user.email "actions@github.com"
           git config user.name "github-actions[bot]"
