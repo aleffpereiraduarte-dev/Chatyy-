@@ -12,34 +12,59 @@
 // `setReporterIdentity(email)` after login so user-bucketed logs land under
 // /var/mail/vhosts/{domain}/{user}/push_tokens/push_diag.log
 
-import { Platform } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import Constants from 'expo-constants';
+// Top-level imports are wrapped in try-blocks defensively. If anything in
+// here throws (e.g. native module mis-link, missing peer dep, Hermes
+// bytecode mismatch from a partial OTA), the reporter must NEVER crash
+// the boot — that would defeat its purpose. So `Platform` is the ONLY
+// import we trust at module load; everything else is lazy-required inside
+// guarded functions.
+let _Platform = null;
+try { _Platform = require('react-native').Platform; } catch {}
 
 const ENDPOINT = 'https://chatyy.com.br/api/email.php?action=push_diag';
 const ANON_KEY = '@chatyy/crash_anon_id_v1';
 
 let _anonId = null;
 let _bearer = null;
-let _platform = Platform.OS === 'ios' ? 'ios' : Platform.OS === 'android' ? 'android' : 'web';
+let _platform = (() => {
+  try {
+    const p = _Platform && _Platform.OS;
+    return p === 'ios' ? 'ios' : p === 'android' ? 'android' : 'web';
+  } catch { return 'web'; }
+})();
 let _installed = false;
 let _seqBoot = 0;
+
+function _lazyAsyncStorage() {
+  try { return require('@react-native-async-storage/async-storage').default; } catch { return null; }
+}
+function _lazyConstants() {
+  try { return require('expo-constants').default; } catch { return null; }
+}
 
 async function _ensureAnonId() {
   if (_anonId) return _anonId;
   try {
-    const cached = await AsyncStorage.getItem(ANON_KEY);
-    if (cached && cached.length >= 8) { _anonId = cached; return _anonId; }
+    const AS = _lazyAsyncStorage();
+    if (AS) {
+      const cached = await AS.getItem(ANON_KEY);
+      if (cached && cached.length >= 8) { _anonId = cached; return _anonId; }
+    }
   } catch {}
   // generate hex-ish 16-char anon id (no PII)
   const r = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
   _anonId = r.slice(0, 16);
-  try { await AsyncStorage.setItem(ANON_KEY, _anonId); } catch {}
+  try {
+    const AS = _lazyAsyncStorage();
+    if (AS) await AS.setItem(ANON_KEY, _anonId);
+  } catch {}
   return _anonId;
 }
 
 function _appVersion() {
   try {
+    const Constants = _lazyConstants();
+    if (!Constants) return '?';
     const m = Constants.expoConfig || Constants.manifest || {};
     const v = m.version || '?';
     const a = m.android?.versionCode;

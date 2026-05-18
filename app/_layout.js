@@ -132,8 +132,12 @@ import { initSentry } from '../services/sentry';
 import { installCrashReporter, reportStep, setReporterIdentity } from '../services/crashReporter';
 import { BASE_URL } from '../services/api';
 
-// Install ASAP so we catch JS errors during early provider init.
-installCrashReporter();
+// Install ASAP so we catch JS errors during early provider init. Wrapped
+// in try/catch defensively — if the reporter itself ever throws (rare,
+// but possible if a deferred require fails), we MUST NOT contaminate
+// boot and trigger expo-updates' ErrorRecovery loop (which re-raises
+// NSException and SIGABRTs the app, observed 2026-05-18).
+try { installCrashReporter(); } catch {}
 
 // Sanitizes filenames coming from the iOS share-intent / Files-app pipeline.
 // expo-share-intent has been observed to surface the literal "$value" as
