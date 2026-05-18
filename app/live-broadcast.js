@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Animated,
   Alert, TextInput, Dimensions, StatusBar, FlatList, Keyboard,
-  ActionSheetIOS, Modal, ScrollView,
+  ActionSheetIOS, Modal, ScrollView, DeviceEventEmitter,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -1391,6 +1391,17 @@ export default function LiveBroadcastScreen() {
     if (endedSessionId) {
       // Dismiss the ongoing-broadcast pill — broadcast is over.
       try { liveBroadcastNotification.stop(endedSessionId); } catch {}
+      // Local fast-path: clear the AO VIVO badge on the host's own Profile
+      // (and any other surface listening) BEFORE the backend round-trip.
+      // Without this the badge could linger for up to 20s (Profile poll
+      // window) or indefinitely if the WS `live_ended` event got dropped.
+      // See Profile.js useEffect with `liveSessionId` for the listener.
+      try {
+        DeviceEventEmitter.emit('profile:live_ended', {
+          session_id: endedSessionId,
+          host_email: (user?.email || '').toLowerCase(),
+        });
+      } catch {}
       // Close the CF Stream WHIP publisher (if we went through that path)
       // BEFORE telling the backend to finalize the recording. CF stops
       // ingest the moment we close the PC; if we did it after live_end_cf
@@ -2343,6 +2354,14 @@ export default function LiveBroadcastScreen() {
         // Dismiss ongoing-broadcast pill on unmount too (covers crash /
         // back-press paths where performEndLive didn't run).
         try { liveBroadcastNotification.stop(sid); } catch {}
+        // Local fast-path: clear the AO VIVO badge instantly on unmount paths
+        // too (back-press / crash) — performEndLive may not have run.
+        try {
+          DeviceEventEmitter.emit('profile:live_ended', {
+            session_id: sid,
+            host_email: (user?.email || '').toLowerCase(),
+          });
+        } catch {}
         const endFn = cfModeRef.current ? api.liveEndCf : api.liveEnd;
         const tryEnd = (attempt) => {
           endFn(sid).catch((err) => {

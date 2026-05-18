@@ -22,6 +22,7 @@ import * as api from './api';
 import {
   getSettings, saveSettings, getBackedUpMap, saveBackedUpMap,
   markAssetBackedUp, setLastSync, KEYS, isBackupKilled,
+  isBackupNotificationsEnabled,
 } from './backup/backupStorage';
 import * as uploadNotification from './uploadNotification';
 
@@ -333,10 +334,31 @@ export async function startForegroundBackup(onProgress, options = {}) {
   // The flag below is flipped by the onComplete listener (further down).
   let _hasFreshUpload = false;
   function _onFreshUpload() { _hasFreshUpload = true; }
+
+  // 2026-05-18: user-facing OFF switch for backup notifications. Read once
+  // up-front and cache in the closure so the per-tick progressCallback
+  // (called from native event listener, must be sync) can consult it
+  // without awaiting AsyncStorage every tick. The flag also gates the
+  // final complete()/fail() notifications below.
+  let _notifAllowed = true;
+  try {
+    _notifAllowed = await isBackupNotificationsEnabled();
+  } catch {}
+
   progressCallback = (p) => {
     try {
       const cur = p?.current || 0;
       const tot = p?.total || 0;
+      // Honor the user's "Notificações de backup" toggle. When OFF we
+      // never paint the sticky banner at all (no start, no update, no
+      // complete). The progress callback still relays to _userProgressCb
+      // so the in-app UI keeps updating in real time.
+      if (!_notifAllowed) {
+        if (_userProgressCb) {
+          try { _userProgressCb(p); } catch {}
+        }
+        return;
+      }
       // Only show the sticky notification when we've SEEN at least one real
       // (non-dedup) upload land. Pure-dedup passes never paint anything.
       if (!_notifStarted && tot > 0 && _hasFreshUpload) {
@@ -979,6 +1001,19 @@ export async function initAutoBackup() {
   // Run unified migration first
   const { migrateBackupStateV2 } = require('./backup/backupStorage');
   await migrateBackupStateV2();
+
+  // 2026-05-18: sync the JS-side "Notificações de backup" toggle into the
+  // native iOS module on boot. Without this, on a fresh launch the native
+  // UserDefaults flag could go stale (e.g. user turned it OFF, app got
+  // killed, BG task ran with the old flag). Reading from AsyncStorage and
+  // mirroring into UserDefaults at every init guarantees both halves
+  // agree before any backup entry point fires.
+  try {
+    const allowed = await isBackupNotificationsEnabled();
+    if (Platform.OS === 'ios' && NativeUpload?.setBackupNotificationsEnabled) {
+      NativeUpload.setBackupNotificationsEnabled(!!allowed);
+    }
+  } catch {}
 
   // Killswitch (2026-05-18): if active, skip ALL registration so neither
   // the BG TaskManager fetch task nor the AppState / MediaLibrary

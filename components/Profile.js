@@ -23,7 +23,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Image,
   Platform, Modal, Pressable, ActivityIndicator, Dimensions, Animated, Alert, TextInput,
-  PanResponder, Easing, Switch, Linking,
+  PanResponder, Easing, Switch, Linking, AppState, DeviceEventEmitter,
 } from 'react-native';
 import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
@@ -1085,8 +1085,21 @@ export default function Profile({
   // Live detection — Instagram parity. When the profile owner is currently
   // broadcasting (active row in chat_live_sessions), we paint a red AO VIVO
   // ring on the avatar and tap routes to /live-viewer instead of the story
-  // viewer / picker. Refetched every 60s so the badge clears within a minute
-  // of the host ending the stream.
+  // viewer / picker.
+  //
+  // Bug fix (user report 2026-05-18): badge "AO VIVO" persistia no profile
+  // mesmo após o host fechar a live. Root cause era 4-fold:
+  //   1) Poll 60s → janela longa de UI stale.
+  //   2) Sem `useFocusEffect` / AppState refetch — abrir o próprio profile
+  //      depois de encerrar a broadcast não disparava nova consulta.
+  //   3) Sem hook local pra `endBroadcast()` — host dependia 100% do WS
+  //      `live_ended` chegar de volta a si próprio; em race de subscribe ou
+  //      perda momentânea de WS, o evento sumia (sem replay).
+  //   4) WS event handler é OK, mas se a subscribe acontece DEPOIS do server
+  //      ter despachado o `live_ended`, o cliente nunca vê.
+  // Fix: encurta poll pra 20s, refetch ao voltar app pro foreground, e
+  // escuta `profile:live_ended` (DeviceEventEmitter) emitido pelo
+  // live-broadcast.js no momento exato do endBroadcast — zero round-trip.
   const [liveSessionId, setLiveSessionId] = useState(null);
   useEffect(() => {
     if (!identity?.email) { setLiveSessionId(null); return undefined; }
@@ -1104,9 +1117,9 @@ export default function Profile({
       }
     };
     tick();
-    const iv = setInterval(tick, 60000);
+    const iv = setInterval(tick, 20000);
     // WS instant updates — when this profile's owner goes live or ends a
-    // live, flip the badge state without waiting for the 60s poll.
+    // live, flip the badge state without waiting for the 20s poll.
     let unsubOn, unsubOff;
     try {
       const mailWs = require('../services/websocket').default;
@@ -1120,11 +1133,35 @@ export default function Profile({
         if ((d.host_email || '').toLowerCase() === target) setLiveSessionId(null);
       });
     } catch {}
+    // Local fast-path — the host's own endBroadcast() emits this so the
+    // badge on his own profile clears INSTANTLY without waiting for the
+    // WS round-trip (which can race the subscribe or be dropped if WS
+    // disconnected mid-stream). We require host_email match so we never
+    // accidentally clear the badge on a *different* user's profile that
+    // happens to be mounted (peek over a chat with the broadcaster, e.g.).
+    let localSub;
+    try {
+      localSub = DeviceEventEmitter.addListener('profile:live_ended', (d) => {
+        const he = (d?.host_email || '').toLowerCase();
+        if (he && he === target) setLiveSessionId(null);
+      });
+    } catch {}
+    // Foreground refetch — covers the case where the host backgrounded the
+    // app, ended the live from a different surface (e.g. native CallKit
+    // dismissed), then reopened the profile.
+    let appSub;
+    try {
+      appSub = AppState.addEventListener('change', (s) => {
+        if (s === 'active') tick();
+      });
+    } catch {}
     return () => {
       cancelled = true;
       clearInterval(iv);
       try { unsubOn?.(); } catch {}
       try { unsubOff?.(); } catch {}
+      try { localSub?.remove?.(); } catch {}
+      try { appSub?.remove?.(); } catch {}
     };
   }, [identity?.email]);
 

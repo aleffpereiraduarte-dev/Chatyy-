@@ -9,7 +9,7 @@ import {
   IconArrowLeft, IconPlus, IconPhone, IconSearch, IconMail, IconCalendar,
   IconFilm, IconFolder, IconCloud, IconFileText, IconStickyNote, IconUsers,
   IconImage, IconVideo, IconSparkles, IconUser, IconSettings, IconStar,
-  IconBell, IconShield, IconGlobe, IconGrid, IconCamera,
+  IconBell, IconShield, IconGlobe, IconGrid, IconCamera, IconMapPin,
 } from '../components/Icons';
 import Svg, { Circle as SvgCircle, Path, Rect, Line, Defs, LinearGradient, Stop } from 'react-native-svg';
 import ChatListTab from '../components/ChatListTab';
@@ -1269,6 +1269,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
       items: [
         { key: 'channels', label: t('channel.title') || 'Channels',      ic: I(IconBell, '#7C3AED'),     action: onOpenChannels },
         { key: 'communities', label: t('community.title') || 'Communities', ic: I(IconUsers, '#10b981'),   action: onOpenCommunities },
+        { key: 'snapmap',  label: t('snapmap.tile') || t('snapmap.sidebar') || 'Mapa de Amigos', ic: I(IconMapPin, '#22c55e'), route: '/snap-map' },
       ],
     },
     {

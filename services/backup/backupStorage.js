@@ -19,7 +19,75 @@ export const KEYS = {
   LAST_RUN:          '@chatyy_backup/last_run',        // ISO string
   UPLOAD_SESSIONS:   '@chatyy_backup/upload_sessions', // resumable sessions
   KILLSWITCH:        '@chatyy_backup/killswitch',      // '1' → halt ALL backup entry points
+  NOTIFY:            '@chatyy_backup/notifications',   // '1' (default) → show batch-complete + sticky notifs; '0' → silent
 };
+
+// ─── Backup notifications toggle ────────────────────────────
+// User-facing OFF switch for both the JS sticky "Backup do Chatyy"
+// progress banner (uploadNotification.start) AND the native iOS
+// "X fotos salvas" / "Backup concluído" batch-complete banner posted
+// by ExpoBackgroundUploadModule's defer block. Set via the toggle in
+// app/backup.js ("Notificações de backup"). Defaults to ON so existing
+// installs keep the previous behavior unless the user opts out.
+//
+// SPAM-FIX (2026-05-18): user got 30+ "Backup do Chatyy" banners per
+// session because the native module's defer-block fired one banner per
+// startNativeBackup call AND the JS uploadNotification re-fired on
+// every progress tick. Even with the per-call dedup identifier, the
+// cumulative volume was disruptive. The 3-layer fix is:
+//   1) Native cooldown (1h) inside notifyBackupComplete
+//   2) Native UserDefaults flag the user controls from JS
+//   3) JS-side honor of this AsyncStorage flag before calling
+//      uploadNotification.start
+let _notifCache = null;
+let _notifTs = 0;
+const NOTIF_CACHE_MS = 30 * 1000;
+export async function isBackupNotificationsEnabled() {
+  const now = Date.now();
+  if (_notifCache !== null && now - _notifTs < NOTIF_CACHE_MS) {
+    return _notifCache;
+  }
+  try {
+    const v = await AsyncStorage.getItem(KEYS.NOTIFY);
+    // Default ON when the key has never been written.
+    _notifCache = v == null ? true : (v === '1');
+    _notifTs = now;
+    return _notifCache;
+  } catch {
+    return true;
+  }
+}
+export async function setBackupNotificationsEnabled(enabled) {
+  _notifCache = !!enabled;
+  _notifTs = Date.now();
+  try {
+    await AsyncStorage.setItem(KEYS.NOTIFY, enabled ? '1' : '0');
+  } catch {}
+  // Mirror the flag into the native iOS module so its background
+  // wake-ups (which can't read AsyncStorage) respect the toggle.
+  try {
+    if (require('react-native').Platform.OS === 'ios') {
+      const native = require('../../modules/expo-background-upload').default;
+      if (native && typeof native.setBackupNotificationsEnabled === 'function') {
+        native.setBackupNotificationsEnabled(!!enabled);
+      }
+    }
+  } catch {}
+  // If the user is disabling notifications, also dismiss any
+  // currently-visible sticky/banner so the change is immediate.
+  if (!enabled) {
+    try {
+      const { Platform } = require('react-native');
+      if (Platform.OS !== 'web') {
+        const Notifications = require('expo-notifications');
+        // Sticky JS banner id used by uploadNotification.start
+        Notifications.dismissNotificationAsync('upload_progress_chatyy_photo_backup').catch(() => {});
+        Notifications.dismissNotificationAsync('upload_progress_chatyy_photo_backup_done').catch(() => {});
+        Notifications.dismissNotificationAsync('upload_progress_chatyy_photo_backup_err').catch(() => {});
+      }
+    } catch {}
+  }
+}
 
 // ─── Global killswitch ──────────────────────────────────────
 // When set, every backup entry point bails out immediately. This is the

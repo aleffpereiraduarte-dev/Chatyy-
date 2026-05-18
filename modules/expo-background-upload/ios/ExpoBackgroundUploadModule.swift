@@ -64,9 +64,53 @@ public class ExpoBackgroundUploadModule: Module {
     ///     faltam Y" subtitle, no false sense of completion.
     /// Also collapse repeats via the same identifier so the system
     /// replaces the previous batch summary instead of stacking them.
+    ///
+    /// SPAM-FIX (2026-05-18): user reported "backup do Chatyy chegando ao
+    /// montes". Root cause: every invocation of startNativeBackup that
+    /// uploaded ≥1 fresh byte fired one notification. With the JS spin
+    /// loop calling startNativeBackup up to 30× per session, plus the
+    /// AppState background fire path, plus iOS BGAppRefresh/Processing
+    /// tasks each ~15min–1h, the user got hammered. Three guards now:
+    ///   1) `com.onemundo.backup.notifications_enabled` UserDefaults
+    ///      flag (default ON for backward compat; user can flip OFF
+    ///      from Settings → Backup). When false, this function is a
+    ///      complete no-op.
+    ///   2) Hard cooldown of 1 hour between consecutive batch-complete
+    ///      notifications. Uses `com.onemundo.backup.lastNotifiedAt`
+    ///      UserDefaults. Within the cooldown window we silently bail
+    ///      so a multi-spin session emits at most one banner.
+    ///   3) Sound forced to nil — these are informational, not
+    ///      actionable, and the user complained specifically about the
+    ///      audible spam.
+    /// The `removeDeliveredNotifications` call still happens so any
+    /// stale banner from a previous session disappears when a new one
+    /// is allowed through.
     private func notifyBackupComplete(count: Int, remaining: Int = 0) {
+        // Guard 1: user-controlled killswitch. Default ON so existing
+        // installs keep their old behavior unless the user opts out.
+        let defaults = UserDefaults.standard
+        let enabledKey = "com.onemundo.backup.notifications_enabled"
+        // If the value was never set, treat it as `true` (default ON).
+        // Once set explicitly by JS via setBackupNotificationsEnabled,
+        // we respect the stored boolean.
+        if defaults.object(forKey: enabledKey) != nil
+            && defaults.bool(forKey: enabledKey) == false {
+            return
+        }
+
+        // Guard 2: 1-hour cooldown. The user's pain was 30+ banners per
+        // session, not the existence of a banner at all. One per hour
+        // matches what Apple Photos / Google Photos do.
+        let cooldownKey = "com.onemundo.backup.lastNotifiedAt"
+        let now = Date().timeIntervalSince1970
+        let last = defaults.double(forKey: cooldownKey)
+        if last > 0 && (now - last) < 60 * 60 {
+            return
+        }
+        defaults.set(now, forKey: cooldownKey)
+
         let center = UNUserNotificationCenter.current()
-        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+        center.requestAuthorization(options: [.alert]) { granted, _ in
             guard granted else { return }
             let content = UNMutableNotificationContent()
             if remaining <= 0 {
@@ -77,8 +121,13 @@ public class ExpoBackgroundUploadModule: Module {
                 content.subtitle = "Ainda faltam \(remaining)"
                 content.body = "O backup continua quando o iPhone estiver no Wi-Fi e carregando."
             }
-            content.sound = .default
+            // Guard 3: silent. Informational only; user can mute the
+            // whole category from iOS Settings → Notifications too.
+            content.sound = nil
             content.threadIdentifier = "chatyy.backup"
+            if #available(iOS 15.0, *) {
+                content.interruptionLevel = .passive
+            }
             let req = UNNotificationRequest(
                 identifier: "chatyy.backup.complete",
                 content: content,
@@ -569,6 +618,29 @@ public class ExpoBackgroundUploadModule: Module {
         // cached (JS isn't running at BG-task time).
         Function("setBackupCreds") { (serverUrl: String, authToken: String, userEmail: String) in
             self.saveBackupCreds(serverUrl: serverUrl, authToken: authToken, userEmail: userEmail)
+        }
+
+        // 2026-05-18: lets JS toggle the native batch-complete notification
+        // (the "X fotos salvas" banner posted in notifyBackupComplete's
+        // defer block). Persisted to UserDefaults so BG wake-ups respect
+        // the flag even when JS isn't running. Pair with the JS-side
+        // uploadNotification gate to fully silence backup notifications.
+        Function("setBackupNotificationsEnabled") { (enabled: Bool) in
+            UserDefaults.standard.set(enabled, forKey: "com.onemundo.backup.notifications_enabled")
+            // Also clear any currently-delivered batch-complete banner so
+            // the user sees the change immediately when they flip it off.
+            if !enabled {
+                UNUserNotificationCenter.current()
+                    .removeDeliveredNotifications(withIdentifiers: ["chatyy.backup.complete"])
+            }
+        }
+
+        Function("isBackupNotificationsEnabled") { () -> Bool in
+            let d = UserDefaults.standard
+            if d.object(forKey: "com.onemundo.backup.notifications_enabled") == nil {
+                return true // default ON for backward compat
+            }
+            return d.bool(forKey: "com.onemundo.backup.notifications_enabled")
         }
 
         // Manually request the scheduler to run soon. Lets the UI offer a

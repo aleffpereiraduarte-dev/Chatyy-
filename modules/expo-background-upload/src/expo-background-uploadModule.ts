@@ -21,6 +21,10 @@ declare class ExpoBackgroundUploadModuleClass extends NativeModule<ExpoBackgroun
   scheduleBackup?(wifiOnly: boolean, chargingOnly: boolean): Promise<void>;
   cancelBackup?(): Promise<void>;
   setBackupCreds?(bearer: string, apiBase: string, email: string): Promise<void>;
+  // 2026-05-18: gate the native "X fotos salvas" / "Backup concluído"
+  // local notification posted by notifyBackupComplete. Default ON.
+  setBackupNotificationsEnabled?(enabled: boolean): void;
+  isBackupNotificationsEnabled?(): boolean;
 }
 
 // No-op stub for web and unsupported platforms. Without this,
@@ -45,6 +49,8 @@ const NoOpModule: any = {
   getBackedUpCount: () => 0,
   setBackupCreds: () => {},
   requestBackgroundBackupNow: () => {},
+  setBackupNotificationsEnabled: () => {},
+  isBackupNotificationsEnabled: () => true,
 };
 
 let mod: ExpoBackgroundUploadModuleClass | any = NoOpModule;

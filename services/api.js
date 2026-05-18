@@ -2996,8 +2996,18 @@ export async function voicemailTranscribe(voicemailId) {
   return apiCall('voicemail_transcribe', { voicemail_id: voicemailId }, 'POST');
 }
 
-export async function chatUpdateLiveLocation(messageId, latitude, longitude, address) {
-  return apiCall('chat_update_live_location', { message_id: messageId, latitude, longitude, address }, 'POST');
+export async function chatUpdateLiveLocation(messageId, latitude, longitude, address, opts) {
+  // opts.unlimited / opts.duration_seconds let the snap-map "sempre ativo"
+  // share keep the right sentinel on every tick. Older callers (no opts)
+  // still get the legacy 1h-default behavior on the backend.
+  const payload = { message_id: messageId, latitude, longitude, address };
+  if (opts && opts.unlimited) {
+    payload.unlimited = true;
+    payload.duration_seconds = -1;
+  } else if (opts && typeof opts.duration_seconds === 'number') {
+    payload.duration_seconds = opts.duration_seconds;
+  }
+  return apiCall('chat_update_live_location', payload, 'POST');
 }
 
 export async function chatStopLiveLocation(messageId) {

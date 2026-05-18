@@ -746,10 +746,18 @@ class MailWebSocket {
       case 'welcome':
         break;
 
-      // Avatar changed on another device — bust local cache + clear ExpoImage's
-      // memory/disk cache so every <AvatarCircle> re-fetches the new photo.
-      // Without this the iOS NSURLCache (cachePolicy="memory-disk") keeps
-      // serving the stale image for up to 24h.
+      // Avatar changed on another device — bust local cache so every
+      // <AvatarCircle> binds to the new URL (?v=<version>). The new URL
+      // is a different cache key, so expo-image naturally fetches it.
+      //
+      // ⚠️ NÃO chamar ExpoImage.clearDiskCache() aqui. Esse método apaga
+      // TODA a cache de disco (chat, feed, status, profile, todos os
+      // avatares), e o WS dispara `avatar_updated` toda vez que QUALQUER
+      // user da rede troca a foto. Em um app com vários contatos, isso
+      // virava um wipe global a cada poucos segundos — "as fotos do
+      // pessoal do app sumiu" (regression mega wave 2026-05-18 / OTA
+      // 406a396). bustAvatarCache muda a URL via `?v=`, expo-image
+      // miss → fetch → cache só DAQUELE avatar.
       case 'avatar_updated': {
         try {
           const data = msg.data || msg;
@@ -759,15 +767,6 @@ class MailWebSocket {
           try {
             const api = require('./api');
             api.bustAvatarCache?.(email, version || undefined);
-          } catch {}
-          // Drop BOTH memory and disk cache — clearMemoryCache alone leaves
-          // expo-image's NSURLCache holding the stale image, and the next
-          // render hands it the new URL but the resolver hits the disk
-          // entry first. clearDiskCache forces a re-fetch from server.
-          try {
-            const ExpoImage = require('expo-image').Image;
-            ExpoImage?.clearMemoryCache?.();
-            ExpoImage?.clearDiskCache?.();
           } catch {}
           this._emit('avatar_updated', { email, version });
         } catch {}

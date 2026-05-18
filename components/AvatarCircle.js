@@ -59,13 +59,24 @@ export function bumpAvatarCache(email) {
   _avatarVersions.set(e, Date.now());
   _persistVersions();
   _versionListeners.forEach(fn => { try { fn(e); } catch {} });
-  // Also clear expo-image cache if available so the new image shows immediately
+  // ⚠️ Importante: NÃO chamar ExpoImage.clearDiskCache() aqui. Ele apaga
+  // o disco INTEIRO do expo-image — todas as fotos do app (chat, feed,
+  // status, profile, avatares de OUTROS users) somem por uma fração de
+  // segundo enquanto recarregam do servidor. Como o WS dispara
+  // `avatar_updated` pra cada user que troca a foto, em um chat ativo
+  // isso acontece dezenas de vezes por sessão e o usuário vê "as fotos
+  // do pessoal sumindo". O cache-buster `?v=<timestamp>` na URL já é
+  // suficiente: expo-image keys o cache pela URL completa, então um
+  // novo `?v=` é tratado como um recurso novo (miss → fetch → cache),
+  // sem afetar todas as outras imagens. (Regression introduzida no
+  // mega wave 2026-05-18 / OTA 406a396 — usuário reportou
+  // "as fotos do pessoal do app sumiu".)
+  // Mantemos só o clear do memory-cache porque é barato e o problema
+  // de NSURLCache servindo a foto antiga só acontece no nível de
+  // resolução da própria URL — uma URL diferente é cache miss.
   try {
     if (ExpoImage && typeof ExpoImage.clearMemoryCache === 'function') {
       ExpoImage.clearMemoryCache();
-    }
-    if (ExpoImage && typeof ExpoImage.clearDiskCache === 'function') {
-      ExpoImage.clearDiskCache();
     }
   } catch {}
 }

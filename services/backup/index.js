@@ -17,6 +17,7 @@ import {
   getLastSync, setLastSync, getLastRun, setLastRun,
   resetAllBackupState, DEFAULT_SETTINGS,
   isBackupKilled, setBackupKilled,
+  isBackupNotificationsEnabled, setBackupNotificationsEnabled,
 } from './backupStorage';
 
 // Lazy imports to avoid circular deps at module level
@@ -246,6 +247,8 @@ export {
   DEFAULT_SETTINGS,
   isBackupKilled,
   setBackupKilled,
+  isBackupNotificationsEnabled,
+  setBackupNotificationsEnabled,
 };
 
 /**

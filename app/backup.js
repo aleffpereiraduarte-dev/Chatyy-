@@ -55,6 +55,17 @@ export default function BackupScreen() {
   const [originalsQuality, setOriginalsQuality] = useState(false);
   const [originalsSaving, setOriginalsSaving] = useState(false);
 
+  // 2026-05-18: user-facing OFF switch for the "Backup do Chatyy" sticky
+  // banner + the native "X fotos salvas" / "Backup concluído" batch-
+  // complete notification. Default ON; flipping OFF silences every
+  // backup-related notification across JS + native (autoBackup honors
+  // it before calling uploadNotification.start, native Swift module
+  // reads its UserDefaults mirror inside notifyBackupComplete). Pair
+  // with the 1-hour native cooldown so even if the user leaves it ON
+  // they get at most one banner per hour.
+  const [notifEnabled, setNotifEnabled] = useState(true);
+  const [notifSaving, setNotifSaving] = useState(false);
+
   // Backup progress + ETA. Engine emits onProgress with cumulative bytes;
   // we keep a rolling 30s window of (timestamp, uploadedBytes) samples and
   // derive bytes_per_sec from window-newest minus window-oldest. Then ETA =
@@ -97,6 +108,15 @@ export default function BackupScreen() {
         if (backupSvc?.getBackupSettings) {
           const s = await backupSvc.getBackupSettings();
           if (s?.quality === 'original') setOriginalsQuality(true);
+        }
+      } catch {}
+      // Hydrate the backup-notifications switch from storage. Defaults to
+      // ON when the key has never been set (existing installs keep their
+      // previous behavior unless the user actively opts out).
+      try {
+        if (backupSvc?.isBackupNotificationsEnabled) {
+          const ne = await backupSvc.isBackupNotificationsEnabled();
+          setNotifEnabled(!!ne);
         }
       } catch {}
     })();
@@ -152,6 +172,29 @@ export default function BackupScreen() {
       safeAlert(t('common.error') || 'Erro', t('backup.qualitySaveFail') || 'Não foi possível salvar a preferência.');
     } finally {
       setOriginalsSaving(false);
+    }
+  }, [t]);
+
+  // 2026-05-18: flip the backup-notifications switch. Persists to
+  // AsyncStorage AND mirrors into the native iOS module's UserDefaults
+  // so background wake-ups (where AsyncStorage isn't available) also
+  // respect the flag. Optimistic UI: state flips immediately, reverts
+  // only on actual failure.
+  const handleToggleNotif = useCallback(async (value) => {
+    setNotifSaving(true);
+    setNotifEnabled(value);
+    try {
+      if (backupSvc?.setBackupNotificationsEnabled) {
+        await backupSvc.setBackupNotificationsEnabled(!!value);
+      }
+    } catch (err) {
+      setNotifEnabled(!value);
+      safeAlert(
+        t('common.error') || 'Erro',
+        t('backup.notifSaveFail') || 'Não foi possível salvar a preferência.'
+      );
+    } finally {
+      setNotifSaving(false);
     }
   }, [t]);
 
@@ -586,6 +629,45 @@ export default function BackupScreen() {
               {originalsQuality
                 ? (t('backup.originalQualityOnDesc') || 'Subindo arquivos originais. Usa mais dados e armazenamento, mas preserva resolução máxima e EXIF.')
                 : (t('backup.originalQualityOffDesc') || 'Subindo versão otimizada (1600 px). Economiza dados e armazenamento. Recomendado em rede móvel.')}
+            </Text>
+          </View>
+
+          {/* 2026-05-18: Notificações de backup toggle. User reported
+              "backup do Chatyy chegando ao montes". Three-layer fix:
+              (1) native cooldown 1h, (2) silent sound, (3) this OFF
+              switch that fully silences both the JS sticky banner and
+              the native batch-complete banner. Defaults ON so existing
+              installs aren't surprised by the change. */}
+          <View style={[s.statusCard, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: -8 }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+              <IconShield size={18} color={ACCENT} />
+              <Text style={{ color: colors.text, fontSize: FontSize.lg, fontWeight: '600', flex: 1 }}>
+                {t('backup.notifTitle') || 'Notificações de backup'}
+              </Text>
+              <TouchableOpacity
+                onPress={() => handleToggleNotif(!notifEnabled)}
+                disabled={notifSaving}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: notifEnabled }}
+                accessibilityLabel={t('backup.notifTitle') || 'Notificações de backup'}
+                style={{
+                  width: 46, height: 28, borderRadius: 14, padding: 3,
+                  backgroundColor: notifEnabled ? ACCENT : (isDark ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.18)'),
+                  opacity: notifSaving ? 0.6 : 1,
+                  justifyContent: 'center',
+                }}
+              >
+                <View style={{
+                  width: 22, height: 22, borderRadius: 11, backgroundColor: '#fff',
+                  alignSelf: notifEnabled ? 'flex-end' : 'flex-start',
+                  ...(Platform.OS === 'web' ? { transition: 'all 160ms ease' } : {}),
+                }} />
+              </TouchableOpacity>
+            </View>
+            <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, lineHeight: 19 }}>
+              {notifEnabled
+                ? (t('backup.notifOnDesc') || 'Mostra uma notificação silenciosa quando um lote de fotos termina. No máximo uma por hora.')
+                : (t('backup.notifOffDesc') || 'O backup continua rodando normalmente, sem nenhuma notificação. Você pode acompanhar pelo app.')}
             </Text>
           </View>
 

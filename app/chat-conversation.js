@@ -3138,7 +3138,7 @@ function VoicemailBubble({ voicemail, messageId, isOwn, colors, t, ownTextColor,
 // LOCATION MESSAGE COMPONENT (Embedded map, WhatsApp-style)
 // ============================================================
 
-function MapModal({ visible, onClose, lat, lng, label, isLive, liveUntil, messageId, conversationId }) {
+function MapModal({ visible, onClose, lat, lng, label, isLive, liveUntil, isUnlimited, messageId, conversationId }) {
   const { t } = useLanguage();
   const numLat = Number(lat);
   const numLng = Number(lng);
@@ -3153,7 +3153,11 @@ function MapModal({ visible, onClose, lat, lng, label, isLive, liveUntil, messag
     return () => clearInterval(id);
   }, [visible, isLive]);
 
-  const isStillLive = !!(isLive && liveUntil && nowSec < Number(liveUntil));
+  // is_unlimited keeps the map live until manual stop. Fall-back: legacy
+  // shares may only have a sentinel live_until > 1y in the future; treat
+  // those as effectively unlimited so we don't flicker to "Encerrada".
+  const _effUnlimited = !!isUnlimited || (isLive && liveUntil && (Number(liveUntil) - nowSec) > (365 * 24 * 3600));
+  const isStillLive = !!(isLive && (_effUnlimited || (liveUntil && nowSec < Number(liveUntil))));
 
   // Subscribe ao live_location_update WS — só quando o modal tá visível e
   // a mensagem ainda tá ao vivo. Filtra por message_id pra não cruzar com
@@ -3287,7 +3291,11 @@ window.addEventListener('message', function(e){var d=e&&e.data; if(d&&d.type==='
                 <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700', letterSpacing: 0.4 }}>
                   {(t('chatConv.liveBadge') || 'AO VIVO')}
                 </Text>
-                {liveUntil ? (
+                {_effUnlimited ? (
+                  <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11 }}>
+                    · ∞ {t('snapmap.alwaysOn') || 'sempre ativo'}
+                  </Text>
+                ) : liveUntil ? (
                   <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11 }}>
                     · {(() => {
                       const remaining = Math.max(0, Number(liveUntil) - nowSec);
@@ -6699,7 +6707,7 @@ export default function ChatConversationScreen() {
             return { ...msg, type: 'status_reply', status_reply: j };
           }
           if (j.question && Array.isArray(j.options)) return { ...msg, type: 'poll', poll: j };
-          if ((j.latitude != null || j.lat != null) && !j.playlist_name) { const _addr = j.address || j.label || ''; return { ...msg, type: 'location', latitude: j.latitude ?? j.lat, longitude: j.longitude ?? j.lng, address: typeof _addr === 'string' ? _addr : (typeof _addr === 'object' ? [_addr.road, _addr.house_number, _addr.city].filter(Boolean).join(', ') : String(_addr)), live: !!j.live, live_until: j.live_until || null }; }
+          if ((j.latitude != null || j.lat != null) && !j.playlist_name) { const _addr = j.address || j.label || ''; return { ...msg, type: 'location', latitude: j.latitude ?? j.lat, longitude: j.longitude ?? j.lng, address: typeof _addr === 'string' ? _addr : (typeof _addr === 'object' ? [_addr.road, _addr.house_number, _addr.city].filter(Boolean).join(', ') : String(_addr)), live: !!j.live, live_until: j.live_until || null, is_unlimited: !!j.is_unlimited }; }
           if (j.playlist_name && j.songs) return { ...msg, type: 'playlist', playlist: j };
           if ((j.name || j.phone || j.email) && !j.title) return { ...msg, type: 'contact', contact: j };
           if (j.title && j.datetime && j.location) return { ...msg, type: 'meetup', meetup: j };
@@ -8434,7 +8442,7 @@ export default function ChatConversationScreen() {
           let addr = jsonData.address || jsonData.label || '';
           const looksLikeCoords = typeof addr === 'string' && /^-?\d+\.\d+\s*,\s*-?\d+\.\d+$/.test(addr.trim());
           if (looksLikeCoords) addr = '';
-          return { ...msg, type: 'location', latitude: jsonData.latitude, longitude: jsonData.longitude, address: addr, live: !!jsonData.live, live_until: jsonData.live_until || null };
+          return { ...msg, type: 'location', latitude: jsonData.latitude, longitude: jsonData.longitude, address: addr, live: !!jsonData.live, live_until: jsonData.live_until || null, is_unlimited: !!jsonData.is_unlimited };
         }
 
         // Detect playlist messages
@@ -12701,9 +12709,19 @@ export default function ChatConversationScreen() {
         }
       }
 
-      const liveUntil = Math.floor(Date.now() / 1000) + durationSec;
+      // Snap-Map "Sempre ativo" 2026-05-18:
+      //   durationSec === -1  => share until user stops manually. We embed
+      //   is_unlimited=true and push live_until ~10y into the future so the
+      //   bubble's `nowSec < liveUntilTs` check (and every other legacy
+      //   reader) treats it as active. Previously we set live_until = now-1
+      //   which made every receiver's bubble render as "encerrada" instantly.
+      const isUnlimited = durationSec === -1;
+      const liveUntil = isUnlimited
+        ? Math.floor(Date.now() / 1000) + (10 * 365 * 24 * 3600) // ~10y sentinel
+        : Math.floor(Date.now() / 1000) + durationSec;
       const content = JSON.stringify({
         latitude, longitude, live: true, live_until: liveUntil,
+        is_unlimited: isUnlimited,
         label: address || `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
         address, updated_at: new Date().toISOString(),
       });
@@ -12761,7 +12779,12 @@ export default function ChatConversationScreen() {
               lat2 = l.coords.latitude;
               lng2 = l.coords.longitude;
             }
-            const res = await api.chatUpdateLiveLocation(msgId, lat2, lng2);
+            // Pass duration through so the snap-map / friends-map rows
+            // keep the right expires_at sentinel on every tick. Without
+            // this, the backend defaults to 3600s and a sempre-ativo share
+            // auto-decays to a 1h share for off-conv viewers.
+            const tickOpts = isUnlimited ? { unlimited: true } : undefined;
+            const res = await api.chatUpdateLiveLocation(msgId, lat2, lng2, undefined, tickOpts);
             if (res?.success) {
               liveFailCount = 0;
             } else {
@@ -12777,13 +12800,20 @@ export default function ChatConversationScreen() {
             }
           }
         }, 10000);
-        // Auto-stop after duration
-        liveLocTimeoutRef.current = setTimeout(() => {
-          clearInterval(liveLocIntervalRef.current);
-          liveLocIntervalRef.current = null;
-          liveLocTimeoutRef.current = null;
-          api.chatStopLiveLocation(msgId).catch(() => {});
-        }, durationSec * 1000);
+        // Auto-stop after duration — SKIP for unlimited ("sempre ativo"):
+        // setTimeout with a 10y value silently clamps to 1ms in JS engines
+        // and fires immediately, which is exactly how the bug shipped (the
+        // bubble flipped to "encerrada" the instant the share started).
+        // For unlimited mode the sender uses the "Parar" button or
+        // chatStopLiveLocation manually.
+        if (!isUnlimited) {
+          liveLocTimeoutRef.current = setTimeout(() => {
+            clearInterval(liveLocIntervalRef.current);
+            liveLocIntervalRef.current = null;
+            liveLocTimeoutRef.current = null;
+            api.chatStopLiveLocation(msgId).catch(() => {});
+          }, durationSec * 1000);
+        }
       }
     } catch (e) {
       console.warn('Live location error:', e);
@@ -16327,8 +16357,16 @@ export default function ChatConversationScreen() {
           const isLiveLocation = !!(loc.live || msg.live);
           const liveUntilTs = loc.live_until || msg.live_until || null;
           const nowSec = Date.now() / 1000;
-          const isLiveExpired = isLiveLocation && liveUntilTs && nowSec >= liveUntilTs;
-          const isLiveActive = isLiveLocation && liveUntilTs && nowSec < liveUntilTs;
+          // Snap-Map "Sempre ativo": is_unlimited bypasses the expiry check
+          // entirely — the share is open until the sender stops it (or the
+          // receiver loses the grant). Defensive: also detect a sentinel
+          // live_until >1y away as "effectively unlimited" so older clients
+          // that only embedded a 10y future-stamp still render correctly.
+          const isUnlimited = !!loc.is_unlimited
+            || !!msg.is_unlimited
+            || (isLiveLocation && liveUntilTs && (Number(liveUntilTs) - nowSec) > (365 * 24 * 3600));
+          const isLiveExpired = isLiveLocation && !isUnlimited && liveUntilTs && nowSec >= liveUntilTs;
+          const isLiveActive = isLiveLocation && (isUnlimited || (liveUntilTs && nowSec < liveUntilTs));
 
           // Card dimensions (WhatsApp-ish). Map height ~180 like WhatsApp.
           const CARD_W = 260;
@@ -16378,6 +16416,7 @@ export default function ChatConversationScreen() {
                   label: addr,
                   isLive: isLiveLocation,
                   liveUntil: liveUntilTs,
+                  isUnlimited,
                   messageId: msg.id,
                   conversationId,
                 });
@@ -16446,7 +16485,11 @@ export default function ChatConversationScreen() {
                     const remaining = Number(liveUntilTs) - _now;
                     if (remaining <= 0) return null;
                     let label;
-                    if (remaining < 3600) {
+                    if (isUnlimited) {
+                      // No countdown for sempre-ativo — show an explicit
+                      // "until I stop" hint instead of a fake 87600h timer.
+                      label = `∞ ${t('snapmap.alwaysOn') || 'sempre ativo'}`;
+                    } else if (remaining < 3600) {
                       const m = Math.floor(remaining / 60);
                       const s = remaining % 60;
                       label = `${t('chatConv.liveEndsIn') || 'Acaba em'} ${m}m${s.toString().padStart(2, '0')}s`;
@@ -16497,7 +16540,7 @@ export default function ChatConversationScreen() {
                     {isLiveExpired
                       ? (t('chatConv.tapToSeeLastLocation') || 'Toque para ver última localização')
                       : (isLiveActive
-                          ? `${t('chatConv.sharingLive') || 'Compartilhando'} • ${formatLiveTimeRemaining(liveUntilTs, t)}`
+                          ? `${t('chatConv.sharingLive') || 'Compartilhando'} • ${isUnlimited ? ('∞ ' + (t('snapmap.alwaysOn') || 'sempre ativo')) : formatLiveTimeRemaining(liveUntilTs, t)}`
                           : (t('chatConv.tapToOpenMap') || 'Toque para abrir no mapa'))}
                   </Text>
                 </View>
@@ -16523,7 +16566,12 @@ export default function ChatConversationScreen() {
                           const c = JSON.parse(m.content || '{}');
                           c.live_until = Math.floor(Date.now() / 1000) - 1;
                           c.live = false;
-                          return { ...m, content: JSON.stringify(c) };
+                          // Clear the unlimited sentinel too — otherwise the
+                          // bubble's "far future = unlimited" fallback keeps
+                          // it rendering as active even after the sender
+                          // tapped Parar.
+                          c.is_unlimited = false;
+                          return { ...m, content: JSON.stringify(c), is_unlimited: false };
                         } catch { return m; }
                       }));
                     }}
@@ -25264,6 +25312,7 @@ export default function ChatConversationScreen() {
         label={mapModalData?.label}
         isLive={mapModalData?.isLive}
         liveUntil={mapModalData?.liveUntil}
+        isUnlimited={mapModalData?.isUnlimited}
         messageId={mapModalData?.messageId}
         conversationId={mapModalData?.conversationId || conversationId}
       />
