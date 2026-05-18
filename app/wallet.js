@@ -149,7 +149,7 @@ export default function WalletScreen() {
 
         <View style={styles.ctaRow}>
           <TouchableOpacity
-            onPress={() => setTopUpOpen(true)}
+            onPress={() => router.push('/diamond-shop')}
             style={[styles.ctaBtn, { backgroundColor: '#A855F7' }]}
             accessibilityRole="button"
           >

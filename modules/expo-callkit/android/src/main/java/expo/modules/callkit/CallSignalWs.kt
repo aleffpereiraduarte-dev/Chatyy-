@@ -93,11 +93,18 @@ object CallSignalWs {
         calleeEmail: String,
         hasVideo: Boolean
     ) {
+        // [P0 regression 2026-05-18 #1122] Server (chatyy-ws-go handleCallInvite)
+        // routes the call by reading `target_email` — it ignores `callee_email`
+        // and silently bails out when the key is missing, so the callee was
+        // never rung. Always emit the canonical `target_email` key. We also
+        // keep `callee_email` for older servers that may still expect it.
         val payload = JSONObject().apply {
             put("type", "call_invite")
             put("conversation_id", conversationId)
             put("call_id", callId)
+            put("target_email", calleeEmail)
             put("callee_email", calleeEmail)
+            put("video", hasVideo)
             put("has_video", hasVideo)
             put("ts", System.currentTimeMillis())
         }.toString()

@@ -416,6 +416,17 @@ export default function PhotosScreen() {
   // duplicating uploads.
   const backupInFlightRef = useRef(false);
   const backupWatchdogRef = useRef(null);
+  // 2026-05-18 (#1126): epoch (ms) of the last time we observed
+  // (uploaded === 0 AND remaining > 0) at the end of a backup loop. That
+  // means the native engine could not close the gap — the remaining
+  // photos are phantom assets (iCloud-only, hidden, library-corrupt,
+  // already-deleted-but-still-counted, etc.) so scheduling another retry
+  // every 45s just spins forever. Block re-entry to startBackup for
+  // COMPLETED_COOLDOWN_MS after we observe this state. The user can
+  // still tap "Backup agora" — that calls forceStartBackup which
+  // bypasses the cooldown by clearing the ref before invoking.
+  const backupCompletedAtRef = useRef(0);
+  const COMPLETED_COOLDOWN_MS = 30 * 60 * 1000;
   const lastUserEmailRef = useRef(user?.email || '');
 
   // ⭐ Wipe in-memory state when the active account changes. Without this,
@@ -1102,8 +1113,9 @@ export default function PhotosScreen() {
         if (backupStatus !== 'complete') setBackupStatus('complete');
       }
       // If totalOnDevice still 0, don't set any status (wait for count to load)
-    }
-  }, [devicePhotos.length, cloudPhotos.length, backupEnabled, deviceTotalCount]);
+    })();
+    return () => { cancelled = true; };
+  }, [devicePhotos.length, cloudPhotos.length, backupEnabled, deviceTotalCount, backedUpTotal, backupStatus]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -1433,6 +1445,20 @@ export default function PhotosScreen() {
       safeAlert('Backup', 'Módulo de backup não disponível. Atualize o app.');
       return;
     }
+    // 2026-05-18 (#1126): if the previous run completed with uploaded=0 AND
+    // remaining>0 (phantom drift the engine can't reconcile), block re-entry
+    // for COMPLETED_COOLDOWN_MS. Without this, the auto-correct effect
+    // (line ~980) flips status back to 'needs_backup' the moment the loop
+    // ends — which fires the pending-photo effect — which schedules another
+    // startBackup in 3s — which runs an empty pass — which fires the
+    // post-loop retry in 45s — ad infinitum. The user's perception:
+    // "chega no final e continua tentando fazer backup".
+    if (backupCompletedAtRef.current > 0 &&
+        Date.now() - backupCompletedAtRef.current < COMPLETED_COOLDOWN_MS) {
+      console.log('[backup] startBackup: in completed-cooldown — skipping (use forceStartBackup to override)');
+      setBackupStatus('complete');
+      return;
+    }
     // PRE-CHECK: só começa backup se tiver pending real.
     // User reportou que "backup feito não para de subir tá duplicando" —
     // a gente rodava rounds até o native retornar zero uploads 5x seguido,
@@ -1721,21 +1747,47 @@ export default function PhotosScreen() {
           setBackupStatus('complete');
           setLastBackupDate(new Date().toISOString());
           backupRetryCountRef.current = 0;
+          backupCompletedAtRef.current = Date.now();
+        } else if (totalUploaded === 0) {
+          // 2026-05-18 (#1126): the foreground loop ran every native pass
+          // it could (5 zero-rounds with backoff inside the for-loop) and
+          // ZERO new photos went up — but the device count still says
+          // there are `remaining` left. Those photos are phantom assets
+          // the engine physically cannot reconcile from this device:
+          //  • iCloud-only originals the user never downloaded
+          //  • hidden / library-corrupt PHAssets
+          //  • already-deleted on device but still tracked in MediaLibrary
+          //    totalCount (iOS bug; clears on next photo app open)
+          //  • formats the server rejects (videos in iCloud over plan limit)
+          // Scheduling another 45s retry CAN'T close the gap; it just keeps
+          // the engine hot. Stamp the completed-at ref so the 30min
+          // cooldown above blocks every re-entry path (auto-correct
+          // effect, AppState resume, MediaLibrary listener), surface
+          // 'complete' to the UI, and let the user manually tap "Reparar"
+          // (forceStartBackup) if they think the gap is real.
+          clearInterval(refreshTimer);
+          cleanupBackupRefresh();
+          setBackupStatus('complete');
+          backupRetryCountRef.current = 0;
+          backupCompletedAtRef.current = Date.now();
+          try {
+            api.apiCall('drive_backup_debug', {
+              msg: 'foreground_loop_zero_with_drift',
+              data: `device=${dt} server=${freshServer} remaining=${remaining}`,
+            }, 'POST').catch(() => {});
+          } catch {}
         } else {
-          // Device still has pending photos — KEEP the status as
-          // 'backing_up' (banner stays visible) and schedule the next
-          // round. iOS will re-grant BG budget eventually; without a
-          // persistent UI signal the user assumed backup had died. We
-          // cap at 20 re-schedulings so a broken session eventually
-          // releases the lock and a fresh tap of "Backup agora" can
-          // try from scratch.
+          // We DID upload something this run but the device still has more
+          // to send — KEEP the 'backing_up' banner and schedule the next
+          // round (iOS re-grants BG budget eventually). Capped at 20
+          // re-schedulings so a broken session eventually releases the
+          // lock and a fresh tap of "Backup agora" can try from scratch.
           //
           // Counter lives on a component ref (was a static prop on the
           // function — which leaked across mounts and got reset on any
           // manual tap, defeating the cap entirely). The timeout handle is
-          // tracked on backupRetryTimerRef so unmount/cleanup can cancel it
-          // (previous version: handle was thrown away → ghost re-entries
-          // after the user navigated off the screen).
+          // tracked on backupRetryTimerRef so unmount/cleanup can cancel
+          // it.
           backupRetryCountRef.current += 1;
           setBackupStatus('backing_up');
           if (backupRetryCountRef.current < 20) {

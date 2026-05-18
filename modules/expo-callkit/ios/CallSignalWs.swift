@@ -71,11 +71,18 @@ final class CallSignalWs: NSObject {
     // MARK: – Public API
 
     func fireCallInvite(callId: String, conversationId: String, calleeEmail: String, hasVideo: Bool) {
+        // [P0 regression 2026-05-18 #1122] Server (chatyy-ws-go handleCallInvite)
+        // routes the call by reading `target_email`. Emitting `callee_email`
+        // alone caused the server to discard the message and the callee was
+        // never rung. Always emit `target_email`; keep `callee_email` for
+        // older servers.
         let dict: [String: Any] = [
             "type": "call_invite",
             "conversation_id": conversationId,
             "call_id": callId,
+            "target_email": calleeEmail,
             "callee_email": calleeEmail,
+            "video": hasVideo,
             "has_video": hasVideo,
             "ts": Int(Date().timeIntervalSince1970 * 1000)
         ]

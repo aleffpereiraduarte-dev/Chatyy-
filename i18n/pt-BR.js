@@ -4711,6 +4711,12 @@ export default {
   'wallet.myDiamonds': 'Meus diamantes',
   'wallet.topupCta': 'Tocar para comprar diamantes',
   'wallet.diamondsLabel': 'diamantes',
+  // 2026-05-18 — Diamond shop screen.
+  'diamondShop.title': 'Loja de Diamantes',
+  'diamondShop.heroSubtitle': 'Compre diamantes para enviar a amigos, presentear criadores e desbloquear conteúdo.',
+  'diamondShop.bestValue': 'Melhor custo',
+  'diamondShop.viewHistory': 'Ver histórico e enviar diamantes',
+  'diamondShop.wallet': 'Carteira',
   // 2026-05-18 — Send-diamond peer-to-peer + wallet history strings.
   'wallet.history': 'Histórico',
   'wallet.historyEmpty': 'Nenhuma transação ainda. Compre diamantes para começar.',
