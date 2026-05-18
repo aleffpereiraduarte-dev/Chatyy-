@@ -29,7 +29,9 @@ const FIREBASE_CONFIG = {
 // MUST be configured before web push works. To get it: Firebase Console →
 // onemundo-52ca6 → Project settings → Cloud Messaging → Web Push certificates
 // → Generate key pair. Paste the resulting "Key pair" value below.
-const VAPID_PUBLIC_KEY = ''; // <-- TODO ops: paste VAPID public key here
+// [2026-05-18] VAPID key from /etc/mail-api.env on prod server.
+// Without this getToken returns null and desktop web push is broken.
+const VAPID_PUBLIC_KEY = 'BNpEc6JEF0FadT6pME0Mhf4XViw-JTDMmuUT_Ga6hEWujYNace8RVlJlYxb5ByprKS2DiO6PbbqncgDepIoA60M';
 
 let _registering = false;
 let _registered = false;

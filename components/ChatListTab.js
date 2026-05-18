@@ -2160,6 +2160,15 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   // Sync ref for conversations count — avoids async setState detection bug
   const _convsCountRef = useRef(_initialConvs.length);
   _convsCountRef.current = conversations?.length || 0;
+  // Web badge: empurra unread total pro document.title + navigator.setAppBadge
+  // (no-op em mobile). Recomputado quando conversations muda.
+  React.useEffect(() => {
+    try {
+      const total = (conversations || []).reduce((sum, c) => sum + (c.unread_count || 0), 0);
+      const { setChatUnread } = require('../services/webBadge');
+      setChatUnread(total);
+    } catch {}
+  }, [conversations]);
   // Debounce lock for conversation taps so a double-tap doesn't push the
   // same chat onto the stack twice (user complaint: "tenho que clicar 2 vez
   // para voltar").
@@ -2308,6 +2317,12 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
 
   const fabMenuAnim = useRef(new Animated.Value(0)).current;
   const [selectionMode, setSelectionMode] = useState(false);
+  // Memoize FlatList extraData so it doesn't get a fresh object every render.
+  // Was a perf gap — every keystroke / presence event re-invalidated row diffs.
+  const extraDataMemo = React.useMemo(
+    () => ({ typingUsers, selectionMode, lockedIds, unlockedIds, isDark, colors, presenceVersion }),
+    [typingUsers, selectionMode, lockedIds, unlockedIds, isDark, colors, presenceVersion]
+  );
   const [selectedIds, setSelectedIds] = useState(new Set());
   // Contact-discovery banner (WhatsApp pattern: surface "X amigos no Chatyy"
   // straight from the chat list so users find friends without first hunting
@@ -5274,7 +5289,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
               progressBackgroundColor={isDark ? '#1F2C33' : '#fff'}
             />
           }
-          extraData={{ typingUsers, selectionMode, lockedIds, unlockedIds, isDark, colors, presenceVersion }}
+          extraData={extraDataMemo}
           onScroll={onListScroll}
           scrollEventThrottle={16}
         />
