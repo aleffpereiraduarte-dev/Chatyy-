@@ -278,6 +278,7 @@
       "./plugins/fix-jitpack",
       "./plugins/with-android-packaging-pickfirst",
       "./plugins/voip-push",
+      "./plugins/with-notification-service",
       "expo-asset",
       [
         "expo-local-authentication",

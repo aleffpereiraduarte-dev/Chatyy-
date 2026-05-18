@@ -277,6 +277,28 @@ public class ExpoCallKitModule: Module {
       NativeCallRoom.shared.setCameraEnabled(enabled)
     }
 
+    // [host-mute, 2026-05-17] Host-issued mute of a remote participant.
+    //
+    // Architecture note: NativeCallRoom is still a stub on iOS (see
+    // NativeCallRoom.swift) so the LK Room is JS-owned via @livekit/react-native.
+    // For host mute we don't have a direct LK SFU-side mute action exposed
+    // through the JS SDK either, so the agreed protocol is:
+    //   1. Host calls this bridge -> POST /api/email.php?action=chat_call_mute_participant
+    //   2. Backend validates host role + relays a WS `call_mute_request` event
+    //      to the target participant.
+    //   3. Target client picks up the event and locally calls
+    //      `room.localParticipant.setMicrophoneEnabled(false)`.
+    //
+    // This native bridge function is a thin no-op pass-through so the JS
+    // /call.js can call it via `await ExpoCallKit.muteParticipant(...)` and
+    // keep call sites symmetric across platforms. The actual HTTP roundtrip
+    // happens in JS (services/api.js -> chatCallMuteParticipant). Future:
+    // when NativeCallRoom v2 lands, do the SFU mute directly here.
+    AsyncFunction("muteParticipant") { (roomName: String, identity: String) -> Bool in
+      NSLog("[ExpoCallKit] muteParticipant room=\(roomName) identity=\(identity) — JS owns the HTTP path, this is a no-op shim")
+      return true
+    }
+
     // [Stage 1+2 alignment] Match Android signature: adoptNativeRoom(callId)
     // returns the snapshot dict or nil if no room or callId mismatch.
     AsyncFunction("adoptNativeRoom") { (callId: String) -> [String: Any]? in

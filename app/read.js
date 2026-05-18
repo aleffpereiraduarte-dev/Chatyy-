@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet, Platform, Animated, Easing, Alert } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getMessage, deleteEmail as apiDelete, starEmail, unstarEmail, addLabel, removeLabel, getThread, archiveEmail } from '../services/api';
+import { getMessage, deleteEmail as apiDelete, starEmail, unstarEmail, addLabel, removeLabel, getThread, archiveEmail, aiFollowupReminder } from '../services/api';
 import { useMail } from '../context/MailContext';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -17,6 +17,12 @@ export default function ReadScreen() {
   const [email, setEmail] = useState(null);
   const [thread, setThread] = useState(null);
   const [loading, setLoading] = useState(true);
+  // ── AI follow-up reminder ──
+  // For sent emails older than 2 days with no reply, surface a yellow chip
+  // suggesting a follow-up. Calls aiFollowupReminder with a single-item
+  // payload and shows the suggested message preview + a "Send follow-up"
+  // button that hops to /compose with the suggestion pre-filled.
+  const [followupSuggestion, setFollowupSuggestion] = useState(null); // {days, suggested_message, urgency}
   const { refresh, markAsRead } = useMail();
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
@@ -100,6 +106,34 @@ export default function ReadScreen() {
 
     return () => { cancelled = true; };
   }, [uid, folder]);
+
+  // Surface AI follow-up reminder chip for sent items aged >= 2 days where
+  // no reply has been received. The reminder endpoint scores urgency and
+  // suggests a short follow-up message; we render a chip when the score
+  // matches and the user can one-tap into compose.
+  useEffect(() => {
+    if (!email || folder !== 'Sent') { setFollowupSuggestion(null); return; }
+    const sentAt = email.date ? new Date(email.date) : null;
+    if (!sentAt || isNaN(sentAt.getTime())) { setFollowupSuggestion(null); return; }
+    const daysAgo = Math.floor((Date.now() - sentAt.getTime()) / (24 * 60 * 60 * 1000));
+    if (daysAgo < 2) { setFollowupSuggestion(null); return; }
+    let cancelled = false;
+    aiFollowupReminder([{
+      to: email.to,
+      subject: email.subject,
+      sent_at: email.date,
+      days_ago: daysAgo,
+    }]).then(r => {
+      if (cancelled) return;
+      const fu = r?.data?.followups?.[0];
+      if (fu && fu.urgency && fu.urgency !== 'low') {
+        setFollowupSuggestion({ days: daysAgo, suggested_message: fu.suggested_message || '', urgency: fu.urgency });
+      } else {
+        setFollowupSuggestion(null);
+      }
+    }).catch(() => { if (!cancelled) setFollowupSuggestion(null); });
+    return () => { cancelled = true; };
+  }, [email?.uid, folder]);
 
   const handleReply = (emailData) => {
     const replyEmail = emailData || email;
@@ -274,12 +308,55 @@ export default function ReadScreen() {
     />
   );
 
+  // Follow-up chip rendered above the EmailReader scroll view. Yellow
+  // background mirrors Gmail's "Send follow-up?" prompt; tapping the action
+  // opens /compose pre-filled with the AI's suggested message. Declared
+  // BEFORE the thread-view branch so both render paths can reference it.
+  const followupChip = followupSuggestion ? (
+    <View style={{
+      flexDirection: 'row', alignItems: 'center', gap: 10,
+      backgroundColor: '#fef3c7', borderColor: '#f59e0b',
+      borderWidth: 1, borderLeftWidth: 4, borderRadius: 10,
+      marginHorizontal: 12, marginTop: 8, padding: 12,
+    }}>
+      <View style={{ flex: 1 }}>
+        <Text style={{ fontWeight: '700', color: '#92400e', fontSize: 13 }}>
+          {(t('read.followupTitle') || 'Aguardando resposta há {n} dias — Enviar follow-up?').replace('{n}', String(followupSuggestion.days))}
+        </Text>
+        {!!followupSuggestion.suggested_message && (
+          <Text numberOfLines={2} style={{ color: '#92400e', fontSize: 12, marginTop: 4 }}>
+            {followupSuggestion.suggested_message}
+          </Text>
+        )}
+      </View>
+      <TouchableOpacity
+        onPress={() => {
+          const subj = email?.subject?.startsWith('Re:') ? email.subject : 'Re: ' + (email?.subject || '');
+          const params = new URLSearchParams({
+            to: email?.to || '',
+            subject: subj,
+            smart_reply: followupSuggestion.suggested_message || '',
+          });
+          router.push('/compose?' + params.toString());
+        }}
+        style={{ backgroundColor: '#f59e0b', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
+        accessibilityLabel={t('read.followupSend') || 'Enviar follow-up'}
+        accessibilityRole="button"
+      >
+        <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+          {t('read.followupSend') || 'Enviar'}
+        </Text>
+      </TouchableOpacity>
+    </View>
+  ) : null;
+
   // Show thread view if we have multiple messages in the conversation
   if (thread && thread.length > 1) {
     return (
       <View style={[s.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}>
         {navBar}
         {progressBar}
+        {followupChip}
         <ThreadView
           thread={thread}
           onReply={handleReply}
@@ -296,6 +373,7 @@ export default function ReadScreen() {
     <View style={[s.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}>
       {navBar}
       {progressBar}
+      {followupChip}
       <Animated.View style={{ flex: 1, opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
         <EmailReader
           email={email}

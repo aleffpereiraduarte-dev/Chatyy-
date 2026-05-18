@@ -263,6 +263,34 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
   const cropStartRef = useRef(null);
   const overlayDragStartRef = useRef(null);
 
+  // ── Editor-depth state (round 2026-05-17) ──
+  // Music track attached to the photo. Set by the music picker sheet; the
+  // host (status / chat) reads `result.music` from the onSave payload to
+  // mix audio on top of the photo on send. Track shape: { id, title, artist, url }.
+  const [musicTrack, setMusicTrack] = useState(null);
+  const [showMusicSheet, setShowMusicSheet] = useState(false);
+  // Person tags placed by tap on the photo. Each entry carries the mention
+  // text + position so the renderer can draw a flag at that point.
+  // shape: { id, x, y, name, email }
+  const [tagItems, setTagItems] = useState([]);
+  const [tagDraft, setTagDraft] = useState(''); // text user types after tap
+  const [tagPlaceTarget, setTagPlaceTarget] = useState(null); // {x, y} once user taps photo
+  // External sticker browser (StickerStore + recents) — opens over the
+  // editor when the user wants a non-emoji sticker. The chosen sticker
+  // becomes a regular stickerItems entry so the existing drag / save
+  // pipeline picks it up unchanged.
+  const [showStickerStore, setShowStickerStore] = useState(false);
+  // Inline draw layer — when the user picks the Draw tab we hand
+  // control to the dedicated PhotoDrawTool component (which already
+  // ships brush/eraser/undo/redo per the round 1 changes). Result is
+  // an array of SVG path objects we keep and overlay on the photo.
+  const [drawPaths, setDrawPaths] = useState([]);
+  const [showDrawTool, setShowDrawTool] = useState(false);
+  // Side-by-side compare with original — pressed (and held) shows the
+  // untouched source image so the user can verify their edits against the
+  // baseline. The hold pattern (vs toggle) matches Apple Photos / Lightroom.
+  const [comparing, setComparing] = useState(false);
+
   // Image display area
   const toolbarH = 120;
   const topBarH = 56;
@@ -314,6 +342,17 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
       setTextInputValue('');
       setTextColor(PEN_COLORS[0]);
       setStickerPack('emoji');
+      // Reset editor-depth state so a previous photo's tags / music / draw
+      // strokes don't leak into the next edit session.
+      setMusicTrack(null);
+      setShowMusicSheet(false);
+      setTagItems([]);
+      setTagDraft('');
+      setTagPlaceTarget(null);
+      setDrawPaths([]);
+      setShowDrawTool(false);
+      setShowStickerStore(false);
+      setComparing(false);
       historyRef.current = { past: [], future: [] };
     }
   }, [visible]);
@@ -596,6 +635,19 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
 
   // ── Save ──
 
+  // Pack the editor's "extras" (music track, person tags, drawing strokes)
+  // into a single object the caller can persist alongside the JPEG. Plain
+  // objects so callers without TS get type-safe-ish shape via shape comments.
+  // The host (status / chat / direct send) decides whether to mix the music,
+  // surface tags as @mentions, etc.
+  const _editorExtras = useCallback(() => {
+    const out = {};
+    if (musicTrack) out.music = musicTrack;
+    if (tagItems.length > 0) out.tags = tagItems;
+    if (drawPaths.length > 0) out.drawPaths = drawPaths;
+    return Object.keys(out).length > 0 ? out : null;
+  }, [musicTrack, tagItems, drawPaths]);
+
   const handleSave = useCallback(async () => {
     if (!imageUri) return;
     setSaving(true);
@@ -604,14 +656,21 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
       // + overlays). It's cheaper than ImageManipulator → re-load → overlay.
       if (Platform.OS === 'web') {
         const result = await saveWithCanvas();
-        if (result) { onSave?.(result); return; }
+        if (result) {
+          // When extras are present, return an object — otherwise keep the
+          // legacy string return so existing callers don't break.
+          const extras = _editorExtras();
+          onSave?.(extras ? { uri: result, ...extras } : result);
+          return;
+        }
       }
 
       let ImageManipulator = null;
       try { ImageManipulator = require('expo-image-manipulator'); } catch {}
 
       if (!ImageManipulator?.manipulateAsync) {
-        onSave?.(imageUri);
+        const extras = _editorExtras();
+        onSave?.(extras ? { uri: imageUri, ...extras } : imageUri);
         return;
       }
 
@@ -661,14 +720,16 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
         result = await ImageManipulator.manipulateAsync(imageUri, [], opts);
       }
 
-      onSave?.(result.uri);
+      const extras = _editorExtras();
+      onSave?.(extras ? { uri: result.uri, ...extras } : result.uri);
     } catch (err) {
       console.warn('PhotoEditor save error:', err);
-      onSave?.(imageUri);
+      const extras = _editorExtras();
+      onSave?.(extras ? { uri: imageUri, ...extras } : imageUri);
     } finally {
       setSaving(false);
     }
-  }, [imageUri, rotation, flipH, flipV, cropRect, imageSize, selectedFilter, onSave, textItems, stickerItems, blurRegions]);
+  }, [imageUri, rotation, flipH, flipV, cropRect, imageSize, selectedFilter, onSave, textItems, stickerItems, blurRegions, _editorExtras]);
 
   // Canvas-based save for web
   const saveWithCanvas = useCallback(async () => {
@@ -943,6 +1004,19 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
             <Text style={s.resetPillText}>{t('photos.reset')}</Text>
           </TouchableOpacity>
 
+          {/* Hold-to-compare. While the user presses, we drop ALL edits in the
+              preview by showing the raw imageUri at the same position. Release
+              snaps back. Pure UI — does not mutate any state. */}
+          <TouchableOpacity
+            onPressIn={() => setComparing(true)}
+            onPressOut={() => setComparing(false)}
+            style={[s.resetPill, comparing && { backgroundColor: 'rgba(124,58,237,0.55)' }]}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            accessibilityLabel="Original"
+          >
+            <Text style={s.resetPillText}>{t('photos.original') || 'Original'}</Text>
+          </TouchableOpacity>
+
           <TouchableOpacity
             onPress={handleSave}
             style={[s.nextPill, saving && { opacity: 0.6 }]}
@@ -1013,6 +1087,23 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
                 ]}
                 resizeMode="contain"
               />
+
+              {/* Original-comparison overlay. Rendered absolutely on top so
+                  while the user holds the "Original" pill, the raw source
+                  image masks every edit (filters, overlays, draw strokes,
+                  crop). Lives outside the filter overlay block on purpose. */}
+              {comparing && (
+                <Image
+                  source={{ uri: imageUri }}
+                  style={{
+                    position: 'absolute',
+                    left: 0, top: 0,
+                    width: displayDims.w, height: displayDims.h,
+                    zIndex: 999,
+                  }}
+                  resizeMode="contain"
+                />
+              )}
 
               {/* Filter overlay — opacity reflects intensity slider */}
               {currentFilter?.overlay && (
@@ -1189,6 +1280,65 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
                   <Text style={{ fontSize: it.size || 56 }}>{it.emoji}</Text>
                 </DraggableOverlay>
               ))}
+
+              {/* Render placed person tags. Each tag is a small flag at the
+                  tapped position with the name string. Tag editing reuses the
+                  generic DraggableOverlay so users can fine-tune position. */}
+              {tagItems.map(it => (
+                <DraggableOverlay
+                  key={it.id}
+                  responder={createOverlayResponder(it.id, 'tag')}
+                  active={activeOverlayId === it.id}
+                  onDelete={() => {
+                    pushHistory();
+                    setTagItems(prev => prev.filter(t => t.id !== it.id));
+                  }}
+                  style={{ left: it.x, top: it.y }}
+                >
+                  <View style={{
+                    backgroundColor: 'rgba(0,0,0,0.7)', borderRadius: 14,
+                    paddingHorizontal: 10, paddingVertical: 4,
+                    flexDirection: 'row', alignItems: 'center', gap: 4,
+                  }}>
+                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+                      @{(it.name || '').replace(/^@/, '')}
+                    </Text>
+                  </View>
+                </DraggableOverlay>
+              ))}
+
+              {/* Render drawing strokes as a non-interactive SVG overlay above
+                  the photo. Strokes are placed in image-display coordinates
+                  the same way PhotoDrawTool produced them, so positions match
+                  the live preview the user saw in the picker. */}
+              {drawPaths.length > 0 && (
+                <View
+                  style={{ position: 'absolute', left: 0, top: 0, width: displayDims.w, height: displayDims.h }}
+                  pointerEvents="none"
+                >
+                  <Svg width={displayDims.w} height={displayDims.h}>
+                    {drawPaths.map(p => (
+                      <Path key={p.id} d={p.d} stroke={p.color} strokeWidth={p.width} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+                    ))}
+                  </Svg>
+                </View>
+              )}
+
+              {/* Tag placement layer — only active while the Tag tab is open.
+                  Capturing a tap here records the position; the tab panel
+                  then prompts for the @mention text. Sits above the photo
+                  but BELOW the existing overlays so dragging stickers/text
+                  still works on the other tabs. */}
+              {activeTab === 'tag' && (
+                <TouchableOpacity
+                  activeOpacity={1}
+                  onPress={(e) => {
+                    const { locationX, locationY } = e.nativeEvent;
+                    setTagPlaceTarget({ x: locationX, y: locationY });
+                  }}
+                  style={{ position: 'absolute', left: 0, top: 0, width: displayDims.w, height: displayDims.h }}
+                />
+              )}
             </View>
           ) : (
             <ActivityIndicator size="large" color="#fff" />
@@ -1396,6 +1546,18 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
                       </TouchableOpacity>
                     );
                   })}
+                  {/* Last pill: open the full StickerStore. Reuses the existing
+                      store + recents UX (`components/StickerPicker.js`). The
+                      chosen sticker comes back as an emoji-equivalent ID so
+                      the existing stickerItems pipeline saves it unchanged. */}
+                  <TouchableOpacity
+                    onPress={() => setShowStickerStore(true)}
+                    style={[s.stickerPackPill, { backgroundColor: 'rgba(124,58,237,0.22)' }]}
+                  >
+                    <Text style={[s.stickerPackLabel, { color: '#7C3AED', fontWeight: '700' }]}>
+                      + Loja
+                    </Text>
+                  </TouchableOpacity>
                 </ScrollView>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.stickerRow}>
                   {(STICKER_PACKS.find(p => p.key === stickerPack)?.items || []).map((em, idx) => (
@@ -1414,26 +1576,80 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
 
             {activeTab === 'draw' && (
               <View style={s.placeholderPanel}>
-                <TouchableOpacity onPress={addBlurRegion} style={s.blurAddBtn}>
-                  <Text style={s.blurAddBtnLabel}>+ Pincel (em breve)</Text>
+                {/* Hands off to PhotoDrawTool (brush sizes, 12 colors + free
+                    hue, eraser, undo/redo stacks). Its onDone returns the
+                    raw path array; we store it and overlay on the photo. */}
+                <TouchableOpacity onPress={() => setShowDrawTool(true)} style={s.blurAddBtn}>
+                  <Text style={s.blurAddBtnLabel}>
+                    {drawPaths.length > 0 ? `${drawPaths.length} traços — editar` : '+ Abrir pincel'}
+                  </Text>
                 </TouchableOpacity>
                 <Text style={s.placeholderHint}>
-                  Desenhe livre na foto. Cores e espessura em breve.
+                  4 espessuras · 12 cores · borracha · desfazer/refazer.
                 </Text>
               </View>
             )}
 
             {activeTab === 'music' && (
               <View style={s.placeholderPanel}>
-                <Text style={s.placeholderTitle}>Música</Text>
-                <Text style={s.placeholderHint}>Adicione uma trilha. Em breve.</Text>
+                {/* Music picker sheet — same UX pattern as StatusCamera so
+                    behavior is consistent between status + photo flows.
+                    Selected track is exported via onSave({ music }) below. */}
+                <TouchableOpacity onPress={() => setShowMusicSheet(true)} style={s.blurAddBtn}>
+                  <Text style={s.blurAddBtnLabel}>
+                    {musicTrack ? `♫ ${musicTrack.title}` : '+ Adicionar som'}
+                  </Text>
+                </TouchableOpacity>
+                {musicTrack && (
+                  <TouchableOpacity onPress={() => setMusicTrack(null)} style={{ marginTop: 4 }}>
+                    <Text style={[s.placeholderHint, { color: '#fca5a5' }]}>Remover trilha</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             )}
 
             {activeTab === 'tag' && (
               <View style={s.placeholderPanel}>
-                <Text style={s.placeholderTitle}>Marcar pessoas</Text>
-                <Text style={s.placeholderHint}>Toque na foto para marcar amigos. Em breve.</Text>
+                {tagItems.length === 0 ? (
+                  <Text style={s.placeholderTitle}>Toque na foto para marcar</Text>
+                ) : (
+                  <Text style={s.placeholderTitle}>{tagItems.length} marcaç{tagItems.length === 1 ? 'ão' : 'ões'}</Text>
+                )}
+                <Text style={s.placeholderHint}>
+                  Use @ para sugerir amigos. Toque longo numa marcação pra remover.
+                </Text>
+                {/* Quick input — appears after the user taps a photo point.
+                    Free text + @mention; the host's onSave gets the list back. */}
+                {tagPlaceTarget && (
+                  <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 6, width: '100%' }}>
+                    <TextInput
+                      autoFocus
+                      value={tagDraft}
+                      onChangeText={setTagDraft}
+                      placeholder="@usuario ou nome"
+                      placeholderTextColor="rgba(255,255,255,0.5)"
+                      style={s.textInput}
+                    />
+                    <TouchableOpacity
+                      onPress={() => {
+                        const name = tagDraft.trim();
+                        if (!name) { setTagPlaceTarget(null); return; }
+                        const email = name.startsWith('@') ? name.slice(1) : '';
+                        pushHistory();
+                        setTagItems(prev => [...prev, {
+                          id: Date.now(),
+                          x: tagPlaceTarget.x, y: tagPlaceTarget.y,
+                          name, email,
+                        }]);
+                        setTagDraft('');
+                        setTagPlaceTarget(null);
+                      }}
+                      style={s.textAddBtn}
+                    >
+                      <Text style={s.textAddBtnLabel}>+</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
               </View>
             )}
 
@@ -1498,6 +1714,111 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose }) {
           </ScrollView>
         </View>
       </View>
+
+      {/* Music picker sheet — same UX pattern as StatusCamera. Lazy library
+          built into AsyncStorage recents until a real catalog ships, but the
+          sheet is wired so swapping the source is a one-line change. */}
+      {showMusicSheet && (
+        <Modal transparent animationType="slide" onRequestClose={() => setShowMusicSheet(false)}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}>
+            <View style={{ backgroundColor: '#1a1a1a', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 20, minHeight: 280 }}>
+              <View style={{ alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.2)', marginBottom: 12 }} />
+              <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>Adicionar som</Text>
+              <Text style={{ color: '#aaa', fontSize: 13, marginTop: 6, marginBottom: 14 }}>
+                Selecione uma trilha para acompanhar a foto.
+              </Text>
+              {/* Static demo catalog — real picker will hit the same shape via
+                  api.musicLibrary() once the backend lands. Each row sets the
+                  track + closes the sheet so the flow is one-tap. */}
+              {[
+                { id: 'sun', title: 'Sunshine Beats', artist: 'Chatyy Library' },
+                { id: 'lof', title: 'Lo-fi Mood', artist: 'Chatyy Library' },
+                { id: 'cin', title: 'Cinematic Pulse', artist: 'Chatyy Library' },
+              ].map(track => (
+                <TouchableOpacity
+                  key={track.id}
+                  onPress={() => { setMusicTrack(track); setShowMusicSheet(false); }}
+                  style={{ paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)' }}
+                >
+                  <Text style={{ color: '#fff', fontSize: 15, fontWeight: '600' }}>{track.title}</Text>
+                  <Text style={{ color: '#999', fontSize: 12, marginTop: 2 }}>{track.artist}</Text>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity
+                onPress={() => setShowMusicSheet(false)}
+                style={{ marginTop: 16, padding: 12, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 10 }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700' }}>Fechar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
+
+      {/* Sticker store launcher — host out the existing StickerPicker so the
+          editor inherits sticker store + recents + search out of the box.
+          The picker returns an emoji-equivalent string; we wrap it in a new
+          stickerItems entry centered on the photo. */}
+      {showStickerStore && (() => {
+        let StickerPicker = null;
+        try { StickerPicker = require('./StickerPicker').default; } catch {}
+        if (!StickerPicker) {
+          // Picker missing in this build — close cleanly so the editor isn't blocked.
+          return null;
+        }
+        return (
+          <Modal transparent animationType="slide" onRequestClose={() => setShowStickerStore(false)}>
+            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}>
+              <View style={{ flex: 1, marginTop: 60, backgroundColor: '#1a1a1a', borderTopLeftRadius: 18, borderTopRightRadius: 18, overflow: 'hidden' }}>
+                <StickerPicker
+                  onSelect={(item) => {
+                    // Accept both emoji strings and richer sticker objects.
+                    const emoji = typeof item === 'string' ? item : (item?.emoji || item?.id || '⭐');
+                    pushHistory();
+                    setStickerItems(prev => [...prev, {
+                      id: Date.now(),
+                      x: displayDims.w / 2 - 28,
+                      y: displayDims.h / 2 - 28,
+                      emoji, size: 56,
+                    }]);
+                    setShowStickerStore(false);
+                  }}
+                  onClose={() => setShowStickerStore(false)}
+                  colors={colors}
+                  t={t}
+                />
+              </View>
+            </View>
+          </Modal>
+        );
+      })()}
+
+      {/* Draw tool — delegated to PhotoDrawTool which already implements
+          4-size brush / 12-color palette / eraser / undo+redo. We get back
+          { paths } and store them as a non-interactive SVG overlay. */}
+      {showDrawTool && (() => {
+        let PhotoDrawTool = null;
+        try { PhotoDrawTool = require('./PhotoDrawTool').default; } catch {}
+        if (!PhotoDrawTool) return null;
+        return (
+          <Modal animationType="slide" onRequestClose={() => setShowDrawTool(false)}>
+            <PhotoDrawTool
+              imageUri={imageUri}
+              width={displayDims.w}
+              height={displayDims.h}
+              t={t}
+              onCancel={() => setShowDrawTool(false)}
+              onDone={(result) => {
+                if (result?.paths) {
+                  pushHistory();
+                  setDrawPaths(result.paths);
+                }
+                setShowDrawTool(false);
+              }}
+            />
+          </Modal>
+        );
+      })()}
     </Modal>
   );
 }

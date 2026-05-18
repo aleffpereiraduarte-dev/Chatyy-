@@ -50,10 +50,12 @@ import org.json.JSONArray
  *     the participant set changes we wipe + rebuild children. Cheap because
  *     the SurfaceViewRenderer instances are reused via the tilesByIdentity
  *     map — only the LayoutParams (row/columnSpec) are recomputed.
- *   - 1 remote   → 1 column, 1 row (the tile MATCH_PARENTs the grid).
- *   - 2 remotes  → 1 column, 2 rows (vertical split).
- *   - 3-4        → 2 columns, 2 rows.
- *   - 5+         → 3 columns, ceil(N/3) rows.
+ *   - 1 remote     → 1 column, 1 row (the tile MATCH_PARENTs the grid).
+ *   - 2 remotes    → 1 column, 2 rows (vertical split).
+ *   - 3-4          → 2 columns, 2 rows.
+ *   - 5-9          → 3 columns, ceil(N/3) rows.
+ *   - 10-32        → 2 columns, ceil(N/2) rows inside the outer ScrollView
+ *                   (WhatsApp 2025 parity, cap = [MAX_PARTICIPANTS]).
  *
  * Tile lifecycle:
  *   - addTileForParticipant(identity, name) creates a FrameLayout containing
@@ -85,6 +87,11 @@ class GroupCallActivity : ComponentActivity() {
     const val EXTRA_LK_TOKEN = "lk_token"
     const val EXTRA_PARTICIPANTS_JSON = "participants_json"
     const val EXTRA_HAS_VIDEO = "has_video"
+
+    /** Hard cap on participants per group call (WhatsApp 2025 parity).
+     *  Bumped from 9 (2026-05-17) — see /tmp/gap_calls_whatsapp.md P1#14.
+     *  Backend chat_call_invite enforces too. */
+    const val MAX_PARTICIPANTS = 32
   }
 
   // Intent state.
@@ -440,18 +447,20 @@ class GroupCallActivity : ComponentActivity() {
   /**
    * Recompute rows/columns + per-tile LayoutParams based on tile count.
    *
-   *   1 → 1 col / 1 row (fullscreen)
-   *   2 → 1 col / 2 rows (vertical split)
-   *   3-4 → 2 col / 2 row
-   *   5+ → 3 col / ceil(N/3)
+   *   1     → 1 col / 1 row (fullscreen)
+   *   2     → 1 col / 2 rows (vertical split)
+   *   3-4   → 2 col / 2 row
+   *   5-9   → 3 col / ceil(N/3)
+   *   10-32 → 2 col / ceil(N/2) — vertical scroll past viewport. Mirrors
+   *           iOS GroupCallView's LazyVGrid 10+ branch (WhatsApp parity).
    *
    * GridLayout's stretch behavior needs explicit columnSpec/rowSpec width=0
    * with weight 1f on each tile so they share the parent's pixels equally.
-   * The grid itself is scrollable via an outer ScrollView only when 5+
-   * tiles overflow vertical space (handled in buildRootView).
+   * The grid itself is scrollable via an outer ScrollView (buildRootView)
+   * so >9-tile layouts spill below the fold gracefully.
    */
   private fun relayoutGrid() {
-    val n = tilesByIdentity.size
+    val n = tilesByIdentity.size.coerceAtMost(MAX_PARTICIPANTS)
     if (n == 0) {
       grid.columnCount = 1
       grid.rowCount = 1
@@ -463,7 +472,9 @@ class GroupCallActivity : ComponentActivity() {
       n == 1 -> { cols = 1; rows = 1 }
       n == 2 -> { cols = 1; rows = 2 }
       n <= 4 -> { cols = 2; rows = 2 }
-      else   -> { cols = 3; rows = ((n + cols - 1) / cols) }
+      n <= 9 -> { cols = 3; rows = ((n + 2) / 3) }
+      // 10-32 — drop back to 2 cols so each tile stays large enough to read.
+      else   -> { cols = 2; rows = ((n + 1) / 2) }
     }
     grid.columnCount = cols
     grid.rowCount = rows
@@ -501,16 +512,28 @@ class GroupCallActivity : ComponentActivity() {
       )
     }
 
-    // Grid fills the screen.
-    grid = GridLayout(this).apply {
-      columnCount = 1
-      rowCount = 1
+    // Grid wrapped in a vertical ScrollView so 10-32 participant layouts
+    // (computed in relayoutGrid) can overflow viewport cleanly. The fill*
+    // attrs let the GridLayout still MATCH_PARENT vertically when there
+    // are <= 9 tiles, so single/dual/quad layouts still fill the screen.
+    val gridScroll = android.widget.ScrollView(this).apply {
+      isFillViewport = true
+      overScrollMode = View.OVER_SCROLL_NEVER
       layoutParams = FrameLayout.LayoutParams(
         ViewGroup.LayoutParams.MATCH_PARENT,
         ViewGroup.LayoutParams.MATCH_PARENT
       )
     }
-    root.addView(grid)
+    grid = GridLayout(this).apply {
+      columnCount = 1
+      rowCount = 1
+      layoutParams = ViewGroup.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.MATCH_PARENT
+      )
+    }
+    gridScroll.addView(grid)
+    root.addView(gridScroll)
 
     // Local PiP renderer in top-right (only when video).
     if (hasVideo) {

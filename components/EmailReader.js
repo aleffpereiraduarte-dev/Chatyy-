@@ -24,7 +24,7 @@ import AvatarCircle from './AvatarCircle';
 import AttachmentPreviewModal from './AttachmentPreviewModal';
 import AIEmailSummary from './AIEmailSummary';
 import AIPhishingBanner from './AIPhishingBanner';
-import { getAttachmentUrl, getExportUrl, blockSender, muteThread, sendEmail, translate as apiTranslate } from '../services/api';
+import { getAttachmentUrl, getExportUrl, blockSender, muteThread, sendEmail, translate as apiTranslate, aiDetectUnsubscribe, emailUnsubscribe } from '../services/api';
 import {
   IconStar, IconStarFilled, IconX, IconSparkles, IconReply, IconReplyAll,
   IconForward, IconTrash, IconPaperclip, IconFileText, IconBarChart,
@@ -218,6 +218,60 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
   // ─── AI Action Items modal state ───
   const [actionItems, setActionItems] = useState(null);
   const [actionItemsLoading, setActionItemsLoading] = useState(false);
+
+  // ─── AI Unsubscribe detection ───
+  // For newsletter-style emails, the backend extracts the List-Unsubscribe
+  // url/mailto via ai_detect_unsubscribe. The "Descadastrar" pill renders
+  // only when the AI flags the message as marketing AND a usable target was
+  // returned. Tapping it fires email_unsubscribe (one-click POST + mailto).
+  const [unsubscribeInfo, setUnsubscribeInfo] = useState(null); // {url, mailto, sender_name}
+  const [unsubscribeState, setUnsubscribeState] = useState('idle'); // idle | sending | done | error
+  const unsubscribeForUidRef = useRef(null);
+  useEffect(() => {
+    if (!email || !email.uid) return;
+    if (unsubscribeForUidRef.current === email.uid) return;
+    unsubscribeForUidRef.current = email.uid;
+    setUnsubscribeInfo(null);
+    setUnsubscribeState('idle');
+    if (folder === 'Sent' || folder === 'Drafts') return; // never on own mail
+    if (user?.email && email?.from?.toLowerCase() === user.email.toLowerCase()) return;
+    const bodyText = (email.body_text || email.body_html?.replace(/<[^>]+>/g, ' ') || email.body || '').slice(0, 4000);
+    if (bodyText.length < 30) return;
+    const headers = email.headers || email.raw_headers || '';
+    (async () => {
+      try {
+        const r = await aiDetectUnsubscribe(bodyText, typeof headers === 'string' ? headers : '');
+        if (unsubscribeForUidRef.current !== email.uid) return;
+        // Spec calls the field `is_marketing`; backend returns `is_newsletter`.
+        // Accept either so we don't drop on a rename later.
+        const isMarketing = !!(r?.data?.is_marketing || r?.data?.is_newsletter);
+        if (!isMarketing) return;
+        const info = {
+          url: r.data?.unsubscribe_url || '',
+          mailto: r.data?.unsubscribe_email || '',
+          sender_name: r.data?.sender_name || '',
+        };
+        if (!info.url && !info.mailto) return;
+        setUnsubscribeInfo(info);
+      } catch {}
+    })();
+  }, [email?.uid, folder, user?.email]);
+
+  const handleUnsubscribe = useCallback(async () => {
+    if (!unsubscribeInfo) return;
+    setUnsubscribeState('sending');
+    try {
+      const r = await emailUnsubscribe({
+        url: unsubscribeInfo.url || '',
+        mailto: unsubscribeInfo.mailto || '',
+        oneClick: !!unsubscribeInfo.url,
+        headers: '',
+      });
+      setUnsubscribeState(r?.success ? 'done' : 'error');
+    } catch {
+      setUnsubscribeState('error');
+    }
+  }, [unsubscribeInfo]);
 
   // ─── AI Smart Actions (boleto, tracking, meeting) ───
   const [smartActions, setSmartActions] = useState(null); // {boleto, tracking, meeting}
@@ -662,6 +716,40 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onD
       } : undefined}
     >
       <Animated.View style={{ opacity: fadeAnim, transform: [{ translateY: slideAnim }] }}>
+      {/* AI Newsletter unsubscribe — purple pill, only renders when the AI
+          flagged the email as marketing AND found a usable unsubscribe
+          target. Tapping fires email_unsubscribe and the pill rolls through
+          sending → done states. */}
+      {unsubscribeInfo && (
+        <View style={{ marginHorizontal: 16, marginTop: 12, flexDirection: 'row', alignItems: 'center', gap: 10,
+                       backgroundColor: '#f3e8ff', borderLeftWidth: 4, borderLeftColor: '#7c3aed',
+                       padding: 12, borderRadius: 8 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontWeight: '700', color: '#5b21b6', fontSize: 13 }}>
+              {t('reader.unsubscribeTitle') || 'Newsletter detectada'}
+            </Text>
+            {!!unsubscribeInfo.sender_name && (
+              <Text style={{ color: '#6b21a8', fontSize: 12, marginTop: 2 }}>{unsubscribeInfo.sender_name}</Text>
+            )}
+          </View>
+          <TouchableOpacity
+            onPress={handleUnsubscribe}
+            disabled={unsubscribeState === 'sending' || unsubscribeState === 'done'}
+            style={{ backgroundColor: unsubscribeState === 'done' ? '#a78bfa' : '#7c3aed',
+                     paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8,
+                     opacity: unsubscribeState === 'sending' ? 0.6 : 1 }}
+            accessibilityLabel={t('reader.unsubscribe') || 'Descadastrar'}
+            accessibilityRole="button"
+          >
+            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+              {unsubscribeState === 'sending' ? (t('reader.unsubscribing') || 'Enviando...')
+                : unsubscribeState === 'done' ? (t('reader.unsubscribed') || 'Solicitado ✓')
+                : unsubscribeState === 'error' ? (t('reader.unsubscribeError') || 'Tentar novamente')
+                : (t('reader.unsubscribe') || 'Descadastrar')}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
       {/* AI Smart Actions Banner: boleto, tracking, meeting */}
       {smartActions && (
         <View style={{ marginHorizontal: 16, marginTop: 12, gap: 8 }}>

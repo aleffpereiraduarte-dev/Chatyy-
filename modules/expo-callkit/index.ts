@@ -45,6 +45,11 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
   lkDisconnect(): Promise<void>;
   lkSetMicEnabled(enabled: boolean): Promise<void>;
   lkSetCameraEnabled(enabled: boolean): Promise<void>;
+  // [host-mute, 2026-05-17] Host-issued mute of a remote participant. See
+  // `ExpoCallKitModule.muteParticipant` on both platforms — the actual HTTP
+  // path lives in services/api.js#chatCallMuteParticipant; this native shim
+  // is a forward-compat hook for when NativeCallRoom v2 owns the LK Room.
+  muteParticipant(roomName: string, identity: string): Promise<boolean>;
   // [#992 Stage 3] Launches the full-native call screen (CallActivity on
   // Android, CallViewController hosting SwiftUI CallView on iOS). Replaces
   // the RN /call.js screen for outgoing/incoming calls.
@@ -327,6 +332,21 @@ export async function lkSetCameraEnabled(enabled: boolean): Promise<void> {
   const m = getModule();
   if (!m) return;
   try { await m.lkSetCameraEnabled(enabled); } catch {}
+}
+
+/** Host-issued mute of a remote participant. The native module is a thin
+ *  shim today (the actual mute travels HTTP → WS → target client because
+ *  NativeCallRoom is a stub on both platforms). Always returns true so
+ *  callers don't branch on the no-op case; the HTTP layer surfaces the real
+ *  outcome via `chatCallMuteParticipant`. */
+export async function muteParticipant(roomName: string, identity: string): Promise<boolean> {
+  const m = getModule();
+  if (!m) return false;
+  try {
+    return !!(await m.muteParticipant(roomName, identity));
+  } catch {
+    return false;
+  }
 }
 
 /** Launches the full-native call screen. Replaces the RN /call.js screen for

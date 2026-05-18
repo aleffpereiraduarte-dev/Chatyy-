@@ -7,7 +7,9 @@ import { IconX, IconChevronLeft, IconChevronRight, IconDownload } from './Icons'
 
 // SVG não é renderizado de forma confiável por <Image> remoto em iOS/Android,
 // então não inclui aqui — caímos em "outro arquivo" que abre via download.
-const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
+// HEIC/HEIF added: iOS captures natively, server transcodes thumbs, RN 0.83+
+// decodes originals.
+const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'heic', 'heif'];
 const PDF_EXTS = ['pdf'];
 
 function getExt(filename) {

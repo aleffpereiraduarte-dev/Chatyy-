@@ -298,8 +298,174 @@ class IncomingCallActivity : AppCompatActivity() {
     buttonsRow.addView(acceptContainer)
 
     container.addView(buttonsRow)
+
+    // [decline-with-message, 2026-05-17] Secondary "Recusar com mensagem"
+    // button below the main accept/decline row. Tapping it opens a bottom
+    // sheet with 4 preset replies + a custom field. Mirrors WhatsApp's
+    // incoming-call quick-reply. The actual send happens in
+    // onDeclineWithMessage which posts to chat_call_decline_with_message
+    // (so the caller sees the reason as a chat message) and then ends
+    // the call with reason='declined' just like a plain decline.
+    val quickReplyContainer = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER
+      layoutParams = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT,
+        LinearLayout.LayoutParams.WRAP_CONTENT
+      ).apply { topMargin = dpToPx(20) }
+    }
+    val quickReplyBtn = TextView(this).apply {
+      text = "Recusar com mensagem"
+      setTextColor(Color.parseColor("#90a4ae"))
+      textSize = 14f
+      gravity = Gravity.CENTER
+      setPadding(dpToPx(16), dpToPx(10), dpToPx(16), dpToPx(10))
+      val bg = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = dpToPx(24).toFloat()
+        setStroke(dpToPx(1), Color.parseColor("#4a5662"))
+      }
+      background = bg
+      isClickable = true
+      isFocusable = true
+      setOnClickListener { showQuickReplySheet() }
+    }
+    quickReplyContainer.addView(quickReplyBtn)
+    container.addView(quickReplyContainer)
+
     root.addView(container)
     setContentView(root)
+  }
+
+  /**
+   * Bottom sheet with 4 preset replies + a custom input. Each preset on tap
+   * posts the message into the DM via chat_call_decline_with_message AND
+   * closes the call. The custom row reveals an EditText + Send button.
+   */
+  private fun showQuickReplySheet() {
+    val presets = listOf(
+      "Te ligo já",
+      "Estou ocupado",
+      "Não posso falar agora",
+      "Pode mandar mensagem?",
+    )
+    val builder = androidx.appcompat.app.AlertDialog.Builder(this, androidx.appcompat.R.style.Theme_AppCompat_Dialog_Alert)
+    val sheet = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      setPadding(dpToPx(20), dpToPx(16), dpToPx(20), dpToPx(20))
+    }
+    val title = TextView(this).apply {
+      text = "Responder com mensagem"
+      setTextColor(Color.parseColor("#212121"))
+      textSize = 16f
+      setPadding(0, 0, 0, dpToPx(12))
+    }
+    sheet.addView(title)
+    val dialog = builder.setView(sheet).setCancelable(true).create()
+    presets.forEach { p ->
+      val row = TextView(this).apply {
+        text = p
+        textSize = 15f
+        setTextColor(Color.parseColor("#1976d2"))
+        setPadding(dpToPx(8), dpToPx(14), dpToPx(8), dpToPx(14))
+        isClickable = true
+        isFocusable = true
+        setOnClickListener {
+          dialog.dismiss()
+          onDeclineWithMessage(p)
+        }
+      }
+      sheet.addView(row)
+    }
+    // Custom row — inline EditText + Send.
+    val customRow = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER_VERTICAL
+      setPadding(0, dpToPx(8), 0, 0)
+    }
+    val input = android.widget.EditText(this).apply {
+      hint = "Mensagem personalizada"
+      textSize = 15f
+      setTextColor(Color.parseColor("#212121"))
+      setHintTextColor(Color.parseColor("#9e9e9e"))
+      layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+      maxLines = 2
+      filters = arrayOf(android.text.InputFilter.LengthFilter(240))
+    }
+    val sendBtn = TextView(this).apply {
+      text = "Enviar"
+      setTextColor(Color.parseColor("#1976d2"))
+      textSize = 15f
+      setPadding(dpToPx(12), dpToPx(10), dpToPx(12), dpToPx(10))
+      isClickable = true
+      isFocusable = true
+      setOnClickListener {
+        val txt = input.text?.toString()?.trim().orEmpty()
+        if (txt.isNotEmpty()) {
+          dialog.dismiss()
+          onDeclineWithMessage(txt)
+        }
+      }
+    }
+    customRow.addView(input)
+    customRow.addView(sendBtn)
+    sheet.addView(customRow)
+    dialog.show()
+  }
+
+  /**
+   * Decline + drop a chat message. POSTs to chat_call_decline_with_message
+   * on the backend which inserts the message into the conversation and
+   * fans the standard call_end event to the caller. We do NOT block the
+   * dismiss on the HTTP roundtrip — the user expects the screen to close
+   * instantly; the backend handles delivery asynchronously.
+   */
+  private fun onDeclineWithMessage(message: String) {
+    // Same UI side-effects as onDecline: stop ring + service + finish.
+    stopRinging()
+    ExpoCallKitModule.emitCallEnded(callId ?: "")
+    CallNotificationService.cancelNotification(this, callId ?: "")
+    stopRingingService()
+
+    // Best-effort HTTP send. We don't have the auth token in this Activity
+    // (it lives in SharedPreferences via persistAuthForNativeCall) — read
+    // it the same way NativeCallTokenFetcher does in the iOS path.
+    val ctx = applicationContext
+    val cid = callId ?: ""
+    val conv = conversationId ?: ""
+    val target = callerEmail ?: ""
+    Thread {
+      try {
+        val sp = ctx.getSharedPreferences("expo_callkit_prefs", Context.MODE_PRIVATE)
+        val authToken = sp.getString("auth_token", "") ?: ""
+        val apiBase = sp.getString("api_base", "") ?: ""
+        if (authToken.isEmpty() || apiBase.isEmpty()) return@Thread
+        val base = if (apiBase.endsWith("/")) apiBase.dropLast(1) else apiBase
+        val url = java.net.URL("$base/api/email.php?action=chat_call_decline_with_message")
+        val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+          requestMethod = "POST"
+          setRequestProperty("Authorization", "Bearer $authToken")
+          setRequestProperty("Content-Type", "application/json")
+          setRequestProperty("Accept", "application/json")
+          doOutput = true
+          connectTimeout = 4000
+          readTimeout = 6000
+        }
+        val body = org.json.JSONObject(mapOf(
+          "action" to "chat_call_decline_with_message",
+          "call_id" to cid,
+          "conversation_id" to conv,
+          "to_email" to target,
+          "message" to message.take(240),
+        )).toString()
+        conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+        Log.d("IncomingCallActivity", "decline-with-msg HTTP ${conn.responseCode}")
+        try { conn.inputStream.close() } catch (_: Throwable) {}
+      } catch (t: Throwable) {
+        Log.w("IncomingCallActivity", "decline-with-msg failed: ${t.message}")
+      }
+    }.start()
+    finish()
   }
 
   private fun startRinging() {

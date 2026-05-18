@@ -38,6 +38,12 @@ try { _Haptics = require('expo-haptics'); } catch {}
 let _cacheMedia = null;
 try { _cacheMedia = require('../../services/mediaCache').cacheMedia; } catch {}
 
+// WS singleton — used to surface real-time reaction toasts on the author's
+// own story without polling. Safe to require here: every viewer surface
+// already has the WS connected via AuthContext; we only piggy-back on it.
+let _mailWs = null;
+try { _mailWs = require('../../services/websocket').default; } catch {}
+
 // Resolve any media-ish URL (relative path, R2, signed URL) to a fully-qualified
 // URL the platform can fetch. Mirrors the inline logic in renderMedia so the
 // pre-cache pass and poster lookup don't drift out of sync.
@@ -262,6 +268,10 @@ export default function StoryViewer({
   isSelf = false,
   onDelete,
   onAddMore,
+  // Repost own status — fires with (story) so the caller can route to the
+  // composer pre-loaded with the same media. Optional; if omitted, the
+  // Repost button is not rendered.
+  onRepost,
   onReply,
   onReact,
   // New (Wave 4) — optional viewers sheet integration. When provided, the
@@ -298,6 +308,11 @@ export default function StoryViewer({
   const [replyFocused, setReplyFocused] = useState(false);
   const [reactPop, setReactPop] = useState(null);
   const [emojiPulse, setEmojiPulse] = useState(null); // emoji currently scaling (UI feedback)
+  // Realtime reaction toast — shown on the OWNER side when a viewer reacts.
+  // Backed by the WS `status_react` event (chat.php fires it via /notify).
+  // Auto-dismisses after 2.6s. Shape: { name, emoji } or null.
+  const [reactToast, setReactToast] = useState(null);
+  const reactToastAnim = useRef(new Animated.Value(0)).current;
   // Heart burst — long-press on ❤️ spawns 5 hearts that float up & fade.
   // Each entry: { id, emoji, dx (start horizontal offset), size, anim }.
   // Anim 0 → 1 over 1.2s: translateY -180, opacity 1 → 0, scale 0.6 → 1.
@@ -412,6 +427,42 @@ export default function StoryViewer({
     });
     return () => { try { sub.remove(); } catch {} };
   }, [visible]);
+
+  // Realtime reaction toast (owner side). When a viewer reacts to one of
+  // OUR stories the backend fires `status_react` on our personal channel;
+  // we surface a small "X reacted with EMOJI" pill that fades out after
+  // ~2.6s. Skipped when we're viewing someone else's story (isSelf=false).
+  // The "removed" flag means the viewer un-reacted — we don't show a toast
+  // for that. Multi-reaction in <2s coalesces by replacing the visible pill.
+  useEffect(() => {
+    if (!visible || !isSelf || !_mailWs?.on) return undefined;
+    let dismissTimer = null;
+    const sub = _mailWs.on('status_react', (data) => {
+      try {
+        const d = data || {};
+        if (d.removed || !d.emoji) return;
+        // Match against the currently visible story id so a reaction on
+        // a different (older) story doesn't surface mid-view. Owner sees
+        // it later in viewers sheet anyway.
+        const curId = stories?.[idx]?.id;
+        if (curId && d.status_id && Number(d.status_id) !== Number(curId)) return;
+        const name = d.reactor_name || (d.reactor_email ? String(d.reactor_email).split('@')[0] : '');
+        setReactToast({ name, emoji: String(d.emoji) });
+        reactToastAnim.setValue(0);
+        Animated.sequence([
+          Animated.timing(reactToastAnim, { toValue: 1, duration: 220, useNativeDriver: true }),
+          Animated.delay(2200),
+          Animated.timing(reactToastAnim, { toValue: 0, duration: 240, useNativeDriver: true }),
+        ]).start(() => setReactToast(null));
+        if (dismissTimer) clearTimeout(dismissTimer);
+        dismissTimer = setTimeout(() => setReactToast(null), 2800);
+      } catch {}
+    });
+    return () => {
+      try { sub?.(); } catch {}
+      if (dismissTimer) clearTimeout(dismissTimer);
+    };
+  }, [visible, isSelf, idx, stories, reactToastAnim]);
 
   const keyboardOffset = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -1267,6 +1318,23 @@ export default function StoryViewer({
                   <IconPlus size={18} color="#fff" />
                 </TouchableOpacity>
               ) : null}
+              {onRepost ? (
+                // Repost own status — closes the viewer, then forwards the
+                // current story to the caller so they can open the composer
+                // with the same media. Mirrors Instagram's "Compartilhar de
+                // novo" flow without the Highlights side effect.
+                <TouchableOpacity
+                  onPress={() => {
+                    const item = cur;
+                    onClose?.();
+                    setTimeout(() => { try { onRepost?.(item); } catch {} }, 150);
+                  }}
+                  style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(124,58,237,0.55)', alignItems: 'center', justifyContent: 'center' }}
+                  accessibilityLabel={t?.('status.repostAction') || 'Repostar'}
+                >
+                  <IconArrowRight size={18} color="#fff" />
+                </TouchableOpacity>
+              ) : null}
             </>
           )}
           <TouchableOpacity
@@ -1700,6 +1768,43 @@ export default function StoryViewer({
           }}>
             <Text style={{ fontSize: 72 }}>{reactPop}</Text>
           </View>
+        )}
+
+        {/* Realtime reaction toast (owner side) — slides down from the top
+            bar when a viewer reacts to one of OUR stories. Backed by the
+            WS `status_react` event; no polling. Auto-dismisses after ~2.6s
+            via the inline animation chain in the subscription effect. */}
+        {reactToast && (
+          <Animated.View
+            pointerEvents="none"
+            style={{
+              position: 'absolute', top: Platform.OS === 'ios' ? 110 : 92,
+              left: 0, right: 0, alignItems: 'center', zIndex: 30,
+              opacity: reactToastAnim,
+              transform: [{
+                translateY: reactToastAnim.interpolate({
+                  inputRange: [0, 1], outputRange: [-12, 0],
+                }),
+              }],
+            }}
+          >
+            <View style={{
+              flexDirection: 'row', alignItems: 'center', gap: 8,
+              backgroundColor: 'rgba(20,20,28,0.92)',
+              borderRadius: 22, paddingHorizontal: 14, paddingVertical: 9,
+              borderWidth: 1, borderColor: 'rgba(124,58,237,0.55)',
+              shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 8,
+              shadowOffset: { width: 0, height: 4 }, elevation: 6,
+              maxWidth: '85%',
+            }}>
+              <Text style={{ fontSize: 20 }}>{reactToast.emoji}</Text>
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }} numberOfLines={1}>
+                {reactToast.name
+                  ? `${reactToast.name} ${t?.('status.reactedWith') || 'reagiu com'}`
+                  : (t?.('status.someoneReacted') || 'Alguém reagiu')}
+              </Text>
+            </View>
+          </Animated.View>
         )}
 
         {/* Heart burst — 5 hearts spawned by long-press on ❤️ in the reaction

@@ -3,7 +3,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform,
   Modal, TextInput, Image, Animated, Dimensions, KeyboardAvoidingView,
   ActivityIndicator, PanResponder, Pressable, Alert, StatusBar,
-  Linking, RefreshControl,
+  Linking, RefreshControl, FlatList,
 } from 'react-native';
 import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
@@ -1059,6 +1059,16 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   // we can publish all of them as one story sequence via status_carousel_publish.
   const [carouselPhotos, setCarouselPhotos] = useState([]); // [{ uri, name, type }]
   const [statusPrivacy, setStatusPrivacy] = useState('all'); // 'all' | 'contacts' | 'close_friends' | 'except'
+  // Author-side hide list — populated by the "Ocultar de…" sheet when the
+  // user picks privacy=except. Travels to the backend as `except_emails` so
+  // status_list filters out these viewers. Reset when the composer closes.
+  const [exceptEmails, setExceptEmails] = useState([]); // [email lowercase]
+  const [exceptPickerVisible, setExceptPickerVisible] = useState(false);
+  // Notify-on-stories subscriptions — Set of target emails the current
+  // user opted into push pings for. Loaded once on mount via
+  // status_notify_list and mutated optimistically when the user taps the
+  // "Notificar / Não notificar" pill in the preview action sheet.
+  const [notifySubs, setNotifySubs] = useState(() => new Set());
   // Cross-post to Feed — when true the publish flow passes cross_post_feed=true
   // so the backend duplicates the media into the public Feed. Only meaningful
   // for image/video status; the toggle is hidden for text/poll modes.
@@ -1303,6 +1313,24 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     if (hookLoading === false && loading) setLoading(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hookMine, hookOthers, hookLoading, loading, archivedStatusIds]);
+
+  // Load the "Notify me about X's stories" subscription set once on mount.
+  // The set drives the toggle pill rendered in the long-press preview
+  // action sheet (alongside Silenciar / Reportar / Compartilhar). Cheap
+  // single-row-per-pair table on the backend; cached client-side as a Set
+  // for O(1) lookup. Failure is silent — the pill defaults to "off".
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const r = await api.statusNotifyList?.();
+        if (!mounted) return;
+        const arr = Array.isArray(r?.data?.targets) ? r.data.targets : [];
+        setNotifySubs(new Set(arr.map(e => String(e || '').toLowerCase())));
+      } catch {}
+    })();
+    return () => { mounted = false; };
+  }, []);
 
   // Pull-to-refresh handler — re-runs the hook's refetch and clears the
   // spinner once the network round-trip resolves (or fails silently).
@@ -1846,6 +1874,9 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       font_style: textFontStyle !== 'normal' ? textFontStyle : undefined,
       text_animation: textAnimation !== 'none' ? textAnimation : undefined,
       privacy: statusPrivacy !== 'all' ? statusPrivacy : undefined,
+      // Author-side hide list — forwarded only when privacy === 'except'.
+      // Backend persists it under meta.except_emails and filters per viewer.
+      except_emails: (statusPrivacy === 'except' && exceptEmails.length > 0) ? exceptEmails : undefined,
       filter: photoFilter !== 'normal' ? photoFilter : undefined,
       stickers: stickers.length > 0 ? stickers.map(s => ({
         ...(s.emoji ? { emoji: s.emoji } : {}),
@@ -1908,7 +1939,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     } finally {
       setPublishing(false);
     }
-  }, [textContent, textBgColor, creatorMode, photoFile, publishing, loadStatuses, selectedMusic, textFontStyle, statusPrivacy, crossPostFeed]);
+  }, [textContent, textBgColor, creatorMode, photoFile, publishing, loadStatuses, selectedMusic, textFontStyle, statusPrivacy, crossPostFeed, exceptEmails]);
 
   // Multi-photo carousel publisher — uploads each picked image (up to 10)
   // in parallel, then calls status_carousel_publish to register them as one
@@ -2640,6 +2671,71 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                   {t?.('status.shareAction') || 'Compartilhar'}
                 </Text>
               </Pressable>
+              {/* Notify-for-stories pill — opt-in to FCM pings when this
+                  contact posts a new story. Active state paints the chip
+                  purple so the user reads at a glance whether they're
+                  already subscribed. Optimistic mutate the Set, then fire
+                  the toggle; revert + alert on failure. */}
+              {(() => {
+                const targetEm = String(previewGroup.ownerEmail || '').toLowerCase();
+                const targetNm = previewGroup.ownerName;
+                const active = notifySubs.has(targetEm);
+                return (
+                  <Pressable
+                    onPress={async () => {
+                      setPreviewGroup(null);
+                      // Optimistic flip + fire-and-forget API call. If the
+                      // backend rejects, we restore the prior state and
+                      // surface an alert. The Set is cloned so React picks
+                      // up the change in StrictMode.
+                      const next = !active;
+                      setNotifySubs(prev => {
+                        const s = new Set(prev);
+                        if (next) s.add(targetEm); else s.delete(targetEm);
+                        return s;
+                      });
+                      try {
+                        const r = await api.statusNotifyToggle?.(targetEm, next);
+                        if (r && r.success === false) throw new Error(r?.message || 'toggle failed');
+                        try { Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Success); } catch {}
+                        try {
+                          Alert.alert?.(
+                            next ? (t?.('status.notifyOn') || 'Notificar sobre stories de') + ' ' + targetNm
+                                 : (t?.('status.notifyOff') || 'Não notificar sobre stories de') + ' ' + targetNm,
+                            next ? (t?.('status.notifyEnabled') || 'Você será avisado quando postar novos stories.')
+                                 : (t?.('status.notifyDisabled') || 'Notificações desativadas.'),
+                          );
+                        } catch {}
+                      } catch (e) {
+                        // Revert on failure
+                        setNotifySubs(prev => {
+                          const s = new Set(prev);
+                          if (next) s.delete(targetEm); else s.add(targetEm);
+                          return s;
+                        });
+                        try { Alert.alert?.(t?.('common.error') || 'Erro', e?.message || ''); } catch {}
+                      }
+                    }}
+                    style={({ pressed }) => ({
+                      paddingHorizontal: 16, paddingVertical: 11,
+                      backgroundColor: active
+                        ? (pressed ? 'rgba(124,58,237,0.85)' : 'rgba(124,58,237,0.65)')
+                        : (pressed ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.15)'),
+                      borderRadius: 22, flexDirection: 'row', alignItems: 'center', gap: 7,
+                    })}
+                  >
+                    <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                      <Path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+                      <Path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                    </Svg>
+                    <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>
+                      {active
+                        ? (t?.('status.notifyingShort') || 'Notificando')
+                        : (t?.('status.notifyShort') || 'Notificar')}
+                    </Text>
+                  </Pressable>
+                );
+              })()}
             </View>
           )}
         </Pressable>
@@ -3626,7 +3722,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
               styles.creatorHeader,
               { paddingTop: Platform.OS === 'android' ? insets.top + 8 : (insets.top || 54) },
             ]}>
-              <TouchableOpacity onPress={() => { setCreatorVisible(false); setMusicPickerVisible(false); setPhotoFilter('normal'); setStickers([]); setShowStickerPicker(false); setTextOverlays([]); setShowAddTextInput(false); setDrawMode(false); setDrawPaths([]); resetHistory(); }} style={styles.creatorCloseBtn}>
+              <TouchableOpacity onPress={() => { setCreatorVisible(false); setMusicPickerVisible(false); setPhotoFilter('normal'); setStickers([]); setShowStickerPicker(false); setTextOverlays([]); setShowAddTextInput(false); setDrawMode(false); setDrawPaths([]); resetHistory(); setExceptEmails([]); setExceptPickerVisible(false); }} style={styles.creatorCloseBtn}>
                 <IconX size={26} color="#fff" />
               </TouchableOpacity>
 
@@ -3680,7 +3776,17 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                 onPress={() => {
                   const privacyOptions = ['all', 'contacts', 'close_friends', 'except'];
                   const idx = privacyOptions.indexOf(statusPrivacy);
-                  setStatusPrivacy(privacyOptions[(idx + 1) % privacyOptions.length]);
+                  const nextPrivacy = privacyOptions[(idx + 1) % privacyOptions.length];
+                  setStatusPrivacy(nextPrivacy);
+                  // When the user lands on "except" via the cycle, surface the
+                  // picker right away so they don't have to discover a second
+                  // tap. Skipped on the same-mode tap.
+                  if (nextPrivacy === 'except') setExceptPickerVisible(true);
+                }}
+                onLongPress={() => {
+                  // Long-press the chip while on "except" to re-open the
+                  // picker without cycling the whole audience wheel.
+                  if (statusPrivacy === 'except') setExceptPickerVisible(true);
                 }}
                 style={styles.privacyToggleBtn}
                 activeOpacity={0.7}
@@ -3698,7 +3804,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                   {statusPrivacy === 'all' ? (t?.('status.privacyAll') || 'All')
                     : statusPrivacy === 'contacts' ? (t?.('status.privacyContacts') || 'Contacts')
                     : statusPrivacy === 'close_friends' ? (t?.('status.closeFriends') || 'Close friends')
-                    : (t?.('status.privacyExcept') || 'Except')}
+                    : (t?.('status.privacyExcept') || 'Except') + (exceptEmails.length > 0 ? ` (${exceptEmails.length})` : '')}
                 </Text>
               </TouchableOpacity>
 
@@ -4215,6 +4321,109 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       {Platform.OS !== 'web' && nativeAudioSrc && (
         <NativeAudioPlayer key={nativeAudioSrc} url={nativeAudioSrc} />
       )}
+
+      {/* "Hide from…" multi-select sheet — appears when the user picks
+          privacy=except. Lists the contact rows from the home strip plus
+          any extra contacts we know about. Tap to toggle inclusion. The
+          chosen emails travel to status_create as `except_emails` and are
+          stored in meta so status_list filters them out per viewer. */}
+      <Modal
+        visible={exceptPickerVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setExceptPickerVisible(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}>
+          <View style={{
+            backgroundColor: isDark ? '#1A0F2E' : '#fff',
+            borderTopLeftRadius: 22, borderTopRightRadius: 22,
+            paddingHorizontal: 18, paddingTop: 14, paddingBottom: 28,
+            maxHeight: '72%',
+          }}>
+            <View style={{
+              alignSelf: 'center', width: 38, height: 4, borderRadius: 2,
+              backgroundColor: isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)',
+              marginBottom: 14,
+            }} />
+            <Text style={{ color: isDark ? '#fff' : '#111', fontSize: 17, fontWeight: '800', marginBottom: 4 }}>
+              {t?.('status.hideFromListTitle') || 'Ocultar este status de:'}
+            </Text>
+            <Text style={{ color: isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.55)', fontSize: 12, marginBottom: 12 }}>
+              {(contactStatuses?.length || 0) === 0
+                ? (t?.('status.hideFromListEmpty') || 'Toque em contatos para ocultar deles.')
+                : `${exceptEmails.length} ${(t?.('status.selectedCount') || 'selecionado(s)')}`}
+            </Text>
+            <FlatList
+              data={contactStatuses || []}
+              keyExtractor={(g) => String(g.ownerEmail || g.email || Math.random())}
+              renderItem={({ item }) => {
+                const em = String(item.ownerEmail || item.email || '').toLowerCase();
+                const nm = item.ownerName || item.name || em.split('@')[0] || em;
+                const sel = exceptEmails.includes(em);
+                return (
+                  <TouchableOpacity
+                    onPress={() => {
+                      setExceptEmails(prev => prev.includes(em)
+                        ? prev.filter(e => e !== em)
+                        : [...prev, em]);
+                    }}
+                    style={{
+                      flexDirection: 'row', alignItems: 'center', gap: 12,
+                      paddingVertical: 10,
+                    }}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: sel }}
+                  >
+                    <View style={{
+                      width: 22, height: 22, borderRadius: 11,
+                      borderWidth: 2,
+                      borderColor: sel ? '#FF6B6B' : (isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.3)'),
+                      backgroundColor: sel ? '#FF6B6B' : 'transparent',
+                      alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      {sel ? <Text style={{ color: '#fff', fontWeight: '900', fontSize: 14 }}>{'✓'}</Text> : null}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: isDark ? '#fff' : '#111', fontSize: 15, fontWeight: '600' }} numberOfLines={1}>
+                        {nm}
+                      </Text>
+                      <Text style={{ color: isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.5)', fontSize: 12 }} numberOfLines={1}>
+                        {em}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              }}
+            />
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+              <TouchableOpacity
+                onPress={() => { setExceptEmails([]); }}
+                style={{
+                  flex: 1, paddingVertical: 12, borderRadius: 22,
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)',
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ color: isDark ? '#fff' : '#111', fontWeight: '700' }}>
+                  {t?.('common.clear') || 'Limpar'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setExceptPickerVisible(false)}
+                style={{
+                  flex: 1, paddingVertical: 12, borderRadius: 22,
+                  backgroundColor: '#7C3AED',
+                  alignItems: 'center',
+                }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '800' }}>
+                  {t?.('common.done') || 'Pronto'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

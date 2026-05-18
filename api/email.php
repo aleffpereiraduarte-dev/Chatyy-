@@ -1443,7 +1443,7 @@ try {
                        'Maildir/.Archive/cur', 'Maildir/.Archive/new', 'Maildir/.Archive/tmp'] as $dir) {
                 @mkdir("{$home}/{$dir}", 0700, true);
             }
-            exec("chown -R vmail:www-data " . escapeshellarg($home));
+            exec("sudo /usr/local/bin/chatyy-fix-mailbox " . escapeshellarg($username . "@" . $domain));
             exec("chmod 710 " . escapeshellarg($home));
             exec("chmod 770 " . escapeshellarg($home . "/profile") . " 2>/dev/null");
             // push_tokens/ MUST be www-data writable because register_push_token
@@ -3543,7 +3543,7 @@ try {
                        'Maildir/.Archive/cur', 'Maildir/.Archive/new', 'Maildir/.Archive/tmp'] as $d) {
                 @mkdir("{$home}/{$d}", 0700, true);
             }
-            @exec("chown -R vmail:www-data " . escapeshellarg($home));
+            @exec("sudo /usr/local/bin/chatyy-fix-mailbox " . escapeshellarg($username . "@" . $domain));
             @exec("chmod 710 " . escapeshellarg($home));
             // push_tokens/ www-data writable (see signup case for rationale)
             @mkdir($home . "/push_tokens", 0755, true);
@@ -3564,7 +3564,7 @@ try {
                 'ip'              => $_SERVER['REMOTE_ADDR'] ?? '',
             ];
             @file_put_contents("{$profileDir}/data.json", json_encode($profile, JSON_PRETTY_PRINT), LOCK_EX);
-            @exec("chown -R vmail:www-data " . escapeshellarg($profileDir));
+            @exec("sudo /usr/local/bin/chatyy-fix-mailbox " . escapeshellarg($username . "@" . $domain));
 
             // Persist recovery password so phone_login_verify can issue
             // tokens later without prompting for a password.
@@ -3798,7 +3798,7 @@ try {
                        'Maildir/.Archive/cur', 'Maildir/.Archive/new', 'Maildir/.Archive/tmp'] as $d) {
                 @mkdir("{$home}/{$d}", 0700, true);
             }
-            @exec("chown -R vmail:www-data " . escapeshellarg($home));
+            @exec("sudo /usr/local/bin/chatyy-fix-mailbox " . escapeshellarg($username . "@" . $domain));
             @exec("chmod 710 " . escapeshellarg($home));
 
             // Profile — phone_required:false marks this as username-only.
@@ -3816,7 +3816,7 @@ try {
                 'ip'              => $_SERVER['REMOTE_ADDR'] ?? '',
             ];
             @file_put_contents("{$profileDir}/data.json", json_encode($profile, JSON_PRETTY_PRINT), LOCK_EX);
-            @exec("chown -R vmail:www-data " . escapeshellarg($profileDir));
+            @exec("sudo /usr/local/bin/chatyy-fix-mailbox " . escapeshellarg($username . "@" . $domain));
 
             // Persist recovery so future password rotations / Face ID flows
             // have a recovery hook (mirrors phone_signup behaviour).
@@ -5605,7 +5605,7 @@ try {
             if (!is_dir($profileDir)) {
                 exec("sudo mkdir -p " . escapeshellarg($profileDir));
                 exec("sudo chmod 770 " . escapeshellarg($profileDir));
-                exec("sudo chown vmail:www-data " . escapeshellarg($profileDir));
+                exec("sudo /usr/local/bin/chatyy-fix-mailbox " . escapeshellarg($username . "@" . $domain));
             }
             // Ensure file is writable
             if (file_exists($profileFile) && !is_writable($profileFile)) {
@@ -5661,7 +5661,7 @@ try {
             if (!is_dir($profileDir)) {
                 exec("sudo mkdir -p " . escapeshellarg($profileDir));
                 exec("sudo chmod 770 " . escapeshellarg($profileDir));
-                exec("sudo chown vmail:www-data " . escapeshellarg($profileDir));
+                exec("sudo /usr/local/bin/chatyy-fix-mailbox " . escapeshellarg($username . "@" . $domain));
             }
             // Ensure file is writable
             if (file_exists($settingsFile) && !is_writable($settingsFile)) {
@@ -6570,7 +6570,23 @@ try {
                 // users. 500 is the comfortable ceiling for a single-host
                 // broadcast at current infra; increase when SFU scales out.
                 $MAX_VIEWERS = 500;
-                $curStmt = $pg->prepare("SELECT viewer_count, status FROM chat_live_sessions WHERE id = :id");
+                // Block banned viewers BEFORE the viewer_count bump so we
+                // don't pad the count with kicked users who'll be hung up
+                // on the client a moment later. chat_live_bans is created
+                // lazily by chat.php's migration block; if the table doesn't
+                // exist yet we silently skip the check rather than 500.
+                try {
+                    $banStmt = $pg->prepare("SELECT 1 FROM chat_live_bans WHERE live_session_id = :s AND LOWER(banned_email) = LOWER(:e) LIMIT 1");
+                    $banStmt->execute([':s' => $sessionId, ':e' => $auth['email']]);
+                    if ($banStmt->fetchColumn()) {
+                        jsonResponse(false, ['code' => 'banned'], 'Você foi removido deste live', 403);
+                    }
+                } catch (Throwable $e) { /* table not created yet — skip */ }
+
+                // Pull viewer_count + status + new moderation columns in a
+                // single SELECT so live_join is still one round-trip even
+                // with pinned-comment + slow-mode surfaced in the response.
+                $curStmt = $pg->prepare("SELECT viewer_count, status, pinned_comment, pinned_comment_by, slow_mode_seconds FROM chat_live_sessions WHERE id = :id");
                 $curStmt->execute([':id' => $sessionId]);
                 $row = $curStmt->fetch(PDO::FETCH_ASSOC);
                 if (!$row || ($row['status'] ?? '') !== 'live') {
@@ -6583,7 +6599,16 @@ try {
                    ->execute([':id' => $sessionId, ':cap' => $MAX_VIEWERS]);
                 $stmt = $pg->prepare("SELECT viewer_count FROM chat_live_sessions WHERE id = :id");
                 $stmt->execute([':id' => $sessionId]);
-                jsonResponse(true, ['viewer_count' => (int)$stmt->fetchColumn(), 'session_id' => $sessionId]);
+                $resp = [
+                    'viewer_count'      => (int)$stmt->fetchColumn(),
+                    'session_id'        => $sessionId,
+                    'slow_mode_seconds' => (int)($row['slow_mode_seconds'] ?? 0),
+                ];
+                if (!empty($row['pinned_comment'])) {
+                    $resp['pinned_comment']    = (string)$row['pinned_comment'];
+                    $resp['pinned_comment_by'] = (string)($row['pinned_comment_by'] ?? '');
+                }
+                jsonResponse(true, $resp);
             } catch (Throwable $e) { jsonResponse(true, ['viewer_count' => 0]); }
             break;
         }
@@ -6608,6 +6633,45 @@ try {
             $sessionId = trim((string)($input['session_id'] ?? ''));
             $content = trim((string)($input['content'] ?? ''));
             if ($sessionId === '' || $content === '') jsonResponse(false, null, 'session_id + content required', 400);
+            require_once __DIR__ . '/db.php';
+            $pg = getPGDB();
+            // Block banned viewers from commenting (they may still have a
+            // stale WS subscription that bypassed live_join). Cheap LIMIT 1
+            // query; falls through silently if the table isn't migrated yet.
+            try {
+                $banStmt = $pg->prepare("SELECT 1 FROM chat_live_bans WHERE live_session_id = :s AND LOWER(banned_email) = LOWER(:e) LIMIT 1");
+                $banStmt->execute([':s' => $sessionId, ':e' => $auth['email']]);
+                if ($banStmt->fetchColumn()) {
+                    jsonResponse(false, ['code' => 'banned'], 'Você foi removido deste live', 403);
+                }
+            } catch (Throwable $e) { /* table not created yet — skip */ }
+            // Slow mode — host can throttle per-viewer comment cadence to
+            // suppress spam. We allow the host themselves to bypass slow
+            // mode so they can keep moderating. Lookup is one row from
+            // chat_live_sessions; if missing column we treat as off.
+            try {
+                $smStmt = $pg->prepare("SELECT slow_mode_seconds, host_email FROM chat_live_sessions WHERE id = :id");
+                $smStmt->execute([':id' => $sessionId]);
+                $smRow = $smStmt->fetch(PDO::FETCH_ASSOC);
+                $slowSec = (int)($smRow['slow_mode_seconds'] ?? 0);
+                $isHost = $smRow && strcasecmp((string)$smRow['host_email'], $auth['email']) === 0;
+                if ($slowSec > 0 && !$isHost) {
+                    // Compare against the latest comment from this email in
+                    // this session. Cheaper than tracking a per-user timer
+                    // in memcache, and survives PHP-FPM worker churn.
+                    // created_at is stored as TEXT in chat_live_chat (legacy
+                    // schema) so we cast to timestamptz before the epoch
+                    // diff. The column for the author is `email` (not
+                    // sender_email — same legacy quirk).
+                    $lastStmt = $pg->prepare("SELECT EXTRACT(EPOCH FROM (now() - created_at::timestamptz))::int AS age FROM chat_live_chat WHERE session_id = :s AND LOWER(email) = LOWER(:e) ORDER BY id DESC LIMIT 1");
+                    $lastStmt->execute([':s' => $sessionId, ':e' => $auth['email']]);
+                    $age = $lastStmt->fetchColumn();
+                    if ($age !== false && $age !== null && (int)$age < $slowSec) {
+                        $wait = $slowSec - (int)$age;
+                        jsonResponse(false, ['code' => 'slow_mode', 'wait_seconds' => $wait], 'Modo lento ativo — aguarde ' . $wait . 's', 429);
+                    }
+                }
+            } catch (Throwable $e) { /* slow_mode column not migrated yet — skip */ }
             // 15 msgs/10s per user per live room — stops bot spam without
             // punishing normal hype chat.
             $rateFile = '/tmp/live_chat_rate_' . md5($auth['email'] . '|' . $sessionId);
@@ -6621,8 +6685,6 @@ try {
             $rates[] = time();
             @file_put_contents($rateFile, json_encode($rates), LOCK_EX);
             try {
-                require_once __DIR__ . '/db.php';
-                $pg = getPGDB();
                 $pg->prepare("INSERT INTO chat_live_chat (session_id, sender_email, sender_name, content) VALUES (:s, :se, :sn, :c)")
                    ->execute([':s' => $sessionId, ':se' => $auth['email'], ':sn' => $auth['name'] ?? explode('@', $auth['email'])[0], ':c' => mb_substr($content, 0, 500)]);
                 jsonResponse(true, ['sent' => true]);
@@ -8059,7 +8121,7 @@ try {
             $parts = explode('@', $auth['email']);
             $snoozeDir = '/var/mail/vhosts/' . ($parts[1] ?? 'onemundo.com.br') . '/' . $parts[0] . '/snooze';
             @mkdir($snoozeDir, 0770, true);
-            @exec("chown vmail:www-data " . escapeshellarg($snoozeDir));
+            exec("sudo /usr/local/bin/chatyy-fix-mailbox " . escapeshellarg($username . "@" . $domain));
 
             $snoozeFile = $snoozeDir . '/pending.json';
             $pending = file_exists($snoozeFile) ? json_decode(file_get_contents($snoozeFile), true) : [];

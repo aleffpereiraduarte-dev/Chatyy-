@@ -598,7 +598,11 @@ struct CallView: View {
 
     // MARK: - Quick emoji bar
 
-    private let quickEmojis = ["❤️", "👍", "👏", "😂", "🎉", "🔥"]
+    // [reaction bar, 2026-05-17] Trimmed from 6 → 5 (dropped 🔥) so the bar
+    // matches the cross-platform spec (Android `QuickEmojis`, iOS Group
+    // `quickEmojis`, JS /call.js `CALL_EMOJIS` UI bar). 5 is the WhatsApp
+    // 2025 baseline and keeps each tap target wider on phones.
+    private let quickEmojis = ["❤️", "👍", "👏", "😂", "🎉"]
 
     private var emojiQuickBar: some View {
         HStack(spacing: 12) {

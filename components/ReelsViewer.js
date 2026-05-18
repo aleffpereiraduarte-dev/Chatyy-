@@ -436,6 +436,67 @@ const SpinningDisc = memo(function SpinningDisc({ authorEmail, authorName }) {
   );
 });
 
+// ── Live Badge Ring ──
+// Renders a pulsing colored ring + "AO VIVO" badge under the avatar when the
+// reel's author is currently broadcasting. Tapping the avatar routes to the
+// live viewer (`/live-viewer?id=<liveId>`) — handled by the parent via
+// onAvatarTap. Pure View + Animated stack so it works on web + native without
+// needing react-native-svg. 2-color rotating gradient effect is simulated
+// with a single colored ring + opacity loop, which is plenty for the size.
+const LiveBadgeRing = memo(function LiveBadgeRing({ size = 44, children }) {
+  const pulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 900, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0, duration: 900, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+  const scale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.07] });
+  const opacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.55, 1] });
+  return (
+    <View style={{ alignItems: 'center', justifyContent: 'center' }}>
+      <Animated.View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          width: size + 6,
+          height: size + 6,
+          borderRadius: (size + 6) / 2,
+          borderWidth: 2.5,
+          borderColor: '#FF3B30',
+          opacity,
+          transform: [{ scale }],
+        }}
+      />
+      <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+        {children}
+      </View>
+      {/* "AO VIVO" pill anchored just below the avatar. */}
+      <View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          bottom: -8,
+          backgroundColor: '#FF3B30',
+          paddingHorizontal: 6,
+          paddingVertical: 1,
+          borderRadius: 4,
+          borderWidth: 1.5,
+          borderColor: '#000',
+        }}
+      >
+        <Text style={{ color: '#fff', fontSize: 8, fontWeight: '800', letterSpacing: 0.4 }}>
+          AO VIVO
+        </Text>
+      </View>
+    </View>
+  );
+});
+
 // ── Music equalizer (3 bars bouncing) ──
 // Renders next to the music icon to signal "audio is playing" without
 // audio actually being present (the reel is muted in the UI; this is
@@ -662,7 +723,9 @@ function ShareSheet({ visible, reel, t, onClose, onRepost, onCopyLink, onExterna
 }
 
 // ── Single Reel Item ──
-const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, user, containerHeight, onOpenComments, onOpenLikers, onOpenProfile, overlayOpen, router }) {
+const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, user, containerHeight, onOpenComments, onOpenLikers, onOpenProfile, onUseSound, onDuet, onStitch, onHidePost, showLiveRing, overlayOpen, router }) {
+  // Reels P0 — more-sheet visibility (Not interested / Duet / Stitch / Use sound)
+  const [moreSheetOpen, setMoreSheetOpen] = useState(false);
   const [paused, setPaused] = useState(false);
   // Share drawer (Repost / Copy link / External). Declared early so the
   // effectivePaused expression on the next line can reference it.
@@ -1116,13 +1179,21 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
         <TouchableOpacity
           style={styles.profileAvatarBtn}
           activeOpacity={0.8}
-          onPress={() => onOpenProfile?.(reel.author_email)}
+          onPress={() => onOpenProfile?.(reel.author_email, reel)}
           accessibilityLabel={authorDisplay}
           accessibilityRole="button"
         >
-          <View style={styles.profileAvatarRing}>
-            <AvatarCircle email={reel.author_email} name={reel.author_name} size={36} />
-          </View>
+          {/* Reels P0 — Live badge ring around the avatar when the author is
+              broadcasting. Tap routes via onAvatarTap (wired in parent). */}
+          {showLiveRing && (reel.is_live || reel.live_id) ? (
+            <LiveBadgeRing size={40}>
+              <AvatarCircle email={reel.author_email} name={reel.author_name} size={36} />
+            </LiveBadgeRing>
+          ) : (
+            <View style={styles.profileAvatarRing}>
+              <AvatarCircle email={reel.author_email} name={reel.author_name} size={36} />
+            </View>
+          )}
           <View style={styles.profileFollowBadge}>
             <Text style={styles.profileFollowPlus}>+</Text>
           </View>
@@ -1217,12 +1288,11 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
           </TouchableOpacity>
         </Animated.View>
 
-        {/* More (kebab) — opens the share/options drawer. Until a dedicated
-            "report / not interested" sheet exists, share covers the same
-            surface and matches user expectation that something happens. */}
+        {/* More (kebab) — Reels P0: opens the actions sheet
+            (Duet / Stitch / Use sound / Not interested / Report). */}
         <TouchableOpacity
           style={styles.sidebarBtn}
-          onPress={handleShare}
+          onPress={() => setMoreSheetOpen(true)}
           activeOpacity={0.7}
           accessibilityLabel={t?.('common.more') || 'More'}
           accessibilityRole="button"
@@ -1230,8 +1300,17 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
           <IconMoreHorizontal size={26} color="#fff" />
         </TouchableOpacity>
 
-        {/* Spinning album art disc */}
-        <SpinningDisc authorEmail={reel.author_email} authorName={reel.author_name} />
+        {/* Spinning album art disc — tap to jump to the sound feed
+            ("Usar este som"). Long-press-friendly hit area thanks to the
+            outer TouchableOpacity. */}
+        <TouchableOpacity
+          activeOpacity={0.85}
+          onPress={() => onUseSound && onUseSound(reel)}
+          accessibilityLabel={t?.('feed.useThisSound') || 'Usar este som'}
+          accessibilityRole="button"
+        >
+          <SpinningDisc authorEmail={reel.author_email} authorName={reel.author_name} />
+        </TouchableOpacity>
       </View>
 
       {/* ── Subtitle overlay (TikTok auto-caption) ──
@@ -1266,13 +1345,19 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
           </TouchableOpacity>
         ) : null}
 
-        {/* Music row with marquee + tiny equalizer (signals audio
-            is "playing" even when the reel is muted). */}
-        <View style={styles.musicRow}>
+        {/* Music row with marquee + tiny equalizer. Tapping anywhere in the
+            row jumps to "Use this sound" — Reels P0 surface. */}
+        <TouchableOpacity
+          style={styles.musicRow}
+          activeOpacity={0.7}
+          onPress={() => onUseSound && onUseSound(reel)}
+          accessibilityLabel={t?.('feed.useThisSound') || 'Usar este som'}
+          accessibilityRole="button"
+        >
           <IconMusic size={12} color="#fff" />
           <MusicEqualizer />
           <MusicMarquee text={musicName} />
-        </View>
+        </TouchableOpacity>
       </View>
 
       {/* ── PROGRESS BAR ── */}
@@ -1290,6 +1375,100 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
         onCopyLink={handleShareCopyLink}
         onExternal={handleShareExternal}
       />
+
+      {/* Reels P0 — More actions sheet (Duet / Stitch / Use sound /
+          Not interested / Report). Sliding bottom sheet, same UX shape
+          as ShareSheet so it feels native + consistent. */}
+      <Modal
+        visible={moreSheetOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMoreSheetOpen(false)}
+      >
+        <Pressable
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}
+          onPress={() => setMoreSheetOpen(false)}
+        >
+          <Pressable
+            style={{
+              backgroundColor: '#1a1a1a',
+              borderTopLeftRadius: 18,
+              borderTopRightRadius: 18,
+              paddingTop: 10,
+              paddingBottom: 28,
+            }}
+            onPress={(e) => e.stopPropagation && e.stopPropagation()}
+          >
+            <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.25)', alignSelf: 'center', marginBottom: 12 }} />
+
+            {/* Use this sound */}
+            {!!reel.sound_id && (
+              <TouchableOpacity
+                style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 14 }}
+                onPress={() => { setMoreSheetOpen(false); onUseSound && onUseSound(reel); }}
+                activeOpacity={0.7}
+              >
+                <IconMusic size={22} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>
+                  {t?.('feed.useThisSound') || 'Usar este som'}
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Duet — only when the creator allows it. */}
+            {reel.allow_duet !== false && reel.media_type === 'video' && (
+              <TouchableOpacity
+                style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 14 }}
+                onPress={() => { setMoreSheetOpen(false); onDuet && onDuet(reel); }}
+                activeOpacity={0.7}
+              >
+                <IconRepeat size={22} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>
+                  {t?.('feed.duet') || 'Duet (split-screen)'}
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Stitch — only when the creator allows it. */}
+            {reel.allow_stitch !== false && reel.media_type === 'video' && (
+              <TouchableOpacity
+                style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 14 }}
+                onPress={() => { setMoreSheetOpen(false); onStitch && onStitch(reel); }}
+                activeOpacity={0.7}
+              >
+                <IconPlay size={22} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>
+                  {t?.('feed.stitch') || 'Stitch (clip + reagir)'}
+                </Text>
+              </TouchableOpacity>
+            )}
+
+            {/* Not interested — soft-hide. */}
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 14 }}
+              onPress={() => { setMoreSheetOpen(false); onHidePost && onHidePost(reel, 'not_interested'); }}
+              activeOpacity={0.7}
+            >
+              <IconX size={22} color="#fff" />
+              <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600' }}>
+                {t?.('feed.notInterested') || 'Não tenho interesse'}
+              </Text>
+            </TouchableOpacity>
+
+            {/* Report — escalated negative signal. */}
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 14 }}
+              onPress={() => { setMoreSheetOpen(false); onHidePost && onHidePost(reel, 'reported'); }}
+              activeOpacity={0.7}
+            >
+              <IconX size={22} color="#FF3B30" />
+              <Text style={{ color: '#FF3B30', fontSize: 16, fontWeight: '600' }}>
+                {t?.('feed.report') || 'Denunciar'}
+              </Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 });
@@ -1312,8 +1491,16 @@ function EmptyReels({ colors, isDark, t }) {
 }
 
 // ── Main ReelsViewer ──
-export default function ReelsViewer({ colors, isDark, t, user, router }) {
-  const [reelTab, setReelTab] = useState('forYou'); // 'forYou' | 'following'
+export default function ReelsViewer({ colors, isDark, t, user, router, feedMode: feedModeProp, showLiveRing, onAvatarTap, onPullRefresh, soundId: soundIdProp, soundLabel: soundLabelProp }) {
+  // Parent can drive the tab via prop (ChatReelsTab does). Default to whatever
+  // the parent says or "forYou" so the in-viewer tab bar still works standalone.
+  const initialTab = feedModeProp === 'following' ? 'following' : 'forYou';
+  const [reelTab, setReelTab] = useState(initialTab);
+  // Keep local tab state in sync if the parent flips it.
+  useEffect(() => {
+    if (feedModeProp === 'following' && reelTab !== 'following') setReelTab('following');
+    if (feedModeProp === 'foryou' && reelTab !== 'forYou') setReelTab('forYou');
+  }, [feedModeProp]); // eslint-disable-line react-hooks/exhaustive-deps
   const [reels, setReels] = useState([]);
   const [followingReels, setFollowingReels] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -1333,31 +1520,60 @@ export default function ReelsViewer({ colors, isDark, t, user, router }) {
 
   useEffect(() => {
     loadReels();
-  }, []);
+    // soundIdProp drives a "by-sound" load path — when set, both lists fold
+    // into the same sound-feed so swiping shows every reel using that audio.
+  }, [soundIdProp]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadReels = async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     try {
-      const r = await api.feedList(1, 50);
-      if (r && r.success && r.data) {
-        const rawPosts = r.data.posts || r.data;
-        const allPosts = Array.isArray(rawPosts) ? rawPosts : [];
-        const videos = allPosts.filter(p => {
-          if (p.media_type === 'video') return true;
-          const urls = parseMediaUrls(p.media_urls);
-          return urls.some(u => typeof u === 'string' && (u.endsWith('.mp4') || u.endsWith('.mov') || u.endsWith('.webm')));
-        });
-        setReels(videos);
-        // Filter following reels (posts from users the current user follows)
-        const following = videos.filter(p => p.is_following || p.author_email === user?.email);
-        setFollowingReels(following);
+      // Reels P0 — three load paths:
+      //   1. soundIdProp set → "Use this sound" feed (chat_reels_by_sound)
+      //   2. Following tab    → feedList({ type: 'following' }) for a strict
+      //      chronological follows-only feed (no shared-conversation match)
+      //   3. For You tab      → standard feedList() (contact-aware) for now;
+      //      will swap to algorithm='fyp' once FYP ranker is GA.
+      if (soundIdProp) {
+        const r = await api.chatReelsBySound(soundIdProp, 1, 50);
+        if (r && r.success && r.data) {
+          const videos = Array.isArray(r.data.posts) ? r.data.posts : [];
+          setReels(videos);
+          setFollowingReels(videos);
+        }
+      } else {
+        // Fire both feeds in parallel so switching tabs is instant.
+        const [allR, followR] = await Promise.all([
+          api.feedList({ page: 1, limit: 50 }),
+          api.feedList({ page: 1, limit: 50, type: 'following' }),
+        ]);
+        if (allR && allR.success && allR.data) {
+          const rawPosts = allR.data.posts || allR.data;
+          const allPosts = Array.isArray(rawPosts) ? rawPosts : [];
+          const videos = allPosts.filter(p => {
+            if (p.media_type === 'video') return true;
+            const urls = parseMediaUrls(p.media_urls);
+            return urls.some(u => typeof u === 'string' && (u.endsWith('.mp4') || u.endsWith('.mov') || u.endsWith('.webm')));
+          });
+          setReels(videos);
+        }
+        if (followR && followR.success && followR.data) {
+          const rawF = followR.data.posts || followR.data;
+          const followingAll = Array.isArray(rawF) ? rawF : [];
+          const followingVids = followingAll.filter(p => {
+            if (p.media_type === 'video') return true;
+            const urls = parseMediaUrls(p.media_urls);
+            return urls.some(u => typeof u === 'string' && (u.endsWith('.mp4') || u.endsWith('.mov') || u.endsWith('.webm')));
+          });
+          setFollowingReels(followingVids);
+        }
       }
     } catch (e) {
       console.warn('Reels load error:', e);
     } finally {
       setLoading(false);
       setRefreshing(false);
+      try { onPullRefresh && isRefresh && onPullRefresh(); } catch {}
     }
   };
 
@@ -1387,10 +1603,47 @@ export default function ReelsViewer({ colors, isDark, t, user, router }) {
     }
   }, []);
 
-  const handleOpenProfile = useCallback((email) => {
+  const handleOpenProfile = useCallback((email, item) => {
+    // If the parent wired onAvatarTap (ChatReelsTab does for live routing),
+    // give it the first shot so tapping a live creator opens the live viewer
+    // instead of their profile.
+    if (item && typeof onAvatarTap === 'function') {
+      const handled = onAvatarTap(item);
+      if (handled) return;
+    }
     if (!email || !router) return;
     router.push(`/u/${encodeURIComponent(email)}`);
+  }, [router, onAvatarTap]);
+
+  // ── Reels P0: "Use this sound" — route to a sound-feed instance of the
+  // viewer. The /reels-sound route renders <ReelsViewer soundId={id} /> so
+  // every clip using that audio shows up in the same vertical pager.
+  const handleUseSound = useCallback((reel) => {
+    if (!reel?.sound_id) return;
+    try {
+      router?.push(`/reels-sound?sound_id=${encodeURIComponent(reel.sound_id)}&label=${encodeURIComponent(reel.sound_label || '')}`);
+    } catch {}
   }, [router]);
+
+  // ── Reels P0: Duet / Stitch — bounce into the create-post screen with the
+  // parent post id pre-loaded so the recorder boots into split/stitch mode.
+  const handleDuet = useCallback((reel) => {
+    if (!reel?.id) return;
+    try { router?.push(`/post-create?duet_of=${reel.id}`); } catch {}
+  }, [router]);
+  const handleStitch = useCallback((reel) => {
+    if (!reel?.id) return;
+    try { router?.push(`/post-create?stitch_of=${reel.id}`); } catch {}
+  }, [router]);
+
+  // ── Reels P0: Not interested — soft-hide for the current viewer.
+  const handleHidePost = useCallback(async (reel, signal = 'not_interested') => {
+    if (!reel?.id) return;
+    try { await api.feedHidePost(reel.id, signal); } catch {}
+    // Optimistically drop the reel from the active list so it disappears now.
+    setReels(prev => prev.filter(p => p.id !== reel.id));
+    setFollowingReels(prev => prev.filter(p => p.id !== reel.id));
+  }, []);
 
   const overlayOpen = !!commentsReel || !!likersReel;
   const renderItem = useCallback(({ item, index }) => (
@@ -1406,9 +1659,14 @@ export default function ReelsViewer({ colors, isDark, t, user, router }) {
       onOpenComments={handleOpenComments}
       onOpenLikers={handleOpenLikers}
       onOpenProfile={handleOpenProfile}
+      onUseSound={handleUseSound}
+      onDuet={handleDuet}
+      onStitch={handleStitch}
+      onHidePost={handleHidePost}
+      showLiveRing={!!showLiveRing}
       overlayOpen={overlayOpen}
     />
-  ), [currentIndex, colors, isDark, t, user, router, containerHeight, handleOpenComments, handleOpenLikers, handleOpenProfile, overlayOpen]);
+  ), [currentIndex, colors, isDark, t, user, router, containerHeight, handleOpenComments, handleOpenLikers, handleOpenProfile, handleUseSound, handleDuet, handleStitch, handleHidePost, showLiveRing, overlayOpen]);
 
   const keyExtractor = useCallback((item) => String(item.id), []);
 

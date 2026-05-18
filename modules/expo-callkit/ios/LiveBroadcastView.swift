@@ -348,41 +348,80 @@ struct LiveBroadcastView: View {
     }
 
     // MARK: - Cohost grid
+    //
+    // Multi-cam grid (#922, raised to cap=4 in 2026-05-17 P0). Adaptive layout
+    // by cohort count:
+    //   0 → no chrome
+    //   1 → single 110×150 mini PiP top-right of cohost strip (legacy look)
+    //   2 → side-by-side split (50/50 width × 150 tall)
+    //   3-4 → 2×2 grid
+    // Backend cap is 4 (chat_live_cohosts cap raised from 1). We render even
+    // when count > 4 so a server-side race doesn't crash the UI — just truncates.
 
     @ViewBuilder
     private func cohostStrip() -> some View {
-        if !session.cohosts.isEmpty {
-            HStack(spacing: 8) {
-                ForEach(session.cohosts) { ch in
-                    ZStack(alignment: .bottomLeading) {
-                        if let track = ch.videoTrack {
-                            SwiftUIVideoView(track)
-                                .frame(width: 110, height: 150)
-                                .clipShape(RoundedRectangle(cornerRadius: 12))
-                        } else {
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(chip)
-                                .frame(width: 110, height: 150)
-                            VStack {
-                                Spacer()
-                                avatarCircle(name: ch.name, email: ch.identity, size: 36)
-                                Spacer()
-                            }
-                            .frame(width: 110, height: 150)
-                        }
-                        Text(ch.name)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.black.opacity(0.55))
-                            .clipShape(Capsule())
-                            .padding(6)
+        let cohorts = Array(session.cohosts.prefix(4))
+        if !cohorts.isEmpty {
+            GeometryReader { geo in
+                let stripW = geo.size.width
+                if cohorts.count == 1 {
+                    HStack {
+                        Spacer()
+                        cohostTile(ch: cohorts[0], width: 110, height: 150)
                     }
+                    .padding(.horizontal, 12)
+                } else if cohorts.count == 2 {
+                    HStack(spacing: 8) {
+                        ForEach(cohorts) { ch in
+                            cohostTile(ch: ch, width: (stripW - 32) / 2, height: 160)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                } else {
+                    // 3 or 4 → 2×2 grid (3rd cell occupies one slot; 4th fills).
+                    let cols = [GridItem(.flexible(), spacing: 8),
+                                GridItem(.flexible(), spacing: 8)]
+                    LazyVGrid(columns: cols, spacing: 8) {
+                        ForEach(cohorts) { ch in
+                            cohostTile(ch: ch, width: (stripW - 32) / 2, height: 130)
+                        }
+                    }
+                    .padding(.horizontal, 12)
                 }
             }
-            .padding(.horizontal, 12)
+            .frame(height: cohorts.count <= 2 ? 168 : 276)
             .padding(.bottom, 6)
+        }
+    }
+
+    // Single cohost tile — extracted so all 3 layouts share the same chrome
+    // (rounded corners, name chip, fallback avatar when no video track yet).
+    @ViewBuilder
+    private func cohostTile(ch: LiveCohost, width: CGFloat, height: CGFloat) -> some View {
+        ZStack(alignment: .bottomLeading) {
+            if let track = ch.videoTrack {
+                SwiftUIVideoView(track)
+                    .frame(width: width, height: height)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+            } else {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(chip)
+                    .frame(width: width, height: height)
+                VStack {
+                    Spacer()
+                    avatarCircle(name: ch.name, email: ch.identity, size: 36)
+                    Spacer()
+                }
+                .frame(width: width, height: height)
+            }
+            Text(ch.name)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Color.black.opacity(0.55))
+                .clipShape(Capsule())
+                .padding(6)
         }
     }
 

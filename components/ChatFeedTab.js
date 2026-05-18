@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, RefreshControl,
   ActivityIndicator, Platform, Dimensions, ScrollView, Animated, TextInput,
@@ -115,6 +115,62 @@ function LiveFab({ onPress, t, isWeb, styles }) {
       >
         <IconVideo size={20} color="#fff" />
       </TouchableOpacity>
+    </View>
+  );
+}
+
+// ── Reels P0: Trending hashtags rail ──
+// Lists the top hashtags parsed out of feed captions over the last 24h.
+// Tapping a chip routes to the /hashtag/<tag> page which already exists.
+function TrendingHashtagsRail({ colors, isDark, t, router }) {
+  const [tags, setTags] = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await api.chatFeedTrendingHashtags(20);
+        if (!alive) return;
+        if (r?.success && Array.isArray(r.data?.tags)) setTags(r.data.tags);
+      } catch {}
+      if (alive) setLoading(false);
+    })();
+    return () => { alive = false; };
+  }, []);
+  if (loading) {
+    return (
+      <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+        <ActivityIndicator size="small" color={isDark ? '#888' : '#999'} />
+      </View>
+    );
+  }
+  if (tags.length === 0) return null;
+  return (
+    <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 18 }}>
+      <Text style={{ color: colors.text, fontSize: 14, fontWeight: '700', marginBottom: 10 }}>
+        {t?.('feed.trending') || 'Em alta'}
+      </Text>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+        {tags.map((row) => (
+          <TouchableOpacity
+            key={row.hashtag}
+            onPress={() => { try { router?.push(`/hashtag/${encodeURIComponent(row.hashtag)}`); } catch {} }}
+            activeOpacity={0.7}
+            style={{
+              paddingHorizontal: 12,
+              paddingVertical: 6,
+              borderRadius: 14,
+              backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.08)',
+              borderWidth: 1,
+              borderColor: 'rgba(124,58,237,0.32)',
+            }}
+          >
+            <Text style={{ color: '#7C3AED', fontSize: 13, fontWeight: '600' }}>
+              #{row.hashtag} <Text style={{ color: colors.textSecondary, fontWeight: '500' }}>· {row.uses}</Text>
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
     </View>
   );
 }
@@ -243,6 +299,47 @@ function StoriesStrip({ user, colors, isDark, t, router }) {
 
 export default function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedModeConsumed }) {
   const [feedMode, setFeedMode] = useState(initialFeedMode === 'reels' ? 'reels' : 'posts'); // 'posts' | 'reels' | 'profile'
+  // Note: the "Para você / Seguindo" sub-tab is already handled via the
+  // existing `algorithm` state below — `algorithm='following'` routes to
+  // the chronological follows-only feed (Reels P0). No duplicate state.
+  // Algorithm selector for Posts mode — 'fyp' (Para você, default) or
+  // 'following' (chronological feed from accounts you follow). Persists per
+  // session via MMKV so navigating away + back keeps the chosen tab.
+  const _initialAlgo = (() => {
+    if (Platform.OS === 'web') {
+      try { return localStorage.getItem('feed_algorithm') === 'following' ? 'following' : 'fyp'; } catch { return 'fyp'; }
+    }
+    try {
+      const { getString: _gs } = require('../services/mmkv');
+      return _gs('feed_algorithm') === 'following' ? 'following' : 'fyp';
+    } catch { return 'fyp'; }
+  })();
+  const [algorithm, setAlgorithm] = useState(_initialAlgo);
+  const persistAlgorithm = useCallback((a) => {
+    try {
+      if (Platform.OS === 'web') { try { localStorage.setItem('feed_algorithm', a); } catch {} }
+      else {
+        const { setString: _ss } = require('../services/mmkv');
+        _ss('feed_algorithm', a);
+      }
+    } catch {}
+  }, []);
+  // Recommended creators rail — fetched once per mount.
+  const [suggestions, setSuggestions] = useState([]);
+  const [suggestionsLoaded, setSuggestionsLoaded] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await api.followSuggestions(10);
+        if (alive && r?.success && Array.isArray(r.data?.users)) {
+          setSuggestions(r.data.users.slice(0, 10));
+        }
+      } catch {}
+      if (alive) setSuggestionsLoaded(true);
+    })();
+    return () => { alive = false; };
+  }, []);
   useEffect(() => {
     if (initialFeedMode === 'reels' && feedMode !== 'reels') setFeedMode('reels');
     if (initialFeedMode && typeof onFeedModeConsumed === 'function') onFeedModeConsumed();
@@ -327,7 +424,15 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
     }
 
     try {
-      const r = await api.feedList(pageNum, 20);
+      // Pass the active algorithm so the backend can switch between the
+      // FYP ranker (algorithm=fyp) and the chronological following-only feed
+      // (algorithm=following). Backend defaults to chronological when omitted.
+      // Reels P0: also pass type=following so the backend short-circuits to
+      // strict follows-only (no shared-conversation match). This is the actual
+      // server-side semantic the user expects when they tap "Seguindo".
+      const feedArgs = { page: pageNum, limit: 20, algorithm };
+      if (algorithm === 'following') feedArgs.type = 'following';
+      const r = await api.feedList(feedArgs);
       if (r && r.success && r.data) {
         const rawPosts = r.data.posts || r.data;
         const newPosts = Array.isArray(rawPosts) ? rawPosts : [];
@@ -376,7 +481,20 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
       setRefreshing(false);
       setLoadingMore(false);
     }
-  }, []);
+  }, [algorithm]);
+
+  // Reload page 1 whenever the user flips the For You / Following tab.
+  // We reset the page state, the fingerprint, and the dedup Set so the new
+  // feed paints from scratch instead of merging with the previous list.
+  useEffect(() => {
+    setPage(1);
+    setHasMore(true);
+    lastFeedFpRef.current = '';
+    feedIdSetRef.current = new Set();
+    setLoading(true);
+    loadPosts(1, true);
+    persistAlgorithm(algorithm);
+  }, [algorithm]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load active lives
   // [bug-shape] Backend `live_list` returns `data.lives` (NOT `sessions`); the
@@ -763,7 +881,18 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
         backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
         flex: 1,
       }]}>
-        <IconSearch size={18} color={isDark ? '#888' : '#999'} />
+        {/* Tapping the magnifying glass routes to the unified /search screen
+            (Pessoas / Hashtags / Sons / Lives tabs). The inline TextInput is
+            kept as a quick-search-in-feed surface for users who want to find
+            an account without leaving the feed. */}
+        <TouchableOpacity
+          onPress={() => { try { router?.push('/search'); } catch {} }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityLabel={t('feed.unifiedSearch') || 'Pesquisa'}
+          accessibilityRole="button"
+        >
+          <IconSearch size={18} color={isDark ? '#888' : '#999'} />
+        </TouchableOpacity>
         <TextInput
           style={[styles.searchInput, { color: colors.text }]}
           placeholder={t('feed.searchPlaceholder')}
@@ -871,11 +1000,21 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
     }
     if (searchQuery.trim().length < 2 && isSearchActive) {
       return (
-        <View style={styles.searchStatusContainer}>
-          <IconSearch size={40} color={isDark ? '#333' : '#ddd'} />
-          <Text style={[styles.searchStatusText, { color: colors.textSecondary, marginTop: 12 }]}>
-            {t('feed.searchHint')}
-          </Text>
+        <View style={{ flex: 1 }}>
+          <View style={styles.searchStatusContainer}>
+            <IconSearch size={40} color={isDark ? '#333' : '#ddd'} />
+            <Text style={[styles.searchStatusText, { color: colors.textSecondary, marginTop: 12 }]}>
+              {t('feed.searchHint')}
+            </Text>
+          </View>
+          {/* Reels P0 — Trending hashtags from feed captions (last 24h).
+              Surfaced as tappable chips so users can dive into hashtag pages. */}
+          <TrendingHashtagsRail
+            colors={colors}
+            isDark={isDark}
+            t={t}
+            router={router}
+          />
         </View>
       );
     }
@@ -891,19 +1030,33 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
     );
   };
 
-  const renderPost = useCallback(({ item }) => (
-    <FeedPostRow
-      post={item}
-      colors={colors}
-      isDark={isDark}
-      t={t}
-      user={user}
-      onOpenComments={handleOpenComments}
-      onPostUpdated={() => {}}
-      onDeletePost={handleDeletePost}
-      onPressUser={handlePressUser}
-    />
-  ), [colors, isDark, t, user, handleOpenComments, handleDeletePost, handlePressUser]);
+  const renderPost = useCallback(({ item }) => {
+    // Sentinel rows carry an explicit __type marker. We use it to inject the
+    // suggested-creators rail every N posts inline with the feed so the user
+    // discovers new accounts without leaving the timeline. Any non-post type
+    // we don't recognize is silently skipped.
+    if (item && item.__type === 'suggestionsRail') {
+      // renderSuggestionsRail is defined later in this component — it's a
+      // useCallback so its identity stays stable across renders. We pass the
+      // sentinel id as the React key so multiple rails (after rows 3, 10,
+      // 17, ...) stay distinct.
+      return renderSuggestionsRail({ inlineKey: item.__key || 'rec-rail' });
+    }
+    return (
+      <FeedPostRow
+        post={item}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+        user={user}
+        onOpenComments={handleOpenComments}
+        onPostUpdated={() => {}}
+        onDeletePost={handleDeletePost}
+        onPressUser={handlePressUser}
+        onHidePost={handleDeletePost}
+      />
+    );
+  }, [colors, isDark, t, user, handleOpenComments, handleDeletePost, handlePressUser, renderSuggestionsRail]);
 
   const renderFooter = useCallback(() => {
     // End-of-feed: when there's no more pages and we have at least 1 post,
@@ -996,6 +1149,125 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
     }).start();
   }, [feedMode]);
   const pillLeft = tabSlide.interpolate({ inputRange: [0, 1], outputRange: ['1%', '51%'] });
+
+  // Para você / Seguindo algorithm toggle — twin sliding pill above the
+  // Posts/Reels bar. Only visible in Posts mode (Reels has its own surface).
+  const algoSlide = useRef(new Animated.Value(algorithm === 'following' ? 1 : 0)).current;
+  useEffect(() => {
+    Animated.spring(algoSlide, {
+      toValue: algorithm === 'following' ? 1 : 0,
+      tension: 240, friction: 22,
+      useNativeDriver: false,
+    }).start();
+  }, [algorithm]);
+  const algoPillLeft = algoSlide.interpolate({ inputRange: [0, 1], outputRange: ['1%', '51%'] });
+
+  const renderAlgorithmTabs = useCallback(() => (
+    <View style={[styles.tabBar, {
+      backgroundColor: isDark ? colors.background : '#f6f8fa',
+      borderBottomColor: 'transparent',
+      paddingVertical: 2,
+    }]}>
+      <Animated.View pointerEvents="none" style={{
+        position: 'absolute',
+        top: 4, bottom: 4, left: algoPillLeft,
+        width: '48%',
+        backgroundColor: isDark ? 'rgba(124,58,237,0.20)' : 'rgba(124,58,237,0.10)',
+        borderRadius: 10,
+      }} />
+      <TouchableOpacity
+        style={styles.tabItem}
+        onPress={() => setAlgorithm('fyp')}
+        activeOpacity={0.7}
+        accessibilityLabel={t('feed.forYou') || 'Para você'}
+        accessibilityRole="tab"
+      >
+        <Text style={[
+          styles.tabItemText,
+          { color: algorithm === 'fyp' ? ACCENT : (isDark ? '#aaa' : '#666') },
+          algorithm === 'fyp' && styles.tabItemTextActive,
+        ]}>
+          {t('feed.forYou') || 'Para você'}
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={styles.tabItem}
+        onPress={() => setAlgorithm('following')}
+        activeOpacity={0.7}
+        accessibilityLabel={t('feed.following') || 'Seguindo'}
+        accessibilityRole="tab"
+      >
+        <Text style={[
+          styles.tabItemText,
+          { color: algorithm === 'following' ? ACCENT : (isDark ? '#aaa' : '#666') },
+          algorithm === 'following' && styles.tabItemTextActive,
+        ]}>
+          {t('feed.following') || 'Seguindo'}
+        </Text>
+      </TouchableOpacity>
+    </View>
+  ), [algorithm, algoPillLeft, isDark, colors, t]);
+
+  // Recommended creators rail — horizontal scroll of 10 suggested users
+  // (friends-of-friends). Rendered between post #3 and #4 on the first page
+  // and embedded again every 7 posts (via getItemLayout interleaving below).
+  const renderSuggestionsRail = useCallback(({ inlineKey = 'rec-rail' } = {}) => {
+    if (!suggestionsLoaded || suggestions.length === 0) return null;
+    return (
+      <View style={[styles.suggestionsRail, {
+        backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : '#fff',
+        borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+        borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+      }]} key={inlineKey}>
+        <View style={styles.suggestionsHeader}>
+          <Text style={[styles.suggestionsTitle, { color: colors.text }]}>
+            {t('feed.suggestedForYou') || 'Sugestões para você'}
+          </Text>
+        </View>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.suggestionsScroll}
+        >
+          {suggestions.map((u) => (
+            <TouchableOpacity
+              key={u.email}
+              style={[styles.suggestionCard, {
+                backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#f6f8fa',
+                borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+              }]}
+              onPress={() => handlePressUser(u.email)}
+              activeOpacity={0.75}
+              accessibilityRole="button"
+              accessibilityLabel={u.name || u.email}
+            >
+              <AvatarCircle name={u.name || u.email} email={u.email} size={56} />
+              <Text style={[styles.suggestionName, { color: colors.text }]} numberOfLines={1}>
+                {u.name || u.email?.split('@')[0]}
+              </Text>
+              {typeof u.mutual_count === 'number' && u.mutual_count > 0 ? (
+                <Text style={[styles.suggestionMutual, { color: colors.textSecondary }]} numberOfLines={1}>
+                  {(t('feed.mutualCount') || '{n} em comum').replace('{n}', u.mutual_count)}
+                </Text>
+              ) : null}
+              <TouchableOpacity
+                style={styles.suggestionFollowBtn}
+                onPress={async () => {
+                  try { await api.followUser(u.email); } catch {}
+                  setSuggestions(prev => prev.filter(s => s.email !== u.email));
+                }}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.suggestionFollowText}>
+                  {t('profile.follow') || 'Seguir'}
+                </Text>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+    );
+  }, [suggestions, suggestionsLoaded, isDark, colors, t]);
 
   const renderTabBar = () => (
     <View style={[styles.tabBar, {
@@ -1105,11 +1377,30 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
   }
 
   // ── Posts mode (existing) ──
+  // Build the interleaved data list: post rows + suggestion rail sentinels.
+  // First rail goes after position 3 (so the user sees real content first),
+  // then every 7 posts (positions 10, 17, 24, ...). Rails only inject when
+  // we actually have suggestions to show; otherwise the array is identical
+  // to the bare posts list.
+  const interleavedPosts = useMemo(() => {
+    if (!suggestionsLoaded || suggestions.length === 0 || posts.length === 0) return posts;
+    const out = [];
+    const RAIL_OFFSETS = new Set([3, 10, 17, 24, 31, 38, 45, 52, 59, 66, 73, 80, 87, 94]);
+    posts.forEach((p, idx) => {
+      out.push(p);
+      if (RAIL_OFFSETS.has(idx + 1)) {
+        out.push({ __type: 'suggestionsRail', __key: `rec-rail-${idx + 1}`, id: `__rail_${idx + 1}` });
+      }
+    });
+    return out;
+  }, [posts, suggestionsLoaded, suggestions.length]);
+
   if (loading) {
     return (
       <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f6f8fa' }]}>
         {renderSearchBar()}
         {renderTabBar()}
+        {renderAlgorithmTabs()}
         <FeedSkeleton isDark={isDark} />
       </View>
     );
@@ -1119,7 +1410,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
     <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f6f8fa' }]}>
       <ListComponent
         ref={feedListRef}
-        data={posts}
+        data={interleavedPosts}
         renderItem={renderPost}
         keyExtractor={(item) => String(item.id)}
         estimatedItemSize={450}
@@ -1136,7 +1427,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
             progressBackgroundColor={isDark ? '#1f1b2e' : '#fff'}
           />
         }
-        ListHeaderComponent={() => <>{renderSearchBar()}{renderTabBar()}<StoriesStrip user={user} colors={colors} isDark={isDark} t={t} router={router} />{renderLiveHeader()}</>}
+        ListHeaderComponent={() => <>{renderSearchBar()}{renderTabBar()}{renderAlgorithmTabs()}<StoriesStrip user={user} colors={colors} isDark={isDark} t={t} router={router} />{renderLiveHeader()}</>}
         ListEmptyComponent={renderEmpty}
         ListFooterComponent={renderFooter}
         showsVerticalScrollIndicator={false}
@@ -1544,6 +1835,58 @@ const styles = StyleSheet.create({
   },
   searchStatusText: {
     fontSize: 15,
+  },
+  // Recommended creators rail (inline in feed)
+  suggestionsRail: {
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    marginBottom: 4,
+  },
+  suggestionsHeader: {
+    paddingHorizontal: 16,
+    marginBottom: 10,
+  },
+  suggestionsTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: -0.1,
+  },
+  suggestionsScroll: {
+    paddingHorizontal: 12,
+    gap: 10,
+  },
+  suggestionCard: {
+    width: 130,
+    padding: 12,
+    borderRadius: 14,
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginRight: 10,
+  },
+  suggestionName: {
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  suggestionMutual: {
+    fontSize: 11,
+    textAlign: 'center',
+  },
+  suggestionFollowBtn: {
+    marginTop: 6,
+    backgroundColor: ACCENT,
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+    borderRadius: 8,
+    alignSelf: 'stretch',
+    alignItems: 'center',
+  },
+  suggestionFollowText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
   },
   // Back to posts pill (reels mode)
   backToPostsPill: {

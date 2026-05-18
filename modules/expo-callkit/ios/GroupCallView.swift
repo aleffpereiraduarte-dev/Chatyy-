@@ -12,16 +12,21 @@
 //     GroupCallViewController.swift and is mutated on the main actor as
 //     LiveKit reports state.
 //   * Each participant is a `GroupParticipant` row in `session.participants`.
-//   * Layout rule matches WhatsApp / Meet:
+//   * Layout rule matches WhatsApp 2025 (cap 32 participants):
 //       0 remotes   → "waiting" placeholder
 //       1 remote    → fullscreen single tile (the local preview floats)
 //       2 remotes   → 1 col × 2 rows
 //       3-4 remotes → 2 × 2 grid
 //       5-6 remotes → 2 × 3 grid
 //       7-9 remotes → 3 × 3 grid
-//       10+         → 2 cols, scrollable
+//       10-32       → scrollable 2-col LazyVGrid (WhatsApp parity)
 //   * SF Symbols only.
 //   * pt-BR strings.
+
+/// Hard cap on participants per group call. WhatsApp 2025 = 32. Bumped from
+/// 9 (2026-05-17) to match parity audit `/tmp/gap_calls_whatsapp.md` item P1#14.
+/// Used by the backend invite check and the JS-side participant-picker.
+public let kMaxCallParticipants: Int = 32
 
 import SwiftUI
 import UIKit
@@ -298,13 +303,16 @@ struct GroupCallView: View {
         } else if count <= 9 {
             adaptiveGrid(remotes: remotes, cols: 3, size: size)
         } else {
-            // 10+ — scrollable 2 columns, fixed aspect
+            // 10-32 — scrollable 2 column LazyVGrid (WhatsApp parity).
+            // Past 9 tiles, a 3x3 stops being readable so we go vertical-scroll;
+            // hard cap at kMaxCallParticipants = 32, but LK already refuses
+            // additional subscribes via SFU policy if the room is full.
             let cols = Array(repeating: GridItem(.flexible(), spacing: 8), count: 2)
             let tileW = (size.width - 8) / 2
             let tileH = tileW * (4.0 / 3.0)
             ScrollView(.vertical, showsIndicators: false) {
                 LazyVGrid(columns: cols, spacing: 8) {
-                    ForEach(remotes) { p in
+                    ForEach(remotes.prefix(kMaxCallParticipants)) { p in
                         tile(for: p, width: tileW, height: tileH)
                     }
                 }
@@ -622,7 +630,9 @@ struct GroupCallView: View {
 
     // MARK: - Quick emoji bar
 
-    private let quickEmojis = ["❤️", "👍", "👏", "😂", "🎉", "🔥"]
+    // [reaction bar, 2026-05-17] 5 emojis — matches 1:1 CallView, Android
+    // CallActivity, and the JS /call.js fallback. WhatsApp 2025 parity.
+    private let quickEmojis = ["❤️", "👍", "👏", "😂", "🎉"]
 
     private var emojiQuickBar: some View {
         HStack(spacing: 12) {

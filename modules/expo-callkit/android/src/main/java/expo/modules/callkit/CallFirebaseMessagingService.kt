@@ -175,6 +175,23 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
                 )
             }
         } else {
+            // [notif-p0p1] Chat MessagingStyle: render chat_message /
+            // chat_mention / chat_reaction with NotificationCompat.MessagingStyle
+            // (per-conv thread + avatars + smart-reply chips + mute/snooze
+            // actions). If the handler succeeds, we DO NOT forward to Expo
+            // (would duplicate the notification). If it fails or the type
+            // doesn't match, fall through to the Expo delegate path below.
+            if (type == "chat_message" || type == "chat_mention" || type == "chat_reaction") {
+                try {
+                    if (ChatMessagingStyleHandler.tryHandle(applicationContext, message)) {
+                        Log.d(TAG, "MessagingStyle handler consumed $type")
+                        return
+                    }
+                } catch (t: Throwable) {
+                    Log.w(TAG, "MessagingStyle handler crashed, falling through to Expo", t)
+                }
+            }
+
             // Forward non-call messages to Expo's notification handler.
             // We use reflection to call FirebaseMessagingDelegate since we can't
             // directly depend on expo-notifications at compile time.

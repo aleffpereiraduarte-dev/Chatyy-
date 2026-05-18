@@ -421,6 +421,23 @@ export async function registerForPushNotifications() {
         showBadge: true,
       });
 
+      // [notif-p0p1] Keyword-highlight channel — used when a chat msg
+      // matches one of the user's per-keyword highlights (Slack-style
+      // "notify when someone says X"). MAX importance + distinct sound so
+      // it pierces silently-muted general chat noise.
+      await Notifications.setNotificationChannelAsync('chat_keyword', {
+        name: 'Chat — Palavras-chave',
+        description: 'Mensagens que contêm uma palavra-chave que você configurou',
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 200, 100, 200, 100, 200],
+        lightColor: '#ef4444',
+        sound: 'default',
+        enableLights: true,
+        enableVibrate: true,
+        showBadge: true,
+        bypassDnd: false,
+      });
+
       // Call channel - highest priority with custom ringtone
       await Notifications.setNotificationChannelAsync('calls', {
         name: 'Incoming Calls',
@@ -564,6 +581,38 @@ export async function registerForPushNotifications() {
         buttonTitle: 'Marcar como lido',
         options: { isDestructive: false, isAuthenticationRequired: false },
       },
+    ]);
+
+    // [notif-p0p1] chat_reaction — someone reacted to one of your msgs.
+    // Single action to jump straight to the original message; no reply
+    // (you'd reply via the normal chat_message category if you tap reply
+    // on the threaded conversation).
+    await Notifications.setNotificationCategoryAsync('chat_reaction', [
+      {
+        identifier: 'view',
+        buttonTitle: 'Ver',
+        options: { opensAppToForeground: true },
+      },
+      {
+        identifier: 'reply',
+        buttonTitle: 'Responder',
+        textInput: { submitButtonTitle: 'Enviar', placeholder: 'Mensagem...' },
+      },
+    ]);
+
+    // [notif-p0p1] Generic mute action on chat — also surfaced inside the
+    // dynamic smart-reply category registered by the NSE per-notification.
+    // This static category is the fallback for clients that haven't
+    // upgraded to the NSE pathway yet (older iOS / web).
+    await Notifications.setNotificationCategoryAsync('chat_with_mute', [
+      {
+        identifier: 'reply',
+        buttonTitle: 'Responder',
+        textInput: { submitButtonTitle: 'Enviar', placeholder: 'Mensagem...' },
+      },
+      { identifier: 'mark_read', buttonTitle: 'Marcar como lido' },
+      { identifier: 'mute_8h', buttonTitle: 'Silenciar 8h' },
+      { identifier: 'snooze_1h', buttonTitle: 'Soneca 1h' },
     ]);
 
     // feed_like / feed_comment / feed_follow — social actions (view only, no text reply)
@@ -776,6 +825,47 @@ export async function setupNotificationListeners() {
     // but that branch guards on `data?.uid` so chat pushes (with `conversation_id`) fall through here.
     if ((actionId === 'mark_read' || actionId === 'MARK_READ' || actionId === 'mark_read_chat') && data?.conversation_id) {
       handleMarkReadChatFromNotification(data.conversation_id);
+      return;
+    }
+    // [notif-p0p1] Smart-reply chip tap: NSE registers UNTextInputNotificationActions
+    // with identifiers `smart_reply_0` / `_1` / `_2`. iOS still surfaces the
+    // text input so the user can edit before sending — the chip text is the
+    // pre-filled value via response.userText.
+    if (/^smart_reply_\d+$/.test(actionId || '') && data?.conversation_id) {
+      const userText = response.userText;
+      if (userText?.trim()) {
+        handleChatReplyFromNotification(data.conversation_id, userText.trim());
+      }
+      return;
+    }
+    // [notif-p0p1] Mute-from-notification (8h). Identifier `mute_8h` is
+    // registered statically (chat_with_mute) and dynamically (NSE smart
+    // category). Sends chat_user_conv_settings_set with mute_until = now+8h.
+    if (actionId === 'mute_8h' && data?.conversation_id) {
+      try {
+        const { apiCall } = require('./api');
+        const muteUntil = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString();
+        apiCall('chat_user_conv_settings_set', {
+          conversation_id: data.conversation_id,
+          mute_until: muteUntil,
+        }, 'POST').catch(() => {});
+      } catch {}
+      try { Notifications.dismissNotificationAsync(response.notification.request.identifier); } catch {}
+      return;
+    }
+    // [notif-p0p1] Snooze user-level for 1h. Pushes for the next hour fold
+    // into silent data pushes (push fanout reads chat_user_snooze).
+    if (actionId === 'snooze_1h') {
+      try {
+        const { apiCall } = require('./api');
+        apiCall('chat_user_snooze_set', { minutes: 60 }, 'POST').catch(() => {});
+      } catch {}
+      try { Notifications.dismissNotificationAsync(response.notification.request.identifier); } catch {}
+      return;
+    }
+    // [notif-p0p1] Reaction "view" action — jump to the reacted message.
+    if (actionId === 'view' && data?.conversation_id) {
+      handleNotificationNavigation({ ...data, type: 'chat_message' });
       return;
     }
     // FEED/SOCIAL: View post or profile

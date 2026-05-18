@@ -6,6 +6,16 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconX, IconDownload, IconPlay, IconPause, IconLock, IconCheck } from './Icons';
 
+// expo-screen-capture: prevent screenshots & screen recordings while a
+// view-once media is on screen. Android sets FLAG_SECURE (black thumbnail
+// in the screenshot, black frames in screen recordings); iOS only fires
+// a `screenshotListener` event we react to (FLAG_SECURE has no iOS twin).
+// Lazy-loaded so web stays green.
+let ScreenCapture = null;
+if (Platform.OS !== 'web') {
+  try { ScreenCapture = require('expo-screen-capture'); } catch {}
+}
+
 // expo-video for native MOV/MP4 playback (SDK 55+)
 let ExpoVideo = null;
 let useVideoPlayer = null;
@@ -18,7 +28,12 @@ if (Platform.OS !== 'web') {
 }
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
-const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
+// HEIC/HEIF are iOS-native captures. Server already transcodes for thumbnails
+// (ImageMagick fallback in driveGenerateThumbnail). Listing them here lets the
+// fullscreen viewer pick the image branch on iOS, where native ImageIO renders
+// HEIC directly. Android falls through to <Image> which on RN 0.83+ also
+// decodes HEIC via libheif.
+const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'heic', 'heif'];
 const VIDEO_EXTS = ['mp4', 'mov', 'avi', 'webm', 'mkv', 'm4v', '3gp'];
 const PDF_EXTS = ['pdf'];
 const DOCX_EXTS = ['docx', 'doc'];
@@ -858,6 +873,49 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   // the previous viewer position.
   useEffect(() => { if (visible) _setCurrentIdx(_initial); }, [visible, _initial]);
 
+  // Block screenshots / screen recording while a view-once media is on
+  // screen. Android: FLAG_SECURE makes thumbnails + screen recordings show
+  // black frames. iOS: prevent-flag is a no-op (Apple won't expose it),
+  // but we still register a screenshot listener so we can render a
+  // watermark overlay (user email + timestamp) — anyone who screenshots
+  // captures the overlay and is identifiable. Cleanup releases the flag
+  // on unmount so other screens (gallery, etc.) stay screenshottable.
+  const [_watermarkVisible, _setWatermarkVisible] = useState(false);
+  const [_currentUserEmail, _setCurrentUserEmail] = useState('');
+  useEffect(() => {
+    if (!visible || !viewOnce || !ScreenCapture) return;
+    // Resolve current user email lazily so the import stays optional.
+    try {
+      const auth = require('../context/AuthContext');
+      // Hooks can't run here — we read straight from SecureStore mirror.
+      const SecureStore = require('expo-secure-store');
+      SecureStore.getItemAsync?.('current_user_email').then((e) => {
+        if (e) _setCurrentUserEmail(String(e));
+      }).catch(() => {});
+    } catch {}
+    let sub;
+    (async () => {
+      try { await ScreenCapture.preventScreenCaptureAsync('chatyy-view-once'); } catch {}
+      try {
+        sub = ScreenCapture.addScreenshotListener?.(() => {
+          // Make the watermark immediately visible so the *next* attempt
+          // (or a screen recording running in parallel) captures it. We
+          // also keep it on for a few seconds in case the user tries
+          // again. The watermark is the recipient's own email — the
+          // sender doesn't see it on their side because they're never
+          // marked as "viewing" their own view-once media.
+          _setWatermarkVisible(true);
+          setTimeout(() => _setWatermarkVisible(false), 6000);
+        });
+      } catch {}
+    })();
+    return () => {
+      try { sub?.remove?.(); } catch {}
+      try { ScreenCapture.allowScreenCaptureAsync?.('chatyy-view-once'); } catch {}
+      _setWatermarkVisible(false);
+    };
+  }, [visible, viewOnce]);
+
   // Preload neighbors so swipe between is instant. Image.prefetch on RN +
   // ExpoImage.prefetch when available.
   useEffect(() => {
@@ -890,6 +948,10 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   const isPreviewable = PREVIEWABLE_EXTS.includes(ext);
   const _activeFileName = _active?.fileName;
   const _activeFileSize = _active?.fileSize;
+  // media_kind tagging (set by the backup pipeline via photos_set_media_kind).
+  // Used to surface a small "LIVE" / "BURST" / "SLO-MO" / "RAW" badge so
+  // recipients know the format up front. Falls back to no badge when unset.
+  const _activeMediaKind = _active?.mediaKind || _active?.media_kind || null;
   const _multi = _list.length > 1;
 
   const handleDownload = async () => {
@@ -995,6 +1057,28 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
         style={[s.backdrop, viewOnceStyle]}
         onContextMenu={viewOnce ? (e) => e.preventDefault?.() : undefined}
       >
+        {/* View-once watermark — appears after a screenshot is detected
+            (iOS) so the captured image carries the viewer's email +
+            timestamp. The overlay is intentionally semi-transparent so
+            it doesn't ruin the legitimate viewing experience, but is
+            still readable in any saved capture or screen recording. */}
+        {viewOnce && _watermarkVisible && (
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+              alignItems: 'center', justifyContent: 'center', zIndex: 9999,
+            }}
+          >
+            <Text style={{
+              color: 'rgba(255,255,255,0.55)', fontSize: 22, fontWeight: '700',
+              transform: [{ rotate: '-22deg' }], textAlign: 'center',
+              textShadowColor: 'rgba(0,0,0,0.6)', textShadowRadius: 4,
+            }}>
+              {(_currentUserEmail || 'chatyy.com.br') + '\n' + new Date().toLocaleString()}
+            </Text>
+          </View>
+        )}
         {/* Header — SVG icons replace 🔒/✓ emoji per project rule (sharp on
             every density), and the page count "1 / 5" sits in a subtle pill
             so multi-photo galleries read like Instagram instead of a sterile
@@ -1020,6 +1104,32 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
               </View>
             )}
             {viewOnce && <Text style={s.headerSize}>Visualização única</Text>}
+            {_activeMediaKind && _activeMediaKind !== 'regular' && (() => {
+              // Compact uppercase pill — Instagram-style format badge. Per
+              // task: live = LIVE (motion hint via short loop already
+              // handled by the video branch when src is the paired clip),
+              // burst = BURST, slowmo = SLO-MO with the rate hint inline,
+              // timelapse = TIME-LAPSE, raw = RAW.
+              const LABELS = {
+                live_photo: 'LIVE',
+                burst: 'BURST',
+                slowmo: 'SLO-MO',
+                timelapse: 'TIME-LAPSE',
+                raw: 'RAW',
+              };
+              const label = LABELS[_activeMediaKind] || _activeMediaKind.toUpperCase();
+              return (
+                <View style={{
+                  alignSelf: 'flex-start', marginTop: 4,
+                  paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6,
+                  backgroundColor: 'rgba(255,255,255,0.92)',
+                }}>
+                  <Text style={{ color: '#111', fontSize: 10, fontWeight: '800', letterSpacing: 0.5 }}>
+                    {label}
+                  </Text>
+                </View>
+              );
+            })()}
           </View>
           {!viewOnce && (
             <TouchableOpacity onPress={handleDownload} disabled={saving} style={s.headerBtn} hitSlop={12} accessibilityLabel="Download" accessibilityRole="button">

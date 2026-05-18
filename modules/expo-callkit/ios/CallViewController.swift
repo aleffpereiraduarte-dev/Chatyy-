@@ -396,6 +396,11 @@ final class CallViewController: UIViewController {
     /// Send a chat-level reaction. LiveKit's data channel takes Data; we
     /// prefix `R:` so the receiver can demux from any future control message.
     /// Locally we append to floatingReactions for immediate feedback.
+    ///
+    /// [reaction bar, 2026-05-17] Also fires the parity WS `call_reaction`
+    /// event via CallSignalWs so reactions arrive even when LK data is
+    /// briefly disrupted (mirrors the status-reaction WS event the user
+    /// already has elsewhere in the app).
     private func sendReaction(_ emoji: String) {
         // Local burst
         let reaction = CallFloatingReaction(
@@ -422,6 +427,12 @@ final class CallViewController: UIViewController {
                 print("[CallVC] publish reaction failed: \(error)")
             }
         }
+        // Parity WS broadcast — fan to peers even if LK data is fluttering.
+        CallSignalWs.shared.fireCallReaction(
+            callId: self.callId,
+            conversationId: self.conversationId,
+            emoji: emoji.isEmpty ? "🖐️" : emoji
+        )
     }
 
     // MARK: - Ringback (unchanged from prior round)

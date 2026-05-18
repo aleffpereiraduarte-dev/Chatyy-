@@ -1391,26 +1391,98 @@ private fun RailButton(
 
 @Composable
 private fun CohostStrip(session: LiveBroadcastSessionState) {
-    if (session.cohosts.isEmpty()) return
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Spacer(Modifier.weight(1f))
-        for (ch in session.cohosts) {
-            CohostTile(cohost = ch, roomRef = session.roomRef)
+    // Multi-cam grid (P0 — cap raised to 4 in 2026-05-17). Adaptive layout:
+    //   0   → nothing
+    //   1   → bottom-right mini PiP (legacy)
+    //   2   → side-by-side split
+    //   3-4 → 2×2 grid
+    // Backend cap is 4; we still take prefix(4) so a server race doesn't
+    // crash the column.
+    val cohosts = session.cohosts.take(4)
+    if (cohosts.isEmpty()) return
+    when (cohosts.size) {
+        1 -> {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Spacer(Modifier.weight(1f))
+                CohostTile(cohost = cohosts[0], roomRef = session.roomRef,
+                    width = 110.dp, height = 150.dp)
+            }
+        }
+        2 -> {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                for (ch in cohosts) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        CohostTile(cohost = ch, roomRef = session.roomRef,
+                            width = null, height = 160.dp)
+                    }
+                }
+            }
+        }
+        else -> {
+            // 3 or 4 → 2×2 grid. Compose without LazyVerticalGrid (overkill
+            // for max-4 items) — two rows of two boxes each, weighted to
+            // share the width evenly.
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    for (i in 0..1) {
+                        if (i < cohosts.size) {
+                            Box(modifier = Modifier.weight(1f)) {
+                                CohostTile(cohost = cohosts[i], roomRef = session.roomRef,
+                                    width = null, height = 130.dp)
+                            }
+                        } else {
+                            Spacer(Modifier.weight(1f))
+                        }
+                    }
+                }
+                if (cohosts.size > 2) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        for (i in 2..3) {
+                            if (i < cohosts.size) {
+                                Box(modifier = Modifier.weight(1f)) {
+                                    CohostTile(cohost = cohosts[i], roomRef = session.roomRef,
+                                        width = null, height = 130.dp)
+                                }
+                            } else {
+                                Spacer(Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun CohostTile(cohost: LiveCohost, roomRef: Room? = null) {
+private fun CohostTile(
+    cohost: LiveCohost,
+    roomRef: Room? = null,
+    width: androidx.compose.ui.unit.Dp? = 110.dp,
+    height: androidx.compose.ui.unit.Dp = 150.dp,
+) {
+    val mod = if (width != null) {
+        Modifier.width(width).height(height)
+    } else {
+        Modifier.fillMaxWidth().height(height)
+    }
     Box(
-        modifier = Modifier
-            .width(110.dp)
-            .height(150.dp)
+        modifier = mod
             .clip(RoundedCornerShape(12.dp))
             .background(CHIP_COLOR)
     ) {

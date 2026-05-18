@@ -146,14 +146,37 @@ function FilterThumb({ filter, uri, selected, onPress }) {
   );
 }
 
-export default function StatusCamera({ visible, onClose, onCapture, t }) {
+export default function StatusCamera({ visible, onClose, onCapture, t, initialSeed = null }) {
   const [permission, requestPermission] = useCameraPermissions();
   const [facing, setFacing] = useState('front');
   const [flash, setFlash] = useState('off');
   const [captureMode, setCaptureMode] = useState('photo');
   const [recording, setRecording] = useState(false);
   const [recordTimer, setRecordTimer] = useState(0);
-  const [preview, setPreview] = useState(null);
+  // initialSeed (Repost flow) hydrates the preview slot with the previous
+  // story's media so the user lands directly in the filter/confirm editor
+  // instead of having to re-shoot. The capture screen is bypassed via the
+  // existing `preview` → "PREVIEW MODE" render branch.
+  const [preview, setPreview] = useState(initialSeed && initialSeed.uri ? {
+    uri: initialSeed.uri,
+    type: initialSeed.type === 'video' ? 'video' : 'photo',
+    width: initialSeed.width,
+    height: initialSeed.height,
+    fromRepost: true,
+  } : null);
+  // Reset the preview when a fresh seed arrives (e.g. user closes + repos
+  // a different story without unmounting the modal).
+  useEffect(() => {
+    if (initialSeed && initialSeed.uri) {
+      setPreview({
+        uri: initialSeed.uri,
+        type: initialSeed.type === 'video' ? 'video' : 'photo',
+        width: initialSeed.width,
+        height: initialSeed.height,
+        fromRepost: true,
+      });
+    }
+  }, [initialSeed?.uri]);
   const [filterIdx, setFilterIdx] = useState(0);
   const [timerDelay, setTimerDelay] = useState(0);
   const [counting, setCounting] = useState(false);
@@ -166,6 +189,16 @@ export default function StatusCamera({ visible, onClose, onCapture, t }) {
   const [musicPickerOpen, setMusicPickerOpen] = useState(false);
   const [galleryThumb, setGalleryThumb] = useState(null); // last roll asset uri
   const [showSwipeHint, setShowSwipeHint] = useState(true);
+  // Multi-clip recording — TikTok-style. Each tap adds a finished segment
+  // (max 20s each) to the stack; once the user has 2+ they can either keep
+  // recording or hit "Pronto" to publish all clips as one CAROUSEL story.
+  // Native AVMutableComposition stitch is not in this build (no ffmpeg-wasm
+  // dep, native module would need a fresh build); we publish via the
+  // existing status_carousel_publish so viewers see a segmented progress
+  // ring with all clips back-to-back — the perceptual equivalent.
+  const [segments, setSegments] = useState([]); // [{ uri, type:'video', durationMs }]
+  const MAX_SEGMENTS = 3;
+  const MAX_SEGMENT_MS = 20000;
 
   const cameraRef = useRef(null);
   const recordTimerRef = useRef(null);
@@ -284,7 +317,11 @@ export default function StatusCamera({ visible, onClose, onCapture, t }) {
     if (!cameraRef.current || recording) return;
     setRecording(true);
     try {
-      const video = await cameraRef.current.recordAsync({ maxDuration: 30, quality: '720p' });
+      // Spec bump: 30s → 60s cap (TikTok / IG Story plus parity). The
+      // MAX_RECORD_MS constant + progress ring already animate over 60s;
+      // only the camera SDK call still passed 30, which silently capped
+      // recordings at 30s no matter what the UI suggested. Aligned now.
+      const video = await cameraRef.current.recordAsync({ maxDuration: 60, quality: '720p' });
       if (video?.uri) onCapture?.({
         uri: video.uri,
         type: 'video',
@@ -345,15 +382,86 @@ export default function StatusCamera({ visible, onClose, onCapture, t }) {
       // Story mode = quick photo capture (uses status flow, no boomerang loop)
       await takePhoto();
     } else if (captureMode === 'video') {
+      // Segment mode: once the user has captured at least one clip, every
+      // subsequent tap records another segment instead of a fresh single
+      // clip. This is the multi-clip path — clips publish as a carousel
+      // via publishSegments() when the user hits "Pronto".
+      if (segments.length > 0 && segments.length < MAX_SEGMENTS) {
+        if (recording) { haptic('heavy'); stopRecording(); }
+        else { haptic('medium'); recordSegment(); }
+        return;
+      }
       if (recording) { haptic('heavy'); stopRecording(); }
       else { haptic('medium'); startRecording(); }
     }
-  }, [captureMode, recording, timerDelay, takePhoto, startRecording, stopRecording]);
+  }, [captureMode, recording, timerDelay, takePhoto, startRecording, stopRecording, recordSegment, segments.length]);
+
+  // Tracks whether the current recording started via long-press (hold-to-
+  // record). When true, releasing the button stops recording. When false
+  // (tapped in video mode to toggle), releasing must NOT stop — otherwise
+  // the user can't lift their finger between start-tap and stop-tap.
+  const holdRecordingRef = useRef(false);
+  // Segment-mode start timestamp. We use it to compute durationMs for the
+  // finished clip so the carousel can show per-clip elapsed in the viewer.
+  const segmentStartRef = useRef(0);
+
+  // Record one segment (max 20s) and push it onto the segments stack
+  // instead of emitting onCapture immediately. Returns once recordAsync
+  // resolves — caller should keep recording state coherent.
+  const recordSegment = useCallback(async () => {
+    if (!cameraRef.current || recording) return;
+    if (segments.length >= MAX_SEGMENTS) {
+      try { Linking.openURL('chatyy://noop'); } catch {} // no-op anchor
+      return;
+    }
+    setRecording(true);
+    segmentStartRef.current = Date.now();
+    try {
+      const cap = Math.ceil(MAX_SEGMENT_MS / 1000);
+      const video = await cameraRef.current.recordAsync({ maxDuration: cap, quality: '720p' });
+      if (video?.uri) {
+        const dur = Math.max(0, Date.now() - segmentStartRef.current);
+        setSegments(prev => [...prev, { uri: video.uri, type: 'video', durationMs: dur }]);
+      }
+    } catch (e) {
+      console.warn('[StatusCamera] segment record error:', e);
+    }
+    setRecording(false);
+  }, [recording, segments.length]);
+
+  // Publish the accumulated segment stack as a CAROUSEL. Each segment
+  // travels as one carousel item (type: 'video'); the viewer already
+  // paints a segmented progress ring across multi-item groups so the
+  // playback feels continuous even without a real native stitch.
+  const publishSegments = useCallback(() => {
+    if (segments.length === 0) return;
+    onCapture?.({
+      multi: true,
+      items: segments.map(s => ({
+        uri: s.uri,
+        type: 'video',
+        durationMs: s.durationMs,
+      })),
+      filter: activeFilter.key !== 'normal' ? activeFilter.key : undefined,
+      filterAdjust: activeFilter.adjust || undefined,
+      speed: speed !== 1 ? speed : undefined,
+      beauty: beauty || undefined,
+      music: musicTrack || undefined,
+    });
+    setSegments([]);
+  }, [segments, onCapture, activeFilter, speed, beauty, musicTrack]);
 
   const handleLongPress = useCallback(() => {
     haptic('medium');
-    if (captureMode === 'photo') { setCaptureMode('video'); startRecording(); }
-  }, [captureMode, startRecording]);
+    // Hands-free record: hold to start (any mode), release to stop. In
+    // photo mode we transparently switch to video so the recording fires
+    // immediately without forcing the user to tap the mode bar first.
+    if (!recording) {
+      if (captureMode === 'photo' || captureMode === 'story') setCaptureMode('video');
+      holdRecordingRef.current = true;
+      startRecording();
+    }
+  }, [captureMode, recording, startRecording]);
 
   const handlePressIn = useCallback(() => {
     Animated.spring(recScaleAnim, { toValue: 0.92, useNativeDriver: true, friction: 6, tension: 180 }).start();
@@ -361,7 +469,14 @@ export default function StatusCamera({ visible, onClose, onCapture, t }) {
 
   const handlePressOut = useCallback(() => {
     Animated.spring(recScaleAnim, { toValue: 1, useNativeDriver: true, friction: 5, tension: 180 }).start();
-    if (recording) { haptic('heavy'); stopRecording(); setCaptureMode('photo'); }
+    // Only auto-stop when the recording originated from a long-press hold.
+    // Tap-to-toggle recordings (handleCapturePress in video mode) must
+    // survive press-out so the user can release between start and stop.
+    if (recording && holdRecordingRef.current) {
+      holdRecordingRef.current = false;
+      haptic('heavy');
+      stopRecording();
+    }
   }, [recording, stopRecording]);
 
   // ─── Gallery ───
@@ -604,6 +719,27 @@ export default function StatusCamera({ visible, onClose, onCapture, t }) {
           <Text style={s.stackIcon}>⏱</Text>
           <Text style={s.stackLabel}>{timerDelay === 0 ? 'Timer' : `${timerDelay}s`}</Text>
         </TouchableOpacity>
+        {/* Multi-clip toggle — sets captureMode to video and records the
+            first segment. Subsequent taps on the record button add more
+            segments (up to 3). The user finishes by hitting "Pronto" in
+            the segment bar that appears under the mode tabs. */}
+        <TouchableOpacity
+          onPress={() => {
+            if (recording) return;
+            haptic('medium');
+            if (captureMode !== 'video') setCaptureMode('video');
+            // Start the first segment via recordSegment so the stack
+            // accumulates instead of firing onCapture with one clip.
+            recordSegment();
+          }}
+          style={[s.stackBtn, segments.length > 0 && s.stackBtnActive]}
+          accessibilityLabel="Multi-clip"
+        >
+          <Text style={s.stackIcon}>{segments.length > 0 ? `${segments.length}+` : '⊞'}</Text>
+          <Text style={s.stackLabel}>
+            {t?.('status.segments') || 'Clips'}
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {/* Beauty soft overlay */}
@@ -618,11 +754,68 @@ export default function StatusCamera({ visible, onClose, onCapture, t }) {
         </View>
       )}
 
-      {/* Record timer badge */}
+      {/* Record timer badge — shows red dot + elapsed time + "Gravando"
+          label so the user knows hands-free recording is live. The label
+          aliases to the localized string via t() when available. */}
       {recording && (
         <View style={s.recBadge}>
           <View style={s.recDot} />
           <Text style={s.recTxt}>{fmtTime(recordTimer)}</Text>
+          <Text style={[s.recTxt, { fontSize: 11, opacity: 0.9, marginLeft: 4 }]}>
+            {t?.('status.recording') || 'Gravando'}
+          </Text>
+        </View>
+      )}
+
+      {/* Hands-free hint — small pill above the capture button when idle
+          and on the video tab. Auto-fades once they've recorded at least
+          one clip (showSwipeHint reuses that visibility timing). */}
+      {!recording && captureMode === 'video' && showSwipeHint && (
+        <Animated.View style={[s.swipeHint, { opacity: hintFadeAnim, bottom: 180 }]} pointerEvents="none">
+          <Text style={s.swipeHintTxt}>
+            {t?.('status.recordHoldHint') || 'Segure para gravar'}
+          </Text>
+        </Animated.View>
+      )}
+
+      {/* Segment counter + Pronto pill — shown when the user has at least
+          one captured segment. Each segment is a separate clip (max 20s);
+          we publish the stack as a carousel via onCapture({multi:true}).
+          Tap "+" on the record button keeps adding clips up to 3 total. */}
+      {captureMode === 'video' && segments.length > 0 && (
+        <View style={s.segmentBar} pointerEvents="box-none">
+          <View style={s.segmentPill}>
+            {Array.from({ length: MAX_SEGMENTS }).map((_, i) => (
+              <View
+                key={i}
+                style={[
+                  s.segmentDot,
+                  i < segments.length && s.segmentDotFilled,
+                ]}
+              />
+            ))}
+            <Text style={s.segmentPillTxt}>
+              {`${segments.length}/${MAX_SEGMENTS}`}
+            </Text>
+          </View>
+          <TouchableOpacity
+            onPress={() => { haptic('medium'); publishSegments(); }}
+            style={s.segmentDoneBtn}
+            disabled={recording}
+            accessibilityLabel={t?.('common.done') || 'Pronto'}
+          >
+            <Text style={s.segmentDoneTxt}>
+              {t?.('common.done') || 'Pronto'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => { haptic('light'); setSegments(prev => prev.slice(0, -1)); }}
+            style={s.segmentUndoBtn}
+            disabled={recording}
+            accessibilityLabel={t?.('common.undo') || 'Desfazer'}
+          >
+            <Text style={s.segmentDoneTxt}>{'⤺'}</Text>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -917,6 +1110,37 @@ const s = StyleSheet.create({
     borderColor: BRAND_PURPLE_LIGHT,
     borderTopColor: BRAND_PINK,
     borderRightColor: 'transparent',
+  },
+
+  // Segment bar (multi-clip recording UI) — appears once the user has
+  // at least one captured segment. Pill shows N/MAX_SEGMENTS dots; the
+  // "Pronto" button publishes the stack via status_carousel_publish.
+  segmentBar: {
+    position: 'absolute', bottom: 220,
+    left: 0, right: 0,
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
+    gap: 10,
+  },
+  segmentPill: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6,
+    gap: 6,
+  },
+  segmentDot: {
+    width: 8, height: 8, borderRadius: 4,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+  },
+  segmentDotFilled: { backgroundColor: BRAND_PURPLE_LIGHT },
+  segmentPillTxt: { color: '#fff', fontSize: 11, fontWeight: '800', marginLeft: 4 },
+  segmentDoneBtn: {
+    paddingHorizontal: 16, paddingVertical: 8, borderRadius: 16,
+    backgroundColor: '#25D366',
+  },
+  segmentDoneTxt: { color: '#fff', fontSize: 13, fontWeight: '800' },
+  segmentUndoBtn: {
+    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16,
+    backgroundColor: 'rgba(0,0,0,0.55)',
   },
 
   // Swipe hint (Feature 8)

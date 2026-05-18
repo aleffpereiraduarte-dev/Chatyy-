@@ -35,7 +35,7 @@ import {
 import PhotoEditor from '../components/PhotoEditor';
 import BrandFab from '../components/BrandFab';
 import { generateBatch } from '../services/thumbnailCache';
-import Svg, { Path, Circle as SvgCircle, Line, Polyline } from 'react-native-svg';
+import Svg, { Path, Circle as SvgCircle, Line, Polyline, Rect } from 'react-native-svg';
 
 let photoBackup = null;
 try { photoBackup = require('../services/photoBackup'); } catch {}
@@ -115,10 +115,24 @@ function IconAlbum({ size = 24, color = '#666' }) {
   );
 }
 
+// Map pin icon for the new geo-tagged photos tab. Single-color stroke style
+// matches the other tab icons (IconImage/IconAlbum/IconSearch/IconCloud).
+function IconMap({ size = 24, color = '#666' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+      <SvgCircle cx="12" cy="10" r="3" />
+    </Svg>
+  );
+}
+
 // ============================================================
 // CONSTANTS
 // ============================================================
-const TABS = ['photos', 'albums', 'search', 'backup'];
+// Tabs include 'map' — surfaces geo-tagged photos on a clustered Google Maps
+// WebView (no extra dep, uses the bundled gmaps embed). 'backup' stays last
+// since users hit it least often during a normal session.
+const TABS = ['photos', 'albums', 'search', 'map', 'backup'];
 const PAGE_SIZE = Platform.OS === 'web' ? 200 : 60;
 
 function formatGB(bytes) {
@@ -2890,7 +2904,23 @@ export default function PhotosScreen() {
                     <ActivityIndicator size="small" color="#7C3AED" />
                   ) : null}
                   <Text style={{ fontSize: 13, fontWeight: '700', color: '#7C3AED' }}>
-                    {presetFilter === 'summer' ? `Verão ${(new Date().getMonth() >= 11 ? new Date().getFullYear() + 1 : new Date().getFullYear())}` : presetFilter === 'thisweek' ? 'Esta semana' : 'Pessoas'}
+                    {(() => {
+                      // Centralized label resolver — keeps the active-filter
+                      // pill in sync with the card list. Falls back to a
+                      // capitalized key so a future preset auto-labels even
+                      // without a manual entry here.
+                      const labels = {
+                        summer: `Verão ${(new Date().getMonth() >= 11 ? new Date().getFullYear() + 1 : new Date().getFullYear())}`,
+                        thisweek: 'Esta semana',
+                        people: 'Pessoas',
+                        selfies: 'Selfies',
+                        food: 'Comida',
+                        pets: 'Pets',
+                        sunset: 'Por do sol',
+                        documents: 'Documentos',
+                      };
+                      return labels[presetFilter] || (presetFilter.charAt(0).toUpperCase() + presetFilter.slice(1));
+                    })()}
                   </Text>
                   <Text style={{ fontSize: 13, color: '#7C3AED', fontWeight: '700' }}>×</Text>
                 </Pressable>
@@ -3799,6 +3829,38 @@ export default function PhotosScreen() {
             <TouchableOpacity style={s.viewerBtn} onPress={() => sharePhoto(viewerPhoto)}>
               <IconShare size={22} color="#fff" />
             </TouchableOpacity>
+            {/* Print to canvas — opens a partner print service in the system
+                browser. Stub for now: Mixtiles affiliate URL. Real wiring will
+                pass the photo CDN URL as a query param once the partner SDK
+                publishes the receive-import API. Keeps the print button real
+                so users can already export their photos to physical media. */}
+            <TouchableOpacity
+              style={s.viewerBtn}
+              onPress={async () => {
+                try {
+                  const photoUrl = encodeURIComponent(viewerResolvedUri || getFullUrl(viewerPhoto) || '');
+                  // Mixtiles is the friendlier of the two big consumer-photo
+                  // print services and they accept ?image= queries. Swap for
+                  // a server-side affiliate redirect once revenue share is wired.
+                  const partner = `https://www.mixtiles.com/?utm_source=chatyy&utm_medium=app&image_url=${photoUrl}`;
+                  if (Platform.OS === 'web') {
+                    window.open(partner, '_blank');
+                  } else {
+                    const WB = require('expo-web-browser');
+                    await WB.openBrowserAsync(partner);
+                  }
+                } catch (e) { console.warn('[Photos] print partner error:', e); }
+              }}
+              accessibilityLabel={t('photos.print') || 'Imprimir'}
+            >
+              {/* Inline printer SVG to avoid pulling another icon. Visual
+                  weight matches the existing 22-px outline icons next to it. */}
+              <Svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                <Polyline points="6 9 6 2 18 2 18 9" />
+                <Path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+                <Rect x="6" y="14" width="12" height="8" />
+              </Svg>
+            </TouchableOpacity>
           </Animated.View>
 
           {/* Image with scale animation + pinch-zoom + swipe-between-photos */}
@@ -4130,7 +4192,11 @@ export default function PhotosScreen() {
         >
           {TABS.map((tab) => {
             const isActive = activeTab === tab;
-            const Ico = tab === 'photos' ? IconImage : tab === 'search' ? IconSearch : tab === 'albums' ? IconAlbum : IconCloud;
+            const Ico = tab === 'photos' ? IconImage
+              : tab === 'search' ? IconSearch
+              : tab === 'albums' ? IconAlbum
+              : tab === 'map' ? IconMap
+              : IconCloud;
             return (
               <Pressable
                 key={tab}
@@ -4223,6 +4289,19 @@ export default function PhotosScreen() {
             {activeTab === 'photos' && renderPhotosTab()}
             {activeTab === 'search' && renderSearchTab()}
             {activeTab === 'albums' && renderAlbumsTab()}
+            {activeTab === 'map' && (
+              <ErrorBoundary>
+                <PhotosMapTab
+                  colors={colors}
+                  isDark={isDark}
+                  insets={insets}
+                  t={t}
+                  api={api}
+                  allPhotos={allPhotos}
+                  openViewer={openViewer}
+                />
+              </ErrorBoundary>
+            )}
             {activeTab === 'backup' && (
               <ErrorBoundary>
                 {renderBackupTab()}
@@ -4343,6 +4422,44 @@ export default function PhotosScreen() {
           </TouchableOpacity>
           <TouchableOpacity
             style={s.batchAction}
+            onPress={async () => {
+              // Export selected as a single ZIP. Server-side endpoint streams
+              // the bytes, so on native we open the URL via expo-web-browser
+              // (system browser handles download UX). On web we navigate
+              // directly so the browser's downloader takes over.
+              const selectedIds = filteredPhotos
+                .filter(p => selectedItems.has(p.id) && !p.isDevice)
+                .map(p => p.id);
+              if (selectedIds.length === 0) return;
+              if (selectedIds.length > 500) {
+                safeAlert?.(t('photos.exportTooMany') || 'Limite 500', t('photos.exportTooManyDesc') || 'Selecione até 500 fotos.');
+                return;
+              }
+              const url = api.photosExportZipUrl(selectedIds);
+              try {
+                if (Platform.OS === 'web') {
+                  window.location.href = url;
+                } else {
+                  const WB = require('expo-web-browser');
+                  await WB.openBrowserAsync(url);
+                }
+              } catch (e) {
+                console.warn('[Photos] export zip error:', e);
+              }
+              clearSelection();
+            }}
+            accessibilityLabel={t('photos.exportZip') || 'Exportar ZIP'}
+          >
+            <View style={[s.batchActionPill, { backgroundColor: 'rgba(14,165,233,0.12)' }]}>
+              {/* Reuse IconDownload for now — a dedicated archive icon would be
+                  cleaner but the rest of the bar already uses Lucide-style
+                  outline icons; the action label is the disambiguator. */}
+              <IconDownload size={20} color="#0EA5E9" />
+            </View>
+            <Text style={[s.batchActionText, { color: colors.text }]}>{t('photos.exportZip') || 'ZIP'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={s.batchAction}
             onPress={deleteSelected}
             accessibilityLabel={t('photos.delete')}
           >
@@ -4416,6 +4533,184 @@ function IconSparkles({ size = 16, color = '#fff' }) {
   );
 }
 
+// PhotosMapTab — Google Maps WebView with clustered pins for geo-tagged
+// photos. Backend (photos_with_gps) buckets points by 2-decimal lat/lon so
+// dense vacation albums collapse into a single ~1km cluster instead of
+// thousands of overlapping pins. Tapping a pin asks the embedded JS bridge
+// to surface the photo id; we then call openViewer on the matching frame.
+// Why WebView + Google Maps embed: react-native-maps would need a native
+// rebuild + Google billing token wiring. The embed is bundled, free, and
+// works on iOS / Android / web with zero extra dep.
+function PhotosMapTab({ colors, isDark, insets, t, api, allPhotos, openViewer }) {
+  const [loading, setLoading] = React.useState(true);
+  const [extracting, setExtracting] = React.useState(false);
+  const [clusters, setClusters] = React.useState([]);
+  const [total, setTotal] = React.useState(0);
+  const [error, setError] = React.useState(null);
+
+  // Lazy require so the import doesn't pull react-native-webview into web
+  // bundles that don't need it.
+  let WebView = null;
+  try { WebView = require('react-native-webview').WebView; } catch {}
+
+  const loadClusters = React.useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await api.photosWithGps();
+      if (r?.success && r?.data) {
+        setClusters(r.data.clusters || []);
+        setTotal(r.data.total || 0);
+      } else {
+        setError(r?.error || 'Falha ao carregar mapa');
+      }
+    } catch (e) {
+      setError(e?.message || 'Falha ao carregar mapa');
+    } finally {
+      setLoading(false);
+    }
+  }, [api]);
+
+  // Trigger an EXIF GPS extraction pass — pulls metadata from up to 100 photos
+  // that don't yet have gps_lat. Re-fetches the clusters when done.
+  const runExtract = React.useCallback(async () => {
+    setExtracting(true);
+    try {
+      await api.photosExtractGps(100);
+      await loadClusters();
+    } catch {} finally {
+      setExtracting(false);
+    }
+  }, [api, loadClusters]);
+
+  React.useEffect(() => { loadClusters(); }, [loadClusters]);
+
+  // Build the Google Maps embed HTML. We use the public /maps/embed/v1/view
+  // endpoint when there's nothing to plot (just a centered view), and
+  // /maps/embed/v1/search with a marker list for cluster centroids. The
+  // simplest cross-platform path is to render markers via the JS API; the
+  // free embed endpoint doesn't support clusters natively, so we use the
+  // gmaps JS SDK with a placeholder API key the user can swap later.
+  const mapHtml = React.useMemo(() => {
+    const center = clusters.length > 0
+      ? { lat: clusters[0].lat, lng: clusters[0].lon }
+      : { lat: -23.5505, lng: -46.6333 }; // São Paulo fallback
+    const markersJson = JSON.stringify(clusters.map(c => ({
+      lat: c.lat, lng: c.lon, count: c.count, id: c.sample_id,
+    })));
+    // Inline HTML — OpenStreetMap via Leaflet (no API key needed, no per-load
+    // billing). Pins clickable; click posts a message back to RN.
+    return `<!doctype html><html><head>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>html,body,#map{height:100%;margin:0;padding:0;background:${isDark ? '#0b0f17' : '#fff'}}.cluster{background:#7C3AED;color:#fff;border-radius:18px;padding:4px 10px;font:600 13px system-ui;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.3)}</style>
+</head><body>
+<div id="map"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+  const map = L.map('map', { zoomControl: true }).setView([${center.lat}, ${center.lng}], ${clusters.length > 0 ? 10 : 5});
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap', maxZoom: 19
+  }).addTo(map);
+  const markers = ${markersJson};
+  const bounds = [];
+  markers.forEach(m => {
+    const icon = L.divIcon({ html: '<div class="cluster">' + m.count + '</div>', className: '', iconSize: [40, 28] });
+    const pin = L.marker([m.lat, m.lng], { icon }).addTo(map);
+    pin.on('click', () => {
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'pin_tap', id: m.id }));
+      }
+    });
+    bounds.push([m.lat, m.lng]);
+  });
+  if (bounds.length > 1) map.fitBounds(bounds, { padding: [40, 40] });
+</script>
+</body></html>`;
+  }, [clusters, isDark]);
+
+  const onMessage = React.useCallback((evt) => {
+    try {
+      const data = JSON.parse(evt?.nativeEvent?.data || '{}');
+      if (data.type === 'pin_tap' && data.id) {
+        const idx = (allPhotos || []).findIndex(p => String(p.id) === String(data.id));
+        if (idx >= 0) openViewer(idx);
+      }
+    } catch {}
+  }, [allPhotos, openViewer]);
+
+  // Empty / loading / error states. Map renders only when we have a WebView
+  // AND there are cluster points to show; otherwise we show a CTA explaining
+  // how to populate EXIF metadata for backed-up photos.
+  if (loading) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator color="#7C3AED" />
+        <Text style={{ marginTop: 10, color: colors.textSecondary, fontSize: 13 }}>
+          {t('photos.mapLoading') || 'Carregando mapa...'}
+        </Text>
+      </View>
+    );
+  }
+  if (error) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>
+          {error}
+        </Text>
+        <TouchableOpacity onPress={loadClusters} style={{ marginTop: 16, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: '#7C3AED' }}>
+          <Text style={{ color: '#fff', fontWeight: '700' }}>{t('common.retry') || 'Tentar de novo'}</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+  if (clusters.length === 0) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <IconMap size={48} color={colors.textTertiary} />
+        <Text style={{ marginTop: 12, color: colors.text, fontSize: 16, fontWeight: '700' }}>
+          {t('photos.mapEmptyTitle') || 'Sem fotos no mapa'}
+        </Text>
+        <Text style={{ marginTop: 6, color: colors.textSecondary, fontSize: 13, textAlign: 'center' }}>
+          {t('photos.mapEmptyDesc') || 'Para aparecer no mapa, a foto precisa ter GPS no EXIF. Rodamos uma extração agora — pode levar alguns segundos.'}
+        </Text>
+        <TouchableOpacity
+          onPress={runExtract}
+          disabled={extracting}
+          style={{ marginTop: 18, paddingHorizontal: 22, paddingVertical: 12, borderRadius: 12, backgroundColor: '#7C3AED', opacity: extracting ? 0.6 : 1 }}
+        >
+          {extracting
+            ? <ActivityIndicator color="#fff" />
+            : <Text style={{ color: '#fff', fontWeight: '700' }}>{t('photos.mapExtractGps') || 'Extrair GPS das fotos'}</Text>}
+        </TouchableOpacity>
+      </View>
+    );
+  }
+  if (!WebView) {
+    // Web fallback — embed via iframe (Leaflet works the same in a plain iframe).
+    return (
+      <View style={{ flex: 1, paddingBottom: insets.bottom }}>
+        <iframe srcDoc={mapHtml} style={{ width: '100%', height: '100%', border: 0 }} />
+      </View>
+    );
+  }
+  return (
+    <View style={{ flex: 1, paddingBottom: insets.bottom }}>
+      <WebView
+        originWhitelist={['*']}
+        source={{ html: mapHtml }}
+        onMessage={onMessage}
+        style={{ flex: 1, backgroundColor: 'transparent' }}
+      />
+      <View style={{ position: 'absolute', top: 10, left: 10, backgroundColor: 'rgba(0,0,0,0.65)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 }}>
+        <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+          {total} {t('photos.itemsOnMap') || 'fotos no mapa'}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
 function MemoriesCarousel({
   colors, isDark, t, memoriesData, filteredPhotos, getThumbnailUrl,
   openViewer, api, setPresetFilter, setPresetMLIds, setPresetLoading, s,
@@ -4424,10 +4719,21 @@ function MemoriesCarousel({
   // Years-ago buckets first (up to 4), then curated presets — same order as
   // the original inline mapping, just hoisted so we can iterate twice.
   const memoryCards = (memoriesData || []).slice(0, 4);
+  // Curated presets — both date-based (thisweek) and AI-tag-based. The
+  // AI cards run a photo_search_ml query whose tokens overlap photo_labels
+  // produced by gpt-4o-mini Vision (already stored in drive_files.photo_labels
+  // per the audit). Adding new categories is a matter of dropping an entry
+  // here + extending the `queries` map below; no backend change required.
   const presetCards = [
     { key: 'summer', title: `Verão ${(new Date().getMonth() >= 11 ? new Date().getFullYear() + 1 : new Date().getFullYear())}`, sub: 'Os melhores momentos', tint: ['#7C3AED', '#EC4899'] },
     { key: 'thisweek', title: 'Esta semana', sub: 'Novas memórias', tint: ['#0EA5E9', '#7C3AED'] },
     { key: 'people', title: 'Pessoas', sub: 'Quem aparece mais', tint: ['#F59E0B', '#7C3AED'] },
+    // Auto-categories ("Coleções automáticas") — surfaced via photo_labels.
+    { key: 'selfies', title: 'Selfies', sub: 'Você no foco', tint: ['#EC4899', '#7C3AED'] },
+    { key: 'food', title: 'Comida', sub: 'Pratos que marcaram', tint: ['#F97316', '#EF4444'] },
+    { key: 'pets', title: 'Pets', sub: 'Animais que amam você', tint: ['#10B981', '#06B6D4'] },
+    { key: 'sunset', title: 'Por do sol', tint: ['#F59E0B', '#EC4899'], sub: 'Céus inesquecíveis' },
+    { key: 'documents', title: 'Documentos', sub: 'Recibos, comprovantes', tint: ['#64748B', '#0EA5E9'] },
   ];
   const totalCards = memoryCards.length + presetCards.length;
 
@@ -4553,10 +4859,21 @@ function MemoriesCarousel({
                     // photo_labels (tags/objects/scene) + optional date window.
                     setPresetFilter(preset.key);
                     setPresetMLIds(null);
+                    // Each query token is matched against photo_labels.tags +
+                    // .objects + .scene by photoMlSearch (see photo-ml.php).
+                    // Wide PT+EN keyword nets so users phrasing either way hit.
                     const queries = {
                       summer: 'beach pool sun outdoor vacation summer praia piscina sol verão férias',
                       thisweek: '',
                       people: 'person people face portrait selfie group friends pessoa pessoas rosto retrato selfie amigos',
+                      // Auto-categories — keep tokens tight so we don't pull in
+                      // unrelated photos. AI Vision already emits these in its
+                      // tag set so the recall is high.
+                      selfies: 'selfie self-portrait front-camera autorretrato selfie autofoto',
+                      food: 'food meal dish plate restaurant breakfast lunch dinner dessert comida prato refeição almoço jantar sobremesa cozinha',
+                      pets: 'dog cat pet animal puppy kitten cachorro gato pet animal filhote',
+                      sunset: 'sunset sunrise dusk horizon golden-hour pôr-do-sol nascer-do-sol crepúsculo entardecer',
+                      documents: 'document receipt invoice form id-card passport screenshot text-document documento recibo comprovante nota-fiscal formulário rg cpf passaporte captura-de-tela',
                     };
                     const q = queries[preset.key] || '';
                     if (!q) return; // thisweek is purely date-based

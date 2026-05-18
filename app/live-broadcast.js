@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Animated,
   Alert, TextInput, Dimensions, StatusBar, FlatList, Keyboard,
-  ActionSheetIOS, Modal,
+  ActionSheetIOS, Modal, ScrollView,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -65,6 +65,13 @@ export default function LiveBroadcastScreen() {
   // Audience pill — Instagram Live "Who can watch": public | friends | private.
   // Affects backend visibility flag in liveStart. Local-only pre-start.
   const [audience, setAudience] = useState('public');
+  // Category — 1 of 8 server-defined categories (gaming/music/chat/food/travel
+  // /tech/sports/learning). Sent to liveStart so the discover page can filter
+  // on it. Empty string = unspecified ("Geral").
+  const [liveCategory, setLiveCategory] = useState('');
+  // Subscriber-only gate — when true, only viewers with an active subscription
+  // to the host can join. Backend enforces in live_discover + live_join.
+  const [subscribersOnly, setSubscribersOnly] = useState(false);
   // Pre-live mirror facing toggle so the host can pick front/back camera
   // BEFORE the countdown — same UX as Instagram & TikTok.
   const [preFacing, setPreFacing] = useState('user');
@@ -1161,7 +1168,7 @@ export default function LiveBroadcastScreen() {
       // Ask for camera + mic only now — the user actively tapped Go Live.
       const ok = await ensureCameraStream();
       if (!ok) return;
-      const res = await api.liveStart(titleInput.trim() || t('live.title') || 'Live', { audience });
+      const res = await api.liveStart(titleInput.trim() || t('live.title') || 'Live', { audience, category: liveCategory, subscribersOnly });
       const sid = res.data?.session_id || res.data?.session?.id;
       if (res.success && sid) {
         setSessionId(sid);
@@ -2415,6 +2422,73 @@ export default function LiveBroadcastScreen() {
                 })}
               </View>
             </View>
+
+            {/* Category picker — 1 of 8 backend-known keys (gaming, music,
+                chat, food, travel, tech, sports, learning) + a "Geral"
+                opt-out. Renders as a horizontal pill rail. Used by the
+                discover page filter. Empty selection ships no category to
+                the backend (column stays NULL). */}
+            <View style={styles.preCatRow}>
+              <Text style={styles.preAudLabel}>{t('live.category') || 'Categoria'}</Text>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ gap: 8, paddingRight: 8 }}
+              >
+                {[
+                  { key: '',         label: t('live.catGeneral')  || 'Geral',       color: '#6B7280' },
+                  { key: 'gaming',   label: t('live.catGaming')   || 'Gaming',      color: '#A855F7' },
+                  { key: 'music',    label: t('live.catMusic')    || 'Música',      color: '#EC4899' },
+                  { key: 'chat',     label: t('live.catChat')     || 'Bate-papo',   color: '#22D3EE' },
+                  { key: 'food',     label: t('live.catFood')     || 'Comida',      color: '#FBBF24' },
+                  { key: 'travel',   label: t('live.catTravel')   || 'Viagens',     color: '#34D399' },
+                  { key: 'tech',     label: t('live.catTech')     || 'Tecnologia',  color: '#60A5FA' },
+                  { key: 'sports',   label: t('live.catSports')   || 'Esportes',    color: '#F97316' },
+                  { key: 'learning', label: t('live.catLearning') || 'Aprendizado', color: '#10B981' },
+                ].map(c => {
+                  const active = liveCategory === c.key;
+                  return (
+                    <TouchableOpacity
+                      key={c.key || 'general'}
+                      onPress={() => setLiveCategory(c.key)}
+                      style={[
+                        styles.preCatPill,
+                        active && { backgroundColor: c.color, borderColor: c.color },
+                      ]}
+                      activeOpacity={0.85}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: active }}
+                      accessibilityLabel={c.label}
+                    >
+                      <Text style={[styles.preCatPillText, active && { color: '#fff', fontWeight: '800' }]}>
+                        {c.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+
+            {/* Subscriber-only toggle — gates the live so only viewers with
+                an active subscription to this host can join. Backend
+                enforces in live_discover + the host could also call
+                live_set_category to flip mid-stream. */}
+            <TouchableOpacity
+              onPress={() => setSubscribersOnly(s => !s)}
+              style={styles.preSubRow}
+              activeOpacity={0.85}
+              accessibilityRole="switch"
+              accessibilityState={{ checked: subscribersOnly }}
+              accessibilityLabel={t('live.subscribersOnly') || 'Só assinantes'}
+            >
+              <View style={styles.preSubLabel}>
+                <Text style={styles.preSubLabelText}>{t('live.subscribersOnly') || 'Só assinantes'}</Text>
+                <Text style={styles.preSubHint}>{t('live.subscribersOnlyHint') || 'Bloqueia entrada de quem não te assina'}</Text>
+              </View>
+              <View style={[styles.preSubSwitch, subscribersOnly && styles.preSubSwitchOn]}>
+                <View style={[styles.preSubKnob, subscribersOnly && styles.preSubKnobOn]} />
+              </View>
+            </TouchableOpacity>
 
             {/* CTA — wrapped in an Animated.View so the red glow loops behind
                 the button (web only via boxShadow). On native, the live dot
@@ -4555,6 +4629,48 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     letterSpacing: 0.2,
   },
+  // ----- Pre-live category pill rail -----
+  preCatRow: {
+    width: '100%',
+    marginTop: 14,
+  },
+  preCatPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  preCatPillText: {
+    color: 'rgba(255,255,255,0.82)',
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+  },
+  // ----- Pre-live subscriber-only toggle row -----
+  preSubRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginTop: 14,
+    paddingHorizontal: 4,
+  },
+  preSubLabel: { flexShrink: 1, paddingRight: 12 },
+  preSubLabelText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  preSubHint: { color: 'rgba(255,255,255,0.55)', fontSize: 11, marginTop: 2 },
+  preSubSwitch: {
+    width: 44, height: 26, borderRadius: 13,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    padding: 3,
+  },
+  preSubSwitchOn: { backgroundColor: '#F59E0B' },
+  preSubKnob: {
+    width: 20, height: 20, borderRadius: 10,
+    backgroundColor: '#fff',
+  },
+  preSubKnobOn: { transform: [{ translateX: 18 }] },
   preFlipBtn: {
     position: 'absolute',
     left: 20,

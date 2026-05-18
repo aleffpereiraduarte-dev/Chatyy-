@@ -181,6 +181,17 @@ export default function LinkedDevicesScreen() {
         );
 
     confirmFn(async () => {
+      // Biometric gate: removing a linked device is destructive — it
+      // signs the other surface out and rotates session state. If a thief
+      // grabs the phone while it's unlocked they could otherwise kick the
+      // legitimate user off every other device. Face ID / passcode first.
+      try {
+        const { confirmWithBiometric } = require('../services/biometricGate');
+        const ok = await confirmWithBiometric({
+          reason: t('devices.confirmRevokeTitle') || 'Remove device',
+        });
+        if (!ok) return;
+      } catch {}
       setRevoking(session.id || session.token_hash);
       try {
         await api.apiCall('revoke_session', { session_id: session.id || session.token_hash }, 'POST');

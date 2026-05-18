@@ -134,6 +134,29 @@ object CallSignalWs {
         enqueueAndShip(context, payload)
     }
 
+    /**
+     * [reaction bar, 2026-05-17] Floating-emoji reaction during an active
+     * call. Mirrors fireCallReaction on iOS (CallSignalWs.swift). The LK
+     * DataPacket path stays as the primary in-band transport — WS firing
+     * is the parity fallback so reactions arrive even if LK data is briefly
+     * disrupted. Mirrors the status-reaction WS event pattern.
+     */
+    fun fireCallReaction(
+        context: Context,
+        callId: String,
+        conversationId: String,
+        emoji: String
+    ) {
+        val payload = JSONObject().apply {
+            put("type", "call_reaction")
+            put("call_id", callId)
+            put("conversation_id", conversationId)
+            put("emoji", emoji)
+            put("ts", System.currentTimeMillis())
+        }.toString()
+        enqueueAndShip(context, payload)
+    }
+
     // ─── Internals ─────────────────────────────────────────────────────────
 
     private fun enqueueAndShip(context: Context, json: String) {

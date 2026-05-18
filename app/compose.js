@@ -37,7 +37,7 @@ function sanitizeQuotedHtml(html) {
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { sendEmail, getMessage, aiToneCheck, aiDetectLeak, aliasesList } from '../services/api';
+import { sendEmail, getMessage, aiToneCheck, aiDetectLeak, aliasesList, archiveEmail, emailUrlPreview } from '../services/api';
 import * as api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import useIsMounted from '../hooks/useIsMounted';
@@ -55,7 +55,7 @@ import AISmartCompose from '../components/AISmartCompose';
 import {
   IconX, IconSparkles, IconSend, IconCheckCircle,
   IconClock, IconFileText, IconPaperclip, IconFilm,
-  IconChevronDown, IconChevronUp, IconArrowLeft,
+  IconChevronDown, IconChevronUp, IconArrowLeft, IconArchive,
 } from '../components/Icons';
 
 const DRAFT_SAVE_INTERVAL = 5000;
@@ -700,6 +700,112 @@ export default function ComposeScreen() {
   const [toneWarning, setToneWarning] = useState(null); // {tone, score, suggestion}
   const [leakWarning, setLeakWarning] = useState(null); // {types, warning}
   const [toneCheckedHash, setToneCheckedHash] = useState('');
+  // ── Reply-All external-recipient warning state ──
+  // Counts how many people on To/Cc are outside the user's own domain(s).
+  // Surfaces a banner above the send button (only on reply-all when there
+  // are 3+ recipients and at least one is external) so the user doesn't
+  // accidentally CC a customer/competitor.
+  const [externalWarning, setExternalWarning] = useState(null); // {externalCount, totalCount, externalAddrs}
+  // ── Send & Archive — after a successful reply send, archives the
+  // original thread (Gmail's "Send + Archive" parity). Only meaningful in
+  // reply/replyAll mode; toggle is sticky in localStorage so users who
+  // prefer this default don't have to re-pick on each compose.
+  const [sendAndArchive, setSendAndArchive] = useState(false);
+  useEffect(() => {
+    if (!isReply) return;
+    if (Platform.OS === 'web') {
+      try {
+        if (typeof localStorage !== 'undefined') {
+          const v = localStorage.getItem('send_and_archive_default');
+          if (v === '1') setSendAndArchive(true);
+        }
+      } catch {}
+    } else {
+      import('@react-native-async-storage/async-storage').then(m => {
+        m.default.getItem('send_and_archive_default').then(v => { if (v === '1') setSendAndArchive(true); }).catch(() => {});
+      }).catch(() => {});
+    }
+  }, [isReply]);
+  // ── URL preview cards (compose body unfurl) ──
+  // Detects http(s) URLs in the body, fetches og:* meta via backend, and
+  // exposes a one-tap "Insert preview card" button. Per-URL cache so a tap
+  // doesn't re-fetch the same link. Only renders the most-recent unique URL.
+  const [urlPreview, setUrlPreview] = useState(null); // {url, title, image, description, site_name}
+  const [urlPreviewLoading, setUrlPreviewLoading] = useState(false);
+  const urlPreviewCacheRef = useRef({}); // {url: previewObj}
+  const lastDetectedUrlRef = useRef('');
+  useEffect(() => {
+    const plain = (body || '').replace(/<[^>]+>/g, ' ');
+    const m = plain.match(/https?:\/\/[A-Za-z0-9._/?=&%~+:#@!$'()*,;\-]+/);
+    const url = m ? m[0].replace(/[).,;!?]+$/, '') : '';
+    if (!url || url === lastDetectedUrlRef.current) return;
+    lastDetectedUrlRef.current = url;
+    if (urlPreviewCacheRef.current[url]) {
+      setUrlPreview(urlPreviewCacheRef.current[url]);
+      return;
+    }
+    let cancelled = false;
+    setUrlPreviewLoading(true);
+    emailUrlPreview(url).then(r => {
+      if (cancelled) return;
+      if (r?.success && (r.data?.title || r.data?.image)) {
+        urlPreviewCacheRef.current[url] = r.data;
+        setUrlPreview(r.data);
+      } else {
+        setUrlPreview(null);
+      }
+    }).catch(() => { if (!cancelled) setUrlPreview(null); })
+      .finally(() => { if (!cancelled) setUrlPreviewLoading(false); });
+    return () => { cancelled = true; };
+  }, [body]);
+  const insertUrlPreviewCard = useCallback(() => {
+    if (!urlPreview) return;
+    const escAttr = (s) => String(s || '').replace(/"/g, '&quot;');
+    const escTxt = (s) => String(s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    let hostname = '';
+    try { hostname = new URL(urlPreview.url).hostname; } catch {}
+    const card = `<div style="border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;margin:12px 0;max-width:480px;font-family:system-ui">
+      ${urlPreview.image ? `<img src="${escAttr(urlPreview.image)}" alt="" style="width:100%;max-height:240px;object-fit:cover;display:block"/>` : ''}
+      <div style="padding:12px 14px">
+        <div style="font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:0.4px">${escTxt(urlPreview.site_name || hostname)}</div>
+        <a href="${escAttr(urlPreview.url)}" style="display:block;font-size:15px;font-weight:600;color:#111827;margin-top:4px;text-decoration:none">${escTxt(urlPreview.title || urlPreview.url)}</a>
+        ${urlPreview.description ? `<div style="font-size:13px;color:#4b5563;margin-top:6px;line-height:1.4">${escTxt(urlPreview.description)}</div>` : ''}
+      </div>
+    </div><br/>`;
+    setBody(prev => (prev || '') + card);
+  }, [urlPreview]);
+
+  // Helper: user's own domain(s) for external-recipient detection.
+  const userDomains = useRef(new Set());
+  useEffect(() => {
+    const set = new Set();
+    if (user?.email && user.email.includes('@')) set.add(user.email.split('@')[1].toLowerCase());
+    aliases.forEach(a => {
+      const e = a.alias_email || '';
+      if (e.includes('@')) set.add(e.split('@')[1].toLowerCase());
+    });
+    userDomains.current = set;
+  }, [user?.email, aliases]);
+  // Re-evaluate external-recipient warning on every recipient change.
+  // Only fires for reply-all flows (per spec) and only when there are
+  // 3+ recipients on To+Cc combined.
+  useEffect(() => {
+    if (!isReplyAll) { setExternalWarning(null); return; }
+    const allAddrs = [...to, ...cc].map(c => (c.email || '').toLowerCase()).filter(Boolean);
+    if (allAddrs.length < 3) { setExternalWarning(null); return; }
+    const externals = allAddrs.filter(a => {
+      const at = a.lastIndexOf('@');
+      if (at < 0) return false;
+      const dom = a.slice(at + 1);
+      return !userDomains.current.has(dom);
+    });
+    if (externals.length === 0) { setExternalWarning(null); return; }
+    setExternalWarning({
+      externalCount: externals.length,
+      totalCount: allAddrs.length,
+      externalAddrs: externals.slice(0, 3),
+    });
+  }, [to, cc, isReplyAll]);
 
   const handleSend = async () => {
     // Guard contra duplo envio enquanto AI checks rodam — antes podia
@@ -824,6 +930,13 @@ export default function ComposeScreen() {
         }
         const r = await sendEmail(toStr, sendSubject, finalBody, ccStr, bccStr, params.reply_uid || null, params.folder || 'INBOX', sendAttachments, { trackOpens, fromAlias });
         if (r.success) {
+          // Send & Archive: when the user has the "Send + Archive" toggle on
+          // for a reply, archive the original thread/message immediately
+          // after a successful send. Failure here is best-effort and does
+          // not block the success transition.
+          if (sendAndArchive && isReply && params.reply_uid) {
+            try { await archiveEmail(params.reply_uid, params.folder || 'INBOX'); } catch {}
+          }
           if (draftTimerRef.current) clearInterval(draftTimerRef.current);
           setSuccess(true);
           if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -1055,6 +1168,35 @@ export default function ComposeScreen() {
           <Text style={[s.errorText, { color: colors.error }]}>{error}</Text>
         </View>
       )}
+      {/* Reply-All external-recipient warning — pre-send heads-up so the user
+          doesn't accidentally CC a customer/competitor in a long thread. */}
+      {externalWarning && (
+        <View style={{
+          flexDirection: 'row', alignItems: 'center', gap: 10,
+          backgroundColor: (colors.warning || '#f59e0b') + '18',
+          borderColor: (colors.warning || '#f59e0b') + '55',
+          borderWidth: 1, borderRadius: 12,
+          marginHorizontal: Spacing.md, marginTop: Spacing.sm, padding: 12,
+        }}>
+          <Text style={{ fontSize: 13, color: colors.text, flex: 1 }}>
+            {(t('compose.externalWarning') || 'Você está respondendo a {n} pessoas, incluindo {x} externos. Continuar?')
+              .replace('{n}', String(externalWarning.totalCount))
+              .replace('{x}', String(externalWarning.externalCount))}
+            {'\n'}
+            <Text style={{ fontSize: 11, color: colors.textSecondary }}>{externalWarning.externalAddrs.join(', ')}{externalWarning.externalCount > 3 ? ' …' : ''}</Text>
+          </Text>
+          <TouchableOpacity
+            onPress={() => setExternalWarning(null)}
+            style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: colors.warning || '#f59e0b' }}
+            accessibilityLabel={t('compose.externalAck') || 'OK, continuar'}
+            accessibilityRole="button"
+          >
+            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+              {t('compose.externalAck') || 'OK'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </>
   );
 
@@ -1185,6 +1327,47 @@ export default function ComposeScreen() {
             {confidential ? ` · ${confidentialExpiry}d` : ''}
           </Text>
         </TouchableOpacity>
+        {/* Send & Archive toggle — only meaningful when replying. Sticky pref
+            persisted under send_and_archive_default. */}
+        {isReply && (
+          <TouchableOpacity
+            onPress={() => {
+              const next = !sendAndArchive;
+              setSendAndArchive(next);
+              if (Platform.OS === 'web') {
+                try { typeof localStorage !== 'undefined' && localStorage.setItem('send_and_archive_default', next ? '1' : '0'); } catch {}
+              } else {
+                import('@react-native-async-storage/async-storage').then(m => {
+                  m.default.setItem('send_and_archive_default', next ? '1' : '0').catch(() => {});
+                }).catch(() => {});
+              }
+            }}
+            style={[s.toolBtn, { backgroundColor: sendAndArchive ? colors.primaryLight : colors.surfaceVariant }]}
+            accessibilityLabel={t('compose.sendAndArchive') || 'Enviar e arquivar'}
+            accessibilityRole="button"
+            accessibilityState={{ checked: sendAndArchive }}
+          >
+            <IconArchive size={13} color={sendAndArchive ? colors.primary : colors.textSecondary} />
+            <Text style={[s.toolBtnText, { color: sendAndArchive ? colors.primary : colors.textSecondary }]}>
+              {sendAndArchive ? '✓ ' : ''}{t('compose.sendAndArchive') || 'Enviar + Arquivar'}
+            </Text>
+          </TouchableOpacity>
+        )}
+        {/* URL preview insert — appears when backend returned a valid og:* card
+            for the most-recent URL in the body. */}
+        {(urlPreview || urlPreviewLoading) && (
+          <TouchableOpacity
+            onPress={insertUrlPreviewCard}
+            disabled={!urlPreview}
+            style={[s.toolBtn, { backgroundColor: colors.primaryLight, opacity: urlPreview ? 1 : 0.5 }]}
+            accessibilityLabel={t('compose.insertUrlPreview') || 'Inserir preview'}
+            accessibilityRole="button"
+          >
+            <Text style={[s.toolBtnText, { color: colors.primary }]}>
+              {urlPreviewLoading ? (t('compose.urlPreviewLoading') || 'Carregando preview...') : '🔗 ' + (t('compose.insertUrlPreview') || 'Inserir preview')}
+            </Text>
+          </TouchableOpacity>
+        )}
       </ScrollView>
     </View>
   );

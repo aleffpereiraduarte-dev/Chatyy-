@@ -1,8 +1,8 @@
-import { useState } from 'react';
-import { View, Text, TouchableOpacity, TextInput, StyleSheet, Modal, Platform } from 'react-native';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { View, Text, TouchableOpacity, TextInput, StyleSheet, Modal, Platform, ScrollView } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
-import { IconX, IconTag, IconCheck, IconPlus } from './Icons';
+import { IconX, IconTag, IconCheck, IconPlus, IconChevronDown, IconChevronRight } from './Icons';
 import * as api from '../services/api';
 
 // Gmail-style: 12 clean colors (compact, no clutter)
@@ -42,17 +42,105 @@ export default function LabelPicker({ visible, onClose, currentLabels = [], onTo
   const { colors } = useTheme();
   const [showCreate, setShowCreate] = useState(false);
   const [newLabelName, setNewLabelName] = useState('');
+  // Nested-label support (2026-05-17): pull labels (with parent_label) from
+  // PG via label_list. Falls back to the flat builtins + customLabels if the
+  // endpoint fails so existing users still see their labels.
+  const [pgLabels, setPgLabels] = useState([]);
+  const [parentDraft, setParentDraft] = useState('');
+  const [collapsed, setCollapsed] = useState({}); // { parentName: true } when collapsed
+  useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
+    api.labelList?.().then(r => {
+      if (cancelled || !r?.success) return;
+      const list = Array.isArray(r.data?.labels) ? r.data.labels : [];
+      setPgLabels(list);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [visible]);
 
-  const allLabels = [...LABEL_NAMES, ...customLabels.filter(l => !LABEL_NAMES.includes(l))];
+  // Build a tree of labels: roots + children grouped under parent name.
+  // Falls back to the legacy flat structure when nothing has parent_label.
+  const tree = useMemo(() => {
+    const allNames = new Set([
+      ...LABEL_NAMES,
+      ...customLabels.filter(l => !LABEL_NAMES.includes(l)),
+      ...pgLabels.map(l => l.name),
+    ]);
+    // Map: name → metadata (parent, color, etc)
+    const metaByName = {};
+    pgLabels.forEach(l => { metaByName[l.name] = { parent: l.parent_label || null, color: l.color }; });
+    LABEL_NAMES.forEach(n => { if (!metaByName[n]) metaByName[n] = { parent: null, color: LABEL_COLORS[n]?.text }; });
+    customLabels.forEach(n => { if (!metaByName[n]) metaByName[n] = { parent: null }; });
+
+    const roots = [];
+    const childrenOf = {}; // { parentName: [child1, child2] }
+    allNames.forEach(n => {
+      const p = metaByName[n]?.parent;
+      if (p && allNames.has(p)) {
+        (childrenOf[p] = childrenOf[p] || []).push(n);
+      } else {
+        roots.push(n);
+      }
+    });
+    Object.values(childrenOf).forEach(arr => arr.sort());
+    roots.sort();
+    return { roots, childrenOf, metaByName };
+  }, [pgLabels, customLabels]);
 
   const handleCreateLabel = async () => {
     const name = newLabelName.trim().toLowerCase();
     if (!name) return;
-    const r = await api.createLabel(name);
-    if (r.success) {
-      setNewLabelName('');
-      setShowCreate(false);
-    }
+    // When the user provided a parent draft, persist nested via the new
+    // label_create_nested endpoint; otherwise fall back to legacy create.
+    const parent = parentDraft.trim().toLowerCase();
+    try {
+      if (parent) {
+        await api.labelCreateNested?.(name, '#1a73e8', parent);
+      } else {
+        await api.createLabel(name);
+      }
+    } catch {}
+    setNewLabelName('');
+    setParentDraft('');
+    setShowCreate(false);
+    // Refresh PG list so the new (nested) label appears immediately.
+    try {
+      const r = await api.labelList?.();
+      if (r?.success) setPgLabels(Array.isArray(r.data?.labels) ? r.data.labels : []);
+    } catch {}
+  };
+
+  // Recursively render a label row + its children (one level deep typically,
+  // but the function self-recurses so deeper nests still work).
+  const renderLabelRow = (name, depth = 0) => {
+    const isActive = currentLabels.includes(name);
+    const labelStyle = LABEL_COLORS[name] || { text: tree.metaByName[name]?.color || colors.primary, bg: colors.primaryLight };
+    const kids = tree.childrenOf[name] || [];
+    const isCollapsed = !!collapsed[name];
+    return (
+      <View key={name}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8, paddingLeft: 16 + depth * 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight }}>
+          {kids.length > 0 ? (
+            <TouchableOpacity onPress={() => setCollapsed(prev => ({ ...prev, [name]: !prev[name] }))} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              {isCollapsed
+                ? <IconChevronRight size={12} color={colors.textSecondary} />
+                : <IconChevronDown size={12} color={colors.textSecondary} />}
+            </TouchableOpacity>
+          ) : (
+            <View style={{ width: 12 }} />
+          )}
+          <View style={[s.dot, { backgroundColor: labelStyle.text, marginLeft: 6 }]} />
+          <TouchableOpacity style={{ flex: 1 }} onPress={() => onToggleLabel(name)}>
+            <Text style={[s.labelName, { color: colors.text, fontWeight: isActive ? '700' : '400' }]}>
+              {name.charAt(0).toUpperCase() + name.slice(1)}
+            </Text>
+          </TouchableOpacity>
+          {isActive && <IconCheck size={14} color={colors.primary} />}
+        </View>
+        {!isCollapsed && kids.map(k => renderLabelRow(k, depth + 1))}
+      </View>
+    );
   };
 
   return (
@@ -68,46 +156,14 @@ export default function LabelPicker({ visible, onClose, currentLabels = [], onTo
           </View>
 
           <View style={s.body}>
-            {/* Color grid preview */}
-            <View style={s.colorGrid}>
-              {allLabels.map((name) => {
-                const isActive = currentLabels.includes(name);
-                const labelStyle = LABEL_COLORS[name] || { text: colors.primary, bg: colors.primaryLight };
-                return (
-                  <TouchableOpacity
-                    key={name}
-                    style={[
-                      s.colorCircle,
-                      { backgroundColor: labelStyle.text, borderColor: isActive ? colors.text : 'transparent' },
-                      isActive && s.colorCircleActive,
-                    ]}
-                    onPress={() => onToggleLabel(name)}
-                    accessibilityLabel={name}
-                  >
-                    {isActive && <IconCheck size={12} color="#fff" />}
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
-            {/* Label list with names */}
-            {allLabels.filter(name => currentLabels.includes(name)).map((name) => {
-              const labelStyle = LABEL_COLORS[name] || { text: colors.primary, bg: colors.primaryLight };
-              return (
-                <View key={name} style={[s.activeLabel, { borderBottomColor: colors.borderLight }]}>
-                  <View style={[s.dot, { backgroundColor: labelStyle.text }]} />
-                  <Text style={[s.labelName, { color: colors.text, flex: 1 }]}>
-                    {name.charAt(0).toUpperCase() + name.slice(1)}
-                  </Text>
-                  <TouchableOpacity onPress={() => onToggleLabel(name)}>
-                    <IconX size={14} color={colors.textTertiary} />
-                  </TouchableOpacity>
-                </View>
-              );
-            })}
+            {/* Tree view — roots + children indented one level per depth. */}
+            <ScrollView style={{ maxHeight: 360 }}>
+              {tree.roots.map(name => renderLabelRow(name, 0))}
+            </ScrollView>
 
-            {/* Create new label */}
+            {/* Create new label — supports optional parent for nesting. */}
             {showCreate ? (
-              <View style={[s.createRow, { borderBottomColor: colors.borderLight }]}>
+              <View style={{ paddingHorizontal: Spacing.xl, paddingVertical: Spacing.sm, gap: 6 }}>
                 <TextInput
                   style={[s.createInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceVariant }]}
                   value={newLabelName}
@@ -117,12 +173,22 @@ export default function LabelPicker({ visible, onClose, currentLabels = [], onTo
                   autoFocus
                   onSubmitEditing={handleCreateLabel}
                 />
-                <TouchableOpacity onPress={handleCreateLabel} style={s.createBtn}>
-                  <IconCheck size={16} color={colors.primary} />
-                </TouchableOpacity>
-                <TouchableOpacity onPress={() => { setShowCreate(false); setNewLabelName(''); }} style={s.createBtn}>
-                  <IconX size={16} color={colors.textSecondary} />
-                </TouchableOpacity>
+                <TextInput
+                  style={[s.createInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surfaceVariant }]}
+                  value={parentDraft}
+                  onChangeText={setParentDraft}
+                  placeholder="Pai (opcional, ex.: trabalho)"
+                  placeholderTextColor={colors.textTertiary}
+                  onSubmitEditing={handleCreateLabel}
+                />
+                <View style={{ flexDirection: 'row', gap: 8, justifyContent: 'flex-end' }}>
+                  <TouchableOpacity onPress={() => { setShowCreate(false); setNewLabelName(''); setParentDraft(''); }} style={s.createBtn}>
+                    <IconX size={16} color={colors.textSecondary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={handleCreateLabel} style={s.createBtn}>
+                    <IconCheck size={16} color={colors.primary} />
+                  </TouchableOpacity>
+                </View>
               </View>
             ) : (
               <TouchableOpacity

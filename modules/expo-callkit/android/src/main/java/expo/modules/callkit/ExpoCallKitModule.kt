@@ -238,6 +238,15 @@ class ExpoCallKitModule : Module() {
           Log.w(TAG, "Full-screen intent NOT granted. Call notifications may not show full-screen UI on Android 14+.")
         }
       }
+
+      // [Telecom integration, 2026-05-17] Register the Chatyy PhoneAccount with
+      // TelecomManager so the OS recognises us as a calling app. Idempotent —
+      // safe to call on every setup. Pre-O devices no-op silently.
+      try {
+        ChatyyInCallService.registerPhoneAccount(context)
+      } catch (t: Throwable) {
+        Log.w(TAG, "registerPhoneAccount failed: ${t.message}")
+      }
     }
 
     AsyncFunction("displayIncomingCall") { callId: String, callerName: String, hasVideo: Boolean, callerEmail: String?, conversationId: String? ->
@@ -475,6 +484,23 @@ class ExpoCallKitModule : Module() {
 
     AsyncFunction("lkSetCameraEnabled") { enabled: Boolean ->
       NativeCallRoom.setCameraEnabled(enabled)
+    }
+
+    // [host-mute, 2026-05-17] Host-issued mute of a remote participant.
+    //
+    // See ios/ExpoCallKitModule.swift for the full protocol — the LK Room is
+    // JS-owned, so this is a thin pass-through: the host's JS calls
+    // `chatCallMuteParticipant` (HTTP), backend validates host role + fans
+    // a `call_mute_request` WS event to the target client; the target's
+    // /call.js handles the event and locally toggles
+    // `room.localParticipant.setMicrophoneEnabled(false)`.
+    //
+    // We expose this bridge so call sites stay symmetric across platforms
+    // and so a future native LK Room owner can switch from no-op to the
+    // real SFU mute action without touching JS.
+    AsyncFunction("muteParticipant") { roomName: String, identity: String ->
+      android.util.Log.i(TAG, "muteParticipant room=$roomName identity=$identity — JS owns the HTTP path, this is a no-op shim")
+      true
     }
 
     // [2026-05-15 Day 1 full-native] Launch the native call screen (CallActivity)

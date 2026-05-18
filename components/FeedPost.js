@@ -374,12 +374,23 @@ function VideoPlayer({ uri, poster, colors, isDark, t, filterName }) {
   );
 }
 
-function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated, onDeletePost, onPressUser, profileMode }) {
+function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated, onDeletePost, onPressUser, profileMode, onHidePost }) {
   const [liked, setLiked] = useState(!!post.user_liked);
   const [likeCount, setLikeCount] = useState(Number(post.like_count) || 0);
   const [bookmarked, setBookmarked] = useState(!!post.user_bookmarked);
   const [pinned, setPinned] = useState(!!post.is_pinned);
   const [showMenu, setShowMenu] = useState(false);
+  // Non-owner "more options" menu — hide / not interested / see less.
+  // Separate state from showMenu (owner menu) so they don't overlap visually.
+  const [showViewerMenu, setShowViewerMenu] = useState(false);
+  // Hidden flag: once the user picks "not interested" we collapse this post
+  // immediately so the rest of the feed doesn't jump. Parent re-fetch on
+  // next refresh will drop it for good.
+  const [hidden, setHidden] = useState(false);
+  // Caption translation (long-press → translate). null = not translated,
+  // string = translated copy, 'loading' = in flight, 'error' = AI failed.
+  const [captionTranslation, setCaptionTranslation] = useState(null);
+  const [captionTranslating, setCaptionTranslating] = useState(false);
   const [activeMediaIndex, setActiveMediaIndex] = useState(0);
   const [captionExpanded, setCaptionExpanded] = useState(false);
   const [likersOpen, setLikersOpen] = useState(false);
@@ -499,6 +510,66 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
   const isOwner = user?.email === post.author_email;
   const isWeb = Platform.OS === 'web';
   const cardWidth = Math.min(SCREEN_WIDTH, MAX_CARD_WIDTH);
+
+  // Translate the caption via the existing AI translate endpoint. Toggles:
+  // not-translated → loading → translated. A second long-press collapses
+  // back to the original. Stays inline (no modal) so it feels like Twitter's
+  // "Show this thread" expand.
+  const translateCaption = useCallback(async () => {
+    if (!post.caption) return;
+    if (captionTranslation) {
+      setCaptionTranslation(null);
+      return;
+    }
+    setCaptionTranslating(true);
+    try {
+      // Pick the user's UI language as the target. Backend expects lang code
+      // (pt-BR | en | es); falls back to 'pt-BR' so a missing prop doesn't
+      // 400 the request.
+      const targetLang = (_appLang || 'pt-BR');
+      const r = await api.apiCall('ai_translate', {
+        text: post.caption,
+        target_lang: targetLang,
+      }, 'POST');
+      if (r?.success && (r.data?.translated || r.data?.text)) {
+        setCaptionTranslation(r.data.translated || r.data.text);
+      } else {
+        setCaptionTranslation('error');
+      }
+    } catch { setCaptionTranslation('error'); }
+    finally { setCaptionTranslating(false); }
+  }, [post.caption, captionTranslation, _appLang]);
+
+  // If the viewer hid this post, render a small collapsed banner with an
+  // "Undo" affordance instead of yanking it out of the layout. Avoids the
+  // jump-to-bottom scroll glitch RN's VirtualizedList does on data shrink.
+  if (hidden) {
+    return (
+      <View style={[styles.container, {
+        backgroundColor: isDark ? colors.surface : '#ffffff',
+        borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+        paddingVertical: 18,
+        paddingHorizontal: 16,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+      }]}>
+        <Text style={{ color: colors.textSecondary, fontSize: 13, flex: 1 }} numberOfLines={2}>
+          {t?.('feed.postHidden') || 'Este post foi ocultado.'}
+        </Text>
+        <TouchableOpacity
+          onPress={() => setHidden(false)}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel={t?.('common.undo') || 'Desfazer'}
+        >
+          <Text style={{ color: ACCENT, fontWeight: '700', fontSize: 13 }}>
+            {t?.('common.undo') || 'Desfazer'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   // Sync with prop changes
   useEffect(() => {
@@ -750,6 +821,87 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
           <Text style={[styles.headerTime, { color: colors.textTertiary }]}>
             {_relTime}
           </Text>
+          {!isOwner && (
+            <View>
+              <TouchableOpacity
+                onPress={() => setShowViewerMenu(!showViewerMenu)}
+                onLongPress={() => setShowViewerMenu(true)}
+                style={styles.menuBtn}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityLabel={t('common.more') || 'More options'}
+                accessibilityRole="button"
+              >
+                <IconMoreHorizontal size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+              {showViewerMenu && (
+                <>
+                  <Pressable
+                    style={StyleSheet.absoluteFill}
+                    onPress={() => setShowViewerMenu(false)}
+                  />
+                  <View style={[styles.menuDropdown, {
+                    backgroundColor: isDark ? '#1e293b' : '#ffffff',
+                    borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
+                    ...(isWeb ? { boxShadow: '0 8px 30px rgba(0,0,0,0.12)' } : {}),
+                  }]}>
+                    {/* Não tenho interesse — adds to chat_feed_negative_signals
+                        so the ranker stops surfacing this exact post for this
+                        viewer. Collapses the post immediately. */}
+                    <TouchableOpacity
+                      style={styles.menuItem}
+                      onPress={async () => {
+                        setShowViewerMenu(false);
+                        setHidden(true);
+                        try { await api.feedHidePost(post.id, 'not_interested'); } catch {}
+                        try { onHidePost?.(post.id); } catch {}
+                      }}
+                      accessibilityLabel={t('feed.notInterested') || 'Não tenho interesse'}
+                      accessibilityRole="button"
+                    >
+                      <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={colors.text} strokeWidth="2">
+                        <Path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
+                        <Path d="M12 2v10" />
+                      </Svg>
+                      <Text style={[styles.menuItemText, { color: colors.text }]}>
+                        {t('feed.notInterested') || 'Não tenho interesse'}
+                      </Text>
+                    </TouchableOpacity>
+                    {/* Ver menos posts assim — same hide signal + NLP keyword
+                        extraction server-side that downweights related topics
+                        in feed_user_topics (weight 0.7 = 30% penalty). */}
+                    <TouchableOpacity
+                      style={styles.menuItem}
+                      onPress={async () => {
+                        setShowViewerMenu(false);
+                        setHidden(true);
+                        try { await api.feedHidePost(post.id, 'see_less'); } catch {}
+                        try { onHidePost?.(post.id); } catch {}
+                      }}
+                      accessibilityLabel={t('feed.seeLess') || 'Ver menos posts assim'}
+                      accessibilityRole="button"
+                    >
+                      <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={colors.text} strokeWidth="2">
+                        <Path d="M5 12h14" />
+                      </Svg>
+                      <Text style={[styles.menuItemText, { color: colors.text }]}>
+                        {t('feed.seeLess') || 'Ver menos posts assim'}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.menuItem}
+                      onPress={() => setShowViewerMenu(false)}
+                      accessibilityLabel={t('common.cancel') || 'Cancelar'}
+                      accessibilityRole="button"
+                    >
+                      <Text style={[styles.menuItemText, { color: colors.textSecondary }]}>
+                        {t('common.cancel') || 'Cancelar'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+            </View>
+          )}
           {isOwner && (
             <View>
               <TouchableOpacity
@@ -1101,6 +1253,11 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
           <Text
             style={[styles.captionText, { color: colors.text }]}
             numberOfLines={captionExpanded ? undefined : 2}
+            // Long-press the caption surface to translate via AI. Same
+            // gesture pattern as WhatsApp message "Traduzir". 350ms delay
+            // matches the bookmark-collection long-press elsewhere.
+            onLongPress={translateCaption}
+            delayLongPress={350}
           >
             <Text style={styles.captionAuthor}>{authorDisplay}</Text>
             {'  '}
@@ -1162,6 +1319,30 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
               </Text>
             </TouchableOpacity>
           )}
+          {/* Translation surface: shows when the AI call resolves. Tap the
+              "Show original" pill to collapse back to the source text. */}
+          {captionTranslating ? (
+            <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 6 }}>
+              {t?.('feed.translating') || 'Traduzindo…'}
+            </Text>
+          ) : null}
+          {captionTranslation && captionTranslation !== 'error' ? (
+            <View style={{ marginTop: 6 }}>
+              <Text style={[styles.captionText, { color: colors.text }]}>
+                {captionTranslation}
+              </Text>
+              <TouchableOpacity onPress={() => setCaptionTranslation(null)} hitSlop={{ top: 4, bottom: 4 }}>
+                <Text style={[styles.moreText, { color: colors.textSecondary }]}>
+                  {t?.('feed.showOriginal') || 'Ver original'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
+          {captionTranslation === 'error' ? (
+            <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 4 }}>
+              {t?.('feed.translateError') || 'Não foi possível traduzir.'}
+            </Text>
+          ) : null}
         </View>
       ) : null}
 

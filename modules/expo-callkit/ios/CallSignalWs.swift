@@ -103,6 +103,22 @@ final class CallSignalWs: NSObject {
         enqueue(dict)
     }
 
+    /// [reaction bar, 2026-05-17] Floating-emoji reaction during an active
+    /// call. Mirrors the status-reaction WS event so the same broadcaster
+    /// hub fans it to all peers in the same conversation. The LK DataPacket
+    /// path (CallViewController.sendReaction) stays — both fire so reactions
+    /// arrive even when one transport is briefly down.
+    func fireCallReaction(callId: String, conversationId: String, emoji: String) {
+        let dict: [String: Any] = [
+            "type": "call_reaction",
+            "call_id": callId,
+            "conversation_id": conversationId,
+            "emoji": emoji,
+            "ts": Int(Date().timeIntervalSince1970 * 1000),
+        ]
+        enqueue(dict)
+    }
+
     // MARK: – Internals
 
     private func enqueue(_ dict: [String: Any]) {

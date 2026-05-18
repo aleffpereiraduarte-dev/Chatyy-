@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, FlatList, ScrollView,
   ActivityIndicator, Platform, Alert, useWindowDimensions, Modal, TextInput,
@@ -18,6 +18,11 @@ import AvatarCircle from '../components/AvatarCircle';
 import {
   IconArrowLeft, IconUpload, IconCheck, IconTrash, IconShield, IconLock, IconRefresh,
 } from '../components/Icons';
+// Backup engine config / progress hooks. Quality toggle reads/writes the
+// shared settings store the engine consults at runtime, so flipping it here
+// affects the very next photo the engine compresses (or skips, for original).
+let backupSvc = null;
+try { backupSvc = require('../services/backup'); } catch {}
 
 export default function BackupScreen() {
   const { colors, isDark } = useTheme();
@@ -43,9 +48,112 @@ export default function BackupScreen() {
   const [e2eErr, setE2eErr] = useState('');
   const [e2eSaving, setE2eSaving] = useState(false);
 
+  // Originals quality toggle. When ON the engine skips ImageManipulator
+  // compression and uploads the raw photo bytes (engine already accepts
+  // `quality: 'original'` per audit). Default OFF = 1600 px / 0.78 JPEG
+  // economy preset which is what most users want on cellular.
+  const [originalsQuality, setOriginalsQuality] = useState(false);
+  const [originalsSaving, setOriginalsSaving] = useState(false);
+
+  // Backup progress + ETA. Engine emits onProgress with cumulative bytes;
+  // we keep a rolling 30s window of (timestamp, uploadedBytes) samples and
+  // derive bytes_per_sec from window-newest minus window-oldest. Then ETA =
+  // remaining / bytes_per_sec. Avoids "infinity" spikes when the very first
+  // chunk lands.
+  const [bkProgress, setBkProgress] = useState(null); // { uploadedBytes, totalBytes, completedFiles, totalFiles, isRunning }
+  const speedSamplesRef = useRef([]); // [{ t: ms, b: bytes }, ...]
+  const speedWindowMs = 30000;
+
+  // Compute bytes/sec from rolling window. Empty / single sample → 0.
+  const computeBytesPerSec = useCallback(() => {
+    const samples = speedSamplesRef.current;
+    if (!samples || samples.length < 2) return 0;
+    const newest = samples[samples.length - 1];
+    const oldest = samples[0];
+    const dt = (newest.t - oldest.t) / 1000;
+    if (dt <= 0) return 0;
+    return Math.max(0, (newest.b - oldest.b) / dt);
+  }, []);
+
+  // Render an ETA string in user-friendly Portuguese. "Restam X min" per
+  // task spec; short form ("Restam Xs") for sub-minute deltas, hour+min
+  // composite for long jobs.
+  const formatEta = useCallback((sec) => {
+    if (!sec || !isFinite(sec) || sec < 0) return '';
+    if (sec < 60) return (t('backup.etaSeconds', { n: String(Math.round(sec)) }) || `Restam ${Math.round(sec)}s`);
+    if (sec < 3600) return (t('backup.etaMinutes', { n: String(Math.round(sec / 60)) }) || `Restam ${Math.round(sec / 60)} min`);
+    const h = Math.floor(sec / 3600);
+    const m = Math.round((sec % 3600) / 60);
+    return (t('backup.etaHoursMin', { h: String(h), m: String(m) }) || `Restam ${h}h ${m}min`);
+  }, [t]);
+
   useEffect(() => {
     AsyncStorage.getItem('backup_e2e_enabled').then(v => setE2eEnabled(v === '1')).catch(() => {});
+    // Load current engine quality preference. The engine reads `settings.quality`
+    // every time it queues a batch, so reflecting the persisted value here
+    // keeps the toggle truthful even after an app restart.
+    (async () => {
+      try {
+        if (backupSvc?.getBackupSettings) {
+          const s = await backupSvc.getBackupSettings();
+          if (s?.quality === 'original') setOriginalsQuality(true);
+        }
+      } catch {}
+    })();
   }, []);
+
+  // Engine progress poll. The engine pushes via onProgress callbacks but that
+  // path is wired in runBackupNow which the user may not have started from
+  // this screen. Polling getBackupStats every 1s captures both: ongoing runs
+  // kicked off by autoBackup AND foreground runs the user starts here. Light
+  // (just an in-memory snapshot read), no AsyncStorage round trip.
+  useEffect(() => {
+    if (!backupSvc?.getBackupStats) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const stats = await backupSvc.getBackupStats();
+        if (cancelled) return;
+        if (stats && (stats.isRunning || stats.uploadedBytes > 0)) {
+          setBkProgress(stats);
+          // Add a sample to the rolling window so the ETA computation has data.
+          const samples = speedSamplesRef.current;
+          const now = Date.now();
+          samples.push({ t: now, b: stats.uploadedBytes || 0 });
+          // Drop samples older than 30s. Cheap loop — at most ~30 samples kept.
+          while (samples.length > 0 && samples[0].t < now - speedWindowMs) {
+            samples.shift();
+          }
+        } else if (!stats?.isRunning) {
+          // Reset window once a run ends so the next run starts fresh.
+          speedSamplesRef.current = [];
+          if (bkProgress?.isRunning) setBkProgress(stats || null);
+        }
+      } catch {}
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => { cancelled = true; clearInterval(id); };
+    // bkProgress.isRunning intentionally omitted — we want the poll to keep
+    // running so we detect the next backup start without remounting.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleToggleOriginals = useCallback(async (value) => {
+    setOriginalsSaving(true);
+    setOriginalsQuality(value);
+    try {
+      if (backupSvc?.setBackupSettings) {
+        await backupSvc.setBackupSettings({ quality: value ? 'original' : 'economy' });
+      }
+    } catch (err) {
+      // Revert on failure so the UI matches the actual persisted state.
+      setOriginalsQuality(!value);
+      safeAlert(t('common.error') || 'Erro', t('backup.qualitySaveFail') || 'Não foi possível salvar a preferência.');
+    } finally {
+      setOriginalsSaving(false);
+    }
+  }, [t]);
 
   const passwordStrength = (pw) => {
     let score = 0;
@@ -417,6 +525,81 @@ export default function BackupScreen() {
               )}
             </View>
           </View>
+
+          {/* Originals quality toggle. OFF (default) = 1600 px / 0.78 JPEG
+              compression which uses 4-8× less storage and uploads 5-10× faster
+              on cellular. ON keeps the raw camera bytes — ideal on WiFi or
+              when archival is the goal. Routes through getBackupSettings so
+              the engine picks it up on the next batch. */}
+          <View style={[s.statusCard, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: -8 }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+              <IconUpload size={18} color={ACCENT} />
+              <Text style={{ color: colors.text, fontSize: FontSize.lg, fontWeight: '600', flex: 1 }}>
+                {t('backup.originalQuality') || 'Qualidade original'}
+              </Text>
+              <TouchableOpacity
+                onPress={() => handleToggleOriginals(!originalsQuality)}
+                disabled={originalsSaving}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: originalsQuality }}
+                style={{
+                  width: 46, height: 28, borderRadius: 14, padding: 3,
+                  backgroundColor: originalsQuality ? ACCENT : (isDark ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.18)'),
+                  opacity: originalsSaving ? 0.6 : 1,
+                  justifyContent: 'center',
+                }}
+              >
+                <View style={{
+                  width: 22, height: 22, borderRadius: 11, backgroundColor: '#fff',
+                  alignSelf: originalsQuality ? 'flex-end' : 'flex-start',
+                  ...(Platform.OS === 'web' ? { transition: 'all 160ms ease' } : {}),
+                }} />
+              </TouchableOpacity>
+            </View>
+            <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, lineHeight: 19 }}>
+              {originalsQuality
+                ? (t('backup.originalQualityOnDesc') || 'Subindo arquivos originais. Usa mais dados e armazenamento, mas preserva resolução máxima e EXIF.')
+                : (t('backup.originalQualityOffDesc') || 'Subindo versão otimizada (1600 px). Economiza dados e armazenamento. Recomendado em rede móvel.')}
+            </Text>
+          </View>
+
+          {/* Live backup progress + ETA. Renders only while the engine is
+              actually running so the card disappears when idle. Bytes/sec
+              comes from the 30s rolling window; ETA = remaining / bps. */}
+          {bkProgress?.isRunning && (() => {
+            const bps = computeBytesPerSec();
+            const remaining = Math.max(0, (bkProgress.totalBytes || 0) - (bkProgress.uploadedBytes || 0));
+            const etaSec = bps > 0 ? remaining / bps : 0;
+            const pct = bkProgress.totalBytes > 0
+              ? Math.min(100, Math.round((bkProgress.uploadedBytes / bkProgress.totalBytes) * 100))
+              : (bkProgress.percentage || 0);
+            return (
+              <View style={[s.statusCard, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: -8 }]}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                  <ActivityIndicator size="small" color={ACCENT} />
+                  <Text style={{ color: colors.text, fontSize: FontSize.lg, fontWeight: '600', flex: 1 }}>
+                    {t('backup.progressTitle') || 'Backup em andamento'}
+                  </Text>
+                  <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, fontWeight: '600' }}>
+                    {pct}%
+                  </Text>
+                </View>
+                <View style={[s.storageBarBg, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', marginBottom: 8 }]}>
+                  <View style={[s.storageBarFill, { width: `${pct}%`, backgroundColor: ACCENT }]} />
+                </View>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={{ color: colors.textSecondary, fontSize: FontSize.xs }}>
+                    {bkProgress.completedFiles || 0} / {bkProgress.totalFiles || 0} · {formatBytes(bkProgress.uploadedBytes || 0)}
+                  </Text>
+                  {etaSec > 0 && (
+                    <Text style={{ color: ACCENT, fontSize: FontSize.xs, fontWeight: '700' }}>
+                      {formatEta(etaSec)}
+                    </Text>
+                  )}
+                </View>
+              </View>
+            );
+          })()}
 
           {/* Snapshot Backup Card — single-snapshot model with schedule */}
           <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>

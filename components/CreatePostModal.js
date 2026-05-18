@@ -492,7 +492,15 @@ function TagPeopleModal({ visible, onClose, tagged, onTag, colors, isDark, t }) 
 // ===========================================================================
 // MAIN COMPONENT
 // ===========================================================================
-export default function CreatePostModal({ visible, colors, isDark, t, user, onClose, onPostCreated, initialFiles, repostOf, originalPost }) {
+export default function CreatePostModal({
+  visible, colors, isDark, t, user, onClose, onPostCreated, initialFiles, repostOf, originalPost,
+  // Reels P0 — Duet / Stitch / preset sound entrypoints.
+  // - duetOf:    parent post id to record a side-by-side companion clip for.
+  // - stitchOf:  parent post id to trim 1-5s from then append our own clip.
+  // - presetSoundId / presetSoundLabel: pre-fill the sound picker so a reel
+  //   posted from "Use this sound" already has the right audio attached.
+  duetOf, stitchOf, presetSoundId, presetSoundLabel,
+}) {
   const [step, setStep] = useState(1); // 1 = select media, 2 = caption/options
   const [mediaFiles, setMediaFiles] = useState([]); // { uri, file, type, id, duration?, thumbnail? }
 
@@ -504,6 +512,68 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
     setMediaFiles(initialFiles);
     setStep(2);
   }, [visible, initialFiles]);
+
+  // Reels P0 — Duet / Stitch metadata fetched from the parent post once on open.
+  // duetParent is the result of chat_reels_duet_init / chat_reels_stitch_init
+  // (video_url, thumbnail, sound_id, etc.). Used to:
+  //   • render a parent-clip preview pill in the composer
+  //   • inherit the parent's sound_id when no override is provided
+  //   • POST media to /api/duet-compose.php for server-side ffmpeg compose
+  //   • forward parent_post_id + duet_type to feed_create_post
+  const [duetParent, setDuetParent] = useState(null);
+  // Stitch trim window — [start_ms, end_ms]. TikTok-style 1-5s budget.
+  const [stitchTrim, setStitchTrim] = useState({ start: 0, end: 3000 });
+  // Selected sound (from picker OR preset OR parent inherited).
+  const [selectedSound, setSelectedSound] = useState(
+    presetSoundId ? { id: presetSoundId, label: presetSoundLabel || '' } : null
+  );
+  const [showSoundPicker, setShowSoundPicker] = useState(false);
+  const [savedSounds, setSavedSounds] = useState([]);
+  const [savedSoundsLoading, setSavedSoundsLoading] = useState(false);
+  const duetMode = duetOf ? 'split' : (stitchOf ? 'stitch' : null);
+
+  // Bootstrap the parent-post payload when Duet/Stitch mode is active.
+  useEffect(() => {
+    if (!visible) return;
+    const parentId = duetOf || stitchOf;
+    if (!parentId) { setDuetParent(null); return; }
+    let alive = true;
+    (async () => {
+      try {
+        const r = duetOf
+          ? await api.chatReelsDuetInit(parentId)
+          : await api.chatReelsStitchInit(parentId);
+        if (!alive) return;
+        if (r?.success && r.data) {
+          setDuetParent(r.data);
+          // Skip the gallery step — the user picks "Record" on step 2.
+          setStep(2);
+          // Inherit the parent's sound unless caller already supplied one.
+          if (!selectedSound && r.data.sound_id) {
+            setSelectedSound({ id: r.data.sound_id, label: r.data.sound_label || '' });
+          }
+          // Default stitch trim to the first 3s of the parent.
+          if (stitchOf) setStitchTrim({ start: 0, end: Math.min(3000, Math.max(1500, r.data.duration_ms || 3000)) });
+        } else {
+          setError(r?.error || (duetOf ? 'Duet desativado pelo autor' : 'Stitch desativado pelo autor'));
+        }
+      } catch { /* non-fatal */ }
+    })();
+    return () => { alive = false; };
+  }, [visible, duetOf, stitchOf]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Lazy-load saved sounds when the picker opens.
+  const loadSavedSounds = useCallback(async () => {
+    if (savedSoundsLoading) return;
+    setSavedSoundsLoading(true);
+    try {
+      const r = await api.apiCall?.('chat_status_music_search', { source: 'saved' }, 'POST')
+        ?? await fetch(''); // graceful no-op if helper missing
+      if (r?.success && r.data?.tracks) setSavedSounds(r.data.tracks);
+      else if (Array.isArray(r?.data)) setSavedSounds(r.data);
+    } catch {}
+    setSavedSoundsLoading(false);
+  }, [savedSoundsLoading]);
   const [caption, setCaption] = useState('');
   const [location, setLocation] = useState('');
   const [publishing, setPublishing] = useState(false);
@@ -800,6 +870,32 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
     setPublishing(true);
     setError('');
     try {
+      // Reels P0 — Duet / Stitch: when the user is in either mode, the raw
+      // captured clip flows through /api/duet-compose.php first so ffmpeg can
+      // hstack (duet) or concat-trim (stitch) it with the parent. We then
+      // publish the composed media via feed_create_post's media_url= path
+      // (no double-upload — the composer left the file on the server).
+      let composedMedia = null;
+      if (duetMode && duetParent?.post_id && mediaFiles.length > 0) {
+        const dfd = new FormData();
+        dfd.append('parent_post_id', String(duetParent.post_id));
+        dfd.append('duet_type', duetMode);
+        if (duetMode === 'stitch') {
+          dfd.append('clip_start_ms', String(stitchTrim.start || 0));
+          dfd.append('clip_end_ms', String(stitchTrim.end || 3000));
+        }
+        const item = mediaFiles[0];
+        if (isWeb) dfd.append('media', item.file, item.file.name);
+        else dfd.append('media', item.file);
+        const cr = await api.duetCompose(dfd);
+        if (!cr?.success) {
+          setError(cr?.error || (duetMode === 'split' ? 'Duet compose failed' : 'Stitch compose failed'));
+          setPublishing(false);
+          return;
+        }
+        composedMedia = cr.data;
+      }
+
       const formData = new FormData();
       formData.append('caption', caption.trim());
       if (location.trim()) formData.append('location', location.trim());
@@ -808,19 +904,35 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
       if (taggedPeople.length > 0) formData.append('tagged', JSON.stringify(taggedPeople.map(p => p.email)));
       if (repostOf) formData.append('repost_of', String(repostOf));
 
-      const hasVideo = mediaFiles.some(m => m.type === 'video');
+      // Reels P0 — sound + duet/stitch metadata on the new post.
+      if (selectedSound?.id) {
+        formData.append('sound_id', String(selectedSound.id));
+        if (selectedSound.label) formData.append('sound_label', selectedSound.label);
+      }
+      if (duetMode && duetParent?.post_id) {
+        formData.append('parent_post_id', String(duetParent.post_id));
+        formData.append('duet_type', duetMode);
+      }
+
+      const hasVideo = mediaFiles.some(m => m.type === 'video') || !!composedMedia;
       formData.append('media_type', hasVideo ? 'video' : 'image');
-      if (postAsReel && hasVideo) formData.append('is_reel', '1');
+      if ((postAsReel && hasVideo) || duetMode) formData.append('is_reel', '1');
       if (activeFilter && activeFilter !== 'Normal') {
         formData.append('filter', activeFilter);
       }
 
-      for (let i = 0; i < mediaFiles.length; i++) {
-        const item = mediaFiles[i];
-        if (isWeb) {
-          formData.append('media[]', item.file, item.file.name);
-        } else {
-          formData.append('media[]', item.file);
+      if (composedMedia?.media_url) {
+        // Composed flow: ffmpeg already produced the final clip on disk;
+        // hand the URL to feed_create_post instead of re-uploading bytes.
+        formData.append('media_url', composedMedia.media_url);
+      } else {
+        for (let i = 0; i < mediaFiles.length; i++) {
+          const item = mediaFiles[i];
+          if (isWeb) {
+            formData.append('media[]', item.file, item.file.name);
+          } else {
+            formData.append('media[]', item.file);
+          }
         }
       }
 
@@ -836,7 +948,7 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
       setError(t('feed.publishError') || 'Failed to publish');
       setPublishing(false);
     }
-  }, [publishing, mediaFiles, caption, location, audience, scheduleDate, taggedPeople, isWeb, handleClose, onPostCreated, t, activeFilter, repostOf, postAsReel]);
+  }, [publishing, mediaFiles, caption, location, audience, scheduleDate, taggedPeople, isWeb, handleClose, onPostCreated, t, activeFilter, repostOf, postAsReel, duetMode, duetParent, stitchTrim, selectedSound]);
 
   const bgColor = isDark ? '#0f172a' : '#ffffff';
   const surfaceColor = isDark ? '#1e293b' : '#f8fafc';
@@ -1288,18 +1400,59 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
               <IconChevronRight size={18} color={colors.textTertiary} />
             </TouchableOpacity>
 
-            {/* Add music */}
+            {/* Reels P0 — Add music / sound picker.
+                Opens a bottom sheet with the user's saved tracks +
+                "Original sound" option. If presetSoundId / a parent-inherited
+                sound is already set, that row is highlighted. The list is
+                intentionally NOT a music catalog — we don't have rights
+                clearance for arbitrary tracks (Epidemic Sound deal pending),
+                so users pick from sounds they've previously saved or use the
+                creator's original audio (mic-only). */}
             <TouchableOpacity
               style={[gs.optionRow, { borderTopColor: borderColor }]}
               activeOpacity={0.7}
-              onPress={() => { /* TODO: Sound picker */ }}
+              onPress={() => { setShowSoundPicker(true); loadSavedSounds(); }}
             >
               <IconMusic size={22} color={colors.textSecondary} />
-              <Text style={[gs.optionLabel, { color: colors.textTertiary }]}>
-                {t('post.addMusic') || 'Add music'}
+              <Text style={[gs.optionLabel, { color: selectedSound ? colors.text : colors.textTertiary }]}>
+                {selectedSound
+                  ? (selectedSound.label || (t('post.musicSelected') || 'Som selecionado'))
+                  : (t('post.addMusic') || 'Add music')}
               </Text>
-              <IconChevronRight size={18} color={colors.textTertiary} />
+              {selectedSound ? (
+                <TouchableOpacity hitSlop={8} onPress={(e) => { e.stopPropagation && e.stopPropagation(); setSelectedSound(null); }}>
+                  <IconX size={16} color={colors.textTertiary} />
+                </TouchableOpacity>
+              ) : (
+                <IconChevronRight size={18} color={colors.textTertiary} />
+              )}
             </TouchableOpacity>
+
+            {/* Reels P0 — Duet / Stitch banner. When the user is composing
+                a duet or stitch, show the parent thumbnail + mode so they
+                see what they're recording against. */}
+            {duetMode && duetParent ? (
+              <View
+                style={[gs.optionRow, {
+                  borderTopColor: borderColor,
+                  backgroundColor: isDark ? 'rgba(124,58,237,0.10)' : 'rgba(124,58,237,0.06)',
+                }]}
+              >
+                <View style={{ width: 32, height: 44, borderRadius: 4, overflow: 'hidden', backgroundColor: '#000' }}>
+                  {duetParent.thumbnail_url ? (
+                    <Image source={{ uri: duetParent.thumbnail_url }} style={{ width: 32, height: 44 }} />
+                  ) : null}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: ACCENT, fontSize: 11, fontWeight: '700' }}>
+                    {duetMode === 'split' ? (t('feed.duet') || 'Duet') : (t('feed.stitch') || 'Stitch')}
+                  </Text>
+                  <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }} numberOfLines={1}>
+                    @{duetParent.author_name || duetParent.author_email?.split('@')[0]}
+                  </Text>
+                </View>
+              </View>
+            ) : null}
 
             {/* Audience */}
             <TouchableOpacity
@@ -1464,6 +1617,107 @@ export default function CreatePostModal({ visible, colors, isDark, t, user, onCl
         isDark={isDark}
         t={t}
       />
+
+      {/* Reels P0 — Sound picker. Lists saved tracks + an
+          "Original sound" option (creator's own mic-only audio). */}
+      <Modal
+        visible={showSoundPicker}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowSoundPicker(false)}
+      >
+        <Pressable
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}
+          onPress={() => setShowSoundPicker(false)}
+        >
+          <Pressable
+            style={{
+              backgroundColor: isDark ? '#0f172a' : '#fff',
+              borderTopLeftRadius: 18,
+              borderTopRightRadius: 18,
+              paddingBottom: 28,
+              maxHeight: SCREEN_HEIGHT * 0.7,
+            }}
+            onPress={(e) => e.stopPropagation && e.stopPropagation()}
+          >
+            <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.20)' : 'rgba(0,0,0,0.18)', alignSelf: 'center', marginVertical: 10 }} />
+            <Text style={{ color: colors.text, fontSize: 18, fontWeight: '700', paddingHorizontal: 20, marginBottom: 8 }}>
+              {t('post.chooseSound') || 'Escolha um som'}
+            </Text>
+
+            {/* Original sound — always available, mic-only audio. The
+                backend will auto-derive a sound_id of "<email>/<post_id>"
+                when no sound_id is sent for a video post. */}
+            <TouchableOpacity
+              style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12, gap: 12 }}
+              activeOpacity={0.7}
+              onPress={() => { setSelectedSound(null); setShowSoundPicker(false); }}
+            >
+              <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: ACCENT, alignItems: 'center', justifyContent: 'center' }}>
+                <IconMusic size={20} color="#fff" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>
+                  {t('post.originalSound') || 'Som original'}
+                </Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
+                  {t('post.originalSoundHint') || 'Áudio gravado com o vídeo'}
+                </Text>
+              </View>
+              {!selectedSound ? <IconCheck size={20} color={ACCENT} /> : null}
+            </TouchableOpacity>
+
+            {/* Saved tracks list */}
+            {savedSoundsLoading ? (
+              <View style={{ paddingVertical: 18, alignItems: 'center' }}>
+                <ActivityIndicator size="small" color={ACCENT} />
+              </View>
+            ) : savedSounds.length === 0 ? (
+              <View style={{ paddingVertical: 18, paddingHorizontal: 20 }}>
+                <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
+                  {t('post.noSavedSounds') || 'Sem sons salvos ainda. Toque "Salvar som" nos reels que você curtir.'}
+                </Text>
+              </View>
+            ) : (
+              <FlatList
+                data={savedSounds}
+                keyExtractor={(it) => String(it.id || it.track_id)}
+                renderItem={({ item: trk }) => {
+                  const trackId = String(trk.id || trk.track_id);
+                  const active = selectedSound?.id === trackId;
+                  return (
+                    <TouchableOpacity
+                      style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12, gap: 12 }}
+                      activeOpacity={0.7}
+                      onPress={() => {
+                        setSelectedSound({ id: trackId, label: `${trk.artist || ''} — ${trk.title || ''}`.replace(/^ — /, '') });
+                        setShowSoundPicker(false);
+                      }}
+                    >
+                      {trk.artwork_url ? (
+                        <Image source={{ uri: trk.artwork_url }} style={{ width: 40, height: 40, borderRadius: 4 }} />
+                      ) : (
+                        <View style={{ width: 40, height: 40, borderRadius: 4, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)', alignItems: 'center', justifyContent: 'center' }}>
+                          <IconMusic size={20} color={colors.textSecondary} />
+                        </View>
+                      )}
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }} numberOfLines={1}>
+                          {trk.title || 'Sem título'}
+                        </Text>
+                        <Text style={{ color: colors.textSecondary, fontSize: 12 }} numberOfLines={1}>
+                          {trk.artist || ''}
+                        </Text>
+                      </View>
+                      {active ? <IconCheck size={20} color={ACCENT} /> : null}
+                    </TouchableOpacity>
+                  );
+                }}
+              />
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
     </Modal>
   );
 }

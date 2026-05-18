@@ -104,6 +104,35 @@ export default function InboxScreen() {
   const isDesktop = width >= 768;
   const [showSidebar, setShowSidebar] = useState(false);
   const [searchText, setSearchText] = useState('');
+  // Saved searches state — PG-backed via email_search_list. Loaded lazily on
+  // the first time the user opens the saved-searches menu.
+  const [savedSearches, setSavedSearches] = useState([]);
+  const [showSavedSearches, setShowSavedSearches] = useState(false);
+  const [savingSearch, setSavingSearch] = useState(false);
+  const loadSavedSearches = useCallback(async () => {
+    try {
+      const r = await api.emailSearchList();
+      if (r?.success) setSavedSearches(Array.isArray(r.data?.searches) ? r.data.searches : []);
+    } catch {}
+  }, []);
+  const handleSaveSearch = useCallback(async () => {
+    const q = searchText.trim();
+    if (!q || savingSearch) return;
+    setSavingSearch(true);
+    try {
+      const r = await api.emailSearchSave(q);
+      if (r?.success) {
+        setSavedSearches(prev => [{ id: r.data?.id, name: r.data?.name || q, query: q, created_at: r.data?.created_at }, ...prev]);
+      }
+    } catch {} finally {
+      setSavingSearch(false);
+    }
+  }, [searchText, savingSearch]);
+  const handleDeleteSavedSearch = useCallback(async (id) => {
+    try { await api.emailSearchDelete(id); } catch {}
+    setSavedSearches(prev => prev.filter(s => s.id !== id));
+  }, []);
+  useEffect(() => { loadSavedSearches(); }, [loadSavedSearches]);
   const [aiBriefing, setAiBriefing] = useState(null);
   const aiBriefingDateRef = useRef('');
   const [showMenu, setShowMenu] = useState(false);
@@ -1340,13 +1369,70 @@ export default function InboxScreen() {
       {!(isDesktop && sidePanels.length > 0) && (
         <>
           <View style={[s.searchRow, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-            <SearchBar
-              value={searchText}
-              onChange={setSearchText}
-              onSubmit={handleSearch}
-              onClear={handleClearSearch}
-            />
+            <View style={{ flex: 1 }}>
+              <SearchBar
+                value={searchText}
+                onChange={setSearchText}
+                onSubmit={handleSearch}
+                onClear={handleClearSearch}
+              />
+            </View>
+            {/* Saved-searches launcher — always visible. When the search bar
+                has text, the primary affordance is "Save"; otherwise it
+                opens the saved list. */}
+            <TouchableOpacity
+              onPress={() => {
+                if (searchText.trim()) { handleSaveSearch(); }
+                else { setShowSavedSearches(true); }
+              }}
+              style={{ paddingHorizontal: 10, paddingVertical: 6, marginLeft: 6, borderRadius: 10, backgroundColor: colors.primaryLight }}
+              accessibilityLabel={searchText.trim() ? (t('search.saveSearch') || 'Salvar busca') : (t('search.savedSearches') || 'Buscas salvas')}
+              accessibilityRole="button"
+            >
+              <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '700' }}>
+                {searchText.trim() ? ('💾 ' + (t('search.saveSearch') || 'Salvar busca')) : ('★ ' + (savedSearches.length || 0))}
+              </Text>
+            </TouchableOpacity>
           </View>
+          {/* Saved-searches sheet — modal list of persisted queries; tap a row
+              to re-run the search, X to delete. */}
+          {showSavedSearches && (
+            <Modal visible transparent animationType="fade" onRequestClose={() => setShowSavedSearches(false)}>
+              <TouchableOpacity activeOpacity={1} onPress={() => setShowSavedSearches(false)}
+                style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+                <View style={{ backgroundColor: colors.background, borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '60%' }}>
+                  <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text, marginBottom: 12 }}>
+                    {t('search.savedSearches') || 'Buscas salvas'}
+                  </Text>
+                  {savedSearches.length === 0 ? (
+                    <Text style={{ color: colors.textSecondary, fontSize: 13, paddingVertical: 16, textAlign: 'center' }}>
+                      {t('search.noSavedSearches') || 'Nenhuma busca salva. Digite uma busca e toque em "Salvar busca".'}
+                    </Text>
+                  ) : (
+                    savedSearches.map(item => (
+                      <TouchableOpacity
+                        key={item.id}
+                        onPress={() => {
+                          setSearchText(item.query);
+                          setShowSavedSearches(false);
+                          doSearch(item.query);
+                        }}
+                        style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight }}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text numberOfLines={1} style={{ fontSize: 14, color: colors.text, fontWeight: '500' }}>{item.name}</Text>
+                          <Text numberOfLines={1} style={{ fontSize: 11, color: colors.textTertiary, marginTop: 2 }}>{item.query}</Text>
+                        </View>
+                        <TouchableOpacity onPress={() => handleDeleteSavedSearch(item.id)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                          <IconX size={16} color={colors.textTertiary} />
+                        </TouchableOpacity>
+                      </TouchableOpacity>
+                    ))
+                  )}
+                </View>
+              </TouchableOpacity>
+            </Modal>
+          )}
           {isOffline && (
             <View style={{
               flexDirection: 'row', alignItems: 'center', gap: 10,

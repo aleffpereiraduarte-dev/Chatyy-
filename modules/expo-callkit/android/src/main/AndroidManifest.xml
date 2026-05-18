@@ -109,6 +109,23 @@
       android:exported="false" />
 
     <!--
+      [notif-p0p1 2026-05-17] Chat notification actions. Backs MessagingStyle
+      inline RemoteInput (quick reply), mark-as-read, mute 8h, snooze 1h.
+      Explicit intent actions (setPackage in sender) so no permission/export.
+    -->
+    <receiver
+      android:name=".ChatActionReceiver"
+      android:exported="false">
+      <intent-filter>
+        <action android:name="com.onemundo.mail.ACTION_CHAT_REPLY" />
+        <action android:name="com.onemundo.mail.ACTION_CHAT_MARK_READ" />
+        <action android:name="com.onemundo.mail.ACTION_CHAT_MUTE_8H" />
+        <action android:name="com.onemundo.mail.ACTION_CHAT_SNOOZE_1H" />
+        <action android:name="com.onemundo.mail.ACTION_CHAT_SMART_REPLY" />
+      </intent-filter>
+    </receiver>
+
+    <!--
       CRITICAL: priority="10" ensures this service receives FCM messages
       BEFORE Expo's ExpoFirebaseMessagingService (which uses priority="-1").
       Android only delivers to ONE FirebaseMessagingService — the highest priority one.
@@ -160,6 +177,30 @@
       android:name=".RelayWakeService"
       android:exported="false"
       android:foregroundServiceType="dataSync" />
+
+    <!--
+      [Telecom integration, 2026-05-17] InCallService scaffold so Chatyy
+      shows up in Settings → Calling Accounts and the stock dialer's
+      Recents tab can attribute calls to us. The matching ConnectionService
+      will land in a follow-up — until then this is enough to register the
+      PhoneAccountHandle and expose Chatyy as a calling app. See
+      ChatyyInCallService.kt for the full architecture comment.
+
+      BIND_INCALL_SERVICE permission lets the system bind us when a call
+      tied to our PhoneAccountHandle is active. The intent-filter is the
+      contract the framework expects on this service class.
+    -->
+    <service
+      android:name=".ChatyyInCallService"
+      android:exported="true"
+      android:permission="android.permission.BIND_INCALL_SERVICE">
+      <meta-data
+        android:name="android.telecom.IN_CALL_SERVICE_UI"
+        android:value="false" />
+      <intent-filter>
+        <action android:name="android.telecom.InCallService" />
+      </intent-filter>
+    </service>
 
   </application>
 

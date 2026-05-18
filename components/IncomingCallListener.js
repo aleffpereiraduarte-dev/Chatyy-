@@ -1111,6 +1111,24 @@ export default function IncomingCallListener() {
           const callId = (currentCall && (currentCall.call_id || currentCall.room_id)) || eventData?.callId || '';
           const targetEmail = currentCall?.caller_email || eventData?.callerEmail || '';
 
+          // [decline-with-message iOS, 2026-05-17] CallKit doesn't allow
+          // injecting custom buttons into the system call UI, so on iOS we
+          // surface the quick-reply sheet immediately AFTER the user taps
+          // the system decline button. The Activity-side equivalent on
+          // Android lives directly in IncomingCallActivity.kt.
+          if (Platform.OS === 'ios' && !wasAccepted && callId && targetEmail) {
+            try {
+              if (typeof globalThis !== 'undefined') {
+                globalThis.__chatyyPendingDeclineWithMessage = {
+                  callId,
+                  toEmail: targetEmail,
+                  conversationId: (currentCall && currentCall.conversation_id) || '',
+                  ts: Date.now(),
+                };
+              }
+            } catch {}
+          }
+
           if (callId && targetEmail) {
             const sendEnd = () => {
               try {

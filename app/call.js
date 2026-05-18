@@ -159,6 +159,12 @@ if (Platform.OS !== 'web') {
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
+// Max participants per group call. Matches WhatsApp 2025 + native iOS
+// `kMaxCallParticipants` + Android `GroupCallActivity.MAX_PARTICIPANTS`.
+// Backend chat_call_invite enforces this too — the UI just shows a banner
+// once we hit the cap so add-participant becomes a no-op.
+export const MAX_CALL_PARTICIPANTS = 32;
+
 // Global call state lives in services/callState so it survives module re-imports
 // (Expo Router loads screens as separate chunks; module-level vars don't share).
 import { getGlobalCall as _getGC, setGlobalCall as _setGC, clearGlobalCall as _clearGC } from '../services/callState';
@@ -1463,7 +1469,31 @@ function CallScreenInner() {
         goToVoicemail('declined', data.recipient_email || data.email || contactEmail, data);
       });
     }
-    wsUnsubsRef.current = [unsubAccepted, unsubEnd, unsubMissed, unsubDeclined];
+    // Host-issued mute. Backend relays `call_mute_request` from
+    // `chat_call_mute_participant` to the target user's WS channel; we then
+    // locally toggle the microphone off so the host sees us drop. Avoids
+    // any kick/ban semantics — host can mute, user re-unmutes themselves.
+    let unsubMuteRequest = () => {};
+    if (mailWs) {
+      unsubMuteRequest = mailWs.on('call_mute_request', (data) => {
+        if (!data || data.call_id !== callId) return;
+        try {
+          const r = roomRef.current;
+          if (r && r.localParticipant) {
+            r.localParticipant.setMicrophoneEnabled(false).catch(() => {});
+          }
+        } catch {}
+        try { setAudioMuted(true); audioMutedRef.current = true; } catch {}
+        // Optional toast so the user knows it was the host, not a glitch.
+        try {
+          const { Alert } = require('react-native');
+          Alert.alert(t('call.muted') || 'Mudo', t('call.mutedByHost') || 'O anfitrião silenciou seu microfone.', [
+            { text: 'OK' },
+          ]);
+        } catch {}
+      });
+    }
+    wsUnsubsRef.current = [unsubAccepted, unsubEnd, unsubMissed, unsubDeclined, unsubMuteRequest];
 
     // Caller: send invite + start CallKit, then wait for accept before joining
     // the LiveKit room. Callee: join the room immediately (their accept
@@ -1988,12 +2018,14 @@ function CallScreenInner() {
 
   // ───── Recording ─────
   const uploadRecordingAsync = useCallback(async () => {
+    let uploaded = false;
     try {
       const { uploadCallRecording } = require('../services/api');
       if (Platform.OS === 'web') {
         if (recordedChunksRef.current.length === 0) return;
         const blob = new Blob(recordedChunksRef.current, { type: 'audio/webm' });
-        await uploadCallRecording({ blob, name: `recording-${callId}.webm`, type: 'audio/webm' }, null, callId);
+        const r = await uploadCallRecording({ blob, name: `recording-${callId}.webm`, type: 'audio/webm' }, null, callId);
+        uploaded = !!(r && r.success);
         recordedChunksRef.current = [];
       } else {
         const recording = mediaRecorderRef.current;
@@ -2002,12 +2034,24 @@ function CallScreenInner() {
           await recording.stopAndUnloadAsync();
           const uri = recording.getURI();
           if (uri) {
-            await uploadCallRecording({ uri, name: `recording-${callId}.m4a`, type: 'audio/mp4' }, null, callId);
+            const r = await uploadCallRecording({ uri, name: `recording-${callId}.m4a`, type: 'audio/mp4' }, null, callId);
+            uploaded = !!(r && r.success);
           }
         } catch {}
       }
     } catch (err) {
       console.warn('[Call] Recording upload err:', err);
+    }
+    // Stash the callId so the post-call screen (or the chat list) can offer a
+    // "Resumo da chamada" entry that routes to /call-recap?callId=<id>.
+    // We don't auto-navigate here because the call screen is already mid-
+    // teardown — the user gets the prompt next time they open chat list.
+    if (uploaded) {
+      try {
+        if (typeof globalThis !== 'undefined') {
+          globalThis.__chatyyLastRecordedCallId = String(callId || '');
+        }
+      } catch {}
     }
   }, [callId]);
 
@@ -2080,9 +2124,18 @@ function CallScreenInner() {
       toValue: 1, duration: 2000, easing: Easing.out(Easing.cubic), useNativeDriver: false,
     }).start(() => setFloatingEmojis(prev => prev.filter(e => e.id !== id)));
     sendData({ type: 'reaction', emoji });
+    // [reaction bar, 2026-05-17] Also fan via WS so peers without an active
+    // LK data-channel still see the reaction (mirrors status_reaction event).
+    try {
+      sendSignaling('call_reaction', {
+        call_id: callId,
+        conversation_id: conversationId,
+        emoji,
+      });
+    } catch {}
     setShowEmojiBar(false);
     resetControlsTimer();
-  }, [sendData, resetControlsTimer]);
+  }, [sendData, resetControlsTimer, sendSignaling, callId, conversationId]);
 
   // ───── Add participant ─────
   useEffect(() => {
@@ -2152,6 +2205,17 @@ function CallScreenInner() {
 
   const handleInviteToCall = useCallback(async (email) => {
     if (!email || addParticipantBusy) return;
+    // Hard cap (WhatsApp 2025 parity). Count = local + current remotes. We
+    // compare against MAX_CALL_PARTICIPANTS - 1 so the invite slot fits.
+    try {
+      const r = roomRef.current;
+      const remoteCount = (r && r.remoteParticipants && r.remoteParticipants.size) || 0;
+      const occupied = remoteCount + 1; // include local participant
+      if (occupied >= MAX_CALL_PARTICIPANTS) {
+        if (__DEV__) console.warn('[call.invite] cap reached:', occupied);
+        return;
+      }
+    } catch {}
     setAddParticipantBusy(true);
     try {
       const { chatCallInvite } = require('../services/api');
@@ -2974,6 +3038,57 @@ function CallScreenInner() {
                 <IconX size={22} color="#fff" />
               </TouchableOpacity>
             </View>
+
+            {/* Currently joined remotes — only shown to the host (isCaller) and
+                only for group calls. Each row has a "Silenciar" affordance that
+                fires chat_call_mute_participant → backend relays call_mute_request
+                → target's local mic is dropped. Avoids the kick/ban concept. */}
+            {isGroupCall && isCaller && (() => {
+              const r = roomRef.current;
+              const joined = r && r.remoteParticipants
+                ? Array.from(r.remoteParticipants.values())
+                : [];
+              if (joined.length === 0) return null;
+              return (
+                <View style={{ marginBottom: 12 }}>
+                  <Text style={[styles.addPartEmail, { marginBottom: 8, fontWeight: '600' }]}>
+                    {t('call.inCallSection') || 'Em chamada'}
+                  </Text>
+                  {joined.slice(0, MAX_CALL_PARTICIPANTS).map((p) => {
+                    const ident = p?.identity || '';
+                    const display = p?.name || ident.split('@')[0];
+                    return (
+                      <View key={ident} style={styles.addPartRow}>
+                        <AvatarCircle email={ident} name={display} size={40} />
+                        <View style={{ flex: 1, marginLeft: 12 }}>
+                          <Text style={styles.addPartName} numberOfLines={1}>{display}</Text>
+                          <Text style={styles.addPartEmail} numberOfLines={1}>{ident}</Text>
+                        </View>
+                        <TouchableOpacity
+                          onPress={async () => {
+                            try {
+                              const { chatCallMuteParticipant } = require('../services/api');
+                              await chatCallMuteParticipant(conversationId, callId, ident);
+                            } catch (e) {
+                              if (__DEV__) console.warn('[call.hostMute]', e?.message);
+                            }
+                          }}
+                          style={[styles.addPartCallBtn, { backgroundColor: 'rgba(255,255,255,0.15)' }]}
+                          activeOpacity={0.7}
+                          accessibilityRole="button"
+                          accessibilityLabel={t('call.muteParticipant') || 'Silenciar participante'}
+                        >
+                          <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>
+                            {t('call.mute') || 'Mudo'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    );
+                  })}
+                </View>
+              );
+            })()}
+
             {addParticipantLoading && addParticipantCandidates.length === 0 ? (
               <Text style={styles.addPartEmpty}>{t('call.addParticipantLoading') || 'Carregando contatos...'}</Text>
             ) : addParticipantCandidates.length === 0 ? (

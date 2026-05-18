@@ -70,6 +70,7 @@ import FormatToolbar from '../components/FormatToolbar';
 import RichTextOverlay from '../components/RichTextOverlay';
 import LocationPickerSheet from '../components/LocationPickerSheet';
 import ChatNotificationSettingsSheet from '../components/ChatNotificationSettingsSheet';
+import SafetyNumberSheet from '../components/SafetyNumberSheet';
 import { getCachedUri, preCacheUrls, cacheMedia, saveMediaPermanent, saveConversationMedia, initSyncCache } from '../services/mediaCache';
 const ExpoImage = Image;
 import { cacheMessages, getCachedMessages, getLastSyncId, cacheSingleMessage, savePendingMessage, removePendingMessage, getPendingMessages, purgeStalePending } from '../services/chatCache';
@@ -849,6 +850,68 @@ function LiveLocationPulse({ size = 14, color = '#22c55e' }) {
         }}
       />
       <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color, borderWidth: 2.5, borderColor: '#fff' }} />
+    </View>
+  );
+}
+
+// Multi-photo carousel for chat album bubbles. Native ScrollView with
+// pagingEnabled is enough — we deliberately don't pull in
+// react-native-pager-view because the chat already imports a hundred screens
+// and the cost/benefit is poor for a swipe that doesn't need physics. Each
+// slide reuses the renderCell helper from the bubble so the cell visuals
+// (video play overlay, +N badge, etc.) stay 100% consistent with the grid
+// fallback. Dots indicator below tracks the active page via onScroll.
+function AlbumCarousel({ items, slideW, slideH, renderCell, resolveMediaUri, isDark }) {
+  const [active, setActive] = useState(0);
+  const onScroll = useCallback((e) => {
+    const x = e?.nativeEvent?.contentOffset?.x || 0;
+    const idx = Math.round(x / Math.max(1, slideW));
+    if (idx !== active && idx >= 0 && idx < items.length) setActive(idx);
+  }, [active, items.length, slideW]);
+  return (
+    <View>
+      <ScrollView
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        onScroll={onScroll}
+        scrollEventThrottle={32}
+        style={{ width: slideW, height: slideH }}
+      >
+        {items.map((m, idx) => (
+          <View key={m?.id || idx} style={{ width: slideW, height: slideH }}>
+            {renderCell(m, slideW, slideH, idx)}
+          </View>
+        ))}
+      </ScrollView>
+      {/* Dots indicator. Inactive dots are translucent white over the photo
+          so they read on both dark and light photos. Active dot is opaque. */}
+      <View style={{
+        position: 'absolute', bottom: 8, left: 0, right: 0,
+        flexDirection: 'row', justifyContent: 'center', gap: 5,
+      }} pointerEvents="none">
+        {items.map((_, i) => (
+          <View
+            key={i}
+            style={{
+              width: i === active ? 7 : 6,
+              height: i === active ? 7 : 6,
+              borderRadius: 4,
+              backgroundColor: i === active ? '#fff' : 'rgba(255,255,255,0.55)',
+            }}
+          />
+        ))}
+      </View>
+      {/* Index pill top-right — Instagram-style "2/5" counter. */}
+      <View style={{
+        position: 'absolute', top: 8, right: 8,
+        backgroundColor: 'rgba(0,0,0,0.55)',
+        paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
+      }} pointerEvents="none">
+        <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
+          {active + 1}/{items.length}
+        </Text>
+      </View>
     </View>
   );
 }
@@ -6981,6 +7044,10 @@ export default function ChatConversationScreen() {
     : (chatyySettings.wallpaper || 'none');
   const [showWallpaperPicker, setShowWallpaperPicker] = useState(false);
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
+  // Safety-number / E2E verification sheet — opened from the encryption
+  // banner tap. Direct conversations only; group verification is per-pair
+  // and not surfaced here (matches WhatsApp/Signal behavior).
+  const [showSafetyNumber, setShowSafetyNumber] = useState(false);
   // Header overflow menu entrance animation: scale 0.94 → 1 + opacity 0 → 1
   // (220ms spring-ease) to match WhatsApp/Telegram polish. Reverse on close.
   const headerMenuScale = useRef(new Animated.Value(0.94)).current;
@@ -7066,6 +7133,28 @@ export default function ChatConversationScreen() {
     };
     checkLock();
   }, [chatLockKey]);
+
+  // Screen-capture block: when this is a locked chat (PIN/biometric-gated)
+  // or a secret-mode conversation, set FLAG_SECURE (Android) to keep the
+  // chat content out of screenshots and screen recordings. The flag is
+  // released on unmount so other surfaces of the app stay screenshottable.
+  // iOS can't prevent screenshots — Apple won't expose the flag — but
+  // expo-screen-capture still lets us hook a screenshot listener if we
+  // ever want to inform the peer.
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const secretMode = !!conversation?.secret_mode || !!conversation?.is_secret;
+    const shouldBlock = !!chatLocked || !!secretMode;
+    if (!shouldBlock) return;
+    let SC;
+    try { SC = require('expo-screen-capture'); } catch { return; }
+    (async () => {
+      try { await SC.preventScreenCaptureAsync('chatyy-chat-private'); } catch {}
+    })();
+    return () => {
+      try { SC.allowScreenCaptureAsync?.('chatyy-chat-private'); } catch {}
+    };
+  }, [chatLocked, conversation?.secret_mode, conversation?.is_secret]);
 
   // Lock a chat. WhatsApp parity: try Face ID / fingerprint first
   // (much faster + matches OS expectations), fall back to password only
@@ -13144,13 +13233,29 @@ export default function ChatConversationScreen() {
     }
   };
 
-  // Toggle inclusion of a conv in the multi-forward selection.
+  // Toggle inclusion of a conv in the multi-forward selection. Enforces the
+  // WhatsApp 2025 anti-misinformation cap of 5 chats per forward batch — once
+  // 5 targets are selected, additional taps are rejected with a haptic and a
+  // toast. Deselect is always allowed regardless of cap.
+  const FORWARD_MAX_TARGETS = 5;
   const toggleForwardTarget = useCallback((convId) => {
     setForwardSelected(prev => {
       const next = new Set(prev);
       const key = String(convId);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        if (next.size >= FORWARD_MAX_TARGETS) {
+          // Cap reached — short warn haptic + toast, no state change
+          try { if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning); } catch {}
+          safeAlert(
+            t('chatConv.forwardCapTitle') || 'Limite de encaminhamento',
+            (t('chatConv.forwardCapMsg') || 'Você pode encaminhar para no máximo {n} conversas por vez.').replace('{n}', String(FORWARD_MAX_TARGETS))
+          );
+          return prev;
+        }
+        next.add(key);
+      }
       return next;
     });
   }, []);
@@ -13170,7 +13275,9 @@ export default function ChatConversationScreen() {
       return;
     }
     setForwardSending(true);
-    const targets = Array.from(forwardSelected).map(id => Number(id)).filter(n => n > 0);
+    // Defensive cap re-enforced here in case state was mutated externally.
+    // Mirrors toggleForwardTarget's FORWARD_MAX_TARGETS = 5.
+    const targets = Array.from(forwardSelected).map(id => Number(id)).filter(n => n > 0).slice(0, 5);
     let ok = 0;
     try {
       const r = await api.chatForwardMulti(msgId, targets);
@@ -14462,8 +14569,30 @@ export default function ChatConversationScreen() {
           </TouchableOpacity>
         );
       };
+      // Carousel mode for multi-image albums (Instagram-style swipe). Triggers
+      // when (a) the message looks like a `media_urls` batch, i.e. an album
+      // whose items are all images, and (b) count is between 2 and 30 (picker
+      // ceiling). Falls back to the existing grid layout for video / mixed
+      // albums or single items. Built on RN ScrollView pagingEnabled — no new
+      // dependency needed (react-native-pager-view isn't installed). Dots
+      // indicator below the strip, tap a slide → opens fullscreen viewer.
+      const allImages = items.every(m => m && (m.type === 'image' || m.type === 'photo' || m.type === 'gif'));
+      const useCarousel = n >= 2 && n <= 30 && allImages;
       let grid;
-      if (n === 2) {
+      if (useCarousel) {
+        const slideW = maxW;
+        const slideH = Math.min(maxH, slideW);
+        grid = (
+          <AlbumCarousel
+            items={items}
+            slideW={slideW}
+            slideH={slideH}
+            renderCell={renderCell}
+            resolveMediaUri={resolveMediaUri}
+            isDark={isDark}
+          />
+        );
+      } else if (n === 2) {
         const w = (maxW - GAP) / 2, h = maxH * 0.6;
         grid = (
           <View style={{ flexDirection: 'row', gap: GAP }}>
@@ -18278,37 +18407,20 @@ export default function ChatConversationScreen() {
         </TouchableOpacity>
       )}
 
-      {/* E2E encryption banner (WhatsApp-style) — tap to verify, X to dismiss */}
+      {/* E2E encryption banner (WhatsApp-style) — tap to verify, X to dismiss.
+          Direct chats open the full SafetyNumberSheet (60-digit code + QR
+          + scan); group chats keep the simple info alert (per-pair
+          verification isn't surfaced here, mirroring WhatsApp/Signal). */}
       {e2eEnabled && !vanishMode && disappearingTimer === 0 && !e2eBannerDismissed && (
         <TouchableOpacity
-          onPress={async () => {
-            try {
-              const e2eeOrch = require('../services/e2ee');
-              if (conversationType === 'direct') {
-                const myPub = await e2eeOrch.getPublicKeyBase64?.();
-                const otherEmail = params.email || '';
-                const otherPub = e2eKeys?.[otherEmail];
-                if (myPub && otherPub) {
-                  const safetyNumber = e2eeOrch.generateSafetyNumber?.(myPub, otherPub) || '';
-                  const formatted = safetyNumber.replace(/(.{5})/g, '$1 ').trim();
-                  safeAlert(
-                    t('chatConv.securityCode') || 'Código de segurança',
-                    `🔐 ${formatted}\n\n${t('chatConv.securityCodeDesc') || 'Compare este código com a outra pessoa para verificar que a criptografia está segura. Se os códigos forem iguais, ninguém está interceptando suas mensagens.'}`
-                  );
-                } else {
-                  safeAlert(
-                    t('chatConv.e2eTitle') || 'Criptografia',
-                    t('chatConv.e2eVerifyWait') || 'Aguardando chaves de criptografia do outro participante. A verificação estará disponível em breve.'
-                  );
-                }
-              } else {
-                safeAlert(
-                  t('chatConv.e2eTitle') || 'Criptografia',
-                  t('chatConv.e2eGroupInfo') || 'As mensagens neste grupo são protegidas com criptografia de ponta a ponta. Somente os participantes podem ler.'
-                );
-              }
-            } catch (e) {
-              safeAlert(t('chatConv.e2eTitle') || 'Criptografia', t('chatConv.e2eActiveDesc') || 'Suas mensagens são protegidas com criptografia ponta-a-ponta.');
+          onPress={() => {
+            if (conversationType === 'direct') {
+              setShowSafetyNumber(true);
+            } else {
+              safeAlert(
+                t('chatConv.e2eTitle') || 'Criptografia',
+                t('chatConv.e2eGroupInfo') || 'As mensagens neste grupo são protegidas com criptografia de ponta a ponta. Somente os participantes podem ler.'
+              );
             }
           }}
           activeOpacity={0.7}
@@ -20471,6 +20583,16 @@ export default function ChatConversationScreen() {
         t={t}
       />
 
+      {/* Safety-number / E2E verification sheet — direct chats only.
+          The sheet itself handles loading + key fetch + QR scan; we just
+          wire the open/close state from the encryption banner tap. */}
+      <SafetyNumberSheet
+        visible={showSafetyNumber}
+        onClose={() => setShowSafetyNumber(false)}
+        peerEmail={params?.email || ''}
+        peerName={params?.name || ''}
+      />
+
       {/* AI Leak / Tone Warnings */}
       {chatLeakWarning && (
         <View style={{ position:'absolute', top:0, left:0, right:0, bottom:0, backgroundColor:'rgba(0,0,0,0.6)', justifyContent:'center', alignItems:'center', padding:20, zIndex:99999 }}>
@@ -21421,6 +21543,38 @@ export default function ChatConversationScreen() {
                 <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>{t('chatConv.select') || 'Selecionar'}</Text>
               </TouchableOpacity>
 
+              {/* Mark as unread (per-message). WhatsApp surfaces this on
+                  incoming messages only — rolling our last_read pointer back
+                  to before this bubble reopens the thread with an unread dot.
+                  Skip for own outbound messages (no semantics) and for tmp/
+                  unsynced rows (no server id yet). */}
+              {selectedMsg?.sender_email && selectedMsg.sender_email !== currentEmail && typeof selectedMsg?.id === 'number' && selectedMsg.id > 0 && !selectedMsg?.deleted_at && (
+                <TouchableOpacity
+                  style={styles.ctxSecondaryItem}
+                  onPress={async () => {
+                    const msgId = selectedMsg.id;
+                    setSelectedMsg(null);
+                    try {
+                      await api.chatMarkMessageUnread(conversationId, msgId);
+                      try { if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
+                      // Hint to the user the thread will reopen unread elsewhere
+                      safeAlert(
+                        t('chatConv.markedUnreadTitle') || 'Marcada como não lida',
+                        t('chatConv.markedUnreadMsg') || 'Esta conversa vai aparecer não lida na lista.'
+                      );
+                      // Back-nav so the user sees the chat list pick up the unread badge
+                      try { goBack?.(); } catch {}
+                    } catch (e) {
+                      console.warn('mark_message_unread error:', e);
+                    }
+                  }}
+                  activeOpacity={0.6}
+                >
+                  <IconMessageSquare size={18} color={colors.text} />
+                  <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>{t('chatConv.markUnread') || 'Marcar como não lida'}</Text>
+                </TouchableOpacity>
+              )}
+
               {/* Keep message (in disappearing chats) */}
               {disappearingTimer > 0 && selectedMsg?.id && typeof selectedMsg.id === 'number' && (
                 <TouchableOpacity
@@ -22301,7 +22455,8 @@ export default function ChatConversationScreen() {
             </TouchableOpacity>
             <Text style={[styles.forwardTitle, { color: colors.text, flex: 1 }]}>
               {forwardSelected.size > 0
-                ? `${forwardSelected.size} ${t('chatConv.forwardSelected') || 'selecionada(s)'}`
+                /* "3/5 selecionadas" — surface the WhatsApp 5-chat cap inline. */
+                ? `${forwardSelected.size}/5 ${t('chatConv.forwardSelected') || 'selecionada(s)'}`
                 : (t('chatConv.forwardTo') || 'Encaminhar para')}
             </Text>
           </View>

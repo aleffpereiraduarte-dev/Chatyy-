@@ -10,7 +10,7 @@ const ListComponent = FlatList;
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as api from '../services/api';
 import { useConfirm } from './ConfirmModal';
-import { emailToDisplayName } from '../services/api';
+import { emailToDisplayName, BASE_URL } from '../services/api';
 import { cacheConversations, getCachedConversations, prewarmConversationsCache, prefetchConversation } from '../services/chatCache';
 import { userScopedKey } from '../services/cache';
 import { getCachedMessagesSync } from '../services/smartChatCache';
@@ -1200,6 +1200,12 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
   const [statusPublishing, setStatusPublishing] = useState(false);
   const [statusUploadPct, setStatusUploadPct] = useState(0);
   const [showCustomCamera, setShowCustomCamera] = useState(false);
+  // Repost seed — when the user taps "Repostar" on their own story we
+  // pre-populate the camera composer with the original media so they
+  // can re-publish without re-recording. Shape: { uri, type, width?,
+  // height?, caption? } or null. Consumed by StatusCamera below and
+  // cleared on close.
+  const [repostSeed, setRepostSeed] = useState(null);
   const [noteText, setNoteText] = useState('');
   const [savingNote, setSavingNote] = useState(false);
 
@@ -1798,6 +1804,32 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
               setStatusViewerEmail(null); setStatusViewIdx(0);
               setTimeout(() => { setShowCustomCamera(true); }, 140);
             }}
+            onRepost={(story) => {
+              // Repost own status: dismiss the viewer, then route to the
+              // camera composer with the original media pre-loaded. The
+              // camera surface accepts an onCapture-shape seed via
+              // setRepostSeed; if the caller hasn't wired that state yet,
+              // we still open the camera so the user lands somewhere
+              // useful (better than a no-op).
+              setStatusViewerEmail(null); setStatusViewIdx(0);
+              if (!story) return;
+              try {
+                const rawUrl = (story.media_url || story.content || '').split('\n')[0];
+                const fullUrl = rawUrl
+                  ? (rawUrl.startsWith('http') ? rawUrl : (BASE_URL + rawUrl))
+                  : null;
+                if (fullUrl && typeof setRepostSeed === 'function') {
+                  setRepostSeed({
+                    uri: fullUrl,
+                    type: story.type === 'video' ? 'video' : 'photo',
+                    width: story.width || undefined,
+                    height: story.height || undefined,
+                    caption: story?.meta?.caption || '',
+                  });
+                }
+              } catch {}
+              setTimeout(() => { setShowCustomCamera(true); }, 160);
+            }}
             onReply={async (story, text) => {
               try { await api.statusReplyDM?.(story?.id, text); } catch {}
             }}
@@ -1816,12 +1848,14 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
 
       {/* Instagram-style custom camera (NATIVE ONLY — crashes on web) */}
       {Platform.OS !== 'web' && (
-        <Modal visible={showCustomCamera} transparent={false} animationType="slide" onRequestClose={() => setShowCustomCamera(false)}>
+        <Modal visible={showCustomCamera} transparent={false} animationType="slide" onRequestClose={() => { setShowCustomCamera(false); setRepostSeed(null); }}>
           <StatusCamera
             visible={showCustomCamera}
             t={t}
-            onClose={() => setShowCustomCamera(false)}
+            initialSeed={repostSeed}
+            onClose={() => { setShowCustomCamera(false); setRepostSeed(null); }}
             onCapture={async (payload) => {
+              setRepostSeed(null);
               setShowCustomCamera(false);
               // Multi-select carousel from gallery → upload each + publish as
               // one story sequence, no single-item editor pass.
@@ -3273,6 +3307,17 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   }, [lockedIds, unlockedIds, navigateToConversation, t]);
 
   const handleDeleteConversation = useCallback(async (conv) => {
+    // Biometric gate: deleting a chat is destructive (wipes local cache +
+    // server row + remote-storage media) and irreversible. Require Face ID
+    // / fingerprint / device passcode before we proceed so a momentarily
+    // unattended phone can't have its history nuked.
+    try {
+      const { confirmWithBiometric } = require('../services/biometricGate');
+      const ok = await confirmWithBiometric({
+        reason: (t?.('chat.deleteConfirmBio')) || 'Confirme para apagar a conversa',
+      });
+      if (!ok) return;
+    } catch {}
     try {
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
       setConversations(prev => prev.filter(c => c.id !== conv.id));
@@ -3291,7 +3336,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       } catch {}
       await api.chatDeleteConversation(conv.id);
     } catch {}
-  }, []);
+  }, [t]);
 
   const handleArchiveConversation = useCallback(async (conv) => {
     const newArchived = !conv.archived;
@@ -3765,8 +3810,23 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     } catch { return undefined; }
   }, []);
 
+  // Locked-chats partition. Mirrors WhatsApp's "Conversas trancadas" hidden
+  // folder: locked rows are pulled out of the main list so a glance at the
+  // home screen reveals no peer name, no preview, no avatar. The user
+  // opens the folder explicitly (biometric / PIN gate handled per-row in
+  // ChatLongPressSheet → onLockToggle).
+  const lockedConversations = useMemo(
+    () => conversations.filter(c => !!c.locked && !c.archived),
+    [conversations]
+  );
+  const lockedCount = lockedConversations.length;
+
   const filteredConversations = useMemo(() => {
     if (filter === 'archived') return archivedConversations;
+    // Dedicated "locked" pseudo-filter (entered by tapping the hidden
+    // section footer). Lives outside the standard partition so locked
+    // rows never leak into search/unread/folder filters.
+    if (filter === 'locked') return lockedConversations;
     // Folder filter: filter values like "folder_<id>" → match by folder filter_type/value
     let folderFilter = null;
     if (typeof filter === 'string' && filter.startsWith('folder_')) {
@@ -3779,6 +3839,11 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     // chat is initiated but never receives a message and the peer email
     // wasn't persisted; pure clutter for the user.
     let list = conversations.filter(c => {
+      // Locked chats live in the dedicated hidden folder. Excluding them
+      // here keeps the main list free of "redacted" rows that would
+      // otherwise leak metadata (timestamp, unread count) to a shoulder-
+      // surfer even when the bubble preview was already redacted.
+      if (c.locked) return false;
       if (c.type === 'group' || c.type === 'channel') return true;
       const hasName = !!(c.display_name || c.name);
       const hasPeer = !!(c.other_email || c.contact_email || c.peer_email || c.email);
@@ -3854,7 +3919,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       return (b.last_message_at || '').localeCompare(a.last_message_at || '');
     });
     return list;
-  }, [filter, conversations, archivedConversations, debouncedQuery, chatFolders, user?.email]);
+  }, [filter, conversations, archivedConversations, lockedConversations, debouncedQuery, chatFolders, user?.email]);
 
   // Feature C — partition drafts at the top so we can render a collapsible
   // "Rascunhos (X)" section above the rest. When 2+ drafts exist:
@@ -4438,6 +4503,57 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     );
   };
 
+  // Locked-chats hidden section. Rendered as a row similar to Archived;
+  // tap opens the dedicated `filter='locked'` view. The biometric/PIN
+  // gate is enforced per-row in ChatLongPressSheet → onLockToggle on
+  // entry, and once `chatUnlocked` is set per-conversation the actual
+  // bubble preview still renders gated until the user authenticates.
+  // Hidden when there are no locked chats so the home screen stays clean.
+  const renderLockedHeader = () => {
+    if (filter !== 'all' || lockedCount === 0) return null;
+    // Entering the hidden section is itself gated by Face ID / passcode.
+    // The per-chat gate still fires when the user opens one of the rows,
+    // but the index-level gate stops a shoulder-surfer from even reading
+    // the redacted-row count / order without authenticating once.
+    const openLocked = async () => {
+      try {
+        const { confirmWithBiometric } = require('../services/biometricGate');
+        const ok = await confirmWithBiometric({
+          reason: t('chat.hiddenSection') || 'Conversas trancadas',
+        });
+        if (!ok) return;
+      } catch {}
+      setFilter('locked');
+    };
+    return (
+      <TouchableOpacity
+        style={[s.archivedHeader, {
+          borderBottomColor: isDark ? '#2a2e3a' : '#dadbe0',
+          backgroundColor: isDark ? '#1c1c24' : '#f3f3f7',
+        }]}
+        onPress={openLocked}
+        activeOpacity={0.65}
+        accessibilityLabel={t('chat.hiddenSection') || 'Conversas trancadas'}
+        accessibilityRole="button"
+      >
+        <View style={[s.archivedHeaderIcon, { backgroundColor: '#52525b' }]}>
+          <IconLock size={16} color="#fff" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={[s.archivedHeaderText, { color: colors.text }]}>
+            {t('chat.hiddenSection') || 'Conversas trancadas'}
+          </Text>
+          <Text style={{ fontSize: 12, color: colors.textTertiary, marginTop: 2 }}>
+            {t('chat.hiddenSectionDesc') || 'Toque para ver suas conversas trancadas'}
+          </Text>
+        </View>
+        <View style={[s.archivedCountBadge, { backgroundColor: '#52525b' }]}>
+          <Text style={s.archivedCountText}>{lockedCount}</Text>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
   const renderArchivedHeader = () => {
     if (filter !== 'all' || archivedCount === 0) return null;
     return (
@@ -4753,6 +4869,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         </Animated.View>
       )}
       {renderArchivedHeader()}
+      {renderLockedHeader()}
       {/* Contact-discovery banner (WhatsApp pattern) — auto-shown only on
           native and only if not dismissed in the last 7 days. Tap → opens
           chat-new (which also runs the sync), or runs the sync inline if
@@ -4831,7 +4948,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         </View>
       )}
     </>
-  ), [filter, pinnedCount, isDark, colors, t, archivedCount, searchQuery, filteredConversations.length, user, router, pinnedAvatarsMode, pinnedConversations, selectionMode, selectedIds, handleConversationPress, enterSelectionMode, toggleSelected, contactBanner, contactBannerSyncing, handleContactBannerPress, dismissContactBanner, pinnedEditMode, pinnedSize, pinnedSizes, pinDraggingId, typingUsers, lockedIds, unlockedIds]);
+  ), [filter, pinnedCount, isDark, colors, t, archivedCount, lockedCount, searchQuery, filteredConversations.length, user, router, pinnedAvatarsMode, pinnedConversations, selectionMode, selectedIds, handleConversationPress, enterSelectionMode, toggleSelected, contactBanner, contactBannerSyncing, handleContactBannerPress, dismissContactBanner, pinnedEditMode, pinnedSize, pinnedSizes, pinDraggingId, typingUsers, lockedIds, unlockedIds]);
 
   // Footer: "MENSAGENS" section with chat_search hits, shown when searching
   const ListFooterComponent = useMemo(() => {

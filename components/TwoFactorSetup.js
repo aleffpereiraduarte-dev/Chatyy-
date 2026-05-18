@@ -84,6 +84,16 @@ export default function TwoFactorSetup({ visible, onClose }) {
       setError(t('twoFactor.enterPassword'));
       return;
     }
+    // Biometric gate: turning 2FA off weakens the account's defenses
+    // against credential stuffing. Confirm with Face ID / passcode before
+    // we let the password alone disable it.
+    try {
+      const { confirmWithBiometric } = require('../services/biometricGate');
+      const ok = await confirmWithBiometric({
+        reason: t('twoFactor.disableConfirmBio') || 'Confirme para desativar 2FA',
+      });
+      if (!ok) return;
+    } catch {}
     setLoading(true);
     setError('');
     try {

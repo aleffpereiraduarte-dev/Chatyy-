@@ -992,6 +992,10 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
       'live_session_info', 'live_session_list', 'live_status',
       'status_list', 'status_view',
       'feed_list', 'feed_likes', 'feed_comments',
+      'feed_explore', 'feed_set_topics', 'feed_get_topics',
+      'feed_analytics', 'trending_hashtags',
+      'chat_feed_hide_post', 'feed_hide_post',
+      'feed_muted_words_list', 'feed_muted_words_add', 'feed_muted_words_remove',
       'reels_list', 'reels_view',
       'get_avatar', 'get_avatar_initials',
       'send_health', 'send_ping',
@@ -3061,6 +3065,14 @@ export async function chatMarkUnread(conversationId) {
   return apiCall('chat_mark_unread', { conversation_id: conversationId }, 'POST');
 }
 
+// chat_mark_message_unread — per-message variant: rolls the user's
+// last_read_message_id back to (message_id - 1) so the thread reappears with
+// unread dots starting at the chosen message. Mirrors WhatsApp's per-bubble
+// "Mark as unread" long-press action.
+export async function chatMarkMessageUnread(conversationId, messageId) {
+  return apiCall('chat_mark_message_unread', { conversation_id: conversationId, message_id: messageId }, 'POST');
+}
+
 export async function chatMessageInfo(messageId) {
   return apiCall('chat_message_info', { message_id: messageId });
 }
@@ -3483,8 +3495,12 @@ export async function getFriendsLocations() { return apiCall('get_friends_locati
 export async function feedCollectionCreate(name) { return apiCall('feed_collection_create', { name }, 'POST'); }
 export async function feedCollectionList() { return apiCall('feed_collection_list', {}); }
 export async function feedCollectionAdd(collectionId, postId) { return apiCall('feed_collection_add', { collection_id: collectionId, post_id: postId }, 'POST'); }
-// Creator analytics
-export async function feedAnalytics() { return apiCall('feed_analytics', {}); }
+// Creator analytics. If postId is provided, returns per-post stats (views,
+// likes, comments, shares + 7-day view series). Otherwise returns the
+// creator-wide rollup.
+export async function feedAnalytics(postId = 0) {
+  return apiCall('feed_analytics', postId ? { post_id: postId } : {}, 'POST');
+}
 
 // Instagram Notes (24h text status)
 export async function chatSetNote(content) {
@@ -3583,6 +3599,13 @@ export async function statusPublish(content, type = 'text', bgColor = '#7C3AED',
     }
     // cross_post_feed — server creates a feed_posts row with same media when true.
     if (extraMeta.cross_post_feed === true) params.cross_post_feed = true;
+    // except_emails — author-side hide list when privacy === 'except'. The
+    // backend persists it under meta and filters status_list per viewer.
+    if (Array.isArray(extraMeta.except_emails) && extraMeta.except_emails.length > 0) {
+      params.except_emails = extraMeta.except_emails
+        .map(e => String(e || '').trim().toLowerCase())
+        .filter(Boolean);
+    }
   }
   return apiCall('status_create', params, 'POST');
 }
@@ -3732,6 +3755,23 @@ export async function statusReact(statusId, emoji) {
 // card with a preview of the story + the reply text.
 export async function statusReplyDM(statusId, text) {
   return apiCall('status_reply_dm', { status_id: statusId, content: text }, 'POST');
+}
+
+// statusNotifyToggle — Subscribe / unsubscribe to FCM pings for a specific
+// author's new statuses. The profile sheet exposes this as a toggle row
+// (\"Notificar sobre stories de X\"). Idempotent on the server.
+export async function statusNotifyToggle(targetEmail, enabled) {
+  return apiCall('status_notify_toggle', {
+    target_email: String(targetEmail || '').toLowerCase(),
+    enabled: !!enabled,
+  }, 'POST');
+}
+
+// statusNotifyList — Return the set of author emails the current viewer
+// has opted-in for. Frontend caches this so the profile sheet can paint
+// the toggle correctly without an extra round-trip per profile open.
+export async function statusNotifyList() {
+  return apiCall('status_notify_list', {}, 'POST');
 }
 
 // Group management
@@ -4606,6 +4646,44 @@ export async function chatCallInvite(conversationId, callId, emails, video = tru
   }, 'POST');
 }
 
+// Host-issued mute of a remote participant in a group call. Backend validates
+// the caller has admin role on the conversation, then relays a WS
+// `call_mute_request` event to the target's `chat_user_{email}` channel.
+// The target /call.js picks up the event and locally calls
+// `room.localParticipant.setMicrophoneEnabled(false)`.
+// Avoids `kick`/`ban` wording per product preference — only mute/restrict.
+export async function chatCallMuteParticipant(conversationId, callId, targetEmail) {
+  return apiCall('chat_call_mute_participant', {
+    conversation_id: conversationId,
+    call_id: callId,
+    target_email: targetEmail,
+  }, 'POST');
+}
+
+// Decline-with-message: post-CallKit / IncomingCallActivity quick-reply.
+// Backend fans the standard WS `call_end` event AND drops a chat message
+// into the DM from the declining user so the caller sees "Te ligo já" /
+// "Estou ocupado" / custom text in chat. See chat.php
+// `chat_call_decline_with_message`.
+export async function chatCallDeclineWithMessage(callId, conversationId, toEmail, message) {
+  return apiCall('chat_call_decline_with_message', {
+    call_id: callId,
+    conversation_id: conversationId,
+    to_email: toEmail,
+    message: (message || '').slice(0, 240),
+  }, 'POST');
+}
+
+// Generate a post-call recap (transcript + AI summary) for a 1:1 or group
+// call. Reuses the voicemail Whisper pipeline — see `_voicemailTranscribeAsync`
+// in chat.php for the model. Recording must have been uploaded via
+// `uploadCallRecording` first. Returns
+// `{ transcript, summary, duration }` or `{ pending: true }` if still
+// processing.
+export async function chatCallRecap(callId) {
+  return apiCall('chat_call_recap', { call_id: callId }, 'POST');
+}
+
 // Chat backup
 export async function chatBackupCreate() {
   return apiCall('chat_backup_create', {}, 'POST');
@@ -4621,6 +4699,43 @@ export async function chatBackupDelete(backupId) {
 }
 export async function chatBackupRestore(backupId) {
   return apiCall('chat_backup_restore', { backup_id: backupId }, 'POST');
+}
+
+// E2E backup escrow — fatter ciphertext envelope (master key + chat keys +
+// device fingerprints) encrypted client-side with the user's passphrase.
+// The server never sees the passphrase or the encryption key; it stores
+// only the ciphertext + a sha256(passphrase) gate so we can refuse to
+// hand the blob back when the user types a different passphrase. See
+// /var/www/mail/api/e2ee.php → e2ee_backup_escrow_put/get for the schema.
+export async function e2eeBackupEscrowPut({ ciphertext, salt, nonce, kdfIters = 100000, passphraseHash, deviceLabel = '' }) {
+  return apiCall('e2ee_backup_escrow_put', {
+    ciphertext, salt, nonce,
+    kdf_iters: kdfIters,
+    passphrase_hash: passphraseHash,
+    device_label: deviceLabel,
+  }, 'POST');
+}
+export async function e2eeBackupEscrowGet(passphraseHash = '') {
+  return apiCall('e2ee_backup_escrow_get', { passphrase_hash: passphraseHash || '' }, 'POST');
+}
+
+// Group join approval queue. The require_approval flag is admin-set
+// (chatGroupSetRequireApproval); when ON, every link join fans into
+// chat_group_join_requests (pending) and an admin must approve / deny
+// via the *RequestApprove / *RequestDeny endpoints.
+export async function chatGroupSetRequireApproval(conversationId, requireApproval) {
+  return apiCall('chat_group_set_require_approval', {
+    conversation_id: conversationId, require_approval: requireApproval,
+  }, 'POST');
+}
+export async function chatGroupRequestList(conversationId) {
+  return apiCall('chat_group_request_list', { conversation_id: conversationId });
+}
+export async function chatGroupRequestApprove(requestId) {
+  return apiCall('chat_group_request_approve', { request_id: requestId }, 'POST');
+}
+export async function chatGroupRequestDeny(requestId) {
+  return apiCall('chat_group_request_deny', { request_id: requestId }, 'POST');
 }
 
 // Photo sync from cloud
@@ -5069,6 +5184,40 @@ export async function photoAnalyzeBatch(limit = 20) {
 
 export async function photoSearchML(query, page = 1, limit = 50) {
   return apiCall('photo_search_ml', { query, page, limit }, 'POST');
+}
+
+// Extract EXIF GPS coordinates from up to `limit` photos that don't yet have
+// gps_lat populated. Backend streams just the first 256 KB from R2 so a 50-
+// photo batch costs ~12 MB of bandwidth and ~1s of wall time.
+export async function photosExtractGps(limit = 50) {
+  return apiCall('photos_extract_gps', { limit }, 'POST');
+}
+
+// Return geo-tagged photos clustered by ~1km grid for the Map view.
+export async function photosWithGps() {
+  return apiCall('photos_with_gps', {}, 'POST');
+}
+
+// Tag the iOS PHAsset.mediaSubtypes / Android equivalent onto a backed-up
+// photo so the viewer knows to render it as live/burst/slowmo/timelapse/raw.
+export async function photosSetMediaKind(fileId, mediaKind) {
+  return apiCall('photos_set_media_kind', { file_id: fileId, media_kind: mediaKind }, 'POST');
+}
+
+// Build the export ZIP URL — used directly with WebBrowser.openBrowserAsync
+// or Linking.openURL so the browser handles the download stream. apiCall is
+// inappropriate here (response is octet-stream, not JSON).
+export function photosExportZipUrl(ids) {
+  // Compact CSV — keeps the URL short for moderate batches; large batches
+  // (>500 ids) are rejected server-side so this stays well under HTTP limits.
+  const csv = (Array.isArray(ids) ? ids : []).join(',');
+  return `${BASE_URL}/api/email.php?action=photos_export_zip&ids=${encodeURIComponent(csv)}`;
+}
+
+// POST form of the ZIP export (used when ids[] is too long for a GET URL,
+// or from environments where opening a browser URL is awkward).
+export async function photosExportZip(ids) {
+  return apiCall('photos_export_zip', { ids }, 'POST');
 }
 
 // Photo Memories (Google Photos-style "On this day" — DOY ±3 days vs prev years,
@@ -5615,12 +5764,83 @@ export async function feedList(pageOrOpts = 1, limit = 20) {
   return apiCall('feed_list', { page: pageOrOpts, limit }, 'POST');
 }
 
+// Suggestion rail in the feed (follows people the viewer doesn't already
+// follow, ranked by mutual_count). Thin wrapper over the existing
+// `follow_suggestions` backend so callers don't have to know the action name.
+export async function followSuggestions(limit = 10) {
+  return apiCall('follow_suggestions', { limit }, 'POST');
+}
+
+// ─── Feed P0 / FYP support ───
+// hide a post + send a negative signal so the FYP ranker stops surfacing it.
+// `signal` is one of 'not_interested' | 'hide' | 'see_less'. 'see_less' also
+// triggers a topic-extraction downweight server-side.
+export async function feedHidePost(postId, signal = 'not_interested') {
+  return apiCall('chat_feed_hide_post', { post_id: postId, signal }, 'POST');
+}
+// Muted-words CRUD. List, add, remove.
+export async function feedMutedWordsList() {
+  return apiCall('feed_muted_words_list', {}, 'POST');
+}
+export async function feedMutedWordsAdd(word) {
+  return apiCall('feed_muted_words_add', { word: String(word || '') }, 'POST');
+}
+export async function feedMutedWordsRemove(word) {
+  return apiCall('feed_muted_words_remove', { word: String(word || '') }, 'POST');
+}
+
 export async function feedUserPosts(email, page = 1) {
   return apiCall('feed_user_posts', { email, page }, 'POST');
 }
 
 export async function feedHashtagPosts(tag, page = 1, limit = 20) {
   return apiCall('feed_hashtag_posts', { tag, page, limit });
+}
+
+// ─── Reels P0 ───
+// chat_reels_by_sound — list reels using the same audio. sound_id is TEXT
+// (numeric track id from the picker, or "<creator_email>/<post_id>" for an
+// original sound). Returns { posts, sound_id, sound_label, page, has_more }.
+export async function chatReelsBySound(soundId, page = 1, limit = 20) {
+  return apiCall('chat_reels_by_sound', { sound_id: String(soundId || ''), page, limit }, 'POST');
+}
+// chat_reels_duet_init / chat_reels_stitch_init — fetch the parent video URL +
+// flags so the client can capture a side-by-side companion clip (duet) or
+// trim + append (stitch). Both honour the per-post allow_duet / allow_stitch
+// toggles.
+export async function chatReelsDuetInit(postId) {
+  return apiCall('chat_reels_duet_init', { post_id: postId }, 'POST');
+}
+export async function chatReelsStitchInit(postId) {
+  return apiCall('chat_reels_stitch_init', { post_id: postId }, 'POST');
+}
+// chat_feed_trending_hashtags — top hashtags parsed out of feed captions over
+// the last 24h. Surfaced in Discover.
+export async function chatFeedTrendingHashtags(limit = 20) {
+  return apiCall('chat_feed_trending_hashtags', { limit }, 'POST');
+}
+// duet-compose.php endpoint — server-side ffmpeg composite. Returns
+// { media_url, thumbnail_url, duet_type, parent_post_id } that feedCreatePost
+// can publish via the media_url= path. multipart/form-data.
+export async function duetCompose(formData) {
+  const headers = {};
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 240000);
+    const resp = await fetch(`${API_URL.replace(/email\.php.*$/, 'duet-compose.php')}`, {
+      method: 'POST',
+      body: formData,
+      credentials: 'include',
+      headers,
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    return resp.json();
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
 }
 
 // ─── Chat hashtag trending + search (Telegram-style) ───
@@ -5821,7 +6041,14 @@ export async function getMutualFollowers(email) {
 // LIVE STREAMING API
 // ============================================================
 export async function liveStart(title, opts = {}) {
-  return apiCall('live_start', { title, ...(opts.audience ? { audience: opts.audience } : {}) }, 'POST');
+  // Optional extras: audience (public/friends/private), category (1 of 8
+  // backend-known keys), subscribersOnly (creator-sub gating). Forward only
+  // truthy values so old callers stay byte-compatible.
+  const payload = { title };
+  if (opts && opts.audience) payload.audience = opts.audience;
+  if (opts && opts.category) payload.category = opts.category;
+  if (opts && opts.subscribersOnly) payload.subscribers_only = 1;
+  return apiCall('live_start', payload, 'POST');
 }
 export async function liveEnd(sessionId, opts = {}) {
   // `save_replay` lets the host opt-out of the CF Stream VOD being kept
@@ -5869,6 +6096,105 @@ export async function liveTopGifters(sessionId, limit = 50) {
 // fire, rocket).
 export async function liveSendGift(sessionId, giftType) {
   return apiCall('chat_live_send_gift', { session_id: sessionId, gift_type: giftType }, 'POST');
+}
+
+// ─── Live discovery + categories (P0 monetization parity, 2026-05-17) ───
+// 8 fixed categories — backend returns label_en/label_pt + icon + accent color.
+// Cached in-memory by callers (rarely changes).
+export async function liveCategories() {
+  return apiCall('live_categories', {}, 'POST');
+}
+// Top-50 active lives ordered by current_viewers DESC, started_at DESC.
+// `category` optional — pass '' or null for "all categories" rail.
+// Backend hides subscriber-only lives the viewer doesn't have access to.
+export async function liveDiscover(category = '') {
+  const payload = category ? { category } : {};
+  return apiCall('live_discover', payload, 'POST');
+}
+// Host updates the category / subscriber-gate of their active live. The
+// pre-live screen calls this right after liveStart succeeds so the rail
+// can filter immediately.
+export async function liveSetCategory(sessionId, category, subscribersOnly = false) {
+  return apiCall('live_set_category', {
+    session_id: sessionId,
+    category: category || '',
+    subscribers_only: subscribersOnly ? 1 : 0,
+  }, 'POST');
+}
+
+// ─── Live quizzes (P1 — extends the polls infrastructure) ───
+// Host opens a 1-question quiz. `correctIdx` is the 0-based index of the
+// correct option in `options[]`. Backend hides correct_idx from viewers
+// until liveQuizClose broadcasts `live_quiz_result`.
+export async function liveQuizStart(sessionId, question, options, correctIdx) {
+  return apiCall('live_quiz_start', {
+    session_id: sessionId,
+    question: String(question || '').slice(0, 280),
+    options: (Array.isArray(options) ? options : []).slice(0, 6).map(o => String(o || '').slice(0, 120)),
+    correct_idx: Number(correctIdx) || 0,
+  }, 'POST');
+}
+// Viewer answers — INSERT-only, dedup by (quiz_id, voter_email).
+export async function liveQuizAnswer(quizId, answerIdx) {
+  return apiCall('live_quiz_answer', { quiz_id: quizId, answer_idx: Number(answerIdx) }, 'POST');
+}
+// Host closes the quiz — backend broadcasts `live_quiz_result` with per-option
+// tallies + total + correct_idx so viewers can finally render correctness.
+export async function liveQuizClose(quizId) {
+  return apiCall('live_quiz_close', { quiz_id: quizId }, 'POST');
+}
+
+// ─── Diamond wallet + paid gifts (P1 monetization scaffolding) ───
+// Read the signed-in user's diamond balance + pending creator payout.
+export async function walletBalance() {
+  return apiCall('wallet_balance', {}, 'POST');
+}
+// IAP purchase callback — credits the wallet with the diamond pack for the
+// given SKU. On iOS we pass `transaction_id` + `receipt` so the backend can
+// re-verify with App Store Server API (same code path as iap_verify_receipt).
+// On Android we pass the receipt blob (Google Play Developer API verification
+// is on the roadmap; for now we credit and rely on Apple-style server
+// reconciliation for refunds).
+export async function walletBuyDiamonds(sku, { transactionId = '', receipt = '', platform = 'ios' } = {}) {
+  return apiCall('wallet_buy_diamonds', {
+    sku,
+    platform,
+    transaction_id: transactionId,
+    receipt,
+  }, 'POST');
+}
+// Paid gift send — debits diamond balance, credits 70% to creator as
+// pending_payout_cents (30% platform retain). Returns the new balance.
+export async function liveGiftSend(sessionId, giftSku) {
+  return apiCall('live_gift_send', { session_id: sessionId, gift_sku: giftSku }, 'POST');
+}
+// Static catalog (6 paid gifts + 6 diamond packs). Mirrors backend so the
+// gift sheet renders without hardcoding prices client-side.
+export async function liveGiftCatalog() {
+  return apiCall('live_gift_catalog', {}, 'POST');
+}
+// Toggle a (currently soft) subscription bond to a creator — months 1..12.
+// Future: gate behind a creator-sub IAP SKU.
+export async function liveSubscribeCreator(creator, months = 1) {
+  return apiCall('live_subscribe_creator', { creator, months: Number(months) || 1 }, 'POST');
+}
+
+// ─── Live shopping product cards (P1) ───
+// Host adds a card to their active live. Up to 5 active per session.
+export async function liveProductAdd(sessionId, { title, priceCents = 0, imageUrl = '', linkUrl }) {
+  return apiCall('live_product_add', {
+    session_id: sessionId,
+    title,
+    price_cents: Number(priceCents) || 0,
+    image_url: imageUrl || '',
+    link_url: linkUrl,
+  }, 'POST');
+}
+export async function liveProductRemove(productId) {
+  return apiCall('live_product_remove', { product_id: Number(productId) }, 'POST');
+}
+export async function liveProductsList(sessionId) {
+  return apiCall('live_products_list', { session_id: sessionId }, 'POST');
 }
 
 // Live replay / recording endpoints. CF Stream auto-records every push
@@ -7224,3 +7550,54 @@ export async function businessUpdateLabel(data) { return apiCall('business_updat
 export async function businessDeleteLabel(labelId) { return apiCall('business_delete_label', { label_id: labelId }, 'POST'); }
 export async function businessAssignLabel(conversationId, labelId) { return apiCall('business_assign_label', { conversation_id: conversationId, label_id: labelId }, 'POST'); }
 export async function businessRemoveLabel(conversationId, labelId) { return apiCall('business_remove_label', { conversation_id: conversationId, label_id: labelId }, 'POST'); }
+
+// ============================================================
+// EMAIL GAP CLOSURES (2026-05-17) — confidential SMS OTP, unsubscribe,
+// saved searches, URL preview, nested labels.
+// ============================================================
+
+// Send an SMS OTP to the recipient of a confidential email so they can
+// unlock the body. Recipient receives a 6-digit code on the phone the
+// sender attached when creating the confidential email.
+export async function emailConfidentialSendOtp(confidentialId) {
+  return apiCall('email_confidential_send_otp', { id: confidentialId }, 'POST');
+}
+
+// Verify the 6-digit code and receive an opaque otp_token. Pass that token
+// back to confidential_view to retrieve the email body.
+export async function emailConfidentialVerifyOtp(confidentialId, code) {
+  return apiCall('email_confidential_verify_otp', { id: confidentialId, code }, 'POST');
+}
+
+// One-shot unsubscribe — backend dispatches an HTTP one-click request and
+// (when present) a mailto: unsubscribe email on the user's behalf.
+export async function emailUnsubscribe({ url = '', mailto = '', oneClick = false, headers = '' } = {}) {
+  return apiCall('email_unsubscribe', { url, mailto, one_click: oneClick ? 1 : 0, headers }, 'POST');
+}
+
+// Saved searches CRUD (PG-backed via chat_user_saved_searches).
+export async function emailSearchSave(query, name = '') {
+  return apiCall('email_search_save', { query, name }, 'POST');
+}
+export async function emailSearchList() {
+  return apiCall('email_search_list');
+}
+export async function emailSearchDelete(id) {
+  return apiCall('email_search_delete', { id }, 'POST');
+}
+
+// URL preview for compose unfurl — backend scrapes og:* meta tags.
+export async function emailUrlPreview(url) {
+  return apiCall('email_url_preview', { url }, 'POST');
+}
+
+// Nested labels (PG-backed with parent_label).
+export async function labelList() {
+  return apiCall('label_list');
+}
+export async function labelCreateNested(name, color = '#1a73e8', parentLabel = null) {
+  return apiCall('label_create_nested', { name, color, parent_label: parentLabel || '' }, 'POST');
+}
+export async function labelDeleteNested({ id = 0, name = '' } = {}) {
+  return apiCall('label_delete_nested', { id, name }, 'POST');
+}

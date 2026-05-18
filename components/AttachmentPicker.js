@@ -1,10 +1,11 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator, Image } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator, Image, Modal, FlatList } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
-import { IconPaperclip, IconX, IconFileText, IconImage, IconMusic, IconFilm, IconAlertTriangle } from './Icons';
+import { IconPaperclip, IconX, IconFileText, IconImage, IconMusic, IconFilm, IconAlertTriangle, IconFolder, IconCheckCircle } from './Icons';
 import { formatBytes } from '../services/format';
+import { fileListAll, BASE_URL } from '../services/api';
 
 const DEFAULT_MAX_FILES = 10;
 const DEFAULT_MAX_SIZE = 55 * 1024 * 1024; // 55 MB
@@ -35,6 +36,15 @@ export default function AttachmentPicker({
   const [error, setError] = useState(null);
   const fileInputRef = useRef(null);
   const objectUrlsRef = useRef([]);
+  // Drive picker — fetched on open from the existing drive_list_all endpoint.
+  // Selections become "reference" attachments (no bytes transferred): the
+  // outgoing email carries a drive URL + filename + size in metadata so the
+  // recipient downloads from CDN instead of having a 50 MB MIME inline.
+  const [showDrive, setShowDrive] = useState(false);
+  const [driveLoading, setDriveLoading] = useState(false);
+  const [driveError, setDriveError] = useState(null);
+  const [driveFiles, setDriveFiles] = useState([]);
+  const [driveSelection, setDriveSelection] = useState({});
 
   // Revoke all created object URLs on unmount to prevent memory leaks
   useEffect(() => {
@@ -131,32 +141,98 @@ export default function AttachmentPicker({
 
   const handlePress = Platform.OS === 'web' ? triggerWebPicker : triggerMobilePicker;
 
+  // ── Drive picker ────────────────────────────────────────────────────
+  const openDrivePicker = useCallback(async () => {
+    if (!canAdd) return;
+    setShowDrive(true);
+    setDriveSelection({});
+    setDriveError(null);
+    setDriveLoading(true);
+    try {
+      const r = await fileListAll();
+      // drive_list_all returns { folders, files, trash, total }. We only
+      // want non-trashed user files (folders excluded so the user doesn't
+      // accidentally attach a directory).
+      const items = Array.isArray(r?.data?.files) ? r.data.files
+                  : Array.isArray(r?.data) ? r.data
+                  : [];
+      const files = items.filter(f => f && f.is_folder !== true && f.is_folder !== 1 && f.type !== 'folder');
+      setDriveFiles(files);
+    } catch (e) {
+      setDriveError(t('attachment.driveError') || 'Falha ao carregar Drive');
+    } finally {
+      setDriveLoading(false);
+    }
+  }, [canAdd, t]);
+
+  const confirmDriveSelection = useCallback(() => {
+    const picked = driveFiles.filter(f => driveSelection[String(f.id)]);
+    let added = 0;
+    for (const f of picked) {
+      if (attachments.length + added >= maxFiles) break;
+      // Build a "reference" attachment carrying the public Drive URL. The
+      // send pipeline already accepts attachment objects with `drive_url` so
+      // it can MIME-stitch them without re-uploading bytes.
+      const id = String(f.id);
+      const downloadUrl = (BASE_URL || '') + '/api/files.php?action=drive_download&id=' + encodeURIComponent(id);
+      const ref = {
+        name: f.name || f.filename || 'file',
+        size: Number(f.size || f.size_bytes || 0),
+        type: f.mime_type || f.mime || 'application/octet-stream',
+        // Marker fields — composer sends these as drive refs (no bytes).
+        drive_id: id,
+        drive_url: downloadUrl,
+        uri: downloadUrl,
+        is_drive_ref: true,
+      };
+      if (validate(ref)) {
+        onAdd && onAdd(ref);
+        added++;
+      }
+    }
+    setShowDrive(false);
+  }, [driveFiles, driveSelection, attachments.length, maxFiles, validate, onAdd]);
+
   // ── Render ────────────────────────────────────────────────────────────
 
   return (
     <View style={s.container}>
-      {/* Add-file button */}
-      <TouchableOpacity
-        style={[
-          s.addBtn,
-          {
-            backgroundColor: colors.surfaceVariant,
-            borderColor: colors.border,
-            opacity: canAdd ? 1 : 0.5,
-          },
-        ]}
-        onPress={handlePress}
-        disabled={!canAdd}
-        activeOpacity={0.7}
-      >
-        <IconPaperclip size={18} color={colors.primary} />
-        <Text style={[s.addBtnText, { color: colors.primary }]}>
-          {t('attachment.attachFiles')}
-        </Text>
-        <Text style={[s.addBtnHint, { color: colors.textTertiary }]}>
-          {attachments.length}/{maxFiles}
-        </Text>
-      </TouchableOpacity>
+      {/* Add-file + Drive picker row — two equal-width pills */}
+      <View style={{ flexDirection: 'row', gap: Spacing.sm }}>
+        <TouchableOpacity
+          style={[
+            s.addBtn,
+            { flex: 1, backgroundColor: colors.surfaceVariant, borderColor: colors.border, opacity: canAdd ? 1 : 0.5 },
+          ]}
+          onPress={handlePress}
+          disabled={!canAdd}
+          activeOpacity={0.7}
+        >
+          <IconPaperclip size={18} color={colors.primary} />
+          <Text style={[s.addBtnText, { color: colors.primary }]}>
+            {t('attachment.attachFiles')}
+          </Text>
+          <Text style={[s.addBtnHint, { color: colors.textTertiary }]}>
+            {attachments.length}/{maxFiles}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            s.addBtn,
+            { flex: 1, backgroundColor: colors.surfaceVariant, borderColor: colors.border, opacity: canAdd ? 1 : 0.5 },
+          ]}
+          onPress={openDrivePicker}
+          disabled={!canAdd}
+          activeOpacity={0.7}
+          accessibilityLabel={t('attachment.attachFromDrive') || 'Anexar do Drive'}
+          accessibilityRole="button"
+        >
+          <IconFolder size={18} color={colors.primary} />
+          <Text style={[s.addBtnText, { color: colors.primary }]}>
+            {t('attachment.attachFromDrive') || 'Anexar do Drive'}
+          </Text>
+        </TouchableOpacity>
+      </View>
 
       {/* Hidden file input (web only) */}
       {Platform.OS === 'web' && (
@@ -261,6 +337,86 @@ export default function AttachmentPicker({
           </View>
         </View>
       )}
+
+      {/* Drive picker modal — slide-up sheet listing the user's Drive files. */}
+      <Modal visible={showDrive} animationType="slide" transparent onRequestClose={() => setShowDrive(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+          <View style={{ backgroundColor: colors.background, borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingBottom: 24, maxHeight: '80%' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight }}>
+              <IconFolder size={20} color={colors.primary} />
+              <Text style={{ flex: 1, marginLeft: 10, fontSize: 17, fontWeight: '700', color: colors.text }}>
+                {t('attachment.driveTitle') || 'Anexar do Drive'}
+              </Text>
+              <TouchableOpacity onPress={() => setShowDrive(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <IconX size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            {driveLoading ? (
+              <View style={{ padding: 32, alignItems: 'center' }}>
+                <ActivityIndicator color={colors.primary} />
+                <Text style={{ marginTop: 10, color: colors.textSecondary, fontSize: 13 }}>
+                  {t('attachment.driveLoading') || 'Carregando Drive...'}
+                </Text>
+              </View>
+            ) : driveError ? (
+              <View style={{ padding: 32, alignItems: 'center' }}>
+                <IconAlertTriangle size={20} color={colors.error} />
+                <Text style={{ marginTop: 8, color: colors.error, fontSize: 13 }}>{driveError}</Text>
+              </View>
+            ) : driveFiles.length === 0 ? (
+              <View style={{ padding: 32, alignItems: 'center' }}>
+                <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
+                  {t('attachment.driveEmpty') || 'Nenhum arquivo no Drive'}
+                </Text>
+              </View>
+            ) : (
+              <FlatList
+                data={driveFiles}
+                keyExtractor={(item) => String(item.id)}
+                style={{ maxHeight: 480 }}
+                renderItem={({ item }) => {
+                  const id = String(item.id);
+                  const picked = !!driveSelection[id];
+                  return (
+                    <TouchableOpacity
+                      onPress={() => setDriveSelection(prev => ({ ...prev, [id]: !prev[id] }))}
+                      style={{ flexDirection: 'row', alignItems: 'center', padding: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight, backgroundColor: picked ? colors.primaryLight : 'transparent' }}
+                    >
+                      <View style={{ width: 36, height: 36, borderRadius: 8, backgroundColor: colors.primaryLight, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                        {iconForType(item.mime_type || item.mime, 18, colors.primary)}
+                      </View>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text numberOfLines={1} style={{ fontSize: 14, fontWeight: '500', color: colors.text }}>{item.name || item.filename}</Text>
+                        <Text style={{ fontSize: 11, color: colors.textTertiary, marginTop: 2 }}>{formatBytes(Number(item.size || item.size_bytes || 0))}</Text>
+                      </View>
+                      {picked && <IconCheckCircle size={20} color={colors.primary} />}
+                    </TouchableOpacity>
+                  );
+                }}
+              />
+            )}
+            <View style={{ flexDirection: 'row', padding: 12, gap: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.borderLight }}>
+              <TouchableOpacity
+                onPress={() => setShowDrive(false)}
+                style={{ flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center', backgroundColor: colors.surfaceVariant }}
+              >
+                <Text style={{ color: colors.text, fontWeight: '600' }}>
+                  {t('common.cancel') || 'Cancelar'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={confirmDriveSelection}
+                disabled={Object.values(driveSelection).filter(Boolean).length === 0}
+                style={{ flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center', backgroundColor: colors.primary, opacity: Object.values(driveSelection).filter(Boolean).length === 0 ? 0.5 : 1 }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '700' }}>
+                  {t('attachment.attachSelected') || 'Anexar selecionados'} ({Object.values(driveSelection).filter(Boolean).length})
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

@@ -639,13 +639,41 @@ class CallActivity : ComponentActivity() {
       delay(3_000)
       state.floatingReactions.remove(item)
     }
+    // [reaction bar, 2026-05-17] LK Room owns in-band data delivery already
+    // (publishData below) but also fan to the WS hub so peers without an
+    // active data channel still get the reaction. Mirrors iOS CallViewController
+    // .sendReaction + the status-reaction WS event pattern.
+    try {
+      val r = room
+      if (r != null) {
+        lifecycleScope.launch {
+          try {
+            val payload = ("R:" + emoji).toByteArray(Charsets.UTF_8)
+            r.localParticipant.publishData(payload)
+          } catch (t: Throwable) {
+            Log.w(TAG, "publishData reaction failed: ${t.message}")
+          }
+        }
+      }
+    } catch (_: Throwable) {}
+    try {
+      CallSignalWs.fireCallReaction(applicationContext, callId, conversationId, emoji)
+    } catch (t: Throwable) {
+      Log.w(TAG, "CallSignalWs.fireCallReaction failed: ${t.message}")
+    }
   }
 
   // ────────────── PiP
 
   private fun tryEnterPip() {
-    if (!hasVideo) return
-    if (remoteRenderer == null) return
+    // [PiP polish, 2026-05-17] Allow audio-only calls into PiP too — the
+    // Compose UI renders the avatar block when hasRemoteVideo is false,
+    // so the mini-window still shows something useful (caller's circle +
+    // duration). Reverted the prior `if (!hasVideo) return` so backgrounding
+    // a voice call doesn't kill the in-call UX on Android.
+    //
+    // Aspect ratio: 9x16 keeps it portrait (matches CallActivity orientation
+    // lock). The system clamps to 100:239 / 239:100 anyway.
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     if (isInPictureInPictureMode) return
     try {
@@ -653,7 +681,7 @@ class CallActivity : ComponentActivity() {
         .setAspectRatio(Rational(9, 16))
         .build()
       enterPictureInPictureMode(params)
-      Log.d(TAG, "Entered PiP")
+      Log.d(TAG, "Entered PiP (hasVideo=$hasVideo remoteRenderer=${remoteRenderer != null})")
     } catch (t: Throwable) {
       Log.w(TAG, "enterPictureInPictureMode failed: ${t.message}")
     }
@@ -1337,7 +1365,10 @@ private fun CircleControlButton(
 // Emoji quick bar + floating bursts
 // ══════════════════════════════════════════════════════════════════════════
 
-private val QuickEmojis = listOf("❤️", "👍", "👏", "😂", "🎉", "🔥")
+// [reaction bar, 2026-05-17] 5 emojis — matches iOS CallView/GroupCallView
+// and the JS /call.js fallback. Trimmed from 6 (dropped 🔥) to align with
+// the WhatsApp 2025 reaction set and keep each tile-tap target wider.
+private val QuickEmojis = listOf("❤️", "👍", "👏", "😂", "🎉")
 
 @Composable
 private fun EmojiQuickBar(onPick: (String) -> Unit) {

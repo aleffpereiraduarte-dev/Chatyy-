@@ -182,6 +182,16 @@ TaskManager.defineTask(TASK_NAME, async () => {
                           if (confirmResult?.success !== false) {
                             markAssetBackedUp(backedUpIds, chunk[idx].id);
                             uploaded++;
+                            // Tag media kind (Live / Burst / Slo-mo / Time-lapse / RAW)
+                            // so the viewer can render with motion / playback hints.
+                            // Cheap: `info` is already fetched a few lines above; we
+                            // just pass it through detectMediaKind. Fire-and-forget so
+                            // the upload loop isn't gated on the tiny extra RTT.
+                            try {
+                              const { detectMediaKind, persistMediaKind } = require('./mediaKind');
+                              const kind = detectMediaKind(info, { name: assetFilename(chunk[idx]), mimeType: assetMime(chunk[idx]) });
+                              persistMediaKind(api, batchResult.data.uploads[idx].file_id, kind);
+                            } catch {}
                           }
                         }
                       } catch (uploadErr) {

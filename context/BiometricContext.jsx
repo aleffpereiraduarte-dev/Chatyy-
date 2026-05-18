@@ -13,8 +13,24 @@ const AUTH_ROUTES = ['/login', '/signup', '/signup-phone', '/forgot'];
 
 const BiometricContext = createContext({});
 
-const LOCK_DELAY_MS = 5000; // Lock after 5 seconds in background
+// Default lock delay when the user hasn't picked one yet. 5 s matches the
+// historical behavior and avoids surprising existing users post-upgrade.
+const DEFAULT_LOCK_DELAY_SEC = 5;
 const BIOMETRIC_PREF_KEY = 'biometric_enabled';
+// Persisted user pref for auto-lock interval. Stored as seconds so 0 is
+// "immediate" and a very large value (or the literal `never`) disables
+// the timer entirely. We accept the literal string `never` so we don't
+// have to store sentinels like -1.
+const AUTO_LOCK_INTERVAL_KEY = 'biometric_auto_lock_interval_sec';
+// Picker options surfaced in Settings → Privacidade → Bloqueio automático.
+// Kept here so the Settings screen can import the same source of truth.
+export const AUTO_LOCK_INTERVAL_OPTIONS = [
+  { value: 0,    labelKey: 'biometric.lockImmediate' },
+  { value: 60,   labelKey: 'biometric.lock1Min' },
+  { value: 300,  labelKey: 'biometric.lock5Min' },
+  { value: 900,  labelKey: 'biometric.lock15Min' },
+  { value: 'never', labelKey: 'biometric.lockNever' },
+];
 
 // Storage helper (works on both web and native)
 async function getStoredPref(key) {
@@ -58,6 +74,11 @@ export function BiometricProvider({ children }) {
   const [biometricEnabled, setBiometricEnabled] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   const [authenticating, setAuthenticating] = useState(false);
+  // Interval expressed in seconds OR the string 'never'. Default kept in
+  // a ref so the AppState handler picks up changes without re-subscribing.
+  const [autoLockInterval, setAutoLockIntervalState] = useState(DEFAULT_LOCK_DELAY_SEC);
+  const autoLockIntervalRef = useRef(DEFAULT_LOCK_DELAY_SEC);
+  useEffect(() => { autoLockIntervalRef.current = autoLockInterval; }, [autoLockInterval]);
   const backgroundTimeRef = useRef(null);
   const appStateRef = useRef(AppState.currentState);
 
@@ -75,10 +96,35 @@ export function BiometricProvider({ children }) {
         if (stored === 'true' && hasHw && isEnrolled) {
           setBiometricEnabled(true);
         }
+        // Load saved auto-lock interval pref. Accept both numeric strings
+        // and the literal 'never'.
+        try {
+          const ival = await getStoredPref(AUTO_LOCK_INTERVAL_KEY);
+          if (ival === 'never') {
+            setAutoLockIntervalState('never');
+          } else if (ival != null && /^\d+$/.test(String(ival))) {
+            const n = parseInt(ival, 10);
+            if (Number.isFinite(n) && n >= 0) setAutoLockIntervalState(n);
+          }
+        } catch {}
       } catch {
         setBiometricAvailable(false);
       }
     })();
+  }, []);
+
+  // Setter exposed via context. Persists the choice + updates the ref so
+  // the in-flight AppState handler picks the new threshold next backgrounding.
+  const setAutoLockInterval = useCallback(async (value) => {
+    let coerced;
+    if (value === 'never') coerced = 'never';
+    else {
+      const n = Number(value);
+      coerced = Number.isFinite(n) && n >= 0 ? Math.floor(n) : DEFAULT_LOCK_DELAY_SEC;
+    }
+    setAutoLockIntervalState(coerced);
+    autoLockIntervalRef.current = coerced;
+    try { await setStoredPref(AUTO_LOCK_INTERVAL_KEY, String(coerced)); } catch {}
   }, []);
 
   // Monitor app state changes for auto-lock
@@ -100,8 +146,17 @@ export function BiometricProvider({ children }) {
         // common case being signup picking an avatar from the gallery
         // and returning to the app a few seconds later.
         const bgTime = backgroundTimeRef.current;
-        if (bgTime && (Date.now() - bgTime) >= LOCK_DELAY_MS && !isAuthRouteRef.current) {
-          setIsLocked(true);
+        // Resolve the active threshold from the ref so a recent settings
+        // change applies on the next backgrounding without waiting for a
+        // listener re-subscribe.
+        const ival = autoLockIntervalRef.current;
+        if (ival === 'never') {
+          // User opted out — never auto-lock on background return.
+        } else {
+          const thresholdMs = Math.max(0, Number(ival) * 1000);
+          if (bgTime && (Date.now() - bgTime) >= thresholdMs && !isAuthRouteRef.current) {
+            setIsLocked(true);
+          }
         }
         backgroundTimeRef.current = null;
       }
@@ -205,6 +260,8 @@ export function BiometricProvider({ children }) {
       biometricAvailable,
       toggleBiometric,
       authenticate,
+      autoLockInterval,
+      setAutoLockInterval,
     }}>
       {children}
       {lockOverlay}
