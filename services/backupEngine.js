@@ -375,6 +375,61 @@ export class BackupEngine {
       console.warn('[Backup] Auto-correction error:', e?.message);
     }
 
+    // ── SERVER-SIDE BOOTSTRAP DEDUP (cross-platform) ──
+    // The iOS native upload path warms backedUpIds via drive_precheck_asset_ids
+    // before scanning (autoBackup.js:408). Android (and iOS-fallback) goes through
+    // engine.runFullBackup which only consults the local map. When the local map
+    // is empty (post-install, post-logout, post-v3-migration wipe, account
+    // switch), the engine re-uploads every photo from scratch and the user sees
+    // "30 de 45593 (0%)" even though their library is already in R2.
+    // Fix: walk the device library once and ask the server which asset_ids are
+    // already in drive_files, then merge those into backedUpIds before scan.
+    try {
+      if (Object.keys(this.backedUpIds).length < 100) {
+        const ML = require('expo-media-library');
+        const { status } = await ML.getPermissionsAsync();
+        if (status === 'granted') {
+          const deviceIds = [];
+          let cursor;
+          let pages = 0;
+          while (pages < 12) {
+            const page = await ML.getAssetsAsync({
+              first: 5000,
+              after: cursor,
+              mediaType: [ML.MediaType.photo, ML.MediaType.video],
+            });
+            for (const a of page.assets) deviceIds.push(a.id);
+            if (!page.hasNextPage) break;
+            cursor = page.endCursor;
+            pages++;
+          }
+          if (deviceIds.length > 0) {
+            const now = Date.now();
+            let seeded = 0;
+            for (let i = 0; i < deviceIds.length; i += 1500) {
+              const slice = deviceIds.slice(i, i + 1500);
+              try {
+                const r = await api.apiCall('drive_precheck_asset_ids', { asset_ids: slice }, 'POST');
+                const list = r?.data?.backed_up || r?.backed_up || [];
+                for (const id of list) {
+                  if (!this.backedUpIds[id]) {
+                    this.backedUpIds[id] = now;
+                    seeded++;
+                  }
+                }
+              } catch {}
+            }
+            if (seeded > 0) {
+              await saveBackedUpMap(this.backedUpIds);
+              api.apiCall('drive_backup_debug', { msg: 'server_bootstrap', data: `seeded=${seeded} device=${deviceIds.length}` }, 'POST').catch(() => {});
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Backup] Server bootstrap failed:', e?.message);
+    }
+
     // Load upload sessions from unified storage and clean up expired/completed ones
     try {
       const parsed = await getUploadSessions();

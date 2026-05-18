@@ -14,7 +14,7 @@
 //   - `ShortsPlayer.releasePool()` — pool drain.
 
 import * as React from 'react';
-import { NativeSyntheticEvent, StyleSheet, ViewProps, findNodeHandle, UIManager } from 'react-native';
+import { NativeSyntheticEvent, StyleSheet, View, ViewProps, findNodeHandle, UIManager } from 'react-native';
 import { requireNativeViewManager, requireNativeModule } from 'expo-modules-core';
 import { prefetchShortsVideo, releaseShortsPool } from './index';
 
@@ -55,8 +55,18 @@ interface NativeViewProps extends Omit<ShortsPlayerProps, 'onPlaybackReady' | 'o
   onTime?: (event: TimeEvent) => void;
 }
 
-const NativeView: React.ComponentType<NativeViewProps & { ref?: React.Ref<any> }> =
-  requireNativeViewManager('ExpoShortsPlayer');
+// Native module is registered as Name("ExpoShorts") on both iOS + Android
+// (ExpoShortsModule.swift:28, ExpoShortsModule.kt:27). Pre-2026-05-18 this
+// looked up "ExpoShortsPlayer" — wrong key, threw red "Unimplemented component:
+// <ViewManagerAdapter_ExpoShortsPlayer>" inside ReelsViewer's ErrorBoundary.
+// Try/catch so any future regression degrades to a black frame instead of
+// crashing the whole tab.
+let NativeView: React.ComponentType<NativeViewProps & { ref?: React.Ref<any> }> | null = null;
+try {
+  NativeView = requireNativeViewManager('ExpoShorts');
+} catch {
+  NativeView = null;
+}
 
 export interface ShortsPlayerHandle {
   /** Seek the bound native player to [ms]. */
@@ -103,7 +113,7 @@ const ShortsPlayerImpl = React.forwardRef<ShortsPlayerHandle, ShortsPlayerProps>
       if (!mod || typeof mod.seek !== 'function') {
         // Fallback: UIManager dispatch (covers older Expo Modules builds).
         try {
-          const cmd = (UIManager as any).getViewManagerConfig?.('ExpoShortsPlayer')?.Commands?.seek;
+          const cmd = (UIManager as any).getViewManagerConfig?.('ExpoShorts')?.Commands?.seek;
           if (cmd != null) {
             (UIManager as any).dispatchViewManagerCommand(node, cmd, [ms]);
           }
@@ -118,6 +128,13 @@ const ShortsPlayerImpl = React.forwardRef<ShortsPlayerHandle, ShortsPlayerProps>
     },
   }), []);
 
+  // If native view manager isn't registered (older build, broken linkage),
+  // render a black frame instead of throwing inside ErrorBoundary. ReelsViewer's
+  // upstream lazy fallback (components/ReelsViewer.js) will pick a different
+  // player implementation.
+  if (!NativeView) {
+    return <View style={[styles.fill, style, { backgroundColor: '#000' }]} />;
+  }
   return (
     <NativeView
       ref={nativeRef}
