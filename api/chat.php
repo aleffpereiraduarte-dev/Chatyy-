@@ -6194,6 +6194,146 @@ function handleChatAction($action) {
         }
 
         // ============================================================
+        // chat_redownload_media — Re-fetch a media URL that was evicted
+        // from local cache. R2 retention is indefinite so this should
+        // always succeed unless the message itself was hard-deleted.
+        // Client flow:
+        //   1. Local cache miss → render "tap to download" bubble
+        //   2. Network attempt to original file_url 404s
+        //   3. Client calls this endpoint with message_id
+        //   4. Server returns fresh URL (R2 public > local origin > presigned GET)
+        //   5. Client caches + replays
+        // ============================================================
+        case 'chat_redownload_media': {
+            $user = requireChatAuth();
+            $messageId = (int)($input['message_id'] ?? $_GET['message_id'] ?? 0);
+            if (!$messageId) jsonResponse(false, null, 'message_id required', 400);
+
+            // One-time idempotent column add — track LRU access for future
+            // server-side cache decisions (e.g. cold-storage tier in R2).
+            try { $db->exec("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS last_download_at TIMESTAMPTZ"); } catch (\Throwable $_) {}
+
+            $st = $db->prepare("SELECT id, conversation_id, sender_email, type, file_url, file_name, file_size, deleted_at, created_at FROM chat_messages WHERE id = :id");
+            $st->execute([':id' => $messageId]);
+            $msg = $st->fetch(\PDO::FETCH_ASSOC);
+            if (!$msg) jsonResponse(false, null, 'message not found', 404);
+            if (!empty($msg['deleted_at'])) jsonResponse(false, null, 'message deleted', 410);
+
+            // Auth — must be a member of the conversation. requireConversationMember
+            // throws 403 itself, no need to wrap.
+            requireConversationMember($db, (int)$msg['conversation_id'], $user['email']);
+
+            $fileUrl = trim((string)($msg['file_url'] ?? ''));
+            if ($fileUrl === '') jsonResponse(false, null, 'no media on this message', 404);
+
+            // Three URL candidates, tried in order of preference:
+            //   1. CDN public URL (media.chatyy.com.br/<key>) — fastest, edge-cached
+            //   2. Original file_url (relative path served by origin nginx) — local fallback
+            //   3. Presigned S3 GET — works even if R2 bucket goes private
+            $resolved = null;
+            $resolvedKind = null;
+
+            // Candidate 1: R2 public CDN. Object key mirrors file_url with leading
+            // slash stripped (see chat_upload r2Key construction).
+            require_once __DIR__ . '/drive.php';
+            $publicUrl = '';
+            if (function_exists('s3PublicUrl')) {
+                $objectKey = ltrim($fileUrl, '/');
+                // file_url is sometimes already an absolute media.chatyy.com.br URL
+                // for older rows that were re-uploaded. Skip the prefix in that case.
+                if (preg_match('#^https?://#i', $fileUrl)) {
+                    $parsed = parse_url($fileUrl);
+                    $objectKey = ltrim($parsed['path'] ?? '', '/');
+                }
+                if ($objectKey !== '') {
+                    try { $publicUrl = (string)s3PublicUrl($objectKey); } catch (\Throwable $_) {}
+                }
+            }
+
+            // HEAD the public CDN URL to confirm the object is still in R2.
+            // 5-second timeout — if Cloudflare edge is slow we'd rather fall
+            // through to presigned than block the response.
+            if ($publicUrl !== '') {
+                $ch = curl_init($publicUrl);
+                curl_setopt_array($ch, [
+                    CURLOPT_NOBODY         => true,
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_FOLLOWLOCATION => true,
+                    CURLOPT_TIMEOUT        => 5,
+                    CURLOPT_CONNECTTIMEOUT => 3,
+                ]);
+                curl_exec($ch);
+                $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                curl_close($ch);
+                if ($code >= 200 && $code < 400) {
+                    $resolved = $publicUrl;
+                    $resolvedKind = 'cdn';
+                }
+            }
+
+            // Candidate 2: local origin path. We can stat() since the file
+            // would be under /var/www/mail. Only valid for relative URLs.
+            if (!$resolved && $fileUrl !== '' && $fileUrl[0] === '/') {
+                $localPath = '/var/www/mail' . $fileUrl;
+                if (is_file($localPath) && filesize($localPath) > 0) {
+                    // Return an absolute URL so the client doesn't have to know
+                    // the base host. Same host the bubble already loads from.
+                    $host = $_SERVER['HTTP_HOST'] ?? 'chatyy.com.br';
+                    $resolved = 'https://' . $host . $fileUrl;
+                    $resolvedKind = 'origin';
+                }
+            }
+
+            // Candidate 3: presigned GET to the bucket. Works even if the CDN
+            // hostname is down or the bucket is private. 1-hour expiry — long
+            // enough for client to download but short enough to avoid leaking
+            // long-lived URLs.
+            if (!$resolved && function_exists('s3PresignUrl')) {
+                $objectKey = ltrim($fileUrl, '/');
+                if (preg_match('#^https?://#i', $fileUrl)) {
+                    $parsed = parse_url($fileUrl);
+                    $objectKey = ltrim($parsed['path'] ?? '', '/');
+                }
+                if ($objectKey !== '') {
+                    try {
+                        $signed = s3PresignUrl('GET', $objectKey, [], 3600);
+                        if ($signed) {
+                            $resolved = $signed;
+                            $resolvedKind = 'presigned';
+                        }
+                    } catch (\Throwable $_) {}
+                }
+            }
+
+            if (!$resolved) {
+                jsonResponse(false, [
+                    'message_id'  => (int)$msg['id'],
+                    'file_url'    => $fileUrl,
+                ], 'media unavailable in any tier', 404);
+            }
+
+            // Bump LRU. Best-effort — failure here just means the next
+            // cold-storage sweep might evict this row earlier. Never block
+            // the user-facing response on it.
+            try {
+                $upd = $db->prepare("UPDATE chat_messages SET last_download_at = NOW() WHERE id = :id");
+                $upd->execute([':id' => (int)$msg['id']]);
+            } catch (\Throwable $_) {}
+
+            jsonResponse(true, [
+                'message_id'  => (int)$msg['id'],
+                'url'         => $resolved,
+                'kind'        => $resolvedKind,
+                'type'        => $msg['type'],
+                'file_name'   => $msg['file_name'],
+                'file_size'   => (int)$msg['file_size'],
+                'created_at'  => $msg['created_at'],
+                'expires_in'  => $resolvedKind === 'presigned' ? 3600 : 0,
+            ]);
+            break;
+        }
+
+        // ============================================================
         // chat_favorite — Toggle pinned/favorite conversation
         // ============================================================
         case 'chat_favorite':
@@ -10457,47 +10597,269 @@ function handleChatAction($action) {
             break;
         }
 
-        // chat_sticker_remove_bg — automatic background removal.
-        // TODO: integrate remove.bg API (REMOVE_BG_API_KEY env var) or a
-        // self-hosted U2Net model. For now this is a stub that accepts an
-        // uploaded image and returns it unchanged, so the UI can show the
-        // button without blocking on the AI pipeline.
-        //
-        // When implementing: forward $_FILES['file'] to remove.bg, receive
-        // PNG with transparent background, save under sticker-files/{hash}/
-        // and return the new URL.
+        // chat_sticker_remove_bg — automatic background removal via
+        // ImageMagick fuzz-floodfill from the 4 image corners. This handles
+        // the 80% case of WhatsApp sticker creation (subject on a roughly
+        // uniform background — selfies, product shots, drawings on paper)
+        // without depending on a paid API or shipping a 50MB U-2-Net model.
+        // For pixel-perfect remove.bg-grade results, set REMOVE_BG_API_KEY
+        // and the upstream API will be used; otherwise we fall back to
+        // local ImageMagick (always present on this box — see ffmpeg sibling).
         case 'chat_sticker_remove_bg': {
             $user = requireChatAuth();
             if (empty($_FILES['file'])) jsonResponse(false, null, 'No file uploaded', 400);
+            $file = $_FILES['file'];
+            $maxSize = 8 * 1024 * 1024;
+            if ($file['size'] > $maxSize) jsonResponse(false, null, 'Image too large (max 8MB)', 400);
 
-            // Minimal stub — echo the image back as-is. This way the client
-            // can wire the UI + upload flow and the server can be upgraded
-            // later without a client rebuild.
+            $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+            $allowed = ['png', 'jpg', 'jpeg', 'webp', 'heic'];
+            if (!in_array($ext, $allowed, true)) {
+                jsonResponse(false, null, 'Only PNG/JPG/WEBP/HEIC allowed', 400);
+            }
+
+            // Try paid remove.bg first if a key is configured (better edges).
             $apiKey = $_ENV['REMOVE_BG_API_KEY'] ?? getenv('REMOVE_BG_API_KEY') ?? '';
-            if (empty($apiKey)) {
-                // No API key configured — return a flag so UI can fall back
-                // to client-side MediaPipe SelfieSegmentation.
+            $userHash = substr(hash('sha256', strtolower($user['email'])), 0, 16);
+            $uploadDir = '/var/www/mail/data/sticker-files/' . $userHash . '/';
+            if (!is_dir($uploadDir)) @mkdir($uploadDir, 0755, true);
+            $uniqueName = 'nobg_' . time() . '_' . bin2hex(random_bytes(5)) . '.png';
+            $destPath = $uploadDir . $uniqueName;
+
+            $tmpInput = tempnam(sys_get_temp_dir(), 'stk_bg_') . '.' . $ext;
+            if (!move_uploaded_file($file['tmp_name'], $tmpInput)) {
+                jsonResponse(false, null, 'Failed to save upload', 500);
+            }
+
+            $processed = false;
+            $method = 'none';
+
+            // ── Path 0: client already extracted subject (e.g. MediaPipe
+            // on web). Skip floodfill + remove.bg — just resize/re-encode
+            // the transparent PNG to the 512x512 WhatsApp spec so the
+            // sticker pipeline downstream stays uniform. ──
+            $clientProcessed = !empty($_POST['client_processed']) && (string)$_POST['client_processed'] !== '0';
+            if ($clientProcessed) {
+                $magick = trim(shell_exec('command -v magick 2>/dev/null') ?: '');
+                if ($magick === '') $magick = trim(shell_exec('command -v convert 2>/dev/null') ?: '');
+                if ($magick !== '') {
+                    $cmd = sprintf(
+                        'timeout 8 nice -n 19 %s %s '
+                        . '-resize 512x512^ -gravity center -extent 512x512 '
+                        . '-strip '
+                        . '%s 2>&1',
+                        escapeshellcmd($magick),
+                        escapeshellarg($tmpInput),
+                        escapeshellarg($destPath)
+                    );
+                    @shell_exec($cmd);
+                    if (file_exists($destPath) && filesize($destPath) > 200) {
+                        $processed = true;
+                        $method = 'client_mediapipe';
+                    }
+                }
+                // If ImageMagick is missing, just copy the raw upload through.
+                if (!$processed) {
+                    if (@copy($tmpInput, $destPath) && filesize($destPath) > 200) {
+                        $processed = true;
+                        $method = 'client_passthrough';
+                    }
+                }
+            }
+
+            // ── Path A: remove.bg API (if configured) ──
+            if (!$processed && !empty($apiKey)) {
+                $ch = curl_init('https://api.remove.bg/v1.0/removebg');
+                curl_setopt_array($ch, [
+                    CURLOPT_POST => true,
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_HTTPHEADER => ['X-Api-Key: ' . $apiKey],
+                    CURLOPT_POSTFIELDS => [
+                        'image_file' => new CURLFile($tmpInput),
+                        'size' => 'auto',
+                        'format' => 'png',
+                    ],
+                    CURLOPT_TIMEOUT => 30,
+                ]);
+                $pngData = curl_exec($ch);
+                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                curl_close($ch);
+                if ($httpCode === 200 && $pngData && strlen($pngData) > 200) {
+                    if (file_put_contents($destPath, $pngData) !== false) {
+                        $processed = true;
+                        $method = 'remove_bg_api';
+                    }
+                }
+            }
+
+            // ── Path B: ImageMagick fuzz floodfill from corners ──
+            // Works well for uniform-ish backgrounds (selfies on a wall,
+            // products on paper, screenshots). We sample 4 corner pixels and
+            // run a 30% fuzz transparent-fill from each. Then trim + resize
+            // to the WhatsApp 512x512 sticker spec.
+            if (!$processed) {
+                $magick = trim(shell_exec('command -v magick 2>/dev/null') ?: '');
+                if ($magick === '') {
+                    $magick = trim(shell_exec('command -v convert 2>/dev/null') ?: '');
+                }
+                if ($magick !== '') {
+                    // Sample the 4 corners + 4 mid-edges so single-color
+                    // backgrounds with a vignette still get cleaned. We
+                    // chain `-fuzz 25% -fill none -draw "matte X,Y floodfill"`
+                    // calls. Final step composites onto a transparent canvas.
+                    $matteCmds = '';
+                    foreach ([
+                        '0,0', '511,0', '0,511', '511,511',
+                        '256,0', '256,511', '0,256', '511,256',
+                    ] as $pt) {
+                        $matteCmds .= ' -draw ' . escapeshellarg("matte {$pt} floodfill");
+                    }
+                    $cmd = sprintf(
+                        'timeout 15 nice -n 19 %s %s '
+                        . '-resize 512x512^ -gravity center -extent 512x512 '
+                        . '-alpha set -channel A -fuzz 25%% -fill none '
+                        . '+channel '
+                        . '%s '
+                        . '-trim +repage -resize 512x512^ -gravity center -extent 512x512 '
+                        . '%s 2>&1',
+                        escapeshellcmd($magick),
+                        escapeshellarg($tmpInput),
+                        $matteCmds,
+                        escapeshellarg($destPath)
+                    );
+                    $out = shell_exec($cmd);
+                    if (file_exists($destPath) && filesize($destPath) > 200) {
+                        $processed = true;
+                        $method = 'imagemagick_floodfill';
+                    } else {
+                        error_log('[sticker_remove_bg] magick failed: ' . substr((string)$out, 0, 400));
+                    }
+                }
+            }
+
+            @unlink($tmpInput);
+
+            if (!$processed) {
+                @unlink($destPath);
                 jsonResponse(true, [
                     'processed' => false,
-                    'reason' => 'no_api_key',
-                    'message' => 'Background removal not configured on server. Using client-side.',
+                    'reason' => 'no_processor',
+                    'message' => 'No background removal pipeline available',
                 ]);
                 break;
             }
 
-            // Real implementation (kept commented until key is configured):
-            // $ch = curl_init('https://api.remove.bg/v1.0/removebg');
-            // curl_setopt_array($ch, [
-            //     CURLOPT_POST => true,
-            //     CURLOPT_RETURNTRANSFER => true,
-            //     CURLOPT_HTTPHEADER => ['X-Api-Key: ' . $apiKey],
-            //     CURLOPT_POSTFIELDS => ['image_file' => new CURLFile($_FILES['file']['tmp_name']), 'size' => 'auto', 'format' => 'png'],
-            //     CURLOPT_TIMEOUT => 30,
-            // ]);
-            // $pngData = curl_exec($ch);
-            // ... save to disk, return URL
+            @chmod($destPath, 0640);
+            $fileUrl = '/data/sticker-files/' . $userHash . '/' . $uniqueName;
+            jsonResponse(true, [
+                'processed' => true,
+                'method' => $method,
+                'url' => $fileUrl,
+                'cdn_url' => $fileUrl,
+            ]);
+            break;
+        }
 
-            jsonResponse(true, ['processed' => false, 'reason' => 'not_implemented']);
+        // chat_sticker_global_search — discovery search across every
+        // sticker tagged by anyone in a public pack. Powers the
+        // "more results" rail under the user's own picker search. Limited
+        // to non-personal packs so private "My Stickers" stays private.
+        case 'chat_sticker_global_search': {
+            $user = requireChatAuth();
+            require_once __DIR__ . '/db.php';
+            $pg = getPGDB();
+            $q = strtolower(trim((string)($input['q'] ?? $_GET['q'] ?? '')));
+            if ($q === '' || mb_strlen($q) < 2) { jsonResponse(true, ['items' => []]); break; }
+            // Cheap rate limit so a typing user can't hammer the DB.
+            if (!chatRateLimit('stk_gsearch_' . md5(strtolower($user['email'])), 'stk_gsearch', 60, 60)) {
+                jsonResponse(true, ['items' => [], 'rate_limited' => true]);
+                break;
+            }
+            $items = [];
+            try {
+                $stmt = $pg->prepare("
+                    SELECT s.id, s.pack_id, s.image_url AS url,
+                        COALESCE(s.emoji,'') AS emoji,
+                        COALESCE(s.emoji_tags,'') AS emoji_tags,
+                        COALESCE(s.is_animated,false) AS is_animated,
+                        p.name AS pack_name,
+                        COALESCE(p.is_personal,false) AS is_personal
+                    FROM chat_stickers s
+                    JOIN chat_sticker_packs p ON p.id = s.pack_id
+                    WHERE COALESCE(p.is_personal,false) = false
+                      AND (LOWER(s.emoji_tags) LIKE :q OR s.emoji LIKE :q2)
+                    ORDER BY s.id DESC
+                    LIMIT 60
+                ");
+                $stmt->execute([':q' => '%' . $q . '%', ':q2' => '%' . $q . '%']);
+                foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                    $r['id'] = (int)$r['id'];
+                    $r['pack_id'] = (int)$r['pack_id'];
+                    $r['is_animated'] = (bool)$r['is_animated'];
+                    $r['is_personal'] = (bool)$r['is_personal'];
+                    $items[] = $r;
+                }
+            } catch (Throwable $e) { error_log('[sticker_global_search] ' . $e->getMessage()); }
+            jsonResponse(true, ['items' => $items]);
+            break;
+        }
+
+        // chat_sticker_favorite_toggle / chat_sticker_favorites_list —
+        // server-side persistence of favorited stickers so they survive
+        // logout, app reinstall, and multi-device. Stored as the sticker URL
+        // (works for built-in emoji packs + uploaded stickers alike, since
+        // a unicode emoji string is also "URL-shaped" enough to dedupe).
+        case 'chat_sticker_favorite_toggle': {
+            $user = requireChatAuth();
+            require_once __DIR__ . '/db.php';
+            $pg = getPGDB();
+            $url = trim((string)($input['url'] ?? ''));
+            if ($url === '' || mb_strlen($url) > 1024) jsonResponse(false, null, 'url required', 400);
+            try {
+                $pg->exec("CREATE TABLE IF NOT EXISTS chat_sticker_favorites (
+                    user_email TEXT NOT NULL,
+                    sticker_url TEXT NOT NULL,
+                    favorited_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    PRIMARY KEY (user_email, sticker_url)
+                )");
+                $pg->exec("CREATE INDEX IF NOT EXISTS idx_chat_sticker_favorites_user
+                    ON chat_sticker_favorites (user_email, favorited_at DESC)");
+                $del = $pg->prepare("DELETE FROM chat_sticker_favorites
+                    WHERE LOWER(user_email) = LOWER(:e) AND sticker_url = :u");
+                $del->execute([':e' => $user['email'], ':u' => $url]);
+                $removed = $del->rowCount() > 0;
+                if (!$removed) {
+                    $pg->prepare("INSERT INTO chat_sticker_favorites (user_email, sticker_url)
+                        VALUES (:e, :u) ON CONFLICT DO NOTHING")
+                       ->execute([':e' => $user['email'], ':u' => $url]);
+                }
+                jsonResponse(true, ['favorited' => !$removed]);
+            } catch (Throwable $e) {
+                error_log('[sticker_favorite_toggle] ' . $e->getMessage());
+                jsonResponse(false, null, 'toggle failed', 500);
+            }
+            break;
+        }
+        case 'chat_sticker_favorites_list': {
+            $user = requireChatAuth();
+            require_once __DIR__ . '/db.php';
+            $pg = getPGDB();
+            $items = [];
+            try {
+                $pg->exec("CREATE TABLE IF NOT EXISTS chat_sticker_favorites (
+                    user_email TEXT NOT NULL,
+                    sticker_url TEXT NOT NULL,
+                    favorited_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    PRIMARY KEY (user_email, sticker_url)
+                )");
+                $stmt = $pg->prepare("SELECT sticker_url, favorited_at
+                    FROM chat_sticker_favorites
+                    WHERE LOWER(user_email) = LOWER(:e)
+                    ORDER BY favorited_at DESC LIMIT 200");
+                $stmt->execute([':e' => $user['email']]);
+                $items = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            } catch (Throwable $e) { error_log('[sticker_favorites_list] ' . $e->getMessage()); }
+            jsonResponse(true, ['items' => $items]);
             break;
         }
 
@@ -12902,6 +13264,8 @@ function handleChatAction($action) {
         case 'sticker_pack_my':
         case 'sticker_pack_browse':
         case 'sticker_pack_search':
+        case 'sticker_pack_get_by_handle':
+        case 'sticker_pack_reorder':
         case 'custom_emoji_upload':
         case 'custom_emoji_my':
         case 'custom_emoji_delete': {
@@ -13099,12 +13463,20 @@ function handleChatAction($action) {
                 case 'sticker_pack_my': {
                     $items = [];
                     try {
+                        // sort_order is lazy-added by sticker_pack_reorder. Use
+                        // COALESCE so rows that predate the column (=0) fall
+                        // back to install order naturally.
+                        @$pg->exec("ALTER TABLE user_sticker_packs ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 0");
                         $stmt = $pg->prepare("SELECT p.id, p.handle, p.name, p.author_email, p.description, p.cover_url,
-                                p.animated, p.premium, p.install_count, p.created_at, u.installed_at
+                                p.animated, p.premium, p.install_count, p.created_at, u.installed_at,
+                                COALESCE(u.sort_order, 0) AS sort_order
                             FROM user_sticker_packs u
                             JOIN sticker_packs p ON p.id = u.pack_id
                             WHERE LOWER(u.user_email) = LOWER(:e)
-                            ORDER BY u.installed_at DESC");
+                            ORDER BY
+                                CASE WHEN COALESCE(u.sort_order,0) = 0 THEN 1 ELSE 0 END,
+                                COALESCE(u.sort_order,0) ASC,
+                                u.installed_at DESC");
                         $stmt->execute([':e' => $user['email']]);
                         foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $r) {
                             $r['id'] = (int)$r['id'];
@@ -13181,6 +13553,66 @@ function handleChatAction($action) {
                         }
                     } catch (Throwable $e) { error_log('[sticker_pack_search] ' . $e->getMessage()); }
                     jsonResponse(true, ['items' => $items]);
+                    break;
+                }
+
+                case 'sticker_pack_get_by_handle': {
+                    // Resolve a deep-link share handle (chatyy.com.br/stickers/store?install=<handle>)
+                    // to the underlying pack row. Used by the frontend to auto-
+                    // open the install modal on cold-start from a shared link.
+                    $handle = strtolower(trim((string)($input['handle'] ?? $_GET['handle'] ?? '')));
+                    if ($handle === '' || mb_strlen($handle) > 96) jsonResponse(false, null, 'handle required', 400);
+                    try {
+                        $stmt = $pg->prepare("SELECT id, handle, name, author_email, description, cover_url,
+                                animated, premium, install_count, created_at FROM sticker_packs
+                            WHERE LOWER(handle) = :h LIMIT 1");
+                        $stmt->execute([':h' => $handle]);
+                        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+                        if (!$row) jsonResponse(false, null, 'Pack not found', 404);
+                        $row['id'] = (int)$row['id'];
+                        $row['install_count'] = (int)$row['install_count'];
+                        $row['animated'] = (bool)$row['animated'];
+                        $row['premium'] = (bool)$row['premium'];
+                        jsonResponse(true, ['pack' => $row]);
+                    } catch (Throwable $e) {
+                        jsonResponse(false, null, 'lookup failed: ' . $e->getMessage(), 500);
+                    }
+                    break;
+                }
+
+                case 'sticker_pack_reorder': {
+                    // Persist the user's local pack ordering on the server so it
+                    // survives reinstalls and propagates across devices. Accepts
+                    // a JSON array of pack ids (the user's current order). Only
+                    // ids the user already has installed are honored — unknown
+                    // ids are dropped silently.
+                    $ids = $input['ids'] ?? [];
+                    if (!is_array($ids)) jsonResponse(false, null, 'ids must be an array', 400);
+                    if (count($ids) > 200) $ids = array_slice($ids, 0, 200);
+                    // Coerce to ints + dedupe in order.
+                    $seen = [];
+                    $clean = [];
+                    foreach ($ids as $raw) {
+                        $i = (int)$raw;
+                        if ($i <= 0 || isset($seen[$i])) continue;
+                        $seen[$i] = 1;
+                        $clean[] = $i;
+                    }
+                    try {
+                        // Lazy-add an order column. PG IF NOT EXISTS is supported
+                        // on ADD COLUMN since v9.6 — safe on this stack.
+                        @$pg->exec("ALTER TABLE user_sticker_packs ADD COLUMN IF NOT EXISTS sort_order INT NOT NULL DEFAULT 0");
+                        $upd = $pg->prepare("UPDATE user_sticker_packs SET sort_order = :o
+                            WHERE LOWER(user_email) = LOWER(:e) AND pack_id = :p");
+                        $idx = 1;
+                        foreach ($clean as $pid) {
+                            $upd->execute([':o' => $idx, ':e' => $user['email'], ':p' => $pid]);
+                            $idx++;
+                        }
+                        jsonResponse(true, ['reordered' => count($clean)]);
+                    } catch (Throwable $e) {
+                        jsonResponse(false, null, 'reorder failed: ' . $e->getMessage(), 500);
+                    }
                     break;
                 }
 

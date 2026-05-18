@@ -2188,7 +2188,8 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   useEffect(() => {
     let unsub = null;
     let cancelled = false;
-    let hideTimer = null;
+    let showTimer = null;       // gate: only flip true after 1500ms
+    let hideFailsafe = null;    // hard 5s ceiling
     (async () => {
       try {
         const m = await import('../services/onlineRecoveryOrchestrator');
@@ -2196,16 +2197,29 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         if (typeof m.subscribeSyncStatus === 'function') {
           unsub = m.subscribeSyncStatus(({ running }) => {
             if (cancelled) return;
-            setSyncingBadge(!!running);
-            // Hard client-side failsafe: hide badge after 5s no matter what
-            // the orchestrator says. Covers WS reconnect loops that keep
-            // re-emitting running:true and freeze the badge for the user.
-            if (hideTimer) { try { clearTimeout(hideTimer); } catch {} hideTimer = null; }
             if (running) {
-              hideTimer = setTimeout(() => {
-                hideTimer = null;
-                setSyncingBadge(false);
-              }, 5000);
+              // WhatsApp-invisible-sync (2026-05-18): suppress the brief
+              // reconnect flashes. If the recovery finishes inside 1500ms
+              // (the common case on healthy networks), the user never sees
+              // the badge at all — feels like nothing happened.
+              if (showTimer) { try { clearTimeout(showTimer); } catch {} }
+              showTimer = setTimeout(() => {
+                showTimer = null;
+                setSyncingBadge(true);
+                // Hard ceiling — clear after 5s no matter what orchestrator
+                // says. Covers WS reconnect loops that get stuck on
+                // running:true.
+                if (hideFailsafe) { try { clearTimeout(hideFailsafe); } catch {} }
+                hideFailsafe = setTimeout(() => {
+                  hideFailsafe = null;
+                  setSyncingBadge(false);
+                }, 5000);
+              }, 1500);
+            } else {
+              // Recovery finished — clear pending "show" timer + hide now.
+              if (showTimer) { try { clearTimeout(showTimer); } catch {} showTimer = null; }
+              if (hideFailsafe) { try { clearTimeout(hideFailsafe); } catch {} hideFailsafe = null; }
+              setSyncingBadge(false);
             }
           });
         }
@@ -2213,7 +2227,8 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     })();
     return () => {
       cancelled = true;
-      if (hideTimer) { try { clearTimeout(hideTimer); } catch {} hideTimer = null; }
+      if (showTimer) { try { clearTimeout(showTimer); } catch {} showTimer = null; }
+      if (hideFailsafe) { try { clearTimeout(hideFailsafe); } catch {} hideFailsafe = null; }
       if (typeof unsub === 'function') { try { unsub(); } catch {} }
     };
   }, []);

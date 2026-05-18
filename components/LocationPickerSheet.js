@@ -41,6 +41,9 @@ const LIVE_DURATIONS = [
   { key: '15m', label: '15 min', seconds: 15 * 60 },
   { key: '1h',  label: '1 hora', seconds: 60 * 60 },
   { key: '8h',  label: '8 horas', seconds: 8 * 60 * 60 },
+  // Snap-Map style "always on" — broadcasts until user manually stops.
+  // Backend interprets seconds === -1 as unlimited (sentinel ~10y).
+  { key: 'inf', label: 'Sempre', seconds: -1 },
 ];
 
 export default function LocationPickerSheet({ visible, onClose, onSend, onLiveStart, colors, t }) {
@@ -281,37 +284,44 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
               {/* Live location chips — picking a duration jumps to the
                   confirm step instead of starting broadcast immediately
                   (WhatsApp parity: avoids accidental "I just shared my
-                  live location with 2 hours of tracking" taps). */}
+                  live location with 2 hours of tracking" taps).
+                  Snap-Map 2026-05-18: "Sempre" chip = unlimited until
+                  user stops manually (highlighted differently so it reads
+                  as a power-user choice, not a default). */}
               {onLiveStart && (
                 <View style={{ marginTop: 18 }}>
                   <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textSecondary, marginBottom: 8, letterSpacing: 0.5 }}>
                     {(t?.('chatConv.liveLocation') || 'COMPARTILHAR AO VIVO').toUpperCase()}
                   </Text>
-                  <View style={{ flexDirection: 'row', gap: 8 }}>
-                    {LIVE_DURATIONS.map(d => (
-                      <TouchableOpacity
-                        key={d.key}
-                        onPress={() => {
-                          if (sending) return;
-                          setLiveConfirm({ seconds: d.seconds, label: d.label });
-                        }}
-                        disabled={sending}
-                        style={{
-                          flex: 1,
-                          paddingVertical: 12,
-                          borderRadius: 22,
-                          borderWidth: 1,
-                          borderColor: colors.primary + '50',
-                          backgroundColor: colors.primary + '10',
-                          alignItems: 'center',
-                          opacity: sending ? 0.5 : 1,
-                        }}
-                      >
-                        <Text style={{ color: colors.primary, fontSize: 14, fontWeight: '700' }}>
-                          {d.label}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                    {LIVE_DURATIONS.map(d => {
+                      const inf = d.seconds === -1;
+                      return (
+                        <TouchableOpacity
+                          key={d.key}
+                          onPress={() => {
+                            if (sending) return;
+                            setLiveConfirm({ seconds: d.seconds, label: d.label, unlimited: inf });
+                          }}
+                          disabled={sending}
+                          style={{
+                            flexBasis: '47%',
+                            flexGrow: 1,
+                            paddingVertical: 12,
+                            borderRadius: 22,
+                            borderWidth: 1.5,
+                            borderColor: inf ? '#7C3AED90' : colors.primary + '50',
+                            backgroundColor: inf ? '#7C3AED15' : colors.primary + '10',
+                            alignItems: 'center',
+                            opacity: sending ? 0.5 : 1,
+                          }}
+                        >
+                          <Text style={{ color: inf ? '#7C3AED' : colors.primary, fontSize: 14, fontWeight: '700' }}>
+                            {inf ? '∞ ' : ''}{d.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
                   </View>
                 </View>
               )}
@@ -354,26 +364,28 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
               </View>
 
               {/* Duration switcher — pre-selected pill highlighted */}
-              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 14 }}>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
                 {LIVE_DURATIONS.map(d => {
                   const active = d.seconds === liveConfirm.seconds;
+                  const inf = d.seconds === -1;
                   return (
                     <TouchableOpacity
                       key={d.key}
-                      onPress={() => setLiveConfirm({ seconds: d.seconds, label: d.label })}
+                      onPress={() => setLiveConfirm({ seconds: d.seconds, label: d.label, unlimited: inf })}
                       disabled={sending}
                       style={{
-                        flex: 1,
+                        flexBasis: '23%',
+                        flexGrow: 1,
                         paddingVertical: 10,
                         borderRadius: 18,
                         borderWidth: 1.5,
-                        borderColor: active ? colors.primary : colors.border + '60',
-                        backgroundColor: active ? colors.primary + '15' : 'transparent',
+                        borderColor: active ? (inf ? '#7C3AED' : colors.primary) : colors.border + '60',
+                        backgroundColor: active ? (inf ? '#7C3AED15' : colors.primary + '15') : 'transparent',
                         alignItems: 'center',
                       }}
                     >
-                      <Text style={{ color: active ? colors.primary : colors.textSecondary, fontSize: 13, fontWeight: '700' }}>
-                        {d.label}
+                      <Text style={{ color: active ? (inf ? '#7C3AED' : colors.primary) : colors.textSecondary, fontSize: 13, fontWeight: '700' }}>
+                        {inf ? '∞ ' : ''}{d.label}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -402,9 +414,12 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
 
               {/* Privacy reminder — WhatsApp does this and it actually
                   helps adoption since users worry about who sees their
-                  pin. */}
-              <Text style={{ fontSize: 11, color: colors.textSecondary, lineHeight: 16, marginBottom: 16 }}>
-                {t?.('chatConv.livePrivacyNote') || 'Apenas pessoas desta conversa veem sua localização. Você pode parar a qualquer momento.'}
+                  pin. Snap-Map 2026-05-18: "Sempre" mode gets a stronger
+                  warning because there's no auto-expiry. */}
+              <Text style={{ fontSize: 11, color: liveConfirm.unlimited ? '#7C3AED' : colors.textSecondary, lineHeight: 16, marginBottom: 16, fontWeight: liveConfirm.unlimited ? '600' : '400' }}>
+                {liveConfirm.unlimited
+                  ? (t?.('chatConv.livePrivacyUnlimited') || 'Sempre ativo: sua localização continua sendo compartilhada até você desligar manualmente. Toque na bolha para parar.')
+                  : (t?.('chatConv.livePrivacyNote') || 'Apenas pessoas desta conversa veem sua localização. Você pode parar a qualquer momento.')}
               </Text>
 
               {/* Primary CTA + secondary back */}

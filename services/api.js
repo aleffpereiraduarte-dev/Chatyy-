@@ -2635,6 +2635,14 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
   // dispatching the send (passed as opts.sealed) — kept opt-in to avoid
   // breaking spam control unless the user explicitly wants it.
   if (opts?.sealed) payload.sealed = true;
+  // 2026-05-18: structured meta blob (short_video / video_note subtypes).
+  // Server whitelists keys server-side — see chat.php meta parse block.
+  // We JSON-stringify because PHP's input parser accepts both raw arrays
+  // (when content-type is JSON) and strings (when posted as form). String
+  // form is safest across both Rust and PHP paths.
+  if (opts?.meta && typeof opts.meta === 'object') {
+    try { payload.meta = JSON.stringify(opts.meta); } catch { /* skip on circular */ }
+  }
   // Try Rust — inserts in PG, broadcasts to WS hub, returns ~5ms vs 30-50ms PHP.
   // topic_id still goes through PHP (threaded replies not yet in Rust).
   //
@@ -2723,7 +2731,10 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
     }
   } else {
     try {
-      if (!topicId && !opts?.skipRust && !opts?.effect && !opts?.sealed) {
+      // opts.meta also forces PHP — the Rust signal-server INSERT path
+      // doesn't know about the meta JSONB column yet and would silently
+      // drop the structured payload (same problem as effect / sealed).
+      if (!topicId && !opts?.skipRust && !opts?.effect && !opts?.sealed && !opts?.meta) {
         const rust = await _rustChatPost('send', payload);
         if (rust?.success) { result = rust; }
       }
@@ -2788,6 +2799,15 @@ export async function chatTranslateMessage(messageId, targetLang = 'pt') {
 }
 export async function chatSetSlowMode(conversationId, seconds) {
   return apiCall('chat_set_slow_mode', { conversation_id: conversationId, seconds }, 'POST');
+}
+
+// Ask the server for a fresh URL for a chat-media message whose local cache
+// was evicted and whose original file_url returned 404. R2 retention is
+// indefinite, so this should almost always resolve to a valid URL (CDN >
+// local origin > presigned S3 GET). 410 = message was hard-deleted (user
+// "Delete for everyone"); 404 = no media on that message id (text-only row).
+export async function chatRedownloadMedia(messageId) {
+  return apiCall('chat_redownload_media', { message_id: messageId }, 'POST');
 }
 
 // Group Topics
@@ -3611,9 +3631,82 @@ export async function chatStatusMusicSave(track) {
 export async function chatStatusMusicUnsave(trackId) {
   return apiCall('chat_status_music_unsave', { track_id: trackId }, 'POST');
 }
-// Snap Map
-export async function updateLocation(latitude, longitude) { return apiCall('update_location', { latitude, longitude }, 'POST'); }
-export async function getFriendsLocations() { return apiCall('get_friends_locations', {}); }
+// Snap Map (legacy stubs — kept so callers built against the older
+// `update_location` / `get_friends_locations` shape don't 500. They map onto
+// the new Friend-Tracking API below.)
+export async function updateLocation(latitude, longitude) {
+  // No-op without an active conversation — the new pipeline stores location
+  // via chat_update_live_location inside a chat. Use friendLocationShareGlobal
+  // for the Map-tab fire-and-forget case.
+  return apiCall('update_location', { latitude, longitude }, 'POST').catch(() => ({ success: false }));
+}
+export async function getFriendsLocations() {
+  // Forward to new endpoint, preserving the legacy shape {data:{locations:[]}}.
+  const r = await apiCall('chat_friends_map_shares', {}).catch(() => null);
+  if (r && r.success && r.data) {
+    return { success: true, data: { locations: r.data.shares || [] } };
+  }
+  return { success: false, data: { locations: [] } };
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Friend-Tracking (Snap-Map / Find-My-Friends) — added 2026-05-18
+// ──────────────────────────────────────────────────────────────────────
+//
+// Two-tier permission model:
+//   1. Sharer (B) must explicitly accept a request before A sees their pin.
+//   2. Either side can revoke at any time (instant via revoke endpoint).
+//
+// Privacy invariant: chat_friends_map_shares only returns pins from users
+// who currently have a chat_location_grants row with me as receiver. There
+// is no "silent" mode — see backend chat.php BEGIN FRIEND_LOCATION_TRACKING.
+
+/**
+ * A asks B "can I see your location?". Triggers a push + WS event on B's
+ * side; B answers via friendLocationAccept / friendLocationDecline.
+ */
+export async function friendLocationRequest(targetEmail, message = '') {
+  return apiCall('chat_friend_location_request', { target_email: targetEmail, message }, 'POST');
+}
+
+/**
+ * B accepts A's request. `durationSeconds = -1` means unlimited (until B
+ * manually revokes). Otherwise bounded to [15min..7d].
+ */
+export async function friendLocationAccept(requesterEmail, durationSeconds = 3600) {
+  return apiCall('chat_friend_location_accept', {
+    requester_email: requesterEmail,
+    duration_seconds: durationSeconds,
+    unlimited: durationSeconds === -1,
+  }, 'POST');
+}
+
+export async function friendLocationDecline(requesterEmail) {
+  return apiCall('chat_friend_location_decline', { requester_email: requesterEmail }, 'POST');
+}
+
+/**
+ * Either side ends an active grant. `peerEmail` = the other party.
+ */
+export async function friendLocationRevoke(peerEmail) {
+  return apiCall('chat_friend_location_revoke', { peer_email: peerEmail }, 'POST');
+}
+
+/**
+ * Privacy dashboard data: who I'm sharing with, who I'm receiving from,
+ * pending requests both directions.
+ */
+export async function friendLocationGrants() {
+  return apiCall('chat_friend_location_grants', {});
+}
+
+/**
+ * Map-tab feed: every active live-share from users who granted me access.
+ * Poll this every 30s + listen to WS 'location_update' for live patches.
+ */
+export async function friendsMapShares() {
+  return apiCall('chat_friends_map_shares', {});
+}
 // Saved collections
 export async function feedCollectionCreate(name) { return apiCall('feed_collection_create', { name }, 'POST'); }
 export async function feedCollectionList() { return apiCall('feed_collection_list', {}); }
@@ -6378,6 +6471,28 @@ export async function liveEndCf(sessionId, opts = {}) {
   }
   return apiCall('live_end_cf', payload, 'POST');
 }
+// Cloudflare Stream pipeline (managed ingest + HLS/DASH + automatic VOD).
+// Returns { sessionId, cf_input_uid, rtmps_url, rtmps_key, srt_url,
+// srt_passphrase, srt_stream_id, webrtc_url (WHIP), hls_url, dash_url }.
+// Host publishes via one of the ingest URLs (WHIP from browser, RTMPS from
+// OBS, SRT from pro encoders). Viewers consume hls_url. Recording is
+// automatic — `cron-live-recordings.php` finalizes the VOD URLs onto
+// chat_live_sessions within ~30-120s after `liveEndCf`.
+export async function liveStartCf(title, opts = {}) {
+  const payload = { title: title || 'Live' };
+  if (opts && opts.audience) payload.audience = opts.audience;
+  if (opts && opts.category) payload.category = opts.category;
+  if (opts && opts.subscribersOnly) payload.subscribers_only = 1;
+  return apiCall('live_start_cf', payload, 'POST');
+}
+// Status probe — checks CF Stream for a session (live_input_status, viewers,
+// connected, etc.). Used by the broadcaster UI to flip "AO VIVO" only after
+// CF confirms the input is receiving frames.
+export async function liveStatusCf(sessionId) {
+  return apiCall('live_status_cf', { session_id: sessionId }, 'POST');
+}
+// List CF Stream live sessions (host-only — own sessions).
+export async function liveListCf() { return apiCall('live_list_cf', {}, 'POST'); }
 export async function liveList() { return apiCall('live_list', {}, 'POST'); }
 export async function liveUpdateViewers(sessionId, count) { return apiCall('live_update_viewers', { session_id: sessionId, viewer_count: count }, 'POST'); }
 export async function liveSendChat(sessionId, content) { return apiCall('live_send_chat', { session_id: sessionId, content }, 'POST'); }
@@ -6603,8 +6718,23 @@ export async function liveRecordingPoll(sessionId = null) {
   // ending) or omit for a rolling 20-session sweep (used by /lives-saved).
   return apiCall('live_recording_poll', sessionId ? { session_id: sessionId } : {}, 'POST');
 }
-export async function liveRecordingsList(limit = 50, offset = 0) {
-  return apiCall('live_recordings_list', { limit, offset }, 'POST');
+// Backwards-compatible. Old callers (`liveRecordingsList(50, 0)`) keep
+// working; new callers can pass an options object — `liveRecordingsList({
+// user_email: 'foo@bar' })` filters the result set to a specific host
+// (used by Profile.js → Lives tab to surface a user's saved replays).
+export async function liveRecordingsList(limitOrOpts = 50, offset = 0) {
+  // Object form: { limit, offset, user_email }
+  if (limitOrOpts && typeof limitOrOpts === 'object') {
+    const o = limitOrOpts;
+    const payload = {
+      limit: typeof o.limit === 'number' ? o.limit : 50,
+      offset: typeof o.offset === 'number' ? o.offset : 0,
+    };
+    if (o.user_email) payload.user_email = o.user_email;
+    return apiCall('live_recordings_list', payload, 'POST');
+  }
+  // Legacy positional form.
+  return apiCall('live_recordings_list', { limit: limitOrOpts, offset }, 'POST');
 }
 export async function liveSaveReplay(sessionId) {
   return apiCall('live_save_replay', { session_id: sessionId }, 'POST');
@@ -7675,6 +7805,21 @@ export async function chatStickerMyStickers({ packId = null, q = '' } = {}) {
 export async function chatStickerSearch(q) {
   return apiCall('chat_sticker_search', { q }, 'POST');
 }
+// chat_sticker_global_search — discovery search across every public pack
+// (every uploaded sticker tagged by anyone, not just installed). Backed by
+// a per-user rate limit server-side (60/min), so call it debounced.
+export async function chatStickerGlobalSearch(q) {
+  return apiCall('chat_sticker_global_search', { q }, 'POST');
+}
+// Server-side favorites. The local AsyncStorage cache stays in place for
+// offline writes but every toggle hits the server too — favorites survive
+// reinstall and follow the user across devices.
+export async function chatStickerFavoriteToggle(url) {
+  return apiCall('chat_sticker_favorite_toggle', { url }, 'POST');
+}
+export async function chatStickerFavoritesList() {
+  return apiCall('chat_sticker_favorites_list', {}, 'POST');
+}
 // ─── Sticker store / custom animated emoji (Telegram Premium-style) ───
 // New marketplace endpoints introduced for /stickers/store + /stickers/my.
 // Authors create packs, add R2-uploaded items, and other users install +
@@ -7705,6 +7850,15 @@ export async function stickerPackBrowse(filter = 'trending') {
 export async function stickerPackSearch(q) {
   return apiCall('sticker_pack_search', { q }, 'POST');
 }
+// Resolve a share-link handle to a pack row (used by deep-link install).
+export async function stickerPackGetByHandle(handle) {
+  return apiCall('sticker_pack_get_by_handle', { handle }, 'POST');
+}
+// Persist the user's pack ordering server-side so it survives reinstall +
+// propagates across devices.
+export async function stickerPackReorder(ids) {
+  return apiCall('sticker_pack_reorder', { ids }, 'POST');
+}
 export async function customEmojiUpload({ emojiHandle, webpR2Key } = {}) {
   return apiCall('custom_emoji_upload', {
     emoji_handle: emojiHandle,
@@ -7718,7 +7872,7 @@ export async function customEmojiDelete(id) {
   return apiCall('custom_emoji_delete', { id }, 'POST');
 }
 
-export async function chatStickerRemoveBg(file) {
+export async function chatStickerRemoveBg(file, { clientProcessed = false } = {}) {
   const formData = new FormData();
   if (Platform.OS === 'web') {
     if (file instanceof Blob || file instanceof File) formData.append('file', file, file.name || 'sticker.png');
@@ -7730,6 +7884,9 @@ export async function chatStickerRemoveBg(file) {
     if (!file?.uri) return { success: false };
     formData.append('file', { uri: file.uri, name: file.name || 'sticker.png', type: file.type || 'image/png' });
   }
+  // When the client already extracted the subject (e.g. MediaPipe on web)
+  // the server skips the floodfill and just re-encodes to 512x512 PNG.
+  if (clientProcessed) formData.append('client_processed', '1');
   const headers = {};
   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
   if (csrfToken) headers['X-CSRF-Token'] = csrfToken;

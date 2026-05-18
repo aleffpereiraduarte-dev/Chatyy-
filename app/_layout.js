@@ -263,6 +263,7 @@ const IncomingCallListener = React.lazy(() => import('../components/IncomingCall
 const DeclineWithMessageSheet = React.lazy(() => import('../components/DeclineWithMessageSheet'));
 const ActiveCallBar = React.lazy(() => import('../components/ActiveCallBar').then(m => ({ default: () => { const B = m.ActiveCallBridge; return React.createElement(B, null); } })));
 import LoginChallengePrompt from '../components/LoginChallengePrompt';
+import LocationRequestModal from '../components/LocationRequestModal';
 import PWAPrompts from '../components/PWAPrompts';
 import WhatsNewSheet, { shouldShowWhatsNew } from '../components/WhatsNewSheet';
 // Stage 6 — surface "Phone offline" UI when web's relay reads fall back to
@@ -379,6 +380,23 @@ function useDeepLinking() {
       const feedMatch = pathname.match(/^\/feed\/(\d+)/);
       if (feedMatch) {
         router.push('/feed/' + feedMatch[1]);
+        return;
+      }
+
+      // /stickers/store?install=<handle> → sticker pack share link.
+      // Auto-opens the install modal for the pack referenced by the handle.
+      // The handle is the share slug minted by sticker_pack_create.
+      if (pathname === '/stickers/store' || pathname === '/stickers' || pathname.startsWith('/stickers/store')) {
+        let installParam = '';
+        try {
+          const parsed = new URL(url);
+          installParam = parsed.searchParams.get('install') || '';
+        } catch {}
+        if (installParam) {
+          router.push('/stickers/store?install=' + encodeURIComponent(installParam));
+        } else {
+          router.push('/stickers/store');
+        }
         return;
       }
 
@@ -636,10 +654,13 @@ function AppInit({ onNotification, setOtaToast }) {
           prefetch('notes', () => apiMod.notesList({}), 600000).catch(() => {}),
         ]).catch(() => {});
 
-        // Chat conversations + messages — WhatsApp parity: top 50 × last 30 msgs.
-        // Delay 2s (down from 5s) so cold open feels instant; we already have
-        // cached UI painted from MMKV/SQLite before this fires. Stagger 150ms
-        // between requests so a slow server doesn't backlog the network queue.
+        // WhatsApp-invisible-sync (2026-05-18): chat messages are now
+        // fetched ON OPEN (lazy), not in a 7.5s bootstrap burst. We just
+        // refresh the conversation list (cheap, single request) so the
+        // sidebar shows fresh unread counts / last-message previews when
+        // the user lands on /chat. Per-conv messages already paint from
+        // SQLite/SmartCache and only hit the network when the user opens
+        // a specific conversation.
         setTimeout(async () => {
           try {
             const convRes = await apiMod.chatConversations();
@@ -647,25 +668,6 @@ function AppInit({ onNotification, setOtaToast }) {
               const convs = convRes.data?.conversations || convRes.data?.chats || [];
               cacheConversations(convs).catch(() => {});
               try { SmartCache?.cacheConversations?.(convs); } catch {}
-
-              // Top 50 convs × 30 msgs each. ~1.5s amortized cost on cellular
-              // (150ms stagger × 50 = 7.5s tail, but UI already up + responsive).
-              const topConvs = convs.slice(0, 50);
-              for (let i = 0; i < topConvs.length; i++) {
-                setTimeout(async () => {
-                  try {
-                    const msgRes = await apiMod.chatMessages(topConvs[i].id, 30);
-                    if (msgRes?.success) {
-                      const msgs = msgRes.data?.messages || [];
-                      cacheMessages(topConvs[i].id, msgs).catch(() => {});
-                      // SmartCache primes the synchronous chat-conversation
-                      // mount so opening any of these 50 convs paints in zero
-                      // frames (vs the ~300ms async SQLite read otherwise).
-                      try { SmartCache?.cacheMessages?.(topConvs[i].id, msgs); } catch {}
-                    }
-                  } catch {}
-                }, i * 150);
-              }
             }
           } catch {}
         }, 2000);
@@ -1233,6 +1235,8 @@ export default function RootLayout() {
                   <Stack.Screen name="kids-learn" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="hashtag" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="hashtag/[tag]" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  {/* Snap-Map / Friends-on-a-Map (Find My Friends style). */}
+                  <Stack.Screen name="snap-map" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   {/* Reels P0 — "Use this sound" deep link + Duet/Stitch composer. */}
                   <Stack.Screen name="reels-sound" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 150 }} />
                   {/* Reels recorder — dedicated full-screen camera (TikTok/Instagram-style). */}
@@ -1261,6 +1265,7 @@ export default function RootLayout() {
                   <DeclineWithMessageSheet />
                 </Suspense>
                 <LoginChallengePrompt />
+                <LocationRequestModal />
                 <WhatsNewGate />
                 <PWAPromptsThemed />
                 <NotificationToast

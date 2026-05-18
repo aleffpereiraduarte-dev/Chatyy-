@@ -8,6 +8,7 @@ import {
   IconArchive, IconStarFilled, IconCompose, IconFolder, IconClock,
   IconFolderPlus, IconPlus, IconX, IconCheck,
   IconFilm, IconMessageSquare, IconCalendar, IconGlobe, IconUser, IconZap, IconCamera, IconStar, IconStickyNote, IconBell, IconSearch, IconBookmark, IconChevronDown, IconLogout,
+  IconMapPin,
 } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import { LABEL_COLORS, LABEL_NAMES } from './LabelPicker';
@@ -364,6 +365,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
       { label: t('sidebar.documents'), icon: IconGlobe, route: '/documentos', color: '#4285f4' },
       { label: t('sidebar.notes'), icon: IconStickyNote, route: '/notes', color: '#f59e0b' },
       { label: 'One', icon: IconZap, route: '/one', color: '#A78BFA' },
+      { label: t('snapmap.sidebar') || 'Mapa', icon: IconMapPin, route: '/snap-map', color: '#22c55e' },
     ];
     return (
       <ScrollView style={[s.sidebar, { backgroundColor: colors.sidebarBg }]} showsVerticalScrollIndicator={false} contentContainerStyle={s.collapsedContent}>
@@ -457,6 +459,11 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
           // dedicated screen (tabs, search, schedule reminders). Floppy-
           // disk feel uses IconBookmark since the codebase already ships it.
           { label: t('chat.savedMessages') || 'Mensagens Salvas', icon: IconBookmark, route: '/saved-messages', color: '#7C3AED' },
+          // Snap-Map / Friends-on-a-Map — Snapchat-style "where are my
+          // friends" screen. Pin-icon is overloaded for "live location"
+          // semantics already; the green color (matches the live-share
+          // pulse) reads as "live now" at a glance.
+          { label: t('snapmap.sidebar') || 'Mapa de Amigos', icon: IconMapPin, route: '/snap-map', color: '#22c55e' },
         ];
         const list = showMoreQuick ? [...primary, ...secondary] : primary;
         return (

@@ -875,6 +875,21 @@ export async function setupNotificationListeners() {
         }
       } catch {}
     }
+    // Find My Friends — backend pushes data.type='location_request' when peer
+    // asks to see this user's location. Open the global accept/decline sheet
+    // instead of relying on the snap-map screen being open.
+    if (data?.type === 'location_request' && data.requester_email) {
+      try {
+        const { triggerLocationRequestModal } = require('../components/LocationRequestModal');
+        triggerLocationRequestModal({
+          requester_email: data.requester_email,
+          requester_name: data.requester_name,
+          message: data.message,
+        });
+        // Suppress the system banner — modal is already on screen.
+        try { Notifications.dismissNotificationAsync(notification.request.identifier); } catch {}
+      } catch {}
+    }
   });
 
   const responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
@@ -1114,6 +1129,15 @@ function handleNotificationNavigation(data) {
     }
     if (data.type === 'status_update') {
       router.push('/chat?tab=status');
+      return;
+    }
+    // Find My Friends — peer requested to see this user's location. Route
+    // to snap-map with the requester pre-loaded so the accept/decline sheet
+    // auto-opens on mount (see app/snap-map.js incoming_request param).
+    if (data.type === 'location_request' && data.requester_email) {
+      const nameParam = data.requester_name ? `&requester_name=${encodeURIComponent(data.requester_name)}` : '';
+      const msgParam = data.message ? `&message=${encodeURIComponent(data.message)}` : '';
+      router.push(`/snap-map?incoming_request=${encodeURIComponent(data.requester_email)}${nameParam}${msgParam}`);
       return;
     }
     // Feed/social notifications → open the relevant post

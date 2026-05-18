@@ -153,6 +153,15 @@ export function getLocalUriSyncJs(url) {
   return syncIndex.get(key) || null;
 }
 
+// Public alias — same semantics as getLocalUriSyncJs but with the name the
+// rest of the codebase (and external docs) expect. Returns a file:// path if
+// the URL is already cached on disk (per the in-memory syncIndex), otherwise
+// null. Zero I/O, safe in render closures. Components consult this BEFORE
+// using the remote URL — that's the entire "tocando offline" guarantee.
+export function getLocalUriIfCached(url) {
+  return getLocalUriSyncJs(url);
+}
+
 // Scan both cache and saved dirs once, fill syncIndex. Call at app boot
 // (post-login) so that subsequent renders hit the Map instantly.
 export function initSyncCache() {
@@ -716,13 +725,27 @@ export async function adoptLocalFileAsCache(remoteUrl, localUri) {
 export function prefetchIncomingMessageMedia(message) {
   if (!message || Platform.OS === 'web') return;
   const t = String(message.type || '').toLowerCase();
-  // Scope: image + audio/voice ONLY. Skip video (heavy), gif (small but Tenor
-  // URL lives in `content`, handled by the existing saveConversationMedia
-  // path on chat open), sticker (also Tenor), file/doc (heavy).
-  if (t !== 'image' && t !== 'audio' && t !== 'voice') return;
-  let url = message.file_url;
-  if (!url || typeof url !== 'string') return;
-  if (!url.startsWith('http')) url = `https://chatyy.com.br${url}`;
+  // Full scope for offline playback parity (task #1103 round 2): every
+  // media-bearing message type is eligible for background download. Heavy
+  // types (video/document) still flow through cacheMedia()'s per-bucket
+  // policy gate (defaults to never-on-cellular), so we don't blow up the
+  // user's data plan — we just *offer* the download when their pref allows.
+  const isAudio   = t === 'audio' || t === 'voice';
+  const isImage   = t === 'image';
+  const isVideo   = t === 'video' || t === 'short_video' || t === 'video_note';
+  const isFile    = t === 'file' || t === 'document';
+  const isGifLike = t === 'gif' || t === 'sticker';
+  if (!isAudio && !isImage && !isVideo && !isFile && !isGifLike) return;
+
+  // GIFs / stickers ship their URL in `content` (Tenor / sticker server),
+  // not file_url. Other types use file_url. Support both shapes.
+  let rawUrl = message.file_url;
+  if (!rawUrl && isGifLike && typeof message.content === 'string' && message.content.startsWith('http')) {
+    rawUrl = message.content;
+  }
+  if (!rawUrl || typeof rawUrl !== 'string') return;
+  const url = rawUrl.startsWith('http') ? rawUrl : `https://chatyy.com.br${rawUrl}`;
+
   // Persist LQIP (thumb_b64) opportunistically so the blur placeholder is
   // available the moment the bubble mounts — even before the row hits the
   // chat-conversation render path.
@@ -731,7 +754,7 @@ export function prefetchIncomingMessageMedia(message) {
   }
   const convId = message.conversation_id ?? message.conversationId;
   try {
-    if (t === 'audio' || t === 'voice') {
+    if (isAudio) {
       // Audio is tiny (~50-300KB) and the user expects instant playback —
       // bypass the cellular gate so voice notes always land. Matches the
       // ChatListTab #886 behavior. Goes through saveMediaPermanent which
@@ -739,7 +762,9 @@ export function prefetchIncomingMessageMedia(message) {
       prefetchAudioMessage(url);
       if (convId != null) tagUrlConversation(url, convId);
     } else {
-      // Image — honor the cellular gate via cacheMedia (defaults to wifi-only).
+      // Image / video / file / gif / sticker — honor the per-bucket cellular
+      // gate via cacheMedia. Photos default to wifi, video/docs default to
+      // never; tap-to-download in the bubble bypasses with { force: true }.
       // Fire-and-forget; failures don't bubble up to the WS handler.
       cacheMedia(url, convId != null ? { conversationId: convId } : undefined).catch(() => {});
     }
@@ -1322,4 +1347,124 @@ export function formatBytesShort(bytes) {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// ── Server-backed redownload ────────────────────────────────────────────
+// Subscribers for redownload completion. Components mount/unmount via
+// `subscribeRedownload(cb)` so a successful resolve can swap the bubble's
+// stale URL with the fresh one *without* a full message-list refetch.
+const _redlListeners = new Set();
+export function subscribeRedownload(cb) {
+  if (typeof cb !== 'function') return () => {};
+  _redlListeners.add(cb);
+  return () => { _redlListeners.delete(cb); };
+}
+function _emitRedownload(payload) {
+  for (const cb of _redlListeners) {
+    try { cb(payload); } catch {}
+  }
+}
+
+// Dedup concurrent calls for the same message — three bubbles tapping
+// redownload at once for a forwarded broadcast should only hit the server
+// once. Keyed by messageId.
+const _inflightRedl = new Map(); // messageId → Promise<{ ok, url, ... }>
+
+/**
+ * Ask the backend for a fresh URL for an evicted chat-media message and
+ * download it back into the local cache. Returns `{ ok, url, localUri,
+ * kind, error }`. Emits to subscribers on success so any open bubble
+ * binding the same messageId can re-render with the new URL.
+ *
+ * Caller pattern (bubble component):
+ *   const r = await requestRedownload(msg.id, msg.file_url);
+ *   if (r.ok) setUrl(r.localUri || r.url);
+ *
+ * Error paths:
+ *   - 410: message was hard-deleted ("delete for everyone")
+ *   - 403: user no longer a member of the conversation
+ *   - network: surfaced as { ok: false, error: 'network' } so the bubble
+ *     can show a retry button instead of a permanent "unavailable" state.
+ */
+export async function requestRedownload(messageId, fileUrl = '') {
+  const mid = Number(messageId) || 0;
+  if (!mid) return { ok: false, error: 'invalid_message_id' };
+
+  if (_inflightRedl.has(mid)) return _inflightRedl.get(mid);
+
+  const work = (async () => {
+    let resp;
+    try {
+      const api = require('./api');
+      resp = await api.chatRedownloadMedia(mid);
+    } catch (e) {
+      return { ok: false, error: 'network', messageId: mid };
+    }
+    if (!resp || !resp.success) {
+      // Pass through the server-side reason so UI can show "deleted" vs
+      // "unavailable" copy. status comes from apiCall's wrapped error shape.
+      const msg = resp?.message || resp?.error || 'unknown';
+      const code = resp?.status || 0;
+      return {
+        ok: false,
+        error: msg,
+        status: code,
+        messageId: mid,
+        deleted: code === 410 || /deleted/i.test(String(msg)),
+      };
+    }
+    const data = resp.data || {};
+    const freshUrl = String(data.url || '');
+    if (!freshUrl) return { ok: false, error: 'no_url', messageId: mid };
+
+    // Pull into local cache so the next read is offline-friendly. cacheMedia
+    // honors per-bucket prefs but we force-download here — user just tapped
+    // "redownload", their intent is explicit. Web skips (URL is the cache).
+    let localUri = null;
+    if (Platform.OS !== 'web') {
+      try {
+        localUri = await cacheMedia(freshUrl, { force: true });
+        // Also bind the ORIGINAL fileUrl to the same local path so other
+        // bubbles in the conversation that still reference the stale URL
+        // pick up the local file on their next render — avoids forcing
+        // every viewer in the thread to re-fetch.
+        if (localUri && fileUrl && localUri !== freshUrl && localUri.startsWith('file://')) {
+          try { bindLocalUriToRemoteUrl(localUri, fileUrl); } catch {}
+        }
+      } catch {}
+    }
+
+    const payload = {
+      ok: true,
+      messageId: mid,
+      url: freshUrl,
+      localUri,
+      kind: data.kind || 'cdn',
+      type: data.type || '',
+      fileName: data.file_name || '',
+      fileSize: Number(data.file_size) || 0,
+      createdAt: data.created_at || null,
+      originalUrl: fileUrl,
+    };
+    _emitRedownload(payload);
+    return payload;
+  })();
+
+  _inflightRedl.set(mid, work);
+  try { return await work; } finally { _inflightRedl.delete(mid); }
+}
+
+// Relative-time helper for "Last downloaded X ago" copy on the redownload
+// bubble. Falls back to a date string after a week so really old messages
+// don't render as "300d". Locale-aware via toLocaleDateString.
+export function formatRelativeAge(timestamp) {
+  if (!timestamp) return '';
+  const ms = typeof timestamp === 'number' ? timestamp : Date.parse(String(timestamp));
+  if (!isFinite(ms) || ms <= 0) return '';
+  const diff = Date.now() - ms;
+  if (diff < 60_000) return 'agora';
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} min`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
+  if (diff < 604_800_000) return `${Math.floor(diff / 86_400_000)}d`;
+  try { return new Date(ms).toLocaleDateString(); } catch { return ''; }
 }

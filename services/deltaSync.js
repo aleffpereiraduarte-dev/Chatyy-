@@ -14,12 +14,11 @@ import * as localDb from './localDb';
 
 let _apiCall = null;
 let _onSyncComplete = null;
-let _syncInterval = null;
 let _appStateSubscription = null;
+let _wsUnsub = null;
 let _isSyncing = false;
 let _lastSyncTime = 0;
 
-const SYNC_INTERVAL_MS = 60 * 1000;       // 1 minute when active
 const MIN_SYNC_GAP_MS = 10 * 1000;        // Don't sync more often than 10s
 const FIRST_SYNC_DELAY_MS = 1000;          // 1s after init
 
@@ -29,6 +28,15 @@ const FIRST_SYNC_DELAY_MS = 1000;          // 1s after init
 
 /**
  * Start the delta sync engine.
+ *
+ * WhatsApp-invisible-sync: NO setInterval. We only sync on event-driven
+ * triggers:
+ *   1. Initial kick 1s after init (first paint already showed cache).
+ *   2. WS connection authenticated → catch up anything missed while offline.
+ *   3. AppState transitions to 'active' → user opened the app, sync once.
+ * Push-pushed updates flow through applyRealtimeEvent() so there's nothing
+ * to poll for in the steady state.
+ *
  * @param {Function} apiCall - The API call function from api.js
  * @param {Function} onSyncComplete - Callback when sync finishes (to refresh UI)
  */
@@ -37,37 +45,47 @@ export function initDeltaSync(apiCall, onSyncComplete) {
   _onSyncComplete = onSyncComplete;
 
   // Idempotent — chamadas repetidas (login multi-conta, hot reload) não
-  // devem acumular intervals/listeners.
-  if (_syncInterval) { clearInterval(_syncInterval); _syncInterval = null; }
+  // devem acumular listeners.
   if (_appStateSubscription) { try { _appStateSubscription.remove(); } catch {} _appStateSubscription = null; }
+  if (_wsUnsub) { try { _wsUnsub(); } catch {} _wsUnsub = null; }
 
-  // First sync shortly after init
+  // First sync shortly after init (cold open path).
   setTimeout(() => syncNow(), FIRST_SYNC_DELAY_MS);
 
-  // Periodic sync
-  _syncInterval = setInterval(() => syncNow(), SYNC_INTERVAL_MS);
-
-  // Sync when app comes to foreground
+  // Sync when app comes to foreground (replaces the periodic poll).
   _appStateSubscription = AppState.addEventListener('change', (state) => {
     if (state === 'active') {
       syncNow();
     }
   });
 
-  console.log('[deltaSync] initialized');
+  // Sync once after every WS reconnect → re-auth. While the WS is healthy
+  // it pushes events live, so there's nothing else to poll.
+  try {
+    const mailWs = require('./websocket').default;
+    if (mailWs && typeof mailWs.on === 'function') {
+      _wsUnsub = mailWs.on('connection', (evt) => {
+        if (evt?.status === 'authenticated') {
+          syncNow();
+        }
+      });
+    }
+  } catch {}
+
+  console.log('[deltaSync] initialized (event-driven, no polling)');
 }
 
 /**
  * Stop the sync engine (call on logout).
  */
 export function stopDeltaSync() {
-  if (_syncInterval) {
-    clearInterval(_syncInterval);
-    _syncInterval = null;
-  }
   if (_appStateSubscription) {
     _appStateSubscription.remove();
     _appStateSubscription = null;
+  }
+  if (_wsUnsub) {
+    try { _wsUnsub(); } catch {}
+    _wsUnsub = null;
   }
   _apiCall = null;
   _onSyncComplete = null;

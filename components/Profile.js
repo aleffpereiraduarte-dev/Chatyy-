@@ -40,7 +40,7 @@ import EmptyStateCard from './EmptyStateCard';
 import {
   IconX, IconPhone, IconVideo, IconMail, IconMessageSquare, IconUserPlus,
   IconChevronRight, IconSettings, IconMoreHorizontal, IconShare, IconAlertTriangle, IconLock, IconEdit,
-  IconTrash, IconPlus, IconGrid, IconFilm, IconTag, IconCheck, IconEyeOff, IconLink,
+  IconTrash, IconPlus, IconGrid, IconFilm, IconTag, IconCheck, IconEyeOff, IconLink, IconPlay,
 } from './Icons';
 const IconEdit3 = IconEdit;
 const IconTrash2 = IconTrash;
@@ -477,6 +477,70 @@ function EmptyGridIllustration({ isDark, size = 120 }) {
   );
 }
 
+// ─── Live recording grid tile ────────────────────────────────────────
+// Used by the Lives profile tab. Mirrors the Reels GridItem look (full-
+// bleed 1:1 cell, hairline gutters) but layers a duration chip + view
+// count overlay so the user can scan their saved replays. Long-press on
+// own profile opens the delete confirm (wired in renderTabContent).
+function LiveGridItem({ rec, size, onPress, onLongPress }) {
+  const thumb = rec?.thumbnail_url ? resolveMedia(rec.thumbnail_url) : '';
+  const views = Number(rec?.view_count || rec?.views || 0);
+  const viewLabel = views >= 1000
+    ? `${(views / 1000).toFixed(views >= 10000 ? 0 : 1)}K`
+    : (views > 0 ? String(views) : '');
+  const dur = Number(rec?.duration || 0);
+  const durLabel = dur > 0
+    ? (dur >= 3600
+      ? `${Math.floor(dur / 3600)}:${String(Math.floor((dur % 3600) / 60)).padStart(2, '0')}:${String(Math.floor(dur % 60)).padStart(2, '0')}`
+      : `${Math.floor(dur / 60)}:${String(Math.floor(dur % 60)).padStart(2, '0')}`)
+    : '';
+  return (
+    <TouchableOpacity onPress={onPress} onLongPress={onLongPress} activeOpacity={0.85}
+      style={{ width: size, height: size, padding: 0.5 }}
+      accessibilityLabel={rec?.title || 'Live replay'}
+    >
+      <View style={{ width: '100%', height: '100%', overflow: 'hidden', backgroundColor: '#0a0a0a' }}>
+        {thumb
+          ? (WEB
+              ? <img src={thumb} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 3 }} alt="" loading="lazy" decoding="async" />
+              : (_ExpoImage
+                  ? <_ExpoImage source={{ uri: thumb }} style={{ width: '100%', height: '100%', borderRadius: 3 }} contentFit="cover" cachePolicy="memory-disk" transition={120} />
+                  : <Image source={{ uri: thumb }} style={{ width: '100%', height: '100%', borderRadius: 3 }} resizeMode="cover" />))
+          : <View style={{ width: '100%', height: '100%', backgroundColor: '#1a1a1a', borderRadius: 3 }} />}
+        {/* Top-right play badge — same visual weight as the Reels grid so
+            the two tabs feel consistent. */}
+        <View style={{
+          position: 'absolute', top: 6, right: 6,
+          width: 22, height: 22, borderRadius: 11,
+          backgroundColor: 'rgba(0,0,0,0.45)',
+          alignItems: 'center', justifyContent: 'center',
+        }}>
+          <IconPlay size={12} color="#fff" />
+        </View>
+        {/* Bottom-left: ▶ view count (matches Reels overlay convention). */}
+        {!!viewLabel && (
+          <View style={{ position: 'absolute', bottom: 6, left: 6 }}>
+            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700', textShadowColor: 'rgba(0,0,0,0.5)', textShadowRadius: 3 }}>
+              ▶ {viewLabel}
+            </Text>
+          </View>
+        )}
+        {/* Bottom-right: duration chip — distinguishes lives from reels
+            (reels don't show duration on the grid). */}
+        {!!durLabel && (
+          <View style={{
+            position: 'absolute', bottom: 6, right: 6,
+            paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,
+            backgroundColor: 'rgba(0,0,0,0.55)',
+          }}>
+            <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>{durLabel}</Text>
+          </View>
+        )}
+      </View>
+    </TouchableOpacity>
+  );
+}
+
 // ─── Animated tab bar (Posts / Reels / Mídia / …) ────────────────────
 // Instagram-style sticky tabs with a sliding underline. The underline
 // translates between tab slots in 200ms (cubic-out) and lives on the GPU
@@ -785,6 +849,14 @@ export default function Profile({
   const [retryCounter, setRetryCounter] = useState(0);
   const [activeTab, setActiveTab] = useState('posts');
   const [viewer, setViewer] = useState({ open: false, startIdx: 0, list: 'posts' });
+  // ─── Lives tab state (2026-05-18) ───
+  // Saved CF Stream replays of the profile owner. Loaded lazily the first
+  // time the Lives tab is focused so we don't waste a network round-trip
+  // on every profile open. `livesLoaded` gates the fetch — without it the
+  // tab refetched on every render.
+  const [lives, setLives] = useState([]);
+  const [livesLoading, setLivesLoading] = useState(false);
+  const [livesLoaded, setLivesLoaded] = useState(false);
   const [storyViewer, setStoryViewer] = useState({ open: false, startIdx: 0 });
   // [feat-10] Highlight viewer state — separate from storyViewer so opening a
   // highlight doesn't clobber the live-stories starting index. items[] mirrors
@@ -1085,6 +1157,34 @@ export default function Profile({
   const selfOnly = data?.self_only;
   const posts = data?.posts || [];
   const reels = data?.reels || [];
+  // Lazy-load the saved-lives list when the Lives tab is focused for
+  // the first time. Subsequent tab switches reuse the cached array;
+  // pull-to-refresh on the profile root would reset livesLoaded.
+  useEffect(() => {
+    if (activeTab !== 'lives') return;
+    if (livesLoaded || livesLoading) return;
+    const targetEmail = identity?.email;
+    if (!targetEmail) return;
+    let cancelled = false;
+    setLivesLoading(true);
+    (async () => {
+      try {
+        const res = await api.liveRecordingsList({ user_email: targetEmail });
+        if (cancelled) return;
+        const list = Array.isArray(res?.data?.recordings) ? res.data.recordings : [];
+        setLives(list);
+        setLivesLoaded(true);
+      } catch {
+        if (!cancelled) {
+          setLives([]);
+          setLivesLoaded(true);
+        }
+      } finally {
+        if (!cancelled) setLivesLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeTab, livesLoaded, livesLoading, identity?.email]);
   const sharedMedia = data?.shared_media || [];
   // Backend returns BOTH direct + group conversations where me+target are members.
   // The "Grupos em comum" section is specifically for groups — a direct DM with
@@ -2081,6 +2181,11 @@ export default function Profile({
     const tabs = [
       { k: 'posts', label: t?.('profile.posts') || 'Posts', count: posts.length, icon: IconGrid },
       { k: 'reels', label: t?.('profile.reels') || 'Reels', count: reels.length, icon: IconFilm },
+      // Lives tab — saved CF Stream replays. Shown on both own + other
+      // profiles (Instagram parity: every public live replay surfaces).
+      // Icon = IconPlay so it reads as "tap to watch" at a glance and
+      // doesn't collide with IconFilm (used by Reels).
+      { k: 'lives', label: t?.('profile.lives') || 'Lives', count: lives.length, icon: IconPlay },
       !actions.is_self && { k: 'media', label: t?.('profile.media') || 'Mídia', count: sharedMedia.length, icon: IconTag },
       !actions.is_self && { k: 'chat',  label: t?.('profile.chat') || 'Conversas', count: commonChats.length },
       !actions.is_self && emailPreview.length > 0 && { k: 'email', label: t?.('profile.email') || 'Email', count: emailPreview.length },
@@ -2150,6 +2255,76 @@ export default function Profile({
         return (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
             {reels.map(r => <GridItem key={r.id} item={r} size={gridSize} isReel onPress={() => handleOpenPost(r, 'reels')} />)}
+          </View>
+        );
+      }
+      if (activeTab === 'lives') {
+        // Initial fetch in flight — show a brief activity indicator instead
+        // of jumping straight to the empty state (would feel like the user's
+        // lives "disappeared" between tab presses).
+        if (livesLoading && lives.length === 0) {
+          return (
+            <View style={{ paddingVertical: 60, alignItems: 'center' }}>
+              <ActivityIndicator color="#7C3AED" />
+            </View>
+          );
+        }
+        if (lives.length === 0) {
+          return (
+            <EmptyStateCard
+              illustration={<EmptyGridIllustration isDark={isDark} />}
+              title={actions.is_self
+                ? _ti('profile.empty.livesSelfTitle', 'Sem lives salvos ainda')
+                : _ti('profile.empty.livesOtherTitle', 'Sem lives salvos')}
+              subtitle={actions.is_self
+                ? _ti('profile.empty.livesSelfSub', 'Suas transmissões salvas vão aparecer aqui.')
+                : _ti('profile.empty.livesOtherSub', 'Quando esse usuário salvar uma live, vai aparecer aqui.')}
+              ctaLabel={actions.is_self ? _ti('profile.empty.livesCta', 'Iniciar live') : undefined}
+              onPress={actions.is_self ? () => router?.push('/live-broadcast') : undefined}
+            />
+          );
+        }
+        const onOpenLive = (rec) => {
+          if (!rec?.session_id) return;
+          router?.push(`/live-replay?id=${encodeURIComponent(rec.session_id)}`);
+        };
+        const onLongPressLive = (rec) => {
+          if (!actions.is_self) return;
+          if (!rec?.session_id) return;
+          // Own-profile only — host can delete their saved replay. Mirrors
+          // the lives-saved.js destructive-confirm pattern so behavior is
+          // consistent across the two surfaces.
+          Alert.alert(
+            t?.('liveReplay.deleteTitle') || 'Excluir replay?',
+            t?.('liveReplay.deleteConfirm') || 'Isso vai apagar permanentemente a gravação.',
+            [
+              { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+              {
+                text: t?.('liveReplay.deleteConfirmBtn') || 'Excluir',
+                style: 'destructive',
+                onPress: async () => {
+                  try {
+                    const res = await api.liveRecordingDelete(rec.session_id);
+                    if (res?.success) {
+                      setLives(prev => prev.filter(r => r.session_id !== rec.session_id));
+                    }
+                  } catch {}
+                },
+              },
+            ]
+          );
+        };
+        return (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+            {lives.map((rec) => (
+              <LiveGridItem
+                key={rec.session_id}
+                rec={rec}
+                size={gridSize}
+                onPress={() => onOpenLive(rec)}
+                onLongPress={() => onLongPressLive(rec)}
+              />
+            ))}
           </View>
         );
       }

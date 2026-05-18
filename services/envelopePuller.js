@@ -24,10 +24,9 @@ import { decryptEnvelope, decryptSenderKeysEnvelope } from './envelope';
 import { getDeviceId } from './e2ee';
 import { getIdentityKeyPair } from './e2e';
 
-const PULL_INTERVAL_MS = 30 * 1000;
-
-let _timer = null;
 let _appStateSub = null;
+let _wsEnvUnsub = null;
+let _wsConnUnsub = null;
 let _running = false;
 let _inFlight = false;
 
@@ -163,39 +162,44 @@ async function pullOnce() {
   }
 }
 
-function _startTimer() {
-  _stopTimer();
-  // Immediate kick on start, then a steady 30s cadence.
-  pullOnce();
-  _timer = setInterval(() => { pullOnce(); }, PULL_INTERVAL_MS);
-}
-
-function _stopTimer() {
-  if (_timer) {
-    try { clearInterval(_timer); } catch {}
-    _timer = null;
-  }
-}
-
 /**
  * Start the foreground envelope puller. Idempotent. Safe to call from
  * app root before login — pulls will no-op until auth + flag are set.
+ *
+ * WhatsApp-invisible-sync (2026-05-18): no more setInterval. Pulls fire
+ * ONLY on event-driven triggers:
+ *   - WS `envelope_available` push from server (real-time delivery)
+ *   - WS `connection` becoming `authenticated` (reconnect catch-up)
+ *   - AppState → 'active' (foreground wake; covers push-wake too)
+ *   - Manual `flushEnvelopesNow()` from silent-push handler
+ * Background wake is Stage 4 (silent push) and calls flushEnvelopesNow().
  */
 export function startEnvelopePuller() {
   if (_running) return;
   _running = true;
 
-  // Foreground-only loop. Background wake is Stage 4 (silent push).
+  // One pull on start if we're already foreground.
   if (AppState.currentState === 'active') {
-    _startTimer();
+    pullOnce();
   }
+
+  // Foreground transition → flush once. No timer anymore.
   _appStateSub = AppState.addEventListener('change', (next) => {
     if (next === 'active') {
-      _startTimer();
-    } else {
-      _stopTimer();
+      pullOnce();
     }
   });
+
+  // Wire WS push triggers. Lazy-required so module load order is forgiving.
+  try {
+    const mailWs = require('./websocket').default;
+    if (mailWs && typeof mailWs.on === 'function') {
+      _wsEnvUnsub = mailWs.on('envelope_available', () => { pullOnce(); });
+      _wsConnUnsub = mailWs.on('connection', (evt) => {
+        if (evt?.status === 'authenticated') pullOnce();
+      });
+    }
+  } catch {}
 }
 
 /**
@@ -203,11 +207,12 @@ export function startEnvelopePuller() {
  */
 export function stopEnvelopePuller() {
   _running = false;
-  _stopTimer();
   if (_appStateSub && typeof _appStateSub.remove === 'function') {
     try { _appStateSub.remove(); } catch {}
   }
   _appStateSub = null;
+  if (_wsEnvUnsub) { try { _wsEnvUnsub(); } catch {} _wsEnvUnsub = null; }
+  if (_wsConnUnsub) { try { _wsConnUnsub(); } catch {} _wsConnUnsub = null; }
 }
 
 /**

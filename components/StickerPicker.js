@@ -165,7 +165,8 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
   const [creating, setCreating] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
-  const [searchBackend, setSearchBackend] = useState([]); // server-side emoji-tag results
+  const [searchBackend, setSearchBackend] = useState([]); // server-side emoji-tag results (installed)
+  const [searchGlobal, setSearchGlobal] = useState([]);   // discovery results (every public pack)
   const [showSearch, setShowSearch] = useState(false);
   const [selectedMyPack, setSelectedMyPack] = useState(null); // pack_id filter inside Mine tab
   const [showPackCreate, setShowPackCreate] = useState(false);
@@ -188,13 +189,35 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
     }).start();
   }, [previewScale]);
   const closeStickerPreview = useCallback(() => setPreviewItem(null), []);
-  // "Em breve" placeholder modal for the camera-based create flow.
-  const [showCreateSoon, setShowCreateSoon] = useState(false);
 
   useEffect(() => {
     storageGet(RECENT_KEY).then(setRecents);
     storageGet(MINE_KEY).then(setMine);
+    // Local cache for offline; server is the source of truth — hydrate from
+    // chat_sticker_favorites_list below to merge any favorites this user
+    // saved from another device.
     storageGet(FAV_KEY).then(setFavorites);
+    (async () => {
+      try {
+        const r = await api.chatStickerFavoritesList();
+        const rows = r?.items || r?.data?.items || [];
+        if (Array.isArray(rows) && rows.length) {
+          const serverUrls = rows.map(x => x.sticker_url || x.url).filter(Boolean);
+          setFavorites(prev => {
+            // Merge: server union local, dedupe, keep server order first
+            // (most-recently favorited last server-side, prepended here).
+            const seen = new Set();
+            const merged = [];
+            for (const u of [...serverUrls, ...prev]) {
+              if (!seen.has(u)) { seen.add(u); merged.push(u); }
+            }
+            const next = merged.slice(0, 200);
+            storageSet(FAV_KEY, next);
+            return next;
+          });
+        }
+      } catch {}
+    })();
     // Hydrate from backend — user's own stickers (across all their packs)
     (async () => {
       try {
@@ -264,17 +287,19 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
     if (favorites.includes(item)) {
       next = favorites.filter(f => f !== item);
     } else {
-      next = [item, ...favorites].slice(0, 50);
+      next = [item, ...favorites].slice(0, 200);
     }
     setFavorites(next);
     storageSet(FAV_KEY, next);
+    // Sync to server (fire-and-forget — local UI already updated).
+    try { api.chatStickerFavoriteToggle(typeof item === 'string' ? item : String(item)); } catch {}
   }, [favorites]);
 
   // Search handler — local (emoji packs + keyword index) + backend (user's
   // custom stickers by emoji_tags). Backend runs debounced to avoid a
   // request on every keystroke.
   useEffect(() => {
-    if (!searchQuery.trim()) { setSearchResults([]); setSearchBackend([]); return; }
+    if (!searchQuery.trim()) { setSearchResults([]); setSearchBackend([]); setSearchGlobal([]); return; }
     const q = searchQuery.trim().toLowerCase();
     const results = new Set();
     // Search index
@@ -296,13 +321,21 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
     }
     setSearchResults([...results].slice(0, 60));
 
-    // Debounced backend search for packs installed by user
+    // Debounced backend search for packs installed by user + global
+    // discovery search across every public pack (WhatsApp parity). Both run
+    // in parallel — installed results render first, global underneath in
+    // the "Mais resultados" rail.
     const tid = setTimeout(async () => {
       if (q.length < 2) return;
       try {
         const r = await api.chatStickerSearch(q);
         const items = r?.items || r?.data?.items || [];
         setSearchBackend(items.map(x => x.url).filter(Boolean));
+      } catch {}
+      try {
+        const gr = await api.chatStickerGlobalSearch(q);
+        const gitems = gr?.items || gr?.data?.items || [];
+        setSearchGlobal(gitems.map(x => x.url).filter(Boolean));
       } catch {}
     }, 300);
     return () => clearTimeout(tid);
@@ -545,13 +578,16 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
   // Current pack stickers
   let currentStickers = [];
   if (showSearch && searchQuery.trim()) {
-    // Merge local + backend results, dedupe while preserving order
+    // Merge local + backend (installed) + global discovery results, dedupe
+    // while preserving order. Local emoji index first so the canned answer
+    // is the fastest path, then user's installed packs, then discovery from
+    // the wider sticker corpus.
     const seen = new Set();
     const merged = [];
-    for (const s of [...searchResults, ...searchBackend]) {
+    for (const s of [...searchResults, ...searchBackend, ...searchGlobal]) {
       if (!seen.has(s)) { seen.add(s); merged.push(s); }
     }
-    currentStickers = merged.slice(0, 80);
+    currentStickers = merged.slice(0, 120);
   }
   else if (activePack === 'recent') currentStickers = recents;
   else if (activePack === 'favorites') currentStickers = favorites;
@@ -935,12 +971,13 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
       </ScrollView>
 
       {/* "Criar sticker" floating button — bottom-right, brand purple. Opens
-          a placeholder "Em breve" modal for now (camera flow scaffolded but
-          deferred behind native rebuild — `createSticker` above is the real
-          gallery/video path). */}
+          the same source picker as the top-right "Criar" button so users
+          have a discoverable shortcut without overlapping the header chrome
+          (matches WhatsApp's bottom-anchored "+" affordance). */}
       <TouchableOpacity
-        onPress={() => setShowCreateSoon(true)}
+        onPress={createSticker}
         activeOpacity={0.85}
+        disabled={creating}
         style={{
           position: 'absolute', right: 14, bottom: 60,
           width: 48, height: 48, borderRadius: 24,
@@ -949,10 +986,11 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
           shadowColor: '#7C3AED', shadowOpacity: 0.45,
           shadowRadius: 10, shadowOffset: { width: 0, height: 4 },
           elevation: 6,
+          opacity: creating ? 0.6 : 1,
         }}
         accessibilityLabel="Criar sticker"
       >
-        <IconPlus size={22} color="#fff" />
+        {creating ? <ActivityIndicator color="#fff" /> : <IconPlus size={22} color="#fff" />}
       </TouchableOpacity>
 
       {/* Long-press preview modal — large render of the sticker plus an
@@ -1026,67 +1064,6 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
         </Pressable>
       </Modal>
 
-      {/* "Em breve" placeholder modal for the camera-based create flow. */}
-      <Modal
-        visible={showCreateSoon}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowCreateSoon(false)}
-      >
-        <Pressable
-          onPress={() => setShowCreateSoon(false)}
-          style={{
-            flex: 1, backgroundColor: 'rgba(0,0,0,0.55)',
-            alignItems: 'center', justifyContent: 'center', padding: 24,
-          }}
-        >
-          <View
-            style={{
-              width: 280, padding: 22, borderRadius: 22,
-              backgroundColor: colors.surface,
-              alignItems: 'center', gap: 10,
-              shadowColor: '#000', shadowOpacity: 0.3,
-              shadowRadius: 20, shadowOffset: { width: 0, height: 8 },
-              elevation: 12,
-            }}
-          >
-            <View style={{
-              width: 60, height: 60, borderRadius: 30,
-              backgroundColor: '#7C3AED' + '18',
-              alignItems: 'center', justifyContent: 'center',
-            }}>
-              <Text style={{ fontSize: 30 }}>📸</Text>
-            </View>
-            <Text style={{
-              fontSize: 17, fontWeight: '800', color: colors.text,
-              textAlign: 'center', marginTop: 4,
-            }}>
-              Criar sticker pela câmera
-            </Text>
-            <Text style={{
-              fontSize: 13, color: colors.textSecondary,
-              textAlign: 'center', lineHeight: 18,
-            }}>
-              Em breve! Por enquanto use o botão "Criar" no topo para fazer
-              stickers a partir da galeria ou vídeo.
-            </Text>
-            <TouchableOpacity
-              onPress={() => setShowCreateSoon(false)}
-              activeOpacity={0.85}
-              style={{
-                marginTop: 8,
-                paddingHorizontal: 18, paddingVertical: 9,
-                borderRadius: 999,
-                backgroundColor: '#7C3AED',
-              }}
-            >
-              <Text style={{ fontSize: 12, fontWeight: '800', color: '#fff' }}>
-                Entendi
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </Pressable>
-      </Modal>
     </View>
   );
 }

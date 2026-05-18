@@ -35,6 +35,11 @@ export function onAudioFinished(fn) {
   return () => _finishedListeners.delete(fn);
 }
 
+// Held when we tried to ack a played message but were offline. Drained on
+// the next network_resumed pulse from audioPlaybackBus so the receipts
+// don't disappear silently when the user plays voices in airplane mode.
+const _pendingAcks = new Map(); // messageId(str) → convId
+
 export function emitAudioFinished(messageId) {
   for (const fn of _finishedListeners) {
     try { fn(messageId); } catch {}
@@ -51,9 +56,25 @@ export function emitAudioFinished(messageId) {
     if (!_voiceConvMap.has(key)) return; // own msg or never tracked
     _ackedThisSession.add(key);
     const convId = _voiceConvMap.get(key);
-    const { chatVoicePlayed } = require('./api');
-    if (typeof chatVoicePlayed === 'function') {
-      chatVoicePlayed(messageId, convId).catch(() => {});
+    // OFFLINE-FIRST: when the device has no connectivity (user played the
+    // voice from disk cache), queue the ack and let the resume hook flush
+    // it on reconnect. Otherwise fire-and-forget immediately.
+    let online = true;
+    try {
+      const { isOnline } = require('./audioPlaybackBus');
+      online = typeof isOnline === 'function' ? isOnline() : true;
+    } catch {}
+    if (!online) {
+      _pendingAcks.set(key, convId);
+    } else {
+      const { chatVoicePlayed } = require('./api');
+      if (typeof chatVoicePlayed === 'function') {
+        chatVoicePlayed(messageId, convId).catch(() => {
+          // Network blip between predicate + actual call — re-queue so the
+          // resume hook picks it up.
+          _pendingAcks.set(key, convId);
+        });
+      }
     }
     // Cap the dedup set so a long-lived session doesn't grow unbounded.
     if (_ackedThisSession.size > 5000) {
@@ -62,6 +83,30 @@ export function emitAudioFinished(messageId) {
     }
   } catch {}
 }
+
+// Drain held played-receipt acks. Called when audioPlaybackBus emits
+// `network_resumed` (NetInfo back online, or mail-ws re-authed). The acks
+// dedup against the server's UNIQUE constraint so a stray double-flush is
+// harmless.
+function _flushPendingAcks() {
+  if (_pendingAcks.size === 0) return;
+  try {
+    const { chatVoicePlayed } = require('./api');
+    if (typeof chatVoicePlayed !== 'function') return;
+    for (const [mid, convId] of _pendingAcks.entries()) {
+      chatVoicePlayed(mid, convId).catch(() => {});
+    }
+    _pendingAcks.clear();
+  } catch {}
+}
+// Wire resume hook lazily so importing voicePlaybackBus doesn't pull
+// networkInfo eagerly at module-load (avoid cycles + Fast Refresh churn).
+try {
+  const bus = require('./audioPlaybackBus');
+  bus?.onNetworkTransition?.((evt) => {
+    if (evt === 'network_resumed') _flushPendingAcks();
+  });
+} catch {}
 
 export function onRequestPlay(fn) {
   _requestPlayListeners.add(fn);

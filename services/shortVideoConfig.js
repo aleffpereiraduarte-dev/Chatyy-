@@ -22,7 +22,7 @@
  * ShortVideoBubble downgrades to the regular video renderer so existing
  * `type=video` rows aren't affected.
  */
-export const featureShortVideoInChat = false;
+export const featureShortVideoInChat = true;
 
 /**
  * Returns true when the runtime flag override is on OR the build-time

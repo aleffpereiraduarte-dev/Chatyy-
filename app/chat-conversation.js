@@ -83,6 +83,19 @@ import SyncBar from '../components/SyncBar';
 let VideoNoteRecorder = null; try { VideoNoteRecorder = require('../components/chat/VideoNoteRecorder').default; } catch {}
 let AISummarizeModal = null; try { AISummarizeModal = require('../components/chat/AISummarizeModal').default; } catch {}
 let SmartRepliesBar = null; try { SmartRepliesBar = require('../components/chat/SmartRepliesBar').default; } catch {}
+// 2026-05-18: in-chat short videos (Reels-style 9:16 auto-loop). Lazy require
+// so the bubble + recorder modules don't get parsed when the feature flag is
+// off (kept off for non-rollout users via isShortVideoInChatEnabled()).
+let ShortVideoBubble = null; let _shortVideoMenuBuilder = null;
+try {
+  const mod = require('../components/ShortVideoBubble');
+  ShortVideoBubble = mod.default;
+  _shortVideoMenuBuilder = mod.buildShortVideoMenuItem;
+} catch {}
+let _shortVideoRecord = null;
+try { _shortVideoRecord = require('../services/shortVideoRecord'); } catch {}
+let _shortVideoConfig = null;
+try { _shortVideoConfig = require('../services/shortVideoConfig'); } catch {}
 // LocationMessage and ContactMessage removed — inline rendering used instead
 let ChatBubbleSkeleton = null; try { ChatBubbleSkeleton = require('../components/SkeletonLoader').ChatBubbleSkeleton; } catch {}
 
@@ -3495,6 +3508,16 @@ function AttachmentMenu({ visible, onClose, onPick, colors }) {
     { key: 'poll', icon: IconBarChart, label: t('chat.poll') || 'Enquete', color: '#f59e0b' },
     { key: 'meetup', icon: IconMapPin, label: t('chatConv.meetup') || 'Encontro', color: '#ec4899' },
     { key: 'playlist', icon: IconPlay, label: t('chatConv.playlist') || 'Playlist', color: '#a855f7' },
+    // 2026-05-18: "Vídeo curto" — Reels-style 9:16 clip in-chat. Only renders
+    // when the feature flag is on (isShortVideoInChatEnabled returns true).
+    // Returns null otherwise so the grid silently drops the slot for users
+    // not in the rollout. IconFilm + violet matches the Reels tab identity.
+    ...(_shortVideoConfig && _shortVideoConfig.isShortVideoInChatEnabled && _shortVideoConfig.isShortVideoInChatEnabled() ? [{
+      key: 'short_video',
+      icon: IconFilm,
+      label: t('chat.attach.shortVideo') || 'Vídeo curto',
+      color: '#7C3AED',
+    }] : []),
   ];
 
   const translateY = sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [350, 0] });
@@ -6908,13 +6931,18 @@ export default function ChatConversationScreen() {
   const [showReactions, setShowReactions] = useState(null);
   const [reactionDetail, setReactionDetail] = useState(null);
   const [showFullEmojiPicker, setShowFullEmojiPicker] = useState(false);
-  // Reaction picker tab: 'emoji' (default) or 'sticker' (premium feature).
-  // Sticker reactions: tap a sticker on a message → reacts with that sticker
-  // image instead of an emoji glyph. Server stores as 'sticker:<url>'.
+  // Reaction picker tab: 'emoji' (default), 'mine' (user's custom animated
+  // emoji), or 'sticker' (premium feature). Mine + sticker share the same
+  // server path (sticker:<url> in emoji column); the difference is that
+  // mine is free for the owner of the custom_animated_emoji rows.
   const [reactionPickerTab, setReactionPickerTab] = useState('emoji');
   const [stickerReactionPacks, setStickerReactionPacks] = useState([]); // [{id, name, cover_url, stickers: [{id, file_url}]}]
   const [stickerReactionLoading, setStickerReactionLoading] = useState(false);
   const [stickerReactionPremium, setStickerReactionPremium] = useState(null); // null=unknown, true/false=resolved
+  // "Meus emojis" tab: lazy-loaded list of the user's custom animated emoji
+  // (custom_animated_emoji table). Shape: [{ id, emoji_handle, webp_url }].
+  const [myCustomEmojis, setMyCustomEmojis] = useState(null); // null=not loaded, []=loaded empty
+  const [myCustomEmojiLoading, setMyCustomEmojiLoading] = useState(false);
   const [inputFocused, setInputFocused] = useState(false);
   const [readReceipts, setReadReceipts] = useState([]);
   const [messageInfoModal, setMessageInfoModal] = useState(null); // { message, receipts, sent_at, loading }
@@ -8005,6 +8033,30 @@ export default function ChatConversationScreen() {
     const timer = setTimeout(initE2EE, 500);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [conversationId, currentEmail, members.length]);
+
+  // R2-backed redownload listener — when a bubble (or the fullscreen
+  // viewer) successfully refetches a previously-evicted asset, swap the
+  // local message's _localUri so the bubble paints the fresh file
+  // without a chat-list refetch. Mediates between mediaCache pub/sub and
+  // React state.
+  useEffect(() => {
+    let unsub = null;
+    try {
+      const { subscribeRedownload } = require('../services/mediaCache');
+      unsub = subscribeRedownload((p) => {
+        if (!p?.ok || !p.messageId) return;
+        const fresh = p.localUri || p.url;
+        if (!fresh) return;
+        if (!mountedRef.current) return;
+        setMessages(prev => prev.map(m => (
+          m && m.id === p.messageId
+            ? { ...m, _localUri: fresh, file_url: m.file_url || p.originalUrl || p.url }
+            : m
+        )));
+      });
+    } catch {}
+    return () => { try { unsub && unsub(); } catch {} };
+  }, []);
 
   // Toggle E2E for this conversation
   const handleToggleE2E = useCallback(async () => {
@@ -11422,6 +11474,39 @@ export default function ChatConversationScreen() {
       case 'poll':         return setShowPollCreator(true);
       case 'meetup':       return setShowMeetupCreator(true);
       case 'playlist':     return setShowPlaylistCreator(true);
+      // 2026-05-18: in-chat short video (Reels-style). Flag-gated — when off
+      // the menu item isn't even rendered. The recorder orchestrates capture
+      // → compress → upload → send via shortVideoRecord.js. We surface a
+      // toast on the common sad paths (too long, permission denied) so the
+      // user knows what to do. Success path: the bubble lands via the normal
+      // WS chat_message broadcast like any other send.
+      case 'short_video': {
+        if (!_shortVideoRecord?.recordShortVideoInChat) return;
+        try {
+          const res = await _shortVideoRecord.recordShortVideoInChat({
+            conversationId,
+            source: 'camera',
+          });
+          if (!res?.success) {
+            let toastMsg = null;
+            if (res?.reason === 'too_long') {
+              toastMsg = t('chat.shortVideo.tooLong') || 'Vídeo muito longo. Máximo 30s.';
+            } else if (res?.reason === 'too_short') {
+              toastMsg = t('chat.shortVideo.tooShort') || 'Vídeo muito curto.';
+            } else if (res?.reason === 'permission_denied') {
+              toastMsg = t('common.permissionDenied') || 'Permissão negada';
+            }
+            // 'cancelled' and 'flag_off' are silent — user-initiated outcomes.
+            if (toastMsg) {
+              setScheduleToast(toastMsg);
+              setTimeout(() => setScheduleToast(''), 2400);
+            }
+          }
+        } catch (e) {
+          console.warn('[short_video] send failed', e?.message || e);
+        }
+        return;
+      }
     }
   };
 
@@ -14993,6 +15078,25 @@ export default function ChatConversationScreen() {
     } catch {} finally { setStickerReactionLoading(false); }
   }, [stickerReactionPacks.length]);
 
+  // Lazy-load the user's custom animated emoji the first time the "Meus
+  // emojis" tab opens. Cached in state — re-opening is instant. Returns
+  // items shaped { id, emoji_handle, webp_url } from custom_emoji_my.
+  const loadMyCustomEmojis = useCallback(async () => {
+    if (myCustomEmojis !== null) return; // already loaded (possibly empty)
+    setMyCustomEmojiLoading(true);
+    try {
+      const r = await api.customEmojiMy?.();
+      const items = r?.items || r?.data?.items || [];
+      // Filter out malformed rows so the grid never tries to render a
+      // missing webp_url (would show a broken-image box).
+      setMyCustomEmojis(items.filter(it => it?.webp_url));
+    } catch {
+      setMyCustomEmojis([]);
+    } finally {
+      setMyCustomEmojiLoading(false);
+    }
+  }, [myCustomEmojis]);
+
   // Resolve premium status the first time the picker opens. Server-side
   // gate is authoritative; this is just a UX hint so we can show a lock
   // overlay before the reaction round-trip 402s.
@@ -15652,6 +15756,8 @@ export default function ChatConversationScreen() {
                 )}
                 <ChatMedia
                   uri={fullUri}
+                  messageId={msg.id}
+                  fileSize={msg.file_size || 0}
                   style={{ width: 280, height: 220, opacity: imgUploading ? 0.7 : 1 }}
                   contentFit="cover"
                   // Local cached file:// → no transition, instant. Remote
@@ -15778,6 +15884,42 @@ export default function ChatConversationScreen() {
           );
         }
 
+        // 2026-05-18: Reels-style 9:16 short video bubble — autoplay muted
+        // loop in the bubble, tap to expand fullscreen with sound. Falls
+        // through to the regular 'video' renderer when the feature flag is
+        // off or the bubble module didn't load (forward-compat safety net).
+        case 'short_video': {
+          if (ShortVideoBubble) {
+            const sVUri = msg._localUri || resolveMediaUri(msg.file_url);
+            const sVMeta = (typeof msg.meta === 'string') ? (() => { try { return JSON.parse(msg.meta); } catch { return null; } })() : (msg.meta || null);
+            return (
+              <ShortVideoBubble
+                uri={sVUri}
+                meta={sVMeta}
+                messageId={msg.id}
+                durationMs={sVMeta?.short_duration_ms || (msg.duration ? msg.duration * 1000 : 0)}
+                onTapExpand={() => {
+                  if (selectionMode) return toggleSelection(msg.id);
+                  if (!msg.file_url) return;
+                  // Reuse the existing fullscreen ChatMediaViewer — it
+                  // handles unmute + rotation + pinch. No extra route needed.
+                  setMediaViewer({ visible: true, fileUrl: sVUri || msg.file_url, fileName: msg.file_name || 'short.mp4', fileSize: msg.file_size || 0, type: 'video' });
+                }}
+                onLongPressShare={(messageId) => {
+                  // TODO: "Postar nos Reels também" — wire to
+                  // shareShortVideoToReels once the backend endpoint
+                  // chat_short_video_share_to_reels lands. For now the
+                  // long-press falls through to the regular message
+                  // context menu so users can still copy/delete/reply.
+                  handleLongPress(msg);
+                }}
+              />
+            );
+          }
+          // Fallthrough — flag off or module missing: render as a normal video.
+          // No `break`/`return` so JS continues into the next case body.
+        }
+        // eslint-disable-next-line no-fallthrough
         case 'video': {
           const videoUrl = msg._localUri || resolveMediaUri(msg.file_url);
           const vidUploading = !!msg._uploading;
@@ -22769,8 +22911,8 @@ export default function ChatConversationScreen() {
                 <IconX size={20} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
-            {/* Tab switcher: Emoji vs Stickers (premium). Sticker tab lazy-
-                loads installed packs the first time it opens. */}
+            {/* Tab switcher: Emoji / Meus emojis / Stickers (premium).
+                Each lazy-loads its data the first time it opens. */}
             <View style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 4, paddingBottom: 8 }}>
               <TouchableOpacity
                 onPress={() => setReactionPickerTab('emoji')}
@@ -22778,6 +22920,14 @@ export default function ChatConversationScreen() {
               >
                 <Text style={{ color: reactionPickerTab === 'emoji' ? colors.primary : colors.textSecondary, fontWeight: '600' }}>
                   {t('chatConv.tabEmoji') || 'Emojis'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => { setReactionPickerTab('mine'); loadMyCustomEmojis(); }}
+                style={{ flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: reactionPickerTab === 'mine' ? colors.primary + '22' : 'transparent', alignItems: 'center' }}
+              >
+                <Text style={{ color: reactionPickerTab === 'mine' ? colors.primary : colors.textSecondary, fontWeight: '600' }}>
+                  {t('chatConv.tabMyEmojis') || 'Meus'}
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -22793,7 +22943,62 @@ export default function ChatConversationScreen() {
               </TouchableOpacity>
             </View>
             <ScrollView style={{ maxHeight: 320 }} showsVerticalScrollIndicator={false}>
-            {reactionPickerTab === 'sticker' ? (
+            {reactionPickerTab === 'mine' ? (
+              // "Meus emojis" — user's custom animated WebPs (custom_animated_emoji).
+              // Same reaction wire format as stickers: encoded server-side as
+              // sticker:<url>, rendered in the bubble via the existing
+              // sticker:-prefix branch. No premium gating — these are the
+              // user's own assets.
+              myCustomEmojiLoading ? (
+                <ActivityIndicator color={colors.primary} style={{ marginVertical: 24 }} />
+              ) : !myCustomEmojis || myCustomEmojis.length === 0 ? (
+                <View style={{ paddingVertical: 28, paddingHorizontal: 20, alignItems: 'center' }}>
+                  <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, marginBottom: 6, textAlign: 'center' }}>
+                    {t('chatConv.myEmojiEmptyTitle') || 'Nenhum emoji ainda'}
+                  </Text>
+                  <Text style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 14, textAlign: 'center', lineHeight: 19 }}>
+                    {t('chatConv.myEmojiEmptyBody') || 'Crie seu primeiro emoji animado para reagir com ele.'}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setShowFullEmojiPicker(false);
+                      setReactionPickerTab('emoji');
+                      try { router.push('/stickers/my'); } catch {}
+                    }}
+                    style={{ backgroundColor: colors.primary, paddingHorizontal: 22, paddingVertical: 10, borderRadius: 22 }}
+                  >
+                    <Text style={{ color: '#fff', fontWeight: '700' }}>
+                      {t('chatConv.myEmojiCreateCta') || 'Criar emoji'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <View style={styles.emojiGrid}>
+                  {myCustomEmojis.map(em => (
+                    <TouchableOpacity
+                      key={em.id}
+                      style={[styles.emojiBtn, { width: 48, height: 48 }]}
+                      onPress={() => {
+                        // Reuse sticker reaction wire path: 3rd arg = URL.
+                        // Backend stores `sticker:<url>` and the bubble's
+                        // sticker:-prefix branch renders it as an <Image>.
+                        handleReact(selectedMsg?.id, null, em.webp_url);
+                        setShowFullEmojiPicker(false);
+                        setReactionPickerTab('emoji');
+                        setSelectedMsg(null);
+                      }}
+                      accessibilityLabel={em.emoji_handle ? `Reagir com :${em.emoji_handle}:` : 'Reagir com emoji custom'}
+                    >
+                      <Image
+                        source={{ uri: api.getMediaUrl(em.webp_url) }}
+                        style={{ width: 40, height: 40 }}
+                        resizeMode="contain"
+                      />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )
+            ) : reactionPickerTab === 'sticker' ? (
               stickerReactionPremium === false ? (
                 <View style={{ paddingVertical: 32, paddingHorizontal: 20, alignItems: 'center' }}>
                   <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, marginBottom: 6, textAlign: 'center' }}>
@@ -23439,6 +23644,28 @@ export default function ChatConversationScreen() {
                         safeAlert(t('common.error') || 'Error', r?.message || 'Failed to create secret chat');
                       }
                     } catch (e) { safeAlert(t('common.error') || 'Error', String(e?.message || e)); }
+                  }},
+                ]}] : []),
+                // Find My Friends — pedir localização ao vivo do peer.
+                // Backend endpoint `chat_friend_location_request` cria row em
+                // chat_location_share_requests; peer recebe push (vide
+                // push notif handler) e abre modal aceitar/recusar.
+                // Direct chats apenas — não faz sentido em grupo/canal/saved.
+                ...(conversationType === 'direct' && params.email && (params.email || '').toLowerCase() !== (currentEmail || '').toLowerCase() ? [{ divider: true, items: [
+                  { Icon: IconMapPin, tint: '#10B981', label: t('location.requestLive') || 'Pedir localização ao vivo', onPress: async () => {
+                    setShowHeaderMenu(false);
+                    const otherEmail = (params.email || '').toLowerCase();
+                    if (!otherEmail) return;
+                    try {
+                      const r = await api.friendLocationRequest(otherEmail, '');
+                      if (r?.success) {
+                        safeAlert(t('location.requestLive') || 'Pedir localização ao vivo', t('location.requestSent') || 'Pedido enviado');
+                      } else {
+                        safeAlert(t('common.error') || 'Erro', r?.message || (t('location.requestFailed') || 'Não foi possível enviar o pedido'));
+                      }
+                    } catch (e) {
+                      safeAlert(t('common.error') || 'Erro', String(e?.message || e));
+                    }
                   }},
                 ]}] : []),
                 ...(conversationType === 'direct' ? [{ divider: true, items: [

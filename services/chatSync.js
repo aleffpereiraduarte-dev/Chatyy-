@@ -49,26 +49,23 @@ const MAX_CONVS_PER_REQ = 200;
 // sync is thrashing, and a full reload is the correct fallback.
 const gapStreak = new Map();
 
-/**
- * Pull every event missed since our last-known pts for each conversation.
- * Retries on network error with exponential backoff (3 attempts).
- *
- * @param {Array<number|string>} convIds
- * @returns {Promise<Array<{id, events, messages, latest_pts, has_more, denied?, needsFullReload?}>>}
- */
-export async function syncConversations(convIds) {
-  if (!Array.isArray(convIds) || convIds.length === 0) return [];
-  if (convIds.length > MAX_CONVS_PER_REQ) convIds = convIds.slice(0, MAX_CONVS_PER_REQ);
+// WhatsApp-invisible-sync (2026-05-18): syncConversations is called from
+// many places (focus, WS reconnect, online recovery, manual refresh) and
+// previously they'd all fire in parallel — same request 3-5× on a single
+// foreground transition. Now we serialize with a single-flight gate +
+// 500ms debounce so bursts coalesce into ONE backend hit.
+let _inFlight = null;                     // Promise of the in-flight call
+let _pending = null;                      // {convIds, resolvers[]}
+let _debounceTimer = null;
+const DEBOUNCE_MS = 500;
 
+async function _runSync(convIds) {
+  if (convIds.length > MAX_CONVS_PER_REQ) convIds = convIds.slice(0, MAX_CONVS_PER_REQ);
   const body = {
     conversations: convIds
       .map(n => Number(n))
       .filter(Number.isFinite)
-      .map(id => ({
-        id,
-        since_pts: getLastPts(id),
-        limit: 500,
-      })),
+      .map(id => ({ id, since_pts: getLastPts(id), limit: 500 })),
   };
   if (body.conversations.length === 0) return [];
 
@@ -100,6 +97,58 @@ export async function syncConversations(convIds) {
   }
   if (__DEV__) console.warn('[chatSync] giving up after retries:', lastErr);
   return [];
+}
+
+/**
+ * Pull every event missed since our last-known pts for each conversation.
+ * Retries on network error with exponential backoff (3 attempts).
+ *
+ * Coalesces concurrent / near-simultaneous callers (focus + WS reconnect +
+ * recovery) into a single backend call via 500ms debounce + single-flight
+ * gate. Multiple callers with overlapping conv lists all get the merged
+ * result for free.
+ *
+ * @param {Array<number|string>} convIds
+ * @returns {Promise<Array<{id, events, messages, latest_pts, has_more, denied?, needsFullReload?}>>}
+ */
+export function syncConversations(convIds) {
+  if (!Array.isArray(convIds) || convIds.length === 0) return Promise.resolve([]);
+
+  return new Promise((resolve, reject) => {
+    // Build / extend the pending batch.
+    if (!_pending) _pending = { ids: new Set(), resolvers: [] };
+    for (const id of convIds) _pending.ids.add(id);
+    _pending.resolvers.push(resolve);
+
+    const fire = async () => {
+      _debounceTimer = null;
+      const batch = _pending;
+      _pending = null;
+      if (!batch) return;
+
+      // Serialize: if a previous run is in flight, wait for it. This is
+      // the WhatsApp pattern — the next sync starts only after the
+      // current one finishes, so the badge has one clear lifecycle.
+      while (_inFlight) {
+        try { await _inFlight; } catch {}
+      }
+
+      const ids = Array.from(batch.ids);
+      _inFlight = _runSync(ids).finally(() => { _inFlight = null; });
+      try {
+        const out = await _inFlight;
+        // Filter the per-caller result to only convs they asked about.
+        // For now we just hand everyone the same merged result — callers
+        // already filter by id downstream.
+        for (const r of batch.resolvers) { try { r(out); } catch {} }
+      } catch (e) {
+        for (const r of batch.resolvers) { try { r([]); } catch {} }
+      }
+    };
+
+    if (_debounceTimer) clearTimeout(_debounceTimer);
+    _debounceTimer = setTimeout(fire, DEBOUNCE_MS);
+  });
 }
 
 // ─── Event applier ────────────────────────────────────────────────────

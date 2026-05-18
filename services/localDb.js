@@ -1601,36 +1601,55 @@ export async function replayOfflineQueue(apiCall) {
 // 21. Enhanced Delta Sync (all entity types)
 // ---------------------------------------------------------------------------
 
-export async function fullDeltaSync(apiCall) {
+// WhatsApp-invisible-sync (2026-05-18): chat is now push-only (WS events
+// + envelope pull + per-conv pts on open) so it's excluded from this
+// catch-up. Email/calendar/contacts still benefit from a delta pull on
+// foreground / reconnect because IMAP+CalDAV don't push to the client
+// directly. Other surfaces (feed/drive/docs/notes/meet/notifications)
+// are lazy — they load when the user navigates there, so we skip them
+// here unless explicitly requested.
+const DEFAULT_SURFACES = 'email,calendar,contacts';
+
+export async function fullDeltaSync(apiCall, opts = {}) {
   if (Platform.OS === 'web') return;
   try {
     await _ensureDb();
     const lastSeq = await getLastSyncSeq();
+    // `surfaces` overrides the default if a caller explicitly opts in
+    // (e.g. a "full refresh" gesture in settings).
+    const types = (opts && typeof opts.surfaces === 'string' && opts.surfaces.length)
+      ? opts.surfaces
+      : DEFAULT_SURFACES;
 
     const res = await apiCall('chat_sync', {
       since_seq: lastSeq,
-      types: 'chat,email,feed,calendar,drive,docs,notes,meet,notifications',
+      types,
       limit: 1000
     });
 
     if (!res?.success) return;
 
-    // Apply all entity types
-    if (res.conversations?.length) await saveConversations(res.conversations);
-    if (res.messages?.length) {
-      for (const m of res.messages) {
-        if (m.deleted_at) await deleteMessage(m.id); else await saveMessage(m);
+    // Chat (conversations + messages) — only applied if the caller
+    // explicitly requested 'chat' in `surfaces`. Default path skips it
+    // because the WS handler already saves messages via applyRealtimeEvent
+    // and per-conv pts catch-up runs on open / reconnect.
+    if (types.indexOf('chat') >= 0) {
+      if (res.conversations?.length) await saveConversations(res.conversations);
+      if (res.messages?.length) {
+        for (const m of res.messages) {
+          if (m.deleted_at) await deleteMessage(m.id); else await saveMessage(m);
+        }
       }
     }
     if (res.contacts?.length) await saveContacts(res.contacts);
     if (res.emails?.length) await saveEmails('INBOX', res.emails);
-    if (res.feed_posts?.length) await saveFeedPosts(res.feed_posts);
+    if (types.indexOf('feed') >= 0 && res.feed_posts?.length) await saveFeedPosts(res.feed_posts);
     if (res.calendar_events?.length) await saveCalendarEvents(res.calendar_events);
-    if (res.drive_files?.length) await saveDriveFiles(res.drive_files);
-    if (res.documents?.length) await saveDocuments(res.documents);
-    if (res.notes?.length) await saveNotes(res.notes);
-    if (res.notifications?.length) await saveNotifications(res.notifications);
-    if (res.meeting_rooms?.length) await saveMeetingRooms(res.meeting_rooms);
+    if (types.indexOf('drive') >= 0 && res.drive_files?.length) await saveDriveFiles(res.drive_files);
+    if (types.indexOf('docs') >= 0 && res.documents?.length) await saveDocuments(res.documents);
+    if (types.indexOf('notes') >= 0 && res.notes?.length) await saveNotes(res.notes);
+    if (types.indexOf('notifications') >= 0 && res.notifications?.length) await saveNotifications(res.notifications);
+    if (types.indexOf('meet') >= 0 && res.meeting_rooms?.length) await saveMeetingRooms(res.meeting_rooms);
     if (res.user_profiles?.length) await saveUserProfiles(res.user_profiles);
 
     if (res.sync_seq) await setLastSyncSeq(res.sync_seq);
@@ -1638,7 +1657,7 @@ export async function fullDeltaSync(apiCall) {
     // Replay offline queue while we're at it
     await replayOfflineQueue(apiCall);
 
-    console.log('[localDb] fullDeltaSync done, seq:', res.sync_seq);
+    console.log('[localDb] fullDeltaSync done, seq:', res.sync_seq, 'surfaces:', types);
   } catch (e) {
     console.warn('[localDb] fullDeltaSync:', e?.message);
   }

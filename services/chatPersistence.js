@@ -57,6 +57,30 @@ async function _persistMessage(convId, msg) {
     const SmartCache = require('./smartChatCache');
     SmartCache.cacheSingleMessage?.(convId, msg);
   });
+  // Layer 3 — media prefetch (offline-first guarantee, task #1103 round 2):
+  // every inbound media-bearing msg gets enfileirado pro disk cache em
+  // background. Heavy types respect the per-bucket WhatsApp policy gate
+  // inside cacheMedia (videos/docs default never-on-cellular). Voice/audio
+  // bypass the gate via prefetchAudioMessage (tiny + always wanted).
+  //
+  // Annotate conversation_id on the row so the policy gate + Keep-Always
+  // protection work even when the server omitted it on the inner shape.
+  _safe(() => {
+    const { prefetchIncomingMessageMedia } = require('./mediaCache');
+    const enriched = (msg.conversation_id == null && convId != null)
+      ? { ...msg, conversation_id: convId }
+      : msg;
+    prefetchIncomingMessageMedia(enriched);
+  });
+  // Voice-specific side hook — persists wave_peaks + cacheVoiceMessage so the
+  // bubble paints the real envelope before the audio download lands. The
+  // mediaCache prefetch above ALSO handles audio via prefetchAudioMessage,
+  // but voicePrefetch additionally tracks the message id → conv id map for
+  // the played-receipt auto-ack (voicePlaybackBus).
+  _safe(() => {
+    const { onIncomingVoiceMessage } = require('./voicePrefetch');
+    onIncomingVoiceMessage?.(msg);
+  });
 }
 
 function _onIncomingChatMessage(payload) {

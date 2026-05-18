@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text } from 'react-native';
+import { View, Text, Platform } from 'react-native';
 import { IconVideo } from './Icons';
 
 let _expoVideo = null;
@@ -25,8 +25,20 @@ export default function VideoNotePlayer({ uri }) {
       </View>
     );
   }
+  // OFFLINE-FIRST: prefer the cached file:// URI when mediaCache has it on
+  // disk. Round-bubble video notes are short (5-30s, <2MB) so prefetch lands
+  // them with the rest of the chat media — by the time the user taps to
+  // play, the local file already exists and playback survives offline.
+  let resolvedUri = uri;
+  if (Platform.OS !== 'web' && typeof uri === 'string' && !uri.startsWith('file://')) {
+    try {
+      const { getLocalUriIfCached } = require('../services/mediaCache');
+      const local = getLocalUriIfCached(uri.startsWith('http') ? uri : `https://chatyy.com.br${uri}`);
+      if (local) resolvedUri = local;
+    } catch {}
+  }
   const { useVideoPlayer, VideoView } = mod;
-  const player = useVideoPlayer(uri, (p) => {
+  const player = useVideoPlayer(resolvedUri, (p) => {
     // expo-video usa `muted`/`loop` como properties (não isMuted como em
     // expo-av). p?.play() pode rejeitar em iOS — engole.
     try { p.muted = true; p.loop = true; const r = p.play?.(); if (r?.catch) r.catch(() => {}); } catch {}

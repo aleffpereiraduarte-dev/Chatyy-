@@ -36,7 +36,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Platform, ActivityIndicator, TouchableOpacity, Text } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
-import { getLocalUriSyncJs, cacheMedia } from '../services/mediaCache';
+import { getLocalUriSyncJs, cacheMedia, requestRedownload, formatBytesShort } from '../services/mediaCache';
 import * as api from '../services/api';
 
 function resolveAbsolute(url) {
@@ -96,6 +96,11 @@ export default function ChatMedia({
   recyclingKey,
   transition,
   placeholderColor = 'rgba(0,0,0,0.06)',
+  // R2-backed redownload — when the bubble passes its messageId, the
+  // failure chip below offers "Baixar de novo" instead of "Tentar pra
+  // tentar". On 410 the chip swaps to a disabled "Mensagem apagada".
+  messageId,
+  fileSize,
   ...rest
 }) {
   // Allow remote fallback: ChatMedia is used in render closures (FlashList
@@ -113,10 +118,40 @@ export default function ChatMedia({
   // CDN is briefly down.
   const [failed, setFailed] = useState(false);
   const [retryEpoch, setRetryEpoch] = useState(0);
+  const [redownloading, setRedownloading] = useState(false);
+  const [redownloadDeleted, setRedownloadDeleted] = useState(false);
   // Reset failure when the URI changes (FlashList row recycling +
   // fresh cache hit).
-  useEffect(() => { setFailed(false); }, [localUri]);
-  const handleRetry = useCallback(() => {
+  useEffect(() => {
+    setFailed(false);
+    setRedownloadDeleted(false);
+  }, [localUri]);
+  const handleRetry = useCallback(async () => {
+    // When the bubble passed a messageId we go through the server-side
+    // redownload flow first — it can return a fresh CDN URL even when
+    // the original URL was hard-evicted from cache. Pure client retry
+    // would just hit the same dead URL again.
+    if (messageId && Platform.OS !== 'web') {
+      if (redownloading) return;
+      setRedownloading(true);
+      try {
+        const r = await requestRedownload(messageId, resolveAbsolute(uri));
+        if (r?.ok) {
+          setFailed(false);
+          setRetryEpoch(e => e + 1);
+        } else if (r?.deleted) {
+          setRedownloadDeleted(true);
+        } else {
+          // Network or server error — let the user retry again.
+          setFailed(true);
+        }
+      } catch {
+        setFailed(true);
+      } finally {
+        setRedownloading(false);
+      }
+      return;
+    }
     setFailed(false);
     setRetryEpoch(e => e + 1);
     // Re-trigger background download — syncIndex was already evicted
@@ -124,7 +159,7 @@ export default function ChatMedia({
     if (uri && Platform.OS !== 'web') {
       try { cacheMedia(resolveAbsolute(uri)).catch(() => {}); } catch {}
     }
-  }, [uri]);
+  }, [uri, messageId, redownloading]);
 
   if (!localUri) {
     return (
@@ -133,17 +168,28 @@ export default function ChatMedia({
       </View>
     );
   }
-  if (failed) {
+  if (failed || redownloadDeleted) {
+    const sizeLabel = (typeof fileSize === 'number' && fileSize > 0) ? formatBytesShort(fileSize) : '';
+    const isDeleted = redownloadDeleted;
     return (
       <TouchableOpacity
-        onPress={handleRetry}
+        onPress={isDeleted ? undefined : handleRetry}
+        disabled={isDeleted || redownloading}
         style={[{ backgroundColor: placeholderColor, alignItems: 'center', justifyContent: 'center', padding: 12 }, style]}
-        accessibilityLabel="Tentar baixar novamente"
+        accessibilityLabel={isDeleted ? 'Mensagem apagada' : 'Baixar de novo'}
         accessibilityRole="button"
       >
-        <Text style={{ fontSize: 11, color: 'rgba(0,0,0,0.55)', fontWeight: '600', textAlign: 'center' }}>
-          Falha ao carregar{'\n'}Toque pra tentar
-        </Text>
+        {redownloading ? (
+          <ActivityIndicator size="small" color="#999" />
+        ) : (
+          <Text style={{ fontSize: 11, color: 'rgba(0,0,0,0.55)', fontWeight: '600', textAlign: 'center' }}>
+            {isDeleted
+              ? 'Mensagem apagada'
+              : (messageId
+                  ? `Baixar de novo${sizeLabel ? ` (${sizeLabel})` : ''}`
+                  : 'Falha ao carregar\nToque pra tentar')}
+          </Text>
+        )}
       </TouchableOpacity>
     );
   }

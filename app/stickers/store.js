@@ -17,9 +17,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView, FlatList, Image, ActivityIndicator,
-  Animated, Dimensions, Platform, Modal, TextInput, RefreshControl, Alert,
+  Animated, Dimensions, Platform, Modal, TextInput, RefreshControl, Alert, Share,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useTheme } from '../../context/ThemeContext';
 import { useLanguage } from '../../context/LanguageContext';
 import * as api from '../../services/api';
@@ -306,11 +306,12 @@ function PackDetailModal({ pack, visible, onClose, installedSet, onInstall, onUn
           </View>
 
           {/* CTA */}
-          <View style={{ padding: 16, borderTopWidth: 1, borderTopColor: colors.border }}>
+          <View style={{ padding: 16, borderTopWidth: 1, borderTopColor: colors.border, flexDirection: 'row', gap: 10 }}>
             <TouchableOpacity
               onPress={() => (installed ? onUninstall(pack) : onInstall(pack))}
               activeOpacity={0.85}
               style={{
+                flex: 1,
                 paddingVertical: 14, borderRadius: 14,
                 backgroundColor: installed ? (colors.surfaceVariant || colors.background) : colors.primary,
                 borderWidth: installed ? 1 : 0, borderColor: colors.border,
@@ -326,6 +327,46 @@ function PackDetailModal({ pack, visible, onClose, installedSet, onInstall, onUn
                   : (t?.('chat.installPack') || 'Adicionar pacote')}
               </Text>
             </TouchableOpacity>
+            {/* Share button — only meaningful if the pack has a handle, which
+                is true for all newly minted packs (sticker_pack_create assigns
+                one). Older / legacy packs without a handle still render the
+                button but it short-circuits with a polite warning. */}
+            <TouchableOpacity
+              onPress={async () => {
+                const handle = pack.handle;
+                if (!handle) {
+                  Alert.alert(t?.('chat.shareUnavailable') || 'Não dá pra compartilhar', t?.('chat.shareUnavailableBody') || 'Esse pacote não tem link público.');
+                  return;
+                }
+                const url = `https://chatyy.com.br/stickers/store?install=${encodeURIComponent(handle)}`;
+                const message = (t?.('chat.shareMsg') || 'Confira esse pacote no Chatyy:') + ' ' + url;
+                try {
+                  if (Platform.OS === 'web') {
+                    if (navigator.share) {
+                      await navigator.share({ title: pack.name, text: message, url });
+                    } else if (navigator.clipboard?.writeText) {
+                      await navigator.clipboard.writeText(url);
+                      Alert.alert(t?.('chat.linkCopied') || 'Link copiado', url);
+                    } else {
+                      Alert.alert(pack.name, url);
+                    }
+                  } else {
+                    await Share.share({ message, url, title: pack.name });
+                  }
+                } catch {}
+              }}
+              activeOpacity={0.85}
+              style={{
+                paddingVertical: 14, paddingHorizontal: 18, borderRadius: 14,
+                backgroundColor: colors.surfaceVariant || colors.background,
+                borderWidth: 1, borderColor: colors.border,
+                alignItems: 'center', justifyContent: 'center',
+              }}
+            >
+              <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }}>
+                {t?.('common.share') || 'Compartilhar'}
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
       </View>
@@ -335,6 +376,7 @@ function PackDetailModal({ pack, visible, onClose, installedSet, onInstall, onUn
 
 export default function StickerStoreScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams();
   const { colors } = useTheme();
   const { t } = useLanguage();
   const [trending, setTrending] = useState([]);
@@ -378,6 +420,29 @@ export default function StickerStoreScreen() {
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
+
+  // Deep-link install: if the screen is opened with `?install=<handle>` (from
+  // a share link), resolve the handle → pack row → auto-open the install
+  // modal. Runs once per mount; subsequent param changes (rare) re-trigger.
+  const installHandleSeenRef = useRef(null);
+  useEffect(() => {
+    const raw = params?.install;
+    const handle = typeof raw === 'string' ? raw.trim() : Array.isArray(raw) ? String(raw[0] || '').trim() : '';
+    if (!handle) return;
+    if (installHandleSeenRef.current === handle) return;
+    installHandleSeenRef.current = handle;
+    (async () => {
+      try {
+        const r = await api.stickerPackGetByHandle(handle);
+        const pack = r?.pack || r?.data?.pack;
+        if (pack && pack.id) {
+          setSelectedPack(pack);
+        }
+      } catch {
+        // Soft-fail: user just lands on the store with no modal.
+      }
+    })();
+  }, [params?.install]);
 
   // Debounced search.
   useEffect(() => {

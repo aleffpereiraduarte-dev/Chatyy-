@@ -55,7 +55,16 @@ export default function StickerEditor({ visible, imageUri, onCancel, onSave, t, 
   const [activeTab, setActiveTab] = useState('text');
   const [trashHot, setTrashHot] = useState(false);
   const [textDeleted, setTextDeleted] = useState(false);
+  // Cached cutout URL — when the user taps the "Remover fundo" toggle we
+  // POST to chat_sticker_remove_bg and the server hands us back a PNG with
+  // transparency. We then preview that PNG in the canvas (instead of the
+  // original) so the user sees the cutout BEFORE saving.
+  const [bgCutoutUri, setBgCutoutUri] = useState(null);
+  const [bgProcessing, setBgProcessing] = useState(false);
   const shotRef = useRef(null);
+
+  // Effective canvas image — cutout takes priority once available.
+  const previewUri = bgCutoutUri || imageUri;
 
   // Draggable text position. PanResponder also tracks whether the current
   // drag is overlapping the bottom trash zone — when released over it we
@@ -95,6 +104,164 @@ export default function StickerEditor({ visible, imageUri, onCancel, onSave, t, 
     })
   ).current;
 
+  // Web-only: MediaPipe SelfieSegmentation pipeline. Loads the WASM module
+  // from the official MediaPipe CDN, masks the picked image against the
+  // subject (person) and returns a transparent PNG blob. This handles
+  // complex backgrounds (clutter, gradients, photos shot outdoors) that
+  // the server-side ImageMagick floodfill cannot — floodfill only works
+  // for uniform backgrounds. On success we POST to chat_sticker_remove_bg
+  // with `client_processed=true` and the server skips the floodfill stage,
+  // only re-encoding to WebP-friendly 512x512 PNG (transparency preserved).
+  const runMediaPipeBgRemoval = useCallback(async () => {
+    if (Platform.OS !== 'web') return null;
+    if (typeof window === 'undefined' || typeof document === 'undefined') return null;
+    // Dynamically inject the MediaPipe loader script. The SelfieSegmentation
+    // package ships UMD globals + WASM blobs from a single CDN root.
+    const CDN_BASE = 'https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1.1675465747';
+    async function ensureScript() {
+      if (window.SelfieSegmentation) return;
+      await new Promise((resolve, reject) => {
+        const existing = document.querySelector('script[data-mp-selfie]');
+        if (existing) { existing.addEventListener('load', resolve); existing.addEventListener('error', reject); return; }
+        const s = document.createElement('script');
+        s.src = `${CDN_BASE}/selfie_segmentation.js`;
+        s.async = true;
+        s.crossOrigin = 'anonymous';
+        s.setAttribute('data-mp-selfie', '1');
+        s.onload = resolve;
+        s.onerror = reject;
+        document.head.appendChild(s);
+      });
+    }
+    await ensureScript();
+    if (!window.SelfieSegmentation) throw new Error('MediaPipe SelfieSegmentation unavailable');
+
+    // Load the source image into an HTMLImageElement.
+    const img = new window.Image();
+    img.crossOrigin = 'anonymous';
+    img.src = imageUri;
+    await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; });
+
+    const seg = new window.SelfieSegmentation({
+      locateFile: (file) => `${CDN_BASE}/${file}`,
+    });
+    seg.setOptions({ modelSelection: 1, selfieMode: false });
+
+    const w = 512, h = 512;
+    // Cover-crop to 512x512 so output matches the WhatsApp sticker spec.
+    const cover = document.createElement('canvas');
+    cover.width = w; cover.height = h;
+    const cctx = cover.getContext('2d');
+    const ratio = Math.max(w / img.width, h / img.height);
+    const cw = img.width * ratio, ch = img.height * ratio;
+    cctx.drawImage(img, (w - cw) / 2, (h - ch) / 2, cw, ch);
+
+    // Run segmentation against the cover-cropped frame so the mask aligns 1:1.
+    const blobOut = await new Promise((resolve, reject) => {
+      try {
+        seg.onResults((results) => {
+          try {
+            const out = document.createElement('canvas');
+            out.width = w; out.height = h;
+            const octx = out.getContext('2d');
+            // Mask path: draw subject only by clipping with the segmentation mask.
+            octx.save();
+            octx.drawImage(results.segmentationMask, 0, 0, w, h);
+            octx.globalCompositeOperation = 'source-in';
+            octx.drawImage(cover, 0, 0, w, h);
+            octx.restore();
+            out.toBlob((b) => b ? resolve(b) : reject(new Error('toBlob null')), 'image/png', 1);
+          } catch (e) { reject(e); }
+        });
+        seg.send({ image: cover }).catch(reject);
+      } catch (e) { reject(e); }
+    });
+    try { seg.close && seg.close(); } catch {}
+    return blobOut;
+  }, [imageUri]);
+
+  // Run the server-side bg removal pipeline immediately on toggle so the
+  // user sees a preview. The save path picks the cutout up automatically.
+  // On web we run MediaPipe locally FIRST (handles complex backgrounds),
+  // then hand the cutout to the backend with client_processed=true so the
+  // server only re-encodes. Native still falls back to the server-side
+  // ImageMagick floodfill — a native MediaPipe binding (e.g. react-native-
+  // mediapipe / @imgly/background-removal-rn) would unlock the same path
+  // there, but that's a future native-rebuild.
+  // TODO(native): adopt @imgly/background-removal-rn or react-native-mediapipe
+  //               to bring complex-background subject extraction to iOS+Android.
+  const runBgRemoval = useCallback(async () => {
+    if (bgProcessing || !imageUri) return;
+    setBgProcessing(true);
+    try {
+      // Build a File/Blob/uri shape that the api helper accepts.
+      let file;
+      let clientProcessed = false;
+      if (Platform.OS === 'web') {
+        // Try MediaPipe first. If it throws (offline / CSP / oldbrowser) we
+        // fall through to the server-side pipeline so the user still gets
+        // SOMETHING usable.
+        try {
+          const mpBlob = await runMediaPipeBgRemoval();
+          if (mpBlob && mpBlob.size > 200) {
+            file = {
+              uri: URL.createObjectURL(mpBlob),
+              blob: mpBlob,
+              name: 'sticker_bg_mp.png',
+              type: 'image/png',
+            };
+            clientProcessed = true;
+          }
+        } catch (e) {
+          console.warn('[StickerEditor] MediaPipe path failed, falling back:', e?.message);
+        }
+        if (!file) {
+          // imageUri here is an object URL (createObjectURL of the picked file).
+          try {
+            const blob = await fetch(imageUri).then(r => r.blob());
+            file = { uri: imageUri, blob, name: 'sticker_bg.png', type: blob.type || 'image/png' };
+          } catch { file = { uri: imageUri, name: 'sticker_bg.png', type: 'image/png' }; }
+        }
+      } else {
+        file = { uri: imageUri, name: 'sticker_bg.png', type: 'image/png' };
+      }
+      const r = await api.chatStickerRemoveBg(file, { clientProcessed });
+      // Backend may return data wrapped under `data` (jsonResponse helper) or
+      // at the top level depending on case.
+      const processed = r?.processed ?? r?.data?.processed;
+      const url = r?.url || r?.cdn_url || r?.data?.url || r?.data?.cdn_url;
+      if (processed && url) {
+        // Resolve to absolute URL so <Image> / <img> can fetch it.
+        let abs = url;
+        if (typeof abs === 'string' && abs.startsWith('/data/')) {
+          let base = '';
+          try { base = (typeof api.getCurrentBaseUrl === 'function' ? api.getCurrentBaseUrl() : api.BASE_URL) || ''; } catch {}
+          if (!base) base = api.BASE_URL || '';
+          base = String(base).replace(/\/$/, '');
+          if (base) abs = base + abs;
+          else if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) abs = window.location.origin + abs;
+          else abs = 'https://chatyy.com.br' + abs;
+        }
+        setBgCutoutUri(abs);
+      }
+    } catch (err) {
+      console.warn('[StickerEditor] bg removal failed:', err?.message);
+    } finally {
+      setBgProcessing(false);
+    }
+  }, [bgProcessing, imageUri]);
+
+  const handleToggleRemoveBg = useCallback(() => {
+    const next = !removeBg;
+    setRemoveBg(next);
+    if (!next) {
+      // Turning off — drop the cutout, go back to original.
+      setBgCutoutUri(null);
+      return;
+    }
+    if (!bgCutoutUri) runBgRemoval();
+  }, [removeBg, bgCutoutUri, runBgRemoval]);
+
   const toggleEmojiTag = useCallback((e) => {
     setEmojiTags(prev => {
       if (prev.includes(e)) return prev.filter(x => x !== e);
@@ -119,7 +286,9 @@ export default function StickerEditor({ visible, imageUri, onCancel, onSave, t, 
         ctx.clearRect(0, 0, 512, 512);
         const img = new window.Image();
         img.crossOrigin = 'anonymous';
-        img.src = imageUri;
+        // Use the cutout if the user enabled bg removal — that way the
+        // composed PNG inherits the transparency.
+        img.src = previewUri;
         await new Promise((r, j) => { img.onload = r; img.onerror = j; });
         // Cover-crop (square)
         const ratio = Math.max(512 / img.width, 512 / img.height);
@@ -156,7 +325,8 @@ export default function StickerEditor({ visible, imageUri, onCancel, onSave, t, 
         }
         if (!captureUri) {
           console.warn('[StickerEditor] capture failed — sticker may not include text overlay');
-          captureUri = imageUri;
+          // Fall back to whichever preview we currently show (cutout if any).
+          captureUri = previewUri;
         }
         // Resize to 512x512 (WhatsApp sticker spec)
         try {
@@ -167,18 +337,10 @@ export default function StickerEditor({ visible, imageUri, onCancel, onSave, t, 
         file = { uri: captureUri, name: `sticker_${Date.now()}.png`, type: 'image/png' };
       }
 
-      // Optional: run remove-bg. Server currently returns processed:false for
-      // most cases, so we skip blocking on it. Future: when REMOVE_BG_API_KEY
-      // is set server-side, this path returns a new URL we can use instead.
-      if (removeBg) {
-        try {
-          const bgRes = await api.chatStickerRemoveBg(file);
-          if (bgRes?.processed && bgRes?.url) {
-            // Not implemented yet — keep going with the original file.
-            console.log('[StickerEditor] remove_bg processed:', bgRes.url);
-          }
-        } catch (e) { /* best effort */ }
-      }
+      // BG removal already happened (and was previewed) the moment the user
+      // flipped the toggle, see runBgRemoval. The composited file above is
+      // built off `previewUri` which is already the cutout PNG. Nothing left
+      // to do here — kept as a no-op for back-compat.
 
       // Upload via the sticker_create endpoint. Falls back to hand-off to the
       // caller (which then does its own upload flow) only if the endpoint is
@@ -260,9 +422,21 @@ export default function StickerEditor({ visible, imageUri, onCancel, onSave, t, 
             backgroundColor: '#333',
           }}>
             {Platform.OS === 'web' ? (
-              <img src={imageUri} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
+              <img src={previewUri} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="" />
             ) : (
-              <CachedImage source={{ uri: imageUri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+              <CachedImage source={{ uri: previewUri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+            )}
+            {bgProcessing && (
+              <View pointerEvents="none" style={{
+                position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+                alignItems: 'center', justifyContent: 'center',
+                backgroundColor: 'rgba(0,0,0,0.35)',
+              }}>
+                <ActivityIndicator color="#fff" size="large" />
+                <Text style={{ color: '#fff', fontSize: 11, marginTop: 8, fontWeight: '600' }}>
+                  {t?.('chat.stickerRemovingBg') || 'Removendo fundo...'}
+                </Text>
+              </View>
             )}
             {!!text.trim() && !textDeleted && (
               <Animated.View
@@ -368,12 +542,14 @@ export default function StickerEditor({ visible, imageUri, onCancel, onSave, t, 
             </View>
           </View>
 
-          {/* Background removal toggle (TODO — server stub returns processed:false
-              until REMOVE_BG_API_KEY is configured. Kept in the UI so the
-              feature is discoverable and the client side can be upgraded to
-              MediaPipe SelfieSegmentation without another release.) */}
+          {/* Background removal toggle — flipping it on uploads to
+              chat_sticker_remove_bg, which runs ImageMagick corner-fuzz
+              floodfill (or remove.bg if REMOVE_BG_API_KEY is set) and hands
+              us a transparent PNG. We preview the cutout in the canvas
+              above; the saved sticker inherits that transparency. */}
           <TouchableOpacity
-            onPress={() => setRemoveBg(!removeBg)}
+            onPress={handleToggleRemoveBg}
+            disabled={bgProcessing}
             style={{
               width: CANVAS, marginTop: 16, paddingVertical: 10, paddingHorizontal: 14,
               borderRadius: 10,
@@ -381,15 +557,20 @@ export default function StickerEditor({ visible, imageUri, onCancel, onSave, t, 
               borderWidth: removeBg ? 1.5 : 0,
               borderColor: '#30D158',
               flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+              opacity: bgProcessing ? 0.7 : 1,
             }}
           >
             <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>
-              {removeBg ? '✓ ' : ''}
+              {removeBg ? (bgCutoutUri ? '✓ ' : '… ') : ''}
               {t?.('chat.stickerRemoveBg') || 'Remover fundo automaticamente'}
             </Text>
-            <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 10 }}>
-              {t?.('chat.stickerRemoveBgBeta') || 'Beta'}
-            </Text>
+            {bgProcessing ? (
+              <ActivityIndicator size="small" color="#30D158" />
+            ) : (
+              <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 10 }}>
+                {removeBg && bgCutoutUri ? 'OK' : (t?.('chat.stickerRemoveBgBeta') || 'Beta')}
+              </Text>
+            )}
           </TouchableOpacity>
 
           {/* Actions */}

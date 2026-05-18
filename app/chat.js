@@ -524,15 +524,33 @@ function ChatHub() {
     setMountedTabs(prev => { const next = new Set(prev); next.add(tab); return next; });
   }, [indicatorAnim, contentOpacity, activeTab, TAB_KEYS]);
 
-  // Trigger initial sync ONCE (not on every open)
+  // Trigger initial sync ONCE per account (not per app-version-bump).
+  // Old gate was a global `sync_version` bump that re-ran the 8-phase
+  // pull on every release → users felt "always syncing". Now we key the
+  // gate on the account email so the heavy fetch happens exactly once
+  // after the user's very first login on this device. WS push +
+  // event-driven deltaSync handle everything afterwards.
   const syncTriggered = useRef(false);
   useEffect(() => {
-    if (!syncTriggered.current && !isSyncComplete() && user?.token) {
-      syncTriggered.current = true;
+    if (syncTriggered.current) return;
+    const email = user?.email;
+    if (!email || !user?.token) return;
+    syncTriggered.current = true;
+
+    try {
+      const { getString, setString } = require('../services/mmkv');
+      const gateKey = `initial_sync_done:${email}`;
+      if (getString?.(gateKey) === '1') return; // already done for this account
       const api = require('../services/api');
-      runInitialSync(api).catch(() => {});
-    }
-  }, [user?.token]);
+      runInitialSync(api).then((r) => {
+        // Mark done only on success (or skip path). Avoid sealing the
+        // gate on transient errors so the user gets another chance.
+        if (r && !r.error) {
+          try { setString?.(gateKey, '1'); } catch {}
+        }
+      }).catch(() => {});
+    } catch {}
+  }, [user?.email, user?.token]);
 
   const handleBack = useCallback(() => {
     if (activeTab !== 'chats') {

@@ -12,13 +12,14 @@ import * as api from '../services/api';
 import LiveChat from '../components/LiveChat'; // eslint-disable-line no-unused-vars -- kept for fallback
 import LiveChatOverlay from '../components/live/LiveChatOverlay';
 import AvatarCircle from '../components/AvatarCircle';
-import { IconX, IconCameraFlip, IconMic, IconMicOff, IconVideo, IconVideoOff, IconHeart, IconShare, IconSend, IconSettings, IconUserPlus, IconSparkles, IconFilter, IconPin, IconStar, IconStarFilled, IconGlobe, IconLock, IconUsers, IconEye, IconStop, IconCheck, IconBookmark } from '../components/Icons';
+import { IconX, IconCameraFlip, IconMic, IconMicOff, IconVideo, IconVideoOff, IconHeart, IconShare, IconSend, IconSettings, IconUserPlus, IconSparkles, IconFilter, IconPin, IconStar, IconStarFilled, IconGlobe, IconLock, IconUsers, IconEye, IconStop, IconCheck, IconBookmark, IconChevronRight, IconChevronDown, IconBarChart, IconBrush, IconBookmarkFilled } from '../components/Icons';
 import { useTheme } from '../context/ThemeContext';
 import AnimatedViewerCount from '../components/AnimatedViewerCount';
 import LiveTopGifters from '../components/LiveTopGifters';
 import LiveGiftAnimation from '../components/LiveGiftAnimation';
 import LivePollOverlay from '../components/live/LivePollOverlay';
 import * as liveBroadcastNotification from '../services/liveBroadcastNotification';
+import { publishToCfStream } from '../services/cfStreamPublisher';
 import * as Haptics from 'expo-haptics';
 
 // Cross-platform WebRTC — same pattern as call.js
@@ -128,6 +129,11 @@ export default function LiveBroadcastScreen() {
   const [activeFilter, setActiveFilter] = useState('none');
   // Sparkle/heart particle effect — toggled by the Effects button.
   const [effectsOn, setEffectsOn] = useState(false);
+  // Right rail collapsed by default — user feedback 2026-05-18: "painel de
+  // efeitos do lado direito aparece feio e bagunçado". Now the rail shows
+  // only the heart counter + a single chevron; tap chevron to expand the
+  // full action stack (settings/effects/filter/AR/replay/pin/poll/flip).
+  const [rightStackOpen, setRightStackOpen] = useState(false);
 
   // ─── AR / Beauty / Greenscreen filter carousel (wave 16, 2026-05-17) ───
   // The native LiveHostViewController (iOS) and LiveHostActivity (Android)
@@ -240,6 +246,18 @@ export default function LiveBroadcastScreen() {
   // Guest peer ref + per-guest ICE queue for Codex root cause #7.
   const guestPeerRef = useRef(null);
   const guestIceQueueRef = useRef(new Map());
+
+  // ─── Cloudflare Stream WHIP publisher (2026-05-18) ───
+  // When the host enables "Salvar live", we route the broadcast through
+  // CF Stream instead of the legacy P2P path so the recording lands as a
+  // managed VOD (HLS + MP4). `cfPublisherRef` holds the negotiated
+  // RTCPeerConnection so `performEndLive` can close it cleanly. `cfModeRef`
+  // is a boolean mirror of "did we publish to CF this session" so the end
+  // path can decide between live_end (legacy) and live_end_cf (CF) without
+  // re-reading saveReplay (which could have changed mid-session).
+  const cfPublisherRef = useRef(null);
+  const cfModeRef = useRef(false);
+  const cfIngestRef = useRef(null); // { cf_input_uid, hls_url, rtmps_url, rtmps_key }
 
   // Stage 3 of #929 — host subscribes to LK room `live_{sessionId}` so
   // any approved cohort publishing into it can be rendered alongside the
@@ -1209,11 +1227,51 @@ export default function LiveBroadcastScreen() {
       // Ask for camera + mic only now — the user actively tapped Go Live.
       const ok = await ensureCameraStream();
       if (!ok) return;
-      const res = await api.liveStart(titleInput.trim() || t('live.title') || 'Live', { audience, category: liveCategory, subscribersOnly });
+      // When the host opted into "Salvar live" we go through the Cloudflare
+      // Stream pipeline (live_start_cf → WHIP publish → live_end_cf) so the
+      // recording lands as a managed VOD. Otherwise we keep the legacy P2P
+      // path (no recording) for full back-compat with the existing viewer
+      // join flow. cfModeRef is the single source of truth for the rest of
+      // the lifecycle (end path picks live_end vs live_end_cf accordingly).
+      const wantsCf = !!saveReplay;
+      cfModeRef.current = wantsCf;
+      const liveTitle = titleInput.trim() || t('live.title') || 'Live';
+      const res = wantsCf
+        ? await api.liveStartCf(liveTitle, { audience, category: liveCategory, subscribersOnly })
+        : await api.liveStart(liveTitle, { audience, category: liveCategory, subscribersOnly });
       const sid = res.data?.session_id || res.data?.session?.id;
       if (res.success && sid) {
         setSessionId(sid);
         sessionIdRef.current = sid;
+
+        // ── CF Stream WHIP publish ──
+        // If we asked the backend for the CF pipeline, kick off the WHIP
+        // publish in parallel with the countdown/WS subscribe. We DON'T
+        // await it — a slow ICE negotiation shouldn't block the host UI
+        // from flipping to "AO VIVO" (the recording starts the moment CF
+        // sees frames; if WHIP setup takes 2s the VOD just trims that).
+        // Failure here is non-fatal: viewers on the in-app HLS get a
+        // warm-up screen, and the legacy P2P viewer path still works.
+        if (wantsCf) {
+          const ingestUrl = res.data?.webrtc_url;
+          cfIngestRef.current = {
+            cf_input_uid: res.data?.cf_input_uid,
+            hls_url: res.data?.hls_url,
+            rtmps_url: res.data?.rtmps_url,
+            rtmps_key: res.data?.rtmps_key,
+          };
+          if (ingestUrl && localStreamRef.current) {
+            publishToCfStream(localStreamRef.current, ingestUrl)
+              .then((pub) => { cfPublisherRef.current = pub; })
+              .catch((e) => {
+                console.warn('[Live] CF Stream WHIP publish failed:', e?.message || e);
+                // No teardown — viewers fall back to the WebRTC P2P path
+                // (host -> viewer pcs created via the WS signaling below).
+              });
+          } else if (!ingestUrl) {
+            console.warn('[Live] live_start_cf returned no webrtc_url — VOD will be empty');
+          }
+        }
 
         // Surface the ongoing-broadcast pill (sticky on Android, passive on
         // iOS). Tapping returns to /live-broadcast via the deep_link the
@@ -1314,7 +1372,7 @@ export default function LiveBroadcastScreen() {
       const detail = e?.message ? ` (${e.message})` : '';
       setError((t('live.connectionFailed') || 'Connection failed') + detail);
     }
-  }, [titleInput, connectSignaling, t, animateCountdown, ensureCameraStream]);
+  }, [titleInput, connectSignaling, t, animateCountdown, ensureCameraStream, saveReplay, audience, liveCategory, subscribersOnly]);
 
   // End the live broadcast — shows the rich modal first; the actual teardown
   // runs only when the host confirms (and the chosen replay toggle is sent).
@@ -1333,11 +1391,22 @@ export default function LiveBroadcastScreen() {
     if (endedSessionId) {
       // Dismiss the ongoing-broadcast pill — broadcast is over.
       try { liveBroadcastNotification.stop(endedSessionId); } catch {}
-      // Capture has_recording from the live_end response so the end-card
-      // knows whether to surface "Ver Lives Salvas" (CF Stream pipeline)
-      // vs a plain "Concluído" (legacy P2P — no VOD will materialize).
-      // Memory-safe — fires after teardown.
-      api.liveEnd(endedSessionId, { save_replay: replayRequested })
+      // Close the CF Stream WHIP publisher (if we went through that path)
+      // BEFORE telling the backend to finalize the recording. CF stops
+      // ingest the moment we close the PC; if we did it after live_end_cf
+      // we'd race the recording finalizer and risk a 0-byte VOD.
+      if (cfPublisherRef.current) {
+        try { cfPublisherRef.current.stop(); } catch {}
+        cfPublisherRef.current = null;
+      }
+      // Capture has_recording from the response so the end-card knows
+      // whether to surface "Ver Lives Salvas" (CF Stream pipeline) vs a
+      // plain "Concluído" (legacy P2P — no VOD will materialize). The
+      // endpoint pick mirrors the start path: CF sessions go through
+      // live_end_cf so the cron-live-recordings finalizer picks them up,
+      // legacy sessions stay on live_end. Memory-safe — fires after teardown.
+      const endFn = cfModeRef.current ? api.liveEndCf : api.liveEnd;
+      endFn(endedSessionId, { save_replay: replayRequested })
         .then((res) => {
           if (res?.success) {
             const has = !!res.data?.has_recording;
@@ -2274,8 +2343,9 @@ export default function LiveBroadcastScreen() {
         // Dismiss ongoing-broadcast pill on unmount too (covers crash /
         // back-press paths where performEndLive didn't run).
         try { liveBroadcastNotification.stop(sid); } catch {}
+        const endFn = cfModeRef.current ? api.liveEndCf : api.liveEnd;
         const tryEnd = (attempt) => {
-          api.liveEnd(sid).catch((err) => {
+          endFn(sid).catch((err) => {
             console.warn('[Live] liveEnd attempt ' + attempt + ' failed:', err?.message || err);
             if (attempt < 3) {
               setTimeout(() => tryEnd(attempt + 1), 1000 * attempt);
@@ -2283,6 +2353,12 @@ export default function LiveBroadcastScreen() {
           });
         };
         tryEnd(1);
+      }
+      // Close the CF Stream WHIP publisher on unmount too — covers
+      // back-press / crash paths where performEndLive didn't run.
+      if (cfPublisherRef.current) {
+        try { cfPublisherRef.current.stop(); } catch {}
+        cfPublisherRef.current = null;
       }
       if (wsRef.current) {
         try { wsRef.current.close(); } catch {}
@@ -2310,31 +2386,57 @@ export default function LiveBroadcastScreen() {
   }, []);
 
   // Helper: renders the local camera video for both web and native
+  //
+  // Round 52 polish (2026-05-18) — "mancha preta" host stage fix. The bug
+  // was that the host saw their face rendered as two split halves with a
+  // dark horizontal gap in the middle. Root cause: on Android the
+  // NativeRTCView is backed by a SurfaceView that punches a window-hole
+  // straight through the view hierarchy. If the parent has no explicit
+  // `overflow: 'hidden'` + `backgroundColor: '#000'`, OR the SurfaceView
+  // is recycled across stream restarts without a fresh React key, the
+  // hardware layer can paint a partial frame (top of last frame on top,
+  // current frame on bottom — looks exactly like a face split in two).
+  //
+  // Fixes:
+  //  1. Wrap the video in an absoluteFill <View> with overflow:hidden +
+  //     bg #000 so any SurfaceView mis-paint reveals only black, never a
+  //     ghost previous frame leaking through.
+  //  2. Bind a React key to the stream URL so a reconnect mounts a NEW
+  //     SurfaceView instead of recycling the old one (the recycle is what
+  //     produced the half/half ghost stack).
+  //  3. Force width:'100%' + height:'100%' on the inner view (not just
+  //     absoluteFill) so the native SurfaceView gets explicit dimensions
+  //     instead of inheriting a zero-height calc during layout thrash.
   const renderLocalVideo = (style) => {
     if (Platform.OS === 'web') {
       return (
-        <video
-          ref={localVideoRef}
-          autoPlay
-          muted
-          playsInline
-          style={{
-            position: 'absolute', top: 0, left: 0,
-            width: '100%', height: '100%',
-            objectFit: 'cover', transform: 'scaleX(-1)',
-          }}
-        />
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000', overflow: 'hidden' }]}>
+          <video
+            ref={localVideoRef}
+            autoPlay
+            muted
+            playsInline
+            style={{
+              position: 'absolute', top: 0, left: 0,
+              width: '100%', height: '100%',
+              objectFit: 'cover', transform: 'scaleX(-1)',
+            }}
+          />
+        </View>
       );
     }
     if (NativeRTCView && localStreamUrl) {
       return (
-        <NativeRTCView
-          streamURL={localStreamUrl}
-          style={StyleSheet.absoluteFill}
-          objectFit="cover"
-          mirror={facingRef.current === 'user'}
-          zOrder={0}
-        />
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000', overflow: 'hidden' }]}>
+          <NativeRTCView
+            key={localStreamUrl}
+            streamURL={localStreamUrl}
+            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
+            objectFit="cover"
+            mirror={facingRef.current === 'user'}
+            zOrder={0}
+          />
+        </View>
       );
     }
     return <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }]} />;
@@ -2398,13 +2500,21 @@ export default function LiveBroadcastScreen() {
               accessibilityLabel={t('live.share') || 'Compartilhar'}
             >
               <IconShare size={16} color="#fff" />
-              <Text style={styles.endCardCtaSecondaryText}>{t('live.share') || 'Compartilhar'}</Text>
+              <Text style={styles.endCardCtaSecondaryText} numberOfLines={1}>{t('live.share') || 'Compartilhar'}</Text>
             </TouchableOpacity>
             {/* Codex root cause #6 — after liveEnd the toggle is read-only.
                 Tapping it routes to /lives-saved when a recording exists, so
                 the host doesn't have to hunt the menu for the replay. The
                 label surfaces processing / saved / failed state explicitly
-                instead of the old "Salvar replay" toggle that desynced. */}
+                instead of the old "Salvar replay" toggle that desynced.
+
+                Round 52 polish (2026-05-18) — "Salvo em Lives salvas" pill
+                was overflowing the right edge of the modal card because the
+                Text had no width constraint and the row's two flex:1 children
+                couldn't shrink. Now: icon is wrapped (flexShrink:0), the Text
+                takes flexShrink:1 with numberOfLines={1} + ellipsize, and
+                the saved label is shortened to "Salvo em Lives" so it fits
+                cleanly inside half of a 380px card at fontSize 14. */}
             <TouchableOpacity
               onPress={() => endedHasRecording ? router.push('/lives-saved') : null}
               disabled={!endedHasRecording}
@@ -2414,15 +2524,21 @@ export default function LiveBroadcastScreen() {
               accessibilityLabel={t('live.replayStatusLabel') || 'Status do replay'}
               accessibilityState={{ disabled: !endedHasRecording }}
             >
-              {endedReplayRequested ? <IconStarFilled size={16} color="#000" /> : <IconBookmark size={16} color="#fff" />}
-              <Text style={[styles.endCardCtaPrimaryText, !endedReplayRequested && { color: '#fff' }]}>
+              <View style={{ flexShrink: 0 }}>
+                {endedReplayRequested ? <IconStarFilled size={16} color="#000" /> : <IconBookmark size={16} color="#fff" />}
+              </View>
+              <Text
+                style={[styles.endCardCtaPrimaryText, !endedReplayRequested && { color: '#fff' }]}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
                 {endedReplayStatus === 'processing'
-                  ? (t('live.replayProcessing') || 'Processando em Lives salvas')
+                  ? (t('live.replayProcessing') || 'Processando…')
                   : endedReplayStatus === 'error'
-                    ? (t('live.replayError') || 'Falha ao salvar replay')
+                    ? (t('live.replayError') || 'Falha ao salvar')
                     : endedReplayRequested
-                      ? (t('live.replaySavedInLives') || 'Salvo em Lives salvas')
-                      : (t('live.replayNotSaved') || 'Replay não salvo')}
+                      ? (t('live.replaySavedInLives') || 'Salvo em Lives')
+                      : (t('live.replayNotSaved') || 'Não salvo')}
               </Text>
             </TouchableOpacity>
           </View>
@@ -3001,17 +3117,40 @@ export default function LiveBroadcastScreen() {
 
       {/* Right-side vertical action stack — TikTok pattern: settings, effects,
           filter, timer, pin. Stacked above the bottom controls so they don't
-          collide with the chat overlay. */}
+          collide with the chat overlay.
+          Round 2026-05-18 polish — collapsed by default (single chevron pill).
+          Host taps chevron to expand; tap again to collapse. Keeps the stage
+          clean so the camera reads as the hero. The cumulative heart counter
+          + chevron stay visible at all times. */}
       <View style={[styles.rightStack, { bottom: insets.bottom + 200 }]} pointerEvents="box-none">
         {/* Cumulative heart counter — TikTok pattern: tiny heart + formatted
             total ("❤️ 4.2K") sits above the action buttons so the host sees
             love accumulate in real time. Reads from totalLikes (kept in sync
             via WS live_heart events). */}
-        <Text style={styles.heartCounterText} numberOfLines={1}>
-          <Text style={{ color: LIVE_RED }}>♥</Text>
-          {' '}
-          {formatViewerCount(totalLikes)}
-        </Text>
+        <View style={styles.heartCounterPill} pointerEvents="none">
+          <IconHeart size={12} color={LIVE_RED} />
+          <Text style={styles.heartCounterTextV2} numberOfLines={1}>
+            {formatViewerCount(totalLikes)}
+          </Text>
+        </View>
+        <TouchableOpacity
+          onPress={() => {
+            try { Haptics.selectionAsync().catch(() => {}); } catch {}
+            setRightStackOpen(v => !v);
+          }}
+          style={[styles.rightBtn, styles.rightStackToggle]}
+          activeOpacity={0.7}
+          accessibilityLabel={rightStackOpen
+            ? (t('live.collapseActions') || 'Recolher ações')
+            : (t('live.expandActions') || 'Expandir ações')}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: rightStackOpen }}
+        >
+          {rightStackOpen
+            ? <IconChevronRight size={18} color="#fff" />
+            : <IconChevronDown size={18} color="#fff" />}
+        </TouchableOpacity>
+        {rightStackOpen ? (
         <TouchableOpacity
           onPress={() => setSettingsOpen(true)}
           style={styles.rightBtn}
@@ -3021,37 +3160,48 @@ export default function LiveBroadcastScreen() {
         >
           <IconSettings size={18} color="#fff" />
         </TouchableOpacity>
+        ) : null}
+        {rightStackOpen ? (
         <TouchableOpacity
           onPress={() => { setEffectsOn(v => !v); setEffectsOpen(true); }}
-          style={[styles.rightBtn, effectsOn && { backgroundColor: 'rgba(168,85,247,0.4)' }]}
+          style={[styles.rightBtn, effectsOn && styles.rightBtnActiveEffects]}
           activeOpacity={0.7}
           accessibilityLabel={t('live.effects') || 'Effects'}
           accessibilityRole="button"
         >
           <IconSparkles size={18} color={effectsOn ? '#facc15' : '#fff'} />
         </TouchableOpacity>
+        ) : null}
+        {rightStackOpen ? (
         <TouchableOpacity
           onPress={() => setFilterOpen(true)}
-          style={[styles.rightBtn, activeFilter !== 'none' && { backgroundColor: 'rgba(124,58,237,0.4)' }]}
+          style={[styles.rightBtn, activeFilter !== 'none' && styles.rightBtnActiveFilter]}
           activeOpacity={0.7}
           accessibilityLabel={t('live.filter') || 'Filter'}
           accessibilityRole="button"
         >
           <IconFilter size={18} color={activeFilter !== 'none' ? '#facc15' : '#fff'} />
         </TouchableOpacity>
+        ) : null}
         {/* AR/Beauty/Greenscreen carousel — wave 16 (2026-05-17). 8 presets
             (dog ears, sunglasses, hearts, beauty smooth, slim face, blur bg,
             greenscreen 6 wallpapers). Native MediaPipe pipeline owns the
-            actual effect; this button just toggles the carousel sheet. */}
+            actual effect; this button just toggles the carousel sheet.
+            Round 2026-05-18 — switched the raw "AR" text label for IconBrush
+            so the button stays consistent with the rest of the SVG iconography
+            (design rule: no raw text in icon buttons). */}
+        {rightStackOpen ? (
         <TouchableOpacity
           onPress={() => setArCarouselOpen(v => !v)}
-          style={[styles.rightBtn, activeARFilter !== 'none' && { backgroundColor: 'rgba(236,72,153,0.4)' }]}
+          style={[styles.rightBtn, activeARFilter !== 'none' && styles.rightBtnActiveAr]}
           activeOpacity={0.7}
           accessibilityLabel={t('live.arFilters') || 'AR Filters'}
           accessibilityRole="button"
         >
-          <Text style={{ color: activeARFilter !== 'none' ? '#facc15' : '#fff', fontSize: 10, fontWeight: '900', letterSpacing: 0.5 }}>AR</Text>
+          <IconBrush size={18} color={activeARFilter !== 'none' ? '#facc15' : '#fff'} />
         </TouchableOpacity>
+        ) : null}
+        {rightStackOpen ? (
         <TouchableOpacity
           // Bug #978-6 — surface a clear confirmation when toggling. Before
           // the only feedback was the icon swap (Star ↔ StarFilled) which the
@@ -3078,16 +3228,18 @@ export default function LiveBroadcastScreen() {
               return next;
             });
           }}
-          style={[styles.rightBtn, saveReplay && { backgroundColor: 'rgba(250,204,21,0.4)' }]}
+          style={[styles.rightBtn, saveReplay && styles.rightBtnActiveSave]}
           activeOpacity={0.7}
           accessibilityLabel={t('live.saveReplay') || 'Save replay'}
           accessibilityRole="button"
           accessibilityState={{ checked: saveReplay }}
         >
           {saveReplay
-            ? <IconStarFilled size={20} color="#fbbf24" />
-            : <IconStar size={20} color="#fff" />}
+            ? <IconBookmarkFilled size={20} color="#fbbf24" />
+            : <IconBookmark size={20} color="#fff" />}
         </TouchableOpacity>
+        ) : null}
+        {rightStackOpen ? (
         <TouchableOpacity
           onPress={pinLatestComment}
           style={styles.rightBtn}
@@ -3097,22 +3249,25 @@ export default function LiveBroadcastScreen() {
         >
           <IconPin size={18} color="#fff" />
         </TouchableOpacity>
+        ) : null}
         {/* Poll button — opens the create-poll modal. Highlighted when an
             active poll is on-screen (host can tap to jump to its overlay /
-            close it from there). */}
+            close it from there). Round 2026-05-18 — swapped the raw
+            "POLL"/"FIM" text for IconBarChart so the rail stays consistent
+            with the rest of the SVG iconography. The closed/active state
+            is now signaled via background tint instead of label swap. */}
+        {rightStackOpen ? (
         <TouchableOpacity
           onPress={() => { if (activePoll && !activePoll.closed) { closeActivePoll(); } else { openPollDraft(); } }}
-          style={[styles.rightBtn, activePoll && !activePoll.closed && { backgroundColor: 'rgba(124,58,237,0.5)' }]}
+          style={[styles.rightBtn, activePoll && !activePoll.closed && styles.rightBtnActivePoll]}
           activeOpacity={0.7}
           accessibilityLabel={t('live.poll') || 'Enquete'}
           accessibilityRole="button"
         >
-          <Text style={{ color: activePoll && !activePoll.closed ? '#facc15' : '#fff', fontWeight: '900', fontSize: 11, letterSpacing: 0.5 }}>
-            {activePoll && !activePoll.closed
-              ? (t('live.pollClose') || 'FIM')
-              : (t('live.pollShort') || 'POLL')}
-          </Text>
+          <IconBarChart size={18} color={activePoll && !activePoll.closed ? '#facc15' : '#fff'} />
         </TouchableOpacity>
+        ) : null}
+        {rightStackOpen ? (
         <TouchableOpacity
           onPress={handleFlipCamera}
           style={styles.rightBtn}
@@ -3122,6 +3277,7 @@ export default function LiveBroadcastScreen() {
         >
           <IconCameraFlip size={18} color="#fff" />
         </TouchableOpacity>
+        ) : null}
       </View>
 
       {/* Live insights pill — bottom-left chip with viewer+reaction snapshot.
@@ -3187,28 +3343,40 @@ export default function LiveBroadcastScreen() {
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={{ paddingHorizontal: 12, gap: 8 }}
           >
+            {/* Round 2026-05-18 — replaced emoji icons with SVG-based glyphs
+                (design rule from MEMORY: "NUNCA emoji em UI"). The carousel
+                now reads as a curated brand surface instead of an Android
+                emoji palette dump. Each preset gets a tinted gradient bubble
+                + a single-letter monogram (or an SVG when available). */}
             {[
-              { key: 'none',        icon: '⊘',  label: t('live.arNone')        || 'Nenhum' },
-              { key: 'dog',         icon: '🐶', label: t('live.arDogEars')     || 'Cachorro' },
-              { key: 'sunglasses',  icon: '😎', label: t('live.arSunglasses')  || 'Óculos' },
-              { key: 'hearts',      icon: '💕', label: t('live.arHearts')      || 'Corações' },
-              { key: 'beauty',      icon: '✨', label: t('live.arBeauty')      || 'Suavizar' },
-              { key: 'slim',        icon: '🪞', label: t('live.arSlimFace')    || 'Afinar' },
-              { key: 'blur',        icon: '🌫️', label: t('live.arBlurBg')      || 'Desfocar' },
-              { key: 'greenscreen', icon: '🟢', label: t('live.arGreenscreen') || 'Cenário' },
+              { key: 'none',        glyph: '✕',  tint: 'rgba(148,163,184,0.35)', label: t('live.arNone')        || 'Nenhum' },
+              { key: 'dog',         glyph: 'D',  tint: 'rgba(251,146,60,0.45)',  label: t('live.arDogEars')     || 'Cachorro' },
+              { key: 'sunglasses',  glyph: 'S',  tint: 'rgba(56,189,248,0.45)',  label: t('live.arSunglasses')  || 'Óculos' },
+              { key: 'hearts',      glyph: '♥',  tint: 'rgba(244,114,182,0.55)', label: t('live.arHearts')      || 'Corações' },
+              { key: 'beauty',      svg: 'sparkles', tint: 'rgba(250,204,21,0.45)', label: t('live.arBeauty')   || 'Suavizar' },
+              { key: 'slim',        glyph: '◊',  tint: 'rgba(168,85,247,0.45)',  label: t('live.arSlimFace')    || 'Afinar' },
+              { key: 'blur',        glyph: '◐',  tint: 'rgba(99,102,241,0.45)',  label: t('live.arBlurBg')      || 'Desfocar' },
+              { key: 'greenscreen', glyph: '▣',  tint: 'rgba(34,197,94,0.45)',   label: t('live.arGreenscreen') || 'Cenário' },
             ].map(p => {
               const active = activeARFilter === p.key;
               return (
                 <TouchableOpacity
                   key={p.key}
-                  onPress={() => applyArFilter(p.key)}
+                  onPress={() => {
+                    try { Haptics.selectionAsync().catch(() => {}); } catch {}
+                    applyArFilter(p.key);
+                  }}
                   style={[styles.arChip, active && styles.arChipActive]}
                   activeOpacity={0.85}
                   accessibilityRole="button"
                   accessibilityLabel={p.label}
                   accessibilityState={{ selected: active }}
                 >
-                  <Text style={{ fontSize: 22 }}>{p.icon}</Text>
+                  <View style={[styles.arChipGlyphBubble, { backgroundColor: p.tint }, active && styles.arChipGlyphBubbleActive]}>
+                    {p.svg === 'sparkles'
+                      ? <IconSparkles size={18} color="#fff" />
+                      : <Text style={styles.arChipGlyph}>{p.glyph}</Text>}
+                  </View>
                   <Text style={[styles.arChipLabel, active && { color: '#fff', fontWeight: '800' }]} numberOfLines={1}>
                     {p.label}
                   </Text>
@@ -3330,7 +3498,10 @@ export default function LiveBroadcastScreen() {
           </View>
 
           <TouchableOpacity
-            onPress={handleSelfHeart}
+            onPress={() => {
+              try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {}); } catch {}
+              handleSelfHeart();
+            }}
             style={[styles.composerIconBtn, styles.heartBtn]}
             activeOpacity={0.7}
             accessibilityLabel={t('live.like') || 'Like'}
@@ -3348,8 +3519,11 @@ export default function LiveBroadcastScreen() {
             <IconShare size={18} color="#fff" />
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={handleToggleMute}
-            style={[styles.composerIconBtn, audioMuted && styles.composerIconBtnActive]}
+            onPress={() => {
+              try { Haptics.selectionAsync().catch(() => {}); } catch {}
+              handleToggleMute();
+            }}
+            style={[styles.composerIconBtn, audioMuted && styles.composerIconBtnActive, !audioMuted && styles.composerIconBtnMicLive]}
             activeOpacity={0.7}
             accessibilityLabel={audioMuted ? (t('live.unmute') || 'Unmute') : (t('live.mute') || 'Mute')}
             accessibilityRole="button"
@@ -4331,6 +4505,11 @@ const styles = StyleSheet.create({
   fullScreen: {
     flex: 1,
     backgroundColor: '#000',
+    // Round 52 polish — Android SurfaceView (NativeRTCView for the host
+    // camera) punches a window-hole through the view tree. overflow:hidden
+    // here ensures any partial-paint glitches stay clipped to the screen
+    // bounds + the explicit #000 fill backstops any black-band ghosting.
+    overflow: 'hidden',
   },
   centered: {
     flex: 1,
@@ -4568,10 +4747,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingBottom: 12,
+    paddingBottom: 14,
     zIndex: 10,
-    backgroundColor: 'rgba(0,0,0,0.25)',
-    ...(Platform.OS === 'web' ? { backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' } : {}),
+    // Round 2026-05-18 — softer scrim so the live frame breathes underneath
+    // instead of looking like a fully opaque header strip ("mancha preta"
+    // complaint). Web keeps the backdrop blur; native gets a slim gradient
+    // via a stacked underlay below.
+    backgroundColor: Platform.OS === 'web' ? 'rgba(0,0,0,0.18)' : 'rgba(0,0,0,0.32)',
+    ...(Platform.OS === 'web' ? {
+      backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
+      background: 'linear-gradient(to bottom, rgba(0,0,0,0.42), rgba(0,0,0,0.08))',
+    } : {}),
   },
   topLeft: {
     flexDirection: 'row',
@@ -4849,9 +5035,42 @@ const styles = StyleSheet.create({
   },
   rightBtn: {
     width: 42, height: 42, borderRadius: 21,
-    backgroundColor: 'rgba(0,0,0,0.45)',
+    backgroundColor: 'rgba(0,0,0,0.55)',
     alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+    ...(Platform.OS === 'web' ? {
+      backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
+      boxShadow: '0 2px 10px rgba(0,0,0,0.35)',
+    } : {}),
+  },
+  // Chevron toggle that collapses / expands the right action stack. Slightly
+  // larger backdrop so it reads as the "open me" handle vs the action chips.
+  rightStackToggle: {
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    borderColor: 'rgba(255,255,255,0.22)',
+  },
+  // Active-state tints — one for each surface so the host gets a clear "this
+  // mode is on" cue without losing the underlying glass aesthetic. All
+  // colors are taken from the brand palette (no off-brand reds/blues).
+  rightBtnActiveEffects: {
+    backgroundColor: 'rgba(168,85,247,0.55)',
+    borderColor: 'rgba(168,85,247,0.7)',
+  },
+  rightBtnActiveFilter: {
+    backgroundColor: 'rgba(124,58,237,0.55)',
+    borderColor: 'rgba(124,58,237,0.7)',
+  },
+  rightBtnActiveAr: {
+    backgroundColor: 'rgba(236,72,153,0.55)',
+    borderColor: 'rgba(236,72,153,0.7)',
+  },
+  rightBtnActiveSave: {
+    backgroundColor: 'rgba(250,204,21,0.4)',
+    borderColor: 'rgba(250,204,21,0.6)',
+  },
+  rightBtnActivePoll: {
+    backgroundColor: 'rgba(124,58,237,0.55)',
+    borderColor: 'rgba(124,58,237,0.7)',
   },
   rightBtnIconEmoji: { fontSize: 18 },
   // Cumulative heart total above the action stack — TikTok aesthetic.
@@ -4865,10 +5084,35 @@ const styles = StyleSheet.create({
     textShadowRadius: 3,
     fontVariant: ['tabular-nums'],
   },
+  // Round 2026-05-18 — heart counter now lives in a tiny glass pill with the
+  // SVG IconHeart instead of a raw "♥" + text. Reads as a unit instead of two
+  // floating glyphs, and the pill backdrop lifts the digits over the video.
+  heartCounterPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    ...(Platform.OS === 'web' ? { backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)' } : {}),
+  },
+  heartCounterTextV2: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+    letterSpacing: 0.2,
+  },
 
   // Comments column (custom, replaces LiveChat in live screen)
+  // Round 2026-05-18 — trimmed from 240 → 200 so the chat overlay stops
+  // eating ~25% of the host's video frame. Combined with the (now collapsed)
+  // right rail the stage reads as the hero again instead of a chat box.
   chatScrollWrap: {
-    height: 240,
+    height: 200,
     position: 'relative',
   },
   commentListContent: {
@@ -5009,9 +5253,19 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(220,38,38,0.7)',
     borderColor: 'rgba(220,38,38,0.4)',
   },
+  // Mic-live cue — subtle green halo + tint when the mic is hot. Mirrors the
+  // "you are being heard" feedback Instagram/TikTok use so the host doesn't
+  // accidentally talk on mute (or vice versa).
+  composerIconBtnMicLive: {
+    backgroundColor: 'rgba(34,197,94,0.22)',
+    borderColor: 'rgba(34,197,94,0.55)',
+  },
   heartBtn: {
     backgroundColor: 'rgba(220,38,38,0.65)',
     borderColor: 'rgba(220,38,38,0.4)',
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 4px 14px rgba(220,38,38,0.35)',
+    } : {}),
   },
 
   // End-Live confirmation modal
@@ -5371,8 +5625,30 @@ const styles = StyleSheet.create({
   arChipLabel: {
     color: 'rgba(255,255,255,0.85)',
     fontSize: 10,
-    marginTop: 2,
+    marginTop: 4,
     fontWeight: '600',
+  },
+  // Round 2026-05-18 — circular glyph bubble that replaces the raw emoji on
+  // each AR preset chip. Renders an SVG icon (sparkles) or a monogram glyph.
+  // Tint comes from the preset descriptor so each effect reads as its own
+  // brand swatch instead of system emoji.
+  arChipGlyphBubble: {
+    width: 36, height: 36, borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+  },
+  arChipGlyphBubbleActive: {
+    borderColor: '#fff',
+    borderWidth: 2,
+  },
+  arChipGlyph: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '800',
+    lineHeight: 22,
+    textAlign: 'center',
   },
   arWallpaperChip: {
     width: 40, height: 40, borderRadius: 8,
@@ -5549,23 +5825,32 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
     marginBottom: 12,
+    // Round 52 polish — overflow:hidden as belt-and-suspenders so children
+    // cannot paint outside the row width even if a flex calc rounds funny.
+    overflow: 'hidden',
   },
   endCardCtaSecondary: {
     flex: 1,
+    flexShrink: 1,
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center', justifyContent: 'center',
     gap: 8,
+    paddingHorizontal: 10,
     paddingVertical: 13,
     borderRadius: 14,
     backgroundColor: 'rgba(255,255,255,0.08)',
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
   },
-  endCardCtaSecondaryText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  endCardCtaSecondaryText: { color: '#fff', fontSize: 13, fontWeight: '700', flexShrink: 1 },
   endCardCtaPrimary: {
     flex: 1,
+    flexShrink: 1,
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center', justifyContent: 'center',
     gap: 8,
+    paddingHorizontal: 10,
     paddingVertical: 13,
     borderRadius: 14,
     backgroundColor: '#facc15',
@@ -5576,7 +5861,7 @@ const styles = StyleSheet.create({
   endCardCtaPrimaryOff: {
     backgroundColor: 'rgba(124,58,237,0.85)',
   },
-  endCardCtaPrimaryText: { color: '#000', fontSize: 14, fontWeight: '800', letterSpacing: 0.2 },
+  endCardCtaPrimaryText: { color: '#000', fontSize: 13, fontWeight: '800', letterSpacing: 0.2, flexShrink: 1, textAlign: 'center' },
   endCardDone: {
     paddingVertical: 10,
     alignItems: 'center',

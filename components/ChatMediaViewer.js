@@ -51,7 +51,26 @@ function getExt(filename) {
 
 function getFullUrl(url) {
   if (!url) return '';
+  // If the source is already a local file (e.g. just-recorded outbox audio),
+  // hand it back untouched — no normalization, no remote prefix.
+  if (typeof url === 'string' && (url.startsWith('file://') || url.startsWith('content://') || url.startsWith('blob:'))) {
+    return url;
+  }
   const full = url.startsWith('http') ? url : `https://chatyy.com.br${url}`;
+  // OFFLINE-FIRST: if we already have the file on disk (mediaCache.syncIndex),
+  // return that path instead of the CDN URL. ImageViewer / VideoPlayer /
+  // PreviewViewer / GenericFileViewer all hand the result straight to native
+  // surfaces (RN Image / expo-video / WKWebView / Linking) which accept
+  // file:// URIs uniformly. This is the whole "tocando offline" guarantee —
+  // when the radio drops mid-stream, native keeps reading from disk and
+  // playback never pauses.
+  if (Platform.OS !== 'web') {
+    try {
+      const { getLocalUriIfCached } = require('../services/mediaCache');
+      const local = getLocalUriIfCached(full);
+      if (local) return local;
+    } catch {}
+  }
   // WKWebView (iOS) is strict about reserved-but-unencoded characters in URLs.
   // Filenames sometimes contain "$", spaces, or unicode (e.g. legacy uploads
   // where the filename was "$value.pdf") which makes the WebView refuse to
@@ -153,7 +172,7 @@ function NativeImageViewerWithLoading({ url }) {
   );
 }
 
-function ImageViewer({ url }) {
+function ImageViewer({ url, messageId, fileSize, createdAt, t }) {
   // We deliberately DO NOT use `_NativeImageZoomView` here even on iOS. The
   // native view downloads via raw URLSession which (a) lacks the loading
   // indicator the user expects and (b) silently fails for some CDN routes.
@@ -167,6 +186,13 @@ function ImageViewer({ url }) {
   const translateY = useRef(new Animated.Value(0)).current;
   const [loading, setLoading] = useState(true);
   const [imageError, setImageError] = useState(null);
+  // R2-backed redownload state. When the original URL 404s (cache evicted
+  // or CDN purge propagation issue), tap "Baixar de novo" → server returns
+  // a fresh CDN/origin/presigned URL → we render that. `freshUrl` overrides
+  // `url` once set so the parent doesn't have to be aware.
+  const [freshUrl, setFreshUrl] = useState(null);
+  const [redownloading, setRedownloading] = useState(false);
+  const [redownloadFailed, setRedownloadFailed] = useState(null); // { deleted? }
   // Bump on retry tap → forces RN <Image> to remount + re-fetch (changing
   // the `key` prop is the only reliable way; setting state alone won't
   // re-trigger the network request after onError fired).
@@ -176,12 +202,37 @@ function ImageViewer({ url }) {
   useEffect(() => {
     setLoading(true);
     setImageError(null);
+    setFreshUrl(null);
+    setRedownloading(false);
+    setRedownloadFailed(null);
   }, [url]);
   const handleRetry = useCallback(() => {
     setLoading(true);
     setImageError(null);
     setRetryEpoch(e => e + 1);
   }, []);
+  const handleRedownload = useCallback(async () => {
+    if (!messageId || redownloading) return;
+    setRedownloading(true);
+    setRedownloadFailed(null);
+    try {
+      const { requestRedownload } = require('../services/mediaCache');
+      const r = await requestRedownload(messageId, url);
+      if (r?.ok && (r.localUri || r.url)) {
+        setFreshUrl(r.localUri || r.url);
+        setImageError(null);
+        setLoading(true);
+        setRetryEpoch(e => e + 1);
+      } else {
+        setRedownloadFailed({ deleted: !!r?.deleted, error: r?.error || 'unknown' });
+      }
+    } catch (e) {
+      setRedownloadFailed({ error: 'network' });
+    } finally {
+      setRedownloading(false);
+    }
+  }, [messageId, redownloading, url]);
+  const effectiveUrl = freshUrl || url;
   const lastScale = useRef(1);
   const lastTranslateX = useRef(0);
   const lastTranslateY = useRef(0);
@@ -225,16 +276,65 @@ function ImageViewer({ url }) {
       {loading && !imageError && <ActivityIndicator size="large" color="#fff" style={s.loader} />}
       {imageError && (
         <View style={[s.loader, { alignItems: 'center', justifyContent: 'center', padding: 24 }]}>
-          <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginBottom: 8 }}>Não consegui abrir</Text>
-          <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, textAlign: 'center', marginBottom: 16 }} numberOfLines={3}>{imageError}</Text>
-          <TouchableOpacity
-            onPress={handleRetry}
-            style={{ backgroundColor: '#7C3AED', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10 }}
-            accessibilityLabel="Tentar novamente"
-            accessibilityRole="button"
-          >
-            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>Tentar novamente</Text>
-          </TouchableOpacity>
+          {/* Mídia removida do cache — copy pivots based on whether we have a
+              messageId (server can try a redownload) or not (we can only
+              suggest a manual retry). After a redownload failure we either
+              say "deleted" (410) or "unavailable" (any other status). */}
+          <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginBottom: 8 }}>
+            {redownloadFailed?.deleted
+              ? (t?.('media.messageDeleted') || 'Mensagem apagada')
+              : (t?.('media.cacheEvicted') || 'Mídia removida do cache')}
+          </Text>
+          <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, textAlign: 'center', marginBottom: 4 }} numberOfLines={3}>
+            {redownloadFailed?.deleted
+              ? (t?.('media.messageDeletedHint') || 'O remetente apagou essa mensagem.')
+              : (imageError || '')}
+          </Text>
+          {/* "Last downloaded X ago" — only shown when we know the createdAt */}
+          {!!createdAt && (
+            <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginBottom: 16 }}>
+              {(t?.('media.lastDownloaded') || 'Há {0}').replace('{0}', (() => {
+                try { return require('../services/mediaCache').formatRelativeAge(createdAt); }
+                catch { return ''; }
+              })())}
+            </Text>
+          )}
+          {messageId && !redownloadFailed?.deleted ? (
+            <TouchableOpacity
+              onPress={handleRedownload}
+              disabled={redownloading}
+              style={{
+                backgroundColor: redownloading ? '#6D28D9' : '#7C3AED',
+                paddingHorizontal: 20, paddingVertical: 10,
+                borderRadius: 10, flexDirection: 'row', alignItems: 'center',
+              }}
+              accessibilityLabel={t?.('media.redownload') || 'Baixar de novo'}
+              accessibilityRole="button"
+            >
+              {redownloading ? (
+                <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
+              ) : (
+                <IconDownload size={16} color="#fff" />
+              )}
+              <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600', marginLeft: 6 }}>
+                {redownloading
+                  ? (t?.('media.redownloading') || 'Baixando...')
+                  : (t?.('media.redownload') || 'Baixar de novo')}
+                {!redownloading && fileSize > 0 ? ` (${formatSize(fileSize)})` : ''}
+              </Text>
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              onPress={handleRetry}
+              style={{ backgroundColor: '#7C3AED', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10 }}
+              accessibilityLabel="Tentar novamente"
+              accessibilityRole="button"
+            >
+              <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>
+                {t?.('chat.retry') || 'Tentar novamente'}
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
       <Animated.View
@@ -249,7 +349,7 @@ function ImageViewer({ url }) {
       >
         <Image
           key={retryEpoch}
-          source={{ uri: url }}
+          source={{ uri: effectiveUrl }}
           style={s.fullImage}
           resizeMode="contain"
           onLoadEnd={() => setLoading(false)}
@@ -781,7 +881,7 @@ function buildPreviewUrl(fileUrl, fileName) {
 // Office docs (doc/xlsx): google viewer iframe works on Android + web; on iOS
 // WKWebView handles the iframe OK because the inner content is HTML (not PDF).
 // ============================================================
-function PreviewViewer({ url, filename }) {
+function PreviewViewer({ url, filename, messageId, fileSize, t }) {
   const ext = getExt(filename);
   const isPdf = ext === 'pdf';
   const fullFileUrl = getFullUrl(url);
@@ -807,11 +907,11 @@ function PreviewViewer({ url, filename }) {
     const source = isPdf && Platform.OS === 'ios'
       ? { uri: fullFileUrl }
       : { uri: getFullUrl(previewUrl) };
-    return <WebViewWithErrorFallback source={source} url={url} filename={filename} />;
+    return <WebViewWithErrorFallback source={source} url={url} filename={filename} messageId={messageId} fileSize={fileSize} t={t} />;
   } catch {
     // Fallback if WebView not available
     return (
-      <GenericFileViewer url={url} filename={filename} fileSize={0} />
+      <GenericFileViewer url={url} filename={filename} fileSize={fileSize || 0} messageId={messageId} t={t} />
     );
   }
 }
@@ -821,9 +921,31 @@ function PreviewViewer({ url, filename }) {
 // black screen (WKWebView's default for failed PDF loads) and the user had
 // no idea whether the file was gone, their network was down, or the app
 // was broken.
-function WebViewWithErrorFallback({ source, url, filename }) {
+function WebViewWithErrorFallback({ source, url, filename, messageId, fileSize, t }) {
   const { WebView } = require('react-native-webview');
   const [errored, setErrored] = useState(null); // { code, description } | null
+  const [redownloading, setRedownloading] = useState(false);
+  const [redownloadedSource, setRedownloadedSource] = useState(null);
+  const [redownloadFailed, setRedownloadFailed] = useState(null);
+  const handleRedownload = useCallback(async () => {
+    if (!messageId || redownloading) return;
+    setRedownloading(true);
+    setRedownloadFailed(null);
+    try {
+      const { requestRedownload } = require('../services/mediaCache');
+      const r = await requestRedownload(messageId, url);
+      if (r?.ok && (r.localUri || r.url)) {
+        setRedownloadedSource({ uri: r.localUri || r.url });
+        setErrored(null);
+      } else {
+        setRedownloadFailed({ deleted: !!r?.deleted, error: r?.error || 'unknown' });
+      }
+    } catch {
+      setRedownloadFailed({ error: 'network' });
+    } finally {
+      setRedownloading(false);
+    }
+  }, [messageId, redownloading, url]);
   if (errored) {
     return (
       <View style={[s.mediaContainer, { justifyContent: 'center', alignItems: 'center', padding: 24 }]}>
@@ -831,19 +953,52 @@ function WebViewWithErrorFallback({ source, url, filename }) {
           <Text style={[s.fileExtText, { color: '#EF4444' }]}>!</Text>
         </View>
         <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginTop: 16, textAlign: 'center' }}>
-          Arquivo indisponível
+          {redownloadFailed?.deleted
+            ? (t?.('media.messageDeleted') || 'Mensagem apagada')
+            : (errored.code === 404
+                ? (t?.('media.cacheEvicted') || 'Mídia removida do cache')
+                : (t?.('media.fileUnavailable') || 'Arquivo indisponível'))}
         </Text>
         <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, marginTop: 6, textAlign: 'center' }}>
-          {errored.code === 404
-            ? 'Esse arquivo não está mais disponível no servidor.'
-            : 'Não foi possível carregar. Tente novamente em alguns segundos.'}
+          {redownloadFailed?.deleted
+            ? (t?.('media.messageDeletedHint') || 'O remetente apagou essa mensagem.')
+            : (errored.code === 404
+                ? (t?.('media.cacheEvictedHint') || 'Toque em "Baixar de novo" para recuperar do servidor.')
+                : (t?.('media.fileUnavailableHint') || 'Não foi possível carregar. Tente novamente em alguns segundos.'))}
         </Text>
         <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, marginTop: 12, textAlign: 'center' }} numberOfLines={2}>
           {filename}
         </Text>
+        {messageId && !redownloadFailed?.deleted && (
+          <TouchableOpacity
+            onPress={handleRedownload}
+            disabled={redownloading}
+            style={{
+              marginTop: 16,
+              backgroundColor: redownloading ? '#6D28D9' : '#7C3AED',
+              paddingHorizontal: 20, paddingVertical: 10,
+              borderRadius: 10, flexDirection: 'row', alignItems: 'center',
+            }}
+            accessibilityLabel={t?.('media.redownload') || 'Baixar de novo'}
+            accessibilityRole="button"
+          >
+            {redownloading ? (
+              <ActivityIndicator size="small" color="#fff" style={{ marginRight: 8 }} />
+            ) : (
+              <IconDownload size={16} color="#fff" />
+            )}
+            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600', marginLeft: 6 }}>
+              {redownloading
+                ? (t?.('media.redownloading') || 'Baixando...')
+                : (t?.('media.redownload') || 'Baixar de novo')}
+              {!redownloading && fileSize > 0 ? ` (${formatSize(fileSize)})` : ''}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
     );
   }
+  const effectiveSource = redownloadedSource || source;
   // Use a stretched container — `s.mediaContainer` has `alignItems:'center'`
   // which collapses the WebView to its intrinsic width (0px) on iOS,
   // producing the dark/blank PDF screen the user reported. Override the
@@ -851,7 +1006,7 @@ function WebViewWithErrorFallback({ source, url, filename }) {
   return (
     <View style={[s.mediaContainer, { alignItems: 'stretch', justifyContent: 'flex-start', width: '100%' }]}>
       <WebView
-        source={source}
+        source={effectiveSource}
         style={{ flex: 1, width: '100%', backgroundColor: '#fff' }}
         javaScriptEnabled
         domStorageEnabled
@@ -875,8 +1030,34 @@ function WebViewWithErrorFallback({ source, url, filename }) {
 // ============================================================
 // GENERIC FILE VIEWER (download-only fallback)
 // ============================================================
-function GenericFileViewer({ url, filename, fileSize }) {
+function GenericFileViewer({ url, filename, fileSize, messageId, t }) {
   const ext = getExt(filename);
+  const [resolvedUrl, setResolvedUrl] = useState(url);
+  const [redownloading, setRedownloading] = useState(false);
+  const [redownloadDone, setRedownloadDone] = useState(false);
+  const [redownloadFailed, setRedownloadFailed] = useState(null);
+  // Fire a redownload when the user taps the secondary button — useful when
+  // the file_url is stale and the original Linking.openURL would 404 in
+  // Safari/Chrome. After it resolves, swap the download button's target URL.
+  const handleRedownload = useCallback(async () => {
+    if (!messageId || redownloading) return;
+    setRedownloading(true);
+    setRedownloadFailed(null);
+    try {
+      const { requestRedownload } = require('../services/mediaCache');
+      const r = await requestRedownload(messageId, url);
+      if (r?.ok && (r.localUri || r.url)) {
+        setResolvedUrl(r.localUri || r.url);
+        setRedownloadDone(true);
+      } else {
+        setRedownloadFailed({ deleted: !!r?.deleted, error: r?.error || 'unknown' });
+      }
+    } catch {
+      setRedownloadFailed({ error: 'network' });
+    } finally {
+      setRedownloading(false);
+    }
+  }, [messageId, redownloading, url]);
 
   return (
     <View style={[s.mediaContainer, { justifyContent: 'center', alignItems: 'center' }]}>
@@ -887,13 +1068,40 @@ function GenericFileViewer({ url, filename, fileSize }) {
       {fileSize > 0 && <Text style={s.fileSizeText}>{formatSize(fileSize)}</Text>}
       <TouchableOpacity
         style={s.openExternalBtn}
-        onPress={() => Linking.openURL(url).catch(() => {})}
+        onPress={() => Linking.openURL(resolvedUrl).catch(() => {})}
         accessibilityLabel="Download"
         accessibilityRole="button"
       >
         <IconDownload size={18} color="#fff" />
-        <Text style={s.openExternalText}>Abrir / Baixar</Text>
+        <Text style={s.openExternalText}>
+          {t?.('chat.openOrDownload') || 'Abrir / Baixar'}
+        </Text>
       </TouchableOpacity>
+      {messageId ? (
+        <TouchableOpacity
+          onPress={handleRedownload}
+          disabled={redownloading || redownloadFailed?.deleted}
+          style={{
+            marginTop: 12,
+            paddingHorizontal: 14, paddingVertical: 8,
+            borderRadius: 8, flexDirection: 'row', alignItems: 'center',
+            opacity: redownloading ? 0.7 : 1,
+          }}
+          accessibilityLabel={t?.('media.redownload') || 'Baixar de novo'}
+          accessibilityRole="button"
+        >
+          {redownloading && <ActivityIndicator size="small" color="#7C3AED" style={{ marginRight: 8 }} />}
+          <Text style={{ color: '#A78BFA', fontSize: 13, fontWeight: '500' }}>
+            {redownloadFailed?.deleted
+              ? (t?.('media.messageDeleted') || 'Mensagem apagada')
+              : redownloadDone
+                ? (t?.('media.redownloaded') || 'Atualizado a partir do servidor')
+                : redownloading
+                  ? (t?.('media.redownloading') || 'Baixando...')
+                  : (t?.('media.redownload') || 'Baixar de novo')}
+          </Text>
+        </TouchableOpacity>
+      ) : null}
     </View>
   );
 }
@@ -901,7 +1109,7 @@ function GenericFileViewer({ url, filename, fileSize }) {
 // ============================================================
 // MAIN MODAL
 // ============================================================
-export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fileName, fileSize, type, viewOnce, mediaList, initialIndex, conversationId, messageId }) {
+export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fileName, fileSize, type, viewOnce, mediaList, initialIndex, conversationId, messageId, t, colors }) {
   const insets = useSafeAreaInsets();
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -992,6 +1200,27 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
       try { require('expo-image').Image.prefetch?.(u); } catch {}
     }
   }, [visible, _currentIdx, _list]);
+
+  // OFFLINE-FIRST: when the viewer opens, force a disk cache for the active
+  // item. The user's tap = explicit intent → bypass the cellular gate so
+  // video/document downloads happen even when policy says wifi-only. Once
+  // cached, future opens read from disk and survive network drops.
+  useEffect(() => {
+    if (!visible || Platform.OS === 'web') return;
+    const it = _list[_currentIdx];
+    if (!it?.fileUrl) return;
+    // Skip if already a local URI (outbox / just-saved).
+    if (it.fileUrl.startsWith('file://') || it.fileUrl.startsWith('content://')) return;
+    const absolute = it.fileUrl.startsWith('http') ? it.fileUrl : `https://chatyy.com.br${it.fileUrl}`;
+    try {
+      const { getLocalUriIfCached, cacheMedia } = require('../services/mediaCache');
+      if (getLocalUriIfCached(absolute)) return; // already cached
+      cacheMedia(absolute, {
+        force: true,
+        conversationId: conversationId != null ? conversationId : undefined,
+      }).catch(() => {});
+    } catch {}
+  }, [visible, _currentIdx, _list, conversationId]);
 
   if (!visible) return null;
 
@@ -1239,10 +1468,10 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
               const isPrv = PREVIEWABLE_EXTS.includes(e);
               return (
                 <View style={{ width: SCREEN_W, flex: 1 }}>
-                  {isImg ? <ImageViewer url={u} /> :
+                  {isImg ? <ImageViewer url={u} messageId={item?.messageId || item?.id || 0} fileSize={item?.fileSize} createdAt={item?.createdAt || item?.created_at} t={t} /> :
                    isVid ? <VideoPlayer url={u} /> :
-                   isPrv ? <PreviewViewer url={u} filename={item?.fileName} /> :
-                   <GenericFileViewer url={u} filename={item?.fileName} fileSize={item?.fileSize} />}
+                   isPrv ? <PreviewViewer url={u} filename={item?.fileName} messageId={item?.messageId || item?.id || 0} fileSize={item?.fileSize} t={t} /> :
+                   <GenericFileViewer url={u} filename={item?.fileName} fileSize={item?.fileSize} messageId={item?.messageId || item?.id || 0} t={t} />}
                 </View>
               );
             }}
@@ -1265,14 +1494,32 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
                 />
               </View>
             ) : (
-              <ImageViewer url={url} />
+              <ImageViewer
+                url={url}
+                messageId={_active?.messageId || _active?.id || messageId || 0}
+                fileSize={_activeFileSize}
+                createdAt={_active?.createdAt || _active?.created_at}
+                t={typeof t === 'function' ? t : undefined}
+              />
             )
           ) : isVideo ? (
             <VideoPlayer url={url} />
           ) : isPreviewable ? (
-            <PreviewViewer url={url} filename={_activeFileName} />
+            <PreviewViewer
+              url={url}
+              filename={_activeFileName}
+              messageId={_active?.messageId || _active?.id || messageId || 0}
+              fileSize={_activeFileSize}
+              t={typeof t === 'function' ? t : undefined}
+            />
           ) : (
-            <GenericFileViewer url={url} filename={_activeFileName} fileSize={_activeFileSize} />
+            <GenericFileViewer
+              url={url}
+              filename={_activeFileName}
+              fileSize={_activeFileSize}
+              messageId={_active?.messageId || _active?.id || messageId || 0}
+              t={typeof t === 'function' ? t : undefined}
+            />
           )
         )}
 

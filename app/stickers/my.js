@@ -7,7 +7,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, TouchableOpacity, FlatList, ActivityIndicator, Alert, Platform,
-  Image, TextInput, Modal, ScrollView, Animated,
+  Image, TextInput, Modal, Animated, Share, PanResponder,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../../context/ThemeContext';
@@ -15,8 +15,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import { useAuth } from '../../context/AuthContext';
 import * as api from '../../services/api';
 import {
-  IconArrowLeft, IconTrash, IconPlus, IconStar, IconX, IconCheck,
-  IconChevronUp, IconChevronDown,
+  IconArrowLeft, IconTrash, IconPlus, IconStar, IconX, IconShare,
 } from '../../components/Icons';
 
 // Resolve a stored R2 key / relative URL to something Image can fetch.
@@ -89,7 +88,8 @@ export default function StickerMyPacksScreen() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  // Persist order to local storage.
+  // Persist order to local storage + server. The backend call is fire-and-
+  // forget so an offline reorder still updates the local cache instantly.
   const persistOrder = useCallback(async (arr) => {
     const ids = arr.map((p) => p.id);
     try {
@@ -100,18 +100,80 @@ export default function StickerMyPacksScreen() {
         await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(ids));
       }
     } catch {}
+    try { api.stickerPackReorder?.(ids); } catch {}
   }, []);
 
-  const move = useCallback((from, dir) => {
-    setPacks((prev) => {
-      const to = from + dir;
-      if (to < 0 || to >= prev.length) return prev;
-      const next = prev.slice();
-      [next[from], next[to]] = [next[to], next[from]];
-      persistOrder(next);
-      return next;
-    });
-  }, [persistOrder]);
+  // Drag-to-reorder. We track the index currently being dragged and the
+  // pixel offset from its rest position. On release we swap based on the
+  // accumulated dy / ROW_HEIGHT.
+  const ROW_HEIGHT = 72; // matches the renderItem row (padding 10 + 52 tile)
+  const [dragIndex, setDragIndex] = useState(-1);
+  const dragY = useRef(new Animated.Value(0)).current;
+  const dragAccumRef = useRef(0);
+
+  // Build the responder per-row. The renderItem passes the row's index in.
+  const makePanResponder = useCallback((rowIndex) => PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponder: (_e, gs) => Math.abs(gs.dy) > 4,
+    onPanResponderGrant: () => {
+      setDragIndex(rowIndex);
+      dragAccumRef.current = 0;
+      dragY.setValue(0);
+    },
+    onPanResponderMove: (_e, gs) => {
+      dragAccumRef.current = gs.dy;
+      dragY.setValue(gs.dy);
+    },
+    onPanResponderRelease: () => {
+      const dy = dragAccumRef.current;
+      const steps = Math.round(dy / ROW_HEIGHT);
+      if (steps !== 0) {
+        setPacks((prev) => {
+          const to = Math.max(0, Math.min(prev.length - 1, rowIndex + steps));
+          if (to === rowIndex) return prev;
+          const next = prev.slice();
+          const [moved] = next.splice(rowIndex, 1);
+          next.splice(to, 0, moved);
+          persistOrder(next);
+          return next;
+        });
+      }
+      Animated.timing(dragY, { toValue: 0, duration: 120, useNativeDriver: true }).start(() => {
+        setDragIndex(-1);
+      });
+    },
+    onPanResponderTerminate: () => {
+      Animated.timing(dragY, { toValue: 0, duration: 120, useNativeDriver: true }).start(() => setDragIndex(-1));
+    },
+  }), [persistOrder, dragY]);
+
+  // Share a pack via the system share sheet (or clipboard fallback on web).
+  const sharePack = useCallback(async (pack) => {
+    const handle = pack?.handle;
+    if (!handle) {
+      Alert.alert(
+        t?.('chat.shareUnavailable') || 'Não dá pra compartilhar',
+        t?.('chat.shareUnavailableBody') || 'Esse pacote não tem link público.',
+      );
+      return;
+    }
+    const url = `https://chatyy.com.br/stickers/store?install=${encodeURIComponent(handle)}`;
+    const message = (t?.('chat.shareMsg') || 'Confira esse pacote no Chatyy:') + ' ' + url;
+    try {
+      if (Platform.OS === 'web') {
+        if (typeof navigator !== 'undefined' && navigator.share) {
+          await navigator.share({ title: pack.name, text: message, url });
+        } else if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(url);
+          Alert.alert(t?.('chat.linkCopied') || 'Link copiado', url);
+        } else {
+          Alert.alert(pack.name, url);
+        }
+      } else {
+        await Share.share({ message, url, title: pack.name });
+      }
+    } catch {}
+  }, [t]);
 
   const uninstall = useCallback(async (pack) => {
     Alert.alert(
@@ -212,24 +274,40 @@ export default function StickerMyPacksScreen() {
           data={packs}
           keyExtractor={(p) => String(p.id)}
           contentContainerStyle={{ paddingVertical: 8 }}
+          // Disable scroll while a row is being dragged so the list doesn't
+          // fight the pan responder.
+          scrollEnabled={dragIndex === -1}
           renderItem={({ item, index }) => {
             const cover = resolveCoverUri(item.cover_url);
+            const isDragging = dragIndex === index;
+            // Per-row responder. Built fresh each render — cheap, and the
+            // responder is only ever activated on the drag-handle, so the
+            // outer FlatList scroll keeps working everywhere else.
+            const responder = makePanResponder(index);
             return (
-              <View style={{
+              <Animated.View style={{
                 flexDirection: 'row', alignItems: 'center',
                 paddingHorizontal: 14, paddingVertical: 10,
                 borderBottomWidth: 1, borderBottomColor: colors.border,
                 gap: 12,
+                backgroundColor: isDragging ? (colors.surfaceVariant || colors.surface) : 'transparent',
+                transform: isDragging ? [{ translateY: dragY }] : [],
+                ...(isDragging && Platform.OS === 'web' ? { boxShadow: '0 6px 18px rgba(0,0,0,0.18)' } : {}),
+                zIndex: isDragging ? 10 : 0,
               }}>
-                {/* Drag-handle = up/down arrows (works on web + native without
-                    pulling in a heavy reorder library). */}
-                <View>
-                  <TouchableOpacity onPress={() => move(index, -1)} disabled={index === 0} hitSlop={8}>
-                    <IconChevronUp size={18} color={index === 0 ? colors.border : colors.textSecondary} />
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => move(index, +1)} disabled={index === packs.length - 1} hitSlop={8}>
-                    <IconChevronDown size={18} color={index === packs.length - 1 ? colors.border : colors.textSecondary} />
-                  </TouchableOpacity>
+                {/* Drag-handle. PanResponder lives here so the rest of the
+                    row remains tappable (uninstall, share, etc.). Arrows are
+                    kept as a keyboard-friendly fallback for web users w/o
+                    pointer drag (e.g. accessibility). */}
+                <View {...responder.panHandlers} style={{
+                  paddingHorizontal: 4, paddingVertical: 6,
+                  alignItems: 'center', justifyContent: 'center',
+                  ...(Platform.OS === 'web' ? { cursor: 'grab', touchAction: 'none' } : {}),
+                }}>
+                  {/* Three-line drag glyph, à la WhatsApp/Telegram reorder UI. */}
+                  <View style={{ width: 14, height: 2, backgroundColor: colors.textSecondary, marginVertical: 2, borderRadius: 1 }} />
+                  <View style={{ width: 14, height: 2, backgroundColor: colors.textSecondary, marginVertical: 2, borderRadius: 1 }} />
+                  <View style={{ width: 14, height: 2, backgroundColor: colors.textSecondary, marginVertical: 2, borderRadius: 1 }} />
                 </View>
                 <View style={{
                   width: 52, height: 52, borderRadius: 10, overflow: 'hidden',
@@ -259,10 +337,13 @@ export default function StickerMyPacksScreen() {
                     <Text style={{ color: '#7C3AED', fontSize: 9, fontWeight: '800' }}>PRO</Text>
                   </View>
                 )}
-                <TouchableOpacity onPress={() => uninstall(item)} hitSlop={8}>
+                <TouchableOpacity onPress={() => sharePack(item)} hitSlop={8} style={{ paddingHorizontal: 4 }}>
+                  <IconShare size={18} color={colors.textSecondary} />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => uninstall(item)} hitSlop={8} style={{ paddingHorizontal: 4 }}>
                   <IconTrash size={18} color={colors.danger || '#EF4444'} />
                 </TouchableOpacity>
-              </View>
+              </Animated.View>
             );
           }}
         />

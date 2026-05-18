@@ -132,9 +132,16 @@ class MailWebSocket {
             // Socket SAYS alive, but on iOS the OS often returns
             // readyState===OPEN for a socket that's been killed by the radio
             // sleep. Send an immediate ping AND schedule a short pong-watchdog
-            // — if no pong in 4s, force-reconnect. Without this, an incoming
+            // — if no pong in 8s, force-reconnect. Without this, an incoming
             // call accept (cold-start path) sat behind a dead socket for the
             // full 30s timeout before reconnecting.
+            //
+            // 2026-05-18 (invisible-sync): bumped 4s → 8s. The old 4s ceiling
+            // triggered false-positive zombie reconnects on slow cellular
+            // (cross-Atlantic RTT can spike past 4s on 4G under load) which
+            // flashed the "Connecting…/Sincronizando…" badge for users whose
+            // socket was actually fine. 8s is still well under the 30s OS
+            // timeout but tolerates a single RTT hiccup.
             this._pingTs = Date.now();
             this._send({ type: 'ping', ts: this._pingTs });
             this._startPing();
@@ -146,14 +153,14 @@ class MailWebSocket {
               this._fgWatchdog = null;
               if (this._hidden || this.destroyed) return;
               if (this.lastPongTime < pingedAt) {
-                console.warn('[WS] foreground ping had no pong in 4s — socket is zombie, force reconnect');
+                console.warn('[WS] foreground ping had no pong in 8s — socket is zombie, force reconnect');
                 try { this._cleanup(); } catch {}
                 if (this.token) {
                   this.reconnectAttempt = 0;
                   this.connect(this.token);
                 }
               }
-            }, 4000);
+            }, 8000);
           } else if (this.token && !this.destroyed) {
             // Socket is dead, reconnect immediately
             this.reconnectAttempt = 0;
