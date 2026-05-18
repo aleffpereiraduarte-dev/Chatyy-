@@ -336,8 +336,15 @@ function withNotificationServicePodTarget(config) {
 // symbols at archive time:
 //   "protocol witness table for ExpoCamera.CameraViewModule" not found
 //   "_OBJC_METACLASS_$__TtC15ExpoModulesCore15ModulesProvider" not found
-// Fix: post_install hook stub-a o arquivo da NSE com lista vazia. Issue ref:
-// https://github.com/expo/expo/issues/30605
+//
+// PRIMEIRA tentativa foi stubar o ExpoModulesProvider.swift no post_install do
+// pod, mas o Xcode tem um build phase `[Expo] Configure project` que REGERA
+// o arquivo durante CADA build (xcodebuild archive) — overrode meu stub.
+//
+// SOLUÇÃO ROBUSTA: usar post_install em Ruby pra abrir o user project
+// (Chatyy.xcodeproj) e REMOVER `ExpoModulesProvider.swift` do Sources Build
+// Phase da NSE. O script ainda regenera o arquivo, mas a NSE não compila ele.
+// Issue ref: https://github.com/expo/expo/issues/30605
 function withNotificationServiceProviderStub(config) {
   return withDangerousMod(config, [
     'ios',
@@ -345,45 +352,54 @@ function withNotificationServiceProviderStub(config) {
       const podfilePath = path.join(cfg.modRequest.platformProjectRoot, 'Podfile');
       if (!fs.existsSync(podfilePath)) return cfg;
       let pod = fs.readFileSync(podfilePath, 'utf8');
-      const sentinel = '# NSE_PROVIDER_STUB_v1';
+      const sentinel = '# NSE_REMOVE_PROVIDER_v2';
+      // Strip old v1 sentinel if present (was the failed stub approach)
+      pod = pod.replace(/\s*# NSE_PROVIDER_STUB_v1[\s\S]*?Pod::UI\.puts.*?\n\s*end\s*\n/m, '\n');
       if (pod.includes(sentinel)) return cfg;
 
-      // Insert hook BEFORE the existing post_install block (or append after
-      // the main target if no post_install exists yet — Expo template always
-      // has one but we're defensive).
       const hook = [
         '',
         '  ' + sentinel,
-        `  # Stub out ExpoModulesProvider.swift for the NSE — it inherits :search_paths`,
-        `  # so the modules listed in the auto-generated file aren't linked, causing`,
-        `  # "Undefined symbols" at archive time. Empty class satisfies the linker.`,
-        `  nse_provider = File.join(`,
-        `    installer.sandbox.target_support_files_root,`,
-        `    'Pods-${EXT_NAME}',`,
-        `    'ExpoModulesProvider.swift'`,
-        `  )`,
-        `  if File.exist?(nse_provider)`,
-        `    File.write(nse_provider, <<~SWIFT)`,
-        `      import Foundation`,
-        `      // Auto-stubbed by with-notification-service plugin — NSE has no Expo modules.`,
-        `      @objcMembers`,
-        `      public class ExpoModulesProvider: NSObject {`,
-        `        public func getModuleClasses() -> [Any.Type] { [] }`,
-        `        public func getAppDelegateSubscribers() -> [Any.Type] { [] }`,
-        `        public func getReactDelegateHandlers() -> [(Any.Type, String)] { [] }`,
-        `      }`,
-        `    SWIFT`,
-        `    Pod::UI.puts "[NSE stub] Replaced ExpoModulesProvider.swift with empty stub"`,
+        `  # Remove ExpoModulesProvider.swift from the NSE target's source build phase.`,
+        `  # The Xcode "[Expo] Configure project" build phase regenerates the file on`,
+        `  # every archive (so stubbing the file content doesn't stick). But if we`,
+        `  # remove the file's reference from the NSE Compile Sources phase, Xcode`,
+        `  # never tries to compile it for NSE → no undefined symbols for ExpoCamera/etc.`,
+        `  begin`,
+        `    user_project_path = installer.aggregate_targets.first.user_project_path`,
+        `    user_project = Xcodeproj::Project.open(user_project_path)`,
+        `    nse_target = user_project.targets.find { |t| t.name == '${EXT_NAME}' }`,
+        `    if nse_target`,
+        `      removed = 0`,
+        `      nse_target.source_build_phase.files.dup.each do |build_file|`,
+        `        ref = build_file.file_ref`,
+        `        path = ref && (ref.respond_to?(:path) ? ref.path : nil)`,
+        `        display = ref && ref.respond_to?(:display_name) ? ref.display_name : nil`,
+        `        if (path && path.include?('ExpoModulesProvider.swift')) || display == 'ExpoModulesProvider.swift'`,
+        `          nse_target.source_build_phase.remove_build_file(build_file)`,
+        `          removed += 1`,
+        `        end`,
+        `      end`,
+        `      if removed > 0`,
+        `        user_project.save`,
+        `        Pod::UI.puts "[NSE fix] Removed #{removed} ExpoModulesProvider.swift entries from NSE sources"`,
+        `      else`,
+        `        Pod::UI.puts "[NSE fix] No ExpoModulesProvider.swift found in NSE sources (already clean?)"`,
+        `      end`,
+        `    else`,
+        `      Pod::UI.puts "[NSE fix] WARNING: target ${EXT_NAME} not found in user project"`,
+        `    end`,
+        `  rescue => e`,
+        `    Pod::UI.puts "[NSE fix] ERROR: #{e.class}: #{e.message}"`,
+        `    raise`,
         `  end`,
         '',
       ].join('\n');
 
-      // Locate the post_install block and inject right after `post_install do |installer|`.
       const re = /(post_install\s+do\s*\|installer\|)/;
       if (re.test(pod)) {
         pod = pod.replace(re, `$1\n${hook}`);
       } else {
-        // No post_install in template — append a new block at the end.
         pod += `\n\npost_install do |installer|\n${hook}\nend\n`;
       }
       fs.writeFileSync(podfilePath, pod);
