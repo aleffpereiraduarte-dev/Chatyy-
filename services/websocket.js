@@ -251,6 +251,16 @@ class MailWebSocket {
 
       // Start heartbeat
       this._startPing();
+
+      // Wake voice session resume + offline-queue replay sweep. Any
+      // streaming voice upload that stalled mid-recording when the WS
+      // dropped will now flush its remaining chunks from lastChunkIdx+1
+      // instead of restarting at 0. Fire-and-forget; the prefetch module
+      // dedupes internally.
+      try {
+        const { notifyWsReconnected } = require('./voicePrefetch');
+        notifyWsReconnected?.();
+      } catch {}
     };
 
     this.ws.onmessage = (event) => {
@@ -787,6 +797,18 @@ class MailWebSocket {
           const { prefetchIncomingMessageMedia } = require('./mediaCache');
           prefetchIncomingMessageMedia?.(inner);
         } catch {}
+        // Voice-specific prefetch — persists server-side wave_peaks into
+        // MMKV (so the bubble paints the real envelope on next mount,
+        // even before audio bytes arrive) and triggers a permanent
+        // download into audio-saved/ (immune to LRU eviction). Bypasses
+        // cellular gate — voice notes are 30-200KB. WhatsApp parity:
+        // the recipient should be able to play offline a voice received
+        // weeks ago. Idempotent — dup events for the same msg.id no-op.
+        try {
+          const inner = chatMsg?.message || chatMsg;
+          const { onIncomingVoiceMessage } = require('./voicePrefetch');
+          onIncomingVoiceMessage?.(inner);
+        } catch {}
         // GLOBAL delivery ack — fire the moment ANY chat message lands on
         // this device, regardless of which screen is open. The per-conv
         // handler in chat-conversation.js only ran when that exact thread
@@ -881,6 +903,16 @@ class MailWebSocket {
             const inner = (msg.data && (msg.data.message || msg.data)) || msg;
             const { prefetchIncomingMessageMedia } = require('./mediaCache');
             prefetchIncomingMessageMedia?.(inner);
+          } catch {}
+          // Voice-specific prefetch (waveform peaks + permanent audio
+          // cache + played-ack tracking). Same scope as the chat_message
+          // branch above — chat_summary is the recipient's per-user
+          // fan-out so without this hook the voice never gets cached
+          // unless the user manually opens the conv.
+          try {
+            const inner = (msg.data && (msg.data.message || msg.data)) || msg;
+            const { onIncomingVoiceMessage } = require('./voicePrefetch');
+            onIncomingVoiceMessage?.(inner);
           } catch {}
           // Delivery ack for chat_summary too — the recipient's per-user
           // channel delivers via this type, not chat_message, so without

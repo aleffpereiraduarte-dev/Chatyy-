@@ -31,6 +31,7 @@ import useIsMounted from '../hooks/useIsMounted';
 import { COUNTRIES, formatPhone } from '../constants/countries';
 import { IconArrowLeft, IconArrowRight, IconCheck, IconCheckCircle, IconUser, IconAtSign, IconAlertTriangle, IconPhone, IconShield, IconSparkles, IconZap, IconCamera, IconChevronRight, IconLock, IconEye, IconEyeOff } from '../components/Icons';
 import SignupIntro from '../components/SignupIntro';
+import RestoreBackupPrompt from '../components/RestoreBackupPrompt';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 // Wide-screen breakpoint — tablet / desktop web. At >=768 we lay the handle
@@ -145,6 +146,15 @@ export default function SignupPhone() {
   // component, which jammed flag/dial into the field.
   const [showCountryPicker, setShowCountryPicker] = useState(false);
   const [countrySearch, setCountrySearch] = useState('');
+  // Restore-from-backup prompt state. Surfaced AFTER successful signup
+  // (loginWithToken returns ok) when the user's iCloud/Drive already has
+  // ≥1 backup tied to this phone number — usually means they reinstalled
+  // and signed up again with the same number. Web is excluded (native
+  // module is iOS/Android only). Mirrors login.js:478 pattern so the same
+  // RestoreBackupPrompt component handles both entry points.
+  const [showRestorePrompt, setShowRestorePrompt] = useState(false);
+  const [restoreBackups, setRestoreBackups] = useState([]);
+  const _postSignupNavRef = useRef(null); // { target: '/chat' } deferred until prompt closes
   // Avatar source picker — Instagram/WhatsApp pattern. iOS uses native
   // ActionSheetIOS; Android/Web uses a custom Modal with the same options.
   const [avatarSheetOpen, setAvatarSheetOpen] = useState(false);
@@ -312,6 +322,47 @@ export default function SignupPhone() {
     });
   };
 
+  // After auth (signup or existing-account OTP login) we probe the user's
+  // own iCloud / Drive for backups via expo-chat-backup.listBackups(). If
+  // we find ≥1 we surface the WhatsApp-style "Encontramos um backup"
+  // sheet and defer the router.replace('/chat') until the user picks
+  // "Restaurar" or "Pular". Web and any failure mode falls through to the
+  // immediate navigation so the prompt is never a blocker.
+  const _maybePromptRestoreThenGoChat = () => {
+    _postSignupNavRef.current = { target: '/chat' };
+    const _navNow = () => {
+      setTimeout(() => {
+        if (mountedRef.current) { try { router.replace('/chat'); } catch {} }
+      }, 600);
+    };
+    if (Platform.OS === 'web') { _navNow(); return; }
+    (async () => {
+      try {
+        let ChatBackup = null;
+        try { ChatBackup = require('expo-chat-backup'); } catch { ChatBackup = null; }
+        if (!ChatBackup?.listBackups) { _navNow(); return; }
+        const list = await ChatBackup.listBackups();
+        if (!mountedRef.current) return;
+        if (!Array.isArray(list) || list.length === 0) { _navNow(); return; }
+        setRestoreBackups(list);
+        setShowRestorePrompt(true);
+        // Navigation is now deferred — _handleRestorePromptClose fires it.
+      } catch {
+        _navNow();
+      }
+    })();
+  };
+
+  const _handleRestorePromptClose = () => {
+    setShowRestorePrompt(false);
+    const pending = _postSignupNavRef.current;
+    _postSignupNavRef.current = null;
+    if (!pending?.target) return;
+    setTimeout(() => {
+      if (mountedRef.current) { try { router.replace(pending.target); } catch {} }
+    }, 100);
+  };
+
   // Telegram-style "warm intro" before OTP: ping backend to check if account
   // exists, then frame the OTP screen as "Bem-vindo de volta" (existing) vs
   // "Vamos criar sua conta" (new). Does NOT skip OTP — both flows verify the
@@ -399,10 +450,12 @@ export default function SignupPhone() {
         return;
       }
       if (r?.success && r.data?.token) {
-        // Existing account — log in.
+        // Existing account — log in, then probe iCloud / Drive for an
+        // existing backup tied to this phone (reinstall scenario). On
+        // any probe error or web platform we just navigate immediately.
         try { await loginWithToken(r.data.token, r.data.email); } catch {}
         goStep('done');
-        setTimeout(() => { try { router.replace('/chat'); } catch {} }, 600);
+        _maybePromptRestoreThenGoChat();
       } else if (r?.success && r.data?.exists === false && r.data?.verify_token) {
         // New account — proceed to signup steps.
         setVerifyToken(r.data.verify_token);
@@ -495,7 +548,12 @@ export default function SignupPhone() {
           }
           if (!mountedRef.current) return;
           goStep('done');
-          setTimeout(() => { if (mountedRef.current) try { router.replace('/chat'); } catch {} }, 600);
+          // WhatsApp-parity backup-restore prompt: probe iCloud / Drive for
+          // existing backups tied to this phone number. If we find ≥1 we
+          // defer navigation and let the user pick "Restaurar" vs "Pular".
+          // Web + any error path falls back to the immediate router.replace
+          // so signup is never blocked by the probe.
+          _maybePromptRestoreThenGoChat();
         } else {
           setError(lr?.message || (t('signupPhone.signupError') || 'Falha ao entrar após criar conta'));
         }
@@ -1661,6 +1719,18 @@ export default function SignupPhone() {
           </ScrollView>
         </View>
       </Modal>
+
+      {/* WhatsApp-style "Encontramos um backup" sheet. Surfaces after auth
+          (signup completion OR existing-account OTP login) when the user
+          has ≥1 backup in iCloud/Drive. Same component login.js mounts so
+          UX is consistent across both entry points. onClose resumes the
+          deferred router.replace('/chat'). */}
+      <RestoreBackupPrompt
+        visible={showRestorePrompt}
+        backups={restoreBackups}
+        onClose={_handleRestorePromptClose}
+        onRestored={() => { /* onClose handles nav after the user taps "Pronto" */ }}
+      />
     </KeyboardAvoidingView>
   );
 }

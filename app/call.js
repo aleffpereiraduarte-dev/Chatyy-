@@ -404,6 +404,18 @@ function CallScreenInner() {
   const audioStatsRef = useRef(null);
   useEffect(() => { audioStatsRef.current = audioStats; }, [audioStats]);
 
+  // ───── "You are muted" reminder (WhatsApp/Zoom parity) ─────
+  // When the user starts speaking while muted, surface a small toast so they
+  // don't keep talking into the void. Detection: poll LK's
+  // localParticipant.audioLevel every 250ms while audioMuted=true; trigger
+  // when level crosses MUTE_REMINDER_THRESHOLD. 10s cooldown so it doesn't
+  // spam if the user is just having a noisy environment.
+  const [muteReminderVisible, setMuteReminderVisible] = useState(false);
+  const lastMuteReminderRef = useRef(0);
+  const muteReminderHideTimerRef = useRef(null);
+  const MUTE_REMINDER_THRESHOLD = 0.04; // LK audioLevel is 0..1
+  const MUTE_REMINDER_COOLDOWN_MS = 10_000;
+
   // [bug 2026-05-18 web-mic-permission]
   // Web users on chatyy.com.br were seeing the generic "microphone not
   // available, check permissions" error from LiveKit when getUserMedia was
@@ -2146,6 +2158,54 @@ function CallScreenInner() {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [peerConnected]);
 
+  // ───── Mute-reminder poll ─────
+  // While the local mic is muted, poll LiveKit's localParticipant.audioLevel
+  // every 250ms. If the user crosses the speech threshold (and we haven't
+  // surfaced the reminder in the last 10s), pop the inline toast for ~3s.
+  // Stops when unmuted or call ends. CallAudioStats covers diagnostics; this
+  // is the user-facing "Você está mutado" cue.
+  useEffect(() => {
+    if (!peerConnected || !audioMuted || ended) return;
+    let active = true;
+    const interval = setInterval(() => {
+      if (!active) return;
+      try {
+        const r = roomRef.current;
+        const lp = r?.localParticipant;
+        if (!lp) return;
+        // LK's Participant.audioLevel is a smoothed 0..1 value. Underlying
+        // audio capture continues even when the publication is muted, so
+        // levels remain meaningful for self-detection.
+        const lvl = Number(lp.audioLevel || 0);
+        if (lvl < MUTE_REMINDER_THRESHOLD) return;
+        const now = Date.now();
+        if (now - lastMuteReminderRef.current < MUTE_REMINDER_COOLDOWN_MS) return;
+        lastMuteReminderRef.current = now;
+        setMuteReminderVisible(true);
+        if (muteReminderHideTimerRef.current) clearTimeout(muteReminderHideTimerRef.current);
+        muteReminderHideTimerRef.current = setTimeout(() => {
+          setMuteReminderVisible(false);
+          muteReminderHideTimerRef.current = null;
+        }, 3000);
+      } catch {}
+    }, 250);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [peerConnected, audioMuted, ended]);
+
+  // Hide reminder immediately when user unmutes — no point showing it.
+  useEffect(() => {
+    if (!audioMuted && muteReminderVisible) {
+      setMuteReminderVisible(false);
+      if (muteReminderHideTimerRef.current) {
+        clearTimeout(muteReminderHideTimerRef.current);
+        muteReminderHideTimerRef.current = null;
+      }
+    }
+  }, [audioMuted, muteReminderVisible]);
+
   // ───── Toggles ─────
   const handleToggleMute = useCallback(async () => {
     const r = roomRef.current;
@@ -3242,6 +3302,16 @@ function CallScreenInner() {
                   <Text style={[styles.videoRequestBtnText, { color: '#fff' }]}>{t('common.accept') || 'Aceitar'}</Text>
                 </TouchableOpacity>
               </View>
+            </View>
+          )}
+
+          {/* "Você está mutado" reminder — surfaces when the user speaks
+              while muted. Cooldown + auto-hide handled in the poll effect. */}
+          {muteReminderVisible && !ended && (
+            <View style={[styles.weakBanner, { backgroundColor: 'rgba(239, 68, 68, 0.92)', top: 60 }]}>
+              <Text style={styles.weakBannerText} numberOfLines={1}>
+                {t('call.muteReminder') || 'Você está mutado'}
+              </Text>
             </View>
           )}
 

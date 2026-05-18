@@ -70,6 +70,19 @@ export function onIncomingVoiceMessage(message) {
     if (peaks && peaks.length > 0) {
       setVoiceWaveform(url, peaks, message.id);
     }
+    // Track this message id → conversation_id so when the AudioPlayer's
+    // onended emits emitAudioFinished(messageId) the voicePlaybackBus
+    // can auto-fire chatVoicePlayed (WhatsApp "played" receipt). Inbound
+    // messages only — outgoing voice notes hit this path with our own
+    // address as sender, so the bus's isOwn=false default still tracks
+    // them; the server-side chat_voice_played handler dedupes own-msg
+    // acks. Best-effort.
+    try {
+      const { trackVoiceMessage } = require('./voicePlaybackBus');
+      if (typeof trackVoiceMessage === 'function' && message.id != null) {
+        trackVoiceMessage(message.id, message.conversation_id || message.conversationId, false);
+      }
+    } catch {}
     // Web: defer to the browser's HTTP cache + Cache API (cacheMedia
     // already populates it for audio URLs). Skip the FS download path.
     if (Platform.OS === 'web') {

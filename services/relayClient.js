@@ -257,7 +257,17 @@ export async function searchMessagesViaRelay(query, conversationId = null) {
  * caller doesn't have to wrap the call in try/catch just for telemetry.
  */
 export async function bootstrapHistoryFromPeer(opts = {}) {
-  const { targetDeviceId = null, maxConversations = 50, onProgress = null } = opts || {};
+  // maxConversations is accepted for backwards-compat with old callers but
+  // is no longer used to cap the iteration — we now pull EVERY conversation
+  // the peer reports. WhatsApp Web-grade: a fresh pair should see the full
+  // history, not a "top 50" preview that then leaves the rest invisible
+  // until the user happens to scroll into a conv we silently dropped.
+  const {
+    targetDeviceId = null,
+    onProgress = null,
+    perBatchLimit = 100,   // messages per get_messages page
+    maxBatchesPerConv = 50, // safety cap = up to 5,000 msgs per conv
+  } = opts || {};
 
   // We use the same db.js helpers the rest of the chat stack uses; require
   // lazily so this module stays loadable on web (where db.js is a no-op
@@ -266,7 +276,7 @@ export async function bootstrapHistoryFromPeer(opts = {}) {
   try { db = require('./db'); } catch {}
   const dbSaveConversations = db?.dbSaveConversations || (async () => {});
   const dbSaveMessages      = db?.dbSaveMessages      || (async () => {});
-  const dbGetLastMessageId  = db?.dbGetLastMessageId  || (async () => 0);
+  const _getDb              = db?.getDb               || (() => null);
 
   let log = null;
   try { log = require('./debugLogger'); } catch {}
@@ -278,8 +288,65 @@ export async function bootstrapHistoryFromPeer(opts = {}) {
     } catch {}
   };
 
+  // ── Per-conversation sync checkpoint table ────────────────────────────
+  // Stores the oldest message id we've successfully imported for each
+  // conversation so a resumed bootstrap (after app kill / network drop)
+  // continues paginating from where we left off instead of re-pulling the
+  // whole tail. Created lazily — safe to call repeatedly. Separate from the
+  // existing db.js `sync_state` table (which is keyed by table_name, not
+  // conv_id) to avoid schema conflict and keep migration trivial.
+  async function _ensureSyncStateTable() {
+    const sqlite = _getDb();
+    if (!sqlite || typeof sqlite.execAsync !== 'function') return false;
+    try {
+      await sqlite.execAsync(
+        `CREATE TABLE IF NOT EXISTS chat_conv_sync_state (
+          conv_id TEXT PRIMARY KEY,
+          oldest_id TEXT,
+          last_synced_at INTEGER
+        );`
+      );
+      return true;
+    } catch (e) {
+      _log('chat_conv_sync_state create failed', { message: e?.message });
+      return false;
+    }
+  }
+  async function _getCheckpoint(cid) {
+    const sqlite = _getDb();
+    if (!sqlite || typeof sqlite.getFirstAsync !== 'function') return null;
+    try {
+      const row = await sqlite.getFirstAsync(
+        'SELECT oldest_id, last_synced_at FROM chat_conv_sync_state WHERE conv_id = ?',
+        [String(cid)]
+      );
+      return row || null;
+    } catch { return null; }
+  }
+  async function _setCheckpoint(cid, oldestId) {
+    const sqlite = _getDb();
+    if (!sqlite || typeof sqlite.runAsync !== 'function') return;
+    try {
+      await sqlite.runAsync(
+        `INSERT INTO chat_conv_sync_state (conv_id, oldest_id, last_synced_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(conv_id) DO UPDATE SET oldest_id = excluded.oldest_id,
+                                            last_synced_at = excluded.last_synced_at`,
+        [String(cid), oldestId != null ? String(oldestId) : null, Date.now()]
+      );
+    } catch (e) {
+      _log('chat_conv_sync_state upsert failed', { cid, message: e?.message });
+    }
+  }
+
+  await _ensureSyncStateTable();
+
   // Step 1 — pull the conversation list. We pass target_device_id so the
   // server routes specifically (otherwise it picks any paired non-web).
+  // NOTE: get_conversations on the peer side returns ALL conversations in
+  // one shot today (server doesn't paginate the conv list — chat list is
+  // bounded by user, typically <500). If/when that backend grows a
+  // before_cursor parameter, this is the place to loop.
   let conversations = [];
   try {
     const params = targetDeviceId ? { target_device_id: targetDeviceId } : {};
@@ -294,15 +361,16 @@ export async function bootstrapHistoryFromPeer(opts = {}) {
     return { success: true, done: 0, total: 0 };
   }
 
-  // Sort newest activity first; take top N.
+  // Sort newest activity first so the user sees their most recent threads
+  // hydrated before we drill into long-tail history.
   conversations.sort((a, b) => {
     const ta = String(a?.last_message_time || a?.updated_at || '');
     const tb = String(b?.last_message_time || b?.updated_at || '');
     if (ta === tb) return 0;
     return ta < tb ? 1 : -1;
   });
-  const pickN = Math.max(1, Math.min(parseInt(maxConversations, 10) || 50, 200));
-  const list = conversations.slice(0, pickN);
+  // No more `maxConversations` cap — iterate EVERY conv the peer returned.
+  const list = conversations;
 
   // Persist the convo metadata up-front so even if message fetches fail
   // the user at least sees the conversation list immediately.
@@ -315,7 +383,10 @@ export async function bootstrapHistoryFromPeer(opts = {}) {
   const total = list.length;
   let doneCount = 0;
 
-  // Worker that processes one conversation.
+  // Pull ALL pages of a conversation, oldest cursor advancing each round.
+  // Resumes from the per-conv checkpoint so a bootstrap killed mid-flight
+  // restarts where it left off rather than reflooding the network with
+  // pages we already imported.
   const fetchOne = async (conv) => {
     const cid = conv?.id;
     if (!cid) {
@@ -332,29 +403,74 @@ export async function bootstrapHistoryFromPeer(opts = {}) {
       });
     } catch {}
 
-    // Idempotency check — if we already have ANY message for this conv
-    // locally, skip the network round-trip. The caller can purge the
-    // per-email bootstrap flag (or call dbClearAll) to force a fresh pull.
+    // Resume cursor — if we have a checkpoint, page older than it.
+    // Otherwise start at the head (no before_id).
+    let beforeId = null;
     try {
-      const lastId = await dbGetLastMessageId(cid);
-      if (lastId && Number(lastId) > 0) {
-        doneCount++;
-        return;
-      }
+      const cp = await _getCheckpoint(cid);
+      if (cp && cp.oldest_id) beforeId = cp.oldest_id;
     } catch {}
 
     try {
-      const params = { conversation_id: cid, limit: 100 };
-      if (targetDeviceId) params.target_device_id = targetDeviceId;
-      const data = await relayRequest('get_messages', params, 20000);
-      const msgs = Array.isArray(data?.messages) ? data.messages : [];
-      if (msgs.length) {
-        try { await dbSaveMessages(cid, msgs); }
-        catch (e) { _log('dbSaveMessages error', { cid, message: e?.message }); }
+      for (let batch = 0; batch < maxBatchesPerConv; batch++) {
+        const params = { conversation_id: cid, limit: perBatchLimit };
+        if (targetDeviceId) params.target_device_id = targetDeviceId;
+        if (beforeId) params.before_id = beforeId;
+
+        let data;
+        try {
+          data = await relayRequest('get_messages', params, 20000);
+        } catch (e) {
+          _log('get_messages page failed', { cid, batch, code: e?.code, message: e?.message });
+          // Bail out of this conv but don't abort the whole bootstrap —
+          // the next bootstrap run will pick up at the same checkpoint.
+          break;
+        }
+
+        const msgs = Array.isArray(data?.messages) ? data.messages : [];
+        if (!msgs.length) {
+          // Empty page → we've reached the head of history for this conv.
+          break;
+        }
+
+        try {
+          await dbSaveMessages(cid, msgs);
+        } catch (e) {
+          _log('dbSaveMessages error', { cid, message: e?.message });
+        }
+
+        // Find the OLDEST id in this batch to use as the next before_id.
+        // Messages can come back in either order from the peer; compute
+        // min defensively by numeric id when possible, lexical fallback.
+        let oldest = null;
+        for (const m of msgs) {
+          const id = m?.id;
+          if (id == null) continue;
+          if (oldest == null) { oldest = id; continue; }
+          const a = Number(oldest), b = Number(id);
+          if (Number.isFinite(a) && Number.isFinite(b)) {
+            if (b < a) oldest = id;
+          } else if (String(id) < String(oldest)) {
+            oldest = id;
+          }
+        }
+        if (oldest == null) break;
+
+        // Persist checkpoint after every successful page so a kill anywhere
+        // in the loop resumes cleanly. Tiny write, no perf concern.
+        await _setCheckpoint(cid, oldest);
+
+        // Detect end-of-history signals from server: explicit has_more=false,
+        // OR a short page (server didn't fill the batch ⇒ likely the tail).
+        const hasMore = (data && (data.has_more === true || data.hasMore === true));
+        const explicitNoMore = (data && (data.has_more === false || data.hasMore === false));
+        if (explicitNoMore) break;
+        if (!hasMore && msgs.length < perBatchLimit) break;
+
+        beforeId = oldest;
       }
     } catch (e) {
-      _log('get_messages failed', { cid, code: e?.code, message: e?.message });
-      // swallow — one bad conv shouldn't kill the whole bootstrap
+      _log('fetchOne unexpected', { cid, message: e?.message });
     } finally {
       doneCount++;
     }
@@ -362,7 +478,9 @@ export async function bootstrapHistoryFromPeer(opts = {}) {
 
   // Concurrency = 5. Bigger pools OOM low-end Androids when each response
   // can be 100 messages × 16KB raw_json + image previews. 5 keeps us under
-  // ~8MB peak working set during the fetch phase.
+  // ~8MB peak working set during the fetch phase. (Now that we paginate
+  // deep per conv, the bottleneck is network RTT, not local CPU — but
+  // raising this further still risks burning the peer's relay budget.)
   const CONCURRENCY = 5;
   let cursor = 0;
   async function worker() {

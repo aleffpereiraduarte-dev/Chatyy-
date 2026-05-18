@@ -1918,12 +1918,12 @@ export default function StoryViewer({
             // burst. Mirrors Instagram/TikTok double-tap-like UX without
             // disrupting the existing tap-hold-to-pause + tap-to-advance
             // behaviors (those are handled by onPressIn/onPressOut + the
-            // left/right zones). 280ms window is the sweet spot between
+            // left/right zones). 250ms window is the sweet spot between
             // "two intentional taps" and "two slow scrolls".
             const now = Date.now();
             const last = lastTapRef.current || 0;
             lastTapRef.current = now;
-            if (now - last > 280) return;
+            if (now - last > 250) return;
             lastTapRef.current = 0; // consume — next pair starts fresh
             try {
               const x = e?.nativeEvent?.pageX;

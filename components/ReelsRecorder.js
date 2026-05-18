@@ -105,6 +105,51 @@ const CLIP_COLORS = ['#7C3AED', '#EC4899', '#F59E0B', '#10B981', '#3B82F6', '#EF
 
 const BRAND = '#7C3AED';
 
+// Instagram-style CSS filter strip — same vocabulary as CreatePostModal so
+// users get one mental model across feed/reels. CSS string is used directly
+// on web; native uses `getNativeFilterStyle` for an approximate look since
+// react-native doesn't support the full CSS filter pipeline.
+const FILTERS = [
+  { name: 'Normal', css: '' },
+  { name: 'Clarendon', css: 'contrast(1.2) saturate(1.35)' },
+  { name: 'Gingham', css: 'brightness(1.05) hue-rotate(-10deg)' },
+  { name: 'Moon', css: 'grayscale(1) contrast(1.1) brightness(1.1)' },
+  { name: 'Lark', css: 'contrast(0.9) brightness(1.1) saturate(1.2)' },
+  { name: 'Reyes', css: 'sepia(0.22) brightness(1.1) contrast(0.85) saturate(0.75)' },
+  { name: 'Juno', css: 'contrast(1.1) brightness(1.05) saturate(1.3)' },
+  { name: 'Slumber', css: 'saturate(0.66) brightness(1.05) sepia(0.1)' },
+  { name: 'Aden', css: 'hue-rotate(20deg) contrast(0.9) saturate(0.85) brightness(1.2)' },
+  { name: 'Perpetua', css: 'brightness(1.05) contrast(1.1) saturate(1.1)' },
+];
+
+// Effects — 6 baseline AR-light presets implemented as CSS filters. AR
+// face-tracking lives in a separate cut (FaceFilters.js); these are global
+// color/tone presets that ride on top of the live preview without needing a
+// face mesh.
+const EFFECTS = [
+  { name: 'Normal', css: '' },
+  { name: 'B&W', css: 'grayscale(1) contrast(1.05)' },
+  { name: 'Vintage', css: 'sepia(0.55) contrast(0.95) brightness(1.05)' },
+  { name: 'Vivid', css: 'saturate(1.6) contrast(1.15)' },
+  { name: 'Cold', css: 'hue-rotate(-15deg) saturate(1.1) brightness(1.05)' },
+  { name: 'Warm', css: 'hue-rotate(15deg) saturate(1.2) brightness(1.05) sepia(0.1)' },
+];
+
+// Native fallback styling — RN can't apply CSS filter strings, so we lean
+// on opacity/tint as a visual hint that the filter is active.
+function getNativeFilterStyle(name) {
+  switch (name) {
+    case 'Moon':
+    case 'B&W': return { opacity: 0.85 };
+    case 'Reyes':
+    case 'Vintage': return { opacity: 0.88 };
+    case 'Slumber':
+    case 'Warm': return { opacity: 0.92 };
+    case 'Cold': return { opacity: 0.92 };
+    default: return {};
+  }
+}
+
 /**
  * ReelsRecorder
  *
@@ -120,6 +165,7 @@ const BRAND = '#7C3AED';
 export default function ReelsRecorder({
   onClose,
   onComplete,
+  onOpenDrafts,
   initialMusic = null,
   maxDurationMs = MAX_DURATION_60_MS,
 }) {
@@ -154,10 +200,16 @@ export default function ReelsRecorder({
   // ─── Music ───
   const [selectedSound, setSelectedSound] = useState(initialMusic);
 
-  // ─── Right-rail toggles (skeleton — wired to TODO) ───
+  // ─── Right-rail toggles ───
   const [beauty, setBeauty] = useState(false);
-  const [filtersOpen, setFiltersOpen] = useState(false);   // TODO: open PhotoEditor preset row
-  const [effectsOpen, setEffectsOpen] = useState(false);   // TODO: AR effects sheet
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [effectsOpen, setEffectsOpen] = useState(false);
+  // Active selection per surface — null = Normal / off. Live filter rides on
+  // top of the preview while the bottom sheet is open so the user sees the
+  // change before committing. Effect is layered separately so a filter +
+  // effect combo (e.g. Clarendon + B&W) can be stacked.
+  const [activeFilter, setActiveFilter] = useState('Normal');
+  const [activeEffect, setActiveEffect] = useState('Normal');
 
   // ─── Duration cap toggle (60s vs 180s) ───
   const [maxMs, setMaxMs] = useState(maxDurationMs);
@@ -395,7 +447,18 @@ export default function ReelsRecorder({
       >
         <CameraView
           ref={cameraRef}
-          style={styles.camera}
+          style={[
+            styles.camera,
+            // On web, CameraView is rendered via a <video> element and CSS
+            // filters apply natively. On native we fall back to opacity tints
+            // via getNativeFilterStyle.
+            Platform.OS === 'web'
+              ? { filter: [
+                    FILTERS.find(f => f.name === activeFilter)?.css,
+                    EFFECTS.find(e => e.name === activeEffect)?.css,
+                  ].filter(Boolean).join(' ') || undefined }
+              : { ...getNativeFilterStyle(activeFilter), ...getNativeFilterStyle(activeEffect) },
+          ]}
           facing={facing}
           flash={flash}
           mode="video"
@@ -584,6 +647,21 @@ export default function ReelsRecorder({
         </View>
       )}
 
+      {/* ─── Drafts entry pill — sits above the speed row when there's no
+              active recording. Tap to navigate to /reels-drafts. Persisted
+              drafts are loaded from AsyncStorage there. ─── */}
+      {!recording && onOpenDrafts && (
+        <TouchableOpacity
+          onPress={() => { haptic('light'); onOpenDrafts(); }}
+          style={[styles.draftsPill, { bottom: (insets.bottom || 0) + 250 }]}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.draftsPillTxt}>
+            {t?.('reels.drafts') || 'Rascunhos'}
+          </Text>
+        </TouchableOpacity>
+      )}
+
       {/* ─── BOTTOM ROW: gallery | record | preview ─── */}
       <View
         style={[styles.bottomRow, { paddingBottom: (insets.bottom || 0) + 18 }]}
@@ -663,27 +741,79 @@ export default function ReelsRecorder({
         </TouchableOpacity>
       </View>
 
-      {/* ─── TODO panels (filters / effects) — opens PhotoEditor in a later cut ─── */}
+      {/* ─── Filter / effect strips ─── */}
+      {/* Each strip is a horizontal scroller of preset chips rendered as a
+          bottom sheet. Selecting a chip applies the preset live to the camera
+          preview (see the CameraView style above). Close dismisses without
+          revert — user can pick "Normal" to clear. */}
       {(filtersOpen || effectsOpen) && (
-        <Modal transparent animationType="slide" onRequestClose={() => { setFiltersOpen(false); setEffectsOpen(false); }}>
-          <View style={styles.todoSheetWrap}>
-            <View style={styles.todoSheet}>
-              <Text style={styles.todoSheetTitle}>
-                {filtersOpen
-                  ? (t?.('status.filters') || 'Filtros')
-                  : (t?.('status.effects') || 'Efeitos')}
-              </Text>
-              <Text style={styles.todoSheetBody}>
-                {t?.('common.comingSoon') || 'Em breve'}
-              </Text>
-              <TouchableOpacity
-                onPress={() => { setFiltersOpen(false); setEffectsOpen(false); }}
-                style={styles.todoSheetBtn}
+        <Modal
+          transparent
+          animationType="slide"
+          onRequestClose={() => { setFiltersOpen(false); setEffectsOpen(false); }}
+        >
+          <Pressable
+            style={styles.fxSheetWrap}
+            onPress={() => { setFiltersOpen(false); setEffectsOpen(false); }}
+          >
+            <Pressable style={styles.fxSheet} onPress={(e) => e.stopPropagation?.()}>
+              <View style={styles.fxSheetHeader}>
+                <Text style={styles.fxSheetTitle}>
+                  {filtersOpen
+                    ? (t?.('status.filters') || 'Filtros')
+                    : (t?.('status.effects') || 'Efeitos')}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => { setFiltersOpen(false); setEffectsOpen(false); }}
+                  hitSlop={10}
+                >
+                  <IconX size={22} color="#fff" />
+                </TouchableOpacity>
+              </View>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.fxRow}
               >
-                <Text style={styles.todoSheetBtnTxt}>OK</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+                {(filtersOpen ? FILTERS : EFFECTS).map((preset) => {
+                  const isActive = filtersOpen
+                    ? activeFilter === preset.name
+                    : activeEffect === preset.name;
+                  return (
+                    <TouchableOpacity
+                      key={preset.name}
+                      onPress={() => {
+                        haptic('light');
+                        if (filtersOpen) setActiveFilter(preset.name);
+                        else setActiveEffect(preset.name);
+                      }}
+                      style={styles.fxChip}
+                      activeOpacity={0.8}
+                    >
+                      <View style={[
+                        styles.fxThumb,
+                        isActive && { borderColor: BRAND, borderWidth: 2 },
+                        // Web: paint a colored swatch with the actual CSS
+                        // filter applied so the chip previews the look.
+                        Platform.OS === 'web' && {
+                          backgroundColor: '#7C3AED',
+                          filter: preset.css || undefined,
+                        },
+                        Platform.OS !== 'web' && getNativeFilterStyle(preset.name),
+                      ]}>
+                        {preset.name === 'Normal' && (
+                          <Text style={styles.fxThumbNone}>—</Text>
+                        )}
+                      </View>
+                      <Text style={[styles.fxLabel, isActive && { color: BRAND, fontWeight: '800' }]} numberOfLines={1}>
+                        {preset.name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </Pressable>
+          </Pressable>
         </Modal>
       )}
     </View>
@@ -944,26 +1074,67 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
 
-  // TODO sheets
-  todoSheetWrap: {
+  // Filter/effect bottom sheet
+  fxSheetWrap: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.65)',
+    backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'flex-end',
   },
-  todoSheet: {
+  fxSheet: {
     backgroundColor: '#111',
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,
-    padding: 22,
-    paddingBottom: 42,
+    paddingTop: 14,
+    paddingBottom: 30,
+  },
+  fxSheetHeader: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingBottom: 12,
   },
-  todoSheetTitle: { color: '#fff', fontSize: 18, fontWeight: '800', marginBottom: 8 },
-  todoSheetBody: { color: '#fff', opacity: 0.7, fontSize: 14, marginBottom: 20 },
-  todoSheetBtn: {
-    backgroundColor: BRAND,
-    paddingHorizontal: 28, paddingVertical: 10,
+  fxSheetTitle: { color: '#fff', fontSize: 16, fontWeight: '800' },
+  fxRow: {
+    paddingHorizontal: 14,
+    gap: 12,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  fxChip: {
+    alignItems: 'center',
+    width: 64,
+  },
+  fxThumb: {
+    width: 56, height: 56,
+    borderRadius: 28,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 6,
+    overflow: 'hidden',
+  },
+  fxThumbNone: { color: '#fff', fontSize: 18, fontWeight: '700', opacity: 0.6 },
+  fxLabel: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '600',
+    textAlign: 'center',
+    maxWidth: 64,
+  },
+
+  // Drafts entry pill — centered above the speed row
+  draftsPill: {
+    position: 'absolute',
+    alignSelf: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 7,
     borderRadius: 18,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center',
+    zIndex: 22,
   },
-  todoSheetBtnTxt: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  draftsPillTxt: { color: '#fff', fontSize: 12, fontWeight: '700' },
 });

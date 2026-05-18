@@ -4,6 +4,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { router } from 'expo-router';
 import * as api from '../services/api';
 import { clearAll as clearAllCache, setCacheUser } from '../services/cache';
+import { initDeltaSync, stopDeltaSync } from '../services/deltaSync';
 
 // Lazy-load to break circular dependency: AuthContext → chatCache → db
 const getLazyClearChatCache = async () => {
@@ -142,6 +143,57 @@ async function _maybeOfferWhatsNew() {
     }
     if (lastSeen === '2.5.0') return;
     setWhatsNewState(true);
+  } catch {}
+}
+
+// WhatsApp Web Sync — Stage 1 wiring. Boots the delta-sync engine + the
+// foreground envelope puller as soon as we have a confirmed-good auth
+// (cold-start hydrate, login, completeLoginAfterChallenge, loginWithToken).
+// Idempotent because initDeltaSync() and startEnvelopePuller() are themselves
+// idempotent (they short-circuit on re-entry). Failures are swallowed so a
+// broken sync path doesn't block the user from getting into the app.
+let _syncBooted = false;
+function _bootSyncEngines() {
+  if (_syncBooted) return;
+  _syncBooted = true;
+  try {
+    initDeltaSync(api.apiCall, /* onChange */ () => {
+      // Fan out to any listener that already wires to globalThis. The chat
+      // list / inbox already poll their own data; this is just a nudge for
+      // anyone who'd rather react than poll. Safe no-op when nothing is
+      // listening.
+      try {
+        if (typeof globalThis !== 'undefined' && typeof globalThis.dispatchEvent === 'function') {
+          const Ev = (typeof Event === 'function') ? new Event('chatyy:syncTick') : null;
+          if (Ev) globalThis.dispatchEvent(Ev);
+        }
+      } catch {}
+    });
+  } catch (e) {
+    console.warn('[Auth] deltaSync init failed:', e?.message);
+  }
+  try {
+    const { startEnvelopePuller } = require('../services/envelopePuller');
+    startEnvelopePuller();
+  } catch (e) {
+    // envelopePuller is feature-gated by globalThis.__chatyy_envelope_mode —
+    // and the module itself can be absent on web. Either way, swallow.
+  }
+}
+
+function _teardownSyncEngines() {
+  _syncBooted = false;
+  try { stopDeltaSync(); } catch {}
+  try {
+    const { stopEnvelopePuller } = require('../services/envelopePuller');
+    stopEnvelopePuller();
+  } catch {}
+  // Tear down global chat persistence listeners so a re-login attaches a
+  // fresh set (idempotent + safe — startChatPersistence in _layout's
+  // user-confirmed effect re-attaches them after auth).
+  try {
+    const { stopChatPersistence } = require('../services/chatPersistence');
+    stopChatPersistence?.();
   } catch {}
 }
 
@@ -398,6 +450,10 @@ export function AuthProvider({ children }) {
           _syncShareExtAuth(r.data.email);
           prefetchAvatar(r.data.email);
           prefetchProfile(r.data.email);
+          // Wire the WhatsApp-Web style sync engines now that the token has
+          // been validated by the server. Idempotent + try/catch'd inside so
+          // a failure here can never prevent the user from reaching /inbox.
+          _bootSyncEngines();
           // Idempotent: re-register the user's verified phone so they stay
           // discoverable to anyone who had the number in their contacts. Runs
           // on every app-open (fire-and-forget, 800ms timeout server-side).
@@ -711,9 +767,11 @@ export function AuthProvider({ children }) {
           if (tok) Intents.setShareExtensionAuth(tok, userEmail, baseUrl);
         }
       } catch {}
-      // Initial sync — download everything to SQLite (WhatsApp-style)
-      try {
-      } catch {}
+      // Initial sync — download everything to SQLite (WhatsApp-style).
+      // Boots deltaSync (1min interval + AppState refresh) and the foreground
+      // envelopePuller (30s pull when active, gated on
+      // globalThis.__chatyy_envelope_mode). Both idempotent.
+      _bootSyncEngines();
       // Set child status from login response
       if (r.data?.is_child) {
         _childRestrictions = r.data.child_restrictions || {};
@@ -763,6 +821,7 @@ export function AuthProvider({ children }) {
     setUser(data);
     loadAccounts();
     registerPushAfterAuth();
+    _bootSyncEngines();
     _maybeOfferCloudRestore().catch(() => {});
     _maybeOfferWhatsNew().catch(() => {});
   }, [loadAccounts, registerPushAfterAuth]);
@@ -831,6 +890,7 @@ export function AuthProvider({ children }) {
     }
     loadAccounts();
     registerPushAfterAuth();
+    _bootSyncEngines();
     // First-launch cloud-restore — same prompt path as login(). Only fires
     // when chatyy_restored_once is unset, so QR/Face-ID re-logins of the
     // same user on the same device won't re-trigger it.
@@ -951,6 +1011,12 @@ export function AuthProvider({ children }) {
     //    WebSocket listeners, MQTT subscriptions, push registrations, or the
     //    edge-detection interval from the previous user.
     try { api.stopEdgeDetection?.(); } catch {}
+    // Stop the WA-Web sync engines so the next user that signs in starts
+    // a fresh interval/listener pair. _bootSyncEngines() is idempotent so
+    // even without this they'd just be reused; tearing down keeps the
+    // semantics clean (no leaked AppState listener firing for account A
+    // after account B signs in).
+    try { _teardownSyncEngines(); } catch {}
     try {
       const ws = require('../services/websocket').default;
       ws?.disconnect?.();

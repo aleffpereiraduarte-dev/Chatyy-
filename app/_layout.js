@@ -269,6 +269,11 @@ import WhatsNewSheet, { shouldShowWhatsNew } from '../components/WhatsNewSheet';
 // IndexedDB cache. Web-only; renders null on native.
 import PhoneOfflineBanner from '../components/PhoneOfflineBanner';
 import { registerBackgroundSync } from '../services/backgroundSync';
+// Side-effect import — patches expo-audio RecordingPresets.HIGH_QUALITY to
+// the WhatsApp Opus profile (32kbps mono 16/22kHz) before any chat screen
+// reads it. Mutates the live preset object so chat-conversation's inline
+// `RecordingPresets.HIGH_QUALITY` reference picks it up on the next record.
+import '../services/voiceRecorderTuning';
 import { initAutoBackup } from '../services/autoBackup';
 import { trackPageview, trackAppOpen } from '../services/analytics';
 import { prefetch, warmCache } from '../services/cache';
@@ -535,6 +540,22 @@ function AppInit({ onNotification, setOtaToast }) {
     // Server dedup by client_message_id makes double-sends impossible.
     try { import('../services/outboxDrainer').then(m => m.initOutboxDrainer?.()); } catch {}
 
+    // Global chat persistence — WhatsApp-style local-first. Every WS / MQTT /
+    // TCP chat event (msg, edit, delete, reaction) lands in SQLite + SmartCache
+    // the instant it arrives, no matter which screen is open. Before this, only
+    // the open chat-conversation screen persisted incoming msgs; a push that
+    // arrived while the user was on the chat list left the msg in memory only —
+    // tapping the chat then re-fetched it from the server (and showed a
+    // skeleton flash). Idempotent + safe across re-login.
+    try {
+      import('../services/chatPersistence').then(m => {
+        try { m.startChatPersistence?.(); } catch {}
+        // Eager hydrate SQLite + SmartCache so the very first paint of any
+        // chat screen already has data on disk-backed local-first cache.
+        try { m.hydrateChatFromDisk?.().catch?.(() => {}); } catch {}
+      });
+    } catch {}
+
     // Online recovery orchestrator — WhatsApp-grade auto-sync. Listens for
     // NetInfo offline→online flips, WS authenticated reconnects, and
     // AppState 'active' transitions; coalesces them with an 800ms debounce
@@ -583,6 +604,8 @@ function AppInit({ onNotification, setOtaToast }) {
       try {
         const apiMod = await import('../services/api');
         const { cacheConversations, cacheMessages, purgeAllPendingOnceOnMigration } = await import('../services/chatCache');
+        let SmartCache = null;
+        try { SmartCache = require('../services/smartChatCache'); } catch {}
 
         // One-time migration: clear stuck pending messages from past backend bugs
         purgeAllPendingOnceOnMigration().catch(() => {});
@@ -592,6 +615,10 @@ function AppInit({ onNotification, setOtaToast }) {
           const boot = await apiMod.bootstrap();
           if (boot?.success && boot.data?.conversations) {
             cacheConversations(boot.data.conversations).catch(() => {});
+            // Mirror to SmartCache so synchronous sync getters used in
+            // ChatListTab/chat-conversation initializers see the data on the
+            // very first render — no async wait, no skeleton flash.
+            try { SmartCache?.cacheConversations?.(boot.data.conversations); } catch {}
           }
         } catch {}
 
@@ -609,29 +636,39 @@ function AppInit({ onNotification, setOtaToast }) {
           prefetch('notes', () => apiMod.notesList({}), 600000).catch(() => {}),
         ]).catch(() => {});
 
-        // Chat conversations + messages (delayed 5s to not block startup)
+        // Chat conversations + messages — WhatsApp parity: top 50 × last 30 msgs.
+        // Delay 2s (down from 5s) so cold open feels instant; we already have
+        // cached UI painted from MMKV/SQLite before this fires. Stagger 150ms
+        // between requests so a slow server doesn't backlog the network queue.
         setTimeout(async () => {
           try {
             const convRes = await apiMod.chatConversations();
             if (convRes?.success) {
               const convs = convRes.data?.conversations || convRes.data?.chats || [];
               cacheConversations(convs).catch(() => {});
+              try { SmartCache?.cacheConversations?.(convs); } catch {}
 
-              // Pre-cache last 30 messages for top 15 conversations (background, staggered)
-              const topConvs = convs.slice(0, 15);
+              // Top 50 convs × 30 msgs each. ~1.5s amortized cost on cellular
+              // (150ms stagger × 50 = 7.5s tail, but UI already up + responsive).
+              const topConvs = convs.slice(0, 50);
               for (let i = 0; i < topConvs.length; i++) {
                 setTimeout(async () => {
                   try {
                     const msgRes = await apiMod.chatMessages(topConvs[i].id, 30);
                     if (msgRes?.success) {
-                      cacheMessages(topConvs[i].id, msgRes.data?.messages || []).catch(() => {});
+                      const msgs = msgRes.data?.messages || [];
+                      cacheMessages(topConvs[i].id, msgs).catch(() => {});
+                      // SmartCache primes the synchronous chat-conversation
+                      // mount so opening any of these 50 convs paints in zero
+                      // frames (vs the ~300ms async SQLite read otherwise).
+                      try { SmartCache?.cacheMessages?.(topConvs[i].id, msgs); } catch {}
                     }
                   } catch {}
-                }, i * 500); // 500ms between each to not slam server
+                }, i * 150);
               }
             }
           } catch {}
-        }, 5000);
+        }, 2000);
 
       } catch {}
     };
@@ -1200,6 +1237,8 @@ export default function RootLayout() {
                   <Stack.Screen name="reels-sound" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 150 }} />
                   {/* Reels recorder — dedicated full-screen camera (TikTok/Instagram-style). */}
                   <Stack.Screen name="reels-recorder" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'slide_from_bottom', animationDuration: 180 }} />
+                  {/* Reels drafts — grid of persisted drafts; tap to resume. */}
+                  <Stack.Screen name="reels-drafts" options={{ headerShown: false, presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 180 }} />
                   <Stack.Screen name="post-create" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'slide_from_bottom', animationDuration: 150 }} />
                   <Stack.Screen name="community/[id]" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="community/create" options={{ headerShown: false, presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 180 }} />

@@ -12,6 +12,24 @@
 const _finishedListeners = new Set();
 const _requestPlayListeners = new Set();
 
+// Cache of (messageId → conversationId) so the auto-ack hook below can
+// look up the conversation when the chat-conversation screen only passes
+// the messageId on emit. Populated by the bubble when it mounts via
+// trackVoiceMessage() — and by the WS prefetch path for inbound voices.
+const _voiceConvMap = new Map();
+// Dedup set so a single voice note doesn't ack twice in the same session.
+const _ackedThisSession = new Set();
+
+export function trackVoiceMessage(messageId, conversationId, isOwn) {
+  if (messageId == null) return;
+  // Don't ack our own outgoing voices — played receipts are receiver-side.
+  // We only skip when explicitly told isOwn === true; an absent flag means
+  // "caller doesn't know, register it" (server-side chat_voice_played
+  // ignores acks for own messages, so a stray call is harmless).
+  if (isOwn === true) return;
+  _voiceConvMap.set(String(messageId), conversationId || null);
+}
+
 export function onAudioFinished(fn) {
   _finishedListeners.add(fn);
   return () => _finishedListeners.delete(fn);
@@ -21,6 +39,28 @@ export function emitAudioFinished(messageId) {
   for (const fn of _finishedListeners) {
     try { fn(messageId); } catch {}
   }
+  // WhatsApp "played" receipt — fire ONCE per session per message id.
+  // Receiver-only: tracker skipped own messages on register, so anything
+  // in _voiceConvMap is inbound. Fire-and-forget; chatVoicePlayed in
+  // api.js is itself batched to coalesce auto-playback queues into a
+  // single POST per 250ms window.
+  try {
+    if (messageId == null) return;
+    const key = String(messageId);
+    if (_ackedThisSession.has(key)) return;
+    if (!_voiceConvMap.has(key)) return; // own msg or never tracked
+    _ackedThisSession.add(key);
+    const convId = _voiceConvMap.get(key);
+    const { chatVoicePlayed } = require('./api');
+    if (typeof chatVoicePlayed === 'function') {
+      chatVoicePlayed(messageId, convId).catch(() => {});
+    }
+    // Cap the dedup set so a long-lived session doesn't grow unbounded.
+    if (_ackedThisSession.size > 5000) {
+      const drop = Array.from(_ackedThisSession).slice(0, 1000);
+      for (const k of drop) _ackedThisSession.delete(k);
+    }
+  } catch {}
 }
 
 export function onRequestPlay(fn) {

@@ -2810,6 +2810,42 @@ export async function chatVoiceSessionFinalize(sessionId, { duration = 0, mime =
     waveform,
   }, 'POST');
 }
+
+// WhatsApp-style "played" receipt for voice notes. Fires once per voice
+// message the FIRST time playback reaches didJustFinish on the recipient
+// device. Server (chat_voice_played action) sets `played_at` on the row
+// and broadcasts a WS receipt so the sender's bubble flips its blue check
+// to the music-note glyph. Idempotent server-side — duplicate calls are
+// dropped silently. Batched at 250ms to coalesce queue-auto-play bursts.
+const _voicePlayedQueue = new Map(); // conversationId → Set<messageId>
+const _voicePlayedTimers = new Map();
+export async function chatVoicePlayed(messageId, conversationId) {
+  if (messageId == null) return { success: false, message: 'missing_id' };
+  const convKey = conversationId || '_';
+  let q = _voicePlayedQueue.get(convKey);
+  if (!q) { q = new Set(); _voicePlayedQueue.set(convKey, q); }
+  q.add(messageId);
+  if (_voicePlayedTimers.has(convKey)) return { success: true, queued: true };
+  return new Promise((resolve) => {
+    const h = setTimeout(async () => {
+      _voicePlayedTimers.delete(convKey);
+      const ids = Array.from(_voicePlayedQueue.get(convKey) || []);
+      _voicePlayedQueue.delete(convKey);
+      if (ids.length === 0) { resolve({ success: true, ids: [] }); return; }
+      try {
+        // Single id (most common case) → singular payload. Batched
+        // payload (message_ids array) works too on the server, so we
+        // forward whatever we have.
+        const payload = ids.length === 1
+          ? { message_id: ids[0], conversation_id: conversationId }
+          : { message_ids: ids, conversation_id: conversationId };
+        const r = await apiCall('chat_voice_played', payload, 'POST');
+        resolve(r);
+      } catch (e) { resolve({ success: false, message: e?.message || 'failed' }); }
+    }, 250);
+    _voicePlayedTimers.set(convKey, h);
+  });
+}
 // Forward protection
 export async function chatSetForwardProtection(conversationId, enabled) {
   return apiCall('chat_set_forward_protection', { conversation_id: conversationId, enabled }, 'POST');

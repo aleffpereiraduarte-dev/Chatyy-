@@ -203,6 +203,7 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
       fileName: item.file_name || 'media',
       fileSize: item.file_size || 0,
       type: item.type || activeTab,
+      messageId: item.id || item.message_id || 0,
     });
   };
 
@@ -286,6 +287,8 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
         onClose={() => setViewerItem(null)}
         colors={colors}
         t={t}
+        conversationId={conversationId}
+        messageId={viewerItem?.messageId || 0}
       />
     </Modal>
   );

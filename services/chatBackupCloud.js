@@ -141,9 +141,22 @@ function _safeTimestamp() {
 //
 // passphrase: required (>=8 chars). Use the same one the user picked for
 // e2ee_backup_escrow so they only memorize a single secret.
+//
+// opts.includeMedia (default TRUE — 2026-05-18 WhatsApp-parity flip): when
+// true we delegate to exportChatBundleWithMedia so restore on a fresh device
+// works even if R2 has since expired the originals. Callers that explicitly
+// want the text-only fast path can pass `{ includeMedia: false }`. We also
+// honor opts.bypassMediaSizeGate to skip the >500MB confirmation prompt
+// (used by the UI after the user accepts the modal).
 export async function exportChatBundle(passphrase, opts = {}) {
   if (!passphrase || typeof passphrase !== 'string' || passphrase.length < 8) {
     throw new Error('passphrase required (min 8 chars)');
+  }
+
+  // Default-on media inclusion. The text-only fast path is opt-out via
+  // explicit `includeMedia: false`.
+  if (opts.includeMedia !== false) {
+    return exportChatBundleWithMedia(passphrase, { ...opts, includeMedia: true });
   }
 
   const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : () => {};
@@ -371,6 +384,57 @@ export async function exportChatBundleWithMedia(passphrase, opts = {}) {
 
   if (includeMedia) {
     const withUrls = messages.filter((m) => m.file_url);
+
+    // Pre-flight: estimate total media size via HEAD probes so the UI can
+    // surface a "Backup com mídia (X MB) pode demorar. Continuar?" gate
+    // for free-tier users with very large libraries. The caller passes
+    // opts.confirmLargeMedia (async (estimateBytes) => bool) — if it
+    // returns false we skip the media re-pack (text-only fallback). The
+    // threshold matches Plus/Pro gating in plans.php — 500MB.
+    const LARGE_MEDIA_THRESHOLD = 500 * 1024 * 1024;
+    let estimatedTotal = 0;
+    if (typeof opts.confirmLargeMedia === 'function' && withUrls.length > 0) {
+      onProgress({ stage: 'estimate_media', total: withUrls.length });
+      // Sample up to 50 HEADs to avoid blocking on huge libraries — we use
+      // the avg per-item size × total count as the estimate. Caps the
+      // pre-flight at ~50 round-trips even when the user has 10k items.
+      const sampleSize = Math.min(50, withUrls.length);
+      let sampledBytes = 0;
+      let sampledOk = 0;
+      for (let i = 0; i < sampleSize; i++) {
+        try {
+          const head = await fetch(withUrls[i].file_url, { method: 'HEAD' });
+          const cl = head.headers?.get?.('content-length');
+          if (cl) {
+            const n = parseInt(cl, 10);
+            if (!Number.isNaN(n) && n > 0) {
+              sampledBytes += n;
+              sampledOk++;
+            }
+          }
+        } catch { /* HEAD failed — ignore for estimation */ }
+      }
+      if (sampledOk > 0) {
+        const avgBytes = sampledBytes / sampledOk;
+        estimatedTotal = Math.round(avgBytes * withUrls.length);
+      }
+      if (estimatedTotal > LARGE_MEDIA_THRESHOLD) {
+        let proceed = true;
+        try {
+          proceed = await opts.confirmLargeMedia(estimatedTotal);
+        } catch { proceed = false; }
+        if (!proceed) {
+          // User declined — produce a text-only bundle by falling through
+          // with includeMedia disabled. Mark the manifest so the restore
+          // side knows media wasn't packed even though the caller asked.
+          mediaSkippedTooBig = withUrls.length;
+          // Skip the fetch loop below.
+          onProgress({ stage: 'media_declined_by_user' });
+        }
+      }
+    }
+
+    if (mediaSkippedTooBig === 0 || mediaSkippedTooBig !== withUrls.length) {
     onProgress({ stage: 'fetch_media', total: withUrls.length });
 
     for (let i = 0; i < withUrls.length; i++) {
@@ -407,6 +471,7 @@ export async function exportChatBundleWithMedia(passphrase, opts = {}) {
         mediaSkippedFailed++;
       }
     }
+    } // end "if user didn't decline the >500MB prompt"
   }
 
   const manifest = {
@@ -1033,7 +1098,18 @@ export const BACKUP_FREQUENCIES = ['off', 'daily', 'weekly', 'monthly'];
 export async function getBackupFrequency() {
   try {
     const v = await SecureStore.getItemAsync(SS_FREQ_KEY);
-    return BACKUP_FREQUENCIES.includes(v) ? v : 'off';
+    if (BACKUP_FREQUENCIES.includes(v)) return v;
+    // No explicit setting — promote to WEEKLY if the user has shown
+    // backup intent (≥1 successful manual backup already on file). That
+    // way the engine self-schedules after the first save without
+    // pestering the user to flip a switch they don't think about. If
+    // there's no backup history at all we stay 'off' — never force a
+    // background backup on someone who hasn't opted in.
+    try {
+      const lastAt = await SecureStore.getItemAsync(SS_LAST_BACKUP_AT);
+      if (lastAt) return 'weekly';
+    } catch {}
+    return 'off';
   } catch { return 'off'; }
 }
 

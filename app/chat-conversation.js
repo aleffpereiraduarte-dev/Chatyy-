@@ -9129,8 +9129,11 @@ export default function ChatConversationScreen() {
   // Voice auto-advance orchestrator (WhatsApp parity). When ANY AudioPlayer
   // emits `audioFinished(msgId)` we walk forward in messages to find the
   // NEXT voice/audio bubble — must be from the same sender + arrived within
-  // 60s of the one that just ended (so a voice from yesterday doesn't
-  // auto-play after today's). Then we emit `requestPlay(nextId)` and the
+  // ±60s of the one that just ended (so a voice from yesterday doesn't
+  // auto-play after today's). Intervening non-audio bubbles (a quick text,
+  // a reaction) are SKIPPED, not treated as a break, so a sender that types
+  // "ouve aí 👇" + voice + voice still gets chained. A different sender or
+  // a gap > 60s stops the chain. Then we emit `requestPlay(nextId)` and the
   // matching AudioPlayer's listener kicks its own togglePlay.
   useEffect(() => {
     let unsub = () => {};
@@ -9142,20 +9145,27 @@ export default function ChatConversationScreen() {
         if (idx < 0 || idx >= list.length - 1) return;
         const finished = list[idx];
         const finishedTs = +new Date(finished.created_at || 0);
+        const finishedIsOwn = finished.sender_email === currentEmail;
         for (let i = idx + 1; i < list.length; i++) {
           const m = list[i];
-          if (m.type !== 'audio' && m.type !== 'voice') break;
-          if (m.sender_email !== finished.sender_email) break;
+          // Time-window gate: anything beyond 60s breaks the chain regardless
+          // of type — the user has moved on by then.
           const ts = +new Date(m.created_at || 0);
           if (ts && finishedTs && (ts - finishedTs) > 60_000) break;
-          // Found next sequential voice from same sender within 60s.
+          if (m.type !== 'audio' && m.type !== 'voice') continue;
+          // Same-sender rule: a voice from someone else (or, for received
+          // voices, a voice you yourself sent) interrupts the chain — that's
+          // a NEW conversational turn, not a continuation.
+          if (m.sender_email !== finished.sender_email) break;
+          if (!finishedIsOwn && (m.sender_email === currentEmail)) break;
+          // Found next voice from same sender within 60s — chain it.
           emitRequestPlay(m.id);
           break;
         }
       });
     } catch {}
     return () => { try { unsub(); } catch {} };
-  }, [messages]);
+  }, [messages, currentEmail]);
 
   // Subscribe to "send permanently failing" events so we flip the bubble
   // to red ❗ after ~5 retry attempts in offlineCache.replayOfflineQueue.
@@ -15460,6 +15470,21 @@ export default function ChatConversationScreen() {
           </View>
         );
       }
+      // Screenshot notify — peer took a screenshot inside ChatMediaViewer.
+      // Backend inserts a system msg with content="screenshot_event" plus
+      // sender_email on the row. Render as "{name} fez uma captura de tela".
+      if (msg.content === 'screenshot_event' || (msg.content && msg.content.startsWith('screenshot_event:'))) {
+        const senderName = msg.sender_name || msg.sender_email?.split('@')[0] || '';
+        const text = (t('chatConv.systemScreenshot') || '{name} took a screenshot').replace('{name}', senderName);
+        return (
+          <View style={styles.systemMsg}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <IconEye size={14} color={colors.textTertiary} />
+              <Text style={[styles.systemText, { color: colors.textTertiary }]}>{text}</Text>
+            </View>
+          </View>
+        );
+      }
       // Vanish mode system messages
       if (msg.content && msg.content.startsWith('vanish_mode:')) {
         const val = msg.content.split(':')[1];
@@ -18237,25 +18262,32 @@ export default function ChatConversationScreen() {
                 activeOpacity={0.7}
                 onPress={() => {
                   // WhatsApp-parity: scroll to the quoted message and flash it.
-                  // FlatList inverted means index 0 is the NEWEST, so higher
-                  // indexes correspond to older messages above.
+                  // Use `safeScrollToMsg` (already wired for pin tap + search
+                  // jump) which transparently handles the case where the
+                  // quoted message is OUT of the currently-loaded window —
+                  // it calls `chat_load_around` to splice older history into
+                  // state, then scrolls. Raw scrollToIndex silently no-ops
+                  // when the target row isn't mounted, which broke jumping
+                  // to old replies in long threads.
                   const targetId = msg.reply_to?.id;
                   if (!targetId) return;
-                  // FlatList data is `enrichedMessages` (reversed order since inverted).
-                  // Find the index THERE, not in the forward-ordered messages array.
-                  const idx = enrichedMessages.findIndex(m => m && m.id === targetId);
-                  if (idx >= 0) {
-                    try {
-                      flatListRef.current?.scrollToIndex?.({
-                        index: idx,
-                        animated: true,
-                        viewPosition: 0.5,
-                      });
-                    } catch {}
-                    // Flash-highlight the target bubble for ~1.5s so the user
-                    // can see where it landed (WhatsApp does the same).
-                    setReplyJumpHighlightId(targetId);
-                    setTimeout(() => setReplyJumpHighlightId(prev => prev === targetId ? null : prev), 1500);
+                  try {
+                    safeScrollToMsg({ id: targetId });
+                  } catch {
+                    // Fallback to the inline path on the off chance the
+                    // callback ref isn't ready yet (very early renders).
+                    const idx = enrichedMessages.findIndex(m => m && m.id === targetId);
+                    if (idx >= 0) {
+                      try {
+                        flatListRef.current?.scrollToIndex?.({
+                          index: idx,
+                          animated: true,
+                          viewPosition: 0.5,
+                        });
+                      } catch {}
+                      setReplyJumpHighlightId(targetId);
+                      setTimeout(() => setReplyJumpHighlightId(prev => prev === targetId ? null : prev), 1500);
+                    }
                   }
                 }}
                 style={[styles.replyIndicator, {
@@ -22642,7 +22674,7 @@ export default function ChatConversationScreen() {
                 >
                   <IconStar size={18} color={selectedMsg?.kept ? '#f59e0b' : colors.text} />
                   <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>
-                    {selectedMsg?.kept ? (t('chatConv.unkeep') || 'Desfazer manter') : (t('chatConv.keep') || 'Manter mensagem')}
+                    {selectedMsg?.kept ? (t('chatConv.unkeep') || 'Remover marcação') : (t('chatConv.keep') || 'Manter na conversa')}
                   </Text>
                 </TouchableOpacity>
               )}
@@ -23040,6 +23072,8 @@ export default function ChatConversationScreen() {
             viewOnce={mv.viewOnce}
             mediaList={mediaList}
             initialIndex={initialIndex}
+            conversationId={conversationId}
+            messageId={mv.messageId || 0}
           />
         );
       })()}

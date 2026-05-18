@@ -2,7 +2,15 @@ import { Platform } from 'react-native';
 
 const CACHE_DIR = 'chat-media-cache';
 const PERMANENT_DIR = 'chat-media-saved'; // Permanent storage (not cleared by OS)
-const MAX_CACHE_MB = 500; // Max cache size before cleanup
+// Default cap when the user hasn't picked one. WhatsApp ships uncapped on
+// iOS (the OS sandbox is the only limit) and a soft 5GB on Android. We pick
+// a conservative 500MB default so accounts with no explicit pref still get
+// the LRU sweep — heavier users bump via setMediaCacheCapMb (1GB / 5GB /
+// 10GB / Infinity for "unlimited").
+const MAX_CACHE_MB_DEFAULT = 500;
+// 0 (or any non-positive number) is the sentinel for "unlimited" — skip the
+// LRU sweep entirely. Capped above (~64GB) so a typo doesn't blow the math.
+const MAX_CACHE_MB_CEILING = 64 * 1024;
 let FileSystem = null;
 
 // ── Sync in-memory index: url → local file:// path ─────────────────────
@@ -270,6 +278,17 @@ function _releaseDownloadSlot() {
 // - 'mobile' = auto-DL on any connection (Wi-Fi + cellular).
 // - 'never'  = no auto-DL ever; user must tap to download.
 // Defaults match WhatsApp factory: photos+audio on wifi, videos+docs never.
+//
+// Two extra knobs we accept alongside the 4 bucket prefs:
+//   media_auto_dl_roaming  — bool. When FALSE (default), cellular auto-DL is
+//                            forcibly downgraded to 'never' regardless of
+//                            per-bucket pref. The user toggles this ON when
+//                            they're back on their home carrier. Settings.js
+//                            wires the UI switch into setMediaDownloadPrefs.
+//   media_cache_cap_mb     — number. Hard cap for the LRU sweep. 0/-∞ =
+//                            "unlimited" (sweep disabled). Defaults to
+//                            MAX_CACHE_MB_DEFAULT (500MB).
+//
 // Cached in AsyncStorage under MEDIA_DL_PREFS_KEY so cacheMedia() can read
 // them synchronously after the first hydrate at app start.
 const MEDIA_DL_PREFS_KEY = 'chatyy:media_dl_prefs';
@@ -278,9 +297,33 @@ const _defaultMediaDlPrefs = {
   media_auto_dl_audio:  'wifi',
   media_auto_dl_videos: 'never',
   media_auto_dl_docs:   'never',
+  // Bool — when false, cellular acts as 'never' for every bucket. Stored
+  // as a real boolean in JSON (settings.js mirrors a String('true')/'false'
+  // into local storage too for the UI bootstrap; we accept both here).
+  media_auto_dl_roaming: false,
+  // Number (MB). 0 → unlimited. Set via setMediaCacheCapMb (preferred) or
+  // the generic setMediaDownloadPrefs patch.
+  media_cache_cap_mb: MAX_CACHE_MB_DEFAULT,
 };
 let _mediaDlPrefs = { ..._defaultMediaDlPrefs };
 let _mediaDlPrefsHydrated = false;
+
+function _coerceBucket(v) {
+  return (v === 'wifi' || v === 'mobile' || v === 'never') ? v : null;
+}
+function _coerceBool(v) {
+  if (typeof v === 'boolean') return v;
+  if (v === 'true') return true;
+  if (v === 'false') return false;
+  return null;
+}
+function _coerceCapMb(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  if (n <= 0) return 0; // unlimited sentinel
+  if (n > MAX_CACHE_MB_CEILING) return MAX_CACHE_MB_CEILING;
+  return Math.round(n);
+}
 
 // Hydrate cached prefs from AsyncStorage at module load. Best-effort —
 // any failure leaves us on the WhatsApp defaults. Public setter is
@@ -297,12 +340,14 @@ function _hydrateMediaDlPrefs() {
         try {
           const parsed = JSON.parse(raw);
           if (parsed && typeof parsed === 'object') {
-            for (const k of Object.keys(_defaultMediaDlPrefs)) {
-              const v = parsed[k];
-              if (v === 'wifi' || v === 'mobile' || v === 'never') {
-                _mediaDlPrefs[k] = v;
-              }
+            for (const k of ['media_auto_dl_photos','media_auto_dl_audio','media_auto_dl_videos','media_auto_dl_docs']) {
+              const v = _coerceBucket(parsed[k]);
+              if (v !== null) _mediaDlPrefs[k] = v;
             }
+            const r = _coerceBool(parsed.media_auto_dl_roaming);
+            if (r !== null) _mediaDlPrefs.media_auto_dl_roaming = r;
+            const cap = _coerceCapMb(parsed.media_cache_cap_mb);
+            if (cap !== null) _mediaDlPrefs.media_cache_cap_mb = cap;
           }
         } catch {}
       }).catch(() => {});
@@ -311,17 +356,7 @@ function _hydrateMediaDlPrefs() {
 }
 _hydrateMediaDlPrefs();
 
-// Update the in-memory prefs cache + persist to AsyncStorage. Settings UI
-// calls this after a successful chat_user_defaults_set so cacheMedia() picks
-// up new gates instantly without waiting for the next app launch.
-export function setMediaDownloadPrefs(patch) {
-  if (!patch || typeof patch !== 'object') return;
-  for (const k of Object.keys(_defaultMediaDlPrefs)) {
-    const v = patch[k];
-    if (v === 'wifi' || v === 'mobile' || v === 'never') {
-      _mediaDlPrefs[k] = v;
-    }
-  }
+function _persistMediaDlPrefs() {
   if (Platform.OS === 'web') return;
   try {
     import('@react-native-async-storage/async-storage').then(m => {
@@ -330,9 +365,60 @@ export function setMediaDownloadPrefs(patch) {
   } catch {}
 }
 
+// Update the in-memory prefs cache + persist to AsyncStorage. Settings UI
+// calls this after a successful chat_user_defaults_set so cacheMedia() picks
+// up new gates instantly without waiting for the next app launch.
+//
+// Accepts any subset of the 6 keys above. Unknown keys are ignored; coercion
+// (string 'true'/'false' → bool, number-as-string → number) makes this safe
+// to call with raw chat_user_defaults_get values.
+export function setMediaDownloadPrefs(patch) {
+  if (!patch || typeof patch !== 'object') return;
+  let dirty = false;
+  for (const k of ['media_auto_dl_photos','media_auto_dl_audio','media_auto_dl_videos','media_auto_dl_docs']) {
+    if (k in patch) {
+      const v = _coerceBucket(patch[k]);
+      if (v !== null && _mediaDlPrefs[k] !== v) { _mediaDlPrefs[k] = v; dirty = true; }
+    }
+  }
+  if ('media_auto_dl_roaming' in patch) {
+    const r = _coerceBool(patch.media_auto_dl_roaming);
+    if (r !== null && _mediaDlPrefs.media_auto_dl_roaming !== r) {
+      _mediaDlPrefs.media_auto_dl_roaming = r; dirty = true;
+    }
+  }
+  if ('media_cache_cap_mb' in patch) {
+    const cap = _coerceCapMb(patch.media_cache_cap_mb);
+    if (cap !== null && _mediaDlPrefs.media_cache_cap_mb !== cap) {
+      _mediaDlPrefs.media_cache_cap_mb = cap; dirty = true;
+    }
+  }
+  if (dirty) _persistMediaDlPrefs();
+}
+
 // Read-only accessor — used by debug screens / settings preview.
 export function getMediaDownloadPrefs() {
   return { ..._mediaDlPrefs };
+}
+
+// Dedicated cap setter — used by the storage tela future UI. Accepts
+// number-of-MB (1024, 5120, 10240) or 0/Infinity for "unlimited". Returns
+// the coerced value so the UI can render the same number it persisted.
+export function setMediaCacheCapMb(mb) {
+  const cap = _coerceCapMb(mb);
+  if (cap === null) return _mediaDlPrefs.media_cache_cap_mb;
+  if (_mediaDlPrefs.media_cache_cap_mb !== cap) {
+    _mediaDlPrefs.media_cache_cap_mb = cap;
+    _persistMediaDlPrefs();
+    // Trigger an immediate sweep so the user gets disk freed without
+    // waiting for the next download to land. Debounced inside.
+    try { evictIfNeeded({ force: true }); } catch {}
+  }
+  return cap;
+}
+
+export function getMediaCacheCapMb() {
+  return _mediaDlPrefs.media_cache_cap_mb;
 }
 
 // Classify a URL into one of the 4 buckets. Audio/voice → 'audio'; video → 'videos';
@@ -349,27 +435,44 @@ function _bucketForUrl(url) {
 // Returns true if the URL should auto-download given the current network +
 // user prefs. Used by cacheMedia()'s gate. Callers can bypass via
 // { force: true } (explicit tap-to-download UI).
+//
+// Policy ladder (matches WhatsApp Storage & Data):
+//   1. pref === 'never'  → no.
+//   2. On Wi-Fi          → yes (every bucket).
+//   3. On cellular AND roaming-pref OFF → no (the user's "roaming nunca"
+//      switch from settings overrides bucket prefs).
+//   4. On cellular AND pref === 'mobile' → yes.
+//   5. On cellular AND pref === 'wifi'   → no.
+//   6. Network state unknown (NetInfo still probing) → be conservative:
+//      allow lightweight buckets (photos/audio), defer heavy (videos/docs).
 function _shouldAutoDownload(url) {
   const bucket = _bucketForUrl(url);
   const pref = _mediaDlPrefs[`media_auto_dl_${bucket}`] || _defaultMediaDlPrefs[`media_auto_dl_${bucket}`];
   if (pref === 'never') return false;
-  if (pref === 'mobile') return true; // wifi + cellular both OK
-  // pref === 'wifi' → only auto-DL on Wi-Fi. Read NetInfo state; if unknown
-  // (e.g. NetInfo not initialized yet), be conservative: allow lightweight
-  // (photos/audio) and defer heavy (videos/docs) on cellular. This keeps
-  // behaviour sane during the brief window before the first network event.
+
+  let wifi = false;
+  let known = false;
   try {
     const { isWifi, getNetworkState } = require('./networkInfo');
-    if (typeof isWifi === 'function' && isWifi() === true) return true;
-    const st = typeof getNetworkState === 'function' ? getNetworkState() : null;
-    if (st && st.type === 'unknown') {
-      // Network not yet probed — fall back: photos/audio yes, videos/docs no.
-      return bucket === 'photos' || bucket === 'audio';
+    if (typeof isWifi === 'function') {
+      wifi = isWifi() === true;
+      known = true;
     }
-    return false;
-  } catch {
-    return bucket === 'photos' || bucket === 'audio';
+    const st = typeof getNetworkState === 'function' ? getNetworkState() : null;
+    if (st && st.type === 'unknown') known = false;
+  } catch {}
+
+  if (wifi) return true; // Wi-Fi never burns cellular bytes.
+
+  // Cellular path — the user can globally veto via the roaming switch.
+  // Default pref is FALSE (= "I might be roaming, be conservative") which
+  // mirrors WhatsApp's "Roaming → nunca" requirement from the task.
+  if (known) {
+    if (!_mediaDlPrefs.media_auto_dl_roaming) return false;
+    return pref === 'mobile';
   }
+  // Network not probed yet — old fallback (photos/audio yes, videos/docs no).
+  return bucket === 'photos' || bucket === 'audio';
 }
 
 // Download and cache a URL, return local URI.
@@ -681,6 +784,15 @@ export async function getSavedUri(url) {
 // narrow and left gifs/stickers/files re-downloading every app launch.
 export async function saveConversationMedia(messages) {
   if (Platform.OS === 'web' || !messages?.length) return;
+  // Voice-message side hook — feed every type==='voice'|'audio' row into
+  // voicePrefetch so server-side wave_peaks are persisted in MMKV (bubble
+  // paints the real envelope on next mount) and the played-ack bus
+  // tracks the messageId → conversationId mapping. Fire-and-forget;
+  // idempotent (in-flight set inside voicePrefetch dedupes).
+  try {
+    const { prefetchVoiceMessages } = require('./voicePrefetch');
+    prefetchVoiceMessages?.(messages);
+  } catch {}
   // GIFs and stickers (Tenor URLs) live in `m.content`, not `m.file_url`.
   // Treat both as media sources so they get persisted to the local cache
   // and survive across app launches.
@@ -714,26 +826,35 @@ export async function getSavedSize() {
   } catch { return 0; }
 }
 
-// LRU eviction: scan saved/cache dirs, sum sizes, if over MAX_CACHE_MB
-// delete oldest files (by modificationTime) until under the cap. Without
+// LRU eviction: scan saved/cache dirs, sum sizes, if over the configured
+// cap delete oldest files (by modificationTime) until under it. Without
 // this the saved dir grows unbounded — first-time users hit photos heavy
 // channels and end up with multi-GB sandboxes after a few weeks.
 // Called opportunistically (debounced) — not blocking on every download.
+//
+// opts.force = true bypasses the 5-min debounce. Used by setMediaCacheCapMb
+// so lowering the cap (e.g. 10GB → 1GB) frees disk immediately instead of
+// waiting up to 5 minutes for the next download to trigger a sweep.
 let _lastEvictAt = 0;
 let _evictInflight = null;
-export async function evictIfNeeded() {
+export async function evictIfNeeded(opts) {
   if (Platform.OS === 'web') return;
+  const force = !!(opts && opts.force);
+  // "Unlimited" sentinel — user explicitly opted out of the cap. Skip the
+  // disk walk entirely so big libraries don't burn CPU on every download.
+  const capMb = Number(_mediaDlPrefs.media_cache_cap_mb);
+  if (!Number.isFinite(capMb) || capMb <= 0) return;
   // Debounce: at most one sweep every 5 min. Scanning the dir on every
   // cacheMedia call is its own perf problem on accounts with thousands
   // of media files.
   const now = Date.now();
-  if (now - _lastEvictAt < 5 * 60 * 1000) return;
+  if (!force && now - _lastEvictAt < 5 * 60 * 1000) return;
   if (_evictInflight) return _evictInflight;
   const fs = getFS();
   if (!fs) return;
   _evictInflight = (async () => {
     try {
-      const limitBytes = MAX_CACHE_MB * 1024 * 1024;
+      const limitBytes = capMb * 1024 * 1024;
       const entries = [];
       for (const dir of [getCacheDir(), getSavedDir()]) {
         if (!dir) continue;
@@ -880,12 +1001,15 @@ function _bucketForFilename(name) {
 //
 // Web returns zeros (no file-system store); callers should hide the section.
 export async function getStorageStats() {
+  const capMbEmpty = Number(_mediaDlPrefs.media_cache_cap_mb);
   const empty = {
     totalBytes: 0,
     cacheBytes: 0,
     savedBytes: 0,
     byType:  { image: 0, video: 0, audio: 0, document: 0 },
     counts:  { image: 0, video: 0, audio: 0, document: 0 },
+    capBytes: Number.isFinite(capMbEmpty) && capMbEmpty > 0 ? capMbEmpty * 1024 * 1024 : 0,
+    capMb:    Number.isFinite(capMbEmpty) ? capMbEmpty : 0,
   };
   if (Platform.OS === 'web') return empty;
   const fs = getFS();
@@ -921,12 +1045,21 @@ export async function getStorageStats() {
     } catch {}
   }
 
+  // Surface the cache cap alongside the breakdown so callers (storage UI)
+  // can render "X used of Y" without a second mediaCache import. capBytes
+  // is 0 when the user picked "unlimited" — the UI should hide the
+  // progress bar in that case.
+  const capMb = Number(_mediaDlPrefs.media_cache_cap_mb);
+  const capBytes = Number.isFinite(capMb) && capMb > 0 ? capMb * 1024 * 1024 : 0;
+
   return {
     totalBytes: cacheBytes + savedBytes,
     cacheBytes,
     savedBytes,
     byType,
     counts,
+    capBytes,
+    capMb: Number.isFinite(capMb) ? capMb : 0,
   };
 }
 
@@ -1089,6 +1222,39 @@ export function getThumbB64Sync(messageId) {
   if (messageId == null) return null;
   _hydrateThumbB64();
   return _thumbB64Cache.get(String(messageId)) || null;
+}
+
+// When the optimistic bubble (temp_id) gets replaced by the server's real
+// message id, migrate the LQIP entry so the same blur placeholder keeps
+// rendering on subsequent loads instead of disappearing for ~80ms while the
+// real URL decodes. Cheap O(1) Map operation; safe to call when either id
+// is missing.
+export function migrateThumbB64TempToReal(tempId, realId) {
+  if (tempId == null || realId == null) return;
+  _hydrateThumbB64();
+  const k = String(tempId);
+  const v = _thumbB64Cache.get(k);
+  if (!v) return;
+  const newK = String(realId);
+  if (_thumbB64Cache.get(newK)) return; // already populated by server LQIP
+  _thumbB64Cache.set(newK, v);
+  _thumbB64Cache.delete(k);
+  _scheduleThumbB64Persist();
+}
+
+// When the optimistic bubble points at a local file:// URI (camera/picker
+// output), pre-seed the sync cache so CachedImage on this device finds the
+// local file the moment the message gets its real id — no R2 round-trip,
+// no flicker. Used by imageSendPipeline.preflightOutgoing().
+export function bindLocalUriToRemoteUrl(localUri, remoteUrl) {
+  if (!localUri || !remoteUrl || Platform.OS === 'web') return;
+  try {
+    const key = urlToKey(remoteUrl);
+    if (!key) return;
+    if (syncIndex.has(key)) return; // already mapped
+    syncIndex.set(key, localUri);
+    _schedulePersistIndex();
+  } catch {}
 }
 
 // Batch ingest — call after a `chat_get_messages` / WS sync lands so all

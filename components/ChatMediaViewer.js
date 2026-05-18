@@ -901,7 +901,7 @@ function GenericFileViewer({ url, filename, fileSize }) {
 // ============================================================
 // MAIN MODAL
 // ============================================================
-export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fileName, fileSize, type, viewOnce, mediaList, initialIndex }) {
+export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fileName, fileSize, type, viewOnce, mediaList, initialIndex, conversationId, messageId }) {
   const insets = useSafeAreaInsets();
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -951,6 +951,21 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
           // marked as "viewing" their own view-once media.
           _setWatermarkVisible(true);
           setTimeout(() => _setWatermarkVisible(false), 6000);
+          // Notify the peer that this user just took a screenshot. Backend
+          // (chat.php case 'chat_screenshot_event') inserts a system msg
+          // with subtype='screenshot' and emits a WS event so both sides
+          // see the system bubble in real time. Fire-and-forget — if the
+          // backend hasn't shipped yet this 400s silently and the local
+          // watermark UX still works.
+          if (conversationId) {
+            try {
+              const api = require('../services/api');
+              api.apiCall?.('chat_screenshot_event', {
+                conversation_id: conversationId,
+                message_id: messageId || 0,
+              }, 'POST').catch(() => {});
+            } catch {}
+          }
         });
       } catch {}
     })();

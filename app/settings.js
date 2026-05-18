@@ -464,6 +464,50 @@ function SettingsScreenInner() {
 
   useEffect(() => () => { if (_chatDefaultsSaveTimer.current) clearTimeout(_chatDefaultsSaveTimer.current); }, []);
 
+  // ── Chat granular privacy ──────────────────────────────────────────
+  // Backend already exposes chat_privacy_get/set against PG table
+  // chat_user_privacy. UI surfaces 5 controls: last_seen, profile_photo,
+  // read_receipts (bool), status (mapped to backend's story_privacy column),
+  // groups (mapped to backend's group_add column). Each control opens a
+  // bottom-sheet picker (Everyone / My contacts / Nobody) — except
+  // read_receipts which is a simple Switch. Save is fire-and-forget.
+  const [chatPrivacy, setChatPrivacy] = useState({
+    last_seen: 'everyone',
+    profile_photo: 'everyone',
+    read_receipts: true,
+    story_privacy: 'everyone',
+    group_add: 'everyone',
+  });
+  const [privacyPickerOpen, setPrivacyPickerOpen] = useState(null); // 'last_seen' | 'profile_photo' | 'story_privacy' | 'group_add' | null
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await api.chatPrivacyGet?.();
+        if (r?.success && r.data) {
+          setChatPrivacy(prev => ({
+            ...prev,
+            last_seen:     r.data.last_seen     || 'everyone',
+            profile_photo: r.data.profile_photo || 'everyone',
+            read_receipts: r.data.read_receipts !== undefined ? !!r.data.read_receipts : true,
+            // Backend exposes story_privacy for "Status" and group_add for
+            // "Grupos". Defaults reflect the chat_privacy_set valid set.
+            story_privacy: r.data.story_privacy || 'everyone',
+            group_add:     r.data.group_add     || 'everyone',
+          }));
+        }
+      } catch {}
+    })();
+  }, []);
+  const saveChatPrivacy = useCallback((patch) => {
+    setChatPrivacy(prev => {
+      const next = { ...prev, ...patch };
+      // Only ship the keys that changed — chat_privacy_set merges unspecified
+      // columns to their existing values so partial PATCHes are safe.
+      api.chatPrivacySet?.(patch).catch(() => {});
+      return next;
+    });
+  }, []);
+
   // ── Storage stats (Settings → Storage section) ──────────────────────
   // Scans the local mediaCache dirs (cache + saved-permanent) once on mount
   // and aggregates total bytes + per-bucket breakdown. Re-runs when the user
@@ -2362,6 +2406,105 @@ function SettingsScreenInner() {
         </View>
         )}
 
+        {/* Privacy — granular chat controls. Persists to backend
+            chat_user_privacy via chat_privacy_get/set. The 4 dropdown rows
+            (last_seen / profile_photo / status / groups) open a bottom-sheet
+            picker; read_receipts is a simple Switch since it's boolean. */}
+        {sectionMatches(t('settings.privacyTitle'), t('settings.privacyLastSeen'), t('settings.privacyProfilePhoto'), t('settings.privacyReadReceipts'), t('settings.privacyStatus'), t('settings.privacyGroups'), 'privacy', 'privacidade') && (
+        <View ref={registerSectionRef('privacy_granular')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+          <View style={s.sectionTitleRow}>
+            <IconShield size={18} color={colors.primary} style={{ marginRight: 8 }} />
+            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.privacyTitle')}</Text>
+          </View>
+
+          {/* Last seen */}
+          <TouchableOpacity
+            style={[s.settingRow, { borderBottomColor: colors.borderLight, marginTop: Spacing.md }]}
+            onPress={() => setPrivacyPickerOpen('last_seen')}
+            activeOpacity={0.7}
+          >
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.privacyLastSeen')}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {chatPrivacy.last_seen === 'everyone' ? t('settings.privacyEveryone')
+                  : chatPrivacy.last_seen === 'contacts' ? t('settings.privacyContacts')
+                  : t('settings.privacyNobody')}
+              </Text>
+            </View>
+            <IconChevronRight size={20} color={colors.textTertiary} />
+          </TouchableOpacity>
+
+          {/* Profile photo */}
+          <TouchableOpacity
+            style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
+            onPress={() => setPrivacyPickerOpen('profile_photo')}
+            activeOpacity={0.7}
+          >
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.privacyProfilePhoto')}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {chatPrivacy.profile_photo === 'everyone' ? t('settings.privacyEveryone')
+                  : chatPrivacy.profile_photo === 'contacts' ? t('settings.privacyContacts')
+                  : t('settings.privacyNobody')}
+              </Text>
+            </View>
+            <IconChevronRight size={20} color={colors.textTertiary} />
+          </TouchableOpacity>
+
+          {/* Read receipts — boolean Switch (chat-side, distinct from the
+              email-side settings.read_receipts above). */}
+          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.privacyReadReceipts')}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {t('settings.privacyReadReceiptsDesc')}
+              </Text>
+            </View>
+            <Switch
+              value={!!chatPrivacy.read_receipts}
+              onValueChange={(v) => saveChatPrivacy({ read_receipts: !!v })}
+              trackColor={{ false: colors.divider, true: colors.primaryLight }}
+              thumbColor={chatPrivacy.read_receipts ? colors.primary : '#fff'}
+            />
+          </View>
+
+          {/* Status — backend column is `story_privacy`. */}
+          <TouchableOpacity
+            style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
+            onPress={() => setPrivacyPickerOpen('story_privacy')}
+            activeOpacity={0.7}
+          >
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.privacyStatus')}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {chatPrivacy.story_privacy === 'everyone' ? t('settings.privacyEveryone')
+                  : chatPrivacy.story_privacy === 'contacts' ? t('settings.privacyContacts')
+                  : t('settings.privacyNobody')}
+              </Text>
+            </View>
+            <IconChevronRight size={20} color={colors.textTertiary} />
+          </TouchableOpacity>
+
+          {/* Groups — backend column is `group_add` (who can add this user
+              to a group). */}
+          <TouchableOpacity
+            style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
+            onPress={() => setPrivacyPickerOpen('group_add')}
+            activeOpacity={0.7}
+          >
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.privacyGroups')}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {chatPrivacy.group_add === 'everyone' ? t('settings.privacyEveryone')
+                  : chatPrivacy.group_add === 'contacts' ? t('settings.privacyContacts')
+                  : t('settings.privacyNobody')}
+              </Text>
+            </View>
+            <IconChevronRight size={20} color={colors.textTertiary} />
+          </TouchableOpacity>
+        </View>
+        )}
+
         {/* Legal — Privacy & Terms */}
         {sectionMatches(t('settings.legal'), t('settings.privacyPolicy'), t('settings.termsOfService')) && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
@@ -3239,6 +3382,66 @@ function SettingsScreenInner() {
                 >
                   <Text style={{ color: colors.text, fontSize: 15 }}>{opt.label}</Text>
                   {active && <Text style={{ color: colors.primary, fontSize: 18 }}>✓</Text>}
+                </TouchableOpacity>
+              );
+            })}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Privacy picker bottom-sheet — single Modal reused for all 4
+          dropdown rows (last_seen / profile_photo / story_privacy /
+          group_add). `privacyPickerOpen` carries the field key; closing
+          via tap-outside or selection sets it back to null. Selected
+          value is fire-and-forget saved via saveChatPrivacy(). */}
+      <Modal
+        visible={!!privacyPickerOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setPrivacyPickerOpen(null)}
+      >
+        <Pressable
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}
+          onPress={() => setPrivacyPickerOpen(null)}
+        >
+          <Pressable
+            onPress={(e) => e.stopPropagation()}
+            style={{
+              backgroundColor: colors.surface,
+              borderTopLeftRadius: 20, borderTopRightRadius: 20,
+              paddingHorizontal: 20, paddingTop: 18, paddingBottom: 28,
+            }}
+          >
+            <Text style={{ color: colors.text, fontWeight: '700', fontSize: 17, marginBottom: 12 }}>
+              {privacyPickerOpen === 'last_seen'     ? t('settings.privacyLastSeen')
+               : privacyPickerOpen === 'profile_photo' ? t('settings.privacyProfilePhoto')
+               : privacyPickerOpen === 'story_privacy' ? t('settings.privacyStatus')
+               : privacyPickerOpen === 'group_add'     ? t('settings.privacyGroups')
+               : ''}
+            </Text>
+            {[
+              { value: 'everyone', label: t('settings.privacyEveryone') },
+              { value: 'contacts', label: t('settings.privacyContacts') },
+              { value: 'nobody',   label: t('settings.privacyNobody') },
+            ].map((opt) => {
+              const currentVal = privacyPickerOpen ? chatPrivacy[privacyPickerOpen] : '';
+              const active = currentVal === opt.value;
+              return (
+                <TouchableOpacity
+                  key={opt.value}
+                  onPress={() => {
+                    if (privacyPickerOpen) saveChatPrivacy({ [privacyPickerOpen]: opt.value });
+                    setPrivacyPickerOpen(null);
+                  }}
+                  style={{
+                    paddingVertical: 14,
+                    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                    borderBottomWidth: 0.5, borderBottomColor: colors.borderLight,
+                  }}
+                  activeOpacity={0.6}
+                >
+                  <Text style={{ color: colors.text, fontSize: 15 }}>{opt.label}</Text>
+                  {active && <IconCheck size={18} color={colors.primary} />}
                 </TouchableOpacity>
               );
             })}
