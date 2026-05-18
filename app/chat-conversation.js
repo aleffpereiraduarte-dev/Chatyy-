@@ -42,7 +42,7 @@ import {
   IconCheck, IconCheckCircle, IconMic, IconPlay, IconPause, IconStop, IconVideoNote,
   IconCamera, IconMapPin, IconSmile, IconNavigation, IconUser, IconPlus,
   IconThumbsUp, IconHeart, IconLaughFace, IconSurpriseFace, IconSadFace, IconPrayHands,
-  IconClock, IconAlertTriangle, IconLock, IconForward, IconChevronDown, IconWifiOff,
+  IconClock, IconAlertTriangle, IconLock, IconForward, IconChevronDown, IconChevronLeft, IconWifiOff,
   IconStar, IconStarFilled, IconBarChart, IconInfo, IconGlobe,
   IconCopy, IconPin, IconShield, IconBell, IconCalendar, IconSearch, IconMusic, IconFilter, IconEye, IconSparkles, IconHash, IconDownload,
   IconArchive, IconMessageSquare, IconFilm, IconShare, IconMail, IconUserPlus, IconBookmark,
@@ -4572,8 +4572,15 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
   const [previewProgress, setPreviewProgress] = useState(0); // 0..1
   const previewAudioRef = useRef(null); // HTMLAudioElement on web, expo-audio player on native
   const previewIntervalRef = useRef(null);
-  // Slide-to-cancel
+  // Slide-to-cancel (horizontal) + slide-up-to-lock (vertical) — Telegram /
+  // WhatsApp parity. slideX drives the cancel hint fade + pill recoil; slideY
+  // drives the lock hint that hovers above the mic so the user can see the
+  // lock target without releasing the finger.
   const slideX = useRef(new Animated.Value(0)).current;
+  const slideY = useRef(new Animated.Value(0)).current;
+  // Latched once the user crosses the lock threshold so we don't spam haptics
+  // — Telegram buzzes exactly once when the hint reaches the lock icon.
+  const lockHapticFiredRef = useRef(false);
   const cancelledRef = useRef(false);
   const intervalRef = useRef(null);
   const startTimeRef = useRef(0);
@@ -5148,15 +5155,31 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
   }
 
   // ─── RECORDING MODE ───
-  // PanResponder for WhatsApp-style slide-to-cancel. Drag the record pill
-  // left past -100px → cancel. Live feedback: pill follows finger + the
-  // hint text fades out as cancel gets closer. Prevents accidental mis-tap
-  // on "Trash" button since users can just swipe.
+  // PanResponder for WhatsApp / Telegram-style slide-to-cancel + slide-up-to-
+  // lock. Horizontal drag past -80px cancels; vertical drag past -90px locks
+  // hands-free recording. Live feedback: pill follows finger horizontally,
+  // the lock-hint floats up vertically with `slideY`, and crossing the lock
+  // threshold fires a one-shot 20ms haptic for Telegram parity.
   const slideCancelPan = PanResponder.create({
     onStartShouldSetPanResponder: () => false,
-    onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
+    onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 10 || g.dy < -10,
     onPanResponderMove: (_, g) => {
-      if (g.dx < 0) slideX.setValue(Math.max(g.dx, -140));
+      if (g.dx < 0 && Math.abs(g.dx) > Math.abs(g.dy) * 1.2) {
+        slideX.setValue(Math.max(g.dx, -140));
+      }
+      if (g.dy < 0 && Math.abs(g.dy) > Math.abs(g.dx) * 0.8) {
+        const clamped = Math.max(g.dy, -120);
+        slideY.setValue(clamped);
+        // Telegram parity — single haptic tick when the lock hint reaches
+        // the lock icon (≈ -90px). Latch with lockHapticFiredRef so the
+        // buzz fires once per gesture.
+        if (clamped <= -90 && !lockHapticFiredRef.current) {
+          lockHapticFiredRef.current = true;
+          if (Platform.OS !== 'web') {
+            try { Vibration.vibrate(20); } catch {}
+          }
+        }
+      }
     },
     onPanResponderRelease: (_, g) => {
       if (g.dx < -80 || g.vx < -0.6) {
@@ -5166,22 +5189,47 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
           cancelledRef.current = true;
           handleCancel();
         });
+      } else if (g.dy < -80) {
+        // Released past the lock threshold → engage hands-free recording.
+        // Snap slideY back to 0 so the hint disappears cleanly while the
+        // locked state takes over the UI.
+        Animated.spring(slideY, { toValue: 0, tension: 220, friction: 14, useNativeDriver: true }).start();
+        Animated.spring(slideX, { toValue: 0, tension: 220, friction: 14, useNativeDriver: true }).start();
+        setVoiceLocked(true);
+        lockHapticFiredRef.current = false;
       } else {
         Animated.spring(slideX, { toValue: 0, tension: 220, friction: 14, useNativeDriver: true }).start();
+        Animated.spring(slideY, { toValue: 0, tension: 220, friction: 14, useNativeDriver: true }).start();
+        lockHapticFiredRef.current = false;
       }
     },
   });
   const slideHintOpacity = slideX.interpolate({ inputRange: [-100, 0], outputRange: [0, 1] });
+  // Cancel hint (left) — slides slightly left + fades as the user drags. Matches
+  // the spec: translateX -30 → 0 across the -100..0 range, opacity ramps in
+  // (0 → 0.5 → 1) so the affordance is loudest when the finger is at rest.
+  const cancelHintTranslateX = slideX.interpolate({ inputRange: [-100, 0], outputRange: [-30, 0], extrapolate: 'clamp' });
+  const cancelHintOpacity = slideX.interpolate({ inputRange: [-100, -50, 0], outputRange: [0, 0.5, 1], extrapolate: 'clamp' });
+  // Lock hint (above the mic) — floats up with the finger as the user drags
+  // vertically. -100 maps to translateY -30 so the hint is visibly closer to
+  // the lock icon, with a matching opacity ramp.
+  const lockHintTranslateY = slideY.interpolate({ inputRange: [-100, 0], outputRange: [-30, 0], extrapolate: 'clamp' });
+  const lockHintOpacity = slideY.interpolate({ inputRange: [-100, -40, 0], outputRange: [1, 0.6, 0], extrapolate: 'clamp' });
 
   return (
     <Animated.View
       style={[recStyles.container, recStyles.recordPill, { backgroundColor: recBg, borderTopColor: colors.border, transform: [{ translateX: slideX }] }]}
       {...slideCancelPan.panHandlers}
     >
-      {/* Left: trash / cancel */}
-      <TouchableOpacity onPress={handleCancel} style={recStyles.iconBtn} accessibilityLabel="Cancelar gravação">
+      {/* Left: trash / cancel — when locked, this becomes the explicit "cancel"
+          affordance since the slide-to-cancel gesture no longer applies. The
+          Cancel (X) icon is louder when locked so the user has a clear way
+          out without re-triggering the mic. */}
+      <TouchableOpacity onPress={handleCancel} style={recStyles.iconBtn} accessibilityLabel={voiceLocked ? 'Cancelar' : 'Cancelar gravação'}>
         <View style={recStyles.trashWrap}>
-          <IconTrash size={20} color={colors.error || '#ef4444'} />
+          {voiceLocked
+            ? <IconX size={20} color={colors.error || '#ef4444'} />
+            : <IconTrash size={20} color={colors.error || '#ef4444'} />}
         </View>
       </TouchableOpacity>
 
@@ -5232,26 +5280,35 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
           </View>
         </View>
 
-        {/* Slide hint with animated arrow — fades out as user drags left.
-            When view-once is engaged, swap the slide hint for the view-once
-            explainer so the user gets explicit confirmation that the audio
-            will self-destruct after one play. */}
-        <Animated.View style={[recStyles.slideRow, { opacity: slideHintOpacity }]}>
+        {/* Slide hint — Telegram parity. Three states:
+            • view-once engaged → show the view-once explainer in purple
+            • locked → show "Solto, fala livremente" so the user knows the
+              finger is no longer needed and gets to tap the send button
+            • default → IconChevronLeft + "Deslize para cancelar"; the chevron
+              slides slightly left + fades as the finger drags, with the
+              translateX/opacity interpolations spec'd by the design. */}
+        <Animated.View style={[recStyles.slideRow, { opacity: voiceLocked ? 1 : slideHintOpacity }]}>
           {voiceViewOnce ? (
             <Text style={[recStyles.slideHint, { color: '#7C3AED', fontWeight: '600' }]} numberOfLines={1}>
               {t('chatConv.viewOnceVoiceHint') || 'Áudio só pode ser ouvido uma vez'}
             </Text>
+          ) : voiceLocked ? (
+            <Text style={[recStyles.slideHint, { color: '#7C3AED', fontWeight: '600' }]} numberOfLines={1}>
+              {t('chatConv.handsFree') || 'Solto, fala livremente'}
+            </Text>
           ) : (
-            <>
-              <Animated.Text style={[recStyles.slideArrow, {
-                color: slideCancelColor,
-                transform: [{ translateX: pulseAnim.interpolate({ inputRange: [1, 1.6], outputRange: [0, -4] }) }],
-                opacity: pulseAnim.interpolate({ inputRange: [1, 1.6], outputRange: [0.7, 1] }),
-              }]}>{'‹‹'}</Animated.Text>
+            <Animated.View style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 4,
+              transform: [{ translateX: cancelHintTranslateX }],
+              opacity: cancelHintOpacity,
+            }}>
+              <IconChevronLeft size={14} color={slideCancelColor} />
               <Text style={[recStyles.slideHint, { color: slideCancelColor }]}>
-                {t('chatConv.slideToCancel') || 'Deslize para cancelar · toque ✓ para pré-ouvir'}
+                {t('chatConv.slideToCancel') || 'Deslize para cancelar'}
               </Text>
-            </>
+            </Animated.View>
           )}
         </Animated.View>
       </View>
@@ -5276,21 +5333,48 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
       {/* Lock affordance — tapping engages hands-free recording. The pop
           animation (0.8 → 1.2 → 1 spring) is the only confirmation on web
           since browsers have no haptic API; native pairs the pop with a 40ms
-          Vibration tick. Tinted purple when locked so the eye lands on it. */}
-      <TouchableOpacity
-        onPress={() => setVoiceLocked(v => !v)}
-        style={{ width: 36, height: 36, alignItems: 'center', justifyContent: 'center', marginRight: 4 }}
-        accessibilityLabel={voiceLocked ? 'Destravar gravação' : 'Travar gravação'}
-        accessibilityRole="button"
-      >
-        <Animated.View style={{ transform: [{ scale: lockScale }] }}>
-          <IconLock size={18} color={voiceLocked ? '#7C3AED' : (colors.textTertiary || '#9ca3af')} />
-        </Animated.View>
-      </TouchableOpacity>
+          Vibration tick. Tinted purple when locked so the eye lands on it.
+          While the user drags vertically (slideY < 0) a floating "↑ Bloquear"
+          hint rises above the lock so they can aim — Telegram parity. */}
+      <View style={{ position: 'relative', alignItems: 'center', justifyContent: 'center', marginRight: 4 }}>
+        {!voiceLocked && (
+          <Animated.View
+            pointerEvents="none"
+            style={[recStyles.lockHint, {
+              transform: [{ translateY: lockHintTranslateY }],
+              opacity: lockHintOpacity,
+            }]}
+          >
+            <IconLock size={12} color="#7C3AED" />
+            <Text style={recStyles.lockHintText} numberOfLines={1}>
+              {'↑ ' + (t('chatConv.slideToLock') || 'Bloquear')}
+            </Text>
+          </Animated.View>
+        )}
+        <TouchableOpacity
+          onPress={() => setVoiceLocked(v => !v)}
+          style={{ width: 36, height: 36, alignItems: 'center', justifyContent: 'center' }}
+          accessibilityLabel={voiceLocked ? 'Destravar gravação' : 'Travar gravação'}
+          accessibilityRole="button"
+        >
+          <Animated.View style={{ transform: [{ scale: lockScale }] }}>
+            <IconLock size={18} color={voiceLocked ? '#7C3AED' : (colors.textTertiary || '#9ca3af')} />
+          </Animated.View>
+        </TouchableOpacity>
+      </View>
 
       {/* Right: STOP button (enters preview) — wrapped in a synced pulse halo
-          so the entire control reads as one heartbeat: dot + waveform + stop. */}
+          so the entire control reads as one heartbeat: dot + waveform + stop.
+          When locked, a "Toque para enviar" hint floats above it so the user
+          knows what the stop/send button does in hands-free mode. */}
       <View style={recStyles.stopWrap}>
+        {voiceLocked && (
+          <View pointerEvents="none" style={recStyles.tapToSendHint}>
+            <Text style={recStyles.tapToSendHintText} numberOfLines={1}>
+              {t('chatConv.tapToSend') || 'Toque para enviar'}
+            </Text>
+          </View>
+        )}
         <Animated.View style={[recStyles.stopHalo, {
           transform: [{ scale: pulseAnim.interpolate({ inputRange: [1, 1.6], outputRange: [1, 1.18] }) }],
           opacity: pulseAnim.interpolate({ inputRange: [1, 1.6], outputRange: [0.55, 0] }),
@@ -5448,6 +5532,47 @@ const recStyles = StyleSheet.create({
   slideHint: {
     fontSize: FontSize.xs,
     opacity: 0.7,
+  },
+  // Floating lock hint (Telegram-style) — hovers above the lock button while
+  // the user drags vertically. translateY interpolation drives the rise so
+  // the chip visually approaches the lock target.
+  lockHint: {
+    position: 'absolute',
+    bottom: 38,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 10,
+    backgroundColor: 'rgba(124,58,237,0.12)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(124,58,237,0.35)',
+  },
+  lockHintText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#7C3AED',
+    letterSpacing: 0.2,
+  },
+  // "Toque para enviar" chip that floats above the stop button once recording
+  // is locked. Mirrors the Telegram send-hint design.
+  tapToSendHint: {
+    position: 'absolute',
+    bottom: 54,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+    backgroundColor: 'rgba(124,58,237,0.12)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(124,58,237,0.35)',
+    zIndex: 5,
+  },
+  tapToSendHintText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#7C3AED',
+    letterSpacing: 0.2,
   },
   // Right column: lock + send
   sendBtn: {
@@ -11410,6 +11535,27 @@ export default function ChatConversationScreen() {
         if (!wasUserCancel) {
           setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
           setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
+          // Persist falha pra retry automático quando net voltar. Áudio + texto
+          // já tinham essa rede de proteção (handleSendAudio L11541, handleSend
+          // L10546); foto/video ficavam só como _failed e morriam se o user
+          // fechasse o app antes de tocar no balão vermelho. Agora replay-
+          // OfflineQueue (próximo foreground / OfflineNotice / reconnect)
+          // dispara o upload de novo via case 'chat_file_upload'.
+          try {
+            const { queueOfflineAction } = require('../services/offlineCache');
+            await queueOfflineAction({
+              type: 'chat_file_upload',
+              conversation_id: conversationId,
+              uri: file?.uri || localUri,
+              name: file?.name || '',
+              file_type: file?.type || '',
+              msg_type: fileType,
+              client_message_id: msgId,
+              temp_id: tempId,
+              caption: caption || '',
+              view_once: forceViewOnce ? 1 : 0,
+            });
+          } catch {}
           const detail = lastError?.message ? ` (${lastError.message})` : '';
           safeAlert(t('common.error') || 'Error', (t('chatConv.uploadError') || 'Failed to send file') + detail);
         } else {
@@ -17721,9 +17867,48 @@ export default function ChatConversationScreen() {
                   <TouchableOpacity
                     onPress={async () => {
                       const isText = msg.type === 'text' && msg.content;
-                      const isMediaWithUrl = ['image','video','audio','voice','gif','sticker','file'].includes(msg.type) && msg.file_url;
-                      if (!isText && !isMediaWithUrl) return;
-                      setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _failed: false, _pending: true } : m));
+                      const isMediaType = ['image','video','audio','voice','gif','sticker','file'].includes(msg.type);
+                      const localUriRaw = msg._localUri || msg.file_url || '';
+                      // Media que ainda não foi pro server tem file_url local
+                      // (file://... no native, blob:... no web). Esse caso o
+                      // chatSend abaixo NÃO resolve — precisa re-enqueue do
+                      // upload em si pra subir os bytes. Só consideramos
+                      // "media com URL remota" quando o file_url já é http(s).
+                      const hasRemoteUrl = !!msg.file_url && /^https?:/i.test(msg.file_url);
+                      const isMediaWithUrl = isMediaType && hasRemoteUrl;
+                      const isLocalMedia = isMediaType && !hasRemoteUrl && !!localUriRaw;
+                      if (!isText && !isMediaWithUrl && !isLocalMedia) return;
+                      setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _failed: false, _pending: true, _uploading: isLocalMedia ? true : false } : m));
+                      // Caminho 1 — media local falhou no upload original.
+                      // Re-enqueue via offlineCache (mesma chave que o catch
+                      // do uploadAndSendFile usa), depois dispara replay
+                      // imediato. Sem isso o user tocava no balão vermelho e
+                      // nada acontecia (chatSend mandava o file:// como text).
+                      if (isLocalMedia) {
+                        try {
+                          const { queueOfflineAction, replayOfflineQueue } = require('../services/offlineCache');
+                          await queueOfflineAction({
+                            type: 'chat_file_upload',
+                            conversation_id: conversationId,
+                            uri: localUriRaw,
+                            name: msg.file_name || '',
+                            file_type: '',
+                            msg_type: msg.type,
+                            client_message_id: msg._client_id || msg.client_message_id || ('msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)),
+                            temp_id: (typeof msg.id === 'string' && msg.id.startsWith('tmp_')) ? msg.id : `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                            caption: msg.content || '',
+                            view_once: msg.is_view_once ? 1 : 0,
+                          });
+                          // Dispara replay agora (não espera próximo foreground).
+                          replayOfflineQueue(api).catch(() => {});
+                        } catch {
+                          setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+                        }
+                        return;
+                      }
+                      // Caminho 2 — texto ou media com URL remota (caso raro
+                      // onde o upload foi mas o chat_send falhou). chatSend
+                      // direto é seguro: server tem dedup por client_message_id.
                       try {
                         const retryTempId = (typeof msg.id === 'string' && msg.id.startsWith('tmp_')) ? msg.id : `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
                         const retryMsgId = msg._client_id || msg.client_message_id || ('msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8));
@@ -20148,7 +20333,11 @@ export default function ChatConversationScreen() {
                 paddingHorizontal: 4,
                 paddingTop: Platform.OS === 'ios' ? 10 : 8,
                 paddingBottom: Platform.OS === 'ios' ? 10 : 8,
-                ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+                // caretColor explicit on web: TextInput color is transparent
+                // (RichTextOverlay paints the glyphs) but on web caret-color
+                // CSS inherits from color, so the caret disappears too. RN
+                // native paints caret separately, web doesn't.
+                ...(Platform.OS === 'web' ? { outlineStyle: 'none', caretColor: colors.primary || '#7C3AED' } : {}),
               }}
               placeholder={t('chatConv.messagePlaceholder') || 'Mensagem'}
               placeholderTextColor={isDark ? '#8696a0' : '#8696a0'}

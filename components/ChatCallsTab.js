@@ -20,7 +20,7 @@ const sipSendDTMF = _sip?.sendDTMF || (() => {});
 
 const GREEN = '#34C759';
 const GREEN_DARK = '#30D158';
-const RED = '#FF3B30';
+const RED = '#E53935';
 const BLUE = '#007AFF';
 const ACCENT = '#7C3AED';
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -750,7 +750,10 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
           {formatCallTime(item.timestamp || item.created_at, t, language)}
         </Text>
         <TouchableOpacity
-          style={{ padding: 4 }}
+          style={[
+            s.callBackBtn,
+            { backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7' },
+          ]}
           onPress={() => onCallBack?.(item)}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityLabel={t?.('calls.callBack') || 'Call back'}
@@ -3569,7 +3572,7 @@ const s = StyleSheet.create({
     fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
-    paddingHorizontal: 32,
+    paddingHorizontal: 16,
     paddingTop: 20,
     paddingBottom: 6,
   },
@@ -3634,6 +3637,14 @@ const s = StyleSheet.create({
   },
   infoBtn: {
     padding: 4,
+  },
+  callBackBtn: {
+    borderRadius: 22,
+    padding: 10,
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   separator: {
     height: StyleSheet.hairlineWidth,

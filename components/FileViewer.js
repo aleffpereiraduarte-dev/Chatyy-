@@ -428,7 +428,7 @@ const s = StyleSheet.create({
   container: { flex: 1 },
   header: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
-    paddingHorizontal: 16, paddingVertical: 12,
+    padding: 12,
   },
   headerBtn: { padding: 8 },
   headerInfo: { flex: 1 },

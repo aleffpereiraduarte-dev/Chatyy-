@@ -374,6 +374,35 @@ function VideoPlayer({ uri, poster, colors, isDark, t, filterName }) {
   );
 }
 
+// ── Animated carousel dot ──
+// Smoothly fades + scales between the inactive (white, 6×6, 50% opacity) and
+// active (purple, 8×8, full opacity) states so the indicator doesn't snap
+// when the user swipes between images. Pure React Native Animated so it
+// runs on both native + web.
+const AnimatedCarouselDot = memo(function AnimatedCarouselDot({ active }) {
+  const progress = useRef(new Animated.Value(active ? 1 : 0)).current;
+  useEffect(() => {
+    Animated.timing(progress, {
+      toValue: active ? 1 : 0,
+      duration: 220,
+      useNativeDriver: false,
+    }).start();
+  }, [active, progress]);
+  const size = progress.interpolate({ inputRange: [0, 1], outputRange: [6, 8] });
+  const opacity = progress.interpolate({ inputRange: [0, 1], outputRange: [0.5, 1] });
+  return (
+    <Animated.View
+      style={{
+        width: size,
+        height: size,
+        borderRadius: 4,
+        opacity,
+        backgroundColor: active ? ACCENT : '#ffffff',
+      }}
+    />
+  );
+});
+
 function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated, onDeletePost, onPressUser, profileMode, onHidePost }) {
   const [liked, setLiked] = useState(!!post.user_liked);
   const [likeCount, setLikeCount] = useState(Number(post.like_count) || 0);
@@ -1160,24 +1189,15 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                   {activeMediaIndex + 1}/{mediaUrls.length}
                 </Text>
               </View>
-              {/* Dot indicators */}
+              {/* Dot indicators — opacity is animated via AnimatedCarouselDot
+                  so the transition between active/inactive states fades in
+                  smoothly instead of snapping. */}
               {mediaUrls.length <= 10 && (
                 <View style={styles.dotRow}>
                   {mediaUrls.map((_, idx) => (
-                    <View
+                    <AnimatedCarouselDot
                       key={idx}
-                      style={[
-                        styles.dot,
-                        {
-                          width: idx === activeMediaIndex ? 8 : 6,
-                          height: idx === activeMediaIndex ? 8 : 6,
-                          borderRadius: idx === activeMediaIndex ? 4 : 3,
-                          opacity: idx === activeMediaIndex ? 1 : 0.5,
-                          backgroundColor: idx === activeMediaIndex
-                            ? ACCENT
-                            : '#ffffff',
-                        },
-                      ]}
+                      active={idx === activeMediaIndex}
                     />
                   ))}
                 </View>
@@ -1935,8 +1955,16 @@ const styles = StyleSheet.create({
   headerTime: {
     fontSize: 12,
   },
+  // ⋯ kebab button — subtle circular hit target so it visually groups
+  // with the headerTime pill on its left instead of floating as a stray
+  // icon. The faint border + tighter padding mirrors the X/Threads kebab.
   menuBtn: {
-    padding: 8,
+    padding: 6,
+    borderRadius: 14,
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   // Menu
   menuDropdown: {
@@ -2028,6 +2056,10 @@ const styles = StyleSheet.create({
     padding: 8,
     borderRadius: 12,
     borderWidth: StyleSheet.hairlineWidth,
+    // Subtle purple left accent so the quoted post reads as a "reply/quote"
+    // block at a glance — mirrors how Threads + X surface reposts.
+    borderLeftWidth: 3,
+    borderLeftColor: 'rgba(124,58,237,0.4)',
     gap: 10,
   },
   repostThumb: {

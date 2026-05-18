@@ -15,7 +15,7 @@ import {
   IconArrowLeft, IconSparkles, IconMessageSquare, IconPenTool, IconDraft,
   IconFilter, IconChevronRight, IconGlobe, IconTrash, IconBell, IconForward,
   IconShield, IconFileText, IconUser, IconUsers, IconPlus, IconShare, IconCheck,
-  IconMail, IconPhone, IconAlertTriangle, IconCopy,
+  IconMail, IconPhone, IconAlertTriangle, IconCopy, IconDatabase,
 } from '../components/Icons';
 import { useBiometric } from '../context/BiometricContext';
 import { useConfirm } from '../components/ConfirmModal';
@@ -346,6 +346,28 @@ function SettingsScreenInner() {
   }, []);
 
   useEffect(() => () => { if (_chatDefaultsSaveTimer.current) clearTimeout(_chatDefaultsSaveTimer.current); }, []);
+
+  // ── Storage stats (Settings → Storage section) ──────────────────────
+  // Scans the local mediaCache dirs (cache + saved-permanent) once on mount
+  // and aggregates total bytes + per-bucket breakdown. Re-runs when the user
+  // taps "Clear cache" so the card reflects the empty state immediately.
+  // Web platforms get a null result and the section is hidden — there's no
+  // on-disk store in the browser, only IndexedDB which isn't user-relevant
+  // here.
+  const [storageStats, setStorageStats] = useState(null);
+  const [storageBusy, setStorageBusy] = useState(false);
+
+  const refreshStorageStats = useCallback(async () => {
+    if (Platform.OS === 'web') return;
+    try {
+      const mc = require('../services/mediaCache');
+      if (typeof mc.getStorageStats !== 'function') return;
+      const stats = await mc.getStorageStats();
+      setStorageStats(stats);
+    } catch {}
+  }, []);
+
+  useEffect(() => { refreshStorageStats(); }, [refreshStorageStats]);
 
   useEffect(() => {
     loadSettings();
@@ -1853,6 +1875,132 @@ function SettingsScreenInner() {
               </View>
             );
           })}
+        </View>
+        )}
+
+        {/* Storage — WhatsApp Settings → Storage parity.
+            Shows per-bucket usage (photos / videos / audios / docs) plus a
+            "Clear cache" button at the bottom. Stats are read once on mount
+            via mediaCache.getStorageStats() and refreshed after a clear so
+            users get instant feedback. Mobile-only (web has no on-disk
+            store the user cares about). */}
+        {Platform.OS !== 'web' && sectionMatches(t('settings.storage.title'), t('settings.storage.photos'), t('settings.storage.videos'), t('settings.storage.audios'), t('settings.storage.documents'), 'storage', 'cache', 'armazenamento', 'cache') && (
+        <View ref={registerSectionRef('storage')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+          <View style={s.sectionTitleRow}>
+            <IconDatabase size={18} color={colors.primary} style={{ marginRight: 8 }} />
+            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.storage.title')}</Text>
+          </View>
+          {(() => {
+            // Inline helper to format bytes WhatsApp-style: < 1KB shows
+            // 0 KB so very small caches don't read as "0 B" awkwardly.
+            // Threshold-based (KB → MB → GB) with one decimal under 100.
+            const fmtBytes = (b) => {
+              const bytes = Math.max(0, Number(b) || 0);
+              if (bytes < 1024) return bytes === 0 ? '0 KB' : '< 1 KB';
+              const kb = bytes / 1024;
+              if (kb < 1024) return `${kb < 10 ? kb.toFixed(1) : Math.round(kb)} KB`;
+              const mb = kb / 1024;
+              if (mb < 1024) return `${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+              const gb = mb / 1024;
+              return `${gb < 10 ? gb.toFixed(2) : gb.toFixed(1)} GB`;
+            };
+            const fmtCount = (n) => {
+              const num = Number(n) || 0;
+              const key = num === 1 ? 'settings.storage.itemsSingular' : 'settings.storage.items';
+              return (t(key) || `${num} items`).replace('{n}', String(num));
+            };
+            const stats = storageStats || { totalBytes: 0, cacheBytes: 0, savedBytes: 0, byType: { image: 0, video: 0, audio: 0, document: 0 }, counts: { image: 0, video: 0, audio: 0, document: 0 } };
+            const mediaTotal = (stats.byType.image || 0) + (stats.byType.video || 0) + (stats.byType.audio || 0) + (stats.byType.document || 0);
+            const summary = (t('settings.storage.usedSummary') || 'You have used {size} of media').replace('{size}', fmtBytes(mediaTotal));
+            const rows = [
+              { key: 'image',    label: t('settings.storage.photos'),    bytes: stats.byType.image    || 0, count: stats.counts.image    || 0 },
+              { key: 'video',    label: t('settings.storage.videos'),    bytes: stats.byType.video    || 0, count: stats.counts.video    || 0 },
+              { key: 'audio',    label: t('settings.storage.audios'),    bytes: stats.byType.audio    || 0, count: stats.counts.audio    || 0 },
+              { key: 'document', label: t('settings.storage.documents'), bytes: stats.byType.document || 0, count: stats.counts.document || 0 },
+            ];
+            return (
+              <>
+                {/* Summary row — total media size */}
+                <Text style={[s.settingDesc, { color: colors.text, fontSize: FontSize.md, fontWeight: '600', marginTop: Spacing.xs, marginBottom: Spacing.sm }]}>
+                  {summary}
+                </Text>
+                {/* Per-bucket breakdown — 4 rows (photos / videos / audios / docs).
+                    Each shows size + count. Empty buckets still render so the
+                    layout stays consistent and users see "0 KB / 0 items" rather
+                    than wondering if the section is broken. */}
+                {rows.map((row, idx) => (
+                  <View
+                    key={row.key}
+                    style={[
+                      s.settingRow,
+                      {
+                        borderBottomColor: colors.borderLight,
+                        borderBottomWidth: idx === rows.length - 1 ? 0 : StyleSheet.hairlineWidth,
+                        paddingVertical: Spacing.sm,
+                      },
+                    ]}
+                  >
+                    <View style={s.settingInfo}>
+                      <Text style={[s.settingLabel, { color: colors.text }]}>{row.label}</Text>
+                      <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                        {fmtCount(row.count)}
+                      </Text>
+                    </View>
+                    <Text style={[s.settingLabel, { color: colors.textSecondary }]}>{fmtBytes(row.bytes)}</Text>
+                  </View>
+                ))}
+                {/* App cache row — separate visual indicator for the
+                    OS-purgeable cache dir (informational, not actionable on
+                    its own; the button below clears EVERYTHING). */}
+                <View style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0, paddingVertical: Spacing.sm, marginTop: Spacing.xs }]}>
+                  <View style={s.settingInfo}>
+                    <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.storage.appCache')}</Text>
+                  </View>
+                  <Text style={[s.settingLabel, { color: colors.textSecondary }]}>{fmtBytes(stats.totalBytes)}</Text>
+                </View>
+                {/* Destructive action — confirm dialog before nuking. Reuses the
+                    Empty-Trash / Delete-Account pattern: web uses window.confirm
+                    (no native Alert), native uses the useConfirm() modal with
+                    destructive styling. Refreshes stats after clearing so the
+                    card flips to the empty state without a re-mount. */}
+                <TouchableOpacity
+                  style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0, marginTop: Spacing.sm, opacity: storageBusy ? 0.5 : 1 }]}
+                  disabled={storageBusy}
+                  onPress={async () => {
+                    const doClear = async () => {
+                      setStorageBusy(true);
+                      try {
+                        const mc = require('../services/mediaCache');
+                        if (typeof mc.clearAllCache === 'function') await mc.clearAllCache();
+                      } catch {}
+                      await refreshStorageStats();
+                      setStorageBusy(false);
+                    };
+                    const ok = Platform.OS === 'web'
+                      ? (typeof window !== 'undefined' && window.confirm(t('settings.storage.clearConfirm')))
+                      : await confirm({
+                          title: t('settings.storage.clearConfirmTitle'),
+                          message: t('settings.storage.clearConfirm'),
+                          confirmLabel: t('settings.storage.clearCache'),
+                          destructive: true,
+                        });
+                    if (ok) doClear();
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('settings.storage.clearCache')}
+                >
+                  <View style={s.settingInfo}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <IconTrash size={18} color={colors.error} style={{ marginRight: Spacing.sm }} />
+                      <Text style={[s.settingLabel, { color: colors.error }]}>
+                        {storageBusy ? '…' : t('settings.storage.clearCache')}
+                      </Text>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              </>
+            );
+          })()}
         </View>
         )}
 

@@ -1103,11 +1103,14 @@ const styles = StyleSheet.create({
     }),
   },
   heroGoLiveText: { color: BRAND_PURPLE, fontSize: 13, fontWeight: '800', letterSpacing: 0.2 },
+  // Hero badge + count — stacked vertically and aligned right so the AO VIVO
+  // badge sits above the live-count text in a tight column (round 51 polish).
   heroBarBadgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
+    flexDirection: 'column',
+    alignItems: 'flex-end',
+    gap: 4,
     marginBottom: 6,
+    opacity: 1.0,
   },
   heroBigBadge: {
     flexDirection: 'row',
@@ -1209,8 +1212,9 @@ const styles = StyleSheet.create({
 
   listPad: { padding: 6, paddingBottom: 32 },
   // gap between columns; card has its own internal marginHorizontal for the
-  // outer wrapper's breathing room, so total horizontal spacing = 12px.
-  colWrap: { gap: 6, marginBottom: 6 },
+  // outer wrapper's breathing room, so total horizontal spacing = 14px.
+  // Bumped gap+marginBottom for breathing room in the 2-col grid (TikTok parity).
+  colWrap: { gap: 8, marginBottom: 12 },
 
   // Outer wrapper holds the entrance Animated.View. flex:1 so 2 columns split
   // evenly. We separate this from the inner pressable so transform animations
@@ -1242,7 +1246,7 @@ const styles = StyleSheet.create({
   gradBand: { width: '100%' },
 
   liveBadge: {
-    position: 'absolute', top: 8, left: 8,
+    position: 'absolute', top: 12, left: 12,
     flexDirection: 'row', alignItems: 'center',
     backgroundColor: '#DC2626',
     paddingHorizontal: 7, paddingVertical: 3,
@@ -1252,7 +1256,7 @@ const styles = StyleSheet.create({
   liveBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.4 },
 
   viewerPill: {
-    position: 'absolute', top: 8, right: 8,
+    position: 'absolute', top: 12, right: 12,
     flexDirection: 'row', alignItems: 'center',
     // Glass: dark base + slight border for the "blur" suggestion. We can't do
     // a real backdrop-filter on native without expo-blur, so this is the

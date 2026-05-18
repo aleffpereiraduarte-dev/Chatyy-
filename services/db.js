@@ -639,6 +639,33 @@ export async function dbClearAll() {
   `);
 }
 
+// Retention: delete messages older than `maxAgeDays` (default 90) that have
+// already been read (_readStatus >= 1). When `conversationId` is null, prunes
+// across all conversations. Returns number of rows deleted (0 on failure).
+//
+// NOTE: schema currently doesn't carry _readStatus — until that column lands,
+// the WHERE clause matches nothing and this is a no-op. The try/catch keeps
+// the call site safe either way.
+export async function dbPruneOldMessages(conversationId, maxAgeDays = 90) {
+  if (!isDbReady()) return 0;
+  try {
+    const cutoff = Date.now() - (maxAgeDays * 86400000);
+    const sql = conversationId
+      ? `DELETE FROM messages WHERE conversation_id = ? AND created_at < ? AND _readStatus >= 1`
+      : `DELETE FROM messages WHERE created_at < ? AND _readStatus >= 1`;
+    const params = conversationId ? [conversationId, cutoff] : [cutoff];
+    const result = await _db.runAsync(sql, params);
+    return result.changes || 0;
+  } catch { return 0; }
+}
+
+// Reclaim disk space + rebuild indexes after large deletes. Cheap to call
+// post-prune; expensive on huge DBs so only invoke on a weekly cadence.
+export async function dbVacuum() {
+  if (!isDbReady()) return;
+  try { await _db.execAsync('VACUUM;'); } catch {}
+}
+
 export async function dbGetStats() {
   if (isWeb || !_db) return {};
   const [msgs, convs, contacts, emails, events, files] = await Promise.all([

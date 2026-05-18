@@ -192,7 +192,7 @@ const GiftRow = memo(function GiftRow({ m, stackAlpha }) {
           </Text>
         </View>
         <View style={styles.giftAmount}>
-          <IconStar size={12} color="#fff" />
+          <IconStar size={12} color="#fbbf24" />
           <Text style={styles.giftAmountText}>{m.amount || 1}</Text>
         </View>
       </View>
@@ -380,37 +380,37 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     maxWidth: '94%',
   },
+  // Brand-spec gift chip — full-saturation gold (#fbbf24) so the chip reads
+  // as a discrete "gift fired" event in the chat stream (not a subdued tint).
+  // padding 8 + gap 6 matches the round 51 polish brief.
   giftPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingLeft: 5,
-    paddingRight: 8,
-    paddingVertical: 5,
-    backgroundColor: 'rgba(251,191,36,0.22)',
-    borderWidth: 1.5,
-    borderColor: 'rgba(251,191,36,0.85)',
+    gap: 6,
+    padding: 8,
+    backgroundColor: '#fbbf24',
     borderRadius: 16,
     ...(Platform.OS === 'web' ? {
-      boxShadow: '0 4px 14px rgba(251,191,36,0.35)',
+      boxShadow: '0 4px 14px rgba(251,191,36,0.55)',
     } : {}),
   },
+  // Solid-gold chip background now → swap to dark border + dark text so the
+  // username/label stay legible against the saturated fill.
   giftAvatar: {
     borderRadius: 12,
     overflow: 'hidden',
     borderWidth: 1.5,
-    borderColor: 'rgba(251,191,36,0.95)',
+    borderColor: 'rgba(17,17,17,0.45)',
   },
   giftName: {
-    color: '#fff',
+    color: '#111',
     fontSize: 12,
-    fontWeight: '800',
-    ...(Platform.OS === 'web' ? { textShadow: '0 1px 2px rgba(0,0,0,0.7)' } : {}),
+    fontWeight: '900',
   },
   giftText: {
-    color: 'rgba(255,255,255,0.95)',
+    color: 'rgba(17,17,17,0.85)',
     fontSize: 11,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   giftAmount: {
     flexDirection: 'row',
@@ -419,10 +419,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: 10,
-    backgroundColor: '#fbbf24',
+    backgroundColor: 'rgba(17,17,17,0.85)',
   },
   giftAmountText: {
-    color: '#111',
+    color: '#fbbf24',
     fontWeight: '900',
     fontSize: 11,
   },

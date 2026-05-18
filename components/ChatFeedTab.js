@@ -1030,16 +1030,82 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
     );
   };
 
+  // Recommended creators rail — horizontal scroll of 10 suggested users
+  // (friends-of-friends). Rendered between post #3 and #4 on the first page
+  // and embedded again every 7 posts (via getItemLayout interleaving below).
+  //
+  // NOTE: this callback is defined BEFORE renderPost on purpose — renderPost's
+  // dependency array references renderSuggestionsRail, and JS `const` bindings
+  // are not hoisted. Declaring it after renderPost causes a TDZ
+  // "Cannot access 'renderSuggestionsRail' before initialization" crash on
+  // every web mount (minified as 'ut'). DO NOT reorder.
+  const renderSuggestionsRail = useCallback(({ inlineKey = 'rec-rail' } = {}) => {
+    if (!suggestionsLoaded || suggestions.length === 0) return null;
+    return (
+      <View style={[styles.suggestionsRail, {
+        backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : '#fff',
+        borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+        borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+      }]} key={inlineKey}>
+        <View style={styles.suggestionsHeader}>
+          <Text style={[styles.suggestionsTitle, { color: colors.text }]}>
+            {t('feed.suggestedForYou') || 'Sugestões para você'}
+          </Text>
+        </View>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.suggestionsScroll}
+        >
+          {suggestions.map((u) => (
+            <TouchableOpacity
+              key={u.email}
+              style={[styles.suggestionCard, {
+                backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#f6f8fa',
+                borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+              }]}
+              onPress={() => handlePressUser(u.email)}
+              activeOpacity={0.75}
+              accessibilityRole="button"
+              accessibilityLabel={u.name || u.email}
+            >
+              <AvatarCircle name={u.name || u.email} email={u.email} size={56} />
+              <Text style={[styles.suggestionName, { color: colors.text }]} numberOfLines={1}>
+                {u.name || u.email?.split('@')[0]}
+              </Text>
+              {typeof u.mutual_count === 'number' && u.mutual_count > 0 ? (
+                <Text style={[styles.suggestionMutual, { color: colors.textSecondary }]} numberOfLines={1}>
+                  {(t('feed.mutualCount') || '{n} em comum').replace('{n}', u.mutual_count)}
+                </Text>
+              ) : null}
+              <TouchableOpacity
+                style={styles.suggestionFollowBtn}
+                onPress={async () => {
+                  try { await api.followUser(u.email); } catch {}
+                  setSuggestions(prev => prev.filter(s => s.email !== u.email));
+                }}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.suggestionFollowText}>
+                  {t('profile.follow') || 'Seguir'}
+                </Text>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+    );
+  }, [suggestions, suggestionsLoaded, isDark, colors, t, handlePressUser]);
+
   const renderPost = useCallback(({ item }) => {
     // Sentinel rows carry an explicit __type marker. We use it to inject the
     // suggested-creators rail every N posts inline with the feed so the user
     // discovers new accounts without leaving the timeline. Any non-post type
     // we don't recognize is silently skipped.
     if (item && item.__type === 'suggestionsRail') {
-      // renderSuggestionsRail is defined later in this component — it's a
-      // useCallback so its identity stays stable across renders. We pass the
-      // sentinel id as the React key so multiple rails (after rows 3, 10,
-      // 17, ...) stay distinct.
+      // renderSuggestionsRail is defined just above — useCallback identity stays
+      // stable across renders. We pass the sentinel id as the React key so
+      // multiple rails (after rows 3, 10, 17, ...) stay distinct.
       return renderSuggestionsRail({ inlineKey: item.__key || 'rec-rail' });
     }
     return (
@@ -1207,67 +1273,6 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
       </TouchableOpacity>
     </View>
   ), [algorithm, algoPillLeft, isDark, colors, t]);
-
-  // Recommended creators rail — horizontal scroll of 10 suggested users
-  // (friends-of-friends). Rendered between post #3 and #4 on the first page
-  // and embedded again every 7 posts (via getItemLayout interleaving below).
-  const renderSuggestionsRail = useCallback(({ inlineKey = 'rec-rail' } = {}) => {
-    if (!suggestionsLoaded || suggestions.length === 0) return null;
-    return (
-      <View style={[styles.suggestionsRail, {
-        backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : '#fff',
-        borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-        borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-      }]} key={inlineKey}>
-        <View style={styles.suggestionsHeader}>
-          <Text style={[styles.suggestionsTitle, { color: colors.text }]}>
-            {t('feed.suggestedForYou') || 'Sugestões para você'}
-          </Text>
-        </View>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.suggestionsScroll}
-        >
-          {suggestions.map((u) => (
-            <TouchableOpacity
-              key={u.email}
-              style={[styles.suggestionCard, {
-                backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#f6f8fa',
-                borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-              }]}
-              onPress={() => handlePressUser(u.email)}
-              activeOpacity={0.75}
-              accessibilityRole="button"
-              accessibilityLabel={u.name || u.email}
-            >
-              <AvatarCircle name={u.name || u.email} email={u.email} size={56} />
-              <Text style={[styles.suggestionName, { color: colors.text }]} numberOfLines={1}>
-                {u.name || u.email?.split('@')[0]}
-              </Text>
-              {typeof u.mutual_count === 'number' && u.mutual_count > 0 ? (
-                <Text style={[styles.suggestionMutual, { color: colors.textSecondary }]} numberOfLines={1}>
-                  {(t('feed.mutualCount') || '{n} em comum').replace('{n}', u.mutual_count)}
-                </Text>
-              ) : null}
-              <TouchableOpacity
-                style={styles.suggestionFollowBtn}
-                onPress={async () => {
-                  try { await api.followUser(u.email); } catch {}
-                  setSuggestions(prev => prev.filter(s => s.email !== u.email));
-                }}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.suggestionFollowText}>
-                  {t('profile.follow') || 'Seguir'}
-                </Text>
-              </TouchableOpacity>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
-    );
-  }, [suggestions, suggestionsLoaded, isDark, colors, t]);
 
   const renderTabBar = () => (
     <View style={[styles.tabBar, {

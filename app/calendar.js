@@ -389,6 +389,14 @@ function DayCellInner({ isSelected, isToday, isOtherMonth, day, colors }) {
       ]}>
         {day}
       </Text>
+      {isToday && (
+        <Text
+          numberOfLines={1}
+          style={[styles.dayCellTodayLabel, { color: colors.primary }]}
+        >
+          Hoje
+        </Text>
+      )}
     </Animated.View>
   );
 }
@@ -687,6 +695,7 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
                           <Text
                             style={[styles.cellEventText, { color: isOtherMonth ? colors.textTertiary : colors.text }]}
                             numberOfLines={1}
+                            ellipsizeMode="tail"
                           >
                             {evt.title || ''}
                           </Text>
@@ -2969,7 +2978,8 @@ const styles = StyleSheet.create({
   dayHeaderText: { fontSize: FontSize.xs, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
   calendarRow: { flexDirection: 'row' },
   calendarCell: {
-    flex: 1, alignItems: 'stretch', paddingVertical: 3, paddingHorizontal: 2, minHeight: 72,
+    flex: 1, alignItems: 'stretch', paddingVertical: 3, paddingHorizontal: 2,
+    minHeight: Math.max(72, Dimensions.get('window').height * 0.11),
     borderRadius: 10,
     ...Platform.select({
       web: { transition: 'background-color 0.2s ease, transform 0.15s ease' },
@@ -2990,6 +3000,12 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? { transition: 'background-color 180ms ease, transform 160ms ease' } : {}),
   },
   dayCellText: { fontSize: FontSize.xs + 1, fontWeight: '600' },
+  dayCellTodayLabel: {
+    position: 'absolute', bottom: -10, left: -4, right: -4,
+    textAlign: 'center',
+    fontSize: 8, fontWeight: '800', letterSpacing: 0.4,
+    textTransform: 'uppercase',
+  },
   // Mini event previews in cells — Google-Calendar-style chips with a vertical
   // accent stripe instead of a dot, so colors register at a glance even when
   // titles are short or truncated.

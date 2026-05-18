@@ -23,6 +23,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
@@ -30,6 +31,8 @@ import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconShield, IconSmartphone } from '../components/Icons';
 import * as api from '../services/api';
 import { getDeviceId, getDevicePublicKey } from '../services/e2e';
+import { bootstrapHistoryFromPeer } from '../services/relayClient';
+import { loadDeviceRegistry } from '../services/deviceRegistry';
 
 // Tiny deterministic "QR-ish" matrix — copied from profile-qr to avoid a
 // circular import. Real QR encoding is overkill for a 32-char token that
@@ -88,6 +91,14 @@ export default function CompanionQRScreen() {
   const [token, setToken] = useState(null);
   const [status, setStatus] = useState('loading'); // 'loading' | 'pending' | 'approved' | 'expired' | 'error'
   const [error, setError] = useState('');
+  // Bootstrap state: shown UNDER the "Celular vinculado" success card so
+  // the user understands history is downloading in background. We DON'T
+  // gate router.back() on completion — the user can navigate away and the
+  // pull keeps running (relayRequest lives on a singleton WS, not on this
+  // screen). Progress is `{done, total}`; null means "not started".
+  const [bootstrapProgress, setBootstrapProgress] = useState(null);
+  const [bootstrapDone, setBootstrapDone] = useState(false);
+  const bootstrapStartedRef = useRef(false);
   const refreshTimerRef = useRef(null);
   const pollTimerRef = useRef(null);
 
@@ -155,6 +166,85 @@ export default function CompanionQRScreen() {
     return () => { if (pollTimerRef.current) clearInterval(pollTimerRef.current); };
   }, [status, token, mint]);
 
+  // Auto-bootstrap chat history once the QR is approved. WhatsApp behavior
+  // — a freshly-paired device should NOT land in an empty chat list. Until
+  // now this only happened when the user manually requested a relay sync
+  // (cross-device audit gap, 2026-05-18). Idempotent via the per-email
+  // `chat_bootstrap_done_<email>` AsyncStorage flag; clearing local data or
+  // unlinking + re-pairing resets the flag naturally (signup flow is the
+  // only other place that should clear it).
+  useEffect(() => {
+    if (status !== 'approved') return;
+    if (bootstrapStartedRef.current) return;
+    bootstrapStartedRef.current = true;
+    (async () => {
+      try {
+        // Resolve the active account email — we need it to namespace the
+        // "already bootstrapped" flag so signing in/out of multiple
+        // accounts on the same physical device replays the pull per email.
+        let email = '';
+        try {
+          if (typeof api.getActiveAccountEmail === 'function') {
+            email = (api.getActiveAccountEmail() || '').toLowerCase();
+          }
+          if (!email && typeof api.getSavedEmail === 'function') {
+            email = (api.getSavedEmail() || '').toLowerCase();
+          }
+        } catch {}
+        const flagKey = email ? `chat_bootstrap_done_${email}` : 'chat_bootstrap_done_anon';
+
+        // Already pulled? Skip — but still surface "done" so the UI doesn't
+        // dangle in a spinner state.
+        try {
+          const v = await AsyncStorage.getItem(flagKey);
+          if (v === 'true') {
+            setBootstrapDone(true);
+            return;
+          }
+        } catch {}
+
+        // Resolve the primary peer's device id from the registry. The
+        // registry is normally warmed when the user opens /linked-devices;
+        // we force-refresh here because pairing JUST happened and the
+        // freshly-published pubkeys may not be in the local cache yet.
+        let targetDeviceId = null;
+        try {
+          const r = await loadDeviceRegistry({ force: true });
+          const devices = (r && Array.isArray(r.devices)) ? r.devices : [];
+          // Prefer a non-self primary phone. Fallback to ANY non-web peer.
+          // We can't trivially distinguish 'self' from the registry list at
+          // this point (we just published our pubkey above), so we pass
+          // null when in doubt and let the server route to the first
+          // active paired non-web device — same fallback relayClient.js
+          // uses elsewhere.
+          const myDeviceId = await getDeviceId().catch(() => null);
+          const candidates = devices.filter(d => d && d.kind && d.kind !== 'web' && d.device_id !== myDeviceId);
+          if (candidates.length) targetDeviceId = candidates[0].device_id || null;
+        } catch {}
+
+        setBootstrapProgress({ done: 0, total: 0 });
+
+        const result = await bootstrapHistoryFromPeer({
+          targetDeviceId,
+          maxConversations: 50,
+          onProgress: (p) => {
+            // p = { done, total, conversation_id, conversation_name }
+            try { setBootstrapProgress({ done: p.done || 0, total: p.total || 0 }); } catch {}
+          },
+        });
+
+        if (result?.success) {
+          try { await AsyncStorage.setItem(flagKey, 'true'); } catch {}
+        }
+        setBootstrapDone(true);
+      } catch (e) {
+        // Non-fatal — user can re-trigger via /linked-devices later. The
+        // user is already paired; missing history is recoverable.
+        setBootstrapDone(true);
+      }
+    })();
+  }, [status]);
+
   const payload = token ? `chatyy://companion?token=${token}` : '';
 
   return (
@@ -182,6 +272,39 @@ export default function CompanionQRScreen() {
             <Text style={[s.approvedSub, { color: colors.secondaryText }]}>
               {t?.('devices.companionApprovedSub') || 'Seu outro celular já está conectado.'}
             </Text>
+
+            {/* Bootstrap progress strip. We render in 3 states:
+                 - null   → no info yet, do nothing
+                 - !done  → "Sincronizando histórico... X de Y conversas"
+                 - done   → "Histórico sincronizado" (green check via emoji-free dot)
+                Navigation isn't blocked — user can OK out and the pull
+                keeps running on the singleton WS. */}
+            {bootstrapProgress && !bootstrapDone && (
+              <View style={s.bootstrapBox}>
+                <ActivityIndicator color="#7C3AED" size="small" />
+                <View style={{ flex: 1 }}>
+                  <Text style={[s.bootstrapTitle, { color: colors.text }]}>
+                    {t?.('pair.bootstrapping') || 'Sincronizando histórico...'}
+                  </Text>
+                  {bootstrapProgress.total > 0 && (
+                    <Text style={[s.bootstrapMeta, { color: colors.secondaryText }]}>
+                      {(t?.('pair.bootstrap.progress') || '{n} de {total} conversas')
+                        .replace('{n}', String(bootstrapProgress.done))
+                        .replace('{total}', String(bootstrapProgress.total))}
+                    </Text>
+                  )}
+                </View>
+              </View>
+            )}
+            {bootstrapDone && bootstrapProgress && bootstrapProgress.total > 0 && (
+              <View style={[s.bootstrapBox, { borderColor: 'rgba(16,185,129,0.4)' }]}>
+                <View style={s.bootstrapDoneDot} />
+                <Text style={[s.bootstrapTitle, { color: colors.text }]}>
+                  {t?.('pair.bootstrap.done') || 'Histórico sincronizado'}
+                </Text>
+              </View>
+            )}
+
             <TouchableOpacity onPress={() => router.back()} style={[s.cta, { backgroundColor: '#7C3AED' }]}>
               <Text style={s.ctaText}>{t?.('common.done') || 'OK'}</Text>
             </TouchableOpacity>
@@ -246,4 +369,13 @@ const s = StyleSheet.create({
   approvedBox: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 12 },
   approvedTitle: { fontSize: 20, fontWeight: '700', textAlign: 'center' },
   approvedSub: { fontSize: 14, textAlign: 'center', lineHeight: 20 },
+  bootstrapBox: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 12, paddingHorizontal: 14,
+    borderRadius: 12, borderWidth: 1, borderColor: 'rgba(124,58,237,0.4)',
+    alignSelf: 'stretch', marginTop: 12,
+  },
+  bootstrapTitle: { fontSize: 14, fontWeight: '600' },
+  bootstrapMeta: { fontSize: 12, marginTop: 2 },
+  bootstrapDoneDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: '#10B981' },
 });

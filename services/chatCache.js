@@ -29,16 +29,36 @@ function _scopedConvsKey() {
  * Once installed the try/require below auto-enables it — no code changes needed.
  */
 import { Platform, AppState } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getString, setString, remove, getAllKeys } from './mmkv';
 import {
   dbSaveMessages, dbGetMessages, dbGetLastMessageId, dbDeleteMessage, dbUpdateMessage,
   dbSaveConversations, dbGetConversations,
   dbSavePending, dbGetPending, dbRemovePending,
+  dbPruneOldMessages, dbVacuum,
   isDbReady, waitForDb,
 } from './db';
 
 const isNative = Platform.OS !== 'web';
-const MAX_CACHED_MESSAGES = 1000; // key-value store limit (web only; SQLite is unlimited)
+const MAX_CACHED_MESSAGES = 5000; // key-value store limit (bumped from 1000; SQLite is unlimited, pending queue can grow more)
+
+// ─── Cache-scope lock ───────────────────────────────────────────────────────
+// Account switch race: clearChatCache() is async, but React can render the
+// next account's screen BEFORE the clear finishes — sync getters then return
+// the previous user's blobs and we get a 1-2 frame flash of their data.
+//
+// Solution: AuthContext calls lockCacheScope(ms) right before swapping the
+// user. Any sync read inside the window short-circuits to an empty payload,
+// so the brief gap renders as "empty list" instead of "previous user's
+// list". The window naturally drains as clears complete; AuthContext picks
+// a generous 500ms.
+let _scopeLockedUntil = 0;
+export function lockCacheScope(ms = 300) {
+  const until = Date.now() + Math.max(0, ms);
+  if (until > _scopeLockedUntil) _scopeLockedUntil = until;
+}
+export function unlockCacheScope() { _scopeLockedUntil = 0; }
+export function isCacheScopeLocked() { return Date.now() < _scopeLockedUntil; }
 
 // ─── Real MMKV fast-path (react-native-mmkv, if installed) ──────────────────
 // Provides synchronous <0.5ms reads — eliminates the async gap on initial render.
@@ -225,6 +245,10 @@ export async function cacheSingleMessage(conversationId, msg) {
 // Get cached messages for a conversation (INSTANT from SQLite on native,
 // IndexedDB on web, falling back to MMKV/localStorage).
 export async function getCachedMessages(conversationId, limit = 50) {
+  // Account-switch window: refuse to surface any cached payload while the
+  // scope is locked — otherwise the previous user's messages flash on the
+  // new user's screen during the ~500ms clear race.
+  if (isCacheScopeLocked()) return [];
   // Try SQLite first (native) — wait up to 300ms for DB
   if (isNative) {
     if (!isDbReady()) {
@@ -332,6 +356,8 @@ function _hydrateList(list) {
 
 // Get cached conversations (INSTANT)
 export async function getCachedConversations() {
+  // Same account-switch gate as getCachedMessages — see lockCacheScope().
+  if (isCacheScopeLocked()) return [];
   // Try SQLite first (native) — wait up to 500ms for DB to be ready
   if (isNative) {
     if (!isDbReady()) {
@@ -399,6 +425,14 @@ export async function clearChatCache() {
   for (const handle of _pendingWrites.values()) clearTimeout(handle);
   _pendingWrites.clear();
   _hotCache.clear();
+  // Also flush SmartCache's in-memory authoritative state. Without this the
+  // synchronous Sync getters (getCachedMessagesSync / getCachedConversationsSync)
+  // would still serve the previous account's data on the very next render,
+  // because clearChatCache here was only wiping our own tier-0 + MMKV.
+  try {
+    const SmartCache = require('./smartChatCache');
+    SmartCache.clearChatCache?.();
+  } catch {}
   try {
     const keys = _kvGetAllKeys().filter(k => k.startsWith('chat_'));
     keys.forEach(k => _kvRemove(k));
@@ -692,6 +726,41 @@ function mergeMessages(existing, incoming) {
   });
 }
 
+// Weekly retention: prune read messages older than 90 days + VACUUM. Tracked
+// via AsyncStorage `chat_last_prune_at` (epoch ms) so we don't re-run on every
+// foreground. Fire-and-forget; never throws into the caller.
+const PRUNE_INTERVAL_MS = 7 * 86400 * 1000; // 7 days
+const PRUNE_MAX_AGE_DAYS = 90;
+const PRUNE_FLAG_KEY = 'chat_last_prune_at';
+let _pruneInFlight = false;
+
+export async function maybeRunRetention() {
+  if (_pruneInFlight) return;
+  if (!isNative) return; // SQLite is native-only; web uses IndexedDB w/ its own caps
+  _pruneInFlight = true;
+  try {
+    const raw = await AsyncStorage.getItem(PRUNE_FLAG_KEY).catch(() => null);
+    const last = raw ? Number(raw) || 0 : 0;
+    const now = Date.now();
+    if (last && (now - last) < PRUNE_INTERVAL_MS) return;
+    if (!isDbReady()) {
+      try { await Promise.race([waitForDb(), new Promise(r => setTimeout(r, 2000))]); } catch {}
+    }
+    if (!isDbReady()) return;
+    try { await dbPruneOldMessages(null, PRUNE_MAX_AGE_DAYS); } catch {}
+    try { await dbVacuum(); } catch {}
+    try { await AsyncStorage.setItem(PRUNE_FLAG_KEY, String(now)); } catch {}
+  } finally {
+    _pruneInFlight = false;
+  }
+}
+
+// Kick off retention shortly after module load (gives DB time to open) and
+// re-check whenever the app returns to foreground.
+try {
+  setTimeout(() => { maybeRunRetention().catch(() => {}); }, 10000);
+} catch {}
+
 // Flush pending debounced writes when the app is backgrounded so in-flight
 // changes don't vanish if the OS freezes/kills the process (iOS aggressively
 // suspends after ~30s inactive).
@@ -699,6 +768,11 @@ try {
   AppState.addEventListener('change', (next) => {
     if (next === 'background' || next === 'inactive') {
       try { flushCacheWrites(); } catch {}
+    }
+    if (next === 'active') {
+      // Re-evaluate retention window on each foreground; AsyncStorage flag
+      // dedupes so it actually runs at most once per 7-day interval.
+      try { maybeRunRetention().catch(() => {}); } catch {}
     }
   });
 } catch {}

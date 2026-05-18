@@ -445,6 +445,72 @@ export async function replayOfflineQueue(api) {
           }
           break;
         }
+        case 'chat_file_upload': {
+          // Foto/vídeo/file que falhou no upload original — replay quando
+          // rede voltar. Mesmo pattern do chat_audio_upload. Antes media
+          // ficava como _failed e era perdida se o user fechasse o app
+          // antes de tocar no balão vermelho. Só funciona no native: o
+          // uri local (file://...) sobrevive a reload, mas no web o blob
+          // URL morre quando a aba fecha — nesse caso o action vai falhar
+          // permanentemente e o usuário tem que re-anexar o arquivo.
+          if (!action.uri) {
+            // Sem uri salvável (ex: blob revoke pós-reload) é hard error —
+            // não adianta retry. Marca pra ser dropado do queue.
+            const e = new Error('file_uri_missing');
+            e.isHardError = true;
+            throw e;
+          }
+          const filePayload = {
+            uri: action.uri,
+            name: action.name || 'file',
+            type: action.file_type || '',
+          };
+          let r;
+          try {
+            r = await api.chatUploadFile(
+              action.conversation_id,
+              filePayload,
+              action.caption || '',
+              !!action.view_once,
+              null, // no progress callback in replay
+              action.msg_type || undefined,
+            );
+          } catch (uploadErr) {
+            // 404/410 = arquivo sumiu do device (user limpou cache, ou web
+            // perdeu o blob no reload). Nada que retry resolva — marca
+            // hard error pra removeFromQueue logo abaixo.
+            const m = String(uploadErr?.message || '');
+            if (/\b40[49]\b|\b410\b|gone|not.?found/i.test(m)) {
+              uploadErr.isHardError = true;
+            }
+            throw uploadErr;
+          }
+          if (r?.success && r.data) {
+            const serverMsg = r.data.message || r.data;
+            try {
+              const { removePendingMessage, cacheSingleMessage } = require('./chatCache');
+              await removePendingMessage(action.conversation_id, action.temp_id).catch(() => {});
+              await cacheSingleMessage(action.conversation_id, serverMsg).catch(() => {});
+            } catch {}
+            try {
+              const ws = require('./websocket').default;
+              ws?.emit?.('chat_message', {
+                conversation_id: action.conversation_id,
+                message: serverMsg,
+              });
+              ws?.relayChatMessage?.(action.conversation_id, serverMsg, action.temp_id, []);
+            } catch {}
+          } else {
+            // Server respondeu mas sem success — pode ser permanente
+            // (413 size too large, 415 mime rejected) ou transitório.
+            const m = String(r?.message || r?.error || '');
+            const isHard = /too large|size|mime|rejected|blocked|forbidden|\b413\b|\b415\b|\b403\b/i.test(m);
+            const err = new Error(m || 'file_upload_failed');
+            if (isHard) err.isHardError = true;
+            throw err;
+          }
+          break;
+        }
         case 'chat_send': {
           const r = await api.chatSend(
             action.conversation_id,
@@ -517,12 +583,127 @@ export async function replayOfflineQueue(api) {
         case 'settings_update':
           await api.apiCall('update_settings', action.payload, 'POST');
           break;
+        case 'chat_read': {
+          // Read receipt — mark conversation as read on server. WhatsApp blue
+          // double check. Hard errors (conv not found / no permission) just
+          // drop the action; transient errors throw to trigger retry.
+          if (!action.conversation_id) break;
+          try {
+            const r = await api.chatReadAck(action.conversation_id);
+            if (r && r.success === false) {
+              const msg = String(r.message || r.error || '');
+              const isHardError = /not_found|permission|invalid|forbidden/i.test(msg);
+              if (!isHardError) throw new Error('chat_read_failed:' + msg);
+            }
+          } catch (e) {
+            const msg = String(e?.message || e || '');
+            const isHardError = /not_found|permission|forbidden/i.test(msg);
+            if (!isHardError) throw e;
+          }
+          break;
+        }
+        case 'chat_react': {
+          // Emoji / sticker reaction replay. message_id required; emoji OR
+          // sticker_url determines payload shape.
+          if (!action.message_id) break;
+          try {
+            const r = await api.chatReact(
+              action.message_id,
+              action.emoji || null,
+              action.sticker_url || null,
+            );
+            if (r && r.success === false) {
+              const msg = String(r.message || r.error || '');
+              const isHardError = /not_found|invalid|permission|forbidden|too_long/i.test(msg);
+              if (!isHardError) throw new Error('chat_react_failed:' + msg);
+            }
+          } catch (e) {
+            const msg = String(e?.message || e || '');
+            const isHardError = /not_found|invalid|permission|forbidden|too_long/i.test(msg);
+            if (!isHardError) throw e;
+          }
+          break;
+        }
+        case 'chat_star_message': {
+          // Favorite/unfavorite a single message. Star intent persists across
+          // crashes via the queue.
+          if (!action.message_id) break;
+          try {
+            const r = await api.chatStarMessage(
+              action.message_id,
+              action.star ? true : false,
+            );
+            if (r && r.success === false) {
+              const msg = String(r.message || r.error || '');
+              const isHardError = /not_found|permission|forbidden|invalid/i.test(msg);
+              if (!isHardError) throw new Error('chat_star_failed:' + msg);
+            }
+          } catch (e) {
+            const msg = String(e?.message || e || '');
+            const isHardError = /not_found|permission|forbidden|invalid/i.test(msg);
+            if (!isHardError) throw e;
+          }
+          break;
+        }
+        case 'chat_pin': {
+          // Pin a conversation (chat-list pin, not the message-pin variant).
+          if (!action.conversation_id) break;
+          try {
+            const r = await api.chatPin(
+              action.conversation_id,
+              action.message_id || null,
+            );
+            if (r && r.success === false) {
+              const msg = String(r.message || r.error || '');
+              const isHardError = /not_found|permission|forbidden|invalid|limit/i.test(msg);
+              if (!isHardError) throw new Error('chat_pin_failed:' + msg);
+            }
+          } catch (e) {
+            const msg = String(e?.message || e || '');
+            const isHardError = /not_found|permission|forbidden|invalid|limit/i.test(msg);
+            if (!isHardError) throw e;
+          }
+          break;
+        }
+        case 'chat_pin_message': {
+          // Pin a specific message in a conversation (WhatsApp-style, 24h/7d/30d).
+          if (!action.message_id) break;
+          try {
+            const r = await api.chatPinMessage(
+              action.message_id,
+              action.duration_seconds || null,
+            );
+            if (r && r.success === false) {
+              const msg = String(r.message || r.error || '');
+              const isHardError = /not_found|permission|forbidden|invalid|limit/i.test(msg);
+              if (!isHardError) throw new Error('chat_pin_message_failed:' + msg);
+            }
+          } catch (e) {
+            const msg = String(e?.message || e || '');
+            const isHardError = /not_found|permission|forbidden|invalid|limit/i.test(msg);
+            if (!isHardError) throw e;
+          }
+          break;
+        }
         default:
           break;
       }
       replayed++;
     } catch (err) {
       failed++;
+      // Hard error sinal vindo do case (ex: chat_file_upload 404/410,
+      // 413 too large, 415 mime rejected). Não tem retry que resolva —
+      // dropa da fila silenciosamente em vez de bater no servidor pra
+      // sempre. Ainda chama emitSendFail pro balão refletir o estado.
+      if (err && err.isHardError) {
+        if (action.type === 'chat_file_upload' && action.temp_id) {
+          try {
+            const evt = require('./sendFailEvents');
+            evt.emitSendFail?.(action.conversation_id, action.temp_id, action.client_message_id);
+          } catch {}
+        }
+        continue;
+      }
       // WhatsApp-style retry: keep retrying indefinitely with exponential
       // backoff capped at 1h. After 5 attempts the bubble flips to red ❗
       // (so the user can see it failed and tap to retry immediately) but

@@ -11,6 +11,20 @@ const getLazyClearChatCache = async () => {
   return clearChatCache;
 };
 
+// Account-switch paint race: clearChatCache() is async, but React happily
+// renders the new user's chat list BEFORE the clear resolves. Without
+// gating, the sync getters in smartChatCache serve the previous user's
+// blobs for 1-2 frames — visible as a flash of their conversations.
+// lockCacheScope() makes every (sync + async) cache reader return empty
+// for `ms` milliseconds; the new user's real fetch fills the screen
+// instead of the stale one.
+function _lockCacheScopeSync(ms = 500) {
+  try {
+    const mod = require('../services/chatCache');
+    mod?.lockCacheScope?.(ms);
+  } catch {}
+}
+
 const AuthContext = createContext(null);
 
 // Module-level interval ref so it persists across re-renders
@@ -649,8 +663,18 @@ export function AuthProvider({ children }) {
       // session routes to /login again (flag is once-per-process).
       try { api.resetAuthFailureSignal?.(); } catch {}
       const _newEmail = (r.data?.email || email || '').toLowerCase();
+      const _isSwitch = !!_prevEmail && _prevEmail !== _newEmail;
       if (!_prevEmail || _prevEmail !== _newEmail) {
         await clearAccountScopedMmkv();
+      }
+      // Account swap: gate any sync getter for the next 500ms AND drop
+      // user to null so chat screens unmount before the new email lands.
+      // Otherwise the in-flight render reads SmartCache (sync) and paints
+      // the previous user's conversations for a frame or two.
+      if (_isSwitch) {
+        _lockCacheScopeSync(500);
+        setUser(null);
+        setCacheUser(null);
       }
       await clearAllCache();
       const clearChatCache = await getLazyClearChatCache(); await clearChatCache();
@@ -723,8 +747,15 @@ export function AuthProvider({ children }) {
     // second expiry in the same session silently swallows 401s.
     try { api.resetAuthFailureSignal?.(); } catch {}
     const _newEmail = (data?.email || '').toLowerCase();
+    const _isSwitch = !!_prevEmail && _prevEmail !== _newEmail;
     if (!_prevEmail || _prevEmail !== _newEmail) {
       await clearAccountScopedMmkv();
+    }
+    // Same paint-race fence as login() — see lockCacheScope.
+    if (_isSwitch) {
+      _lockCacheScopeSync(500);
+      setUser(null);
+      setCacheUser(null);
     }
     await clearAllCache();
     const _clearChat = await getLazyClearChatCache(); await _clearChat();
@@ -982,6 +1013,18 @@ export function AuthProvider({ children }) {
               ws?.disconnect?.();
               ws?.reset?.(true); // fullWipe=true on account switch
             } catch {}
+            // ── Paint-race fence ────────────────────────────────────────
+            // 1. Lock cache scope BEFORE any await so sync getters that
+            //    might fire during the awaits below already short-circuit.
+            // 2. Drop the user to null so any chat screen unmounts before
+            //    the new identity lands — eliminates the "previous user's
+            //    conversations flash" the user reported.
+            // 3. Clear caches (awaited).
+            // 4. Setting the new user repaints from the now-empty cache,
+            //    which fills via the fresh fetch shortly after.
+            _lockCacheScopeSync(500);
+            setUser(null);
+            setCacheUser(null);
             try { await clearAllCache(); } catch {}
             try { await clearChatCache(); } catch {}
             setCacheUser(check.data.email);

@@ -2529,6 +2529,13 @@ export default function PhotosScreen() {
   // FAB state
   const [fabOpen, setFabOpen] = useState(false);
   const fabRotateAnim = useRef(new Animated.Value(0)).current;
+  // FAB hide-on-scroll: translates the FAB down ~96px when user scrolls
+  // down past a small threshold; reveals it again when they scroll up.
+  // Pattern: Instagram/Google Photos hide overlays so the user can read
+  // content without the FAB covering the bottom row.
+  const fabTranslateY = useRef(new Animated.Value(0)).current;
+  const fabLastScrollY = useRef(0);
+  const fabIsHidden = useRef(false);
 
   // ============================================================
   // NEW POST FLOW — Instagram-style multi-select → carousel → publish
@@ -2840,6 +2847,19 @@ export default function PhotosScreen() {
         setScrollPercent(contentOffset.y / maxScroll);
       }
 
+      // FAB hide-on-scroll: down past 8px → translate +96 (offscreen);
+      // up by 8px → reset. Guard with isHidden to avoid re-animating each frame.
+      const y = contentOffset.y;
+      const delta = y - fabLastScrollY.current;
+      if (delta > 8 && y > 40 && !fabIsHidden.current) {
+        fabIsHidden.current = true;
+        Animated.timing(fabTranslateY, { toValue: 96, duration: 200, useNativeDriver: true }).start();
+      } else if (delta < -8 && fabIsHidden.current) {
+        fabIsHidden.current = false;
+        Animated.timing(fabTranslateY, { toValue: 0, duration: 200, useNativeDriver: true }).start();
+      }
+      fabLastScrollY.current = y;
+
       // Show scrubber while scrolling
       Animated.timing(scrubberOpacity, { toValue: 1, duration: 150, useNativeDriver: false }).start();
       if (scrubberTimer.current) clearTimeout(scrubberTimer.current);
@@ -3065,7 +3085,7 @@ export default function PhotosScreen() {
                 style={[s.albumCard, { width: albumSize, backgroundColor: colors.surface, borderColor: colors.border }]}
                 onPress={() => setCreateAlbumVisible(true)}
               >
-                <View style={[s.albumCoverPlaceholder, { height: albumSize - 16, backgroundColor: colors.surfaceVariant }]}>
+                <View style={[s.albumCoverPlaceholder, { width: albumSize, aspectRatio: 1, backgroundColor: colors.surfaceVariant }]}>
                   <Text style={{ fontSize: 32, color: colors.primary, fontWeight: '300' }}>+</Text>
                 </View>
                 <View style={s.albumInfo}>
@@ -3083,13 +3103,13 @@ export default function PhotosScreen() {
             {album.cover ? (
               <Image
                 source={{ uri: album.cover.isDevice ? album.cover.uri : getThumbnailUrl(album.cover) }}
-                style={[s.albumCover, { height: albumSize - 16, backgroundColor: colors.surfaceVariant || '#f1f5f9' }]}
+                style={[s.albumCover, { width: albumSize, backgroundColor: colors.surfaceVariant || '#f1f5f9' }]}
                 resizeMode="cover"
                 defaultSource={undefined}
                 onError={() => {}}
               />
             ) : (
-              <View style={[s.albumCoverPlaceholder, { height: albumSize - 16, backgroundColor: colors.surfaceVariant || '#f1f5f9' }]}>
+              <View style={[s.albumCoverPlaceholder, { width: albumSize, aspectRatio: 1, backgroundColor: colors.surfaceVariant || '#f1f5f9' }]}>
                 <IconImage size={32} color={colors.textTertiary || '#94a3b8'} />
               </View>
             )}
@@ -4520,9 +4540,10 @@ export default function PhotosScreen() {
         )}
       </View>
 
-      {/* FAB - New post (Instagram-style multi-select) */}
+      {/* FAB - New post (Instagram-style multi-select).
+          Wrapped in Animated.View so it hides on scroll down (Instagram pattern). */}
       {!selectMode && activeTab === 'photos' && (
-        <View style={[s.fabContainer, { bottom: 24 + insets.bottom }]}>
+        <Animated.View style={[s.fabContainer, { bottom: 24 + insets.bottom, transform: [{ translateY: fabTranslateY }] }]}>
           {fabOpen && (
             <Animated.View style={[s.fabOptions, { opacity: fabRotateAnim }]}>
               <TouchableOpacity
@@ -4563,7 +4584,7 @@ export default function PhotosScreen() {
           >
             <IconPlus size={26} color="#fff" />
           </BrandFab>
-        </View>
+        </Animated.View>
       )}
 
       {/* Batch operations toolbar — Google Photos grade */}
@@ -5506,11 +5527,11 @@ const s = StyleSheet.create({
     }),
   },
   albumCover: {
-    width: '100%',
+    aspectRatio: 1,
     backgroundColor: '#1a1a2e',
   },
   albumCoverPlaceholder: {
-    width: '100%',
+    aspectRatio: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -5743,7 +5764,7 @@ const s = StyleSheet.create({
   // iOS uses similar values on the Memories carousel in Photos.app.
   memoryCardLg: {
     width: 320,
-    height: 180,
+    aspectRatio: 16 / 9,
     borderRadius: 20,
     overflow: 'hidden',
     position: 'relative',

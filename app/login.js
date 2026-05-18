@@ -441,6 +441,12 @@ export default function LoginScreen() {
   // only after the pop settles. Halo opacity pulses out-of-phase for depth.
   const logoBreathAnim = useRef(new Animated.Value(1)).current;
   const haloAnim = useRef(new Animated.Value(0.5)).current;
+  // Face ID / Touch ID button press scale — spring 1 → 0.92 → 1 on press.
+  // Mirrors iOS native tap feedback so the biometric tile feels alive even
+  // before the system Face ID sheet appears. Used by handleBiometricLogin
+  // press handler. Refs (not useRef().current) so the IIFE that renders the
+  // button can grab the same Animated.Value across re-renders.
+  const bioBtnScaleRef = useRef(new Animated.Value(1));
   // Two background gradient orbs that drift slowly. Subtle parallax — not
   // looking to be distracting, just adds texture so the screen doesn't
   // feel flat. Orb 1 drifts top-right, orb 2 bottom-left, both ~6s loops.
@@ -2171,14 +2177,34 @@ export default function LoginScreen() {
                         <Text style={[s.igGhostBtnLabel, { color: colors.primary }]}>{t('login.createAccount') || 'Criar conta'}</Text>
                       </TouchableOpacity>
 
-                      {/* Biometric login (native only) */}
-                      {bioAvailable && (
+                      {/* Biometric login (native only) — Animated.spring press
+                          scale 1→0.92 + Haptics.selectionAsync on press for
+                          tactile WhatsApp/Telegram parity. The press handler
+                          fires the haptic before the auth prompt so the user
+                          gets immediate feedback even while iOS spins up the
+                          Face ID sheet. */}
+                      {bioAvailable && (() => {
+                        const _bioScale = bioBtnScaleRef.current;
+                        const _bioIn = () => {
+                          Animated.spring(_bioScale, { toValue: 0.92, tension: 220, friction: 10, useNativeDriver: true }).start();
+                        };
+                        const _bioOut = () => {
+                          Animated.spring(_bioScale, { toValue: 1, tension: 220, friction: 10, useNativeDriver: true }).start();
+                        };
+                        const _onPress = () => {
+                          safeHaptic(() => Haptics.selectionAsync());
+                          handleBiometricLogin();
+                        };
+                        return (
+                        <Animated.View style={{ transform: [{ scale: _bioScale }] }}>
                         <TouchableOpacity
                           style={[s.biometricBtn, {
                             borderColor: colors.primary + '40',
                             backgroundColor: colors.primary + '08',
                           }]}
-                          onPress={handleBiometricLogin}
+                          onPress={_onPress}
+                          onPressIn={_bioIn}
+                          onPressOut={_bioOut}
                           disabled={bioLoading}
                           activeOpacity={0.7}
                           accessibilityRole="button"
@@ -2222,7 +2248,9 @@ export default function LoginScreen() {
                             </>
                           )}
                         </TouchableOpacity>
-                      )}
+                        </Animated.View>
+                        );
+                      })()}
                     </>
 
                   ) : (

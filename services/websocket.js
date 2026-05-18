@@ -758,19 +758,21 @@ class MailWebSocket {
         if (msgId && !this._trackMsgId(msgId)) {
           return; // Duplicate, skip
         }
-        // Kick off a background download for any media attachment the
-        // moment it arrives — by the time the user navigates into the
-        // conv the file is already on disk and ExpoImage renders it
-        // instantly instead of streaming from R2 at open time.
+        // Kick off a background download for image + audio attachments the
+        // moment they arrive — by the time the user navigates into the conv
+        // the file is already on disk and ExpoImage / AudioPlayer renders
+        // it instantly instead of streaming from R2 at open time. Crucially,
+        // this makes media available OFFLINE later: without this hook the
+        // download only happens when the user opens the bubble, so if they
+        // never visited the chat the media never lands on the device.
+        //
+        // Scope: image + audio/voice only. Video / file / docs are skipped
+        // here (too heavy for opportunistic prefetch); user taps to DL.
+        // Throttled to 3 concurrent + cellular-gated inside mediaCache.
         try {
           const inner = chatMsg?.message || chatMsg;
-          const url = inner?.file_url;
-          const type = inner?.type;
-          if (url && ['image', 'video', 'audio', 'voice', 'gif', 'sticker', 'file'].includes(type)) {
-            const absolute = url.startsWith('http') ? url : `https://chatyy.com.br${url}`;
-            const { cacheMedia } = require('./mediaCache');
-            cacheMedia?.(absolute)?.catch?.(() => {});
-          }
+          const { prefetchIncomingMessageMedia } = require('./mediaCache');
+          prefetchIncomingMessageMedia?.(inner);
         } catch {}
         // GLOBAL delivery ack — fire the moment ANY chat message lands on
         // this device, regardless of which screen is open. The per-conv
@@ -842,6 +844,15 @@ class MailWebSocket {
         this._emit('relay_response', msg);
         break;
 
+      // Cross-device settings sync (theme, language, etc.). Fanned out by
+      // the WS server on the same-email channel (chat_user_<email>). The
+      // origin field carries the sender device id so the receiving context
+      // can ignore its own echo and avoid re-emit loops. Emitting the full
+      // frame so listeners see `key`, `value`, `origin` at the top level.
+      case 'user_setting_update':
+        this._emit('user_setting_update', msg);
+        break;
+
       default:
         // Prefetch media for chat_summary too (list-screen bump with
         // full payload when user is on the list, not in-thread). Without
@@ -849,15 +860,14 @@ class MailWebSocket {
         // fresh R2 download at render time — noticeable flash on slow
         // networks.
         if (msg.type === 'chat_summary') {
+          // Auto-prefetch image + audio so the chat is fully offline-ready
+          // even when the recipient never opens the conv (chat_summary is
+          // the per-user fan-out, so this is the only path some messages
+          // take). Same scope/throttle/gate as the chat_message branch.
           try {
             const inner = (msg.data && (msg.data.message || msg.data)) || msg;
-            const url = inner?.file_url;
-            const type = inner?.type;
-            if (url && ['image', 'video', 'audio', 'voice', 'gif', 'sticker', 'file'].includes(type)) {
-              const absolute = url.startsWith('http') ? url : `https://chatyy.com.br${url}`;
-              const { cacheMedia } = require('./mediaCache');
-              cacheMedia?.(absolute)?.catch?.(() => {});
-            }
+            const { prefetchIncomingMessageMedia } = require('./mediaCache');
+            prefetchIncomingMessageMedia?.(inner);
           } catch {}
           // Delivery ack for chat_summary too — the recipient's per-user
           // channel delivers via this type, not chat_message, so without

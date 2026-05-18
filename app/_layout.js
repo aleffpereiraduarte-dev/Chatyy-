@@ -78,6 +78,19 @@ try {
 
 import React, { Suspense } from "react";
 import { Platform, View as RNView, Text as RNText, Linking, Alert, Animated as _RNAnimated, InteractionManager } from 'react-native';
+// ─── Sentry crash reporting ───
+import { initSentry } from '../services/sentry';
+import { installCrashReporter, reportStep, setReporterIdentity } from '../services/crashReporter';
+import { BASE_URL } from '../services/api';
+
+// Install crash reporter FIRST — before any other boot work that can throw.
+// Observed 2026-05-18: LiveKit registerGlobals at boot was throwing on
+// some devices, the throw escaped the outer try/catch via a JSI bridge
+// path, and expo-updates' ErrorRecovery saw a failed boot, rolled back,
+// re-crashed → SIGABRT loop. Reporter must be live before that runs so
+// the failure POSTs to push_diag instead of disappearing.
+try { installCrashReporter(); } catch {}
+
 // LiveKit RN: registra RTCPeerConnection/MediaStream/navigator.mediaDevices
 // no globalThis. Tem que rodar ANTES de qualquer import de livekit-client
 // ou @livekit/react-native. Native-only — web já tem WebRTC do browser.
@@ -95,16 +108,19 @@ if (Platform.OS !== 'web') {
   try {
     const lkrn = require('@livekit/react-native');
     if (typeof lkrn.registerGlobals === 'function') {
-      // registerGlobals accepts an options bag on newer versions; older
-      // versions ignore extras, so this is safe both ways.
       try { lkrn.registerGlobals({ autoConfigureAudioSession: false }); }
-      catch { try { lkrn.registerGlobals(); } catch {} }
+      catch (e) {
+        try { reportStep('lk_register_globals_v2_fail', e?.message); } catch {}
+        try { lkrn.registerGlobals(); }
+        catch (e2) { try { reportStep('lk_register_globals_v1_fail', e2?.message); } catch {} }
+      }
     }
     if (Platform.OS === 'ios' && typeof lkrn.setupIOSAudioManagement === 'function') {
-      // No-op handler — CallKit owns audio session, LK should not touch it.
-      try { lkrn.setupIOSAudioManagement({ defaultOutput: 'earpiece' }); } catch {}
+      try { lkrn.setupIOSAudioManagement({ defaultOutput: 'earpiece' }); }
+      catch (e) { try { reportStep('lk_setup_audio_fail', e?.message); } catch {} }
     }
   } catch (e) {
+    try { reportStep('lk_require_fail', e?.message); } catch {}
     if (typeof console !== 'undefined') console.warn('[LiveKit] registerGlobals failed:', e?.message);
   }
 }
@@ -127,17 +143,6 @@ if (Platform.OS !== 'web') {
   try { GestureHandlerRootView = require('react-native-gesture-handler').GestureHandlerRootView; } catch {}
 }
 if (!GestureHandlerRootView) GestureHandlerRootView = ({ children, style }) => React.createElement(RNView, { style }, children);
-// ─── Sentry crash reporting ───
-import { initSentry } from '../services/sentry';
-import { installCrashReporter, reportStep, setReporterIdentity } from '../services/crashReporter';
-import { BASE_URL } from '../services/api';
-
-// Install ASAP so we catch JS errors during early provider init. Wrapped
-// in try/catch defensively — if the reporter itself ever throws (rare,
-// but possible if a deferred require fails), we MUST NOT contaminate
-// boot and trigger expo-updates' ErrorRecovery loop (which re-raises
-// NSException and SIGABRTs the app, observed 2026-05-18).
-try { installCrashReporter(); } catch {}
 
 // Sanitizes filenames coming from the iOS share-intent / Files-app pipeline.
 // expo-share-intent has been observed to surface the literal "$value" as

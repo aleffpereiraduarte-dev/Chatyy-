@@ -2757,22 +2757,37 @@ export default function LiveViewerScreen() {
         ) : null}
 
         {/* Live chat overlay — last 5 comments float over the video, with
-            per-row entrance + double-tap heart chip support. */}
+            per-row entrance + double-tap heart chip support. Wrapped in a
+            position:relative container so the native top-fade overlay can sit
+            above the comment column without affecting layout (web already
+            handles this via WebkitMaskImage on commentsOverlay). */}
         {!chatHidden ? (
-          <LiveChatOverlay
-            messages={chatMessages}
-            commentHearts={commentHearts}
-            onPressMessage={handleReplyToComment}
-            onOpenSheet={() => {
-              // Reset stick-to-bottom so first open lands at the latest message;
-              // user can then scroll up to read history without auto-snaps.
-              chatSheetStickToBottomRef.current = true;
-              chatSheetUserScrolledRef.current = false;
-              setChatSheetOpen(true);
-            }}
-            hasMore={chatMessages.length > 5}
-            seeAllLabel={t('live.seeAllComments') || 'Ver todos os comentários'}
-          />
+          <View style={styles.chatOverlayWrap}>
+            <LiveChatOverlay
+              messages={chatMessages}
+              commentHearts={commentHearts}
+              onPressMessage={handleReplyToComment}
+              onOpenSheet={() => {
+                // Reset stick-to-bottom so first open lands at the latest message;
+                // user can then scroll up to read history without auto-snaps.
+                chatSheetStickToBottomRef.current = true;
+                chatSheetUserScrolledRef.current = false;
+                setChatSheetOpen(true);
+              }}
+              hasMore={chatMessages.length > 5}
+              seeAllLabel={t('live.seeAllComments') || 'Ver todos os comentários'}
+            />
+            {/* Native top-fade — 3-band manual gradient so the first/oldest
+                row gently melts into the video frame. Web uses the mask gradient
+                inside LiveChatOverlay; we skip on web to avoid double-darkening. */}
+            {Platform.OS !== 'web' ? (
+              <View pointerEvents="none" style={styles.chatTopFade}>
+                <View style={styles.chatTopFadeBand1} />
+                <View style={styles.chatTopFadeBand2} />
+                <View style={styles.chatTopFadeBand3} />
+              </View>
+            ) : null}
+          </View>
         ) : null}
 
         {/* "Pedir pra entrar" pill — sits above the comment input. Hidden if
@@ -3589,6 +3604,38 @@ const styles = StyleSheet.create({
       WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.2) 10%, #000 35%)',
       maskImage: 'linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.2) 10%, #000 35%)',
     } : {}),
+  },
+  // Wrapper for the chat overlay + native top-fade — relative-positioned so
+  // the absolute fade can sit above the comments without affecting layout.
+  chatOverlayWrap: {
+    position: 'relative',
+  },
+  // 3-band manual gradient that sits over the TOP of the comment column on
+  // native. Reverses the bottomGradient pattern: top of the chat melts into
+  // the video frame. zIndex high so it covers older comment rows scrolling up.
+  chatTopFade: {
+    position: 'absolute',
+    top: 0, left: 0, right: 70, // match commentsOverlay paddingRight
+    height: 70,
+    zIndex: 2,
+  },
+  chatTopFadeBand1: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0,
+    height: 28,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  chatTopFadeBand2: {
+    position: 'absolute',
+    top: 28, left: 0, right: 0,
+    height: 22,
+    backgroundColor: 'rgba(0,0,0,0.22)',
+  },
+  chatTopFadeBand3: {
+    position: 'absolute',
+    top: 50, left: 0, right: 0,
+    height: 20,
+    backgroundColor: 'rgba(0,0,0,0.08)',
   },
   // "Ver todos os comentários" chip — small pill above the live comments
   // stack. SVG-only (no arrow emoji per design rule).

@@ -416,16 +416,10 @@ export default function InboxScreen() {
   // folders surface flat lists. Refreshed when the folder changes or the
   // user pulls to refresh.
   useEffect(() => {
-    if (currentFolder !== 'INBOX') { setBundles([]); return; }
-    let alive = true;
-    (async () => {
-      try {
-        const apiSvc = await import('../services/api');
-        const r = await apiSvc.emailBundles('INBOX', 80);
-        if (alive && r?.success) setBundles(r.data?.bundles || []);
-      } catch {}
-    })();
-    return () => { alive = false; };
+    // emailBundles endpoint not yet implemented on backend — skipping to
+    // stop polluting the F12 console with 400s. Re-enable when chat.php /
+    // email.php ships the case 'email_bundles' handler.
+    if (currentFolder !== 'INBOX') setBundles([]);
   }, [currentFolder, emails.length]);
 
   // Auto-generate AI briefing once per day on first INBOX load with emails

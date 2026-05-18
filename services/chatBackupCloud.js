@@ -45,6 +45,39 @@ const NONCE_LEN = nacl.secretbox.nonceLength; // 24
 const KDF_ITERS = 100_000;
 const BUNDLE_VERSION = 2;
 
+// Inner-payload framing (inside the encrypted body) — first byte tells the
+// decrypt path how the JSON was framed before encryption:
+//   0x00 → raw UTF-8 JSON bytes (legacy fast path)
+//   0x01 → gzip-compressed UTF-8 JSON bytes (pako.gzip)
+// Backward compat: if the first decrypted byte is `{` (0x7B) we treat the
+// whole plaintext as raw JSON (matches the v2 format that didn't carry the
+// framing byte at all).
+const FRAME_RAW = 0x00;
+const FRAME_GZIP = 0x01;
+
+// Media-pack tuning — bytes. Anything over MEDIA_MAX_BYTES is skipped; we
+// keep MEDIA_TRUNCATE_BYTES for the (rare) case the server returns a file
+// with no Content-Length and we want to bound memory blow-up.
+const MEDIA_MAX_BYTES = 50 * 1024 * 1024;       // 50 MB ceiling per item
+const MEDIA_TRUNCATE_BYTES = 5 * 1024 * 1024;   // 5 MB safe cut-off
+
+// pako is optional — only used to gzip the JSON before encryption. We
+// require it lazily so the module still loads in environments that didn't
+// install it (web fallback, unit tests). If pako is absent we fall back to
+// FRAME_RAW transparently — the encrypted blob is still readable, just
+// larger.
+let _pakoCache = undefined;
+function _getPako() {
+  if (_pakoCache !== undefined) return _pakoCache;
+  try {
+    // eslint-disable-next-line global-require
+    _pakoCache = require('pako');
+  } catch {
+    _pakoCache = null;
+  }
+  return _pakoCache;
+}
+
 // Storage keys for SecureStore — stash last-used Drive fileId + refresh token
 // so silent auto-backup doesn't need to prompt the user every time.
 const SS_DRIVE_FILE_ID = 'chatyy_cloud_backup_drive_file_id';
@@ -201,23 +234,327 @@ export async function exportChatBundle(passphrase, opts = {}) {
 
   onProgress({ stage: 'encrypt' });
 
-  // Encrypt: nacl.secretbox(decodeUTF8(JSON.stringify(bundle)), nonce, key)
-  const plaintext = decodeUTF8(JSON.stringify(bundle));
+  // Build inner plaintext: [frame-byte] || (gzip(json) | raw(json)). The
+  // gzip pass typically shrinks chat JSON 3–6× because it's overwhelmingly
+  // repeated keys (conversation_id, sender_email, created_at). We accept
+  // the CPU cost since the export runs once per day at most.
+  const jsonBytes = decodeUTF8(JSON.stringify(bundle));
+  const pako = _getPako();
+  let plaintext;
+  if (pako && typeof pako.gzip === 'function') {
+    try {
+      const gz = pako.gzip(jsonBytes);
+      // Only switch to gzip if it actually saved space — defensive against
+      // tiny manifests where the header overhead loses.
+      if (gz.length + 1 < jsonBytes.length) {
+        plaintext = _u8Concat([new Uint8Array([FRAME_GZIP]), gz]);
+      } else {
+        plaintext = _u8Concat([new Uint8Array([FRAME_RAW]), jsonBytes]);
+      }
+    } catch {
+      plaintext = _u8Concat([new Uint8Array([FRAME_RAW]), jsonBytes]);
+    }
+  } else {
+    // pako not linked — write the framing byte anyway so the decrypt path
+    // is single-format. The decrypt code still handles legacy v2 blobs that
+    // start with `{` for backward compat.
+    plaintext = _u8Concat([new Uint8Array([FRAME_RAW]), jsonBytes]);
+  }
+
   const salt = nacl.randomBytes(SALT_LEN);
   const nonce = nacl.randomBytes(NONCE_LEN);
   const key = deriveKey(passphrase, salt);
   const cipher = nacl.secretbox(plaintext, nonce, key);
   if (!cipher) throw new Error('encryption failed');
 
-  // Layout: MAGIC | SALT | NONCE | CIPHERTEXT
+  // Layout: MAGIC | SALT | NONCE | CIPHERTEXT (where CIPHERTEXT decrypts to
+  // [frame-byte][gzip-or-raw JSON]).
   const encrypted = _u8Concat([MAGIC, salt, nonce, cipher]);
 
-  onProgress({ stage: 'done', size_bytes: encrypted.length });
+  onProgress({
+    stage: 'done',
+    size_bytes: encrypted.length,
+    compressed: plaintext[0] === FRAME_GZIP,
+    raw_json_bytes: jsonBytes.length,
+  });
 
   return {
     encrypted,
     manifest,
     size_bytes: encrypted.length,
+  };
+}
+
+// ─── 1b. Export with media re-pack ──────────────────────────────────────
+//
+// Optional companion to exportChatBundle that embeds the bytes of each
+// `file_url` inline (base64) so a restore on a fresh device works even if
+// R2 has since expired the originals. WhatsApp does this when you choose
+// "Include videos" in the iCloud / Drive backup screen.
+//
+// Trade-off — backup size: a media-light power user has 50–200 MB of pics,
+// a heavy user can hit gigabytes. We protect against runaway memory with:
+//   • Per-item ceiling of MEDIA_MAX_BYTES (skip silently if HEAD says
+//     Content-Length > 50 MB).
+//   • Safe truncate to MEDIA_TRUNCATE_BYTES if the server doesn't expose
+//     Content-Length and the body ends up unexpectedly large (rare;
+//     usually means a generated URL that streamed forever).
+//   • Progress reporter so the UI can keep the user calm during long runs.
+//
+// The output uses the same JSON shape as exportChatBundle plus an extra
+// `file_b64` field per message. The decrypt path (`decryptChatBundle`) is
+// agnostic — it just returns the JSON, so the restore side can pick the
+// b64 up and re-upload to R2 if desired.
+export async function exportChatBundleWithMedia(passphrase, opts = {}) {
+  if (!passphrase || typeof passphrase !== 'string' || passphrase.length < 8) {
+    throw new Error('passphrase required (min 8 chars)');
+  }
+  const includeMedia = opts.includeMedia !== false; // default true here — caller opts-in via this entry point
+  const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : () => {};
+
+  // Reuse the regular export to gather the JSON manifest + message list,
+  // but we need access to the bundle object (not just the encrypted blob).
+  // Build it inline so we can mutate messages before encryption.
+  onProgress({ stage: 'list_conversations' });
+  const convResp = await api.chatConversations('', true);
+  const conversations = Array.isArray(convResp?.conversations)
+    ? convResp.conversations
+    : Array.isArray(convResp)
+      ? convResp
+      : [];
+
+  const messages = [];
+  let lastTs = null;
+  const pageSize = 200;
+  for (const conv of conversations) {
+    const cid = conv.id || conv.conversation_id;
+    if (!cid) continue;
+    let beforeId = null;
+    let safety = 200;
+    while (safety-- > 0) {
+      let page;
+      try { page = await api.chatMessages(cid, pageSize, beforeId, 0); } catch { break; }
+      const rows = Array.isArray(page?.messages)
+        ? page.messages
+        : Array.isArray(page) ? page : [];
+      if (!rows.length) break;
+      for (const m of rows) {
+        messages.push({
+          id: m.id,
+          conversation_id: cid,
+          client_msg_id: m.client_msg_id || m.cmid || null,
+          sender_email: m.sender_email || m.from || '',
+          type: m.type || 'text',
+          content: m.content ?? '',
+          file_name: m.file_name || null,
+          file_url: m.file_url || null,
+          file_size: m.file_size || null,
+          reply_to_id: m.reply_to_id || null,
+          forwarded_from: m.forwarded_from || null,
+          edited_at: m.edited_at || null,
+          created_at: m.created_at,
+          mentions: m.mentions || null,
+        });
+        if (!lastTs || (m.created_at && m.created_at > lastTs)) lastTs = m.created_at;
+      }
+      beforeId = rows[rows.length - 1].id;
+      if (rows.length < pageSize) break;
+    }
+  }
+
+  // Media re-pack pass — only if the caller asked for it. Done after the
+  // message scan so progress reporting is accurate.
+  let mediaIncluded = 0;
+  let mediaSkippedTooBig = 0;
+  let mediaSkippedFailed = 0;
+  let mediaBytes = 0;
+
+  if (includeMedia) {
+    const withUrls = messages.filter((m) => m.file_url);
+    onProgress({ stage: 'fetch_media', total: withUrls.length });
+
+    for (let i = 0; i < withUrls.length; i++) {
+      const m = withUrls[i];
+      onProgress({ stage: 'fetch_media_item', index: i, total: withUrls.length, file_name: m.file_name });
+      // HEAD first to learn size (best-effort — many CDNs don't honor HEAD).
+      let declaredSize = null;
+      try {
+        const head = await fetch(m.file_url, { method: 'HEAD' });
+        const cl = head.headers?.get?.('content-length');
+        if (cl) declaredSize = parseInt(cl, 10);
+      } catch { /* HEAD failed — push through */ }
+      if (declaredSize && declaredSize > MEDIA_MAX_BYTES) {
+        mediaSkippedTooBig++;
+        continue;
+      }
+      try {
+        const r = await fetch(m.file_url);
+        if (!r.ok) { mediaSkippedFailed++; continue; }
+        const buf = await r.arrayBuffer();
+        let u8 = new Uint8Array(buf);
+        if (u8.length > MEDIA_MAX_BYTES) { mediaSkippedTooBig++; continue; }
+        if (u8.length > MEDIA_TRUNCATE_BYTES && declaredSize == null) {
+          // Defensive: server didn't tell us size up-front and the body is
+          // larger than our soft cap. Truncate rather than risk OOM.
+          u8 = u8.slice(0, MEDIA_TRUNCATE_BYTES);
+          m.file_truncated = true;
+        }
+        m.file_b64 = _u8ToBase64(u8);
+        m.file_b64_size = u8.length;
+        mediaIncluded++;
+        mediaBytes += u8.length;
+      } catch {
+        mediaSkippedFailed++;
+      }
+    }
+  }
+
+  const manifest = {
+    version: BUNDLE_VERSION,
+    schema: 'chatyy.cloud.backup',
+    created_at: _isoNow(),
+    conv_count: conversations.length,
+    msg_count: messages.length,
+    last_msg_at: lastTs,
+    media_included: mediaIncluded,
+    media_skipped_too_big: mediaSkippedTooBig,
+    media_skipped_failed: mediaSkippedFailed,
+    media_bytes: mediaBytes,
+  };
+
+  const bundle = {
+    manifest,
+    conversations: conversations.map((c) => ({
+      id: c.id || c.conversation_id,
+      name: c.name || null,
+      type: c.type || 'direct',
+      members: c.members || null,
+    })),
+    messages,
+  };
+
+  onProgress({ stage: 'encrypt' });
+
+  // Same gzip + framing path as exportChatBundle. Big payload + gzip is a
+  // huge win here (media is base64-expanded so the JSON is ~33% larger
+  // than raw bytes; gzip walks that back to near-original).
+  const jsonBytes = decodeUTF8(JSON.stringify(bundle));
+  const pako = _getPako();
+  let plaintext;
+  if (pako && typeof pako.gzip === 'function') {
+    try {
+      const gz = pako.gzip(jsonBytes);
+      plaintext = gz.length + 1 < jsonBytes.length
+        ? _u8Concat([new Uint8Array([FRAME_GZIP]), gz])
+        : _u8Concat([new Uint8Array([FRAME_RAW]), jsonBytes]);
+    } catch {
+      plaintext = _u8Concat([new Uint8Array([FRAME_RAW]), jsonBytes]);
+    }
+  } else {
+    plaintext = _u8Concat([new Uint8Array([FRAME_RAW]), jsonBytes]);
+  }
+
+  const salt = nacl.randomBytes(SALT_LEN);
+  const nonce = nacl.randomBytes(NONCE_LEN);
+  const key = deriveKey(passphrase, salt);
+  const cipher = nacl.secretbox(plaintext, nonce, key);
+  if (!cipher) throw new Error('encryption failed');
+  const encrypted = _u8Concat([MAGIC, salt, nonce, cipher]);
+
+  onProgress({
+    stage: 'done',
+    size_bytes: encrypted.length,
+    compressed: plaintext[0] === FRAME_GZIP,
+    raw_json_bytes: jsonBytes.length,
+    media_included: mediaIncluded,
+  });
+
+  return { encrypted, manifest, size_bytes: encrypted.length };
+}
+
+/**
+ * Expose the raw bundle (no encryption) — used by the local export buttons
+ * for "Download unencrypted JSON" (the password-less debugging path). The
+ * caller is responsible for the giant red warning before letting the user
+ * choose this. Built on top of exportChatBundleWithMedia so the optional
+ * media re-pack flag is shared with the encrypted path.
+ */
+export async function buildPlainBundle(opts = {}) {
+  const passphrase = 'placeholder_passphrase_unused'; // not used — we bypass encrypt
+  const includeMedia = !!opts.includeMedia;
+  const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : () => {};
+
+  // Cheap path: reuse exportChatBundle path (no media), then return the JSON.
+  // We can't easily intercept the in-progress bundle from exportChatBundle
+  // because it encrypts before return, so re-do the small list/messages walk
+  // here. For includeMedia: true we fall through to exportChatBundleWithMedia
+  // and then decrypt to recover the bundle (slow but correct).
+  if (includeMedia) {
+    // Build via the media-aware path and then decrypt back to the bundle.
+    // Yes, this means we encrypt + decrypt to recover the same bundle —
+    // tradeoff: avoids duplicating ~80 LoC of the fetch/scan loop.
+    const out = await exportChatBundleWithMedia(passphrase, { ...opts, includeMedia });
+    const bundle = decryptChatBundle(out.encrypted, passphrase);
+    return bundle;
+  }
+
+  // Light path — same loop as exportChatBundle but no encryption.
+  onProgress({ stage: 'list_conversations' });
+  const convResp = await api.chatConversations('', true);
+  const conversations = Array.isArray(convResp?.conversations)
+    ? convResp.conversations
+    : Array.isArray(convResp) ? convResp : [];
+  const messages = [];
+  let lastTs = null;
+  const pageSize = 200;
+  for (const conv of conversations) {
+    const cid = conv.id || conv.conversation_id;
+    if (!cid) continue;
+    let beforeId = null;
+    let safety = 200;
+    while (safety-- > 0) {
+      let page;
+      try { page = await api.chatMessages(cid, pageSize, beforeId, 0); } catch { break; }
+      const rows = Array.isArray(page?.messages) ? page.messages : Array.isArray(page) ? page : [];
+      if (!rows.length) break;
+      for (const m of rows) {
+        messages.push({
+          id: m.id,
+          conversation_id: cid,
+          client_msg_id: m.client_msg_id || m.cmid || null,
+          sender_email: m.sender_email || m.from || '',
+          type: m.type || 'text',
+          content: m.content ?? '',
+          file_name: m.file_name || null,
+          file_url: m.file_url || null,
+          reply_to_id: m.reply_to_id || null,
+          forwarded_from: m.forwarded_from || null,
+          edited_at: m.edited_at || null,
+          created_at: m.created_at,
+          mentions: m.mentions || null,
+        });
+        if (!lastTs || (m.created_at && m.created_at > lastTs)) lastTs = m.created_at;
+      }
+      beforeId = rows[rows.length - 1].id;
+      if (rows.length < pageSize) break;
+    }
+  }
+  return {
+    manifest: {
+      version: BUNDLE_VERSION,
+      schema: 'chatyy.cloud.backup',
+      created_at: _isoNow(),
+      conv_count: conversations.length,
+      msg_count: messages.length,
+      last_msg_at: lastTs,
+    },
+    conversations: conversations.map((c) => ({
+      id: c.id || c.conversation_id,
+      name: c.name || null,
+      type: c.type || 'direct',
+      members: c.members || null,
+    })),
+    messages,
   };
 }
 
@@ -237,8 +574,35 @@ export function decryptChatBundle(encryptedU8, passphrase) {
   const key = deriveKey(passphrase, salt);
   const plain = nacl.secretbox.open(cipher, nonce, key);
   if (!plain) throw new Error('decryption failed — wrong passphrase or corrupted blob');
+
+  // Framing dispatch:
+  //   • 0x01 → gzip(json) — needs pako to inflate
+  //   • 0x00 → raw json bytes (after framing byte)
+  //   • 0x7B '{' → legacy v2 raw json (no framing byte, whole plaintext is JSON)
+  let jsonBytes;
+  const first = plain.length > 0 ? plain[0] : 0;
+  if (first === FRAME_GZIP) {
+    const pako = _getPako();
+    if (!pako || typeof pako.ungzip !== 'function') {
+      throw new Error('this backup is gzip-compressed but pako is not available to decompress');
+    }
+    try {
+      jsonBytes = pako.ungzip(plain.slice(1));
+    } catch (e) {
+      throw new Error('gzip decompress failed: ' + (e?.message || e));
+    }
+  } else if (first === FRAME_RAW) {
+    jsonBytes = plain.slice(1);
+  } else if (first === 0x7B /* '{' */) {
+    // Legacy v2 — the whole plaintext is the JSON, no framing.
+    jsonBytes = plain;
+  } else {
+    // Defensive: unknown framing — try to parse the whole plaintext anyway.
+    jsonBytes = plain;
+  }
+
   let bundle;
-  try { bundle = JSON.parse(encodeUTF8(plain)); } catch { throw new Error('decrypted payload is not JSON'); }
+  try { bundle = JSON.parse(encodeUTF8(jsonBytes)); } catch { throw new Error('decrypted payload is not JSON'); }
   if (!bundle?.manifest || !Array.isArray(bundle.messages)) {
     throw new Error('decrypted payload missing manifest/messages');
   }
@@ -535,6 +899,72 @@ export async function downloadGoogleDriveBackup(fileId, passphrase) {
   }
   const encrypted = new Uint8Array(buf);
   return decryptChatBundle(encrypted, passphrase);
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// 2b. Local export — write bundle to disk + share sheet (or browser
+//     download on web). Used by the "Export local" buttons on the UI to
+//     give the user a tangible file they can stash in Dropbox, AirDrop to
+//     their laptop, email to themselves, etc. — same WhatsApp "export
+//     chat" affordance, but for the whole backup.
+// ═════════════════════════════════════════════════════════════════════════
+
+/**
+ * Write a Uint8Array (the encrypted blob) or a string (raw JSON) to the
+ * device + present the OS share sheet. On web, triggers an `<a download>`
+ * click so the browser saves the file directly.
+ *
+ * mime — defaults sensibly per kind (octet-stream for encrypted, json for
+ * plain JSON). filename should already include the extension.
+ */
+export async function exportBundleLocally(payload, opts = {}) {
+  const filename = opts.filename || `chatyy-backup-${_safeTimestamp()}.bin`;
+  const mime = opts.mime || 'application/octet-stream';
+
+  // ─── Web: trigger an `<a download>` so the browser saves the file. ──
+  if (Platform.OS === 'web') {
+    const blob = payload instanceof Uint8Array
+      ? new Blob([payload], { type: mime })
+      : new Blob([typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2)], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return { uri: url, filename };
+  }
+
+  // ─── Native: write to cacheDirectory then Sharing.shareAsync. ───────
+  if (!FileSystem.cacheDirectory) throw new Error('cacheDirectory unavailable');
+  const uri = FileSystem.cacheDirectory + filename;
+  if (payload instanceof Uint8Array) {
+    await FileSystem.writeAsStringAsync(uri, _u8ToBase64(payload), {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+  } else {
+    const text = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
+    await FileSystem.writeAsStringAsync(uri, text, {
+      encoding: FileSystem.EncodingType.UTF8,
+    });
+  }
+  // Lazy import — expo-sharing may not be linked on simulator/web.
+  try {
+    const Sharing = await import('expo-sharing');
+    const available = await Sharing.isAvailableAsync();
+    if (available) {
+      await Sharing.shareAsync(uri, {
+        mimeType: mime,
+        UTI: mime === 'application/json' ? 'public.json' : 'public.data',
+        dialogTitle: opts.dialogTitle || 'Chatyy backup',
+      });
+    }
+  } catch {
+    // sharing failed — the file is still on disk, caller can decide what to do.
+  }
+  return { uri, filename };
 }
 
 // ═════════════════════════════════════════════════════════════════════════

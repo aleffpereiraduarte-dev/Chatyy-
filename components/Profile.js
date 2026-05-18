@@ -1705,7 +1705,7 @@ export default function Profile({
               color: colors?.textSecondary || (isDark ? 'rgba(255,255,255,0.72)' : 'rgba(0,0,0,0.65)'),
               lineHeight: 21, // ~1.5 of 14
               marginTop: 4,
-              maxWidth: 520,
+              maxWidth: (SCREEN_W || 0) >= 520 ? 520 : '90%',
             }}>
               {identity.bio}
             </Text>

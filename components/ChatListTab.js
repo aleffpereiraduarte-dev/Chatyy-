@@ -1037,14 +1037,7 @@ function EmptyBubbles({ isDark }) {
         width: 100, height: 36, left: 0, top: 20,
         borderBottomLeftRadius: 6,
         transform: [{ translateY: float1 }],
-        ...(isWeb ? {
-          background: isDark
-            ? 'linear-gradient(135deg, rgba(124,58,237,0.15) 0%, rgba(109,40,217,0.15) 100%)'
-            : 'linear-gradient(135deg, rgba(124,58,237,0.12) 0%, rgba(109,40,217,0.12) 100%)',
-          boxShadow: isDark ? '0 4px 16px rgba(124,58,237,0.1)' : '0 4px 16px rgba(124,58,237,0.08)',
-        } : {
-          backgroundColor: isDark ? 'rgba(124,58,237,0.15)' : 'rgba(124,58,237,0.12)',
-        }),
+        backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
       }]}>
         <View style={{ flexDirection: 'row', gap: 4, padding: 10, alignItems: 'center' }}>
           <View style={{ width: 40, height: 6, borderRadius: 3, backgroundColor: isDark ? 'rgba(124,58,237,0.3)' : 'rgba(124,58,237,0.25)' }} />
@@ -1057,14 +1050,7 @@ function EmptyBubbles({ isDark }) {
         width: 120, height: 36, right: 0, top: 52,
         borderBottomRightRadius: 6,
         transform: [{ translateY: float2 }],
-        ...(isWeb ? {
-          background: isDark
-            ? 'linear-gradient(135deg, rgba(167,139,250,0.15) 0%, rgba(124,58,237,0.15) 100%)'
-            : 'linear-gradient(135deg, rgba(167,139,250,0.12) 0%, rgba(124,58,237,0.12) 100%)',
-          boxShadow: isDark ? '0 4px 16px rgba(167,139,250,0.1)' : '0 4px 16px rgba(167,139,250,0.08)',
-        } : {
-          backgroundColor: isDark ? 'rgba(167,139,250,0.15)' : 'rgba(167,139,250,0.12)',
-        }),
+        backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.035)',
       }]}>
         <View style={{ flexDirection: 'row', gap: 4, padding: 10, alignItems: 'center' }}>
           <View style={{ width: 50, height: 6, borderRadius: 3, backgroundColor: isDark ? 'rgba(167,139,250,0.3)' : 'rgba(167,139,250,0.25)' }} />
@@ -1077,14 +1063,7 @@ function EmptyBubbles({ isDark }) {
         width: 80, height: 32, left: 20, top: 88,
         borderBottomLeftRadius: 6,
         transform: [{ translateY: float3 }],
-        ...(isWeb ? {
-          background: isDark
-            ? 'linear-gradient(135deg, rgba(124,58,237,0.1) 0%, rgba(99,102,241,0.1) 100%)'
-            : 'linear-gradient(135deg, rgba(124,58,237,0.08) 0%, rgba(99,102,241,0.08) 100%)',
-          boxShadow: isDark ? '0 4px 12px rgba(124,58,237,0.08)' : '0 4px 12px rgba(124,58,237,0.06)',
-        } : {
-          backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : 'rgba(124,58,237,0.08)',
-        }),
+        backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
       }]}>
         <View style={{ flexDirection: 'row', gap: 3, padding: 10, alignItems: 'center' }}>
           <View style={{ width: 28, height: 5, borderRadius: 2.5, backgroundColor: isDark ? 'rgba(124,58,237,0.25)' : 'rgba(124,58,237,0.2)' }} />
@@ -4572,14 +4551,8 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       <TouchableOpacity
         style={[s.archivedHeader, {
           borderBottomColor: isDark ? '#2a3a2e' : '#d8f0de',
-          ...(isWeb ? {
-            background: isDark
-              ? 'linear-gradient(135deg, rgba(124,58,237,0.06) 0%, rgba(109,40,217,0.06) 100%)'
-              : 'linear-gradient(135deg, rgba(124,58,237,0.06) 0%, rgba(109,40,217,0.04) 100%)',
-            transition: 'background 0.2s ease',
-          } : {
-            backgroundColor: isDark ? '#1a2e1f' : '#f0faf3',
-          }),
+          backgroundColor: isDark ? '#161617' : '#f6f6f7',
+          ...(isWeb ? { transition: 'background 0.2s ease' } : {}),
         }]}
         onPress={() => setFilter('archived')}
         activeOpacity={0.65}
@@ -4837,7 +4810,6 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             width: 52, height: 52, borderRadius: 26,
             backgroundColor: '#7C3AED',
             alignItems: 'center', justifyContent: 'center',
-            ...(isWeb ? { boxShadow: '0 4px 16px rgba(124,58,237,0.5)' } : {}),
           }}>
             <View style={{
               position: 'absolute', top: 4, left: 6,
@@ -6371,11 +6343,6 @@ const s = StyleSheet.create({
   chipActive: {
     backgroundColor: '#7C3AED',
     borderColor: '#7C3AED',
-    ...Platform.select({
-      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 6 },
-      android: { elevation: 3 },
-      web: { boxShadow: '0 2px 10px rgba(124,58,237,0.3)' },
-    }),
   },
   chipText: {
     fontSize: 13,
@@ -6567,9 +6534,9 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     marginRight: 14,
     ...Platform.select({
-      ios: { backgroundColor: ACCENT, shadowColor: ACCENT, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4 },
-      android: { backgroundColor: ACCENT, elevation: 2 },
-      web: { background: `linear-gradient(135deg, ${ACCENT} 0%, ${ACCENT2} 100%)`, boxShadow: `0 3px 8px rgba(124,58,237,0.3)` },
+      ios: { backgroundColor: ACCENT },
+      android: { backgroundColor: ACCENT },
+      web: { backgroundColor: ACCENT },
     }),
   },
   archivedHeaderText: {
@@ -6621,9 +6588,9 @@ const s = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 26,
     ...Platform.select({
-      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 10 },
-      android: { elevation: 5 },
-      web: { boxShadow: `0 4px 18px rgba(124,58,237,0.35)`, transition: 'transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.15s ease' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 4 },
+      android: { elevation: 2 },
+      web: { boxShadow: `0 2px 6px rgba(0,0,0,0.12)`, transition: 'transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.15s ease' },
     }),
   },
   emptyActionText: {
@@ -6643,10 +6610,10 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#7C3AED',
     ...Platform.select({
-      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.35, shadowRadius: 12 },
-      android: { elevation: 6 },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.18, shadowRadius: 4 },
+      android: { elevation: 4 },
       web: {
-        boxShadow: '0 4px 16px rgba(124,58,237,0.4), 0 2px 4px rgba(0,0,0,0.1)',
+        boxShadow: '0 2px 6px rgba(0,0,0,0.18)',
         transition: 'transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.15s ease',
       },
     }),

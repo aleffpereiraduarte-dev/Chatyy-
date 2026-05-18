@@ -14,7 +14,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator,
   Animated, Platform, KeyboardAvoidingView, ScrollView, Dimensions, Modal,
-  Image, ActionSheetIOS, Easing, Pressable,
+  Image, ActionSheetIOS, Easing, Pressable, useWindowDimensions,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -33,6 +33,9 @@ import { IconArrowLeft, IconArrowRight, IconCheck, IconCheckCircle, IconUser, Ic
 import SignupIntro from '../components/SignupIntro';
 
 const { width: SCREEN_W } = Dimensions.get('window');
+// Wide-screen breakpoint — tablet / desktop web. At >=768 we lay the handle
+// step's username + password rows side-by-side to halve vertical scroll.
+// Updates reactively via the useWindowDimensions hook below.
 
 // Trimmed welcome carousel — Instagram-style, just 2 slides (first + last).
 // IG signup has zero intro carousel; we keep just enough to convey brand +
@@ -46,6 +49,9 @@ export default function SignupPhone() {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const { loginWithToken } = useAuth();
+  // Reactive window width for the responsive handle-step layout.
+  const { width: _winW } = useWindowDimensions();
+  const isWide = _winW >= 768;
 
   // 5 steps: welcome → phone → otp → name → handle → done.
   // welcome is the Telegram-style 5-slide carousel (SignupIntro component).
@@ -216,6 +222,23 @@ export default function SignupPhone() {
   const doneScale = useRef(new Animated.Value(0)).current;
   // Username availability check pop — Instagram-style spring from 0 → 1.2 → 1.
   const checkScale = useRef(new Animated.Value(0)).current;
+  // OTP caret blink — custom 2x24 caret rendered absolutely inside the focused
+  // OTP box. Native TextInput's caret can't be styled and is hidden via
+  // caretHidden; this Animated.Value loops 1↔0 every 530ms (matches iOS
+  // system caret cadence) so the user sees a real "ready to type" indicator
+  // in the focused box. Telegram/iMessage OTP pattern.
+  const otpCaretOpacity = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (step !== 'otp') return;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(otpCaretOpacity, { toValue: 0, duration: 530, useNativeDriver: true }),
+        Animated.timing(otpCaretOpacity, { toValue: 1, duration: 530, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [step, otpCaretOpacity]);
   useEffect(() => {
     if (step === 'done') {
       doneScale.setValue(0);
@@ -861,6 +884,21 @@ export default function SignupPhone() {
                 <Text style={[styles.hint, { color: colors.textTertiary }]}>
                   {t('signupPhone.hintPhone') || 'Vamos enviar um código por SMS e WhatsApp'}
                 </Text>
+                {/* "Entrar com email" escape hatch — for legacy / pre-2026
+                    accounts that signed up before phone-first, the user can
+                    bounce to the email tab on /login. WhatsApp/Telegram do
+                    this same "use email instead" link on the phone screen. */}
+                <TouchableOpacity
+                  onPress={() => { try { Haptics.selectionAsync(); } catch {} try { router.replace('/login?tab=email'); } catch {} }}
+                  activeOpacity={0.6}
+                  style={{ alignSelf: 'center', marginTop: 14, paddingVertical: 8, paddingHorizontal: 14 }}
+                  hitSlop={{ top: 8, bottom: 8, left: 12, right: 12 }}
+                  accessibilityRole="button"
+                >
+                  <Text style={{ color: colors.primary, fontSize: 14, fontWeight: '600' }}>
+                    {t('signupPhone.loginWithEmail') || 'Entrar com email'}
+                  </Text>
+                </TouchableOpacity>
               </>
             )}
 
@@ -910,6 +948,22 @@ export default function SignupPhone() {
                           <Text style={{ fontSize: 22, fontWeight: '700', color: colors.text }}>
                             {_digit}
                           </Text>
+                          {/* Custom blinking caret in the focused-empty box —
+                              2x24 vertical bar in brand color. Hidden once
+                              the box has a digit (no caret on filled boxes,
+                              matches iOS keyboard behavior). */}
+                          {_focused && !_filled && (
+                            <Animated.View
+                              pointerEvents="none"
+                              style={{
+                                position: 'absolute',
+                                width: 2, height: 24,
+                                backgroundColor: colors.primary,
+                                borderRadius: 1,
+                                opacity: otpCaretOpacity,
+                              }}
+                            />
+                          )}
                         </Animated.View>
                       );
                     })}
@@ -1169,8 +1223,12 @@ export default function SignupPhone() {
                 : usernameAvailable === true ? '#22c55e'
                 : (_isFocused ? colors.primary : _hairlineDefault);
               const _bottomWidth = (_isFocused || usernameAvailable !== null) ? 2 : StyleSheet.hairlineWidth;
-              return (
-                <>
+              // Wide-screen (>=768): username + password rows side-by-side.
+              // Each takes 50% of the form width with a gap. Suggestions +
+              // hint render below the row to keep the layout simple. On
+              // narrow screens the rows stack vertically as before.
+              const _usernameRow = (
+                <View style={{ flex: isWide ? 1 : undefined }}>
                   <View style={{
                     flexDirection: 'row', alignItems: 'center', gap: 10,
                     paddingVertical: 6,
@@ -1193,7 +1251,7 @@ export default function SignupPhone() {
                       onFocus={() => setFocused('handle')}
                       onBlur={() => setFocused('')}
                     />
-                    <Text style={{ fontSize: 13, color: colors.textSecondary }}>@chatyy.com.br</Text>
+                    {!isWide && <Text style={{ fontSize: 13, color: colors.textSecondary }}>@chatyy.com.br</Text>}
                     {usernameChecking ? (
                       <ActivityIndicator size="small" color={colors.primary} style={{ marginLeft: 6 }} />
                     ) : usernameAvailable === true ? (
@@ -1203,6 +1261,67 @@ export default function SignupPhone() {
                     ) : usernameAvailable === false ? (
                       <View style={{ marginLeft: 6 }}><IconAlertTriangle size={18} color="#ef4444" /></View>
                     ) : null}
+                  </View>
+                  {isWide && (
+                    <Text style={{ fontSize: 11, color: colors.textTertiary, marginTop: 4 }}>@chatyy.com.br</Text>
+                  )}
+                </View>
+              );
+              // Password block — extracted so we can render it inline next to
+              // username on wide screens, or stacked below on narrow.
+              const _hl = isDark ? '#2a2d31' : '#e5e7eb';
+              const _isFocusedPwd = focused === 'password';
+              const _pwdValid = password.length >= 8;
+              const _pwdBottomColor = _pwdValid ? '#22c55e' : (_isFocusedPwd ? colors.primary : _hl);
+              const _pwdBottomWidth = (_isFocusedPwd || _pwdValid) ? 2 : StyleSheet.hairlineWidth;
+              const _passwordRow = (
+                <View style={{ flex: isWide ? 1 : undefined, marginTop: isWide ? 0 : 18 }}>
+                  <View style={{
+                    flexDirection: 'row', alignItems: 'center', gap: 10,
+                    paddingVertical: 6,
+                    borderBottomWidth: _pwdBottomWidth,
+                    borderBottomColor: _pwdBottomColor,
+                  }}>
+                    <IconLock size={18} color={_isFocusedPwd ? colors.primary : colors.textSecondary} />
+                    <TextInput
+                      style={[{
+                        flex: 1, fontSize: 16, paddingVertical: 14, color: colors.text,
+                      }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
+                      placeholder={t('signupPhone.passwordPlaceholder') || 'Mínimo 8 caracteres'}
+                      placeholderTextColor={isDark ? '#5f6368' : '#9ca3af'}
+                      value={password}
+                      onChangeText={setPassword}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      secureTextEntry={!showPassword}
+                      textContentType="newPassword"
+                      autoComplete="new-password"
+                      maxLength={72}
+                      onFocus={() => setFocused('password')}
+                      onBlur={() => setFocused('')}
+                    />
+                    <TouchableOpacity
+                      onPress={() => setShowPassword(v => !v)}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      accessibilityRole="button"
+                      accessibilityLabel={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                    >
+                      {showPassword ? <IconEyeOff size={18} color={colors.textSecondary} /> : <IconEye size={18} color={colors.textSecondary} />}
+                    </TouchableOpacity>
+                    {_pwdValid && (
+                      <IconCheckCircle size={18} color="#22c55e" style={{ marginLeft: 4 }} />
+                    )}
+                  </View>
+                </View>
+              );
+              return (
+                <>
+                  {/* Side-by-side at >=768; stacked below 768. */}
+                  <View style={isWide
+                    ? { flexDirection: 'row', alignItems: 'flex-start', gap: 16 }
+                    : { flexDirection: 'column' }}>
+                    {_usernameRow}
+                    {_passwordRow}
                   </View>
                   {/* Suggestions when taken */}
                   {usernameAvailable === false && usernameSuggestions.length > 0 && (
@@ -1226,53 +1345,10 @@ export default function SignupPhone() {
                     {t('signupPhone.hintHandle') || 'Esse vai ser seu email no Chatyy também — pra receber e mandar mensagem.'}
                   </Text>
 
-                  {/* Password — required for signup. User picks it once; same
-                      password works for IMAP/SMTP and the email tab login.
-                      Hairline-bottom row matches the username row visually. */}
+                  {/* Password hint — outside the row so it spans the form width. */}
                   {(() => {
-                    const _hl = isDark ? '#2a2d31' : '#e5e7eb';
-                    const _isFocusedPwd = focused === 'password';
-                    const _pwdValid = password.length >= 8;
-                    const _bottomColor = _pwdValid ? '#22c55e' : (_isFocusedPwd ? colors.primary : _hl);
-                    const _bottomWidth = (_isFocusedPwd || _pwdValid) ? 2 : StyleSheet.hairlineWidth;
                     return (
-                      <View style={{ marginTop: 18 }}>
-                        <View style={{
-                          flexDirection: 'row', alignItems: 'center', gap: 10,
-                          paddingVertical: 6,
-                          borderBottomWidth: _bottomWidth,
-                          borderBottomColor: _bottomColor,
-                        }}>
-                          <IconLock size={18} color={_isFocusedPwd ? colors.primary : colors.textSecondary} />
-                          <TextInput
-                            style={[{
-                              flex: 1, fontSize: 16, paddingVertical: 14, color: colors.text,
-                            }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
-                            placeholder={t('signupPhone.passwordPlaceholder') || 'Mínimo 8 caracteres'}
-                            placeholderTextColor={isDark ? '#5f6368' : '#9ca3af'}
-                            value={password}
-                            onChangeText={setPassword}
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                            secureTextEntry={!showPassword}
-                            textContentType="newPassword"
-                            autoComplete="new-password"
-                            maxLength={72}
-                            onFocus={() => setFocused('password')}
-                            onBlur={() => setFocused('')}
-                          />
-                          <TouchableOpacity
-                            onPress={() => setShowPassword(v => !v)}
-                            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                            accessibilityRole="button"
-                            accessibilityLabel={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
-                          >
-                            {showPassword ? <IconEyeOff size={18} color={colors.textSecondary} /> : <IconEye size={18} color={colors.textSecondary} />}
-                          </TouchableOpacity>
-                          {_pwdValid && (
-                            <IconCheckCircle size={18} color="#22c55e" style={{ marginLeft: 4 }} />
-                          )}
-                        </View>
+                      <View style={{ marginTop: 8 }}>
                         <Text style={[styles.hint, { color: colors.textTertiary, marginTop: 8 }]}>
                           {t('signupPhone.passwordHint') || 'Use pra entrar pelo email também (IMAP / web). Guarde com carinho.'}
                         </Text>
@@ -1337,8 +1413,22 @@ export default function SignupPhone() {
               );
             })()}
 
+            {/* Inline error — positioned right after the step's body so the
+                user sees it directly under the input that triggered the
+                failure. Lucide alert icon + colored text, left-aligned per
+                step (was center-aligned, which made the message feel like a
+                toast). Phone/handle errors gravitate near the field they
+                relate to; OTP errors also drive the shake animation above. */}
             {!!error && step !== 'done' && (
-              <Text style={{ color: '#ef4444', fontSize: 13, marginTop: 12, textAlign: 'center' }}>{error}</Text>
+              <View style={{
+                flexDirection: 'row', alignItems: 'flex-start', gap: 8,
+                marginTop: 10, paddingHorizontal: 2,
+              }}>
+                <IconAlertTriangle size={15} color="#ef4444" style={{ marginTop: 2 }} />
+                <Text style={{ color: '#ef4444', fontSize: 13, lineHeight: 18, flex: 1 }}>
+                  {error}
+                </Text>
+              </View>
             )}
           </View>
         </Animated.View>
@@ -1347,11 +1437,12 @@ export default function SignupPhone() {
       {/* Primary action button (sticky bottom for the form-like feel) */}
       {step !== 'done' && (
         <View style={[styles.footer, { borderTopColor: colors.border }]}>
-          {/* ToS disclaimer — shown on phone step (legal consent at the
-              moment the user actually submits identifying info). The welcome
-              CTA copy "Concordar e continuar" already carries the consent
-              meaning, so the line is suppressed there to declutter. */}
-          {step === 'phone' && (
+          {/* ToS disclaimer — rendered on EVERY step (phone/otp/name/handle)
+              so legal consent stays visible up through the moment of account
+              creation. Hidden only on `done` (already signed up — no further
+              consent needed). Centralized below via the _renderTosFooter
+              helper so all four steps share one component. */}
+          {step !== 'done' && (
             <Text style={{ fontSize: 11, color: colors.textTertiary, textAlign: 'center', marginBottom: 10, lineHeight: 16, paddingHorizontal: 8 }}>
               {t('signupPhone.tosLine') || 'Ao continuar você concorda com os '}
               <Text style={{ color: colors.primary, fontWeight: '600' }} onPress={() => { try { require('expo-web-browser').openBrowserAsync('https://chatyy.com.br/terms.html'); } catch {} }}>
@@ -1394,7 +1485,19 @@ export default function SignupPhone() {
             activeOpacity={0.85}
           >
             {busy ? (
-              <ActivityIndicator color="#fff" />
+              <>
+                <ActivityIndicator color="#fff" />
+                <Text style={[styles.ctaText, { marginLeft: 10 }]}>
+                  {/* Per-step loading copy — "Enviando..." for the OTP send,
+                      "Verificando..." for code check, "Criando conta..." for
+                      final signup. Tells the user the spinner means *what*,
+                      not just "wait" — Telegram pattern. */}
+                  {step === 'phone' ? (t('signupPhone.sending') || 'Enviando...')
+                  : step === 'otp' ? (t('signupPhone.verifying') || 'Verificando...')
+                  : step === 'handle' ? (t('signupPhone.creating') || 'Criando conta...')
+                  : (t('common.loading') || 'Aguarde...')}
+                </Text>
+              </>
             ) : (
               <>
                 <Text style={styles.ctaText}>

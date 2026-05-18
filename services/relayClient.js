@@ -219,6 +219,171 @@ export async function searchMessagesViaRelay(query, conversationId = null) {
 }
 
 /**
+ * Bootstrap chat history on a freshly-paired device by pulling conversations
+ * + recent messages from the primary peer (the device that has the SQLite
+ * history) via relay. Designed to run ONCE right after QR approval — the
+ * caller is expected to gate re-runs with a per-email AsyncStorage flag
+ * (see chat_bootstrap_done_<email> in app/companion-qr.js).
+ *
+ * Behavior:
+ *  - Fetches conversation list via `get_conversations`.
+ *  - Sorts by last_message_time desc, takes the top `maxConversations`.
+ *  - For each conv, in batches of 5 concurrent: fetches last 100 messages
+ *    via `get_messages` and persists via dbSaveConversations/dbSaveMessages
+ *    (INSERT OR REPLACE — idempotent if the row already exists).
+ *  - Per-conversation idempotency: if the local SQLite already has any
+ *    messages for that conv (dbGetLastMessageId > 0) we SKIP the fetch.
+ *    This lets the user re-run the bootstrap manually without re-pulling
+ *    a 5MB history every time.
+ *  - Errors per-conversation are swallowed (logged via debugLogger if
+ *    available). A single bad conv shouldn't tank the whole sync.
+ *  - onProgress({ done, total, conversation_id, conversation_name }) is
+ *    fired BEFORE each conv fetch starts (so the UI can render
+ *    "Sincronizando 12 de 50 conversas — <name>").
+ *
+ * Params:
+ *  - targetDeviceId  (string|null) — the peer to ask. If null, server picks
+ *    the first non-web paired device automatically (server-side
+ *    `no_paired_device` error covers the empty case).
+ *  - maxConversations (number, default 50) — hard cap on convs pulled.
+ *    50 covers ~99% of WhatsApp-active accounts; bigger pulls risk OOM
+ *    on low-memory Androids during the parallel fetch phase.
+ *  - onProgress  (function|null) — UI callback. Called synchronously
+ *    inside the worker loop so it can update React state every step.
+ *
+ * Returns: { success: bool, done: number, total: number, error?: string }
+ *
+ * Throws nothing — all errors are returned via the result object so the
+ * caller doesn't have to wrap the call in try/catch just for telemetry.
+ */
+export async function bootstrapHistoryFromPeer(opts = {}) {
+  const { targetDeviceId = null, maxConversations = 50, onProgress = null } = opts || {};
+
+  // We use the same db.js helpers the rest of the chat stack uses; require
+  // lazily so this module stays loadable on web (where db.js is a no-op
+  // shim) and so we don't introduce a module-eval cycle.
+  let db = null;
+  try { db = require('./db'); } catch {}
+  const dbSaveConversations = db?.dbSaveConversations || (async () => {});
+  const dbSaveMessages      = db?.dbSaveMessages      || (async () => {});
+  const dbGetLastMessageId  = db?.dbGetLastMessageId  || (async () => 0);
+
+  let log = null;
+  try { log = require('./debugLogger'); } catch {}
+  const _log = (msg, extra) => {
+    try {
+      if (log?.logger?.info) log.logger.info(`[bootstrap] ${msg}`, extra || {});
+      else if (log?.info) log.info(`[bootstrap] ${msg}`, extra || {});
+      else if (__DEV__) console.log(`[bootstrap] ${msg}`, extra || '');
+    } catch {}
+  };
+
+  // Step 1 — pull the conversation list. We pass target_device_id so the
+  // server routes specifically (otherwise it picks any paired non-web).
+  let conversations = [];
+  try {
+    const params = targetDeviceId ? { target_device_id: targetDeviceId } : {};
+    const data = await relayRequest('get_conversations', params, 20000);
+    conversations = Array.isArray(data?.conversations) ? data.conversations : [];
+  } catch (e) {
+    _log('get_conversations failed', { code: e?.code, message: e?.message });
+    return { success: false, done: 0, total: 0, error: e?.code || e?.message || 'list_failed' };
+  }
+
+  if (!conversations.length) {
+    return { success: true, done: 0, total: 0 };
+  }
+
+  // Sort newest activity first; take top N.
+  conversations.sort((a, b) => {
+    const ta = String(a?.last_message_time || a?.updated_at || '');
+    const tb = String(b?.last_message_time || b?.updated_at || '');
+    if (ta === tb) return 0;
+    return ta < tb ? 1 : -1;
+  });
+  const pickN = Math.max(1, Math.min(parseInt(maxConversations, 10) || 50, 200));
+  const list = conversations.slice(0, pickN);
+
+  // Persist the convo metadata up-front so even if message fetches fail
+  // the user at least sees the conversation list immediately.
+  try {
+    await dbSaveConversations(list);
+  } catch (e) {
+    _log('dbSaveConversations error (continuing)', { message: e?.message });
+  }
+
+  const total = list.length;
+  let doneCount = 0;
+
+  // Worker that processes one conversation.
+  const fetchOne = async (conv) => {
+    const cid = conv?.id;
+    if (!cid) {
+      doneCount++;
+      try { onProgress && onProgress({ done: doneCount, total, conversation_id: null, conversation_name: '' }); } catch {}
+      return;
+    }
+    try {
+      onProgress && onProgress({
+        done: doneCount,
+        total,
+        conversation_id: cid,
+        conversation_name: conv?.name || conv?.display_name || '',
+      });
+    } catch {}
+
+    // Idempotency check — if we already have ANY message for this conv
+    // locally, skip the network round-trip. The caller can purge the
+    // per-email bootstrap flag (or call dbClearAll) to force a fresh pull.
+    try {
+      const lastId = await dbGetLastMessageId(cid);
+      if (lastId && Number(lastId) > 0) {
+        doneCount++;
+        return;
+      }
+    } catch {}
+
+    try {
+      const params = { conversation_id: cid, limit: 100 };
+      if (targetDeviceId) params.target_device_id = targetDeviceId;
+      const data = await relayRequest('get_messages', params, 20000);
+      const msgs = Array.isArray(data?.messages) ? data.messages : [];
+      if (msgs.length) {
+        try { await dbSaveMessages(cid, msgs); }
+        catch (e) { _log('dbSaveMessages error', { cid, message: e?.message }); }
+      }
+    } catch (e) {
+      _log('get_messages failed', { cid, code: e?.code, message: e?.message });
+      // swallow — one bad conv shouldn't kill the whole bootstrap
+    } finally {
+      doneCount++;
+    }
+  };
+
+  // Concurrency = 5. Bigger pools OOM low-end Androids when each response
+  // can be 100 messages × 16KB raw_json + image previews. 5 keeps us under
+  // ~8MB peak working set during the fetch phase.
+  const CONCURRENCY = 5;
+  let cursor = 0;
+  async function worker() {
+    while (cursor < list.length) {
+      const idx = cursor++;
+      await fetchOne(list[idx]);
+    }
+  }
+  const workers = [];
+  for (let i = 0; i < Math.min(CONCURRENCY, list.length); i++) {
+    workers.push(worker());
+  }
+  await Promise.all(workers);
+
+  // Final progress tick so the UI hits "X de X conversas".
+  try { onProgress && onProgress({ done: total, total, conversation_id: null, conversation_name: '' }); } catch {}
+
+  return { success: true, done: total, total };
+}
+
+/**
  * Is the relay path actually usable right now?
  *
  *  - Web-only (the only platform that can be the "requester" — phones own
@@ -258,5 +423,6 @@ export default {
   getStarredViaRelay,
   getPinnedViaRelay,
   searchMessagesViaRelay,
+  bootstrapHistoryFromPeer,
   isAvailable,
 };

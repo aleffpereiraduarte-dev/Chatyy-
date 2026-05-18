@@ -273,8 +273,8 @@ export default function SearchBar({ value, onChange, onSubmit, onClear, onFocus 
                 : '0 24px 80px rgba(0,0,0,0.15), 0 8px 24px rgba(0,0,0,0.08)',
             },
           ]}>
-            {/* Search input */}
-            <View style={[st.inputRow, { borderBottomColor: colors.borderLight }]}>
+            {/* Search input — purple accent on focus (input is autoFocused when modal opens) */}
+            <View style={[st.inputRow, { borderBottomColor: colors.primary }]}>
               <IconSearch size={20} color={colors.primary} />
               <TextInput
                 ref={inputRef}

@@ -2833,7 +2833,7 @@ export default function LiveBroadcastScreen() {
               }]}
             />
             <View style={styles.hostAvatarRing} pointerEvents="none" />
-            <AvatarCircle name={user?.name || user?.email} email={user?.email} size={36} />
+            <AvatarCircle name={user?.name || user?.email} email={user?.email} size={48} />
           </View>
           <View style={styles.hostMeta}>
             <View style={styles.liveBadge}>
@@ -3369,9 +3369,13 @@ export default function LiveBroadcastScreen() {
       </View>
 
       {/* End-Live confirmation modal — shows the run summary (duration,
-          viewers, likes) and the Save Replay toggle before tearing down. */}
+          viewers, likes) and the Save Replay toggle before tearing down.
+          Confetti particles drift behind the card so the host gets a small
+          "good job" payoff for the broadcast they just wrapped (TikTok parity).
+       */}
       {endModal ? (
         <View style={styles.endModalBackdrop}>
+          <EndLiveConfetti />
           <View style={styles.endModalCard}>
             <View style={styles.endModalHeader}>
               <View style={styles.endModalLiveDot} />
@@ -3539,19 +3543,23 @@ export default function LiveBroadcastScreen() {
         </View>
       ) : null}
 
-      {/* Join requests pill — Instagram-style "Pedidos" chip in the top-right
-          stack, shown only when there's at least one pending request. Tap
-          opens the requests sheet. */}
+      {/* Join requests pill — Instagram-style "Pedidos" chip pinned at right:16
+          top:100 (relative to insets) with a small red badge bubble showing
+          the pending count. Brand-purple body keeps it as the dominant CTA
+          without screaming red — the count badge handles urgency. */}
       {joinRequests.length > 0 ? (
         <TouchableOpacity
           onPress={() => setRequestsOpen(true)}
           activeOpacity={0.85}
           style={{
-            position: 'absolute', top: insets.top + 64, right: 14,
+            position: 'absolute', top: insets.top + 100, right: 16,
             backgroundColor: '#7C3AED', borderRadius: 16,
-            paddingHorizontal: 10, paddingVertical: 6,
+            paddingHorizontal: 12, paddingVertical: 8,
             flexDirection: 'row', alignItems: 'center', gap: 6,
             zIndex: 30,
+            ...(Platform.OS === 'web' ? {
+              boxShadow: '0 4px 14px rgba(124,58,237,0.5)',
+            } : {}),
           }}
         >
           <Animated.View
@@ -3562,15 +3570,35 @@ export default function LiveBroadcastScreen() {
             }}
           />
           <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>
-            {joinRequests.length} {t('live.colabRequest') || 'pra colab'}
+            {t('live.colabRequest') || 'pra colab'}
           </Text>
+          {/* Red count badge — TikTok pattern: small bubble in the top-right
+              corner of the chip so the host immediately sees "how many waiting". */}
+          <View style={{
+            position: 'absolute',
+            top: -4, right: -4,
+            minWidth: 18, height: 18,
+            paddingHorizontal: 5,
+            borderRadius: 9,
+            backgroundColor: LIVE_RED,
+            alignItems: 'center', justifyContent: 'center',
+            borderWidth: 1.5, borderColor: '#fff',
+          }}>
+            <Text style={{
+              color: '#fff', fontWeight: '900', fontSize: 10,
+              fontVariant: ['tabular-nums'],
+            }}>
+              {joinRequests.length > 99 ? '99+' : joinRequests.length}
+            </Text>
+          </View>
         </TouchableOpacity>
       ) : null}
 
-      {/* Stage 3 of #929 — cohost PiP stack. Each approved cohost publishing
-          into the LK room appears as a 96×128 PiP on the right side. Stage 4
-          will replace this with a proper grid that re-layouts the host's
-          stream alongside cohosts (1+1, 2+1, 3+1). For now it overlays. */}
+      {/* Stage 3 of #929 — cohost PiP grid. Up to 4 approved cohosts publishing
+          into the LK room render as a 2×2 grid (TikTok parity for multi-guest
+          colab). flexWrap + row direction = items reflow to a new line every
+          two cards. gap:8 between rows AND columns. Stage 4 will replace this
+          with a proper compositor that re-layouts host + cohorts together. */}
       {cohostParticipants.length > 0 ? (
         <View
           pointerEvents="none"
@@ -3578,11 +3606,15 @@ export default function LiveBroadcastScreen() {
             position: 'absolute',
             right: 8,
             top: insets.top + 110,
+            width: 200, // 2 × 96 + gap 8 → wraps after 2 cards
             zIndex: 25,
+            flexDirection: 'row',
+            flexWrap: 'wrap',
             gap: 8,
+            justifyContent: 'flex-end',
           }}
         >
-          {cohostParticipants.slice(0, 3).map((p) => {
+          {cohostParticipants.slice(0, 4).map((p) => {
             // Lazy resolve VideoView from livekit react-native at render
             // time so the import is gated to the actually-attached track.
             let VV = null;
@@ -4207,6 +4239,94 @@ const connStyles = StyleSheet.create({
   },
 });
 
+// End-live confetti — 24 colored particles drift down + sideways behind the
+// summary card, each with its own randomized x/y/rotation animation. Tiny
+// payoff moment for the host wrapping a broadcast (TikTok parity). No
+// external dep — pure Animated.Value loops. Particles share four brand-
+// adjacent colors so the burst reads as celebratory without being chaotic.
+const CONFETTI_COLORS = ['#a855f7', '#fbbf24', '#ef4444', '#22c55e', '#3b82f6'];
+const CONFETTI_COUNT = 24;
+function EndLiveConfetti() {
+  // Build particles once on mount — each has a random start x, fall distance,
+  // delay, rotation direction, and color.
+  const particlesRef = useRef(
+    Array.from({ length: CONFETTI_COUNT }).map((_, i) => ({
+      key: `c_${i}`,
+      x: Math.random() * SCREEN_W,
+      delay: Math.random() * 600,
+      duration: 2200 + Math.random() * 1400,
+      fall: SCREEN_H * 0.6 + Math.random() * SCREEN_H * 0.3,
+      drift: (Math.random() - 0.5) * 80,
+      rotateDir: Math.random() > 0.5 ? 1 : -1,
+      color: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+      size: 6 + Math.random() * 6,
+      anim: new Animated.Value(0),
+    }))
+  ).current;
+
+  useEffect(() => {
+    particlesRef.forEach((p) => {
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(p.delay),
+          Animated.timing(p.anim, {
+            toValue: 1,
+            duration: p.duration,
+            useNativeDriver: true,
+          }),
+          Animated.timing(p.anim, {
+            toValue: 0,
+            duration: 0,
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
+    });
+    return () => {
+      particlesRef.forEach((p) => p.anim.stopAnimation());
+    };
+  }, [particlesRef]);
+
+  return (
+    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      {particlesRef.map((p) => {
+        const translateY = p.anim.interpolate({
+          inputRange: [0, 1],
+          outputRange: [-20, p.fall],
+        });
+        const translateX = p.anim.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0, p.drift],
+        });
+        const rotate = p.anim.interpolate({
+          inputRange: [0, 1],
+          outputRange: ['0deg', `${p.rotateDir * 540}deg`],
+        });
+        const opacity = p.anim.interpolate({
+          inputRange: [0, 0.05, 0.85, 1],
+          outputRange: [0, 1, 1, 0],
+        });
+        return (
+          <Animated.View
+            key={p.key}
+            style={{
+              position: 'absolute',
+              left: p.x,
+              top: 0,
+              width: p.size,
+              height: p.size * 1.6,
+              borderRadius: 2,
+              backgroundColor: p.color,
+              opacity,
+              transform: [{ translateY }, { translateX }, { rotate }],
+            }}
+          />
+        );
+      })}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   fullScreen: {
     flex: 1,
@@ -4535,20 +4655,22 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
   // Host avatar with pulse ring — sits at top-left of the live header.
+  // Bumped from 44 to 56 to match TikTok's prominent host avatar — easier to
+  // tap and reads as the focal point of the top bar. Pulse ring scales to 64.
   hostAvatarWrap: {
-    width: 44, height: 44,
+    width: 56, height: 56,
     alignItems: 'center', justifyContent: 'center',
     position: 'relative',
   },
   hostAvatarPulseRing: {
     position: 'absolute',
-    width: 50, height: 50, borderRadius: 25,
+    width: 64, height: 64, borderRadius: 32,
     borderWidth: 2,
     borderColor: LIVE_RED,
   },
   hostAvatarRing: {
     position: 'absolute',
-    width: 40, height: 40, borderRadius: 20,
+    width: 52, height: 52, borderRadius: 26,
     borderWidth: 2,
     borderColor: LIVE_RED,
   },
@@ -4567,7 +4689,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingTop: 12,
-    gap: 12,
+    gap: 16,
     backgroundColor: 'rgba(0,0,0,0.25)',
     ...(Platform.OS === 'web' ? { backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' } : {}),
   },
@@ -4834,7 +4956,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingHorizontal: 12,
+    paddingHorizontal: 16,
     paddingTop: 10,
   },
   invitePill: {

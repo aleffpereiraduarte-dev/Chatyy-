@@ -1,10 +1,25 @@
-import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Platform, NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { translations, DEFAULT_LANGUAGE } from '../i18n';
 import { setUserLanguage as apiSetUserLanguage } from '../services/api';
 
 const LanguageContext = createContext(null);
+
+// Per-provider device id used as the `origin` envelope on outgoing
+// user_setting_update frames. Receiving listener compares against this
+// to ignore its own echo and prevent broadcast loops between devices.
+const LANG_DEVICE_ID = `l_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
+
+function _broadcastLanguage(code) {
+  try {
+    const mod = require('../services/websocket');
+    const ws = mod?.default;
+    if (ws && typeof ws.send === 'function' && ws.isConnected) {
+      ws.send({ type: 'user_setting_update', key: 'language', value: code, origin: LANG_DEVICE_ID });
+    }
+  } catch {}
+}
 
 // Map browser/device locale codes to our supported language codes
 const LOCALE_MAP = {
@@ -114,16 +129,52 @@ export function LanguageProvider({ children }) {
     loadLanguage();
   }, []);
 
-  const changeLanguage = useCallback((code) => {
-    if (!translations[code]) return;
-    setLanguage(code);
-    // Save as manual choice (user explicitly selected)
+  // Suppress outbound broadcast while applying an inbound frame. Otherwise
+  // device A's change would ping B, B applies + re-broadcasts to A, looping
+  // forever. Ref (not state) so the gate is synchronous within one tick.
+  const _suppressBroadcast = useRef(false);
+
+  const _persistLanguage = useCallback((code) => {
     if (Platform.OS === 'web') {
       try { if (typeof localStorage !== 'undefined') localStorage.setItem('app_language_manual', code); } catch {}
     } else {
       AsyncStorage.setItem('app_language_manual', code).catch(() => {});
     }
   }, []);
+
+  const changeLanguage = useCallback((code) => {
+    if (!translations[code]) return;
+    setLanguage(code);
+    _persistLanguage(code);
+    if (!_suppressBroadcast.current) _broadcastLanguage(code);
+  }, [_persistLanguage]);
+
+  // Subscribe to incoming user_setting_update frames so a language switch
+  // on web reaches mobile (and vice-versa). Ignore our own echo via the
+  // origin field; suppress re-broadcast on apply to avoid loops.
+  useEffect(() => {
+    let off = null;
+    try {
+      const ws = require('../services/websocket').default;
+      if (!ws || typeof ws.on !== 'function') return;
+      off = ws.on('user_setting_update', (frame) => {
+        try {
+          if (!frame || frame.origin === LANG_DEVICE_ID) return;
+          if (frame.key !== 'language' && frame.key !== 'locale') return;
+          const code = frame.value;
+          if (!code || !translations[code]) return;
+          _suppressBroadcast.current = true;
+          try {
+            setLanguage(code);
+            _persistLanguage(code);
+          } finally {
+            _suppressBroadcast.current = false;
+          }
+        } catch {}
+      });
+    } catch {}
+    return () => { try { off && off(); } catch {} };
+  }, [_persistLanguage]);
 
   const t = useCallback((key, params) => {
     let str = translations[language]?.[key] ?? translations[DEFAULT_LANGUAGE]?.[key] ?? key;

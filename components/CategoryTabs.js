@@ -71,9 +71,9 @@ export default function CategoryTabs({ activeCategory = 'all', onCategoryChange,
                     backgroundColor: activeColor,
                     borderColor: activeColor,
                     ...Platform.select({
-                      ios: { shadowColor: activeColor, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.32, shadowRadius: 10 },
-                      android: { elevation: 4 },
-                      web: { boxShadow: `0 6px 18px ${activeColor}40` },
+                      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2 },
+                      android: { elevation: 2 },
+                      web: { boxShadow: `0 1px 3px rgba(0,0,0,0.12)` },
                     }),
                   }
                 : {

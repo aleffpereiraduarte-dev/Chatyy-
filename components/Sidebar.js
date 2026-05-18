@@ -887,8 +887,8 @@ const s = StyleSheet.create({
       web: {
         transition: 'all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
         cursor: 'pointer',
-        boxShadow: '0 4px 14px rgba(124, 58, 237, 0.35), 0 2px 6px rgba(124, 58, 237, 0.15)',
-        background: 'linear-gradient(135deg, #7C3AED 0%, #A78BFA 100%)',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
+        backgroundColor: '#7C3AED',
       },
       default: {},
     }),
@@ -943,9 +943,6 @@ const s = StyleSheet.create({
   badgeTextInbox: { fontSize: 12, fontWeight: '800' },
   quickBadge: {
     borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3, minWidth: 22, alignItems: 'center',
-    ...(Platform.OS === 'web' ? {
-      boxShadow: '0 2px 6px rgba(37,99,235,0.25)',
-    } : {}),
   },
   quickBadgeText: { color: '#fff', fontSize: 11, fontWeight: '800' },
   // Labels section
@@ -999,8 +996,8 @@ const s = StyleSheet.create({
     marginBottom: Spacing.md,
     ...(Platform.OS === 'web' ? {
       cursor: 'pointer',
-      boxShadow: '0 2px 8px rgba(124, 58, 237, 0.3)',
-      background: 'linear-gradient(135deg, #7C3AED 0%, #A78BFA 100%)',
+      boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
+      backgroundColor: '#7C3AED',
       transition: 'transform 0.15s ease, box-shadow 0.15s ease',
     } : {}),
   },

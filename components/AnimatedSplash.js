@@ -1,220 +1,45 @@
 import { useEffect, useRef, useCallback } from 'react';
-import { View, Text, Animated, StyleSheet, Platform } from 'react-native';
-import Svg, { Path, Rect, Circle } from 'react-native-svg';
+import { View, Animated, StyleSheet } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
-import { useLanguage } from '../context/LanguageContext';
 
-// Clean, minimal splash — Apple/Google-inspired
-// White bg, logo fades in gently, single smooth motion, no clutter
+// Minimal splash — pure white, no logo, no text, no glow.
+// Just a fast fade-out hand-off to the real UI.
+// User asked: tirar glow roxo + logo Chatyy + tagline + ícone do envelope.
 
 export default function AnimatedSplash({ onFinish }) {
-  const { t } = useLanguage();
+  const fadeOut = useRef(new Animated.Value(1)).current;
 
-  // Hide the native splash screen once our animated splash is laid out and visible.
-  // This ensures a seamless handoff with no flash of white/icon in between.
   const onLayoutReady = useCallback(() => {
     SplashScreen.hideAsync().catch(() => {});
   }, []);
 
-  const fadeOut = useRef(new Animated.Value(1)).current;
-
-  // Logo
-  const logoOpacity = useRef(new Animated.Value(0)).current;
-  const logoScale = useRef(new Animated.Value(0.85)).current;
-  const logoY = useRef(new Animated.Value(8)).current;
-
-  // Text
-  const textOpacity = useRef(new Animated.Value(0)).current;
-  const textY = useRef(new Animated.Value(12)).current;
-
-  // Tagline
-  const tagOpacity = useRef(new Animated.Value(0)).current;
-
-  // Loading dots — 3 staggered pulses (replaces the old progress bar
-  // for a more "premium messenger" feel; keeps the same ~1s reveal budget).
-  const dot1 = useRef(new Animated.Value(0.3)).current;
-  const dot2 = useRef(new Animated.Value(0.3)).current;
-  const dot3 = useRef(new Animated.Value(0.3)).current;
-  const progressOpacity = useRef(new Animated.Value(0)).current;
-  // Logo halo glow loop
-  const glowAnim = useRef(new Animated.Value(0)).current;
-
   useEffect(() => {
-    const ND = false; // Keep all animations on JS thread to avoid native driver conflicts
-
-    // Cold start mais rápido: 2.9s → 1.2s. Splash é branding, não loading
-    // (auth já roda em paralelo desde o mount). WhatsApp faz ~1s, Telegram
-    // ~800ms. Mantive as 3 fases visíveis mas comprimidas.
-    //
-    // Phase 1 (0ms): Logo — 300ms fade/scale/lift
-    Animated.parallel([
-      Animated.timing(logoOpacity, { toValue: 1, duration: 300, useNativeDriver: true }),
-      Animated.spring(logoScale, { toValue: 1, tension: 100, friction: 10, useNativeDriver: true }),
-      Animated.timing(logoY, { toValue: 0, duration: 300, useNativeDriver: true }),
-    ]).start();
-
-    // Phase 2 (150ms): Text fades up
-    setTimeout(() => {
-      Animated.parallel([
-        Animated.timing(textOpacity, { toValue: 1, duration: 250, useNativeDriver: true }),
-        Animated.timing(textY, { toValue: 0, duration: 250, useNativeDriver: true }),
-      ]).start();
-    }, 150);
-
-    // Phase 3 (300ms): Tagline + dots loop
-    setTimeout(() => {
-      Animated.timing(tagOpacity, { toValue: 1, duration: 200, useNativeDriver: true }).start();
-      Animated.timing(progressOpacity, { toValue: 1, duration: 150, useNativeDriver: true }).start();
-      const loop = (val, delay) => Animated.loop(
-        Animated.sequence([
-          Animated.delay(delay),
-          Animated.timing(val, { toValue: 1, duration: 350, useNativeDriver: true }),
-          Animated.timing(val, { toValue: 0.3, duration: 350, useNativeDriver: true }),
-        ])
-      );
-      loop(dot1, 0).start();
-      loop(dot2, 120).start();
-      loop(dot3, 240).start();
-    }, 300);
-
-    // Logo glow — soft purple breathing halo loop, starts on mount.
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(glowAnim, { toValue: 1, duration: 1200, useNativeDriver: true }),
-        Animated.timing(glowAnim, { toValue: 0, duration: 1200, useNativeDriver: true }),
-      ])
-    ).start();
-
-    // Fade out em 1100ms, fade dura 200ms. Total = 1300ms vs 2900ms antes.
+    // Hold ~500ms (just enough for app to mount) then fade out 200ms
     const timer = setTimeout(() => {
-      Animated.timing(fadeOut, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => {
+      Animated.timing(fadeOut, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }).start(() => {
         onFinish?.();
       });
-    }, 1100);
+    }, 500);
 
     return () => clearTimeout(timer);
   }, []);
 
-  const haloScale = glowAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.18] });
-  const haloOpacity = glowAnim.interpolate({ inputRange: [0, 1], outputRange: [0.0, 0.32] });
-
   return (
-    <Animated.View style={[s.container, { opacity: fadeOut }]} onLayout={onLayoutReady}>
-      {/* Logo + soft purple halo */}
-      <Animated.View style={[s.logoWrap, {
-        opacity: logoOpacity,
-        transform: [{ scale: logoScale }, { translateY: logoY }],
-      }]}>
-        <Animated.View pointerEvents="none" style={{
-          position: 'absolute',
-          width: 120, height: 120, borderRadius: 60,
-          backgroundColor: '#7C3AED',
-          opacity: haloOpacity,
-          transform: [{ scale: haloScale }],
-        }} />
-        <View style={s.logoBox}>
-          <Svg width={44} height={44} viewBox="0 0 32 32" fill="none">
-            <Rect x="2" y="6" width="28" height="20" rx="4" fill="#7C3AED" opacity="0.12" />
-            <Rect x="3" y="7" width="26" height="18" rx="3" stroke="#7C3AED" strokeWidth="1.6" fill="none" />
-            <Path d="M3 10l12.2 8.2a1.5 1.5 0 001.6 0L29 10" stroke="#7C3AED" strokeWidth="1.6" strokeLinecap="round" fill="none" />
-            <Circle cx="24" cy="11" r="4" fill="#7C3AED" />
-            <Path d="M22.3 11l1.2 1.2L25.7 10" stroke="#fff" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-          </Svg>
-        </View>
-      </Animated.View>
-
-      {/* App name — single line */}
-      <Animated.View style={{
-        opacity: textOpacity,
-        transform: [{ translateY: textY }],
-        flexDirection: 'row',
-        alignItems: 'baseline',
-        marginTop: 20,
-      }}>
-        <Text style={s.title}>Chatyy</Text>
-      </Animated.View>
-
-      {/* Tagline */}
-      <Animated.Text style={[s.tagline, { opacity: tagOpacity }]}>
-        {t('splash.tagline')}
-      </Animated.Text>
-
-      {/* Loading dots — replaces the old progress bar */}
-      <Animated.View style={[s.dotsRow, { opacity: progressOpacity }]}>
-        <Animated.View style={[s.dot, { opacity: dot1 }]} />
-        <Animated.View style={[s.dot, { opacity: dot2 }]} />
-        <Animated.View style={[s.dot, { opacity: dot3 }]} />
-      </Animated.View>
-    </Animated.View>
+    <Animated.View
+      style={[s.container, { opacity: fadeOut }]}
+      onLayout={onLayoutReady}
+    />
   );
 }
 
 const s = StyleSheet.create({
   container: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#F7F7FA',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
     zIndex: 999,
-  },
-
-  // Logo
-  logoWrap: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  logoBox: {
-    width: 72,
-    height: 72,
-    borderRadius: 18,
-    backgroundColor: '#f0f5ff',
-    alignItems: 'center',
-    justifyContent: 'center',
-    ...Platform.select({
-      web: { boxShadow: '0 2px 16px rgba(124, 58, 237, 0.12)' },
-      default: {
-        shadowColor: '#7C3AED',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.12,
-        shadowRadius: 16,
-        elevation: 6,
-      },
-    }),
-  },
-
-  // Title
-  title: {
-    fontSize: 24,
-    fontWeight: '600',
-    color: '#0f172a',
-    letterSpacing: -0.3,
-  },
-  titleAccent: {
-    fontSize: 24,
-    fontWeight: '600',
-    color: '#7C3AED',
-    letterSpacing: -0.3,
-  },
-
-  // Tagline
-  tagline: {
-    fontSize: 13,
-    color: '#94a3b8',
-    marginTop: 8,
-    fontWeight: '400',
-    letterSpacing: 0.2,
-  },
-
-  // Loading dots
-  dotsRow: {
-    flexDirection: 'row',
-    marginTop: 32,
-    gap: 8,
-  },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#7C3AED',
   },
 });

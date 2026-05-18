@@ -1,64 +1,118 @@
 /**
- * Background Sync Service
- * Keeps email and chat synced even when app is in background
- * Uses expo-background-fetch + expo-task-manager
+ * Background Sync Service — Offline Queue Replay
+ *
+ * Tenta reenviar a fila offline (chat_send, send_email, media uploads, etc.)
+ * mesmo com o app em background ou fechado. WhatsApp faz isso via iOS
+ * Background Task / Android WorkManager — sem isso o usuário precisa abrir
+ * o app pra um replay acontecer e mensagens pendentes ficam paradas até lá.
+ *
+ * Task: `CHATYY_OFFLINE_REPLAY_v1`
+ * Frequência: mínima 15min (cap do iOS — Android também usa o mesmo valor
+ * via WorkManager.PeriodicWorkRequest).
+ *
+ * Estratégia:
+ *  - Pula sem trabalho se a fila estiver vazia (NoData).
+ *  - Chama `replayOfflineQueue(api)` quando há ações pendentes.
+ *  - Mapeia o retorno pra `NewData` / `NoData` / `Failed` pra o OS ajustar
+ *    o budget de execução do app em background.
+ *
+ * TODO(wire): registrar em `app/_layout.js` no mount inicial (após login)
+ * com `await registerBackgroundSync()`. Não fizemos aqui porque _layout.js
+ * está em rota crítica de outro patch — chamada explícita posterior.
  */
 import { Platform } from 'react-native';
+import * as BackgroundFetch from 'expo-background-fetch';
+import * as TaskManager from 'expo-task-manager';
 
-const BACKGROUND_FETCH_TASK = 'ONEMUNDO_BACKGROUND_SYNC';
+export const TASK_NAME = 'CHATYY_OFFLINE_REPLAY_v1';
 
-// defineTask MUST run at module top-level — Expo's headless executor reloads
-// the JS bundle and only finds tasks registered synchronously at startup.
-// If we do it inside register(), the OS may invoke the task before the user
-// app has called register() and we'd hit "Task not defined".
+// defineTask precisa rodar no top-level do módulo: o executor headless do
+// Expo recarrega o bundle JS e só acha tasks registradas sincronamente no
+// startup. Se fizer dentro de register() o OS pode invocar a task antes do
+// user app ter chamado register() e cai em "Task not defined".
 if (Platform.OS !== 'web') {
   try {
-    const TaskManager = require('expo-task-manager');
-    const BackgroundFetch = require('expo-background-fetch');
-    TaskManager.defineTask(BACKGROUND_FETCH_TASK, async () => {
+    TaskManager.defineTask(TASK_NAME, async () => {
       try {
+        const offlineCache = require('./offlineCache');
+        // api.js usa named exports (sem default) — require do módulo
+        // inteiro entrega o namespace que replayOfflineQueue espera
+        // (chama api.chatUploadFile, api.deleteEmail, etc.).
         const api = require('./api');
-        const token = api.getAuthToken();
-        if (!token) return BackgroundFetch.BackgroundFetchResult.NoData;
-        const result = await api.chatUnreadCount();
-        return (result && result.success)
+
+        // Skip cedo se a fila estiver vazia — não queima budget de
+        // background pra nada. getOfflineQueueSize pode não existir em
+        // builds antigas; fallback pra getOfflineQueue().length.
+        let size = 0;
+        if (typeof offlineCache.getOfflineQueueSize === 'function') {
+          size = await offlineCache.getOfflineQueueSize();
+        } else if (typeof offlineCache.getOfflineQueue === 'function') {
+          const q = await offlineCache.getOfflineQueue();
+          size = Array.isArray(q) ? q.length : 0;
+        }
+        if (!size || size === 0) {
+          return BackgroundFetch.BackgroundFetchResult.NoData;
+        }
+
+        const result = await offlineCache.replayOfflineQueue(api);
+        // replayOfflineQueue retorna { replayed, failed } — aceita
+        // também `completed` (alias defensivo) caso a API evolua.
+        const ok = (result?.replayed || result?.completed || 0) > 0;
+        return ok
           ? BackgroundFetch.BackgroundFetchResult.NewData
           : BackgroundFetch.BackgroundFetchResult.NoData;
-      } catch {
+      } catch (e) {
         return BackgroundFetch.BackgroundFetchResult.Failed;
       }
     });
-  } catch {}
+  } catch {
+    // defineTask pode lançar se o bundle for recarregado e a task já
+    // estiver definida — silencioso, é idempotente.
+  }
 }
 
 export async function registerBackgroundSync() {
-  if (Platform.OS === 'web') return;
+  if (Platform.OS === 'web') return false;
   try {
-    const TaskManager = require('expo-task-manager');
-    const BackgroundFetch = require('expo-background-fetch');
     const status = await BackgroundFetch.getStatusAsync();
-    if (status !== BackgroundFetch.BackgroundFetchStatus.Available) {
-      console.warn('[BackgroundSync] Status not Available:', status);
-      return;
+    // Restricted = parental controls / MDM bloqueando background refresh.
+    // Denied = usuário desligou em Settings. Ambos = não vale tentar.
+    if (
+      status === BackgroundFetch.BackgroundFetchStatus.Restricted ||
+      status === BackgroundFetch.BackgroundFetchStatus.Denied
+    ) {
+      return false;
     }
-    const already = await TaskManager.isTaskRegisteredAsync(BACKGROUND_FETCH_TASK);
-    if (already) return;
-    await BackgroundFetch.registerTaskAsync(BACKGROUND_FETCH_TASK, {
-      minimumInterval: 15 * 60,
-      stopOnTerminate: false,
-      startOnBoot: true,
+    const already = await TaskManager.isTaskRegisteredAsync(TASK_NAME);
+    if (already) return true;
+    await BackgroundFetch.registerTaskAsync(TASK_NAME, {
+      minimumInterval: 15 * 60, // 15min — mínimo do iOS
+      stopOnTerminate: false,   // Android: sobreviver app kill
+      startOnBoot: true,        // Android: re-armar após reboot
     });
-    console.log('[BackgroundSync] Registered successfully');
-  } catch (e) {
-    console.warn('[BackgroundSync] Registration failed:', e);
+    return true;
+  } catch {
+    return false;
   }
 }
 
 export async function unregisterBackgroundSync() {
-  if (Platform.OS === 'web') return;
-
+  if (Platform.OS === 'web') return false;
   try {
-    const BackgroundFetch = require('expo-background-fetch');
-    await BackgroundFetch.unregisterTaskAsync(BACKGROUND_FETCH_TASK);
-  } catch {}
+    const already = await TaskManager.isTaskRegisteredAsync(TASK_NAME);
+    if (!already) return true;
+    await BackgroundFetch.unregisterTaskAsync(TASK_NAME);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function isBackgroundSyncRegistered() {
+  if (Platform.OS === 'web') return false;
+  try {
+    return await TaskManager.isTaskRegisteredAsync(TASK_NAME);
+  } catch {
+    return false;
+  }
 }

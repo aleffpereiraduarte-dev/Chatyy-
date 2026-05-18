@@ -5,6 +5,7 @@ import {
   ActivityIndicator, Pressable, ScrollView, Image, Easing,
 } from 'react-native';
 import AvatarCircle from './AvatarCircle';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   IconHeart, IconHeartOutline, IconMessageCircle, IconShare,
   IconBookmark, IconBookmarkFilled, IconMusic, IconPlay, IconPause,
@@ -890,6 +891,9 @@ function ShareSheet({ visible, reel, t, onClose, onRepost, onCopyLink, onExterna
 
 // ── Single Reel Item ──
 const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, user, containerHeight, onOpenComments, onOpenLikers, onOpenProfile, onUseSound, onDuet, onStitch, onHidePost, showLiveRing, overlayOpen, router }) {
+  // Safe-area insets so the bottom info block (username/caption/music row)
+  // doesn't sit on top of the iOS home indicator or Android gesture pill.
+  const insets = useSafeAreaInsets();
   // Reels P0 — more-sheet visibility (Not interested / Duet / Stitch / Use sound)
   const [moreSheetOpen, setMoreSheetOpen] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -1396,7 +1400,35 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
 
       {/* ── TOP BAR (right side only - tabs are rendered by parent) ── */}
       <View style={styles.topBar}>
-        <View />
+        {/* Top-left LIVE banner — only renders when the reel author is
+            broadcasting. Red bg + white dot + "AO VIVO" text. Tapping
+            routes to the live viewer through onOpenProfile (parent wires
+            this to /live-viewer?id=<liveId>). SVG dot, no emoji per UI rule. */}
+        {(reel.is_live || reel.live_id) ? (
+          <TouchableOpacity
+            onPress={() => onOpenProfile?.(reel.author_email, reel)}
+            activeOpacity={0.85}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+              backgroundColor: '#FF3B30',
+              paddingHorizontal: 10,
+              paddingVertical: 5,
+              borderRadius: 6,
+            }}
+            accessibilityLabel={t?.('feed.live') || 'AO VIVO'}
+            accessibilityRole="button"
+          >
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#fff' }} />
+            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 0.5 }}>
+              {(t?.('feed.live') || 'AO VIVO').toUpperCase()}
+            </Text>
+          </TouchableOpacity>
+        ) : (
+          <View />
+        )}
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
           <TouchableOpacity
             onPress={toggleMute}
@@ -1618,7 +1650,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
       )}
 
       {/* ── BOTTOM LEFT INFO ── */}
-      <View style={styles.bottomInfo}>
+      <View style={[styles.bottomInfo, { paddingBottom: insets.bottom + 16 }]}>
         {/* Username */}
         <Text style={styles.username}>@{authorDisplay}</Text>
 

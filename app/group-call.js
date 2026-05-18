@@ -299,12 +299,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: 80,
     paddingBottom: 140,
-    gap: 8,
+    gap: 12,
   },
   gridCell: {
     alignItems: 'center',
     justifyContent: 'flex-start',
-    margin: 6,
+    margin: 0,
   },
   avatarShell: {
     alignItems: 'center',

@@ -234,6 +234,35 @@ export async function getCachedUri(url) {
 // the image appears uncached on next open.
 const _inflightDownloads = new Map(); // key → Promise<localPath | url>
 
+// Concurrency throttle — cap simultaneous network downloads so a burst of
+// WS-driven prefetches (e.g. 30 messages syncing after reconnect) doesn't
+// saturate the radio + heap. WhatsApp parity: small parallel pool, queue
+// the rest. 3 is the sweet spot for mobile HTTP/2 — enough to overlap TLS
+// handshakes but low enough to leave headroom for foreground requests
+// (avatar fetch, message sends, etc).
+const _MAX_CONCURRENT_DOWNLOADS = 3;
+let _activeDownloads = 0;
+const _downloadWaiters = []; // FIFO queue of resolve fns
+
+function _acquireDownloadSlot() {
+  if (_activeDownloads < _MAX_CONCURRENT_DOWNLOADS) {
+    _activeDownloads++;
+    return Promise.resolve();
+  }
+  return new Promise(resolve => _downloadWaiters.push(resolve));
+}
+
+function _releaseDownloadSlot() {
+  const next = _downloadWaiters.shift();
+  if (next) {
+    // Hand the slot directly to the next waiter (no decrement → no race).
+    try { next(); } catch { _activeDownloads--; }
+  } else {
+    _activeDownloads--;
+    if (_activeDownloads < 0) _activeDownloads = 0;
+  }
+}
+
 // ── Media auto-download preferences (WhatsApp Settings → Storage parity) ──
 //
 // 4 buckets: photos, audio, videos, docs. Each is 'wifi' | 'mobile' | 'never'.
@@ -390,11 +419,17 @@ export async function cacheMedia(url, opts = {}) {
   const dir = getSavedDir();
   const localPath = dir + key;
   const dlPromise = (async () => {
+    // Throttle: wait for a free slot before hitting the network. The slot
+    // is held only for the actual download — getInfoAsync / mkdir are
+    // cheap local FS calls so they run pre-acquire.
     try {
       const dirInfo = await fs.getInfoAsync(dir);
       if (!dirInfo.exists) {
         await fs.makeDirectoryAsync(dir, { intermediates: true });
       }
+    } catch {}
+    await _acquireDownloadSlot();
+    try {
       // Retry com exponential backoff em 5xx / network failures. 4xx
       // (404, 410, 403) são bug nosso ou link expirado — retry só queima
       // bateria. Backoff: 0ms → 500ms → 1500ms (3 tentativas no total).
@@ -424,6 +459,8 @@ export async function cacheMedia(url, opts = {}) {
       }
     } catch {
       try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
+    } finally {
+      _releaseDownloadSlot();
     }
     return url;
   })();
@@ -490,10 +527,18 @@ export async function saveMediaPermanent(url) {
       }
     } catch {}
 
-    // Download fresh
-    const download = await fs.downloadAsync(url, localPath);
-    if (download.status === 200) { registerSyncKey(url, localPath); return localPath; }
-    try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
+    // Download fresh — go through the global concurrency throttle so a
+    // burst of audio prefetches (e.g. 10 voice notes arriving over WS
+    // after a reconnect) can't saturate the radio behind cacheMedia's
+    // back. _MAX_CONCURRENT_DOWNLOADS is shared across both code paths.
+    await _acquireDownloadSlot();
+    try {
+      const download = await fs.downloadAsync(url, localPath);
+      if (download.status === 200) { registerSyncKey(url, localPath); return localPath; }
+      try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
+    } finally {
+      _releaseDownloadSlot();
+    }
   } catch {}
 
   return url;
@@ -542,6 +587,48 @@ export async function adoptLocalFileAsCache(remoteUrl, localUri) {
     try { await fs.deleteAsync(destPath, { idempotent: true }); } catch {}
     return null;
   }
+}
+
+// Auto-prefetch hook for the WebSocket receive path. Called fire-and-forget
+// the moment a `chat_message` / `chat_summary` event lands so the media is
+// already on disk by the time the user navigates into the conversation —
+// even if they never opened the chat between the WS event and going offline.
+//
+// Scope by design: ONLY image + audio/voice. Video and documents are heavy
+// (10-200MB common) and would burn cellular data + radio + storage on a
+// background prefetch. The user can still tap-to-download those via the
+// bubble's force-DL UI. WhatsApp parity: photos/audio auto, video/docs gated.
+//
+// Honors the cellular gate inside cacheMedia (per-bucket prefs). On cellular
+// with the default 'wifi' pref, this returns immediately without touching
+// the network. Concurrency is capped at _MAX_CONCURRENT_DOWNLOADS so a burst
+// of inbound messages doesn't saturate the radio.
+//
+// Idempotent: if the URL is already cached or in-flight, no-op (cacheMedia
+// dedup via syncIndex + _inflightDownloads).
+export function prefetchIncomingMessageMedia(message) {
+  if (!message || Platform.OS === 'web') return;
+  const t = String(message.type || '').toLowerCase();
+  // Scope: image + audio/voice ONLY. Skip video (heavy), gif (small but Tenor
+  // URL lives in `content`, handled by the existing saveConversationMedia
+  // path on chat open), sticker (also Tenor), file/doc (heavy).
+  if (t !== 'image' && t !== 'audio' && t !== 'voice') return;
+  let url = message.file_url;
+  if (!url || typeof url !== 'string') return;
+  if (!url.startsWith('http')) url = `https://chatyy.com.br${url}`;
+  try {
+    if (t === 'audio' || t === 'voice') {
+      // Audio is tiny (~50-300KB) and the user expects instant playback —
+      // bypass the cellular gate so voice notes always land. Matches the
+      // ChatListTab #886 behavior. Goes through saveMediaPermanent which
+      // shares the same destination dir as cacheMedia.
+      prefetchAudioMessage(url);
+    } else {
+      // Image — honor the cellular gate via cacheMedia (defaults to wifi-only).
+      // Fire-and-forget; failures don't bubble up to the WS handler.
+      cacheMedia(url).catch(() => {});
+    }
+  } catch {}
 }
 
 // Task #886 — prefetch a single audio message's media so the bubble plays
@@ -724,4 +811,105 @@ export async function deleteConversationMedia(messages) {
   for (const url of urls) {
     try { await deleteCachedUrl(url); } catch {}
   }
+}
+
+// ── Storage stats (Settings → Storage section) ─────────────────────────
+// Classify a cached file by extension into one of 4 buckets that match the
+// WhatsApp Storage UI (Photos / Videos / Audio / Documents). Files with no
+// recognized extension fall into "document" so totals still reflect actual
+// disk usage. Kept separate from `_bucketForUrl` because the auto-download
+// classifier deliberately folds GIFs/stickers into photos — for the storage
+// stats card the user expects the same breakdown WhatsApp shows.
+const _STATS_EXT_BUCKETS = {
+  image:    /\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff)$/i,
+  video:    /\.(mp4|mov|m4v|webm|mkv|avi|3gp)$/i,
+  audio:    /\.(mp3|m4a|ogg|opus|wav|aac|flac)$/i,
+  document: /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|zip|rar|7z|txt|csv|json)$/i,
+};
+
+function _bucketForFilename(name) {
+  if (typeof name !== 'string') return 'document';
+  for (const bucket of Object.keys(_STATS_EXT_BUCKETS)) {
+    if (_STATS_EXT_BUCKETS[bucket].test(name)) return bucket;
+  }
+  return 'document';
+}
+
+// Aggregate cache + saved-media usage broken down by media type. Powers the
+// Storage section in settings (WhatsApp Storage & Data parity).
+//
+// Returns:
+//   {
+//     totalBytes: number,        // cache + saved combined
+//     cacheBytes: number,        // OS-purgeable cache dir
+//     savedBytes: number,        // permanent document dir
+//     byType: { image, video, audio, document }, // bytes per bucket
+//     counts: { image, video, audio, document }, // file counts per bucket
+//   }
+//
+// Web returns zeros (no file-system store); callers should hide the section.
+export async function getStorageStats() {
+  const empty = {
+    totalBytes: 0,
+    cacheBytes: 0,
+    savedBytes: 0,
+    byType:  { image: 0, video: 0, audio: 0, document: 0 },
+    counts:  { image: 0, video: 0, audio: 0, document: 0 },
+  };
+  if (Platform.OS === 'web') return empty;
+  const fs = getFS();
+  if (!fs) return empty;
+
+  const byType = { image: 0, video: 0, audio: 0, document: 0 };
+  const counts = { image: 0, video: 0, audio: 0, document: 0 };
+  let cacheBytes = 0;
+  let savedBytes = 0;
+
+  const dirs = [
+    { path: getCacheDir(), kind: 'cache' },
+    { path: getSavedDir(), kind: 'saved' },
+  ];
+  for (const { path: dir, kind } of dirs) {
+    if (!dir) continue;
+    try {
+      const info = await fs.getInfoAsync(dir);
+      if (!info.exists) continue;
+      const names = await fs.readDirectoryAsync(dir);
+      for (const name of names) {
+        const p = dir + name;
+        try {
+          const st = await fs.getInfoAsync(p);
+          if (!st.exists || st.isDirectory) continue;
+          const size = st.size || 0;
+          const bucket = _bucketForFilename(name);
+          byType[bucket] += size;
+          counts[bucket] += 1;
+          if (kind === 'cache') cacheBytes += size; else savedBytes += size;
+        } catch {}
+      }
+    } catch {}
+  }
+
+  return {
+    totalBytes: cacheBytes + savedBytes,
+    cacheBytes,
+    savedBytes,
+    byType,
+    counts,
+  };
+}
+
+// Nuke both cache + saved media in one call. Used by the "Clear cache" button
+// in settings. Also clears the in-memory syncIndex so subsequent lookups
+// re-scan disk (finding nothing) and the bubbles re-download on demand.
+export async function clearAllCache() {
+  if (Platform.OS === 'web') return;
+  const fs = getFS();
+  if (!fs) return;
+  for (const dir of [getCacheDir(), getSavedDir()]) {
+    if (!dir) continue;
+    try { await fs.deleteAsync(dir, { idempotent: true }); } catch {}
+  }
+  syncIndex.clear();
+  _schedulePersistIndex();
 }

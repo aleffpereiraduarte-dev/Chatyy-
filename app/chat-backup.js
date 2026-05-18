@@ -44,6 +44,10 @@ import {
   getLastBackupAt,
   rememberPassphrase,
   BACKUP_FREQUENCIES,
+  exportChatBundle,
+  exportChatBundleWithMedia,
+  buildPlainBundle,
+  exportBundleLocally,
 } from '../services/chatBackupCloud';
 
 const AUTO_KEY = '@chatyy_backup_auto';
@@ -77,6 +81,11 @@ export default function ChatBackupScreen() {
   // Drive backup list cached transiently during restore — not surfaced in UI.
   // eslint-disable-next-line no-unused-vars
   const [driveBackups, setDriveBackups] = useState([]);
+  // ─── Local export + media toggle ─────────────────────────────────────
+  // includeMedia is OFF by default — embedding base64 media can balloon
+  // the backup into the hundreds-of-MB range, so we make the user opt-in
+  // explicitly (mirrors WhatsApp's "Include videos" checkbox).
+  const [includeMedia, setIncludeMedia] = useState(false);
 
   // Load cloud-side prefs on mount.
   useEffect(() => {
@@ -367,6 +376,94 @@ export default function ChatBackupScreen() {
     try { await setWifiOnly(next); } catch {}
   }, [wifiOnly]);
 
+  // ─── Local export handlers ─────────────────────────────────────────
+  // Both produce a file the user can stash anywhere (AirDrop, email,
+  // Dropbox, Telegram-to-self). Encrypted variant is the recommended one
+  // — the unencrypted variant is power-user / debugging only and shows a
+  // red warning before running.
+  const handleLocalEncryptedExport = useCallback(async () => {
+    if (password.length < 8) {
+      Alert.alert(
+        t('backup.weakPassTitle') || 'Senha muito curta',
+        t('backup.weakPassMsg') || 'Use pelo menos 8 caracteres.'
+      );
+      return;
+    }
+    setWorking(true);
+    setBusyAction('localEnc');
+    try {
+      const exporter = includeMedia ? exportChatBundleWithMedia : exportChatBundle;
+      const { encrypted } = await exporter(password, { includeMedia });
+      const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*/, '').replace('T', '-');
+      const filename = `chatyy-backup-${stamp}.enc`;
+      await exportBundleLocally(encrypted, {
+        filename,
+        mime: 'application/octet-stream',
+        dialogTitle: t('backup.export.encrypted') || 'Baixar JSON criptografado',
+      });
+    } catch (e) {
+      Alert.alert(t('backup.failedTitle') || 'Falha no backup', String(e?.message || e));
+    } finally {
+      setWorking(false);
+      setBusyAction(null);
+    }
+  }, [password, includeMedia, t]);
+
+  const handleLocalPlainExport = useCallback(async () => {
+    // BIG red warning before running — unencrypted backups can be opened
+    // by anyone who gets the file. Mirrors the WhatsApp "Export chat"
+    // confirmation flow.
+    Alert.alert(
+      t('backup.export.unencrypted') || 'Exportar sem criptografia (perigoso)',
+      (t('backup.export.unencWarn') ||
+        'Backup sem senha — qualquer um que abrir o arquivo verá suas conversas. Confirma?'),
+      [
+        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+        {
+          text: t('common.continue') || 'Continuar',
+          style: 'destructive',
+          onPress: async () => {
+            setWorking(true);
+            setBusyAction('localPlain');
+            try {
+              const bundle = await buildPlainBundle({ includeMedia });
+              const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*/, '').replace('T', '-');
+              const filename = `chatyy-backup-${stamp}.json`;
+              await exportBundleLocally(JSON.stringify(bundle, null, 2), {
+                filename,
+                mime: 'application/json',
+                dialogTitle: t('backup.export.unencrypted') || 'Exportar sem criptografia',
+              });
+            } catch (e) {
+              Alert.alert(t('backup.failedTitle') || 'Falha no backup', String(e?.message || e));
+            } finally {
+              setWorking(false);
+              setBusyAction(null);
+            }
+          },
+        },
+      ]
+    );
+  }, [includeMedia, t]);
+
+  const handleToggleIncludeMedia = useCallback(() => {
+    const next = !includeMedia;
+    if (next) {
+      // Surface the size-warning the first time the user flips it ON —
+      // matches the WhatsApp "Include videos" disclaimer.
+      Alert.alert(
+        t('backup.includeMedia') || 'Incluir mídia',
+        t('backup.mediaWarning') || 'Backup pode ficar grande (centenas de MB).',
+        [
+          { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+          { text: t('common.continue') || 'Continuar', onPress: () => setIncludeMedia(true) },
+        ]
+      );
+    } else {
+      setIncludeMedia(false);
+    }
+  }, [includeMedia, t]);
+
   return (
     <View style={[styles.root, { backgroundColor: colors.background, paddingTop: insets.top }]}>
       <View style={[styles.header, { borderBottomColor: colors.border }]}>
@@ -530,6 +627,67 @@ export default function ChatBackupScreen() {
           </Text>
         )}
 
+        {/* Include-media toggle — opt-in because media can balloon the file.
+            Visible to both cloud + local export paths. */}
+        <TouchableOpacity
+          onPress={handleToggleIncludeMedia}
+          style={[styles.toggleRow, { borderColor: colors.border, borderTopWidth: 0 }]}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.toggleLabel, { color: colors.text }]}>
+              {t('backup.includeMedia') || 'Incluir mídia'}
+            </Text>
+            <Text style={[styles.toggleHelp, { color: colors.textMuted }]}>
+              {t('backup.mediaWarning') || 'Backup pode ficar grande (centenas de MB).'}
+            </Text>
+          </View>
+          <Text style={[styles.toggleState, { color: includeMedia ? colors.primary : colors.textMuted }]}>
+            {includeMedia ? (t('common.on') || 'ON') : (t('common.off') || 'OFF')}
+          </Text>
+        </TouchableOpacity>
+
+        {/* ─── Local export section — produces a downloadable file ─── */}
+        <Text style={[styles.sectionHeader, { color: colors.text }]}>
+          {t('backup.export.local') || 'Exportar localmente'}
+        </Text>
+        <Text style={[styles.cardBody, { color: colors.textMuted, marginBottom: Spacing.sm }]}>
+          {Platform.OS === 'web'
+            ? (t('backup.export.descWeb') || 'Baixe um arquivo do seu backup direto no seu computador.')
+            : (t('backup.export.descNative') || 'Salve um arquivo do seu backup e compartilhe via AirDrop, e-mail ou outro app.')}
+        </Text>
+
+        <TouchableOpacity
+          onPress={handleLocalEncryptedExport}
+          disabled={working}
+          style={[styles.secondaryBtn, { borderColor: colors.primary, opacity: working ? 0.5 : 1 }]}
+        >
+          {busyAction === 'localEnc' ? (
+            <ActivityIndicator color={colors.primary} />
+          ) : (
+            <Text style={[styles.secondaryBtnText, { color: colors.primary }]}>
+              {t('backup.export.encrypted') || 'Baixar JSON criptografado'}
+            </Text>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={handleLocalPlainExport}
+          disabled={working}
+          style={[styles.dangerBtn, { borderColor: '#c0392b', opacity: working ? 0.5 : 1 }]}
+        >
+          {busyAction === 'localPlain' ? (
+            <ActivityIndicator color="#c0392b" />
+          ) : (
+            <Text style={[styles.dangerBtnText, { color: '#c0392b' }]}>
+              {t('backup.export.unencrypted') || 'Exportar sem criptografia (perigoso)'}
+            </Text>
+          )}
+        </TouchableOpacity>
+        <Text style={[styles.privacyNote, { color: '#c0392b' }]}>
+          {t('backup.export.unencWarn') ||
+            'Sem senha — não compartilhe esse arquivo com ninguém.'}
+        </Text>
+
         <TouchableOpacity
           onPress={handleToggleAutoSchedule}
           style={[styles.toggleRow, { borderColor: colors.border }]}
@@ -641,6 +799,16 @@ const styles = StyleSheet.create({
     marginTop: Spacing.sm,
   },
   secondaryBtnText: { fontWeight: '700', fontSize: FontSize.md },
+  dangerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    marginTop: Spacing.sm,
+  },
+  dangerBtnText: { fontWeight: '700', fontSize: FontSize.md },
   restoreRow: {
     flexDirection: 'row',
     gap: Spacing.sm,

@@ -673,9 +673,7 @@ function ChatHub() {
     ? (Platform.OS === 'web'
       ? { background: 'linear-gradient(135deg, #6366f1 0%, #a855f7 40%, #ec4899 100%)' }
       : { backgroundColor: isDark ? '#3b1d6e' : '#6366f1' })
-    : (Platform.OS === 'web'
-      ? { background: isDark ? 'linear-gradient(180deg, #1a0a2e 0%, #0a0a0a 100%)' : 'linear-gradient(180deg, #5B21B6 0%, #7C3AED 100%)' }
-      : { backgroundColor: isDark ? '#0d0a14' : '#6D28D9' });
+    : { backgroundColor: isDark ? '#111111' : '#7C3AED' };
 
   const glassTabBar = {
     backgroundColor: isDark ? '#0a0a0a' : '#ffffff',
@@ -939,8 +937,8 @@ function ChatHub() {
           WebkitBackdropFilter: 'blur(24px) saturate(200%)',
           backgroundColor: isDark ? 'rgba(10, 10, 10, 0.92)' : 'rgba(255, 255, 255, 0.92)',
           boxShadow: isDark
-            ? '0 -8px 24px rgba(0,0,0,0.5), 0 -1px 0 rgba(255,255,255,0.06)'
-            : '0 -8px 24px rgba(99,102,241,0.08), 0 -1px 0 rgba(0,0,0,0.04)',
+            ? '0 -2px 6px rgba(0,0,0,0.35), 0 -1px 0 rgba(255,255,255,0.04)'
+            : '0 -1px 3px rgba(0,0,0,0.06), 0 -1px 0 rgba(0,0,0,0.04)',
         }),
       }]}>
         {isKids ? (
@@ -1191,9 +1189,8 @@ function AppTile({ item, badge, onPress, colors, isDark }) {
       <Animated.View style={{ width: 56, height: 56, transform: [{ scale }] }}>
         <View style={{
           width: 56, height: 56, borderRadius: 16,
-          backgroundColor: item.ic.c + '18',
+          backgroundColor: item.ic.c + '14',
           alignItems: 'center', justifyContent: 'center',
-          ...(Platform.OS === 'web' ? { boxShadow: `0 2px 8px ${item.ic.c}22` } : {}),
         }}>
           <item.ic.Comp size={26} color={item.ic.c} />
         </View>
@@ -1499,14 +1496,13 @@ function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark
       onMouseLeave={() => setHovered(false)}
       style={[styles.desktopTabItem, {
         backgroundColor: active
-          ? 'rgba(124,58,237,0.15)'
+          ? (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)')
           : hovered
-            ? 'rgba(255,255,255,0.1)'
+            ? (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.025)')
             : 'transparent',
         borderLeftColor: active ? '#7C3AED' : 'transparent',
         cursor: 'pointer',
         ...(isWeb ? { transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)' } : {}),
-        ...(active && isWeb ? { boxShadow: isDark ? `inset 0 0 20px rgba(124,58,237,0.05)` : `inset 0 0 20px rgba(124,58,237,0.04)` } : {}),
       }]}
     >
       <View style={{ position: 'relative' }}>
@@ -1556,7 +1552,7 @@ function PulseBadge({ badge, isDark }) {
   return (
     <Animated.View style={[styles.badge, {
       transform: [{ scale: pulseAnim }],
-    }, isWeb && isDark && { boxShadow: `0 0 12px ${ACCENT_GLOW}` }]}>
+    }]}>
       <Text style={styles.badgeText}>{badge > 99 ? '99+' : badge}</Text>
     </Animated.View>
   );
@@ -1597,22 +1593,7 @@ function TabBarItem({ icon, label, active, onPress, isDark, badge, dot }) {
     <TouchableOpacity style={styles.tabItem} onPress={onPress} onPressIn={handlePressIn} onPressOut={handlePressOut} activeOpacity={1}>
       <Animated.View style={[styles.tabIconWrap, {
         transform: [{ scale: scaleAnim }, { translateY: bounceAnim }],
-        backgroundColor: glowAnim.interpolate({
-          inputRange: [0, 1],
-          outputRange: ['rgba(124,58,237,0)', isDark ? 'rgba(124,58,237,0.22)' : 'rgba(124,58,237,0.14)'],
-        }),
-        ...(active && Platform.OS === 'ios' ? {
-          shadowColor: '#7C3AED',
-          shadowOffset: { width: 0, height: 0 },
-          shadowOpacity: isDark ? 0.55 : 0.35,
-          shadowRadius: 8,
-        } : {}),
-        ...(isWeb ? {
-          boxShadow: active
-            ? `0 0 20px ${isDark ? 'rgba(124,58,237,0.45)' : 'rgba(124,58,237,0.28)'}`
-            : 'none',
-          transition: 'box-shadow 0.22s ease',
-        } : {}),
+        backgroundColor: 'transparent',
       }]}>
         {icon(active)}
         {badge > 0 && <PulseBadge badge={badge} isDark={isDark} />}
@@ -1650,11 +1631,11 @@ const styles = StyleSheet.create({
     zIndex: 10,
     ...(Platform.OS === 'ios' ? {
       shadowColor: '#000',
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.18,
-      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.06,
+      shadowRadius: 2,
     } : Platform.OS === 'android' ? {
-      elevation: 8,
+      elevation: 2,
     } : {}),
   },
   backBtn: {
@@ -1783,12 +1764,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 5,
     ...Platform.select({
-      web: {
-        background: `linear-gradient(135deg, ${ACCENT} 0%, #6D28D9 100%)`,
-        boxShadow: `0 2px 8px rgba(124,58,237,0.5)`,
-      },
-      ios: { backgroundColor: ACCENT, shadowColor: ACCENT, shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.4, shadowRadius: 3 },
-      android: { backgroundColor: ACCENT, elevation: 3 },
+      web: { backgroundColor: ACCENT },
+      ios: { backgroundColor: ACCENT },
+      android: { backgroundColor: ACCENT, elevation: 1 },
     }),
   },
   badgeText: {

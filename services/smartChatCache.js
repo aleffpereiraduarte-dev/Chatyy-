@@ -25,10 +25,10 @@ const CONV_KEY = 'chat_convs_v2';
 const INDEX_KEY = 'chat_index_v2';
 const MIGRATION_FLAG = 'chat_migrate_v2_done';
 
-const MAX_MSGS_PER_CONV = 50;        // persisted cap
-const MAX_MEMORY_MSGS = 200;         // in-memory scroll window
+const MAX_MSGS_PER_CONV = 200;       // persisted cap (bumped from 50 — LRU evicts under 5MB budget)
+const MAX_MEMORY_MSGS = 500;         // in-memory scroll window (bumped from 200)
 const FLUSH_DEBOUNCE_MS = 500;
-const TOTAL_BYTE_BUDGET = 5 * 1024 * 1024;  // 5 MB
+const TOTAL_BYTE_BUDGET = 5 * 1024 * 1024;  // 5 MB (unchanged — LRU handles eviction)
 const EVICT_DOWN_TO = 4.5 * 1024 * 1024;    // hysteresis
 
 // ─── In-memory authoritative state ─────────────────────────────────────────
@@ -226,8 +226,26 @@ function _maybeEvict() {
   }
 }
 
+// ─── Cache-scope lock bridge ───────────────────────────────────────────────
+// Lazy require to dodge the circular chatCache → smartChatCache import (the
+// latter is also required from chatCache for write-through). Cached after the
+// first successful resolve to skip the require() cost on the hot path.
+let _scopeCheck = null;
+function _isLocked() {
+  try {
+    if (!_scopeCheck) {
+      const mod = require('./chatCache');
+      _scopeCheck = (typeof mod?.isCacheScopeLocked === 'function') ? mod.isCacheScopeLocked : (() => false);
+    }
+    return _scopeCheck();
+  } catch { return false; }
+}
+
 // ─── Public API — sync reads ───────────────────────────────────────────────
 export function getCachedMessagesSync(convId, limit = 50) {
+  // Account-switch race: return empty during the lock window so the new
+  // account's screen never paints the previous user's messages.
+  if (_isLocked()) return [];
   if (convId == null) return [];
   // Accept both numeric and string ids
   const arr = _msgs.get(convId) || _msgs.get(String(convId)) || _msgs.get(Number(convId)) || [];
@@ -237,10 +255,12 @@ export function getCachedMessagesSync(convId, limit = 50) {
 }
 
 export function getCachedConversationsSync() {
+  if (_isLocked()) return [];
   return Array.isArray(_convs) ? _convs.slice() : [];
 }
 
 export function getLastCachedIdSync(convId) {
+  if (_isLocked()) return 0;
   const arr = getCachedMessagesSync(convId, MAX_MEMORY_MSGS);
   let max = 0;
   for (const m of arr) {

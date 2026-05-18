@@ -283,6 +283,67 @@ const CommentItem = memo(function CommentItem({
   );
 });
 
+// ── Mic record button with pulse halo ──
+// While `recording` is true we layer a softly-pulsing red ring behind the
+// mic button so the user gets a clear "I'm recording" affordance without
+// needing extra screen real estate. The halo unmounts when recording ends.
+const MicRecordButton = memo(function MicRecordButton({ recording, sending, onPressIn, onPressOut, t }) {
+  const pulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!recording) {
+      pulse.setValue(0);
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1, duration: 700, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0, duration: 700, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [recording, pulse]);
+  const haloScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.6] });
+  const haloOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.55, 0] });
+  return (
+    <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+      {recording ? (
+        <Animated.View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            width: 32,
+            height: 32,
+            borderRadius: 16,
+            backgroundColor: 'rgba(239,68,68,0.45)',
+            opacity: haloOpacity,
+            transform: [{ scale: haloScale }],
+          }}
+        />
+      ) : null}
+      <Pressable
+        onPressIn={onPressIn}
+        onPressOut={onPressOut}
+        disabled={sending}
+        style={[styles.sendBtn, {
+          opacity: sending ? 0.4 : 1,
+          backgroundColor: recording ? '#ef4444' : 'transparent',
+          borderRadius: 16,
+          paddingHorizontal: recording ? 6 : 0,
+        }]}
+        hitSlop={{ top: 14, bottom: 14, left: 10, right: 10 }}
+        accessibilityLabel={t('feed.voiceComment') || 'Voice comment'}
+        accessibilityRole="button"
+        accessibilityHint={t('feed.recordingTip') || 'Hold to record'}
+      >
+        {sending
+          ? <ActivityIndicator size="small" color={ACCENT} />
+          : <IconMic size={20} color={recording ? '#fff' : ACCENT} />}
+      </Pressable>
+    </View>
+  );
+});
+
 export default function FeedComments({ visible, post, colors, isDark, t, user, onClose, onCommentCountChange }) {
   const insets = useSafeAreaInsets();
   const [comments, setComments] = useState([]);
@@ -935,26 +996,17 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
                 </TouchableOpacity>
               ) : (
                 // Voice comment — Instagram-parity. Tap-and-hold to record,
-                // release to upload. Recording state turns the bubble red.
-                <Pressable
+                // release to upload. While recording we wrap the mic button
+                // in an animated pulse halo (WhatsApp-style) so the user
+                // sees the recording is live without needing a separate
+                // status indicator. Halo only mounts while recording.
+                <MicRecordButton
+                  recording={recording}
+                  sending={sending}
                   onPressIn={startRecording}
                   onPressOut={() => stopRecording(false)}
-                  disabled={sending}
-                  style={[styles.sendBtn, {
-                    opacity: sending ? 0.4 : 1,
-                    backgroundColor: recording ? '#ef4444' : 'transparent',
-                    borderRadius: 16,
-                    paddingHorizontal: recording ? 6 : 0,
-                  }]}
-                  hitSlop={{ top: 14, bottom: 14, left: 10, right: 10 }}
-                  accessibilityLabel={t('feed.voiceComment') || 'Voice comment'}
-                  accessibilityRole="button"
-                  accessibilityHint={t('feed.recordingTip') || 'Hold to record'}
-                >
-                  {sending
-                    ? <ActivityIndicator size="small" color={ACCENT} />
-                    : <IconMic size={20} color={recording ? '#fff' : ACCENT} />}
-                </Pressable>
+                  t={t}
+                />
               )}
             </View>
           </View>
