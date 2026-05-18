@@ -1860,7 +1860,7 @@ export default function ComposeScreen() {
               />
             </View>
             <View style={s.bodyMetaRow}>
-              <Text style={[s.bodyMetaText, { color: colors.textTertiary }]}>
+              <Text style={[s.bodyMetaText, { fontSize: 12, color: colors.text, opacity: 0.55 }]}>
                 {(body || '').replace(/<[^>]*>/g, '').length} {t('compose.characters') || 'caracteres'}
               </Text>
             </View>
@@ -2180,6 +2180,7 @@ const s = StyleSheet.create({
     flexDirection: 'row', alignItems: 'flex-start',
     paddingHorizontal: 20, paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
+    position: 'relative',
   },
   contactFieldInner: { flex: 1, minWidth: 0 },
   fieldLabel: {

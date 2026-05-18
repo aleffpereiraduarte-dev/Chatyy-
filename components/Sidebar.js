@@ -126,7 +126,7 @@ function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setD
   const FolderIcon = FOLDER_ICONS[folder.name] || IconFolder;
   const folderColor = FOLDER_COLORS[folder.name] || colors.textSecondary;
   const folderBgColor = FOLDER_BG_COLORS[folder.name] || colors.surfaceVariant;
-  const activeIndicatorWidth = useRef(new Animated.Value(isActive ? 4 : 0)).current;
+  const activeIndicatorWidth = useRef(new Animated.Value(isActive ? 3 : 0)).current;
   const bgOpacity = useRef(new Animated.Value(isActive ? 1 : 0)).current;
   const [hovered, setHovered] = useState(false);
 
@@ -134,7 +134,7 @@ function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setD
     const nd = Platform.OS !== 'web';
     Animated.parallel([
       Animated.spring(activeIndicatorWidth, {
-        toValue: isActive ? 4 : 0,
+        toValue: isActive ? 3 : 0,
         ...AnimTiming.springSnappy,
         useNativeDriver: false,
       }),
@@ -196,13 +196,13 @@ function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setD
             },
           } : {})}
         >
-          {/* Animated active left border — now thicker and colored per folder */}
+          {/* Animated active left border — 3px purple accent for clear selection */}
           <Animated.View
             style={[
               s.activeIndicator,
               {
                 width: activeIndicatorWidth,
-                backgroundColor: folderColor,
+                backgroundColor: colors.primary,
                 borderRadius: 2,
               },
             ]}

@@ -488,15 +488,26 @@ function AnimatedTabBar({ tabs, activeKey, onChange, colors }) {
   const slotW = barW / tabCount;
   const activeIdx = Math.max(0, tabs.findIndex(tb => tb.k === activeKey));
   const indicatorX = useRef(new Animated.Value(activeIdx * slotW)).current;
+  // Crossfade opacity: dip to 0.4 mid-transition and snap back to 1 once
+  // settled, so the underline reads as "lifting" between tabs instead of
+  // sliding through. Driven by a separate Animated.Value so it can dim+
+  // restore in a single sequence.
+  const indicatorOpacity = useRef(new Animated.Value(1)).current;
   useEffect(() => {
     if (!barW) return;
-    Animated.timing(indicatorX, {
-      toValue: activeIdx * slotW,
-      duration: 200,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
-  }, [activeIdx, slotW, barW, indicatorX]);
+    Animated.parallel([
+      Animated.timing(indicatorX, {
+        toValue: activeIdx * slotW,
+        duration: 200,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.sequence([
+        Animated.timing(indicatorOpacity, { toValue: 0.4, duration: 100, useNativeDriver: true }),
+        Animated.timing(indicatorOpacity, { toValue: 1, duration: 100, useNativeDriver: true }),
+      ]),
+    ]).start();
+  }, [activeIdx, slotW, barW, indicatorX, indicatorOpacity]);
   const accent = colors?.text || '#0f172a';
   const muted = colors?.textTertiary || '#9ca3af';
   return (
@@ -549,6 +560,7 @@ function AnimatedTabBar({ tabs, activeKey, onChange, colors }) {
             width: slotW,
             height: 2.5,
             transform: [{ translateX: indicatorX }],
+            opacity: indicatorOpacity,
             backgroundColor: '#7C3AED',
             borderTopLeftRadius: 2,
             borderTopRightRadius: 2,
@@ -1477,7 +1489,7 @@ export default function Profile({
             the page title. */}
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingLeft: headerLeadingSpace }}>
           <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Text style={{ fontSize: 24, fontWeight: '700', color: colors?.text, letterSpacing: -0.4 }} numberOfLines={1}>
+            <Text style={{ fontSize: 24, fontWeight: '700', color: colors?.text, letterSpacing: -0.4, flexShrink: 1 }} numberOfLines={1}>
               {identity.username ? `@${identity.username}` : identity.name}
             </Text>
             {identity.verified && (
@@ -1665,7 +1677,7 @@ export default function Profile({
           {/* Instagram pattern: 3-column stats row to the right of the avatar.
               Uses justifyContent: space-around with each Stat as flex:1 column
               so numbers/labels stay vertically centered with the avatar. */}
-          <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 4 }}>
+          <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', paddingHorizontal: 4 }}>
             <Stat value={postsTotal} label={t?.('profile.posts') || 'Publicações'} colors={colors} />
             <Stat value={social?.followers_count || 0} label={t?.('profile.followers') || 'Seguidores'} colors={colors}
               onPress={() => (onOpenFollowers ? onOpenFollowers(identity.email, 'followers') : setFollowersTab('followers'))} />

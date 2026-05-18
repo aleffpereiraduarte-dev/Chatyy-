@@ -157,6 +157,13 @@ export default function SignupPhone() {
   const heroScale = useRef(new Animated.Value(0.6)).current;
   const heroPulse = useRef(new Animated.Value(0)).current;
   const heroIconFade = useRef(new Animated.Value(1)).current;
+  // Whole-hero opacity that drives a true crossfade between steps (fade-out
+  // → swap → fade-in). Distinct from heroIconFade (only the inner icon) so
+  // the orb + halos also breathe between steps. Telegram polish.
+  const heroFade = useRef(new Animated.Value(1)).current;
+  // Back-button opacity — fades out briefly on step change, back in once the
+  // new step settles. Avoids the "hard cut" feel between phone/otp/name.
+  const backFade = useRef(new Animated.Value(1)).current;
   useEffect(() => {
     if (step === 'done') return;
     heroScale.setValue(0.6);
@@ -164,7 +171,13 @@ export default function SignupPhone() {
     // Crossfade the icon: fade out → swap (already happened via state) → fade in.
     heroIconFade.setValue(0);
     Animated.timing(heroIconFade, { toValue: 1, duration: 280, easing: Easing.bezier(0.23, 1, 0.32, 1), useNativeDriver: true }).start();
-  }, [step, heroScale, heroIconFade]);
+    // Whole hero soft crossfade — fades from 0.4 back to 1 in 220ms.
+    heroFade.setValue(0.4);
+    Animated.timing(heroFade, { toValue: 1, duration: 240, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
+    // Back button gentle fade so the chevron doesn't snap-pop on step change.
+    backFade.setValue(0);
+    Animated.timing(backFade, { toValue: 1, duration: 260, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
+  }, [step, heroScale, heroIconFade, heroFade, backFade]);
   useEffect(() => {
     if (step === 'done') return;
     const loop = Animated.loop(
@@ -592,32 +605,19 @@ export default function SignupPhone() {
       style={[styles.container, { backgroundColor: colors.background }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      {/* Header — back button + brand. paddingTop uses safe-area inset
-          + status bar height so the back chevron + "Chatyy" title never
-          sit behind notches / dynamic island / Android punch-holes
-          (Pixel center, Samsung notch, etc). */}
-      <View style={[styles.header, { paddingTop: Math.max(_insets.top, Platform.OS === 'android' ? (require('react-native').StatusBar.currentHeight || 24) : 44) + 8 }]}>
-        <TouchableOpacity onPress={goBack} style={styles.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityLabel={t('common.back') || 'Voltar'}>
-          <IconArrowLeft size={22} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={[styles.brand, {
-          color: colors.primary,
-          ...(Platform.OS === 'web' ? {
-            backgroundImage: 'linear-gradient(135deg, #5B21B6 0%, #7C3AED 60%, #A78BFA 100%)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            backgroundClip: 'text',
-          } : {}),
-        }]}>Chatyy</Text>
-        <View style={{ width: 32 }} />
-      </View>
-
-      {/* Segmented progress bar — Instagram-grade. 4 segments (phone, otp,
-          name, handle), 3pt tall, 2pt gap. Filled segments use primary,
-          unfilled fall back to a low-contrast track. Hidden on welcome (no
-          progress yet) and done (already finished). */}
+      {/* Segmented progress bar — moved ABOVE the header (Telegram pattern).
+          User-eye landing zone: the very top of the screen tells them "you
+          are at step 2 of 4" before they even read the brand or hero. 4
+          segments (phone, otp, name, handle), 3pt tall, 2pt gap. */}
       {step !== 'welcome' && step !== 'done' && (
-        <View style={{ height: 3, flexDirection: 'row', gap: 2, marginHorizontal: 24, marginTop: 4, marginBottom: 18 }}>
+        <View style={{
+          height: 3,
+          flexDirection: 'row',
+          gap: 2,
+          marginHorizontal: 24,
+          marginTop: Math.max(_insets.top, Platform.OS === 'android' ? (require('react-native').StatusBar.currentHeight || 24) : 44) + 4,
+          marginBottom: 4,
+        }}>
           {(() => {
             const order = ['phone', 'otp', 'name', 'handle'];
             const cur = order.indexOf(step);
@@ -636,6 +636,28 @@ export default function SignupPhone() {
         </View>
       )}
 
+      {/* Header — back button + brand. paddingTop is reduced now that the
+          progress bar above already pushes us off the status bar / notch /
+          punch-hole. Back button wrapped with Animated.View driven by
+          backFade so it gently fades on step change instead of snap-popping. */}
+      <View style={[styles.header, { paddingTop: (step !== 'welcome' && step !== 'done') ? 8 : Math.max(_insets.top, Platform.OS === 'android' ? (require('react-native').StatusBar.currentHeight || 24) : 44) + 8 }]}>
+        <Animated.View style={{ opacity: backFade }}>
+          <TouchableOpacity onPress={goBack} style={styles.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }} accessibilityLabel={t('common.back') || 'Voltar'}>
+            <IconArrowLeft size={22} color={colors.text} />
+          </TouchableOpacity>
+        </Animated.View>
+        <Text style={[styles.brand, {
+          color: colors.primary,
+          ...(Platform.OS === 'web' ? {
+            backgroundImage: 'linear-gradient(135deg, #5B21B6 0%, #7C3AED 60%, #A78BFA 100%)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            backgroundClip: 'text',
+          } : {}),
+        }]}>Chatyy</Text>
+        <View style={{ width: 32 }} />
+      </View>
+
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <Animated.View style={{ opacity: fade, transform: [{ translateY: slide }, { scale: stepScale }], width: '100%' }}>
           {/* Welcome → Telegram-style horizontal carousel. Renders 5 slides
@@ -650,11 +672,12 @@ export default function SignupPhone() {
               keyboard fold. The orb stays on phone + otp where there is no
               competing illustration. */}
           {step !== 'done' && step !== 'name' && step !== 'handle' && (
-            <View style={{ alignItems: 'center', marginBottom: 18 }}>
+            <Animated.View style={{ alignItems: 'center', marginBottom: 18, opacity: heroFade }}>
               {/* Telegram-grade hero: single soft halo behind the brand
                   orb. One entrance scale-pop, no breathing pulse, no triple
                   halo. Icon swaps per step but the orb stays brand-purple
-                  (calm, recognizable). Mirrors login.js L930-957. */}
+                  (calm, recognizable). Mirrors login.js L930-957.
+                  Wrapped in Animated.View w/ heroFade so steps crossfade. */}
               <Animated.View style={{
                 width: 200, height: 200,
                 alignItems: 'center', justifyContent: 'center',
@@ -710,7 +733,7 @@ export default function SignupPhone() {
                   </Animated.View>
                 </View>
               </Animated.View>
-            </View>
+            </Animated.View>
           )}
           {/* Title + sub do step central — escondido no welcome (cada slide tem o seu) */}
           {step !== 'welcome' && (

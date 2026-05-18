@@ -88,7 +88,11 @@ function Row({ icon: Icon, label, value, onPress, colors, destructive, right, ic
 
 function Section({ title, children, colors }) {
   return (
-    <View style={{ marginTop: 24, marginBottom: 8, position: 'relative' }}>
+    <View style={{
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors?.border || 'rgba(0,0,0,0.08)',
+      marginTop: 24, marginBottom: 8, position: 'relative',
+    }}>
       {title && (
         <Text style={{
           fontSize: 11.5, fontWeight: '700', textTransform: 'uppercase',
@@ -131,9 +135,9 @@ function ToggleRow({ icon: Icon, label, value, onChange, colors, description }) 
       <Switch
         value={!!value}
         onValueChange={onChange}
-        trackColor={{ false: '#ccc', true: colors?.primary || ACCENT }}
+        trackColor={{ false: isDarkColors(colors) ? '#3a3a3a' : '#ddd', true: colors?.primary || ACCENT }}
         thumbColor="#fff"
-        ios_backgroundColor="#ccc"
+        ios_backgroundColor={isDarkColors(colors) ? '#3a3a3a' : '#ddd'}
       />
     </View>
   );
@@ -463,8 +467,14 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
       {visibleDanger.length > 0 && (
         <View style={{
           marginTop: 32,
+          marginHorizontal: 16,
           borderTopWidth: 6,
           borderTopColor: colors?.surfaceVariant || colors?.borderLight || '#f1f5f9',
+          backgroundColor: 'rgba(239,68,68,0.08)',
+          borderColor: 'rgba(239,68,68,0.3)',
+          borderWidth: 1,
+          borderRadius: 12,
+          overflow: 'hidden',
         }}>
           <Section title={t?.('settings.dangerZone') || 'Zona de perigo'} colors={colors}>
             {visibleDanger.map(r => (
@@ -613,6 +623,17 @@ function DevicesScreen({ colors, t, onClose, onLogout }) {
     if (sec < 3600) return `${Math.floor(sec / 60)}m`;
     if (sec < 86400) return `${Math.floor(sec / 3600)}h`;
     return `${Math.floor(sec / 86400)}d`;
+  };
+
+  // Age-based pill color: surfaces freshness at a glance. Green (<1h)
+  // reads as "just active", yellow (<24h) as "today-ish", gray (>24h)
+  // as "stale, probably safe to revoke if you don't recognize it".
+  const ageTint = (ts) => {
+    if (!ts) return '#94a3b8';
+    const sec = Math.max(1, Math.floor(Date.now() / 1000) - Number(ts));
+    if (sec < 3600) return '#10b981';
+    if (sec < 86400) return '#f59e0b';
+    return '#94a3b8';
   };
 
   // Pick icon + tint baseado no device_label/user_agent. iPhone roxo,

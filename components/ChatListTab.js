@@ -5867,7 +5867,7 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
         flexDirection: 'row', alignItems: 'center', gap: 12,
         paddingHorizontal: 14, paddingVertical: 12,
       }}>
-        <PeekAvatar email={peerEmail} name={peerName} size={40} />
+        <PeekAvatar email={peerEmail} name={peerName} size={36} />
         <View style={{ flex: 1, minWidth: 0 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <Text style={{ fontSize: 16, fontWeight: '700', color: '#fff', flexShrink: 1, letterSpacing: -0.15 }} numberOfLines={1}>

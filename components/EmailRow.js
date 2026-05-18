@@ -337,11 +337,11 @@ function EmailRow({
           )
         ) : isUnread ? (
           // Unread: 2px colored ring around avatar (Instagram-story style)
-          <View style={{ padding: 2, borderRadius: (dc.avatarSize + 6) / 2, borderWidth: 2, borderColor: colors.primary }}>
-            <AvatarCircle name={email.from_name || email.from} email={email.from} size={dc.avatarSize - 4} />
+          <View style={{ padding: 2, borderRadius: (Math.min(44, dc.avatarSize) + 6) / 2, borderWidth: 2, borderColor: colors.primary }}>
+            <AvatarCircle name={email.from_name || email.from} email={email.from} size={Math.min(44, dc.avatarSize) - 4} />
           </View>
         ) : (
-          <AvatarCircle name={email.from_name || email.from} email={email.from} size={dc.avatarSize} />
+          <AvatarCircle name={email.from_name || email.from} email={email.from} size={Math.min(44, dc.avatarSize)} />
         )}
       </TouchableOpacity>
 
@@ -410,7 +410,7 @@ function EmailRow({
               ? { bg: lbl.color + '22', text: lbl.color, border: lbl.color }
               : LABEL_COLORS.cinza);
             return (
-              <View key={name + i} style={{ paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10, backgroundColor: c.bg, borderWidth: StyleSheet.hairlineWidth, borderColor: c.border + '80' }}>
+              <View key={name + i} style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10, backgroundColor: c.bg, borderWidth: StyleSheet.hairlineWidth, borderColor: c.border + '80' }}>
                 <Text style={{ fontSize: 10, fontWeight: '700', color: c.text, letterSpacing: 0.2 }} numberOfLines={1}>{name}</Text>
               </View>
             );
@@ -606,7 +606,7 @@ const s = StyleSheet.create({
   } : {},
   // Modern accent bar on the left for unread emails (instead of a dot)
   unreadDotLeft: {
-    position: 'absolute', left: 0, top: 8, bottom: 8,
+    position: 'absolute', left: 6, top: 8, bottom: 8,
     width: 3, borderRadius: 2,
     ...Platform.select({
       web: { boxShadow: '0 0 8px rgba(37, 99, 235, 0.35)' },
@@ -653,7 +653,7 @@ const s = StyleSheet.create({
   },
   swipeHintText: { fontSize: 12, fontWeight: '500' },
   // Hover actions
-  hoverActions: { flexDirection: 'row', gap: 4, marginLeft: Spacing.sm },
+  hoverActions: { flexDirection: 'row', gap: 6, marginLeft: Spacing.sm },
   hoverBtn: {
     width: 34, height: 34, borderRadius: 12,
     justifyContent: 'center', alignItems: 'center',

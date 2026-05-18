@@ -514,9 +514,9 @@ const MusicEqualizer = memo(function MusicEqualizer() {
   ]).current;
   useEffect(() => {
     const cfgs = [
-      { dur: [320, 460], min: 0.25, max: 1 },
-      { dur: [380, 520], min: 0.40, max: 0.95 },
-      { dur: [300, 440], min: 0.30, max: 0.90 },
+      { dur: [280, 400], min: 0.25, max: 1 },
+      { dur: [330, 450], min: 0.40, max: 0.95 },
+      { dur: [290, 410], min: 0.30, max: 0.90 },
     ];
     const loops = bars.map((v, i) => {
       const c = cfgs[i];
@@ -951,6 +951,31 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
   const [soundSaved, setSoundSaved] = useState(!!reel.sound_saved);
   useEffect(() => { setSoundSaved(!!reel.sound_saved); }, [reel.sound_saved, reel.id]);
 
+  // Follow state — mirrors reel.user_following (server-hydrated). Inline
+  // "Follow" button next to the avatar only renders for other users we
+  // don't already follow. Optimistic flip + rollback on failure.
+  const [followed, setFollowed] = useState(!!(reel.user_following || reel.is_following));
+  useEffect(() => {
+    setFollowed(!!(reel.user_following || reel.is_following));
+  }, [reel.user_following, reel.is_following, reel.id]);
+  const isOtherUser = !!reel.author_email
+    && String(reel.author_email).toLowerCase() !== String(user?.email || '').toLowerCase();
+  const followInFlightRef = useRef(false);
+  const handleFollow = useCallback(async () => {
+    if (followInFlightRef.current) return;
+    if (!reel?.author_email) return;
+    followInFlightRef.current = true;
+    setFollowed(true);
+    try { require('expo-haptics').selectionAsync(); } catch {}
+    try {
+      await api.followUser?.(reel.author_email);
+    } catch {
+      setFollowed(false);
+    } finally {
+      followInFlightRef.current = false;
+    }
+  }, [reel?.author_email]);
+
   const pushDiamondBurst = useCallback((label) => {
     burstSeqRef.current += 1;
     const key = burstSeqRef.current;
@@ -1331,6 +1356,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
               width: '100%',
               height: '100%',
               objectFit: 'cover',
+              aspectRatio: '9 / 16',
               backgroundColor: '#000',
             }}
             loop
@@ -1434,9 +1460,18 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
               <AvatarCircle email={reel.author_email} name={reel.author_name} size={36} />
             </View>
           )}
-          <View style={styles.profileFollowBadge}>
-            <Text style={styles.profileFollowPlus}>+</Text>
-          </View>
+          {/* Plus-badge only when not yet followed and is another user. */}
+          {!followed && isOtherUser ? (
+            <TouchableOpacity
+              onPress={handleFollow}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={styles.profileFollowBadge}
+              accessibilityLabel={t?.('feed.follow') || 'Follow'}
+              accessibilityRole="button"
+            >
+              <Text style={styles.profileFollowPlus}>+</Text>
+            </TouchableOpacity>
+          ) : null}
         </TouchableOpacity>
 
         {/* Like */}
@@ -1496,7 +1531,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
           accessibilityLabel={t('feed.share') || 'Compartilhar'}
           accessibilityRole="button"
         >
-          <IconShare size={26} color="#fff" />
+          <IconShare size={28} color="#fff" />
         </TouchableOpacity>
 
         {/* Playback speed — TikTok parity. Tap cycles 1x → 1.5x → 2x → 0.5x.
@@ -1523,7 +1558,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
         {/* Views */}
         {viewCount > 0 && (
           <View style={styles.sidebarBtn}>
-            <IconEye size={24} color="#fff" />
+            <IconEye size={28} color="#fff" />
             <Text style={styles.sidebarCount}>{formatCount(viewCount)}</Text>
           </View>
         )}
@@ -1538,9 +1573,9 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
             accessibilityRole="button"
           >
             {bookmarked ? (
-              <IconBookmarkFilled size={26} color="#fff" />
+              <IconBookmarkFilled size={28} color="#fff" />
             ) : (
-              <IconBookmark size={26} color="#fff" />
+              <IconBookmark size={28} color="#fff" />
             )}
           </TouchableOpacity>
         </Animated.View>
@@ -1554,7 +1589,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
           accessibilityLabel={t?.('common.more') || 'More'}
           accessibilityRole="button"
         >
-          <IconMoreHorizontal size={26} color="#fff" />
+          <IconMoreHorizontal size={28} color="#fff" />
         </TouchableOpacity>
 
         {/* Spinning album art disc — tap to jump to the sound feed
@@ -2276,9 +2311,9 @@ const styles = StyleSheet.create({
     ...TEXT_SHADOW,
   },
   moreText: {
-    color: 'rgba(255,255,255,0.65)',
+    color: '#a78bfa',
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '600',
     marginTop: 2,
   },
 
@@ -2335,21 +2370,21 @@ const styles = StyleSheet.create({
   },
 
   // ── Progress bar ──
-  // Trimmed to 1.5px (was 3px) — TikTok-thin so the bar is informative
-  // without intruding on the video. Track tinted faintly so the fill
-  // visibly wins.
+  // Bumped to 3px so the track reads at a glance even on smaller screens.
+  // Track tint also raised slightly so the empty portion stays legible
+  // against bright/light video content (white sky etc.).
   progressBar: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    height: 1.5,
-    backgroundColor: 'rgba(255,255,255,0.18)',
+    height: 3,
+    backgroundColor: 'rgba(255,255,255,0.25)',
     zIndex: 15,
   },
   // Brand purple → pink gradient with a soft halo on web. Native uses a
   // solid brand purple (RN Animated doesn't render CSS gradients cheaply
-  // and react-native-svg <LinearGradient> on a 1.5px bar isn't worth it).
+  // and react-native-svg <LinearGradient> on a 3px bar isn't worth it).
   progressFill: {
     height: '100%',
     backgroundColor: '#7C3AED',
@@ -2360,11 +2395,14 @@ const styles = StyleSheet.create({
     } : {}),
   },
 
-  // ── Particle burst (anchored to screen center for the like-celebration) ──
+  // ── Particle burst (anchored to the like button on the right rail
+  // so the hearts irradiate FROM the icon the user just tapped). ──
   particleBurstWrap: {
     ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: 'flex-end',
+    justifyContent: 'flex-end',
+    paddingBottom: 100,
+    paddingRight: 32,
     zIndex: 19,
   },
 
@@ -2409,7 +2447,7 @@ const styles = StyleSheet.create({
   },
   sheetHandle: {
     alignItems: 'center',
-    paddingVertical: 10,
+    paddingVertical: 16,
   },
   // Why: handle bar grew (36×4 → 44×5) so the drag affordance reads more
   // substantial — TikTok/Instagram both use ~44px. Header title bumped from

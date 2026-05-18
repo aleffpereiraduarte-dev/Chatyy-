@@ -3473,6 +3473,7 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.xs + 2,
     flexWrap: 'wrap', gap: 4,
     marginTop: 2,
+    minHeight: 44,
   },
   breadcrumbPill: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
@@ -3491,8 +3492,9 @@ const styles = StyleSheet.create({
   },
 
   // Item card - glassmorphism
+  // Structure: [icon] [info flex:1] [star]
   itemCard: {
-    flexDirection: 'row', alignItems: 'center',
+    flexDirection: 'row', alignItems: 'center', gap: 12,
     borderRadius: BorderRadius.xl, padding: Spacing.md,
     borderWidth: 1, marginBottom: 4,
     ...Shadow.md,

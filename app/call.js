@@ -394,8 +394,11 @@ function CallScreenInner() {
       onPanResponderMove: Animated.event([null, { dx: pipPosition.x, dy: pipPosition.y }], { useNativeDriver: false }),
       onPanResponderRelease: (_, g) => {
         pipPosition.flattenOffset();
-        const snapX = g.moveX > SCREEN_W / 2 ? SCREEN_W - 126 : 16;
-        const snapY = Math.max(60, Math.min(g.moveY - 80, SCREEN_H - 340));
+        // Apply velocity decay (FaceTime-style fling) before snapping.
+        const projX = g.moveX + (g.vx || 0) * 0.15 * SCREEN_W;
+        const projY = g.moveY + (g.vy || 0) * 0.15 * SCREEN_H;
+        const snapX = projX > SCREEN_W / 2 ? SCREEN_W - 126 : 16;
+        const snapY = Math.max(60, Math.min(projY - 80, SCREEN_H - 340));
         Animated.spring(pipPosition, { toValue: { x: snapX, y: snapY }, friction: 7, tension: 100, useNativeDriver: false }).start();
       },
     })
@@ -2616,7 +2619,7 @@ function CallScreenInner() {
 
           {/* Center avatar (audio-only / pre-connect) */}
           {!showRemoteVideo && (
-            <View style={styles.centerArea}>
+            <View style={[styles.centerArea, { paddingTop: insets.top, paddingBottom: insets.bottom + 180 }]}>
               {!peerConnected && (
                 <>
                   <Animated.View style={[styles.pulseRing, styles.pulseRingOuter, {
@@ -2643,9 +2646,9 @@ function CallScreenInner() {
                   style={[
                     styles.speakingRing,
                     {
-                      width: (isVideoCall ? 140 : 168) + 28,
-                      height: (isVideoCall ? 140 : 168) + 28,
-                      borderRadius: ((isVideoCall ? 140 : 168) + 28) / 2,
+                      width: 150 + 28,
+                      height: 150 + 28,
+                      borderRadius: (150 + 28) / 2,
                       opacity: speakingPulseAnim.interpolate({
                         inputRange: [0, 1],
                         outputRange: [0.25, 0.85],
@@ -2661,7 +2664,7 @@ function CallScreenInner() {
                 />
               )}
               <Animated.View style={{ transform: [{ scale: peerConnected ? 1 : pulseAnim }] }}>
-                <AvatarCircle name={callerName} email={_safePeerEmail} size={isVideoCall ? 140 : 168} />
+                <AvatarCircle name={callerName} email={_safePeerEmail} size={150} />
                 {(() => {
                   if (!isGroupCall) return null;
                   const key = (contactEmail || '').toLowerCase();
@@ -2715,7 +2718,7 @@ function CallScreenInner() {
 
           {/* Video connected — minimal overlay */}
           {showRemoteVideo && (
-            <View style={styles.centerArea}>
+            <View style={[styles.centerArea, { paddingTop: insets.top, paddingBottom: insets.bottom + 180 }]}>
               <View style={{ flex: 1 }} />
               {ended && (
                 <Text style={styles.endedHint}>{t('call.ended') || 'Chamada encerrada'}</Text>
@@ -2751,7 +2754,7 @@ function CallScreenInner() {
       {LK_VideoView && localVideoTrack && videoEnabled && (
         <Animated.View
           {...pipPanResponder.panHandlers}
-          style={[styles.localVideoContainer, { transform: pipPosition.getTranslateTransform() }]}
+          style={[styles.localVideoContainer, { top: insets.top + 16, transform: pipPosition.getTranslateTransform() }]}
         >
           <LK_VideoView
             videoTrack={localVideoTrack}
@@ -3446,7 +3449,7 @@ const styles = StyleSheet.create({
   controlBtnCircleScreenShare: { backgroundColor: '#7C3AED' },
   controlLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 11, fontWeight: '500', textAlign: 'center' },
   localVideoContainer: {
-    position: 'absolute', left: 0, top: 0,
+    position: 'absolute', right: 16, top: 16,
     width: 110, height: 156, borderRadius: 18, overflow: 'hidden', zIndex: 30,
     elevation: 12, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.32)',
     shadowColor: '#000', shadowOpacity: 0.45, shadowRadius: 14, shadowOffset: { width: 0, height: 6 },
@@ -3582,13 +3585,14 @@ const styles = StyleSheet.create({
   statusStripSide: { flex: 1, flexDirection: 'row', alignItems: 'center', minHeight: 24 },
   statusStripCenter: { minWidth: 64, alignItems: 'center', justifyContent: 'center' },
   statusStripDuration: {
+    position: 'absolute', bottom: 200, alignSelf: 'center',
     color: '#fff', fontSize: 14, fontWeight: '700',
     fontVariant: ['tabular-nums'], letterSpacing: 0.4,
     backgroundColor: 'rgba(0,0,0,0.35)', paddingHorizontal: 10, paddingVertical: 3,
     borderRadius: 10, overflow: 'hidden',
   },
   pipBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
-  centerNameAudio: { fontSize: 32, fontWeight: '800', letterSpacing: -0.6, marginTop: 28 },
+  centerNameAudio: { fontSize: 32, fontWeight: '700', letterSpacing: -0.6, marginTop: 28 },
   videoVignette: { ...StyleSheet.absoluteFillObject, zIndex: 1 },
   videoVignetteTop: { position: 'absolute', top: 0, left: 0, right: 0, height: 90, backgroundColor: 'rgba(0,0,0,0.45)' },
   videoVignetteBottom: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 220, backgroundColor: 'rgba(0,0,0,0.55)' },

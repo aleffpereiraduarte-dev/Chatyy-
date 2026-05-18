@@ -11,8 +11,8 @@
  * Used by signup-phone.js when step==='welcome' (the new initial step,
  * unless phone was forwarded from login).
  */
-import { useState, useRef, useMemo } from 'react';
-import { View, Text, TouchableOpacity, Animated, Dimensions, PanResponder, StyleSheet, Platform, StatusBar } from 'react-native';
+import { useState, useRef, useMemo, useEffect } from 'react';
+import { View, Text, TouchableOpacity, Pressable, Animated, Dimensions, PanResponder, StyleSheet, Platform, StatusBar } from 'react-native';
 import Svg, { Path, Rect, Circle, Line, Defs, LinearGradient, Stop, Ellipse, G } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
@@ -263,16 +263,15 @@ export default function SignupIntro({ onFinish }) {
       {/* Skip button — top right, only shown before the last slide.
           Telegram-style: cheap escape hatch for returning users. */}
       {!isLast && (
-        <TouchableOpacity
+        <Pressable
           accessibilityRole="button"
           accessibilityLabel={skipLabel}
-          activeOpacity={0.6}
           onPress={finishWithFade}
-          style={[styles.skipBtn, { top: topPad + 4 }]}
+          style={({ pressed }) => [styles.skipBtn, { top: topPad + 4, opacity: pressed ? 0.5 : 1 }]}
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
         >
           <Text style={[styles.skipLabel, { color: isDark ? '#9ca3af' : '#6b7280' }]}>{skipLabel}</Text>
-        </TouchableOpacity>
+        </Pressable>
       )}
 
       <View style={{ flex: 1, overflow: 'hidden' }} {...pan.panHandlers}>
@@ -307,10 +306,24 @@ export default function SignupIntro({ onFinish }) {
       </View>
 
       {/* Dots — animated active dot grows wider (Telegram pattern).
-          Tapping a dot jumps to that slide. */}
+          Each dot has its own Animated.Value that interpolates width 8→24
+          and opacity 0.4→1 between idle and active state, springing on
+          slide change. Tapping a dot jumps to that slide. */}
       <View style={styles.dotsRow}>
         {SLIDES.map((_, i) => {
           const isActive = i === idx;
+          // eslint-disable-next-line react-hooks/rules-of-hooks
+          const dotAnim = useRef(new Animated.Value(isActive ? 1 : 0)).current;
+          // eslint-disable-next-line react-hooks/rules-of-hooks
+          useEffect(() => {
+            Animated.spring(dotAnim, {
+              toValue: isActive ? 1 : 0,
+              tension: 80, friction: 12,
+              useNativeDriver: false,
+            }).start();
+          }, [isActive, dotAnim]);
+          const widthInterp = dotAnim.interpolate({ inputRange: [0, 1], outputRange: [8, 24] });
+          const opacityInterp = dotAnim.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] });
           return (
             <TouchableOpacity
               key={i}
@@ -318,9 +331,10 @@ export default function SignupIntro({ onFinish }) {
               onPress={() => animateTo(i)}
               hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
             >
-              <View style={[styles.dot, {
+              <Animated.View style={[styles.dot, {
                 backgroundColor: isActive ? '#7c3aed' : (isDark ? '#374151' : '#d1d5db'),
-                width: isActive ? 28 : 8,
+                width: widthInterp,
+                opacity: opacityInterp,
               }]} />
             </TouchableOpacity>
           );
@@ -328,23 +342,36 @@ export default function SignupIntro({ onFinish }) {
       </View>
 
       <View style={styles.ctaWrap}>
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={handleNext}
-          style={[styles.cta, {
-            // Saturated brand purple — mockup matches `#7c3aed`. The previous
-            // washed `#a78bfa` looked anemic next to the bold typography.
-            backgroundColor: '#7c3aed',
-            ...(Platform.OS === 'web'
-              ? { boxShadow: '0 8px 24px rgba(124,58,237,0.42), inset 0 1px 0 rgba(255,255,255,0.18)' }
-              : Platform.select({
-                  ios: { shadowColor: '#7c3aed', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.42, shadowRadius: 18 },
-                  android: { elevation: 8 },
-                })),
-          }]}
-        >
-          <Text style={styles.ctaLabel}>{ctaLabel}</Text>
-        </TouchableOpacity>
+        {(() => {
+          // Press-spring: scale 1→0.95 on pressIn, back to 1 on pressOut.
+          // Matches iOS-native button "tap" feel (Telegram/iMessage pattern).
+          const ctaScale = useRef(new Animated.Value(1)).current;
+          const _pressIn = () => Animated.spring(ctaScale, { toValue: 0.95, tension: 220, friction: 10, useNativeDriver: true }).start();
+          const _pressOut = () => Animated.spring(ctaScale, { toValue: 1, tension: 220, friction: 10, useNativeDriver: true }).start();
+          return (
+            <Animated.View style={{ transform: [{ scale: ctaScale }] }}>
+              <TouchableOpacity
+                activeOpacity={0.85}
+                onPress={handleNext}
+                onPressIn={_pressIn}
+                onPressOut={_pressOut}
+                style={[styles.cta, {
+                  // Saturated brand purple — mockup matches `#7c3aed`. The previous
+                  // washed `#a78bfa` looked anemic next to the bold typography.
+                  backgroundColor: '#7c3aed',
+                  ...(Platform.OS === 'web'
+                    ? { boxShadow: '0 8px 24px rgba(124,58,237,0.42), inset 0 1px 0 rgba(255,255,255,0.18)' }
+                    : Platform.select({
+                        ios: { shadowColor: '#7c3aed', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.42, shadowRadius: 18 },
+                        android: { elevation: 8 },
+                      })),
+                }]}
+              >
+                <Text style={styles.ctaLabel}>{ctaLabel}</Text>
+              </TouchableOpacity>
+            </Animated.View>
+          );
+        })()}
       </View>
     </Animated.View>
   );

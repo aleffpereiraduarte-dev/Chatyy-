@@ -171,12 +171,12 @@ function AvatarStack({ meeting, colors }) {
   return (
     <View style={styles.avatarStack}>
       {list.map((p, idx) => (
-        <View key={(p.email || p.name || idx) + ':' + idx} style={[styles.avatarStackItem, { marginLeft: idx === 0 ? 0 : -10, zIndex: 10 - idx, borderColor: colors.surface }]}>
+        <View key={(p.email || p.name || idx) + ':' + idx} style={[styles.avatarStackItem, { marginLeft: idx === 0 ? 0 : -12, zIndex: 10 - idx, borderColor: colors.surface }]}>
           <AvatarCircle name={p.name || p.email} email={p.email} size={28} />
         </View>
       ))}
       {extra > 0 && (
-        <View style={[styles.avatarStackItem, styles.avatarStackExtra, { marginLeft: list.length === 0 ? 0 : -10, backgroundColor: colors.surfaceVariant, borderColor: colors.surface }]}>
+        <View style={[styles.avatarStackItem, styles.avatarStackExtra, { marginLeft: list.length === 0 ? 0 : -12, backgroundColor: colors.surfaceVariant, borderColor: colors.surface }]}>
           <Text style={[styles.avatarStackExtraText, { color: colors.textSecondary }]} numberOfLines={1}>+{extra}</Text>
         </View>
       )}
@@ -192,6 +192,7 @@ function HeroLiveCard({ meeting, colors, isDark, onPress, onJoin, t }) {
       style={[styles.heroCard, { shadowColor: ACCENT }]}
     >
       <View style={[styles.heroBg, { backgroundColor: ACCENT }]} />
+      <View style={styles.heroHighlight} pointerEvents="none" />
       <View style={[styles.heroOverlay, { backgroundColor: isDark ? 'rgba(0,0,0,0.18)' : 'rgba(255,255,255,0.04)' }]} />
       <View style={styles.heroContent}>
         <View style={styles.heroTopRow}>
@@ -260,7 +261,7 @@ function MeetingCard({ meeting, colors, isDark, onPress, onJoin, onCopy, t, high
           ) : (
             <View style={[styles.timePill, { backgroundColor: (highlightAmber ? AMBER : ACCENT) + '14' }]}>
               <IconClock size={11} color={highlightAmber ? AMBER : ACCENT} />
-              <Text style={[styles.timePillText, { color: highlightAmber ? AMBER : ACCENT }]} numberOfLines={1}>{timeLabel}</Text>
+              <Text style={[styles.timePillText, { color: highlightAmber ? AMBER : ACCENT }]} numberOfLines={1} ellipsizeMode="tail">{timeLabel}</Text>
             </View>
           )}
           <TouchableOpacity onPress={onCopy} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -627,12 +628,14 @@ function MeetingsScreenInner() {
         </View>
       )}
       {otherMeetings.length > 0 && (showHero || showSoon) && (
-        <SectionHeader
-          label={tab === 'past'
-            ? (t?.('_locale')?.startsWith('pt') ? 'Anteriores' : 'Past')
-            : (t?.('_locale')?.startsWith('pt') ? 'Mais reuniões' : 'More meetings')}
-          color={ACCENT}
-        />
+        <View style={{ borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, paddingTop: 16, marginTop: 8 }}>
+          <SectionHeader
+            label={tab === 'past'
+              ? (t?.('_locale')?.startsWith('pt') ? 'Anteriores' : 'Past')
+              : (t?.('_locale')?.startsWith('pt') ? 'Mais reuniões' : 'More meetings')}
+            color={ACCENT}
+          />
+        </View>
       )}
     </View>
   );
@@ -809,6 +812,10 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.25, shadowRadius: 14, elevation: 6,
   },
   heroBg: { ...StyleSheet.absoluteFillObject },
+  heroHighlight: {
+    position: 'absolute', top: -40, right: -40, width: 200, height: 200, borderRadius: 100,
+    backgroundColor: 'rgba(255,255,255,0.10)',
+  },
   heroOverlay: { ...StyleSheet.absoluteFillObject },
   heroContent: { padding: 16, gap: 8 },
   heroTopRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
@@ -832,8 +839,8 @@ const styles = StyleSheet.create({
     borderRadius: 16, padding: Spacing.md,
     marginBottom: Spacing.sm,
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
     elevation: 3,
   },
   cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
@@ -877,7 +884,7 @@ const styles = StyleSheet.create({
   cardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
   hostText: { fontSize: FontSize.xs, flex: 1 },
 
-  rsvpBadge: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 12 },
+  rsvpBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 12, minHeight: 24, alignItems: 'center', justifyContent: 'center' },
   rsvpText: { fontSize: FontSize.xs, fontWeight: '700' },
 
   copyBtn: {

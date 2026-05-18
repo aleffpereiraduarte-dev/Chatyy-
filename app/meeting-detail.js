@@ -308,7 +308,7 @@ export default function MeetingDetailScreen() {
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView
-        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, Spacing.lg) + Spacing.lg }}
+        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, Spacing.lg) + Spacing.lg + 72 }}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadInfo(); }} colors={[ACCENT]} tintColor={ACCENT} />}
       >
@@ -373,23 +373,6 @@ export default function MeetingDetailScreen() {
 
         {/* PRIMARY CTA — sticky-ish (top of action area, big purple) */}
         <View style={styles.actionsWrap}>
-          {!isFinished && (active || joinable) && (
-            <TouchableOpacity
-              style={[styles.primaryCta, joining && { opacity: 0.7 }]}
-              onPress={handleJoin}
-              disabled={joining}
-              activeOpacity={0.85}
-            >
-              {joining ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <>
-                  <IconVideo size={20} color="#fff" style={{ marginRight: Spacing.sm }} />
-                  <Text style={styles.primaryCtaText}>{t('meetingDetail.joinMeeting') || 'Entrar na reunião'}</Text>
-                </>
-              )}
-            </TouchableOpacity>
-          )}
           {!isFinished && scheduled && !joinable && meeting.scheduled_at && (
             <View style={[styles.primaryCtaDisabled, { backgroundColor: isDark ? colors.surfaceVariant || '#2a2a35' : '#eef2f7' }]}>
               <IconClock size={18} color={isDark ? colors.textSecondary : '#64748b'} style={{ marginRight: Spacing.sm }} />
@@ -412,6 +395,8 @@ export default function MeetingDetailScreen() {
               onPress={() => router.push('/meeting-recap?id=' + recapId)}
               activeOpacity={0.85}
             >
+              <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(167,139,250,0.08)', borderRadius: 18 }]} />
+              <View pointerEvents="none" style={[styles.recapGradientBlob]} />
               <View style={[styles.recapIconWrap, { backgroundColor: ACCENT }]}>
                 <IconSparkles size={22} color="#fff" />
               </View>
@@ -674,6 +659,23 @@ export default function MeetingDetailScreen() {
           </View>
         </View>
       </ScrollView>
+      {!isFinished && (active || joinable) && (
+        <TouchableOpacity
+          style={[styles.primaryCta, styles.primaryCtaSticky, { bottom: insets.bottom + 16 }, joining && { opacity: 0.7 }]}
+          onPress={handleJoin}
+          disabled={joining}
+          activeOpacity={0.85}
+        >
+          {joining ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <>
+              <IconVideo size={20} color="#fff" style={{ marginRight: Spacing.sm }} />
+              <Text style={styles.primaryCtaText}>{t('meetingDetail.joinMeeting') || 'Entrar na reunião'}</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
@@ -769,7 +771,7 @@ const styles = StyleSheet.create({
   heroOrganizerRow: {
     flexDirection: 'row', alignItems: 'center',
     backgroundColor: 'rgba(255,255,255,0.12)',
-    paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm + 2,
+    paddingHorizontal: Spacing.md, paddingVertical: Spacing.md,
     borderRadius: 16,
   },
   heroOrganizerName: { color: '#fff', fontSize: FontSize.base, fontWeight: '700' },
@@ -810,6 +812,12 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? { boxShadow: '0 8px 22px rgba(124,58,237,0.4)', cursor: 'pointer', transition: 'transform 180ms ease' } : {}),
   },
   primaryCtaText: { color: '#fff', fontSize: FontSize.lg, fontWeight: '800', letterSpacing: -0.3 },
+  primaryCtaSticky: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    zIndex: 50,
+  },
   primaryCtaDisabled: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     paddingVertical: 16,
@@ -823,6 +831,12 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     borderWidth: 1.5,
     marginTop: Spacing.md,
+    overflow: 'hidden',
+  },
+  recapGradientBlob: {
+    position: 'absolute', right: -30, top: -30,
+    width: 140, height: 140, borderRadius: 70,
+    backgroundColor: 'rgba(167,139,250,0.18)',
   },
   recapIconWrap: {
     width: 44, height: 44, borderRadius: 14,
@@ -867,7 +881,8 @@ const styles = StyleSheet.create({
     gap: Spacing.sm,
   },
   detailPill: {
-    width: '48%',
+    width: '47%',
+    maxWidth: 280,
     flexGrow: 1,
     minWidth: 140,
     borderRadius: 16,
@@ -901,14 +916,14 @@ const styles = StyleSheet.create({
   rsvpBtnText: { fontWeight: '700', fontSize: FontSize.base },
 
   /* Participants horizontal */
-  participantsScroll: { paddingVertical: Spacing.xs, gap: Spacing.md },
+  participantsScroll: { paddingVertical: Spacing.xs, paddingRight: 16, gap: Spacing.md },
   participantTile: {
     width: 76,
     alignItems: 'center',
   },
   participantAvatarWrap: { position: 'relative', marginBottom: Spacing.xs },
   hostStar: {
-    position: 'absolute', right: -2, bottom: -2,
+    position: 'absolute', right: -4, bottom: -4,
     width: 18, height: 18, borderRadius: 9,
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 2,

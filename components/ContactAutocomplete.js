@@ -344,6 +344,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     minHeight: 40,
     gap: 6,
+    ...(Platform.OS === 'web' ? { overflowX: 'auto' } : { flexShrink: 1 }),
   },
   // Chips. Why: chips were sub-pill (12 radius); bumped to 14 with extra
   // vertical padding so they read like real recipient tags (Apple Mail / Gmail
@@ -355,7 +356,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingLeft: 10,
     paddingRight: 8,
-    paddingVertical: 7,
+    paddingVertical: 8,
     maxWidth: 240,
     gap: 6,
     ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease', cursor: 'default' } : {}),

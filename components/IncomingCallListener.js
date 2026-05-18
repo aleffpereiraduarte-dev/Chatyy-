@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, Platform, Animated, Easing, Dimensions, AppState } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
@@ -249,6 +250,7 @@ export default function IncomingCallListener() {
   const { user } = useAuth();
   const { t } = useLanguage();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [call, setCall] = useState(null);
   const callStateRef = useRef(null); // Ref to avoid stale closure in CallKit callbacks
   const timeoutRef = useRef(null);
@@ -1594,7 +1596,7 @@ export default function IncomingCallListener() {
         </View>
 
         {/* Bottom - Accept / Decline */}
-        <View style={styles.bottomSection}>
+        <View style={[styles.bottomSection, { paddingBottom: insets.bottom + 24 }]}>
           <View style={styles.actionRow}>
             <TouchableOpacity onPress={handleDecline} style={styles.actionItem} activeOpacity={0.7}>
               <View style={[styles.actionBtn, styles.declineBtn]}>
@@ -1610,6 +1612,32 @@ export default function IncomingCallListener() {
               <Text style={styles.actionLabel}>{t('call.accept') || 'Atender'}</Text>
             </TouchableOpacity>
           </View>
+
+          {/* "Mensagem" button — opens DeclineWithMessageSheet via the
+              shared global trigger that the sheet polls for. Lets the
+              callee dismiss with a quick reply instead of just hanging up. */}
+          <TouchableOpacity
+            onPress={() => {
+              try {
+                const c = callStateRef.current || call;
+                if (c && c.call_id) {
+                  globalThis.__chatyyPendingDeclineWithMessage = {
+                    callId: String(c.call_id),
+                    toEmail: c.caller_email || '',
+                    conversationId: c.conversation_id || '',
+                    ts: Date.now(),
+                  };
+                }
+              } catch {}
+              handleDecline();
+            }}
+            style={styles.messageBtn}
+            activeOpacity={0.7}
+            accessibilityLabel={t('call.declineWithMessage') || 'Mensagem'}
+            accessibilityRole="button"
+          >
+            <Text style={styles.messageBtnLabel}>{t('call.declineWithMessage') || 'Mensagem'}</Text>
+          </TouchableOpacity>
         </View>
       </Animated.View>
     </Modal>

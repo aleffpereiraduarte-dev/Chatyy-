@@ -2630,7 +2630,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
 
       {/* FABs — Telegram-grade glass orbs */}
       <BrandFab
-        style={{ position: 'absolute', bottom: 96, right: 24 }}
+        style={{ position: 'absolute', bottom: (insets?.bottom || 0) + 84, right: 24 }}
         size={48}
         variant="secondary"
         surfaceColor={isDark ? '#2a2e2b' : '#fff'}
@@ -2642,7 +2642,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
         <IconCamera size={22} color={ACCENT} />
       </BrandFab>
       <BrandFab
-        style={{ position: 'absolute', bottom: 28, right: 20 }}
+        style={{ position: 'absolute', bottom: (insets?.bottom || 0) + 16, right: 20 }}
         size={58}
         color={ACCENT}
         onPress={() => openCreator('text')}
@@ -4832,7 +4832,7 @@ const styles = StyleSheet.create({
   storyItem: {
     alignItems: 'center',
     width: 80,
-    marginRight: 6,
+    marginRight: 8,
   },
   storyAvatarWrap: {
     position: 'relative',

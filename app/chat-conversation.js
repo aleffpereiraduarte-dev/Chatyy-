@@ -646,7 +646,7 @@ function TypingBubble({ name, colors, recording, t, active = true, entries = nul
   return (
     <Animated.View style={{ alignSelf: 'flex-start', marginBottom: 10, marginLeft: 14, opacity: bubbleOpacity, transform: [{ scale: bubbleScale }, { translateY: bubbleY }] }}>
       {name && (
-        <Text style={{ fontSize: 11.5, color: colors.textTertiary, marginBottom: 4, marginLeft: stackList ? 0 : 10, fontWeight: '700', letterSpacing: 0 }} numberOfLines={1}>
+        <Text style={{ fontSize: 11.5, color: colors.textTertiary, marginBottom: 8, marginLeft: stackList ? 0 : 10, fontWeight: '700', letterSpacing: 0 }} numberOfLines={1}>
           {name}{labelSuffix}
         </Text>
       )}
@@ -1479,7 +1479,7 @@ const linkPreviewStyles = StyleSheet.create({
     color: '#fff', fontSize: 32, fontWeight: '700', letterSpacing: 1,
     textShadowColor: 'rgba(0,0,0,0.25)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2,
   },
-  textContainer: { paddingHorizontal: 10, paddingVertical: 8 },
+  textContainer: { paddingHorizontal: 12, paddingVertical: 8 },
   domain: { fontSize: 10, textTransform: 'uppercase', marginBottom: 3, letterSpacing: 0.5, fontWeight: '600' },
   title: { fontSize: 13, fontWeight: '600', marginBottom: 2, lineHeight: 18 },
   desc: { fontSize: 12, lineHeight: 16, opacity: 0.85 },
@@ -2673,7 +2673,7 @@ const audioStyles = StyleSheet.create({
     }),
   },
   trackWrap: { flex: 1, marginLeft: 10 },
-  waveformRow: { flexDirection: 'row', alignItems: 'center', gap: 1.5, height: 32 },
+  waveformRow: { flexDirection: 'row', alignItems: 'center', gap: 1.5, height: 36, flex: 1 },
   duration: { fontSize: 10, marginTop: 4, fontWeight: '600', letterSpacing: 0.3 },
 });
 
@@ -2739,7 +2739,7 @@ function VoicemailBubble({ voicemail, messageId, isOwn, colors, t, ownTextColor,
   return (
     <View style={{ minWidth: 240, maxWidth: 300, paddingVertical: 2 }}>
       <View style={{
-        flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6,
+        flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4,
       }}>
         <Text style={{ fontSize: 18 }}>🎤</Text>
         <View style={{ flex: 1 }}>
@@ -14529,7 +14529,7 @@ export default function ChatConversationScreen() {
       const n = items.length;
       const isOwn = item.sender_email === currentEmail;
       // Grid geometry: small → full-bleed row, 2 → side-by-side, 3 → big-left + 2-right stack, 4+ → 2×2 with "+N" overlay on 4th if n > 4.
-      const GAP = 2;
+      const GAP = 4;
       const maxW = Math.min(280, Dimensions.get('window').width - 100);
       const maxH = 320;
       const cellStyle = (w, h) => ({
@@ -16109,7 +16109,7 @@ export default function ChatConversationScreen() {
           };
 
           return (
-            <View style={{ minWidth: 220, maxWidth: 280 }}>
+            <View style={{ minWidth: 180, maxWidth: 300 }}>
               <TouchableOpacity
                 activeOpacity={0.78}
                 onPress={onTapStatus}
@@ -24638,11 +24638,11 @@ const styles = StyleSheet.create({
   // WhatsApp ~2-3dp mid-group). `msgRowGroupEnd` bumps this up for the
   // last msg in the group so the next speaker's bubble has clear visual
   // separation (~8dp, WhatsApp standard).
-  msgRow: { maxWidth: '80%', marginBottom: 1 },
+  msgRow: { maxWidth: '85%', marginBottom: 1 },
   msgRowGroupEnd: { marginBottom: 10 },
   msgRowOwn: { alignSelf: 'flex-end', marginRight: 10 },
   msgRowOther: { alignSelf: 'flex-start', marginLeft: 10 },
-  msgSenderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 3, marginLeft: 4 },
+  msgSenderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6, marginLeft: 4 },
   msgSender: { fontSize: 13, fontWeight: '700', letterSpacing: -0.15 },
   replyIndicator: {
     borderLeftWidth: 3, borderRadius: 4,
@@ -24655,10 +24655,10 @@ const styles = StyleSheet.create({
     // minWidth gives it a baseline so even one-word quotes don't collapse.
     minWidth: 200,
   },
-  replyName: { fontSize: 11, fontWeight: '700', letterSpacing: -0.1, marginBottom: 2 },
+  replyName: { fontSize: 13, fontWeight: '600', letterSpacing: -0.1, marginBottom: 2 },
   replyText: { fontSize: 12, lineHeight: 16, opacity: 0.78 },
   bubble: {
-    borderRadius: 18, paddingHorizontal: 12,
+    borderRadius: 18, paddingHorizontal: 14,
     paddingTop: 7, paddingBottom: 6,
     minWidth: 82,
     // flexShrink + alignSelf so Yoga measures the Text intrinsic width
@@ -24697,11 +24697,11 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     flexWrap: 'nowrap',
     gap: 4,
-    marginTop: 3,
+    marginTop: 5,
     minHeight: 14,
   },
   editedLabel: { fontSize: 10, fontStyle: 'italic', opacity: 0.55 },
-  msgTime: { fontSize: 10.5, fontWeight: '500', letterSpacing: 0.2, opacity: 0.6, flexShrink: 0 },
+  msgTime: { fontSize: 10.5, fontWeight: '500', letterSpacing: 0.2, opacity: 0.85, flexShrink: 0 },
   videoOverlayAbsolute: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     alignItems: 'center', justifyContent: 'center',
@@ -24713,8 +24713,8 @@ const styles = StyleSheet.create({
   // overshoot transition on web so hover feels playful — that micro-spring
   // is exactly the dopamine moment.
   reactionChip: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-    paddingHorizontal: 11, paddingVertical: 5,
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 9, paddingVertical: 4,
     borderRadius: 17, borderWidth: 1,
     ...Platform.select({
       ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 7 },
@@ -24736,7 +24736,7 @@ const styles = StyleSheet.create({
   // chip telegraphs "this is reply context" without reading as a separator.
   replyBar: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.md + 4, paddingVertical: 12,
+    paddingHorizontal: Spacing.md + 4, paddingVertical: 14,
     borderTopWidth: 0, borderRadius: 24, marginHorizontal: 10, marginBottom: 6,
     ...Platform.select({
       ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.12, shadowRadius: 14 },

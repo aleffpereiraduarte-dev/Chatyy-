@@ -2256,7 +2256,7 @@ export default function PhotosScreen() {
   // GRID SIZE
   // ============================================================
   const gridItemSize = useMemo(() => {
-    const gap = 2;
+    const gap = 2; // explicit 2px gap between items
     return (width - gap * (gridColumns + 1)) / gridColumns;
   }, [width, gridColumns]);
 
@@ -2780,10 +2780,30 @@ export default function PhotosScreen() {
       return (
         <View style={s.emptyState}>
           <View style={s.emptyIllustration}>
-            <View style={[s.emptyCircleOuter, { borderColor: isDark ? 'rgba(99,102,241,0.15)' : 'rgba(99,102,241,0.1)' }]}>
-              <View style={[s.emptyCircleInner, { backgroundColor: isDark ? 'rgba(99,102,241,0.12)' : 'rgba(99,102,241,0.08)' }]}>
-                <IconImage size={48} color={isDark ? '#818cf8' : '#A78BFA'} />
-              </View>
+            {/* SVG illustration: 3 grey rectangles fanned out + camera icon centered */}
+            <Svg width={160} height={120} viewBox="0 0 160 120">
+              {/* Back-left rectangle (rotated -10deg) */}
+              <Rect
+                x="18" y="28" width="56" height="68" rx="8"
+                fill={isDark ? '#334155' : '#E5E7EB'}
+                opacity="0.7"
+                transform="rotate(-10 46 62)"
+              />
+              {/* Back-right rectangle (rotated +10deg) */}
+              <Rect
+                x="86" y="28" width="56" height="68" rx="8"
+                fill={isDark ? '#334155' : '#E5E7EB'}
+                opacity="0.7"
+                transform="rotate(10 114 62)"
+              />
+              {/* Front rectangle */}
+              <Rect
+                x="52" y="22" width="56" height="74" rx="10"
+                fill={isDark ? '#475569' : '#D1D5DB'}
+              />
+            </Svg>
+            <View style={s.emptyIconCenter} pointerEvents="none">
+              <IconImage size={36} color={isDark ? '#cbd5e1' : '#6B7280'} />
             </View>
           </View>
           <Text style={[s.emptyTitle, { color: colors.text }]}>{t('photos.noPhotos')}</Text>
@@ -2908,7 +2928,7 @@ export default function PhotosScreen() {
               })}
             </View>
           )}
-          stickySectionHeadersEnabled
+          stickySectionHeadersEnabled={true}
           onScroll={handleScroll}
           scrollEventThrottle={16}
           refreshControl={
@@ -4554,7 +4574,7 @@ export default function PhotosScreen() {
             {
               backgroundColor: isDark ? 'rgba(15,23,42,0.96)' : 'rgba(255,255,255,0.98)',
               borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-              paddingBottom: 16 + (insets.bottom || 0),
+              paddingBottom: (insets.bottom || 0) + 16,
             },
           ]}
         >
@@ -5885,9 +5905,10 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
+    backgroundColor: 'rgba(124,58,237,0.15)',
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
     marginLeft: 4,
   },
   selectCounterDot: {
@@ -5958,7 +5979,7 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-around',
     paddingVertical: 10,
-    paddingBottom: 24,
+    // paddingBottom comes from inline style: insets.bottom + 16 (not hardcoded)
     borderTopWidth: 1,
     ...Shadow.md,
   },
@@ -6101,6 +6122,15 @@ const s = StyleSheet.create({
   // Better empty state
   emptyIllustration: {
     marginBottom: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  emptyIconCenter: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   emptyCircleOuter: {
     width: 130,

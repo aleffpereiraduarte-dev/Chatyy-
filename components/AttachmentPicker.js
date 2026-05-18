@@ -198,7 +198,7 @@ export default function AttachmentPicker({
   return (
     <View style={s.container}>
       {/* Add-file + Drive picker row — two equal-width pills */}
-      <View style={{ flexDirection: 'row', gap: Spacing.sm }}>
+      <View style={{ flexDirection: 'row', gap: Spacing.md }}>
         <TouchableOpacity
           style={[
             s.addBtn,

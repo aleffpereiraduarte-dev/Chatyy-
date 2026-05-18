@@ -435,10 +435,36 @@ export default function BackupScreen() {
 
           {/* Status Card */}
           <View style={[s.statusCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-              <IconCheck size={18} color={isDark ? '#4ade80' : '#16a34a'} />
-              <Text style={{ color: colors.text, fontSize: FontSize.lg, fontWeight: '600' }}>{t('backup.enabled')}</Text>
-            </View>
+            {/* Status pill: green=enabled, orange=warning, gray=disabled */}
+            {(() => {
+              const statusKind = currentPlan ? 'ok' : (storageUsed > storageTotal * 0.9 ? 'warn' : 'idle');
+              const pillBg = statusKind === 'ok'
+                ? 'rgba(34,197,94,0.15)'
+                : statusKind === 'warn'
+                  ? 'rgba(245,158,11,0.15)'
+                  : 'rgba(148,163,184,0.18)';
+              const pillFg = statusKind === 'ok'
+                ? (isDark ? '#4ade80' : '#16a34a')
+                : statusKind === 'warn'
+                  ? (isDark ? '#fbbf24' : '#d97706')
+                  : colors.textSecondary;
+              return (
+                <View style={{
+                  alignSelf: 'flex-start',
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 8,
+                  marginBottom: 12,
+                  backgroundColor: pillBg,
+                  borderRadius: 14,
+                  paddingHorizontal: 10,
+                  paddingVertical: 5,
+                }}>
+                  <IconCheck size={16} color={pillFg} />
+                  <Text style={{ color: pillFg, fontSize: FontSize.sm, fontWeight: '700', letterSpacing: 0.2 }}>{t('backup.enabled')}</Text>
+                </View>
+              );
+            })()}
             <View style={{ gap: 6 }}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                 <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm }}>{t('backup.plan')}</Text>
@@ -887,8 +913,8 @@ const s = StyleSheet.create({
   },
   // Storage bar bumped 6→7 height + tighter radius so the fill is more
   // visible — was disappearing on small screens.
-  storageBarBg: { height: 7, borderRadius: 4, overflow: 'hidden' },
-  storageBarFill: { height: 7, borderRadius: 4 },
+  storageBarBg: { height: 10, borderRadius: 5, overflow: 'hidden' },
+  storageBarFill: { height: 10, borderRadius: 5 },
   groupSection: {
     borderRadius: BorderRadius.xl, borderWidth: 1, padding: 16, marginBottom: 12,
   },

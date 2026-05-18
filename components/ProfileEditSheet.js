@@ -24,8 +24,14 @@ const MAX_BIO = 150;
 // wraps below the label, but we keep the same divider treatment.
 function Row({
   label, value, onChangeText, placeholder, multiline, maxLength, colors,
-  prefix, required, rightAdornment, showCounter,
+  prefix, required, rightAdornment, showCounter, collapsible,
 }) {
+  // Bio-style collapse: default to 4 lines, "Ver mais" expands when the
+  // input value visibly overflows the collapsed clamp.
+  const [expanded, setExpanded] = useState(false);
+  const [overflowed, setOverflowed] = useState(false);
+  const collapseLines = collapsible ? 4 : undefined;
+  const showVerMais = !!collapsible && multiline && !expanded && overflowed;
   return (
     <View style={{
       paddingHorizontal: 16,
@@ -36,7 +42,7 @@ function Row({
       <View style={{
         flexDirection: multiline ? 'column' : 'row',
         alignItems: multiline ? 'stretch' : 'center',
-        gap: multiline ? 6 : 12,
+        gap: 12,
       }}>
         <Text style={{
           fontSize: 13,
@@ -65,6 +71,12 @@ function Row({
             onChangeText={onChangeText}
             placeholder={placeholder}
             placeholderTextColor={colors?.textTertiary || '#9ca3af'}
+            onContentSizeChange={collapsible ? (e) => {
+              // ~21px line height — flag overflow once content exceeds 4 lines.
+              const h = e?.nativeEvent?.contentSize?.height || 0;
+              setOverflowed(h > 21 * 4 + 4);
+            } : undefined}
+            numberOfLines={collapsible && !expanded ? collapseLines : undefined}
             style={{
               flex: 1,
               fontSize: 16,
@@ -72,6 +84,7 @@ function Row({
               color: colors?.text,
               paddingVertical: 4, paddingHorizontal: 0,
               minHeight: multiline ? 56 : 24,
+              ...(collapsible && !expanded ? { maxHeight: 21 * 4 + 8 } : null),
               textAlignVertical: multiline ? 'top' : 'center',
             }}
             multiline={!!multiline}
@@ -84,6 +97,11 @@ function Row({
           ) : null}
         </View>
       </View>
+      {showVerMais ? (
+        <TouchableOpacity onPress={() => setExpanded(true)} style={{ marginTop: 4 }} accessibilityRole="button">
+          <Text style={{ fontSize: 13, color: '#7C3AED', fontWeight: '600' }}>Ver mais</Text>
+        </TouchableOpacity>
+      ) : null}
       {showCounter && multiline && maxLength ? (
         <Text style={{
           fontSize: 12,
@@ -463,7 +481,7 @@ export default function ProfileEditSheet({
                   {/* Tiny camera badge — kept as a glanceable affordance even
                       though the "Trocar foto" link does the same thing. */}
                   <View style={{
-                    position: 'absolute', right: 4, bottom: 4,
+                    position: 'absolute', right: 6, bottom: 6,
                     width: 28, height: 28, borderRadius: 14,
                     backgroundColor: '#7C3AED',
                     alignItems: 'center', justifyContent: 'center',
@@ -573,6 +591,7 @@ export default function ProfileEditSheet({
                 maxLength={MAX_BIO}
                 colors={colors}
                 showCounter
+                collapsible
               />
               <Row
                 label={t?.('profile.website') || 'Site'}

@@ -137,7 +137,7 @@ const s = StyleSheet.create({
       default: {},
     }),
   },
-  tabText: { fontSize: 13.5, fontWeight: '700', letterSpacing: -0.1 },
+  tabText: { fontSize: 13, fontWeight: '600', letterSpacing: -0.1 },
   tabTextActive: { fontWeight: '800' },
   badge: {
     minWidth: 20, height: 20, borderRadius: 10,

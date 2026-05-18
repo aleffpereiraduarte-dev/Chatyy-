@@ -383,8 +383,8 @@ const s = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   sectionText: {
-    fontSize: 10, fontWeight: '800',
-    textTransform: 'uppercase', letterSpacing: 1.5,
+    fontSize: 12, fontWeight: '600',
+    textTransform: 'uppercase', letterSpacing: 0.5,
   },
   // List
   loader: { marginTop: 60 },

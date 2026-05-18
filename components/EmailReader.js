@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, ActivityIndicator, Image, Animated, Easing, LayoutAnimation, UIManager, TextInput, Modal as RNModal, FlatList } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, ActivityIndicator, Image, Animated, Easing, LayoutAnimation, UIManager, TextInput, Modal as RNModal, FlatList, useWindowDimensions } from 'react-native';
 import { getString as mmkvGetString, setString as mmkvSetString } from '../services/mmkv';
 // DOMPurify is web-only — lazy load to avoid crash on native
 let DOMPurify = null;
@@ -30,7 +30,7 @@ import {
   IconForward, IconTrash, IconPaperclip, IconFileText, IconBarChart,
   IconImage, IconPackage, IconMusic, IconFilm, IconDownload, IconTag, IconAlertTriangle,
   IconShield, IconArchive, IconPrint, IconChevronDown, IconChevronUp, IconEye, IconSend, IconMarkUnread, IconGlobe, IconCalendar,
-  IconReceipt, IconUser, IconCheck,
+  IconReceipt, IconUser, IconCheck, IconInbox,
 } from './Icons';
 
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
@@ -150,6 +150,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
   const { user } = useAuth();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const win = useWindowDimensions();
   const [showLabelPicker, setShowLabelPicker] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const [muted, setMuted] = useState(false);
@@ -450,7 +451,24 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
   }, [showQuoted, quotedChevron]);
   const chevronRotate = quotedChevron.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '180deg'] });
 
-  if (!email) return null;
+  if (!email) {
+    // Mobile portrait: show CTA instead of blank pane (desktop split keeps blank)
+    const isMobilePortrait = win.width < 768 && win.height >= win.width;
+    if (!isMobilePortrait) return null;
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, backgroundColor: colors.background }}>
+        <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: colors.primaryLight || (colors.primary + '18'), alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+          <IconInbox size={32} color={colors.primary} />
+        </View>
+        <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, textAlign: 'center', marginBottom: 6, letterSpacing: -0.2 }}>
+          {t('reader.emptyTitle') || 'Nenhuma mensagem aberta'}
+        </Text>
+        <Text style={{ fontSize: 14, color: colors.textSecondary, textAlign: 'center', lineHeight: 20 }}>
+          {t('reader.emptyCta') || 'Toque em uma mensagem'}
+        </Text>
+      </View>
+    );
+  }
 
   const avatarColor = getAvatarColor(email.from_name || email.from || 'unknown');
 

@@ -25,6 +25,7 @@ import * as api from '../../services/api';
 import { BASE_URL } from '../../services/api';
 import { IconX, IconPlus, IconTrash, IconSend, IconCheck, IconMessageSquare, IconEye, IconMusic, IconVolume2, IconVolumeX, IconPause, IconArrowRight } from '../Icons';
 import AvatarCircle from '../AvatarCircle';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const WEB = Platform.OS === 'web';
 const STORY_DURATION_MS = 5000;
@@ -295,6 +296,7 @@ export default function StoryViewer({
   onPrevGroup = null,
 }) {
   const stories = Array.isArray(storiesProp) ? storiesProp : [];
+  const insets = useSafeAreaInsets();
   const [idx, setIdx] = useState(startIdx || 0);
   const [paused, setPaused] = useState(false);
   const [replyText, setReplyText] = useState('');
@@ -1081,7 +1083,7 @@ export default function StoryViewer({
               cachePolicy="memory-disk"
               transition={120}
               onLoad={() => {
-                Animated.timing(imageFade, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+                Animated.timing(imageFade, { toValue: 1, duration: 350, useNativeDriver: true }).start();
               }}
             />
           </Animated.View>
@@ -1104,7 +1106,7 @@ export default function StoryViewer({
               style={{ width: '100%', height: '100%' }}
               resizeMode="contain"
               onLoad={() => {
-                Animated.timing(imageFade, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+                Animated.timing(imageFade, { toValue: 1, duration: 350, useNativeDriver: true }).start();
               }}
             />
           </Animated.View>
@@ -1120,7 +1122,7 @@ export default function StoryViewer({
   const renderProgressBars = () => (
     <Animated.View style={{
       position: 'absolute', top: Platform.OS === 'ios' ? 50 : 20, left: 0, right: 0,
-      flexDirection: 'row', gap: 4, paddingHorizontal: 10, zIndex: 5,
+      flexDirection: 'row', gap: 6, paddingHorizontal: 10, zIndex: 5,
       opacity: pausedAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0.4] }),
     }}>
       {stories.map((_, i) => (
@@ -1129,7 +1131,7 @@ export default function StoryViewer({
           // segments paint a solid gradient on top via the `i < safeIdx` branch
           // below, so the user reads three distinct states cleanly: pending
           // (30%), active (animating fill), completed (100% solid gradient).
-          flex: 1, height: 3, backgroundColor: 'rgba(255,255,255,0.3)',
+          flex: 1, height: 4, backgroundColor: 'rgba(255,255,255,0.3)',
           borderRadius: 2, overflow: 'hidden',
         }}>
           {i < safeIdx && (
@@ -1253,7 +1255,7 @@ export default function StoryViewer({
             // backdrop-blur over any photo. 22px radius matches the avatar
             // ring so the two read as one continuous shape; padding tuned so
             // the avatar's outer halo doesn't get clipped.
-            flex: 1, minWidth: 0,
+            flex: 1, minWidth: 0, flexShrink: 1,
             flexDirection: 'row', alignItems: 'center', gap: 10,
             backgroundColor: 'rgba(0,0,0,0.42)',
             borderRadius: 22, paddingLeft: 4, paddingRight: 12, paddingVertical: 4,
@@ -1382,6 +1384,7 @@ export default function StoryViewer({
           }}>
             <TouchableOpacity
               onPress={() => { setVideoMuted(m => !m); _haptic('light'); }}
+              hitSlop={{ top: 12, right: 12, bottom: 12, left: 12 }}
               style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(0,0,0,0.4)', alignItems: 'center', justifyContent: 'center' }}
               accessibilityLabel={videoMuted ? (t?.('status.unmute') || 'Unmute') : (t?.('status.mute') || 'Mute')}
               accessibilityRole="button"
@@ -1409,7 +1412,7 @@ export default function StoryViewer({
             opacity: uiOpacity,
           }}>
             <IconMusic size={14} color="#fff" />
-            <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600', flex: 1 }} numberOfLines={1}>
+            <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600', flex: 1 }} numberOfLines={1} ellipsizeMode="tail">
               {cur.music_title}{cur.music_artist ? ` — ${cur.music_artist}` : ''}
             </Text>
           </Animated.View>
@@ -1437,21 +1440,25 @@ export default function StoryViewer({
           <Animated.View style={{
             position: 'absolute',
             bottom: isSelf ? 78 : 110,
-            left: 16, right: 16,
+            alignSelf: 'center', maxWidth: '92%',
             backgroundColor: 'rgba(0,0,0,0.45)',
             borderRadius: 14, paddingHorizontal: 14, paddingVertical: 10,
             borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
             zIndex: 6,
             opacity: uiOpacity,
           }}>
-            <Text style={{
-              color: '#fff', fontSize: 15, lineHeight: 20, textAlign: 'center',
-              // Subtle shadow under caption text adds extra legibility on top
-              // of the gradient — same trick Instagram uses for stickers.
-              textShadowColor: 'rgba(0,0,0,0.5)',
-              textShadowOffset: { width: 0, height: 1 },
-              textShadowRadius: 3,
-            }}>
+            <Text
+              adjustsFontSizeToFit
+              numberOfLines={6}
+              style={{
+                color: '#fff', fontSize: 15, lineHeight: 20, textAlign: 'center',
+                // Subtle shadow under caption text adds extra legibility on top
+                // of the gradient — same trick Instagram uses for stickers.
+                textShadowColor: 'rgba(0,0,0,0.5)',
+                textShadowOffset: { width: 0, height: 1 },
+                textShadowRadius: 3,
+              }}
+            >
               {caption}
             </Text>
           </Animated.View>
@@ -1645,7 +1652,7 @@ export default function StoryViewer({
             finish typing). Dismisses the keyboard instead — same WhatsApp
             pattern (tap outside input → keyboard down, story stays). */}
         <Pressable
-          style={{ position: 'absolute', left: 0, top: 110, bottom: 100, width: '30%' }}
+          style={{ position: 'absolute', left: 0, top: 110, bottom: Math.max(100, (insets?.bottom || 0) + 80), width: Math.max(winW * 0.3, 100) }}
           onPress={() => {
             // Swallow the opening tap that bled through from the home strip
             // ring — fires goPrev() at idx 0 (noop) but at higher groupIndex
@@ -1658,7 +1665,7 @@ export default function StoryViewer({
           accessibilityRole="button"
         />
         <Pressable
-          style={{ position: 'absolute', right: 0, top: 110, bottom: 100, width: '30%' }}
+          style={{ position: 'absolute', right: 0, top: 110, bottom: Math.max(100, (insets?.bottom || 0) + 80), width: Math.max(winW * 0.3, 100) }}
           onPress={() => {
             // Same opening-tap swallow as the left zone — at last-item this
             // triggers `caughtUp` → 1.4s close, which reads as "fechou na
@@ -1671,7 +1678,7 @@ export default function StoryViewer({
           accessibilityRole="button"
         />
         <Pressable
-          style={{ position: 'absolute', left: '30%', right: '30%', top: 110, bottom: 100 }}
+          style={{ position: 'absolute', left: Math.max(winW * 0.3, 100), right: Math.max(winW * 0.3, 100), top: 110, bottom: Math.max(100, (insets?.bottom || 0) + 80) }}
           onPressIn={(e) => {
             if (isFreshMount()) return;
             if (replyFocused) { try { Keyboard.dismiss(); } catch {} return; }
@@ -1847,7 +1854,7 @@ export default function StoryViewer({
             translation that would fight the keyboard offset. */}
         <Animated.View style={{
           position: 'absolute', left: 0, right: 0, bottom: 0,
-          paddingHorizontal: 14, paddingBottom: Platform.OS === 'ios' ? 28 : 14, paddingTop: 10,
+          paddingHorizontal: 14, paddingBottom: (insets?.bottom || 0) + 14, paddingTop: 10,
           backgroundColor: replyEnter.interpolate({
             inputRange: [0, 1],
             outputRange: ['rgba(0,0,0,0.18)', 'rgba(0,0,0,0.55)'],
@@ -1896,7 +1903,7 @@ export default function StoryViewer({
                   Haptic mirrors WhatsApp react UX: a short medium-strength
                   thump that confirms the touch landed even before the visual
                   catches up. */}
-              <View style={{ flexDirection: 'row', justifyContent: 'space-around' }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16 }}>
                 {['❤️','🔥','😂','😮','😢','👏','👍'].map(emoji => {
                   const pulsing = emojiPulse === emoji;
                   const isHeart = emoji === '❤️';
@@ -2158,7 +2165,7 @@ export default function StoryViewer({
                     // in one place — same UX as Instagram's viewer list.
                     const emoji = viewer.reaction_emoji || '';
                     return (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, gap: 12 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, gap: 12 }}>
                         <AvatarCircle name={name} email={email} size={42} />
                         <View style={{ flex: 1 }}>
                           <Text style={{ color: isDark ? '#fff' : '#111', fontSize: 15, fontWeight: '600' }} numberOfLines={1}>{name}</Text>

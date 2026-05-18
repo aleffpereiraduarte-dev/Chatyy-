@@ -2837,6 +2837,23 @@ export default function LiveBroadcastScreen() {
           </View>
           <View style={styles.hostMeta}>
             <View style={styles.liveBadge}>
+              {/* Two expanding halo rings — pulse rhythm matches livePulse.
+                  Halo 1 starts at scale 1, halo 2 lags via livePulse2 so the
+                  outward expansion reads as a continuous wave (TikTok parity). */}
+              <Animated.View
+                pointerEvents="none"
+                style={[styles.liveBadgeHalo, {
+                  transform: [{ scale: livePulse.interpolate({ inputRange: [1, 1.5], outputRange: [1, 1.8] }) }],
+                  opacity: livePulse.interpolate({ inputRange: [1, 1.5], outputRange: [0.5, 0] }),
+                }]}
+              />
+              <Animated.View
+                pointerEvents="none"
+                style={[styles.liveBadgeHalo, {
+                  transform: [{ scale: livePulse.interpolate({ inputRange: [1, 1.5], outputRange: [1.2, 2.2] }) }],
+                  opacity: livePulse.interpolate({ inputRange: [1, 1.5], outputRange: [0.35, 0] }),
+                }]}
+              />
               <Animated.View style={[styles.liveBadgeDot, {
                 transform: [{ scale: livePulse }],
                 opacity: livePulse.interpolate({ inputRange: [1, 1.5], outputRange: [1, 0.6] }),
@@ -2986,6 +3003,15 @@ export default function LiveBroadcastScreen() {
           filter, timer, pin. Stacked above the bottom controls so they don't
           collide with the chat overlay. */}
       <View style={[styles.rightStack, { bottom: insets.bottom + 200 }]} pointerEvents="box-none">
+        {/* Cumulative heart counter — TikTok pattern: tiny heart + formatted
+            total ("❤️ 4.2K") sits above the action buttons so the host sees
+            love accumulate in real time. Reads from totalLikes (kept in sync
+            via WS live_heart events). */}
+        <Text style={styles.heartCounterText} numberOfLines={1}>
+          <Text style={{ color: LIVE_RED }}>♥</Text>
+          {' '}
+          {formatViewerCount(totalLikes)}
+        </Text>
         <TouchableOpacity
           onPress={() => setSettingsOpen(true)}
           style={styles.rightBtn}
@@ -4591,8 +4617,9 @@ const styles = StyleSheet.create({
 
   // Top-bar layout polish
   hostMeta: {
-    flexDirection: 'column',
-    gap: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   liveBadge: {
     flexDirection: 'row',
@@ -4603,9 +4630,21 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
     borderRadius: 6,
     alignSelf: 'flex-start',
+    position: 'relative',
     ...(Platform.OS === 'web' ? {
       boxShadow: '0 0 12px rgba(220,38,38,0.55)',
     } : {}),
+  },
+  // Concentric expanding halo behind the LIVE badge — sized to the badge's
+  // intrinsic box (matches dot start) so it reads as the badge itself
+  // pulsing outward. Two are stacked at different scales for layered wave.
+  liveBadgeHalo: {
+    position: 'absolute',
+    left: -2, right: -2, top: -2, bottom: -2,
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: LIVE_RED,
+    backgroundColor: 'transparent',
   },
   liveBadgeDot: {
     width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff',
@@ -4618,20 +4657,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 5,
     backgroundColor: 'rgba(0,0,0,0.5)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
     alignSelf: 'flex-start',
   },
   viewerDot: {
     width: 6, height: 6, borderRadius: 3, backgroundColor: LIVE_RED,
   },
   viewerCountText: {
-    color: '#fff', fontSize: 11, fontWeight: '800',
+    color: '#fff', fontSize: 13, fontWeight: '800',
     fontVariant: ['tabular-nums'],
   },
   viewerWatchText: {
-    color: 'rgba(255,255,255,0.75)', fontSize: 10, fontWeight: '600',
+    color: 'rgba(255,255,255,0.75)', fontSize: 13, fontWeight: '600',
   },
   topRight: {
     flexDirection: 'row',
@@ -4682,7 +4721,7 @@ const styles = StyleSheet.create({
   rightStack: {
     position: 'absolute',
     right: 12,
-    gap: 12,
+    gap: 16,
     alignItems: 'center',
     zIndex: 9,
   },
@@ -4693,6 +4732,17 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
   },
   rightBtnIconEmoji: { fontSize: 18 },
+  // Cumulative heart total above the action stack — TikTok aesthetic.
+  heartCounterText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '600',
+    textAlign: 'center',
+    textShadowColor: 'rgba(0,0,0,0.6)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+    fontVariant: ['tabular-nums'],
+  },
 
   // Comments column (custom, replaces LiveChat in live screen)
   chatScrollWrap: {
@@ -4716,7 +4766,14 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    maxWidth: '88%',
+    maxWidth: 280,
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 2px 6px rgba(0,0,0,0.3)',
+    } : {}),
   },
   // Host-authored comment: subtle purple tint + 1px brand border so the
   // host's voice stands out in the rolling feed without screaming.
