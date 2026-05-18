@@ -330,10 +330,73 @@ function withNotificationServicePodTarget(config) {
   ]);
 }
 
+// [2026-05-18] expo-modules-core auto-gera ExpoModulesProvider.swift para
+// CADA target listando TODOS os módulos do app (ExpoCamera, ExpoCallKit, etc).
+// A NSE usa `inherit! :search_paths` então não linka esses pods → undefined
+// symbols at archive time:
+//   "protocol witness table for ExpoCamera.CameraViewModule" not found
+//   "_OBJC_METACLASS_$__TtC15ExpoModulesCore15ModulesProvider" not found
+// Fix: post_install hook stub-a o arquivo da NSE com lista vazia. Issue ref:
+// https://github.com/expo/expo/issues/30605
+function withNotificationServiceProviderStub(config) {
+  return withDangerousMod(config, [
+    'ios',
+    async (cfg) => {
+      const podfilePath = path.join(cfg.modRequest.platformProjectRoot, 'Podfile');
+      if (!fs.existsSync(podfilePath)) return cfg;
+      let pod = fs.readFileSync(podfilePath, 'utf8');
+      const sentinel = '# NSE_PROVIDER_STUB_v1';
+      if (pod.includes(sentinel)) return cfg;
+
+      // Insert hook BEFORE the existing post_install block (or append after
+      // the main target if no post_install exists yet — Expo template always
+      // has one but we're defensive).
+      const hook = [
+        '',
+        '  ' + sentinel,
+        `  # Stub out ExpoModulesProvider.swift for the NSE — it inherits :search_paths`,
+        `  # so the modules listed in the auto-generated file aren't linked, causing`,
+        `  # "Undefined symbols" at archive time. Empty class satisfies the linker.`,
+        `  nse_provider = File.join(`,
+        `    installer.sandbox.target_support_files_root,`,
+        `    'Pods-${EXT_NAME}',`,
+        `    'ExpoModulesProvider.swift'`,
+        `  )`,
+        `  if File.exist?(nse_provider)`,
+        `    File.write(nse_provider, <<~SWIFT)`,
+        `      import Foundation`,
+        `      // Auto-stubbed by with-notification-service plugin — NSE has no Expo modules.`,
+        `      @objcMembers`,
+        `      public class ExpoModulesProvider: NSObject {`,
+        `        public func getModuleClasses() -> [Any.Type] { [] }`,
+        `        public func getAppDelegateSubscribers() -> [Any.Type] { [] }`,
+        `        public func getReactDelegateHandlers() -> [(Any.Type, String)] { [] }`,
+        `      }`,
+        `    SWIFT`,
+        `    Pod::UI.puts "[NSE stub] Replaced ExpoModulesProvider.swift with empty stub"`,
+        `  end`,
+        '',
+      ].join('\n');
+
+      // Locate the post_install block and inject right after `post_install do |installer|`.
+      const re = /(post_install\s+do\s*\|installer\|)/;
+      if (re.test(pod)) {
+        pod = pod.replace(re, `$1\n${hook}`);
+      } else {
+        // No post_install in template — append a new block at the end.
+        pod += `\n\npost_install do |installer|\n${hook}\nend\n`;
+      }
+      fs.writeFileSync(podfilePath, pod);
+      return cfg;
+    },
+  ]);
+}
+
 module.exports = function withNotificationService(config) {
   config = withNotificationServiceFiles(config);
   config = withMainAppGroup(config);
   config = withNotificationServiceTarget(config);
   config = withNotificationServicePodTarget(config);
+  config = withNotificationServiceProviderStub(config);
   return config;
 };
