@@ -218,8 +218,13 @@ struct GroupCallView: View {
         }
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showAudioPicker) {
-            audioPickerSheet
-                .presentationDetents([.height(280)])
+            Group {
+                if #available(iOS 16.0, *) {
+                    audioPickerSheet.presentationDetents([.height(280)])
+                } else {
+                    audioPickerSheet
+                }
+            }
         }
         .onAppear {
             startTimer()

@@ -379,10 +379,13 @@ final class CallViewController: UIViewController {
         screenSharing = desired
         Task {
             do {
-                _ = try await r.localParticipant.setScreenShareEnabled(desired)
+                // LiveKit Swift SDK: setScreenShareEnabled was renamed to
+                // set(source:enabled:). Use the new API; ReplayKit picker is
+                // surfaced internally on iOS.
+                _ = try await r.localParticipant.set(source: .screenShareVideo, enabled: desired)
                 print("[CallVC] screenShare → \(desired)")
             } catch {
-                print("[CallVC] setScreenShareEnabled(\(desired)) failed: \(error)")
+                print("[CallVC] set(.screenShareVideo, enabled: \(desired)) failed: \(error)")
                 self.screenSharing = !desired
             }
         }
@@ -928,12 +931,15 @@ final class PiPVideoRenderer: NSObject, VideoRenderer {
 
     func render(frame: VideoFrame) {
         guard let displayLayer = displayLayer else { return }
-        guard case .cvPixelBuffer(let pixelBuffer) = frame.buffer else {
-            // Other buffer kinds aren't safely convertible without WebRTC
-            // umbrella access. PiP stalls until the next `.cvPixelBuffer`
-            // frame; CallKit handles the fallback UX.
+        // LiveKit Swift SDK: VideoFrame.buffer is `any VideoBuffer` (protocol),
+        // not an enum. The concrete type carrying a CVPixelBuffer is
+        // CVPixelVideoBuffer. Other buffer kinds (I420, etc.) aren't safely
+        // convertible without WebRTC umbrella access — PiP stalls until the
+        // next CVPixelBuffer-backed frame; CallKit handles the fallback UX.
+        guard let pixelBufferWrapper = frame.buffer as? CVPixelVideoBuffer else {
             return
         }
+        let pixelBuffer = pixelBufferWrapper.pixelBuffer
         var formatDescription: CMVideoFormatDescription?
         let fmtErr = CMVideoFormatDescriptionCreateForImageBuffer(
             allocator: kCFAllocatorDefault,

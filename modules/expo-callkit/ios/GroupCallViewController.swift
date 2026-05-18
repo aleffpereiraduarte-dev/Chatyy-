@@ -216,9 +216,11 @@ final class GroupCallViewController: UIViewController {
         screenSharing = desired
         Task {
             do {
-                _ = try await r.localParticipant.setScreenShareEnabled(desired)
+                // LiveKit Swift SDK: setScreenShareEnabled was renamed to
+                // set(source:enabled:). Use the new API.
+                _ = try await r.localParticipant.set(source: .screenShareVideo, enabled: desired)
             } catch {
-                print("[GroupCallVC] setScreenShareEnabled(\(desired)) failed: \(error)")
+                print("[GroupCallVC] set(.screenShareVideo, enabled: \(desired)) failed: \(error)")
                 self.screenSharing = !desired
             }
         }

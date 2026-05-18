@@ -835,10 +835,12 @@ final class LiveBroadcastViewController: UIViewController {
         guard let r = self.room else { return }
         Task {
             do {
-                _ = try await r.localParticipant.setScreenShareEnabled(enabled)
+                // LiveKit Swift SDK: setScreenShareEnabled was renamed to
+                // set(source:enabled:). Use the new API.
+                _ = try await r.localParticipant.set(source: .screenShareVideo, enabled: enabled)
                 print("[LiveBroadcastVC] screen share \(enabled ? "on" : "off")")
             } catch {
-                print("[LiveBroadcastVC] setScreenShareEnabled(\(enabled)) failed: \(error)")
+                print("[LiveBroadcastVC] set(.screenShareVideo, enabled: \(enabled)) failed: \(error)")
             }
         }
     }

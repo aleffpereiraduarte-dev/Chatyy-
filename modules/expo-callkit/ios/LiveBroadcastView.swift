@@ -233,18 +233,21 @@ struct LiveBroadcastView: View {
     }
 
     // 4-bar connection indicator. Matches the JS-side cell-tower pattern.
+    // Helper extracted to avoid `@ViewBuilder` complaining about `()` results
+    // from the switch's compound assignments.
+    private func qualityToBars(_ quality: String) -> (Int, Color) {
+        switch quality {
+        case "excellent": return (3, Color.green)
+        case "good":      return (2, Color.green)
+        case "poor":      return (1, Color.yellow)
+        case "lost":      return (0, Color.red)
+        default:          return (2, Color.green)
+        }
+    }
+
     @ViewBuilder
     private func connectionBars(quality: String) -> some View {
-        // Map LK quality strings to a 1-3 bar count.
-        let bars: Int
-        let color: Color
-        switch quality {
-        case "excellent": bars = 3; color = Color.green
-        case "good":      bars = 2; color = Color.green
-        case "poor":      bars = 1; color = Color.yellow
-        case "lost":      bars = 0; color = Color.red
-        default:          bars = 2; color = Color.green
-        }
+        let (bars, color) = qualityToBars(quality)
         HStack(alignment: .bottom, spacing: 2) {
             ForEach(0..<3, id: \.self) { i in
                 Rectangle()

@@ -207,8 +207,13 @@ struct CallView: View {
         // Sheets are presented via `.sheet` so they get the native iOS feel
         // (drag-to-dismiss, blur backing) without us re-implementing them.
         .sheet(isPresented: $showAudioPicker) {
-            audioPickerSheet
-                .presentationDetents([.height(280)])
+            Group {
+                if #available(iOS 16.0, *) {
+                    audioPickerSheet.presentationDetents([.height(280)])
+                } else {
+                    audioPickerSheet
+                }
+            }
         }
     }
 

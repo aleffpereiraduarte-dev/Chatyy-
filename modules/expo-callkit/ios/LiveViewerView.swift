@@ -204,18 +204,21 @@ struct LiveViewerView: View {
     // Auto-hide bars when quality is excellent — same UX as Instagram /
     // YouTube Live (only surface the indicator when there's actually a
     // problem).
+    // Helper extracted to avoid `@ViewBuilder` complaining about `()` results
+    // from the switch's compound assignments.
+    private func qualityToBars(_ quality: String) -> (Int, Color, Bool) {
+        switch quality {
+        case "excellent": return (3, Color.green, true)
+        case "good":      return (2, Color.green, false)
+        case "poor":      return (1, Color.yellow, false)
+        case "lost":      return (0, Color.red, false)
+        default:          return (2, Color.green, false)
+        }
+    }
+
     @ViewBuilder
     private func connectionBars(quality: String) -> some View {
-        let bars: Int
-        let color: Color
-        let hide: Bool
-        switch quality {
-        case "excellent": bars = 3; color = Color.green; hide = true
-        case "good":      bars = 2; color = Color.green; hide = false
-        case "poor":      bars = 1; color = Color.yellow; hide = false
-        case "lost":      bars = 0; color = Color.red; hide = false
-        default:          bars = 2; color = Color.green; hide = false
-        }
+        let (bars, color, hide) = qualityToBars(quality)
         if !hide {
             HStack(alignment: .bottom, spacing: 2) {
                 ForEach(0..<3, id: \.self) { i in
