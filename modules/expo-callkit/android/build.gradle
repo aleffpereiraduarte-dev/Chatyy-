@@ -1,10 +1,27 @@
+// [2026-05-18] Kotlin 2.0+ requires the standalone Compose Compiler Gradle
+// plugin when `buildFeatures { compose true }` is set. The plugin is NOT on
+// the root project's buildscript classpath by default (Expo's autolinking
+// only injects KGP + AGP), so `apply plugin:` alone fails with
+//   "Plugin with id 'org.jetbrains.kotlin.plugin.compose' not found."
+// We add the classpath dependency here, in the module's own buildscript,
+// so the legacy `apply plugin:` syntax can resolve it. Version is pinned
+// to the project-wide Kotlin version so the compiler plugin matches the
+// Kotlin compiler — a mismatch causes
+//   "This version (X) of the Compose Compiler requires Kotlin version Y".
+buildscript {
+  repositories {
+    google()
+    mavenCentral()
+    gradlePluginPortal()
+  }
+  dependencies {
+    def kver = rootProject.ext.has('kotlinVersion') ? rootProject.ext.get('kotlinVersion') : '2.0.21'
+    classpath "org.jetbrains.kotlin:compose-compiler-gradle-plugin:${kver}"
+  }
+}
+
 apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
-// Kotlin 2.0+ requires the standalone Compose Compiler Gradle plugin
-// when `buildFeatures { compose true }` is set. Without this line the
-// :expo-callkit module fails to configure and cascades to ":expo"
-// being unable to find its `release` SoftwareComponent (top-level
-// build error). Compose Compiler plugin ships with the Kotlin tooling.
 apply plugin: 'org.jetbrains.kotlin.plugin.compose'
 
 group = 'expo.modules.callkit'

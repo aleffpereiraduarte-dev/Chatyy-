@@ -143,6 +143,23 @@ function withNotificationServiceTarget(config) {
   return withXcodeProject(config, (cfg) => {
     const project = cfg.modResults;
 
+    // [2026-05-18 fix #2] OneSignal/expo-share-intent workaround for the
+    // xcode npm package: when the project has only one target (the main app),
+    // `objects.PBXTargetDependency` and `objects.PBXContainerItemProxy` don't
+    // exist yet. `project.addTarget('app_extension', ...)` internally calls
+    // `addTargetDependency(mainApp, [newAppex])` which writes into those
+    // sections — and silently throws when they're undefined, leaving the
+    // appex with NO host dependency. CocoaPods then can't infer the host
+    // and aborts pod install with
+    //   "[!] Unable to find host target(s) for ChatyyNotificationService."
+    // Initializing the sections to {} is harmless when they already exist
+    // (e.g., when this plugin runs after with-share-extension). Source:
+    // node_modules/expo-share-intent/.../withIosShareExtensionXcodeTarget.js
+    // section "4.3 WORK AROUND for addTarget BUG (from OneSignal)".
+    const projObjects = project.hash.project.objects;
+    projObjects.PBXTargetDependency = projObjects.PBXTargetDependency || {};
+    projObjects.PBXContainerItemProxy = projObjects.PBXContainerItemProxy || {};
+
     // Idempotency — bail if a target with this name already exists.
     const existingTarget = project.pbxNativeTargetSection?.() || {};
     for (const key of Object.keys(existingTarget)) {
