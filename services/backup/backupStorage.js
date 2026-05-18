@@ -39,6 +39,12 @@ export const KEYS = {
 //   2) Native UserDefaults flag the user controls from JS
 //   3) JS-side honor of this AsyncStorage flag before calling
 //      uploadNotification.start
+//
+// DEFAULT-OFF (2026-05-18 #1121): user is still annoyed by the spam
+// even after the per-call gates. Flip the JS default to OFF — users
+// must explicitly opt in via app/backup.js "Notificações de backup".
+// Sites running native uploads still respect this flag (see
+// setBackupNotificationsEnabled which mirrors into the iOS module).
 let _notifCache = null;
 let _notifTs = 0;
 const NOTIF_CACHE_MS = 30 * 1000;
@@ -49,12 +55,13 @@ export async function isBackupNotificationsEnabled() {
   }
   try {
     const v = await AsyncStorage.getItem(KEYS.NOTIFY);
-    // Default ON when the key has never been written.
-    _notifCache = v == null ? true : (v === '1');
+    // Default OFF when the key has never been written. The previous
+    // ON-by-default behavior caused the "Backup do Chatyy" spam loop.
+    _notifCache = v === '1';
     _notifTs = now;
     return _notifCache;
   } catch {
-    return true;
+    return false;
   }
 }
 export async function setBackupNotificationsEnabled(enabled) {

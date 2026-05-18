@@ -86,15 +86,21 @@ public class ExpoBackgroundUploadModule: Module {
     /// stale banner from a previous session disappears when a new one
     /// is allowed through.
     private func notifyBackupComplete(count: Int, remaining: Int = 0) {
-        // Guard 1: user-controlled killswitch. Default ON so existing
-        // installs keep their old behavior unless the user opts out.
+        // Guard 1: user-controlled killswitch.
+        //
+        // DEFAULT-OFF (2026-05-18 #1121): users were spammed by the
+        // "Backup concluído" / "Backup do Chatyy" banner even after the
+        // per-call cooldowns. Flip the iOS native default to OFF so the
+        // banner only fires when the user has explicitly opted in via
+        // app/backup.js "Notificações de backup". JS sets the flag via
+        // setBackupNotificationsEnabled which mirrors into this key.
         let defaults = UserDefaults.standard
         let enabledKey = "com.onemundo.backup.notifications_enabled"
-        // If the value was never set, treat it as `true` (default ON).
+        // If the value was never set, treat it as `false` (default OFF).
         // Once set explicitly by JS via setBackupNotificationsEnabled,
         // we respect the stored boolean.
-        if defaults.object(forKey: enabledKey) != nil
-            && defaults.bool(forKey: enabledKey) == false {
+        if defaults.object(forKey: enabledKey) == nil
+            || defaults.bool(forKey: enabledKey) == false {
             return
         }
 
