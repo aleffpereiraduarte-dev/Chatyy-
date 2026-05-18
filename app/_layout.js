@@ -129,7 +129,11 @@ if (Platform.OS !== 'web') {
 if (!GestureHandlerRootView) GestureHandlerRootView = ({ children, style }) => React.createElement(RNView, { style }, children);
 // ─── Sentry crash reporting ───
 import { initSentry } from '../services/sentry';
+import { installCrashReporter, reportStep, setReporterIdentity } from '../services/crashReporter';
 import { BASE_URL } from '../services/api';
+
+// Install ASAP so we catch JS errors during early provider init.
+installCrashReporter();
 
 // Sanitizes filenames coming from the iOS share-intent / Files-app pipeline.
 // expo-share-intent has been observed to surface the literal "$value" as
@@ -1179,9 +1183,6 @@ export default function RootLayout() {
                   <Stack.Screen name="parental-monitor" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="parental-child-chat" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="family" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  {/* Saved messages / Call schedule — pre-registered routes (community/* are below). */}
-                  <Stack.Screen name="saved-messages" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="call-schedule" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="kids-learn" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="hashtag" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="hashtag/[tag]" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />

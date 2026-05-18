@@ -370,6 +370,12 @@ export function AuthProvider({ children }) {
         if (r.success && r.data?.email) {
           setCacheUser(r.data.email);
           setUser(r.data);
+          try {
+            const { setReporterIdentity, reportStep } = require('../services/crashReporter');
+            const tok = (r.data?.token || api.getAuthToken?.() || '').toString();
+            setReporterIdentity({ email: r.data.email, bearer: tok });
+            reportStep('hydrate_checkAuth_ok', `email=${r.data.email}`);
+          } catch {}
           // Cache user data for offline access (WhatsApp-style)
           if (Platform.OS !== 'web') {
             AsyncStorage.setItem('chatyy_offline_user', JSON.stringify(r.data)).catch(() => {});
@@ -650,6 +656,12 @@ export function AuthProvider({ children }) {
       const clearChatCache = await getLazyClearChatCache(); await clearChatCache();
       setCacheUser(r.data?.email || email);
       setUser(r.data);
+      try {
+        const { setReporterIdentity, reportStep } = require('../services/crashReporter');
+        const tok = (r.data?.token || api.getAuthToken?.() || '').toString();
+        setReporterIdentity({ email: r.data?.email || email, bearer: tok });
+        reportStep('login_setUser_ok', `email=${r.data?.email || email}`);
+      } catch {}
       loadAccounts();
       registerPushAfterAuth();
       prefetchAvatar(r.data?.email || email);
