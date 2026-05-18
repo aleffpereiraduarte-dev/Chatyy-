@@ -38,6 +38,12 @@ jobs:
       KEYCHAIN_PASS: ci-build-pass
       MAIN_PROFILE_UUID: 480ef27d-fe7a-4986-af2e-57c75bf3e0d7
       SHAREEXT_PROFILE_UUID: d302e18b-f58a-43b8-8b1f-9bf4b2d05194
+      # [2026-05-18 NSE] Profile created via ASC API (scripts/asc-create-nse-profile.js)
+      # — bundle com.onemundo.mail.notificationservice. No App Group linked
+      # because public ASC API doesn't expose that relationship; the NSE
+      # entitlements file is empty (no app-groups requested), which matches.
+      NSE_BUNDLE_ID: com.onemundo.mail.notificationservice
+      NSE_PROFILE_UUID: 695e2ec7-6a2f-4193-8919-9ad98a4e81c5
       # [2026-05-15 #827] BROADCAST_PROFILE_UUID lido do conteúdo decoded
       # do secret IOS_PROFILE_BROADCAST_BASE64 em runtime (UUID dentro do
       # .mobileprovision). Bundle id: com.onemundo.mail.broadcast.
@@ -56,6 +62,7 @@ jobs:
           [ -z "${{ secrets.IOS_DIST_CERT_PASSWORD }}" ] && missing+=("IOS_DIST_CERT_PASSWORD")
           [ -z "${{ secrets.IOS_PROFILE_MAIN_BASE64 }}" ] && missing+=("IOS_PROFILE_MAIN_BASE64")
           [ -z "${{ secrets.IOS_PROFILE_SHAREEXT_BASE64 }}" ] && missing+=("IOS_PROFILE_SHAREEXT_BASE64")
+          [ -z "${{ secrets.IOS_PROFILE_NSE_BASE64 }}" ] && missing+=("IOS_PROFILE_NSE_BASE64")
           # IOS_PROFILE_BROADCAST_BASE64 is optional — only required when the
           # broadcast extension plugin is active in app.json. The plugin is
           # currently OFF (user needs to create profile on Apple Dev portal
@@ -124,11 +131,13 @@ jobs:
         env:
           MAIN_B64: ${{ secrets.IOS_PROFILE_MAIN_BASE64 }}
           SHAREEXT_B64: ${{ secrets.IOS_PROFILE_SHAREEXT_BASE64 }}
+          NSE_B64: ${{ secrets.IOS_PROFILE_NSE_BASE64 }}
           BROADCAST_B64: ${{ secrets.IOS_PROFILE_BROADCAST_BASE64 }}
         run: |
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           echo "$MAIN_B64" | base64 -d > ~/Library/MobileDevice/Provisioning\ Profiles/$MAIN_PROFILE_UUID.mobileprovision
           echo "$SHAREEXT_B64" | base64 -d > ~/Library/MobileDevice/Provisioning\ Profiles/$SHAREEXT_PROFILE_UUID.mobileprovision
+          echo "$NSE_B64" | base64 -d > ~/Library/MobileDevice/Provisioning\ Profiles/$NSE_PROFILE_UUID.mobileprovision
           # Broadcast profile is OPTIONAL — only installed if secret is set
           # and the broadcast plugin is active in app.json. If absent, the
           # build proceeds without the broadcast extension target (screen
@@ -250,6 +259,7 @@ jobs:
             <dict>
               <key>$MAIN_BUNDLE_ID</key><string>$MAIN_PROFILE_UUID</string>
               <key>$SHAREEXT_BUNDLE_ID</key><string>$SHAREEXT_PROFILE_UUID</string>
+              <key>$NSE_BUNDLE_ID</key><string>$NSE_PROFILE_UUID</string>
               ${BROADCAST_PROFILE_ENTRY}
             </dict>
             <key>uploadBitcode</key><false/>

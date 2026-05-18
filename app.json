@@ -33,19 +33,6 @@
       "bundleIdentifier": "com.onemundo.mail",
       "buildNumber": "501",
       "googleServicesFile": "./GoogleService-Info.plist",
-      "usesIcloudStorage": true,
-      "icloudContainerEnvironment": "Production",
-      "entitlements": {
-        "com.apple.developer.icloud-container-identifiers": [
-          "iCloud.com.onemundo.mail"
-        ],
-        "com.apple.developer.icloud-services": [
-          "CloudDocuments"
-        ],
-        "com.apple.developer.ubiquity-container-identifiers": [
-          "iCloud.com.onemundo.mail"
-        ]
-      },
       "privacyManifests": {
         "NSPrivacyAccessedAPITypes": [
           {
@@ -100,13 +87,6 @@
           "com.onemundo.mail.backup.processing",
           "chatyy-cloud-backup"
         ],
-        "NSUbiquitousContainers": {
-          "iCloud.com.onemundo.mail": {
-            "NSUbiquitousContainerIsDocumentScopePublic": true,
-            "NSUbiquitousContainerSupportedFolderLevels": "Any",
-            "NSUbiquitousContainerName": "Chatyy"
-          }
-        },
         "CFBundleURLTypes": [
           {
             "CFBundleURLSchemes": [
@@ -314,17 +294,7 @@
       "expo-video",
       "./plugins/withFixResourceSigning.js",
       "./plugins/withManualIosSigning.js",
-      "expo-iap",
-      [
-        "expo-build-properties",
-        {
-          "ios": {
-            "extraInfoPlist": {
-              "NSUbiquityContainerIdentifier": "iCloud.com.onemundo.mail"
-            }
-          }
-        }
-      ]
+      "expo-iap"
     ],
     "extra": {
       "router": {

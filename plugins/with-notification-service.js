@@ -37,14 +37,21 @@ const APP_GROUP = 'group.com.onemundo.mail';
 // EMBEDDED SOURCE FILES — keep in sync with ios/ChatyyNotificationService/
 // =====================================================================
 
+// [2026-05-18] App Group removed from NSE entitlements. Apple's public ASC
+// API doesn't expose App Group ↔ capability linking (requires session-cookie
+// auth that we can't automate without Apple ID password + 2FA). The NSE
+// profile we auto-generate has APP_GROUPS capability flag enabled on the
+// bundle but no specific group linked, so requiring `group.com.onemundo.mail`
+// in the binary's entitlements causes code-sign mismatch.
+//
+// Cost: NSE can't read the e2e_key stored in the shared App Group keychain
+// item, so push payloads aren't decrypted client-side. The server already
+// sends a human-readable preview text in the push body (see push-notify.php)
+// — that's what users see. Rich attachments + mutable-content still work.
 const ENTITLEMENTS_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-\t<key>com.apple.security.application-groups</key>
-\t<array>
-\t\t<string>${APP_GROUP}</string>
-\t</array>
 </dict>
 </plist>
 `;
