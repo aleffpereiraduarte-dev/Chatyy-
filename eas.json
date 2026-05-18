@@ -58,8 +58,9 @@
       },
       "android": {
         "serviceAccountKeyPath": "./gcloud-sa-key.json",
-        "track": "production",
-        "releaseStatus": "completed"
+        "track": "internal",
+        "releaseStatus": "completed",
+        "changesNotSentForReview": true
       }
     }
   }
