@@ -1996,16 +1996,29 @@ function _avatarV(email) {
   return _avatarCacheBust.get(String(email || '').toLowerCase()) || '';
 }
 
+// Daily-rotating cache-bust fallback. When `bumpAvatarCache(email)` hasn't
+// been called for this email (cold app open, viewing someone you've never
+// chatted with), the URL still varies once per day so any stale placeholder
+// PNGs that got cached during the 2026-05-18 backend ACL outage roll off
+// within 24h instead of being held forever by expo-image's disk cache.
+function _avatarDailyBust() {
+  const d = new Date();
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}${m}${day}`;
+}
+
 export function getAvatarUrl(email) {
   const e = email || savedCredentials?.email || '';
-  const v = _avatarV(e);
-  return `${API_URL}?action=get_avatar&email=${encodeURIComponent(e)}${v ? `&v=${v}` : ''}`;
+  const v = _avatarV(e) || _avatarDailyBust();
+  return `${API_URL}?action=get_avatar&email=${encodeURIComponent(e)}&v=${v}`;
 }
 
 export function getAvatarUrlForEmail(email) {
   if (!email) return null;
-  const v = _avatarV(email);
-  return `${API_URL}?action=get_avatar&email=${encodeURIComponent(email)}${v ? `&v=${v}` : ''}`;
+  const v = _avatarV(email) || _avatarDailyBust();
+  return `${API_URL}?action=get_avatar&email=${encodeURIComponent(email)}&v=${v}`;
 }
 
 /**

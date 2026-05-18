@@ -2186,10 +2186,18 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   // banner already represents the same "we're catching up" state).
   const [syncingBadge, setSyncingBadge] = useState(false);
   useEffect(() => {
+    // WhatsApp Web parity (2026-05-18, #1131): web NEVER shows the inline
+    // "Sincronizando..." pill at the top of the chat list. WhatsApp Web's
+    // sync feedback is the rare "Computer not connected" full-screen state,
+    // not a chronic banner. Users complained the pill stayed visible
+    // permanently on cold start + every brief WS flap. Skip the subscription
+    // entirely on web so it's impossible to render. Native keeps the
+    // delayed-show + 5s ceiling.
+    if (Platform.OS === 'web') return;
     let unsub = null;
     let cancelled = false;
-    let showTimer = null;       // gate: only flip true after 1500ms
-    let hideFailsafe = null;    // hard 5s ceiling
+    let showTimer = null;       // gate: only flip true after 2500ms
+    let hideFailsafe = null;    // hard 4s ceiling
     (async () => {
       try {
         const m = await import('../services/onlineRecoveryOrchestrator');
@@ -2199,22 +2207,22 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             if (cancelled) return;
             if (running) {
               // WhatsApp-invisible-sync (2026-05-18): suppress the brief
-              // reconnect flashes. If the recovery finishes inside 1500ms
+              // reconnect flashes. If the recovery finishes inside 2500ms
               // (the common case on healthy networks), the user never sees
               // the badge at all — feels like nothing happened.
               if (showTimer) { try { clearTimeout(showTimer); } catch {} }
               showTimer = setTimeout(() => {
                 showTimer = null;
                 setSyncingBadge(true);
-                // Hard ceiling — clear after 5s no matter what orchestrator
+                // Hard ceiling — clear after 4s no matter what orchestrator
                 // says. Covers WS reconnect loops that get stuck on
                 // running:true.
                 if (hideFailsafe) { try { clearTimeout(hideFailsafe); } catch {} }
                 hideFailsafe = setTimeout(() => {
                   hideFailsafe = null;
                   setSyncingBadge(false);
-                }, 5000);
-              }, 1500);
+                }, 4000);
+              }, 2500);
             } else {
               // Recovery finished — clear pending "show" timer + hide now.
               if (showTimer) { try { clearTimeout(showTimer); } catch {} showTimer = null; }

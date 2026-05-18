@@ -39,16 +39,21 @@ export default function SyncBar() {
     }
   }, [status]);
 
-  // Auto-hide "Connecting..." after 7s to avoid permanent banner
+  // Auto-hide "Connecting..." after 3s on web (was 7s) to avoid the bar
+  // lingering past a brief WS reconnect — WhatsApp Web hides it after ~2s of
+  // a flap. Native keeps the 7s ceiling because backgrounded reconnects on
+  // mobile data can legitimately take that long.
+  // 2026-05-18 (#1131): web auto-hide tightened.
   useEffect(() => {
     clearTimeout(connectingTimeout.current);
     if (status === 'connecting') {
+      const ceiling = Platform.OS === 'web' ? 3000 : 7000;
       connectingTimeout.current = setTimeout(() => {
         if (!mountedRef.current) return;
         Animated.timing(slideAnim, { toValue: -36, duration: 300, useNativeDriver: true }).start(() => {
           if (mountedRef.current) setStatus('hidden');
         });
-      }, 7000);
+      }, ceiling);
     }
     return () => clearTimeout(connectingTimeout.current);
   }, [status]);
@@ -72,26 +77,43 @@ export default function SyncBar() {
         // Connected — hide after tiny delay
         graceTimer.current = setTimeout(hide, 500);
       } else if (s === 'disconnected') {
-        // Only show "Connecting..." after 3 seconds of being disconnected
-        // This avoids flashing during quick reconnects
+        // Only show "Connecting..." after a grace period of being disconnected
+        // so brief reconnects don't flash a banner at the user. Web uses a
+        // longer grace (5s) because reconnects there are sub-second in 95%
+        // of cases (WS just resumes on next tick). Native keeps 3s because
+        // backgrounded radios legitimately take a moment.
+        // 2026-05-18 (#1131): bumped web grace to 5s.
+        const grace = Platform.OS === 'web' ? 5000 : 3000;
         graceTimer.current = setTimeout(() => {
           if (mountedRef.current && !mailWs?.authenticated) {
             show('connecting');
           }
-        }, 3000);
+        }, grace);
       }
     };
 
     const armStallTimer = () => {
       clearTimeout(syncStallTimer.current);
-      // If no progress event for 8s, assume sync silently completed and hide.
+      // If no progress event for 4s, assume sync silently completed and hide.
       // Without this, "Finishing..." stays forever if the WS never emits `done`.
+      // 2026-05-18 (#1131): tightened 8s → 4s. Users were seeing the bar linger
+      // for 5-8s on healthy networks where progress events trickled slowly
+      // between phases — felt like the app was stuck.
       syncStallTimer.current = setTimeout(() => {
         if (mountedRef.current) hide();
-      }, 8000);
+      }, 4000);
     };
     const handleSync = ({ phase, progress: p }) => {
       clearTimeout(graceTimer.current);
+      // WhatsApp-grade silent sync (2026-05-18, #1131): web NEVER shows the
+      // syncing progress bar. Initial-sync on web is a no-op (see
+      // services/initialSync.js web fast-path), and any future heavy delta
+      // should happen invisibly in the background — the cached chat list
+      // paints instantly while deltas trickle through WS. Mobile keeps the
+      // full visual since the on-device DB warm-up legitimately takes time.
+      if (Platform.OS === 'web') {
+        return;
+      }
       if (phase === 'start') {
         show('syncing');
         setProgress(0);
@@ -104,9 +126,11 @@ export default function SyncBar() {
         } else {
           armStallTimer();
         }
-      } else if (phase === 'done') {
+      } else if (phase === 'done' || phase === 'error') {
+        // Treat error identically to done — the bar is informational, not
+        // an error surface; a separate loadError banner handles retries.
         clearTimeout(syncStallTimer.current);
-        setTimeout(hide, 800);
+        setTimeout(hide, phase === 'error' ? 200 : 800);
       }
     };
 

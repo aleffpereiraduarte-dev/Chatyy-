@@ -420,19 +420,24 @@ window.addEventListener('message', function(ev) {
 });
 
 // ──────────────────────────── Loader ─────────────────────────────────────
-// 'initMap' exists as the Google Maps JS callback contract. The bootGmaps
-// path is intentionally NOT reachable today because the GCP project tied
-// to GOOGLE_MAPS_KEY has billing disabled — Static Maps 403s and JS API
-// paints the "For development purposes only" watermark. When billing is
-// turned on, flip the loader below to load the gmaps script tag and the
-// existing bootGmaps() (AvatarOverlay + MeOverlay) will take over with
-// the exact same pin/me/pan bridge contract — no RN changes needed.
+// Google Maps JS API path — billing was enabled 2026-05-18. The script
+// tag is injected at runtime so we can fall back to Leaflet if the
+// network blocks googleapis.com or the key is mid-rotation.
 function initMap() { try { bootGmaps(); } catch (e) { bootLeaflet(); } }
 
-// Canonical path: Leaflet over CartoCDN tiles. Matches the in-chat
-// location bubble (static_map.php → CartoCDN) so snap-map and chat share
-// the same visual language. Free, no key, no billing, no watermark.
-bootLeaflet();
+(function loadGoogleMaps() {
+  if (!API_KEY) { bootLeaflet(); return; }
+  var s = document.createElement('script');
+  s.async = true;
+  s.defer = true;
+  s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(API_KEY) + '&callback=initMap&loading=async';
+  s.onerror = function() { bootLeaflet(); };
+  document.head.appendChild(s);
+  // Safety net: if Google never calls initMap within 6s (CDN block,
+  // network flake), fall back to Leaflet so the user isn't stuck on a
+  // blank map.
+  setTimeout(function(){ if (__backend === null) bootLeaflet(); }, 6000);
+})();
 
 // gm_authFailure is the runtime signal Google fires when the JS API
 // loads but is rejected for billing/quota. Kept defensive in case

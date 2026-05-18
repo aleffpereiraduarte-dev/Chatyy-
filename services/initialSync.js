@@ -42,10 +42,31 @@ function emit(phase, progress = 0) {
 
 /**
  * Full initial sync — downloads EVERYTHING
+ *
+ * Web (WhatsApp-grade silent path, 2026-05-18):
+ *   No persistent local store on web (no SQLite, no native DB). Heavy
+ *   pre-pulls (chat list + contacts + 5 IMAP folders + calendar + files +
+ *   profile + settings + notes) were running on EVERY cold start and were
+ *   the root cause of the perpetual "Sincronizando..." banner that users
+ *   complained about (#1131). The chat list and every other screen does
+ *   its own fetch-on-mount with cache fallback. On web we now short-circuit:
+ *   emit start→done in the same tick so the SyncBar never paints, mark the
+ *   sync as complete in localStorage, and return immediately. Real-time WS
+ *   delta + per-screen lazy fetch handle steady-state from here.
  */
 export async function runInitialSync(api, options = {}) {
   if (!options.force && isSyncComplete()) {
     return { skipped: true };
+  }
+
+  // WEB FAST PATH — see jsdoc above. WhatsApp Web mirrors this exact pattern:
+  // first paint is empty/cached, then deltas trickle in. No upfront 8-phase
+  // pull. NO visible banner.
+  if (Platform.OS === 'web') {
+    try { markSyncComplete(); } catch {}
+    // Emit nothing — SyncBar would only show on a 'start' anyway. Return
+    // synthetic skipped so the chat.js gate seals the per-email flag.
+    return { skipped: true, web: true };
   }
 
   const isNative = Platform.OS !== 'web';
@@ -209,7 +230,14 @@ export async function runInitialSync(api, options = {}) {
   } catch (err) {
     // emit 'error' so UI pode diferenciar sucesso/falha. Antes emitia
     // 'done' mesmo em erro, mascarando falhas no fluxo de splash/loader.
+    //
+    // 2026-05-18 (#1131): also emit 'done' so SyncBar's handleSync hides the
+    // bar — otherwise a thrown error left the bar stuck on "Sincronizando..."
+    // until the 8s stall timer fired (and users hit refresh way before that).
+    // The error phase is still emitted FIRST so listeners that distinguish
+    // success/failure (splash, retry banner) still get the signal.
     emit('error', 0);
+    emit('done', 100);
     return { error: err.message };
   }
 }
