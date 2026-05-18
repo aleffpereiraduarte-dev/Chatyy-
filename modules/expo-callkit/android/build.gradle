@@ -1,5 +1,11 @@
 apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
+// Kotlin 2.0+ requires the standalone Compose Compiler Gradle plugin
+// when `buildFeatures { compose true }` is set. Without this line the
+// :expo-callkit module fails to configure and cascades to ":expo"
+// being unable to find its `release` SoftwareComponent (top-level
+// build error). Compose Compiler plugin ships with the Kotlin tooling.
+apply plugin: 'org.jetbrains.kotlin.plugin.compose'
 
 group = 'expo.modules.callkit'
 version = '0.1.0'

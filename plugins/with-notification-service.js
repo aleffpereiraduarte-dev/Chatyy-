@@ -210,6 +210,20 @@ function withNotificationServiceTarget(config) {
       'app_extension'
     );
 
+    // [2026-05-18 fix] Register the NSE as a build dependency of the main
+    // app target. Without this PBXTargetDependency entry, CocoaPods scans
+    // the .pbxproj for embed relations, fails to find one, and aborts with
+    //   "[!] Unable to find host target(s) for ChatyyNotificationService.
+    //    Please add the host targets for the embedded targets to the Podfile."
+    // The Podfile nested-target syntax alone is not enough — CocoaPods also
+    // walks the Xcode project graph to infer hosts. Mirror what `addTarget`
+    // does for first-class targets.
+    try {
+      project.addTargetDependency(mainAppTargetUuid, [target.uuid]);
+    } catch (e) {
+      console.warn('[with-notification-service] addTargetDependency failed:', e?.message || e);
+    }
+
     // Build settings — entitlements, Info.plist, deployment target, etc.
     const xcConfig = project.pbxXCBuildConfigurationSection();
     for (const key of Object.keys(xcConfig)) {
