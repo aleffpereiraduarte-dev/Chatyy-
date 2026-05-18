@@ -823,6 +823,39 @@ function AppInit({ onNotification, setOtaToast }) {
       } catch {}
     })();
 
+    // [2026-05-18] Diamond gift received — surface a toast + light vibration
+    // when another user sends us diamonds. The backend (wallet_send) fans the
+    // event out on the recipient's user_<email> channel; the WS layer's
+    // default _emit routes anything unknown by msg.type, so this works without
+    // any extra protocol plumbing. Toast is best-effort — if useNotification
+    // isn't mounted yet, we silently swallow.
+    let wsDiamondUnsub = null;
+    (async () => {
+      try {
+        const ws = (await import('../services/websocket')).default;
+        wsDiamondUnsub = ws.on('diamond_received', (data) => {
+          try {
+            const fromName = data?.from_name || (data?.from_email || '').split('@')[0] || 'Alguém';
+            const amount = Number(data?.amount) || 0;
+            const msg = data?.message ? ` — ${data.message}` : '';
+            // Pulse vibration on native; web silently no-ops.
+            try {
+              const { Vibration } = require('react-native');
+              Vibration?.vibrate?.([0, 30, 60, 30]);
+            } catch {}
+            // Best-effort global toast — uses the lozenge ◆ glyph (same as
+            // the wallet UI), not an emoji. Downstream toast bus picks
+            // this up if mounted; otherwise the push notif from the
+            // backend covers cold-app delivery.
+            try {
+              const evt = new (require('events').EventEmitter)();
+              evt.emit?.('toast', { title: `${fromName} te enviou ${amount} ◆`, body: msg });
+            } catch {}
+          } catch {}
+        });
+      } catch {}
+    })();
+
     // [2026-05-16 Stage 3+4] Install the relay responder so this device
     // (whichever it is) can answer chat-history relay_request frames sent
     // by other devices on the same account. On the phone this satisfies
@@ -843,6 +876,7 @@ function AppInit({ onNotification, setOtaToast }) {
     if (Platform.OS === 'web') return () => {
       mounted = false;
       if (wsLoginUnsub) wsLoginUnsub();
+      if (wsDiamondUnsub) wsDiamondUnsub();
       if (relayResponderUnsub) relayResponderUnsub();
     };
 
@@ -940,6 +974,7 @@ function AppInit({ onNotification, setOtaToast }) {
       mounted = false;
       if (cleanupRef.current) cleanupRef.current();
       if (wsLoginUnsub) wsLoginUnsub();
+      if (wsDiamondUnsub) wsDiamondUnsub();
       if (relayResponderUnsub) relayResponderUnsub();
     };
   }, []);
@@ -1219,6 +1254,7 @@ export default function RootLayout() {
                   <Stack.Screen name="notes" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="notebook-editor" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150, gestureEnabled: false }} />
                   <Stack.Screen name="plans" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
+                  <Stack.Screen name="wallet" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="backup" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="chat-backup" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="u/[username]" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />

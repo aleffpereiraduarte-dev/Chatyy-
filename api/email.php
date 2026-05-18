@@ -10202,6 +10202,12 @@ try {
         case 'bot_create': case 'bot_list': case 'bot_list_mine':
         case 'bot_search': case 'bot_set_commands': case 'bot_invoke_command':
         case 'bot_update': case 'bot_delete': case 'bot_regenerate_token':
+        // Diamond wallet — 2026-05-18 monetization stack (top-up via IAP,
+        // peer-to-peer send, history). All cases live in chat.php so the
+        // chat_wallet_* PG tables stay co-located with the live/feed gift
+        // pipeline that drives most diamond consumption.
+        case 'wallet_balance': case 'wallet_topup_verify': case 'wallet_buy_diamonds':
+        case 'wallet_send': case 'wallet_history': case 'wallet_pack_catalog':
             require_once __DIR__ . '/chat.php';
             handleChatAction($action);
             break;

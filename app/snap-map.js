@@ -10,15 +10,23 @@
 //   3. Live updates via WS `location_update` + `location_share_revoked`
 //      events; the 30s poll is a fallback for WS reconnects.
 //
-// Why a static-map image instead of react-native-maps
-// ---------------------------------------------------
-// react-native-maps is a NATIVE module and adding it triggers a TestFlight
-// build + Play Store re-submit. To keep the feature shippable as OTA we
-// render a Geoapify static tile + absolute-positioned avatar overlays,
-// projecting lat/lng → screen pixels via a Web-Mercator approximation.
-// It's not pan-zoom but it shows pins, names, and refreshes in real time
-// — enough for v1. Phase 2 swap-in is `react-native-webview` w/ Leaflet,
-// no native rebuild required.
+// Rendering: real Google Maps via WebView
+// ---------------------------------------
+// User feedback 2026-05-18: "amigos no mapa não tá abrindo o google maps".
+// We dropped the Geoapify static-tile + projected-pin overlay approach and
+// switched to Google Maps JS API rendered inside a WebView (native) / iframe
+// (web). That gives real pan/zoom, smooth markers, and matches the in-chat
+// live-location modal style (see chat-conversation.js gmapsHtml block).
+//
+// Why WebView and not react-native-maps:
+//   react-native-maps is a NATIVE module → TestFlight build + Play re-submit
+//   on every change. WebView is core-bundled with react-native-webview
+//   (already installed, used by ~15 screens) and ships as OTA. No native
+//   rebuild required.
+//
+// Fallback: if Google rejects the key (billing flap, quota), the HTML
+// auto-falls back to a Leaflet/OSM map so users still see something usable
+// — same strategy chat-conversation.js uses for the live-location modal.
 //
 // Privacy contract (matches backend chat.php BEGIN FRIEND_LOCATION_TRACKING):
 //   - Backend never returns shares without an active grant. Frontend
@@ -26,12 +34,13 @@
 //   - "Parar de receber" hits chat_friend_location_revoke (delete grant
 //     on either side); WS revoke is broadcast and listeners drop the pin.
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, Platform, Image,
+  View, Text, TouchableOpacity, StyleSheet, Platform,
   ScrollView, Dimensions, Modal, Pressable, ActivityIndicator, Alert,
   Linking,
 } from 'react-native';
+import { WebView } from 'react-native-webview';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { triggerLocationRequestModal } from '../components/LocationRequestModal';
 import { useTheme } from '../context/ThemeContext';
@@ -39,9 +48,16 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
 import AvatarCircle from '../components/AvatarCircle';
+import { getAvatarUrlForEmail } from '../services/api';
 import {
   IconArrowLeft, IconMapPin, IconUser, IconMessageSquare, IconX,
 } from '../components/Icons';
+
+// Google Maps JS API key. Read from app.json `extra.GOOGLE_MAPS_KEY` —
+// same source LocationMessage.js and chat-conversation.js use, so all three
+// stay in lockstep when the key rotates.
+let GMAPS_KEY = '';
+try { GMAPS_KEY = require('expo-constants').default?.expoConfig?.extra?.GOOGLE_MAPS_KEY || ''; } catch {}
 
 // mailWs is the singleton WS bridge — re-uses the connection chat-conv
 // holds, so subscribing here is essentially free.
@@ -50,32 +66,335 @@ try { mailWs = require('../services/mailWs').default; } catch {}
 
 const { width: SW, height: SH } = Dimensions.get('window');
 
-// Tile served by Geoapify free tier (60K hits/month, already in use
-// across the app for static map previews — see chatyy/static_map.php
-// notes). Switch to chatyy.com.br/api/static_map.php for self-hosted
-// when traffic grows.
-const STATIC_MAP_KEY = '0457440ba1db4f5a80840e87a1a2fd60';
-const ZOOM = 12;
+const DEFAULT_ZOOM = 14;
 
-// Web-Mercator pixel projection. Given a tile zoom + the map center, we
-// can map any (lat,lng) within the visible viewport to (x,y) screen px.
-// Same math the gmaps JS uses; just rolled by hand so we don't ship
-// google's API key + iframe overhead.
-function project(lat, lng, centerLat, centerLng, mapW, mapH, zoom) {
-  const worldSize = 256 * Math.pow(2, zoom);
-  const toX = (l) => ((l + 180) / 360) * worldSize;
-  const toY = (lt) => {
-    const sin = Math.sin((lt * Math.PI) / 180);
-    return (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * worldSize;
+// Dark-mode Google Maps styles. Same palette WhatsApp uses on the live-
+// location screen — desaturated, low-contrast roads so the friend avatars
+// pop. Light mode uses Google's default styling (passes `styles: []`).
+const DARK_MAP_STYLES = [
+  { elementType: 'geometry', stylers: [{ color: '#1a1a1a' }] },
+  { elementType: 'labels.text.fill', stylers: [{ color: '#8a8a8a' }] },
+  { elementType: 'labels.text.stroke', stylers: [{ color: '#1a1a1a' }] },
+  { featureType: 'administrative', elementType: 'geometry', stylers: [{ visibility: 'off' }] },
+  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2c2c2c' }] },
+  { featureType: 'road', elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
+  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#3a3a3a' }] },
+  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0d0d0d' }] },
+];
+
+// Build the HTML document that runs Google Maps JS API + a custom
+// `AvatarOverlay` class. The overlay extends `google.maps.OverlayView` so
+// each pin is a real DOM node (rounded avatar img + name label) anchored
+// to lat/lng — exactly the Snapchat / Find-My-Friends look the spec asks
+// for, which the default Marker icon can't render.
+//
+// Pins/myLocation are passed as JSON literals on first render and patched
+// live via `window.RNbridge(jsonString)` (native injectJavaScript) /
+// `window.postMessage` (web iframe). `pin_tap` events flow back via
+// `window.ReactNativeWebView.postMessage` (native) or `window.parent
+// .postMessage` (web).
+function buildMapHtml({ apiKey, center, zoom, isDark, initialPins, initialMe }) {
+  const stylesJson = isDark ? JSON.stringify(DARK_MAP_STYLES) : '[]';
+  const pinsJson = JSON.stringify(initialPins || []);
+  const meJson = JSON.stringify(initialMe || null);
+  // If the key is missing OR Google rejects it at runtime, we silently
+  // swap in Leaflet — see `bootLeaflet()` below. Same fallback path the
+  // in-chat live-location modal uses, so styling stays consistent.
+  return `<!DOCTYPE html><html><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<style>
+  html,body,#map{margin:0;padding:0;width:100%;height:100%;background:${isDark ? '#0d0d0d' : '#e5e7eb'};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+  .pin{position:absolute;transform:translate(-50%,-100%);display:flex;flex-direction:column;align-items:center;cursor:pointer;pointer-events:auto;user-select:none}
+  .pin .ring{width:48px;height:48px;border-radius:24px;background:#fff;padding:3px;box-sizing:border-box;box-shadow:0 3px 10px rgba(0,0,0,0.35);border:3px solid #22c55e}
+  .pin.unlimited .ring{border-color:#7C3AED}
+  .pin .ring img{width:100%;height:100%;border-radius:50%;display:block;object-fit:cover;background:#7C3AED}
+  .pin .ring .ini{width:100%;height:100%;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:18px;background:#7C3AED}
+  .pin .label{margin-top:3px;background:rgba(0,0,0,0.78);color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .me{position:absolute;transform:translate(-50%,-50%);pointer-events:none}
+  .me .dot{width:18px;height:18px;border-radius:50%;background:#3B82F6;border:3px solid #fff;box-shadow:0 0 0 6px rgba(59,130,246,0.25),0 2px 6px rgba(0,0,0,0.4)}
+</style>
+</head><body>
+<div id="map"></div>
+<script>
+var API_KEY = ${JSON.stringify(apiKey || '')};
+var INITIAL_CENTER = ${JSON.stringify(center)};
+var INITIAL_ZOOM = ${zoom};
+var INITIAL_PINS = ${pinsJson};
+var INITIAL_ME = ${meJson};
+var STYLES = ${stylesJson};
+var USE_DARK = ${isDark ? 'true' : 'false'};
+
+var __map = null;
+var __overlays = {};       // email → AvatarOverlay
+var __meOverlay = null;
+var __backend = null;      // 'gmaps' | 'leaflet'
+
+// Send a message back to the RN host. Native uses ReactNativeWebView,
+// web iframe uses parent postMessage.
+function rnPost(obj) {
+  try {
+    var msg = JSON.stringify(obj);
+    if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+      window.ReactNativeWebView.postMessage(msg);
+    } else if (window.parent && window.parent !== window) {
+      window.parent.postMessage(msg, '*');
+    }
+  } catch (e) {}
+}
+
+function pinHtml(pin) {
+  var initial = (pin.name || pin.email || '?').trim().charAt(0).toUpperCase();
+  var img = pin.avatar_url
+    ? '<img src="' + pin.avatar_url + '" onerror="this.style.display=\\'none\\';this.nextElementSibling&&(this.nextElementSibling.style.display=\\'flex\\')"/><div class="ini" style="display:none">' + initial + '</div>'
+    : '<div class="ini">' + initial + '</div>';
+  var name = (pin.name || (pin.email ? pin.email.split('@')[0] : '?'));
+  return '<div class="ring">' + img + '</div><div class="label">' + escapeHtml(name) + '</div>';
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});
+}
+
+// ──────────────────────────── Google Maps backend ────────────────────────
+function bootGmaps() {
+  __backend = 'gmaps';
+  __map = new google.maps.Map(document.getElementById('map'), {
+    center: { lat: INITIAL_CENTER.lat, lng: INITIAL_CENTER.lng },
+    zoom: INITIAL_ZOOM,
+    disableDefaultUI: true,
+    zoomControl: true,
+    gestureHandling: 'greedy',
+    clickableIcons: false,
+    styles: STYLES,
+  });
+
+  // Custom AvatarOverlay — a real DOM node positioned over the map. We
+  // extend OverlayView (not AdvancedMarkerElement) because the latter
+  // needs Maps JS v3 beta + Map ID provisioning we don't have.
+  function AvatarOverlay(pin) {
+    this.pin = pin;
+    this.div = null;
+    this.setMap(__map);
+  }
+  AvatarOverlay.prototype = new google.maps.OverlayView();
+  AvatarOverlay.prototype.onAdd = function() {
+    var div = document.createElement('div');
+    div.className = 'pin' + (this.pin.is_unlimited ? ' unlimited' : '');
+    div.innerHTML = pinHtml(this.pin);
+    var self = this;
+    div.addEventListener('click', function(){ rnPost({ type: 'pin_tap', email: self.pin.email }); });
+    this.div = div;
+    this.getPanes().floatPane.appendChild(div);
   };
-  const cx = toX(centerLng);
-  const cy = toY(centerLat);
-  const px = toX(lng);
-  const py = toY(lat);
-  return {
-    x: mapW / 2 + (px - cx),
-    y: mapH / 2 + (py - cy),
+  AvatarOverlay.prototype.draw = function() {
+    if (!this.div) return;
+    var proj = this.getProjection();
+    if (!proj) return;
+    var p = proj.fromLatLngToDivPixel(new google.maps.LatLng(this.pin.lat, this.pin.lng));
+    if (!p) return;
+    this.div.style.left = p.x + 'px';
+    this.div.style.top = p.y + 'px';
   };
+  AvatarOverlay.prototype.onRemove = function() {
+    if (this.div && this.div.parentNode) this.div.parentNode.removeChild(this.div);
+    this.div = null;
+  };
+  AvatarOverlay.prototype.update = function(pin) {
+    this.pin = pin;
+    if (this.div) {
+      this.div.className = 'pin' + (pin.is_unlimited ? ' unlimited' : '');
+      this.div.innerHTML = pinHtml(pin);
+      var self = this;
+      this.div.addEventListener('click', function(){ rnPost({ type: 'pin_tap', email: self.pin.email }); });
+    }
+    this.draw();
+  };
+
+  // Same OverlayView contract for the "you are here" blue dot — pointer-
+  // events:none so taps fall through to the map underneath.
+  function MeOverlay(pos) {
+    this.pos = pos;
+    this.div = null;
+    this.setMap(__map);
+  }
+  MeOverlay.prototype = new google.maps.OverlayView();
+  MeOverlay.prototype.onAdd = function() {
+    var div = document.createElement('div');
+    div.className = 'me';
+    div.innerHTML = '<div class="dot"></div>';
+    this.div = div;
+    this.getPanes().overlayLayer.appendChild(div);
+  };
+  MeOverlay.prototype.draw = function() {
+    if (!this.div) return;
+    var proj = this.getProjection();
+    if (!proj) return;
+    var p = proj.fromLatLngToDivPixel(new google.maps.LatLng(this.pos.lat, this.pos.lng));
+    if (!p) return;
+    this.div.style.left = p.x + 'px';
+    this.div.style.top = p.y + 'px';
+  };
+  MeOverlay.prototype.onRemove = function() {
+    if (this.div && this.div.parentNode) this.div.parentNode.removeChild(this.div);
+    this.div = null;
+  };
+  MeOverlay.prototype.update = function(pos) {
+    this.pos = pos;
+    this.draw();
+  };
+
+  // Surface tiles loaded so the host can dismiss its loading spinner.
+  google.maps.event.addListenerOnce(__map, 'tilesloaded', function(){
+    rnPost({ type: 'map_ready' });
+  });
+
+  // Initial render.
+  window.__renderPins = function(pins) {
+    var seen = {};
+    pins.forEach(function(p){
+      if (!isFinite(p.lat) || !isFinite(p.lng)) return;
+      seen[p.email] = true;
+      if (__overlays[p.email]) __overlays[p.email].update(p);
+      else __overlays[p.email] = new AvatarOverlay(p);
+    });
+    Object.keys(__overlays).forEach(function(em){
+      if (!seen[em]) { __overlays[em].setMap(null); delete __overlays[em]; }
+    });
+  };
+  window.__renderMe = function(me) {
+    if (!me || !isFinite(me.lat) || !isFinite(me.lng)) {
+      if (__meOverlay) { __meOverlay.setMap(null); __meOverlay = null; }
+      return;
+    }
+    if (__meOverlay) __meOverlay.update(me);
+    else __meOverlay = new MeOverlay(me);
+  };
+  window.__panTo = function(lat, lng) {
+    try { __map.panTo({ lat: lat, lng: lng }); } catch (e) {}
+  };
+
+  window.__renderPins(INITIAL_PINS);
+  if (INITIAL_ME) window.__renderMe(INITIAL_ME);
+}
+
+// ──────────────────────────── Leaflet fallback ───────────────────────────
+// Loaded only if (a) no API key, or (b) Google Maps script tag errors out
+// (key rejected, billing not enabled, network blocked). Renders OSM tiles.
+function bootLeaflet() {
+  if (__backend) return;  // gmaps won the race — skip
+  __backend = 'leaflet';
+  var css = document.createElement('link');
+  css.rel = 'stylesheet';
+  css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+  document.head.appendChild(css);
+  var js = document.createElement('script');
+  js.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+  js.onload = function() {
+    var map = L.map('map', { zoomControl: true, attributionControl: false })
+      .setView([INITIAL_CENTER.lat, INITIAL_CENTER.lng], INITIAL_ZOOM);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, subdomains: 'abc' }).addTo(map);
+
+    var lOverlays = {};
+    var lMe = null;
+    function makePinIcon(pin) {
+      var initial = (pin.name || pin.email || '?').trim().charAt(0).toUpperCase();
+      var img = pin.avatar_url
+        ? '<img src="' + pin.avatar_url + '" onerror="this.style.display=\\'none\\';this.nextElementSibling&&(this.nextElementSibling.style.display=\\'flex\\')"/><div class="ini" style="display:none">' + initial + '</div>'
+        : '<div class="ini">' + initial + '</div>';
+      var name = (pin.name || (pin.email ? pin.email.split('@')[0] : '?'));
+      return L.divIcon({
+        className: '',
+        iconSize: [120, 80],
+        iconAnchor: [60, 80],
+        html: '<div class="pin' + (pin.is_unlimited ? ' unlimited' : '') + '"><div class="ring">' + img + '</div><div class="label">' + escapeHtml(name) + '</div></div>',
+      });
+    }
+    window.__renderPins = function(pins) {
+      var seen = {};
+      pins.forEach(function(p){
+        if (!isFinite(p.lat) || !isFinite(p.lng)) return;
+        seen[p.email] = true;
+        if (lOverlays[p.email]) {
+          lOverlays[p.email].setLatLng([p.lat, p.lng]);
+          lOverlays[p.email].setIcon(makePinIcon(p));
+        } else {
+          var m = L.marker([p.lat, p.lng], { icon: makePinIcon(p) }).addTo(map);
+          (function(em){
+            m.on('click', function(){ rnPost({ type: 'pin_tap', email: em }); });
+          })(p.email);
+          lOverlays[p.email] = m;
+        }
+      });
+      Object.keys(lOverlays).forEach(function(em){
+        if (!seen[em]) { map.removeLayer(lOverlays[em]); delete lOverlays[em]; }
+      });
+    };
+    window.__renderMe = function(me) {
+      if (!me || !isFinite(me.lat) || !isFinite(me.lng)) {
+        if (lMe) { map.removeLayer(lMe); lMe = null; }
+        return;
+      }
+      var icon = L.divIcon({ className: '', iconSize: [18,18], iconAnchor: [9,9], html: '<div class="me"><div class="dot"></div></div>' });
+      if (lMe) { lMe.setLatLng([me.lat, me.lng]); lMe.setIcon(icon); }
+      else lMe = L.marker([me.lat, me.lng], { icon: icon, interactive: false }).addTo(map);
+    };
+    window.__panTo = function(lat, lng) { try { map.panTo([lat, lng]); } catch (e) {} };
+
+    window.__renderPins(INITIAL_PINS);
+    if (INITIAL_ME) window.__renderMe(INITIAL_ME);
+    rnPost({ type: 'map_ready' });
+  };
+  document.body.appendChild(js);
+}
+
+// ──────────────────────────── RN → WebView bridge ────────────────────────
+// Native: parent calls webRef.injectJavaScript("window.RNbridge('{...}')")
+// Web:    parent posts {raw:'{...}'} via iframe.contentWindow.postMessage
+window.RNbridge = function(json) {
+  try {
+    var msg = typeof json === 'string' ? JSON.parse(json) : json;
+    if (msg.type === 'pins' && window.__renderPins) window.__renderPins(msg.pins || []);
+    else if (msg.type === 'me' && window.__renderMe) window.__renderMe(msg.me);
+    else if (msg.type === 'pan' && window.__panTo) window.__panTo(msg.lat, msg.lng);
+  } catch (e) {}
+};
+window.addEventListener('message', function(ev) {
+  var d = ev && ev.data;
+  if (typeof d === 'string') { try { window.RNbridge(d); } catch(e){} }
+  else if (d && d.raw) { try { window.RNbridge(d.raw); } catch(e){} }
+});
+
+// ──────────────────────────── Loader ─────────────────────────────────────
+// Race: load gmaps script; if it errors OR doesn't fire initMap in 5s,
+// fall back to Leaflet so the screen never sits blank.
+function initMap() { try { bootGmaps(); } catch (e) { bootLeaflet(); } }
+if (API_KEY) {
+  var s = document.createElement('script');
+  s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(API_KEY) + '&callback=initMap';
+  s.async = true; s.defer = true;
+  s.onerror = function(){ bootLeaflet(); };
+  document.head.appendChild(s);
+  // Watchdog — if Google's loader paints the "can't load Google Maps"
+  // overlay (billing rejection), initMap never fires. After 6s, force
+  // Leaflet so the user still sees the map.
+  setTimeout(function(){ if (!__backend) bootLeaflet(); }, 6000);
+} else {
+  bootLeaflet();
+}
+// Also catch the "billing not enabled" runtime banner Google paints over
+// the map — when it fires, gmAuthFailure is the only signal we get.
+window.gm_authFailure = function() {
+  Object.keys(__overlays).forEach(function(e){ try { __overlays[e].setMap(null); } catch(_){} });
+  __overlays = {};
+  if (__meOverlay) { try { __meOverlay.setMap(null); } catch(_){} __meOverlay = null; }
+  __map = null; __backend = null;
+  document.getElementById('map').innerHTML = '';
+  bootLeaflet();
+};
+</script>
+</body></html>`;
 }
 
 function ago(updatedAt) {
@@ -215,19 +534,112 @@ export default function SnapMapScreen() {
   }, []);
 
   // Center: prefer my GPS; fall back to first friend; final fallback Brazil.
-  const center = useMemo(() => {
+  // We only compute center ONCE — on mount — to seed the WebView HTML.
+  // After mount, the user is free to pan/zoom; we don't yank them back to
+  // center every time `myLocation` updates. New pins arrive via
+  // injectJavaScript, not a full HTML re-render.
+  const initialCenter = useMemo(() => {
     if (myLocation) return myLocation;
     if (shares[0] && Number.isFinite(shares[0].latitude)) return { lat: shares[0].latitude, lng: shares[0].longitude };
     return { lat: -15.77, lng: -47.92 };
-  }, [myLocation, shares]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);   // ← intentionally empty; first paint only
 
-  // Map viewport in pixels. Header eats ~60px on top + 64px on bottom
-  // for the chip row. Math is approximate but the projection only needs
-  // the *render* width/height, not the device.
-  const mapW = SW;
-  const mapH = SH - 60 - 64;
+  // Build the pin payload the WebView understands. avatar_url is the
+  // backend's /get_avatar endpoint so the map shows the friend's actual
+  // profile photo instead of just initials.
+  const pinsPayload = useMemo(() => (
+    shares
+      .filter((s) => Number.isFinite(s.latitude) && Number.isFinite(s.longitude))
+      .map((s) => ({
+        email: s.email,
+        name: s.name || s.email?.split('@')[0] || '',
+        lat: Number(s.latitude),
+        lng: Number(s.longitude),
+        is_unlimited: !!s.is_unlimited,
+        avatar_url: s.email ? getAvatarUrlForEmail(s.email) : null,
+      }))
+  ), [shares]);
+  const mePayload = useMemo(() => (
+    myLocation ? { lat: myLocation.lat, lng: myLocation.lng } : null
+  ), [myLocation]);
 
-  const mapUrl = `https://maps.geoapify.com/v1/staticmap?style=osm-bright${isDark ? '-smooth' : ''}&width=${Math.min(mapW * 2, 1200)}&height=${Math.min(mapH * 2, 1200)}&center=lonlat:${center.lng},${center.lat}&zoom=${ZOOM}&apiKey=${STATIC_MAP_KEY}`;
+  // HTML built once per mount. We avoid rebuilding on state change
+  // because rebuilding the `source.html` would tear down the WebView
+  // and remount Google Maps from scratch (slow, jittery, loses user
+  // pan/zoom). All pin/me updates flow through injectJavaScript.
+  const mapHtml = useMemo(() => buildMapHtml({
+    apiKey: GMAPS_KEY,
+    center: initialCenter,
+    zoom: DEFAULT_ZOOM,
+    isDark,
+    initialPins: pinsPayload,
+    initialMe: mePayload,
+  }), [initialCenter, isDark]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // WebView refs — native uses ref.injectJavaScript, web posts to iframe.
+  const webRef = useRef(null);
+  const iframeRef = useRef(null);
+  const mapReadyRef = useRef(false);
+
+  // Push updates to the map without remounting. `__pendingPins` queue
+  // is needed because shares can land BEFORE the map's tiles finish
+  // loading — we flush on `map_ready`.
+  const pendingPinsRef = useRef(null);
+  const pendingMeRef = useRef(null);
+
+  const pushToMap = useCallback((msg) => {
+    const raw = JSON.stringify(msg);
+    if (Platform.OS === 'web') {
+      try { iframeRef.current?.contentWindow?.postMessage({ raw }, '*'); } catch {}
+    } else {
+      // Wrap in try/catch — if the WebView is mid-reload the call throws.
+      const js = `try{window.RNbridge(${JSON.stringify(raw)});}catch(e){};true;`;
+      try { webRef.current?.injectJavaScript(js); } catch {}
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!mapReadyRef.current) { pendingPinsRef.current = pinsPayload; return; }
+    pushToMap({ type: 'pins', pins: pinsPayload });
+  }, [pinsPayload, pushToMap]);
+  useEffect(() => {
+    if (!mapReadyRef.current) { pendingMeRef.current = mePayload; return; }
+    pushToMap({ type: 'me', me: mePayload });
+  }, [mePayload, pushToMap]);
+
+  // Bridge messages from the WebView (pin tap → open bottom sheet,
+  // map_ready → flush pending pins + dismiss loading spinner).
+  const onWebMessage = useCallback((raw) => {
+    try {
+      const msg = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (msg.type === 'map_ready') {
+        mapReadyRef.current = true;
+        if (pendingPinsRef.current) {
+          pushToMap({ type: 'pins', pins: pendingPinsRef.current });
+          pendingPinsRef.current = null;
+        }
+        if (pendingMeRef.current) {
+          pushToMap({ type: 'me', me: pendingMeRef.current });
+          pendingMeRef.current = null;
+        }
+      } else if (msg.type === 'pin_tap') {
+        const found = sharesRef.current.find((s) => (s.email || '').toLowerCase() === (msg.email || '').toLowerCase());
+        if (found) setSelected(found);
+      }
+    } catch {}
+  }, [pushToMap]);
+
+  // Web: window message bridge from iframe. Native uses WebView.onMessage.
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const handler = (ev) => {
+      if (!ev || ev.source !== iframeRef.current?.contentWindow) return;
+      onWebMessage(ev.data);
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, [onWebMessage]);
 
   // ── Pending request handling ───────────────────────────────────────
   const respondToRequest = (req, accept) => {
@@ -331,54 +743,31 @@ export default function SnapMapScreen() {
         </ScrollView>
       )}
 
-      {/* Map */}
+      {/* Map — Google Maps JS inside WebView/iframe. Tap on a pin posts
+          `pin_tap` back to RN which opens the bottom sheet below. Real
+          pan/zoom comes for free; we keep the loading + empty overlays
+          absolutely-positioned on top of the WebView. */}
       <View style={{ flex: 1, position: 'relative', backgroundColor: isDark ? '#1a1a1a' : '#e5e7eb' }}>
-        <Image source={{ uri: mapUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
-
-        {/* Friend pins — projected from lat/lng via Web-Mercator */}
-        {shares.map((loc) => {
-          if (!Number.isFinite(loc.latitude) || !Number.isFinite(loc.longitude)) return null;
-          const { x, y } = project(loc.latitude, loc.longitude, center.lat, center.lng, mapW, mapH, ZOOM);
-          if (x < -50 || x > mapW + 50 || y < -50 || y > mapH + 50) return null;
-          return (
-            <TouchableOpacity
-              key={loc.email}
-              onPress={() => setSelected(loc)}
-              style={{ position: 'absolute', left: x - 26, top: y - 30, alignItems: 'center' }}
-            >
-              <View style={{
-                borderWidth: 3,
-                borderColor: loc.is_unlimited ? '#7C3AED' : '#22c55e',
-                borderRadius: 28,
-                padding: 2,
-                backgroundColor: '#fff',
-                ...(Platform.OS === 'web' ? { boxShadow: '0 3px 12px rgba(0,0,0,0.35)' } : {}),
-                ...(Platform.OS !== 'web' ? { shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 6, shadowOffset: { width: 0, height: 3 }, elevation: 6 } : {}),
-              }}>
-                <AvatarCircle name={loc.name || loc.email} email={loc.email} size={44} />
-              </View>
-              <View style={{ backgroundColor: 'rgba(0,0,0,0.78)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, marginTop: 3, maxWidth: 110 }}>
-                <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }} numberOfLines={1}>
-                  {(loc.name || loc.email?.split('@')[0] || '?')}
-                </Text>
-              </View>
-            </TouchableOpacity>
-          );
-        })}
-
-        {/* My location dot — pinned to map center */}
-        {myLocation && (
-          <View style={{ position: 'absolute', left: mapW / 2 - 18, top: mapH / 2 - 18, alignItems: 'center', pointerEvents: 'none' }}>
-            <View style={{
-              borderWidth: 3, borderColor: '#3B82F6', borderRadius: 22, padding: 2, backgroundColor: '#fff',
-              ...(Platform.OS === 'web' ? { boxShadow: '0 0 24px rgba(59,130,246,0.55)' } : {}),
-            }}>
-              <AvatarCircle name={user?.name} email={user?.email} size={32} />
-            </View>
-            <View style={{ backgroundColor: '#3B82F6', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, marginTop: 3 }}>
-              <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>{t?.('snapmap.you') || 'Você'}</Text>
-            </View>
-          </View>
+        {Platform.OS === 'web' ? (
+          <iframe
+            ref={iframeRef}
+            srcDoc={mapHtml}
+            style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
+            allow="geolocation"
+            title="snap-map"
+          />
+        ) : (
+          <WebView
+            ref={webRef}
+            source={{ html: mapHtml, baseUrl: 'https://chatyy.com.br/' }}
+            originWhitelist={['*']}
+            javaScriptEnabled
+            domStorageEnabled
+            allowsInlineMediaPlayback
+            mixedContentMode="always"
+            onMessage={(ev) => onWebMessage(ev?.nativeEvent?.data)}
+            style={{ flex: 1, backgroundColor: isDark ? '#0d0d0d' : '#e5e7eb' }}
+          />
         )}
 
         {/* Loading badge */}
@@ -391,14 +780,16 @@ export default function SnapMapScreen() {
 
         {/* Empty state */}
         {!loading && shares.length === 0 && (
-          <View style={{ position: 'absolute', top: mapH * 0.32, alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.78)', padding: 22, borderRadius: 18, maxWidth: 320, marginHorizontal: 16 }}>
-            <IconMapPin size={36} color="#fff" style={{ alignSelf: 'center' }} />
-            <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700', textAlign: 'center', marginTop: 12 }}>
-              {t?.('snapmap.empty') || 'Nenhum amigo dividindo localização'}
-            </Text>
-            <Text style={{ color: 'rgba(255,255,255,0.82)', fontSize: 13, textAlign: 'center', marginTop: 6, lineHeight: 18 }}>
-              {t?.('snapmap.emptyHint') || 'Peça pra um amigo no chat compartilhar a localização ao vivo, ou ative o seu para eles te verem aqui.'}
-            </Text>
+          <View pointerEvents="box-none" style={{ position: 'absolute', top: 60, left: 0, right: 0, alignItems: 'center' }}>
+            <View style={{ backgroundColor: 'rgba(0,0,0,0.78)', padding: 22, borderRadius: 18, maxWidth: 320, marginHorizontal: 16 }}>
+              <IconMapPin size={36} color="#fff" style={{ alignSelf: 'center' }} />
+              <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700', textAlign: 'center', marginTop: 12 }}>
+                {t?.('snapmap.empty') || 'Nenhum amigo dividindo localização'}
+              </Text>
+              <Text style={{ color: 'rgba(255,255,255,0.82)', fontSize: 13, textAlign: 'center', marginTop: 6, lineHeight: 18 }}>
+                {t?.('snapmap.emptyHint') || 'Peça pra um amigo no chat compartilhar a localização ao vivo, ou ative o seu para eles te verem aqui.'}
+              </Text>
+            </View>
           </View>
         )}
       </View>

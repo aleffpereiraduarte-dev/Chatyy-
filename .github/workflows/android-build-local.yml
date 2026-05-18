@@ -143,15 +143,94 @@ jobs:
         # Auto-submit on push (mirrors iOS workflow). Manual dispatch obeys input.
         # Skip silently if gcloud-sa-key.json missing on the runner — the AAB
         # is still uploaded as artifact so it can be submitted manually.
+        #
+        # FGS-declaration quirk (2026-05-18): if AAB introduces a new
+        # FOREGROUND_SERVICE_* permission that hasn't been declared in
+        # Play Console > App content > Foreground services, Google's
+        # Publishing API rejects the submission on EVERY track (including
+        # internal) with: "You must let us know whether your app uses any
+        # Foreground Service permissions". There is no API endpoint to
+        # toggle the declaration — it MUST be done once in the Play Console
+        # UI. We detect this exact error below and emit a loud annotation
+        # with step-by-step instructions.
+        id: play_submit
         if: ${{ (github.event_name == 'push' || inputs.submit == 'true') && hashFiles('gcloud-sa-key.json') != '' }}
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        continue-on-error: true
         run: |
+          set +e
           npx eas-cli submit \
             --platform android \
             --profile production \
             --path ./build.aab \
-            --non-interactive
+            --non-interactive 2>&1 | tee submit.log
+          rc=${PIPESTATUS[0]}
+          echo "rc=$rc" >> $GITHUB_OUTPUT
+          exit $rc
+
+      - name: Detect FGS-declaration rejection and surface fix steps
+        if: ${{ steps.play_submit.outcome == 'failure' && hashFiles('submit.log') != '' }}
+        run: |
+          if grep -qiE "Foreground Service permissions|foreground service.*declaration|let us know whether your app uses any Foreground" submit.log; then
+            {
+              echo "## Play submit rejected: Foreground Services declaration missing"
+              echo ""
+              echo "The AAB uploaded fine but Google rejected the track update because"
+              echo "one or more \`FOREGROUND_SERVICE_*\` permissions in this build have"
+              echo "NOT been declared in Play Console. This is a one-time manual step"
+              echo "per new FGS type. **Fastlane/Publisher API cannot fix this —"
+              echo "there is no API endpoint for the declaration form.**"
+              echo ""
+              echo "### Action required (5 min, done once)"
+              echo ""
+              echo "1. Open <https://play.google.com/console/> → select **Chatyy**"
+              echo "   (package \`com.onemundo.mail\`) → **Policy** (or \"Política e"
+              echo "   programas\") → **App content** → **Foreground services**."
+              echo "2. Click **Manage**."
+              echo "3. Tick every checkbox the app uses:"
+              echo "   - \`phoneCall\` — LiveKit voice/video calls (CallRingingService, CallOngoingService)"
+              echo "   - \`mediaPlayback\` — background audio (expo-audio AudioControlsService)"
+              echo "   - \`dataSync\` — silent FCM wake relay + photo backup (RelayWakeService, expo-background-upload)"
+              echo "   - \`mediaProjection\` — screen share in live streams (ScreenShareService)"
+              echo "4. For each, paste the justification copy below."
+              echo "5. **Save**."
+              echo "6. Re-run this workflow (or push any commit) — the submit will now succeed"
+              echo "   and will continue to succeed for every future build until a NEW FGS"
+              echo "   type is introduced."
+              echo ""
+              echo "### Justification copy (paste verbatim)"
+              echo ""
+              echo "- **phoneCall**: \"App is a calling/messaging app. Foreground service is used to keep the audio/video LiveKit room alive during an active 1:1 or group call when the user backgrounds the app. Service starts only after the user accepts an incoming call or places an outgoing call, and stops when the call ends.\""
+              echo "- **mediaPlayback**: \"Background playback of voice messages and shared audio attachments. Service starts only when the user taps play on an audio message and continues until playback ends or the user dismisses the media notification.\""
+              echo "- **dataSync**: \"Silent push wakes the app to sync chat messages and to relay state to the user's other signed-in devices. Service starts only on receipt of an FCM data message, performs the sync, and stops within seconds. Also used for resumable photo/video uploads via WorkManager.\""
+              echo "- **mediaProjection**: \"User-initiated screen sharing during a live broadcast or video call. Service starts only after the user accepts the system MediaProjection consent dialog and stops when the user ends sharing.\""
+              echo ""
+              echo "### What we already do automatically"
+              echo ""
+              echo "- Every \`FOREGROUND_SERVICE_*\` permission this app uses is declared in"
+              echo "  \`app.json > expo.android.permissions\` so it's visible in code review."
+              echo "- This workflow captures the submit output, detects this specific"
+              echo "  failure, and prints exactly which checkboxes to tick."
+              echo "- The AAB is always uploaded as a workflow artifact"
+              echo "  (\`chatyy-android-${{ steps.bump.outputs.build }}\`) so you can"
+              echo "  also drag-drop into Play Console UI if you need to ship now —"
+              echo "  the UI accepts uploads even before the declaration is filled."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error title=Play submit rejected — FGS declaration missing::Open the workflow Summary tab for a 5-min fix. AAB artifact is uploaded for manual upload as fallback."
+            exit 1
+          else
+            echo "::error title=Play submit failed::See submit.log artifact for details."
+            exit 1
+          fi
+
+      - name: Upload submit.log on failure
+        if: ${{ always() && steps.play_submit.outcome == 'failure' && hashFiles('submit.log') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: play-submit-log-${{ steps.bump.outputs.build }}
+          path: ./submit.log
+          retention-days: 7
 
       - name: Note about skipped submit
         if: ${{ (github.event_name == 'push' || inputs.submit == 'true') && hashFiles('gcloud-sa-key.json') == '' }}

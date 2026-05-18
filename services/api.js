@@ -6615,6 +6615,22 @@ export async function walletTopupVerify(sku, { transactionId = '', receipt = '',
     receipt,
   }, 'POST');
 }
+// Peer-to-peer diamond send. Debits sender, credits receiver, emits
+// `diamond_received` WS event on receiver's user channel + push notif.
+// Returns { transfer_id, to_email, amount, diamond_balance } or
+// { code: 'insufficient_diamonds', diamond_balance } on 402.
+export async function walletSend(toEmail, amount, message = '') {
+  return apiCall('wallet_send', {
+    to_email: String(toEmail || '').toLowerCase(),
+    amount: Number(amount) || 0,
+    message: String(message || '').slice(0, 200),
+  }, 'POST');
+}
+// Paginated ledger feed. items[] sorted newest first. Also returns the
+// header balance so the screen renders without a second round-trip.
+export async function walletHistory({ limit = 50, offset = 0 } = {}) {
+  return apiCall('wallet_history', { limit, offset }, 'POST');
+}
 // Paid gift send — debits diamond balance, credits 70% to creator as
 // pending_payout_cents (30% platform retain). Returns the new balance.
 export async function liveGiftSend(sessionId, giftSku) {

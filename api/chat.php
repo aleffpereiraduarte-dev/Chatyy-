@@ -19527,12 +19527,427 @@ function handleChatAction($action) {
         }
 
         // ============================================================
+        // wallet_balance — read signed-in user's diamond balance +
+        // pending_payout_cents (creator earnings, $0.0099 / diamond * 70%).
+        // No-op if the chat_wallet_balances row doesn't exist yet — we
+        // return 0 instead of 404 so DiamondTopUpSheet renders without
+        // probing the user's first-time state.
+        // ============================================================
+        case 'wallet_balance': {
+            $user = requireChatAuth();
+            try {
+                _walletEnsureSchema($db);
+                $st = $db->prepare("SELECT diamond_balance, pending_payout_cents FROM chat_wallet_balances WHERE LOWER(email) = LOWER(:e)");
+                $st->execute([':e' => $user['email']]);
+                $row = $st->fetch(\PDO::FETCH_ASSOC) ?: [];
+                jsonResponse(true, [
+                    'diamond_balance'       => (int)($row['diamond_balance'] ?? 0),
+                    'pending_payout_cents'  => (int)($row['pending_payout_cents'] ?? 0),
+                ]);
+            } catch (\Throwable $e) {
+                error_log('[wallet_balance] ' . $e->getMessage());
+                jsonResponse(true, ['diamond_balance' => 0, 'pending_payout_cents' => 0]);
+            }
+            break;
+        }
+
+        // ============================================================
+        // wallet_pack_catalog — static metadata so the topup sheet
+        // can render BRL labels + bonus pct without hardcoding it
+        // client-side (server is source of truth on diamond credit math).
+        // ============================================================
+        case 'wallet_pack_catalog': {
+            requireChatAuth();
+            jsonResponse(true, ['packs' => _walletPackCatalog()]);
+            break;
+        }
+
+        // ============================================================
+        // wallet_topup_verify / wallet_buy_diamonds — IAP success
+        // callback. Receives { sku, transaction_id, receipt, platform }
+        // from services/iap.js after StoreKit/Play confirms the purchase.
+        //
+        // Idempotency: transaction_id is the StoreKit-provided unique
+        // tx id (Apple guarantees uniqueness per purchase). We persist
+        // each tx in chat_wallet_topups; if we already credited it,
+        // we no-op and return the current balance (so receipt restore
+        // / app reinstall doesn't double-credit).
+        //
+        // Apple App Store Server API verification is on the roadmap;
+        // for now we trust the signed-in user's claim plus the unique
+        // transaction_id. Refunds will reverse via /v1/notifications.
+        // ============================================================
+        case 'wallet_topup_verify':
+        case 'wallet_buy_diamonds': {
+            $user = requireChatAuth();
+            $sku = strtolower(trim((string)($input['sku'] ?? $input['product_id'] ?? '')));
+            $txId = trim((string)($input['transaction_id'] ?? ''));
+            $platform = strtolower(trim((string)($input['platform'] ?? 'ios')));
+            if ($sku === '' || $txId === '') {
+                jsonResponse(false, null, 'sku and transaction_id required', 400);
+            }
+            $catalog = _walletPackCatalog();
+            $pack = null;
+            foreach ($catalog as $c) { if ($c['sku'] === $sku) { $pack = $c; break; } }
+            if (!$pack) jsonResponse(false, null, 'Unknown diamond pack', 400);
+
+            try {
+                _walletEnsureSchema($db);
+                // Idempotent insert. If the same transaction_id was already
+                // credited, ON CONFLICT DO NOTHING returns no rows and we
+                // surface the current balance without re-crediting.
+                $db->beginTransaction();
+                $ins = $db->prepare("
+                    INSERT INTO chat_wallet_topups (transaction_id, email, sku, diamonds, price_cents_brl, platform, created_at)
+                    VALUES (:t, :e, :s, :d, :p, :pl, now())
+                    ON CONFLICT (transaction_id) DO NOTHING
+                    RETURNING id
+                ");
+                $ins->bindValue(':t', $txId);
+                $ins->bindValue(':e', $user['email']);
+                $ins->bindValue(':s', $sku);
+                $ins->bindValue(':d', (int)$pack['diamonds'], \PDO::PARAM_INT);
+                $ins->bindValue(':p', (int)round($pack['priceBrl'] * 100), \PDO::PARAM_INT);
+                $ins->bindValue(':pl', $platform);
+                $ins->execute();
+                $newRow = $ins->fetch(\PDO::FETCH_ASSOC);
+                $isNew = !empty($newRow);
+
+                if ($isNew) {
+                    // Credit the wallet + ledger row.
+                    $db->prepare("
+                        INSERT INTO chat_wallet_balances (email, diamond_balance, pending_payout_cents, updated_at)
+                        VALUES (:e, :d, 0, now())
+                        ON CONFLICT (email) DO UPDATE
+                          SET diamond_balance = chat_wallet_balances.diamond_balance + :d2,
+                              updated_at = now()
+                    ")->execute([
+                        ':e' => $user['email'],
+                        ':d' => (int)$pack['diamonds'],
+                        ':d2' => (int)$pack['diamonds'],
+                    ]);
+                    try {
+                        $db->prepare("
+                            INSERT INTO chat_wallet_ledger (email, direction, amount, kind, ref_kind, ref_id, counterparty)
+                            VALUES (:e, 'credit', :d, 'topup', 'iap_tx', NULL, :tx)
+                        ")->execute([
+                            ':e' => $user['email'],
+                            ':d' => (int)$pack['diamonds'],
+                            ':tx' => $txId,
+                        ]);
+                    } catch (\Throwable $e) { /* ledger best-effort */ }
+                }
+
+                $bal = $db->prepare("SELECT diamond_balance FROM chat_wallet_balances WHERE LOWER(email) = LOWER(:e)");
+                $bal->execute([':e' => $user['email']]);
+                $balance = (int)($bal->fetchColumn() ?: 0);
+                $db->commit();
+
+                jsonResponse(true, [
+                    'diamond_balance' => $balance,
+                    'diamonds_added'  => $isNew ? (int)$pack['diamonds'] : 0,
+                    'sku'             => $sku,
+                    'idempotent'      => !$isNew,
+                ]);
+            } catch (\Throwable $e) {
+                try { if ($db->inTransaction()) $db->rollBack(); } catch (\Throwable $_) {}
+                error_log('[wallet_topup_verify] ' . $e->getMessage());
+                jsonResponse(false, null, 'topup_failed', 500);
+            }
+            break;
+        }
+
+        // ============================================================
+        // wallet_send — peer-to-peer diamond gift. Debits sender,
+        // credits receiver, emits a `diamond_received` WS event on the
+        // receiver's user channel, and (best-effort) pushes a notif.
+        // Body: { to_email, amount, message? }
+        //
+        // Self-send rejected (same as feed_post_tip). amount must be
+        // a positive int within [1, 100000] to bound damage from
+        // tampered clients.
+        // ============================================================
+        case 'wallet_send': {
+            $user = requireChatAuth();
+            $toEmail = strtolower(trim((string)($input['to_email'] ?? $input['to'] ?? '')));
+            $amount = (int)($input['amount'] ?? 0);
+            $message = trim((string)($input['message'] ?? ''));
+            if (strlen($message) > 200) $message = substr($message, 0, 200);
+
+            if ($toEmail === '' || !filter_var($toEmail, FILTER_VALIDATE_EMAIL)) {
+                jsonResponse(false, null, 'to_email required', 400);
+            }
+            if ($amount < 1 || $amount > 100000) {
+                jsonResponse(false, null, 'amount out of range', 400);
+            }
+            if (strtolower($user['email']) === $toEmail) {
+                jsonResponse(false, null, 'Cannot send to yourself', 400);
+            }
+
+            // Rate limit: 30 sends / 60s per sender to stop scripted spam.
+            if (chatRateLimit($user['email'], 'wallet_send', 30, 60)) {
+                jsonResponse(false, null, 'Slow down — too many sends', 429);
+            }
+
+            try {
+                _walletEnsureSchema($db);
+                $db->beginTransaction();
+                $bal = $db->prepare("SELECT diamond_balance FROM chat_wallet_balances WHERE LOWER(email) = LOWER(:e) FOR UPDATE");
+                $bal->execute([':e' => $user['email']]);
+                $current = (int)($bal->fetchColumn() ?: 0);
+                if ($current < $amount) {
+                    $db->rollBack();
+                    jsonResponse(false, [
+                        'code' => 'insufficient_diamonds',
+                        'diamond_balance' => $current,
+                    ], 'Insufficient diamonds', 402);
+                }
+                // Debit sender.
+                $db->prepare("UPDATE chat_wallet_balances SET diamond_balance = diamond_balance - :d, updated_at = now() WHERE LOWER(email) = LOWER(:e)")
+                   ->execute([':d' => $amount, ':e' => $user['email']]);
+                // Credit receiver (upsert).
+                $db->prepare("
+                    INSERT INTO chat_wallet_balances (email, diamond_balance, pending_payout_cents, updated_at)
+                    VALUES (:e, :d, 0, now())
+                    ON CONFLICT (email) DO UPDATE
+                      SET diamond_balance = chat_wallet_balances.diamond_balance + :d2,
+                          updated_at = now()
+                ")->execute([':e' => $toEmail, ':d' => $amount, ':d2' => $amount]);
+
+                // Insert transfer row + ledger entries.
+                $tr = $db->prepare("
+                    INSERT INTO chat_wallet_transfers (from_email, to_email, amount, message, created_at)
+                    VALUES (:f, :t, :a, :m, now())
+                    RETURNING id, created_at
+                ");
+                $tr->execute([
+                    ':f' => $user['email'],
+                    ':t' => $toEmail,
+                    ':a' => $amount,
+                    ':m' => $message,
+                ]);
+                $trRow = $tr->fetch(\PDO::FETCH_ASSOC);
+                $transferId = (int)($trRow['id'] ?? 0);
+
+                try {
+                    $db->prepare("
+                        INSERT INTO chat_wallet_ledger (email, direction, amount, kind, ref_kind, ref_id, counterparty)
+                        VALUES (:e, 'debit', :d, 'send', 'transfer', :r, :cp)
+                    ")->execute([
+                        ':e' => $user['email'],
+                        ':d' => $amount,
+                        ':r' => $transferId,
+                        ':cp' => $toEmail,
+                    ]);
+                    $db->prepare("
+                        INSERT INTO chat_wallet_ledger (email, direction, amount, kind, ref_kind, ref_id, counterparty)
+                        VALUES (:e, 'credit', :d, 'receive', 'transfer', :r, :cp)
+                    ")->execute([
+                        ':e' => $toEmail,
+                        ':d' => $amount,
+                        ':r' => $transferId,
+                        ':cp' => $user['email'],
+                    ]);
+                } catch (\Throwable $_) { /* ledger best-effort */ }
+
+                $db->commit();
+
+                $senderName = $user['name'] ?? explode('@', $user['email'])[0];
+                $senderAvatar = '/api/email.php?action=get_avatar&email=' . urlencode($user['email']);
+
+                // WS fanout: emit `diamond_received` on the recipient's
+                // per-user channel so the toast/animation lands in real time.
+                try {
+                    $wsKey = getenv('MAIL_WS_KEY') ?: '';
+                    if ($wsKey) {
+                        $payload = [
+                            'transfer_id'   => $transferId,
+                            'from_email'    => $user['email'],
+                            'from_name'     => $senderName,
+                            'from_avatar'   => $senderAvatar,
+                            'amount'        => $amount,
+                            'message'       => $message,
+                            'created_at'    => $trRow['created_at'] ?? null,
+                        ];
+                        $body = json_encode([
+                            'channel' => 'user_' . strtolower($toEmail),
+                            'event'   => 'diamond_received',
+                            'data'    => $payload,
+                        ], JSON_UNESCAPED_UNICODE);
+                        foreach (['http://127.0.0.1:8081/broadcast', 'http://127.0.0.1:8084/broadcast'] as $endpoint) {
+                            $cu = curl_init($endpoint);
+                            curl_setopt_array($cu, [
+                                CURLOPT_POST            => true,
+                                CURLOPT_POSTFIELDS      => $body,
+                                CURLOPT_HTTPHEADER      => ['Content-Type: application/json', 'X-API-Key: ' . $wsKey],
+                                CURLOPT_RETURNTRANSFER  => true,
+                                CURLOPT_TIMEOUT_MS      => 1500,
+                                CURLOPT_CONNECTTIMEOUT_MS => 500,
+                            ]);
+                            curl_exec($cu); curl_close($cu);
+                        }
+                    }
+                } catch (\Throwable $_) {}
+
+                // Push notification — same firebase_push.php helper that
+                // chat-send uses (fcmSendToUser). Title=sender name, body
+                // carries the diamond count + optional message. Safe to
+                // swallow errors — push is best-effort, the WS event lands
+                // first.
+                try {
+                    if (!function_exists('fcmSendToUser') && file_exists(__DIR__ . '/firebase_push.php')) {
+                        require_once __DIR__ . '/firebase_push.php';
+                    }
+                    if (function_exists('fcmSendToUser')) {
+                        $title = $senderName;
+                        $bodyPush = $amount . ' diamantes' . ($message !== '' ? ' — ' . $message : '');
+                        @fcmSendToUser($toEmail, $title, $bodyPush, [
+                            'type'        => 'diamond_received',
+                            'from_email'  => $user['email'],
+                            'amount'      => (string)$amount,
+                            'transfer_id' => (string)$transferId,
+                        ]);
+                    }
+                } catch (\Throwable $_) {}
+
+                jsonResponse(true, [
+                    'transfer_id'     => $transferId,
+                    'to_email'        => $toEmail,
+                    'amount'          => $amount,
+                    'diamond_balance' => $current - $amount,
+                ]);
+            } catch (\Throwable $e) {
+                try { if ($db->inTransaction()) $db->rollBack(); } catch (\Throwable $_) {}
+                error_log('[wallet_send] ' . $e->getMessage());
+                jsonResponse(false, null, 'send_failed', 500);
+            }
+            break;
+        }
+
+        // ============================================================
+        // wallet_history — paginated ledger feed. Returns the last
+        // `limit` rows from chat_wallet_ledger for the signed-in user,
+        // newest first. Used by /wallet history screen.
+        // ============================================================
+        case 'wallet_history': {
+            $user = requireChatAuth();
+            $limit = max(1, min(100, (int)($input['limit'] ?? 50)));
+            $offset = max(0, (int)($input['offset'] ?? 0));
+            try {
+                _walletEnsureSchema($db);
+                $st = $db->prepare("
+                    SELECT id, direction, amount, kind, ref_kind, ref_id, counterparty,
+                           EXTRACT(EPOCH FROM created_at)::bigint AS created_at_ts,
+                           created_at
+                      FROM chat_wallet_ledger
+                     WHERE LOWER(email) = LOWER(:e)
+                     ORDER BY created_at DESC, id DESC
+                     LIMIT :l OFFSET :o
+                ");
+                $st->bindValue(':e', $user['email']);
+                $st->bindValue(':l', $limit, \PDO::PARAM_INT);
+                $st->bindValue(':o', $offset, \PDO::PARAM_INT);
+                $st->execute();
+                $rows = $st->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+
+                // Balance + pending payout so the screen header can render
+                // without a second round-trip.
+                $bal = $db->prepare("SELECT diamond_balance, pending_payout_cents FROM chat_wallet_balances WHERE LOWER(email) = LOWER(:e)");
+                $bal->execute([':e' => $user['email']]);
+                $balRow = $bal->fetch(\PDO::FETCH_ASSOC) ?: [];
+
+                jsonResponse(true, [
+                    'items' => $rows,
+                    'diamond_balance' => (int)($balRow['diamond_balance'] ?? 0),
+                    'pending_payout_cents' => (int)($balRow['pending_payout_cents'] ?? 0),
+                    'has_more' => count($rows) >= $limit,
+                ]);
+            } catch (\Throwable $e) {
+                error_log('[wallet_history] ' . $e->getMessage());
+                jsonResponse(true, ['items' => [], 'diamond_balance' => 0, 'pending_payout_cents' => 0, 'has_more' => false]);
+            }
+            break;
+        }
+
+        // ============================================================
         // Default — unknown action
         // ============================================================
         default:
             jsonResponse(false, null, 'Unknown chat action: ' . $action, 400);
             break;
     }
+}
+
+/**
+ * Lazy schema bootstrap for the diamond wallet stack. Idempotent —
+ * safe to call at the top of every wallet_* case. Tables:
+ *   chat_wallet_balances   — current diamond + pending payout per user
+ *   chat_wallet_ledger     — append-only credit/debit history
+ *   chat_wallet_topups     — IAP idempotency log (one row per StoreKit tx)
+ *   chat_wallet_transfers  — peer-to-peer diamond sends
+ */
+function _walletEnsureSchema(\PDO $db): void {
+    static $done = false;
+    if ($done) return;
+    try {
+        @$db->exec("CREATE TABLE IF NOT EXISTS chat_wallet_balances (
+            email TEXT PRIMARY KEY,
+            diamond_balance BIGINT NOT NULL DEFAULT 0,
+            pending_payout_cents BIGINT NOT NULL DEFAULT 0,
+            updated_at TIMESTAMPTZ DEFAULT now()
+        )");
+        @$db->exec("CREATE TABLE IF NOT EXISTS chat_wallet_ledger (
+            id BIGSERIAL PRIMARY KEY,
+            email TEXT NOT NULL,
+            direction TEXT NOT NULL,
+            amount BIGINT NOT NULL,
+            kind TEXT NOT NULL,
+            ref_kind TEXT,
+            ref_id BIGINT,
+            counterparty TEXT,
+            created_at TIMESTAMPTZ DEFAULT now()
+        )");
+        @$db->exec("CREATE INDEX IF NOT EXISTS idx_wallet_ledger_email_created ON chat_wallet_ledger (email, created_at DESC)");
+        @$db->exec("CREATE TABLE IF NOT EXISTS chat_wallet_topups (
+            id BIGSERIAL PRIMARY KEY,
+            transaction_id TEXT UNIQUE NOT NULL,
+            email TEXT NOT NULL,
+            sku TEXT NOT NULL,
+            diamonds BIGINT NOT NULL,
+            price_cents_brl BIGINT NOT NULL,
+            platform TEXT NOT NULL DEFAULT 'ios',
+            created_at TIMESTAMPTZ DEFAULT now()
+        )");
+        @$db->exec("CREATE INDEX IF NOT EXISTS idx_wallet_topups_email ON chat_wallet_topups (email, created_at DESC)");
+        @$db->exec("CREATE TABLE IF NOT EXISTS chat_wallet_transfers (
+            id BIGSERIAL PRIMARY KEY,
+            from_email TEXT NOT NULL,
+            to_email TEXT NOT NULL,
+            amount BIGINT NOT NULL,
+            message TEXT,
+            created_at TIMESTAMPTZ DEFAULT now()
+        )");
+        @$db->exec("CREATE INDEX IF NOT EXISTS idx_wallet_transfers_from ON chat_wallet_transfers (from_email, created_at DESC)");
+        @$db->exec("CREATE INDEX IF NOT EXISTS idx_wallet_transfers_to   ON chat_wallet_transfers (to_email,   created_at DESC)");
+    } catch (\Throwable $e) {
+        error_log('[wallet.schema] ' . $e->getMessage());
+    }
+    $done = true;
+}
+
+/**
+ * Canonical pack catalog — must mirror services/iap.js DIAMOND_PACKS.
+ * Server uses this on wallet_topup_verify to compute the diamond credit
+ * (client-supplied amounts are ignored for security).
+ */
+function _walletPackCatalog(): array {
+    return [
+        ['sku' => 'chatyy_diamond_100',   'diamonds' => 100,   'priceBrl' => 4.99,   'bonusPct' => 0],
+        ['sku' => 'chatyy_diamond_500',   'diamonds' => 550,   'priceBrl' => 19.99,  'bonusPct' => 10],
+        ['sku' => 'chatyy_diamond_1500',  'diamonds' => 1700,  'priceBrl' => 49.99,  'bonusPct' => 13],
+        ['sku' => 'chatyy_diamond_5000',  'diamonds' => 6000,  'priceBrl' => 149.99, 'bonusPct' => 20],
+        ['sku' => 'chatyy_diamond_15000', 'diamonds' => 19500, 'priceBrl' => 399.99, 'bonusPct' => 30],
+    ];
 }
 
 /**

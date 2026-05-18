@@ -27,7 +27,7 @@ import {
   IconCopy, IconCheckCircle, IconMail, IconSparkles, IconFilter, IconEdit,
   IconForward, IconFileText, IconUsers,
   IconClock, IconImage, IconStar, IconMapPin, IconSearch,
-  IconSmartphone, IconMonitor, IconShield, IconBarChart,
+  IconSmartphone, IconMonitor, IconShield, IconBarChart, IconGiftBox,
 } from './Icons';
 import * as api from '../services/api';
 import { useTheme, ACCENT_PRESETS } from '../context/ThemeContext';
@@ -395,6 +395,10 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
         // /profile-creator-dashboard which calls the creator_dashboard
         // backend action.
         { icon: IconBarChart, label: t?.('profile.creatorDashboard') || 'Painel de criador', tint: ICON_PURPLE, onPress: () => closeAndRun(() => { try { router?.push?.('/profile-creator-dashboard'); } catch {} }) },
+        // 2026-05-18 — Diamond wallet entry. Surfaces balance, top-up CTA,
+        // and the full ledger history. Same icon as the gift box used in
+        // the live/feed tip flows so users learn the diamond=gift mapping.
+        { icon: IconGiftBox, label: t?.('wallet.myDiamonds') || 'Meus diamantes', tint: ICON_PURPLE, onPress: () => closeAndRun(() => { try { router?.push?.('/wallet'); } catch {} }) },
       ],
     },
     {

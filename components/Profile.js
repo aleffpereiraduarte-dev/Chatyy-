@@ -37,10 +37,12 @@ import ProfileEditSheet from './ProfileEditSheet';
 import ProfileSettingsSheet from './ProfileSettingsSheet';
 import FollowersSheet from './FollowersSheet';
 import EmptyStateCard from './EmptyStateCard';
+import SendDiamondSheet from './SendDiamondSheet';
 import {
   IconX, IconPhone, IconVideo, IconMail, IconMessageSquare, IconUserPlus,
   IconChevronRight, IconSettings, IconMoreHorizontal, IconShare, IconAlertTriangle, IconLock, IconEdit,
   IconTrash, IconPlus, IconGrid, IconFilm, IconTag, IconCheck, IconEyeOff, IconLink, IconPlay,
+  IconGiftBox,
 } from './Icons';
 const IconEdit3 = IconEdit;
 const IconTrash2 = IconTrash;
@@ -902,6 +904,10 @@ export default function Profile({
     setSettingsOpen(true);
   }, [autoOpenSettings, data?.is_self]);
   const [followersTab, setFollowersTab] = useState(null); // null | 'followers' | 'following'
+  // 2026-05-18 — diamond gift send sheet. Opens from the chip below the
+  // primary action row on non-self profiles. State only — sheet itself is
+  // rendered at the bottom of the Profile tree.
+  const [sendDiamondOpen, setSendDiamondOpen] = useState(false);
   // Per-user contact nickname (WhatsApp-style rename). Loaded from the
   // chat_nickname_list endpoint on mount; overrides display name locally.
   const [nicknameValue, setNicknameValue] = useState('');
@@ -2052,6 +2058,35 @@ export default function Profile({
             )}
           </View>
         )}
+        {/* 2026-05-18 — "Enviar diamante" chip on non-self profiles.
+            Opens SendDiamondSheet anchored to this user. The chip is its
+            own row (full-width) so it pops visually — diamond gifts are
+            the primary monetization surface. SVG icon (no emojis in UI). */}
+        {!actions.is_self && identity?.email ? (
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
+            <TouchableOpacity
+              onPress={() => setSendDiamondOpen(true)}
+              accessibilityRole="button"
+              accessibilityLabel={t?.('walletSend.openCta') || 'Enviar diamante'}
+              style={{
+                flex: 1,
+                paddingVertical: 12,
+                paddingHorizontal: 14,
+                borderRadius: 12,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 8,
+                backgroundColor: '#A855F7',
+              }}
+            >
+              <IconGiftBox size={18} color="#fff" />
+              <Text style={{ color: '#fff', fontSize: 14, fontWeight: '800' }}>
+                {t?.('walletSend.openCta') || 'Enviar diamante'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
         {actions.is_self && (
           // Self action row: Editar perfil + Compartilhar perfil. The square
           // "+" discover-people tile that used to sit on the right was
@@ -3079,6 +3114,19 @@ export default function Profile({
     />
   ) : null;
 
+  // 2026-05-18 — Diamond gift sheet for non-self profiles. Anchored to
+  // the viewed user; opens from the "Enviar diamante" chip rendered in
+  // the action-row block above.
+  const sendDiamondNode = !actions.is_self && identity?.email ? (
+    <SendDiamondSheet
+      visible={sendDiamondOpen}
+      onClose={() => setSendDiamondOpen(false)}
+      toEmail={identity.email}
+      toName={identity.name || nicknameValue || identity.email.split('@')[0]}
+      toAvatarUrl={identity.avatar_url}
+    />
+  ) : null;
+
   // ─── Render ──────────────────────────────────────────────────────────
   if (mode === 'full') {
     return (
@@ -3096,6 +3144,7 @@ export default function Profile({
         {statusCameraNode}
         {publishingToastNode}
         {settingsNode}
+        {sendDiamondNode}
         {followersNode}
         {menuNode}
         {nicknameModalNode}
@@ -3122,6 +3171,7 @@ export default function Profile({
       {statusCameraNode}
       {publishingToastNode}
       {settingsNode}
+      {sendDiamondNode}
       {followersNode}
       {menuNode}
     </>}

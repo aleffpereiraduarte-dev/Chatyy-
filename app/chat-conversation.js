@@ -81,6 +81,12 @@ import SyncBar from '../components/SyncBar';
 // Chat 2026 features (top-3): video notes recorder, AI summarize, smart replies.
 // Lazy-required inside the file when needed to keep the initial parse fast.
 let VideoNoteRecorder = null; try { VideoNoteRecorder = require('../components/chat/VideoNoteRecorder').default; } catch {}
+// 2026-05-18: video send pipeline (poster + compress + GIF detection).
+// Used by handleSendVideoNote to land a poster frame in the optimistic
+// bubble BEFORE upload starts — fixes the "blank black bubble" delay
+// while the backend ffmpeg thumb cron catches up.
+let _videoSendPipeline = null;
+try { _videoSendPipeline = require('../services/videoSendPipeline'); } catch {}
 let AISummarizeModal = null; try { AISummarizeModal = require('../components/chat/AISummarizeModal').default; } catch {}
 let SmartRepliesBar = null; try { SmartRepliesBar = require('../components/chat/SmartRepliesBar').default; } catch {}
 // 2026-05-18: in-chat short videos (Reels-style 9:16 auto-loop). Lazy require
@@ -12351,14 +12357,64 @@ export default function ChatConversationScreen() {
     setMessages(prev => [...prev, optimisticMsg]);
     setUploadProgress(prev => ({ ...prev, [tempId]: 0 }));
     requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
+
+    // 2026-05-18: WhatsApp-grade prep before upload.
+    //   1) Extract poster frame at ~500ms → swap into optimistic bubble so
+    //      receivers/senders see a real preview instantly (today the bubble
+    //      sits black until backend ffmpeg cron writes .thumb.jpg, 1-10s lag).
+    //   2) Run native compress (720p / 1.5Mbps) so we don't upload a 60s
+    //      H.264 raw at full bitrate over cellular (~8-12MB → ~2-3MB).
+    //   3) Forward compress progress to the bubble overlay as the first 80%
+    //      of the visible progress bar; the actual upload occupies the last
+    //      20%. Mapping keeps the bar monotonic for the user.
+    //
+    // All steps are guarded: if the native pipeline isn't available, we
+    // fall through to the legacy uri-as-is path with no regression.
+    let sendUri = file.uri;
+    let sendType = file.type || 'video/mp4';
+    let posterUri = null;
+    try {
+      if (_videoSendPipeline?.prepareVideoForSend) {
+        const prepared = await _videoSendPipeline.prepareVideoForSend(file.uri, {
+          quality: '720p',
+          onPosterReady: (p) => {
+            // Land poster into the optimistic bubble immediately.
+            if (!mountedRef.current) return;
+            posterUri = p?.posterUri || null;
+            if (posterUri) {
+              setMessages(prev => prev.map(m => m.id === tempId ? { ...m, poster_url: posterUri, _posterUri: posterUri } : m));
+            }
+          },
+          onCompressProgress: (p) => {
+            // Map [0..1] → [0..80] so upload progress can occupy [80..100].
+            if (!mountedRef.current) return;
+            setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(p * 80) }));
+          },
+        });
+        if (prepared?.uri) sendUri = prepared.uri;
+        // After compress, snap to 80% so upload phase resumes cleanly.
+        if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: 80 }));
+      }
+    } catch (e) {
+      // Non-fatal — fall back to raw upload.
+      console.warn('[video_note] prepare pipeline failed, sending raw:', e?.message);
+    }
+
     try {
       const r = await api.chatUploadFile(
         conversationId,
-        { uri: file.uri, name: file.name, type: file.type || 'video/mp4' },
+        { uri: sendUri, name: file.name, type: sendType },
         '',
         false,
         (progress) => {
-          if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(progress * 100) }));
+          if (mountedRef.current) {
+            // Upload phase = last 20% of the bar. If pipeline was skipped
+            // (no compress), fall back to the full 0..100 mapping so the
+            // legacy path still animates.
+            const usedPipeline = sendUri !== file.uri;
+            const mapped = usedPipeline ? 80 + Math.round(progress * 20) : Math.round(progress * 100);
+            setUploadProgress(prev => ({ ...prev, [tempId]: mapped }));
+          }
         },
         'video_note',
       );

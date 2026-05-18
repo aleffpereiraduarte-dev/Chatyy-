@@ -1,4 +1,4 @@
-// VideoNoteRecorder — Telegram/iMessage-style round video note recorder.
+// VideoNoteRecorder — WhatsApp/Telegram-style round video note recorder.
 //
 // Why this lives outside the main composer:
 //   - Hooks (useState/useEffect) for camera setup must run from a stable
@@ -17,10 +17,12 @@
 //     t={i18nFn}
 //   />
 //
-// Behavior:
-//   - Tap-and-hold the trigger to start recording.
-//   - Release before 1s → cancel.
-//   - Slide up to lock (hands-free); tap stop when locked.
+// Behavior (2026-05-18 WhatsApp-grade upgrade):
+//   - Tap-and-hold the trigger to start recording (haptic medium impact).
+//   - Release before 1s → cancel (with toast "Hold longer").
+//   - Slide ↑ to lock (hands-free); tap stop when locked. Haptic on lock.
+//   - Slide ← past 90px → cancel with trash icon zoom + opacity feedback.
+//   - Last 10s: timer turns red + haptic warning every 1s.
 //   - Max 60s; auto-stops with radial progress indicator.
 //   - On success → onComplete(file). Parent uploads via chatUploadFile w/ type='video_note'.
 
@@ -37,7 +39,7 @@ import {
   Modal,
   Pressable,
 } from 'react-native';
-import { IconX, IconStop } from '../Icons';
+import { IconX, IconStop, IconTrash, IconLock } from '../Icons';
 
 let _camera = null;
 function loadCamera() {
@@ -47,10 +49,33 @@ function loadCamera() {
   return _camera;
 }
 
+let _haptics = null;
+function loadHaptics() {
+  if (_haptics !== null) return _haptics;
+  try { _haptics = require('expo-haptics'); }
+  catch { _haptics = false; }
+  return _haptics || null;
+}
+
+function hapticImpact(style) {
+  // Best-effort haptics. Silent fail on web / unsupported devices.
+  const h = loadHaptics();
+  if (!h) return;
+  try {
+    if (style === 'medium') h.impactAsync(h.ImpactFeedbackStyle.Medium);
+    else if (style === 'heavy') h.impactAsync(h.ImpactFeedbackStyle.Heavy);
+    else if (style === 'warning') h.notificationAsync(h.NotificationFeedbackType.Warning);
+    else if (style === 'success') h.notificationAsync(h.NotificationFeedbackType.Success);
+    else h.impactAsync(h.ImpactFeedbackStyle.Light);
+  } catch {}
+}
+
 const SIZE = 300;     // preview circle diameter (px)
 const MAX_MS = 60000; // 60s WhatsApp/Telegram cap
+const WARN_MS = 50000; // last 10s: red timer + haptic warning ticks
 const MIN_HOLD_MS = 1000; // <1s release = cancel (matches voice notes)
 const LOCK_THRESHOLD = 60; // slide-up px to lock hands-free
+const CANCEL_THRESHOLD = 90; // slide-left px to cancel with trash zone
 
 export default function VideoNoteRecorder({ visible, onClose, onComplete, colors, t }) {
   const mod = loadCamera();
@@ -65,14 +90,29 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
   const [elapsed, setElapsed] = useState(0);
   const [facing, setFacing] = useState('front');
   const [error, setError] = useState('');
+  // Visual flag for "user is dragging left past cancel threshold" — when set,
+  // the trash zone grows and the trigger goes red. Drives both the live drag
+  // feedback and the on-release cancel decision.
+  const [cancelIntent, setCancelIntent] = useState(false);
 
   const cameraRef = useRef(null);
   const startedAtRef = useRef(0);
   const timerRef = useRef(null);
   const progressAnim = useRef(new Animated.Value(0)).current;
   const slideY = useRef(new Animated.Value(0)).current;
+  // Horizontal slide for swipe-left-to-cancel. Mirrors slideY but on X axis
+  // so the trigger button visually tracks the finger while the user drags
+  // toward the trash zone.
+  const slideX = useRef(new Animated.Value(0)).current;
+  const trashScale = useRef(new Animated.Value(0.8)).current;
+  // Lock pill bounce: a subtle upward translate while !locked so users
+  // discover the lock affordance without reading the hint text.
+  const lockHintBounce = useRef(new Animated.Value(0)).current;
   const recordPromiseRef = useRef(null);
   const cancelledRef = useRef(false);
+  // Latched flag for last-10s warning so we haptic-tick exactly once per
+  // second in the final stretch, regardless of timer interval jitter.
+  const lastWarnSecRef = useRef(-1);
 
   // Reset state every time we re-open the recorder.
   useEffect(() => {
@@ -81,12 +121,25 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
       setLocked(false);
       setElapsed(0);
       setError('');
+      setCancelIntent(false);
       cancelledRef.current = false;
+      lastWarnSecRef.current = -1;
       progressAnim.setValue(0);
       slideY.setValue(0);
+      slideX.setValue(0);
+      trashScale.setValue(0.8);
+      // Start a gentle bounce on the lock-hint chevron so the affordance
+      // is visible without reading the text label.
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(lockHintBounce, { toValue: -6, duration: 700, useNativeDriver: true }),
+          Animated.timing(lockHintBounce, { toValue: 0, duration: 700, useNativeDriver: true }),
+        ])
+      ).start();
     }
     return () => {
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+      lockHintBounce.stopAnimation();
     };
   }, [visible]);
 
@@ -112,10 +165,25 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
     startedAtRef.current = Date.now();
     setRecording(true);
     setElapsed(0);
+    lastWarnSecRef.current = -1;
+    // Medium impact = "you are now recording" — matches WhatsApp's haptic
+    // on the audio note hold trigger. Light feels too subtle for video where
+    // the visual change is also subtle (circle borders red).
+    hapticImpact('medium');
     Animated.timing(progressAnim, { toValue: 1, duration: MAX_MS, useNativeDriver: false }).start();
     timerRef.current = setInterval(() => {
       const e = Date.now() - startedAtRef.current;
       setElapsed(e);
+      // Last-10s warning haptics: one warning tick per second once we cross
+      // the WARN_MS threshold. Helps locked-mode users notice the cap is
+      // approaching without staring at the timer.
+      if (e >= WARN_MS && e < MAX_MS) {
+        const sec = Math.floor(e / 1000);
+        if (sec !== lastWarnSecRef.current) {
+          lastWarnSecRef.current = sec;
+          hapticImpact('warning');
+        }
+      }
       if (e >= MAX_MS) stopRecording(false);
     }, 100);
     try {
@@ -154,19 +222,36 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
 
   const stopRecording = async (cancel = false) => {
     if (!recording || !cameraRef.current) return;
-    if (cancel) cancelledRef.current = true;
+    if (cancel) {
+      cancelledRef.current = true;
+      hapticImpact('heavy'); // distinct from success — "tossed in trash"
+    } else {
+      hapticImpact('success'); // double-tap success notification
+    }
     try { cameraRef.current.stopRecording(); } catch {}
     if (cancel) {
       setRecording(false);
       setLocked(false);
+      setCancelIntent(false);
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
       onClose?.();
     }
   };
 
-  // PanResponder for the trigger: hold-to-record + slide-up-to-lock.
-  // Replaces the simple onPressIn/onPressOut combo because we need the
-  // dy gesture for the lock behavior. Threshold 60px matches WhatsApp.
+  // PanResponder for the trigger: hold-to-record + slide-up-to-lock +
+  // slide-left-to-cancel. We need TWO axes:
+  //   • dy < 0 → progress toward lock (LOCK_THRESHOLD = 60px)
+  //   • dx < 0 → progress toward cancel (CANCEL_THRESHOLD = 90px)
+  // Whichever axis dominates wins. WhatsApp uses the same disambiguation.
+  //
+  // NOTE: PanResponder callbacks form a closure over `locked`/`cancelIntent`
+  // at create-time. We re-read these via refs (lockedRef/cancelIntentRef)
+  // below to avoid stale-closure bugs when re-recording within the same modal.
+  const lockedRef = useRef(false);
+  const cancelIntentRef = useRef(false);
+  useEffect(() => { lockedRef.current = locked; }, [locked]);
+  useEffect(() => { cancelIntentRef.current = cancelIntent; }, [cancelIntent]);
+
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -175,22 +260,68 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
         startRecording();
       },
       onPanResponderMove: (_e, gesture) => {
-        if (gesture.dy < 0 && !locked) {
+        if (lockedRef.current) return; // gestures inert once locked
+        // Disambiguate axis: dominant motion wins so a slight diagonal
+        // doesn't toggle both states at once.
+        const absX = Math.abs(gesture.dx);
+        const absY = Math.abs(gesture.dy);
+
+        // Vertical-up dominant → lock track
+        if (gesture.dy < 0 && absY > absX) {
           slideY.setValue(Math.max(gesture.dy, -120));
-          if (Math.abs(gesture.dy) >= LOCK_THRESHOLD) {
+          slideX.setValue(0);
+          if (absY >= LOCK_THRESHOLD) {
+            hapticImpact('medium'); // chunky "locked in" feel
             setLocked(true);
           }
+          return;
         }
+        // Horizontal-left dominant → cancel track
+        if (gesture.dx < 0 && absX > absY) {
+          slideX.setValue(Math.max(gesture.dx, -160));
+          slideY.setValue(0);
+          const past = absX >= CANCEL_THRESHOLD;
+          if (past !== cancelIntentRef.current) {
+            // State edge: entering/leaving the cancel zone.
+            if (past) hapticImpact('light');
+            setCancelIntent(past);
+            Animated.spring(trashScale, {
+              toValue: past ? 1.25 : 0.8,
+              useNativeDriver: true,
+              friction: 5,
+            }).start();
+          }
+          return;
+        }
+        // Neutral / right-drift → reset both
+        slideX.setValue(0);
+        slideY.setValue(0);
       },
       onPanResponderRelease: () => {
-        if (locked) return; // stays recording until user taps stop
+        if (lockedRef.current) return; // stays recording until user taps stop
+        // Tossed past the cancel threshold → discard regardless of hold time.
+        if (cancelIntentRef.current) {
+          stopRecording(true);
+          Animated.parallel([
+            Animated.spring(slideX, { toValue: 0, useNativeDriver: true }),
+            Animated.spring(trashScale, { toValue: 0.8, useNativeDriver: true }),
+          ]).start();
+          return;
+        }
         const heldMs = Date.now() - startedAtRef.current;
         if (heldMs < MIN_HOLD_MS) {
           stopRecording(true);
         } else {
           stopRecording(false);
         }
-        Animated.spring(slideY, { toValue: 0, useNativeDriver: true }).start();
+        Animated.parallel([
+          Animated.spring(slideY, { toValue: 0, useNativeDriver: true }),
+          Animated.spring(slideX, { toValue: 0, useNativeDriver: true }),
+        ]).start();
+      },
+      onPanResponderTerminate: () => {
+        // System interrupted gesture (e.g. modal popped) — treat as cancel.
+        if (!lockedRef.current && recording) stopRecording(true);
       },
     })
   ).current;
@@ -220,6 +351,10 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
   const secs = Math.floor(elapsed / 1000);
   const mm = String(Math.floor(secs / 60)).padStart(2, '0');
   const ss = String(secs % 60).padStart(2, '0');
+  // Last 10s: timer flips red as a visual reminder that we're nearing the
+  // 60s cap. Matches the haptic warning ticks above.
+  const inWarn = elapsed >= WARN_MS && elapsed < MAX_MS;
+  const remainingS = Math.max(0, Math.ceil((MAX_MS - elapsed) / 1000));
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={() => onClose?.()}>
@@ -258,16 +393,31 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
           )}
         </View>
 
-        {/* Hint */}
-        <Text style={s.hint}>
+        {/* Hint — escalates through states:
+              idle → "Hold to record"
+              recording (drag) → "Slide ↑ lock • ← cancel • 0:05"
+              cancel-intent → "Release to cancel" (red)
+              warn (last 10s) → "Stop in 7s" (red)
+              locked → "Tap to stop • 0:30" */}
+        <Text style={[
+          s.hint,
+          cancelIntent && { color: '#FCA5A5' },
+          inWarn && !cancelIntent && { color: '#FCA5A5' },
+        ]}>
           {error === 'camera'
             ? (t?.('videoNote.permissionCamera') || 'Camera permission required')
             : error === 'mic'
               ? (t?.('videoNote.permissionMic') || 'Microphone permission required')
               : recording
-                ? (locked
-                    ? `${t?.('videoNote.tapStop') || 'Tap to stop'} • ${mm}:${ss}`
-                    : `${t?.('videoNote.slideToLock') || 'Slide up to lock'} • ${mm}:${ss}`)
+                ? (cancelIntent
+                    ? (t?.('videoNote.releaseToCancel') || 'Release to cancel')
+                    : locked
+                      ? (inWarn
+                          ? `${t?.('videoNote.stopIn') || 'Stop in'} ${remainingS}s`
+                          : `${t?.('videoNote.tapStop') || 'Tap to stop'} • ${mm}:${ss}`)
+                      : (inWarn
+                          ? `${t?.('videoNote.stopIn') || 'Stop in'} ${remainingS}s`
+                          : `${t?.('videoNote.slideHints') || 'Slide ↑ lock • ← cancel'} • ${mm}:${ss}`))
                 : (t?.('videoNote.holdToRecord') || 'Hold to record')}
         </Text>
 
@@ -283,34 +433,85 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
           </TouchableOpacity>
         )}
 
-        {/* Trigger button — hold to record, slide up to lock. When locked,
-            this becomes a Stop button (single tap). */}
-        <Animated.View style={[s.triggerWrap, { transform: [{ translateY: slideY }] }]}>
+        {/* Trash zone — visible left of the trigger while recording. Grows
+            + opacity-spikes when the user drags into it past CANCEL_THRESHOLD.
+            Mirrors the WhatsApp voice-note "swipe to cancel" affordance. */}
+        {recording && !locked && (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              s.trashZone,
+              {
+                opacity: slideX.interpolate({
+                  inputRange: [-CANCEL_THRESHOLD, -20, 0],
+                  outputRange: [1, 0.6, 0.3],
+                  extrapolate: 'clamp',
+                }),
+                transform: [{ scale: trashScale }],
+                backgroundColor: cancelIntent ? '#EF4444' : 'rgba(255,255,255,0.18)',
+              },
+            ]}
+          >
+            <IconTrash size={26} color="#fff" />
+          </Animated.View>
+        )}
+
+        {/* Lock pill — sits above the trigger; bounces gently to surface
+            the slide-up-to-lock affordance. Hides once locked. */}
+        {!locked && recording && (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              s.lockPillFloat,
+              { transform: [{ translateY: lockHintBounce }] },
+            ]}
+          >
+            <IconLock size={14} color="#fff" />
+            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>↑</Text>
+          </Animated.View>
+        )}
+
+        {/* Trigger button — hold to record, slide up to lock, slide left to
+            cancel. When locked, this becomes a Stop button (single tap). */}
+        <Animated.View
+          style={[
+            s.triggerWrap,
+            { transform: [{ translateY: slideY }, { translateX: slideX }] },
+          ]}
+        >
           {locked ? (
             <TouchableOpacity
               onPress={() => stopRecording(false)}
               style={[s.triggerBtn, { backgroundColor: '#EF4444' }]}
               accessibilityLabel={t?.('videoNote.tapStop') || 'Tap to stop'}
+              accessibilityRole="button"
             >
               <IconStop size={26} color="#fff" />
             </TouchableOpacity>
           ) : (
             <View
               {...panResponder.panHandlers}
-              style={[s.triggerBtn, { backgroundColor: recording ? '#EF4444' : '#7C3AED' }]}
+              style={[
+                s.triggerBtn,
+                {
+                  backgroundColor: cancelIntent
+                    ? '#EF4444'
+                    : recording
+                      ? '#EF4444'
+                      : '#7C3AED',
+                },
+              ]}
+              accessibilityLabel={
+                recording
+                  ? (t?.('videoNote.recordingHint') || 'Recording. Slide up to lock, left to cancel.')
+                  : (t?.('videoNote.holdToRecord') || 'Hold to record')
+              }
+              accessibilityRole="button"
             >
               <View style={[
                 s.triggerInner,
                 recording && { borderRadius: 8, width: 24, height: 24 },
               ]} />
-            </View>
-          )}
-          {!locked && recording && (
-            <View style={s.lockPill}>
-              <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>↑</Text>
-              <Text style={{ color: '#fff', fontSize: 10 }}>
-                {t?.('videoNote.lock') || 'Lock'}
-              </Text>
             </View>
           )}
         </Animated.View>
@@ -379,6 +580,36 @@ const s = StyleSheet.create({
     bottom: 70,
     alignItems: 'center',
     gap: 10,
+  },
+  // Trash zone sits ~120px to the left of the trigger center. We position it
+  // with `right` referenced from the screen so the trigger can drag toward
+  // it without layout reflow. Bottom matches trigger center vertically.
+  trashZone: {
+    position: 'absolute',
+    bottom: 70 + 18, // align with trigger center (trigger is 86 tall, bottom:70 → center @ 113)
+    left: '50%',
+    marginLeft: -160, // 160px left of screen center
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.4)',
+  },
+  // Lock pill floats above the trigger and gently bounces. Centered horizontally.
+  lockPillFloat: {
+    position: 'absolute',
+    bottom: 70 + 86 + 12, // trigger.bottom + trigger.height + gap
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.18)',
   },
   triggerBtn: {
     width: 86,
