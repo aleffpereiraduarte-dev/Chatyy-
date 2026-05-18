@@ -194,6 +194,13 @@ export async function update(id, { current = 0, total, bodySuffix } = {}) {
   if (!entry) return;
   if (typeof total === 'number') entry.total = total;
   const effTotal = entry.total || 0;
+  // Defensive guard (2026-05-18): never paint a "0%" notification. If we
+  // reached update() with total=0 it means a progress tick fired before any
+  // real work was queued — almost certainly the dedup-only path where the
+  // native module emits onProgress events for assets it already knows are
+  // backed up. Showing "0 de 0 (0%)" / "X de 0" is meaningless and was the
+  // user-reported banner that wouldn't go away.
+  if (effTotal === 0) return null;
   try {
     await Notifications.scheduleNotificationAsync({
       identifier: _uniqueRequestId(id),

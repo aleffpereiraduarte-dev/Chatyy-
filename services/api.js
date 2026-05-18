@@ -1662,6 +1662,52 @@ export async function updateProfile(data) {
   return apiCall('update_profile', data, 'POST');
 }
 
+// Cover photo (profile-upgrade combo). Mirrors uploadAvatar plumbing —
+// multipart with the `cover` field. Backend resizes to 1500×500 and ships
+// to R2 (chatyy-media bucket, profile-covers/<email>/<ts>.jpg) so the
+// CDN serves it directly without round-tripping through PHP every render.
+export async function uploadCover(file) {
+  const formData = new FormData();
+  formData.append('action', 'upload_cover');
+  if (typeof File !== 'undefined' && file instanceof File) {
+    formData.append('cover', file, file.name || 'cover.jpg');
+  } else if (typeof Blob !== 'undefined' && file instanceof Blob) {
+    formData.append('cover', file, 'cover.jpg');
+  } else if (file?._raw) {
+    formData.append('cover', file._raw, file.name || 'cover.jpg');
+  } else if (file?.blob) {
+    formData.append('cover', file.blob, file.name || 'cover.jpg');
+  } else if (file?.uri) {
+    if (Platform.OS !== 'web') {
+      formData.append('cover', { uri: file.uri, type: file.type || 'image/jpeg', name: file.name || 'cover.jpg' });
+    } else {
+      try {
+        const blob = await fetch(file.uri).then(r => r.blob());
+        formData.append('cover', blob, file.name || 'cover.jpg');
+      } catch { return { success: false, message: 'Failed to read file' }; }
+    }
+  } else {
+    return { success: false, message: 'Invalid file' };
+  }
+  const headers = {};
+  if (sessionCookie) headers['Cookie'] = sessionCookie;
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  try {
+    const res = await fetch(`${API_URL}?action=upload_cover`, { method: 'POST', headers, body: formData, credentials: 'include', signal: controller.signal });
+    clearTimeout(timeout);
+    const text = await res.text();
+    try { return JSON.parse(text); }
+    catch { return { success: false, message: 'Servidor indisponivel' }; }
+  } catch (err) {
+    clearTimeout(timeout);
+    if (err.name === 'AbortError') return { success: false, message: 'Tempo limite excedido' };
+    return { success: false, message: 'Connection error' };
+  }
+}
+
 // Settings
 export async function getSettings() {
   return apiCall('get_settings');
@@ -5674,6 +5720,25 @@ export async function fileUnshare(fileId, email) {
   return apiCall('drive_unshare', { id: fileId, email }, 'POST');
 }
 
+// ─── PUBLIC LINK SHARE (Dropbox / Drive style) ───
+// /d/{token} resolves to /api/email.php?action=file_resolve_link on the public SPA.
+// Backend: handlePublicFileLink + file_create_link/file_list_links/file_revoke_link in files.php.
+export async function fileCreateLink(fileId, opts = {}) {
+  const payload = { file_id: fileId };
+  if (opts.password) payload.password = opts.password;
+  if (opts.expiresInDays) payload.expires_in_days = opts.expiresInDays;
+  if (opts.maxDownloads) payload.max_downloads = opts.maxDownloads;
+  return apiCall('file_create_link', payload, 'POST');
+}
+
+export async function fileListLinks(fileId) {
+  return apiCall('file_list_links', { file_id: fileId });
+}
+
+export async function fileRevokeLink(token) {
+  return apiCall('file_revoke_link', { token }, 'POST');
+}
+
 export async function filePhotos(type = 'all', page = 1, limit = 50) {
   return apiCall('drive_photos', { type, page, limit });
 }
@@ -5883,14 +5948,40 @@ export async function oneChat(message, conversationId = null, imageBase64 = null
       signal: controller.signal,
     });
     clearTimeout(timeout);
+    // [bug-fix 2026-05-18] Surface the actual HTTP error instead of falling
+    // through to a generic "Erro de conexao". Before, anything non-2xx that
+    // still parsed as JSON (401/429/503/etc.) just returned the body — which
+    // is OK — but a non-JSON body (HTML 502 from nginx, FPM worker timeout
+    // SSE half-stream, etc.) threw at .json() and the catch returned the
+    // generic message, hiding the real cause from the user.
+    if (!res.ok) {
+      let body = '';
+      try { body = await res.text(); } catch {}
+      // Try JSON first (server-shaped error)
+      try {
+        const j = JSON.parse(body);
+        if (j && typeof j === 'object') return j;
+      } catch {}
+      // Friendly hints per status — keeps the message actionable.
+      const hint = res.status === 502 || res.status === 503 || res.status === 504
+        ? 'Servidor sobrecarregado. Tente em alguns segundos.'
+        : res.status === 401 ? 'Sessão expirada. Faça login novamente.'
+        : res.status === 429 ? 'Limite de uso atingido. Tente mais tarde.'
+        : `Erro do servidor (HTTP ${res.status}).`;
+      return { success: false, message: hint, _http_status: res.status };
+    }
     const data = await res.json();
     return data;
   } catch (err) {
     clearTimeout(timeout);
     if (err.name === 'AbortError') {
-      return { success: false, message: 'Tempo limite excedido. Tente novamente.' };
+      return { success: false, message: 'A IA demorou demais para responder. Tente uma pergunta mais curta.' };
     }
-    return { success: false, message: 'Erro de conexao' };
+    // [bug-fix 2026-05-18] Include the real error message so it shows up in
+    // the chat bubble instead of the generic "Erro de conexao". Helps QA + the
+    // user actually understand whether it's network, DNS, CORS, or backend.
+    const detail = (err && (err.message || err.toString())) || 'desconhecido';
+    return { success: false, message: 'Erro de rede: ' + detail };
   }
 }
 
@@ -6382,6 +6473,17 @@ export async function walletBalance() {
 // reconciliation for refunds).
 export async function walletBuyDiamonds(sku, { transactionId = '', receipt = '', platform = 'ios' } = {}) {
   return apiCall('wallet_buy_diamonds', {
+    sku,
+    platform,
+    transaction_id: transactionId,
+    receipt,
+  }, 'POST');
+}
+// 2026-05-18 alias — preferred name for the new BRL diamond ladder. Backend
+// case is set up so both action names hit the same handler; we expose this
+// one to keep the iap.js → wallet flow self-documenting.
+export async function walletTopupVerify(sku, { transactionId = '', receipt = '', platform = 'ios' } = {}) {
+  return apiCall('wallet_topup_verify', {
     sku,
     platform,
     transaction_id: transactionId,

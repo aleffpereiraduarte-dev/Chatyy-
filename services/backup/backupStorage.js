@@ -18,7 +18,46 @@ export const KEYS = {
   LAST_SYNC:         '@chatyy_backup/last_sync',       // ISO string
   LAST_RUN:          '@chatyy_backup/last_run',        // ISO string
   UPLOAD_SESSIONS:   '@chatyy_backup/upload_sessions', // resumable sessions
+  KILLSWITCH:        '@chatyy_backup/killswitch',      // '1' → halt ALL backup entry points
 };
+
+// ─── Global killswitch ──────────────────────────────────────
+// When set, every backup entry point bails out immediately. This is the
+// last-resort circuit breaker for the "Backup do Chatyy" banner bug where
+// the native module emits phantom onProgress events for already-deduped
+// assets and fires a notification that never goes away. The flag is read
+// from AsyncStorage on every entry, so flipping it (via support backend
+// or in-app setting) takes effect on the next backup attempt without
+// requiring a rebuild. To flip remotely, set it from the backend
+// response handler in api.js when a feature flag arrives.
+let _killswitchCache = null;
+let _killswitchTs = 0;
+const KILLSWITCH_CACHE_MS = 30 * 1000;
+export async function isBackupKilled() {
+  const now = Date.now();
+  if (_killswitchCache !== null && now - _killswitchTs < KILLSWITCH_CACHE_MS) {
+    return _killswitchCache;
+  }
+  try {
+    const v = await AsyncStorage.getItem(KEYS.KILLSWITCH);
+    _killswitchCache = v === '1';
+    _killswitchTs = now;
+    return _killswitchCache;
+  } catch {
+    return false;
+  }
+}
+export async function setBackupKilled(killed) {
+  _killswitchCache = !!killed;
+  _killswitchTs = Date.now();
+  try {
+    if (killed) {
+      await AsyncStorage.setItem(KEYS.KILLSWITCH, '1');
+    } else {
+      await AsyncStorage.removeItem(KEYS.KILLSWITCH);
+    }
+  } catch {}
+}
 
 // ─── Legacy keys (for migration only) ──────────────────────
 const LEGACY = {

@@ -23,7 +23,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Image,
   Platform, Modal, Pressable, ActivityIndicator, Dimensions, Animated, Alert, TextInput,
-  PanResponder, Easing, Switch,
+  PanResponder, Easing, Switch, Linking,
 } from 'react-native';
 import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
@@ -40,7 +40,7 @@ import EmptyStateCard from './EmptyStateCard';
 import {
   IconX, IconPhone, IconVideo, IconMail, IconMessageSquare, IconUserPlus,
   IconChevronRight, IconSettings, IconMoreHorizontal, IconShare, IconAlertTriangle, IconLock, IconEdit,
-  IconTrash, IconPlus, IconGrid, IconFilm, IconTag, IconCheck, IconEyeOff,
+  IconTrash, IconPlus, IconGrid, IconFilm, IconTag, IconCheck, IconEyeOff, IconLink,
 } from './Icons';
 const IconEdit3 = IconEdit;
 const IconTrash2 = IconTrash;
@@ -985,13 +985,25 @@ export default function Profile({
         const list = r?.data?.highlights || r?.highlights || [];
         if (!Array.isArray(list)) return;
         // Normalize shape — cover_url is what the row renderer expects.
-        const normalized = list.map((h) => ({
-          id: h.id,
-          title: h.name || h.title || '',
-          cover_url: h.cover_url || '',
-          status_ids: Array.isArray(h.status_ids) ? h.status_ids : [],
-          count: h.count || (Array.isArray(h.status_ids) ? h.status_ids.length : 0),
-        }));
+        // [2026-05-18] Backend now returns `active_count` (real count of
+        // still-resolvable status rows). Trust active_count when present —
+        // status_ids.length is a tombstone-prone fallback for old backends.
+        // Also hide highlights with active_count=0 client-side as a defense
+        // in depth (backend already filters them, but mid-deploy old responses
+        // can leak through).
+        const normalized = list.map((h) => {
+          const ac = (typeof h.active_count === 'number') ? h.active_count
+                    : (typeof h.count === 'number') ? h.count
+                    : (Array.isArray(h.status_ids) ? h.status_ids.length : 0);
+          return {
+            id: h.id,
+            title: h.name || h.title || '',
+            cover_url: h.cover_url || '',
+            status_ids: Array.isArray(h.status_ids) ? h.status_ids : [],
+            count: ac,
+            active_count: ac,
+          };
+        }).filter(h => h.active_count > 0);
         setData((prev) => (prev ? { ...prev, highlights: normalized } : prev));
       } catch {}
     })();
@@ -1435,10 +1447,31 @@ export default function Profile({
               const r = await api.statusHighlightItems?.(h.id);
               const items = r?.data?.items || r?.items || [];
               if (!Array.isArray(items) || items.length === 0) {
-                Alert.alert(
-                  t?.('profile.highlightEmpty') || 'Destaque vazio',
-                  t?.('profile.highlightExpiredAll') || 'Esses status já não existem mais.'
-                );
+                // [2026-05-18] Destaque vazio. Two outcomes:
+                //  - Owner: offer to delete the destaque (it's a dead bookmark).
+                //    Also auto-prune from local state so the user doesn't keep
+                //    tapping a phantom tile.
+                //  - Viewer: silent dismiss — no value in shouting "vazio" at them.
+                if (isSelf) {
+                  Alert.alert(
+                    t?.('profile.highlightEmpty') || 'Destaque vazio',
+                    t?.('profile.highlightEmptyHint') || 'Esse destaque ficou sem stories. Quer apagar?',
+                    [
+                      { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+                      {
+                        text: t?.('common.delete') || 'Apagar',
+                        style: 'destructive',
+                        onPress: async () => {
+                          try { await api.statusHighlightDelete?.(h.id); } catch {}
+                          setData(prev => prev ? { ...prev, highlights: (prev.highlights || []).filter(x => x.id !== h.id) } : prev);
+                        },
+                      },
+                    ]
+                  );
+                } else {
+                  // Hide it from the viewer's local state too — keeps the row tidy.
+                  setData(prev => prev ? { ...prev, highlights: (prev.highlights || []).filter(x => x.id !== h.id) } : prev);
+                }
                 return;
               }
               setHighlightViewer({ open: true, items, title: h.title || '', startIdx: 0, highlightId: h.id });
@@ -1501,7 +1534,23 @@ export default function Profile({
   const renderHeader = () => {
     if (!identity) return null;
     const postsTotal = (posts.length || 0) + (reels.length || 0);
+    const coverUrl = identity.cover_url || '';
+    const accountType = identity.account_type || 'personal';
     return (
+      <View>
+        {/* Cover photo banner — full-width 3:1 strip, sits above the avatar
+            Instagram-style (no overlap; the avatar lands below in normal
+            header flow). Hidden when the user hasn't set one yet to avoid
+            an empty grey rectangle. Profile-upgrade combo (2026-05-18). */}
+        {coverUrl ? (
+          <View style={{ width: '100%', height: 150, backgroundColor: 'rgba(124,58,237,0.06)' }}>
+            {_ExpoImage ? (
+              <_ExpoImage source={{ uri: coverUrl }} style={{ width: '100%', height: '100%' }} contentFit="cover" cachePolicy="memory-disk" />
+            ) : (
+              <Image source={{ uri: coverUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+            )}
+          </View>
+        ) : null}
       <View style={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 10, gap: 14 }}>
         {/* Row 1 — @username + settings/menu (right aligned).
             headerLeadingSpace reserves room for the back arrow overlay in `full` mode so the
@@ -1524,6 +1573,35 @@ export default function Profile({
             {/* Lock icon for private accounts — Instagram parity */}
             {identity.is_private && (
               <IconLock size={16} color={colors?.text} />
+            )}
+            {/* Account type badge — Creator (purple palette icon) / Business
+                (blue briefcase icon). Personal renders nothing so most users
+                see a clean header. The single-character emoji-like glyph
+                comes from the user's spec; using a textual badge keeps it
+                cheap (no extra SVG asset) and lets it inherit font scaling. */}
+            {accountType === 'creator' && (
+              <View style={{
+                paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10,
+                backgroundColor: 'rgba(147,51,234,0.14)',
+                flexDirection: 'row', alignItems: 'center', gap: 3,
+              }} accessibilityLabel={t?.('profile.accountTypeCreator') || 'Criador'}>
+                <Text style={{ fontSize: 11 }}>🎨</Text>
+                <Text style={{ fontSize: 11, color: '#9333EA', fontWeight: '700' }}>
+                  {t?.('profile.accountTypeCreator') || 'Criador'}
+                </Text>
+              </View>
+            )}
+            {accountType === 'business' && (
+              <View style={{
+                paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10,
+                backgroundColor: 'rgba(37,99,235,0.14)',
+                flexDirection: 'row', alignItems: 'center', gap: 3,
+              }} accessibilityLabel={t?.('profile.accountTypeBusiness') || 'Negócio'}>
+                <Text style={{ fontSize: 11 }}>💼</Text>
+                <Text style={{ fontSize: 11, color: '#2563EB', fontWeight: '700' }}>
+                  {t?.('profile.accountTypeBusiness') || 'Negócio'}
+                </Text>
+              </View>
             )}
           </View>
           {actions.is_self ? (
@@ -1739,6 +1817,56 @@ export default function Profile({
               {identity.website}
             </Text>
           )}
+          {/* Multi-link chips — up to 5 link-in-bio pills rendered as a
+              flex-wrap row below the bio. Each chip opens its URL in the
+              system browser (web → window.open, native → Linking). Label
+              falls back to the URL host when the user didn't set one so
+              empty pills don't render as `https://...` walls of text. */}
+          {Array.isArray(identity.links) && identity.links.length > 0 ? (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+              {identity.links.slice(0, 5).map((lk, idx) => {
+                const url = lk?.url || '';
+                if (!url) return null;
+                let host = '';
+                try { host = new URL(url).host.replace(/^www\./, ''); } catch {}
+                const label = (lk?.label && lk.label.trim()) || host || url;
+                const open = () => {
+                  try {
+                    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                      window.open(url, '_blank', 'noopener,noreferrer');
+                    } else {
+                      Linking?.openURL?.(url);
+                    }
+                  } catch {}
+                };
+                return (
+                  <TouchableOpacity
+                    key={`link-${idx}`}
+                    onPress={open}
+                    activeOpacity={0.75}
+                    style={{
+                      flexDirection: 'row', alignItems: 'center', gap: 6,
+                      paddingHorizontal: 12, paddingVertical: 7,
+                      borderRadius: 16,
+                      backgroundColor: isDark ? 'rgba(124,58,237,0.14)' : 'rgba(124,58,237,0.10)',
+                      borderWidth: StyleSheet.hairlineWidth,
+                      borderColor: 'rgba(124,58,237,0.30)',
+                    }}
+                    accessibilityRole="link"
+                    accessibilityLabel={label}
+                  >
+                    <IconLink size={13} color="#7C3AED" />
+                    <Text
+                      numberOfLines={1}
+                      style={{ fontSize: 13, color: '#7C3AED', fontWeight: '600', maxWidth: 180 }}
+                    >
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          ) : null}
         </View>
 
         {/* Row 4 — flat full-width action buttons */}
@@ -1826,6 +1954,7 @@ export default function Profile({
             label={t?.('live.watchingNow') || 'Assistindo agora'}
           />
         )}
+      </View>
       </View>
     );
   };

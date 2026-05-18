@@ -7,14 +7,23 @@ import { IconSparkles } from './Icons';
 
 const BRAND = '#7C3AED';
 
-export default function SmartReplyChips({ email, onSelectReply, onSendReply }) {
+export default function SmartReplyChips({ email, onSelectReply, onSendReply, replies: providedReplies, label: customLabel }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
-  const [replies, setReplies] = useState([]);
+  // When `providedReplies` is passed (e.g. AI follow-ups from /one), skip the
+  // built-in fetch entirely and just render them. The email-bound smart-reply
+  // flow (auto-fetch via aiAssist) only kicks in when no replies prop is set.
+  const usingProvided = Array.isArray(providedReplies);
+  const [replies, setReplies] = useState(usingProvided ? providedReplies.slice(0, 3) : []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
   const [sendingIdx, setSendingIdx] = useState(-1);
   const fadeAnims = useRef([]).current;
+
+  // Sync external replies prop into state so a new question regenerates chips.
+  useEffect(() => {
+    if (usingProvided) setReplies((providedReplies || []).slice(0, 3));
+  }, [usingProvided, providedReplies]);
 
   // Staggered fade-in for chips
   useEffect(() => {
@@ -32,10 +41,11 @@ export default function SmartReplyChips({ email, onSelectReply, onSendReply }) {
   }, [replies]);
 
   useEffect(() => {
+    if (usingProvided) return;
     if (email?.body_text || email?.body) {
       generateReplies();
     }
-  }, [email?.uid]);
+  }, [email?.uid, usingProvided]);
 
   const generateReplies = async () => {
     setLoading(true);
@@ -60,7 +70,10 @@ export default function SmartReplyChips({ email, onSelectReply, onSendReply }) {
   };
 
   const handleInsert = (reply) => {
-    onSelectReply?.({ ...email, smartReply: reply });
+    // When used with `providedReplies` (AI follow-ups), there's no email
+    // context — pass the raw chip text. Email mode keeps the legacy shape.
+    if (usingProvided) onSelectReply?.(reply);
+    else onSelectReply?.({ ...email, smartReply: reply });
   };
 
   const handleQuickSend = async (reply, i) => {
@@ -68,7 +81,8 @@ export default function SmartReplyChips({ email, onSelectReply, onSendReply }) {
     if (onSendReply) {
       setSendingIdx(i);
       try {
-        await onSendReply({ ...email, smartReply: reply });
+        if (usingProvided) await onSendReply(reply);
+        else await onSendReply({ ...email, smartReply: reply });
       } finally {
         setSendingIdx(-1);
       }
@@ -85,7 +99,7 @@ export default function SmartReplyChips({ email, onSelectReply, onSendReply }) {
       <View style={s.labelRow}>
         <IconSparkles size={14} color={BRAND} style={{ marginRight: 6 }} />
         <Text style={[s.label, { color: colors.textSecondary }]}>
-          {t('smartReply.suggested') || 'Sugestões de resposta'}
+          {customLabel || t('smartReply.suggested') || 'Sugestões de resposta'}
         </Text>
       </View>
       {loading ? (

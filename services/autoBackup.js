@@ -21,7 +21,7 @@ import * as TaskManager from 'expo-task-manager';
 import * as api from './api';
 import {
   getSettings, saveSettings, getBackedUpMap, saveBackedUpMap,
-  markAssetBackedUp, setLastSync, KEYS,
+  markAssetBackedUp, setLastSync, KEYS, isBackupKilled,
 } from './backup/backupStorage';
 import * as uploadNotification from './uploadNotification';
 
@@ -134,6 +134,10 @@ TaskManager.defineTask(TASK_NAME, async () => {
   if (Platform.OS === 'web') return BackgroundFetch.BackgroundFetchResult.NoData;
 
   try {
+    // Killswitch (2026-05-18): if the user / backend flipped it on, bail
+    // out before doing any IO or scheduling. Killswitch is the only
+    // reliable circuit-breaker for the phantom "Backup do Chatyy" banner.
+    if (await isBackupKilled()) return BackgroundFetch.BackgroundFetchResult.NoData;
     const settings = await getSettings();
     if (!settings.enabled) return BackgroundFetch.BackgroundFetchResult.NoData;
 
@@ -253,12 +257,43 @@ TaskManager.defineTask(TASK_NAME, async () => {
  * @param {Function} onProgress - Called with { current, total }
  * @returns {Promise<{ uploaded: number, total: number }>}
  */
-export async function startForegroundBackup(onProgress) {
+export async function startForegroundBackup(onProgress, options = {}) {
+  const userInitiated = !!options.userInitiated;
   try {
     const { backupDebug } = require('./backupEngine');
-    backupDebug('autoBackup.foreground.start', { platform: Platform.OS, locked: isLocked() });
+    backupDebug('autoBackup.foreground.start', { platform: Platform.OS, locked: isLocked(), userInitiated });
   } catch {}
   if (Platform.OS === 'web') return { uploaded: 0, total: 0, error: 'web_unsupported' };
+
+  // Killswitch (2026-05-18): backend / settings can disable backup remotely
+  // when the phantom-progress banner pathology happens. Checked on every
+  // entry — boot fire, MediaLibrary listener, AppState change, photos.js
+  // button, BG task — so flipping the flag stops every code path at once.
+  try {
+    if (await isBackupKilled()) {
+      console.log('[backup] startForegroundBackup: killswitch ON — bailing');
+      return { uploaded: 0, total: 0, error: 'killswitch' };
+    }
+  } catch {}
+
+  // Pre-flight pending count gate (2026-05-18). The boot fire in initAutoBackup
+  // already does this, but every OTHER entry point (MediaLibrary listener
+  // burst, AppState resume, internal restart) used to call straight into
+  // native, and native emits onProgress for dedup-only passes which paints
+  // the "X de Y (0%)" notification even when zero new bytes need to go to
+  // R2. Skip the whole engine launch when nothing is pending. Pass
+  // { userInitiated: true } from photos.js / forceStartBackup to bypass
+  // this — the user explicitly asked for a backup, we should run even if
+  // we believe everything is done (their belief may be stale).
+  if (!userInitiated) {
+    try {
+      const pending = await getPendingCount();
+      if (pending === 0) {
+        console.log('[backup] startForegroundBackup: 0 pending — skipping (auto entry)');
+        return { uploaded: 0, total: 0, skipped: 'no_pending' };
+      }
+    } catch {}
+  }
 
   // If already running, request stop and wait
   if (isLocked()) {
@@ -288,15 +323,23 @@ export async function startForegroundBackup(onProgress) {
   // once we see a real progress tick with at least 1 pending item.
   const _userProgressCb = onProgress || null;
   let _notifStarted = false;
+  // 2026-05-18: notification now requires confirmation from onComplete that
+  // we actually transferred at least one FRESH (non-deduped) file to R2.
+  // The native `onProgress` event fires on every successful asset including
+  // pure dedups (the Swift module increments `uploaded` for every chunked
+  // upload return value, and chunkedUploadAsset returns true for dedup short-
+  // circuit hits). Without this gate, a library that's 100% already on the
+  // server still paints "35 de 45597 (0%)" while it churns through precheck.
+  // The flag below is flipped by the onComplete listener (further down).
+  let _hasFreshUpload = false;
+  function _onFreshUpload() { _hasFreshUpload = true; }
   progressCallback = (p) => {
     try {
       const cur = p?.current || 0;
       const tot = p?.total || 0;
-      // Only show the sticky notification if there's actually work to do.
-      // This single-shot guard prevents the notif from flashing during the
-      // initial precheck phase (current=0,total=0) on cold-starts where
-      // every device asset is already backed up.
-      if (!_notifStarted && tot > 0) {
+      // Only show the sticky notification when we've SEEN at least one real
+      // (non-dedup) upload land. Pure-dedup passes never paint anything.
+      if (!_notifStarted && tot > 0 && _hasFreshUpload) {
         _notifStarted = true;
         uploadNotification.start({
           id: BACKUP_NOTIF_ID,
@@ -470,6 +513,16 @@ export async function startForegroundBackup(onProgress) {
           _pendingMarks.push(event.assetId);
           if (!_flushTimer) {
             _flushTimer = setTimeout(_flushPendingMarks, 1000);
+          }
+          // 2026-05-18: flip the fresh-upload flag the first time we see
+          // a NON-deduped completion. The progressCallback above gates the
+          // sticky notification on this so dedup-only passes (where the
+          // server already has every file via content_hash precheck or
+          // drive_init_upload short-circuit) stay silent. The Swift module
+          // sets `deduped:true` on the event payload for both the rust
+          // precheck hit and the drive_init_upload `deduped:true` branch.
+          if (event.deduped !== true) {
+            try { _onFreshUpload(); } catch {}
           }
         }
       });
@@ -725,7 +778,10 @@ export async function startForegroundBackup(onProgress) {
 export async function forceStartBackup(onProgress) {
   lastAppStateBackupTime = 0;
   console.log('[AutoBackup] force-start requested');
-  return startForegroundBackup(onProgress);
+  // userInitiated=true → bypass the 0-pending guard. The user explicitly
+  // asked for a backup; even if our local accounting says nothing's
+  // pending, run the full pass so the server-side precheck reconciles.
+  return startForegroundBackup(onProgress, { userInitiated: true });
 }
 
 export function pause() {
@@ -825,6 +881,13 @@ function setupAppStateListener() {
       // JS task will get suspended in ~5s anyway.
       try {
         persistBackupCreds();
+        // Killswitch (2026-05-18): bail before kicking a fresh background
+        // native pass. Without this the BG-fire path stays a hot entry
+        // point even when we're trying to halt everything.
+        if (await isBackupKilled()) {
+          console.log('[backup] backgrounded — killswitch ON, no bg fire');
+          return;
+        }
         // _nativeIsRunning is the authoritative "JS already launched a
         // startNativeBackup that hasn't returned yet" flag. isLocked() only
         // catches the JS lockState which the bg handler bypassed before,
@@ -835,6 +898,15 @@ function setupAppStateListener() {
         }
         const settings = await getSettings();
         if (!settings.enabled) return;
+        // Skip if nothing pending — avoid spinning native through a full
+        // PHAsset dedup pass just to fire an empty progress callback.
+        try {
+          const pending = await getPendingCount();
+          if (pending === 0) {
+            console.log('[backup] backgrounded — 0 pending, no bg fire');
+            return;
+          }
+        } catch {}
         // No active session — kick off one native pass so the bg-time window
         // (30s–4min via beginBackgroundTask) gets used to upload something
         // before iOS suspends the JS runtime. startNativeBackup acquires its
@@ -907,6 +979,18 @@ export async function initAutoBackup() {
   // Run unified migration first
   const { migrateBackupStateV2 } = require('./backup/backupStorage');
   await migrateBackupStateV2();
+
+  // Killswitch (2026-05-18): if active, skip ALL registration so neither
+  // the BG TaskManager fetch task nor the AppState / MediaLibrary
+  // listeners get installed. This is the cleanest way to halt every
+  // backup-related side effect for a session.
+  try {
+    if (await isBackupKilled()) {
+      console.log('[backup] initAutoBackup: killswitch ON — skipping all registration');
+      initialized = true;
+      return;
+    }
+  } catch {}
 
   const settings = await getSettings();
 

@@ -61,12 +61,38 @@ export const PRODUCT_IDS = [
   'com.onemundo.mail.storage_2000',
 ];
 
+// 2026-05-18 — Consumable diamond top-up SKUs (BRL pricing, +bonus tiers).
+// Must be registered manually in App Store Connect (Consumable type) +
+// Google Play Console (Managed product / Consumable). Backend pack table
+// in /var/www/mail/api/chat.php (case 'wallet_buy_diamonds') is the source
+// of truth for diamond credit math; this list is just StoreKit metadata.
+export const DIAMOND_PACK_SKUS = [
+  'chatyy_diamond_100',
+  'chatyy_diamond_500',
+  'chatyy_diamond_1500',
+  'chatyy_diamond_5000',
+  'chatyy_diamond_15000',
+];
+
+// Catalog used by DiamondTopUpSheet to render the grid before the StoreKit
+// fetchProducts() response lands. Keep in sync with the server catalog —
+// the server still recomputes diamonds credited on receipt verification.
+export const DIAMOND_PACKS = [
+  { sku: 'chatyy_diamond_100',   diamonds: 100,   priceBrl: 4.99,   bonusPct: 0  },
+  { sku: 'chatyy_diamond_500',   diamonds: 550,   priceBrl: 19.99,  bonusPct: 10 },
+  { sku: 'chatyy_diamond_1500',  diamonds: 1700,  priceBrl: 49.99,  bonusPct: 13 },
+  { sku: 'chatyy_diamond_5000',  diamonds: 6000,  priceBrl: 149.99, bonusPct: 20 },
+  { sku: 'chatyy_diamond_15000', diamonds: 19500, priceBrl: 399.99, bonusPct: 30 },
+];
+
 let _available = false;
 let _products = [];
+let _diamondProducts = []; // type:'inapp' consumable diamond packs
 let _purchaseSub = null;
 let _errorSub = null;
 let _initPromise = null; // guard against concurrent initIAP() calls
 let _lastDiagnostic = null; // last reason fetchProducts/init failed, for UI
+let _pendingTopupCallback = null; // resolved by listener after wallet credit
 
 export async function initIAP() {
   if (Platform.OS !== 'ios') { _available = false; return false; }
@@ -111,6 +137,20 @@ async function _doInitIAP() {
       if (attempt < maxAttempts) {
         await new Promise(r => setTimeout(r, 800 * attempt)); // 800ms, 1.6s
       }
+    }
+
+    // Diamond top-ups are consumables (type:'inapp'), not subscriptions —
+    // StoreKit returns nothing for them when queried as 'subs'. Best-effort
+    // fetch; failures are silent because the top-up sheet has a static
+    // fallback (DIAMOND_PACKS) and the user just sees BRL labels in that
+    // case instead of locale-correct StoreKit prices.
+    try {
+      const diamondProducts = await mod.fetchProducts({ skus: DIAMOND_PACK_SKUS, type: 'inapp' });
+      if (Array.isArray(diamondProducts) && diamondProducts.length) {
+        _diamondProducts = diamondProducts;
+      }
+    } catch (e) {
+      if (__DEV__) console.warn('[IAP] diamond fetchProducts failed:', e?.message);
     }
 
     if (!_purchaseSub && mod.purchaseUpdatedListener) {
@@ -164,35 +204,116 @@ export function getLocalizedPrice(productId) {
  *  Apple will auto-refund after ~24h). */
 async function _finalizePurchase(purchase) {
   let verified = false;
+  let resultData = null;
+  const isDiamond = typeof purchase?.productId === 'string'
+    && purchase.productId.indexOf('chatyy_diamond_') === 0;
   try {
     // expo-iap purchase shape: { id, productId, transactionId,
     //   transactionReceipt, purchaseToken, originalTransactionIdentifierIOS, ... }
     const receipt = purchase.transactionReceipt || purchase.purchaseToken || '';
     const txId = purchase.transactionId || purchase.id || '';
     if (txId && purchase.productId) {
-      const r = await apiCall('iap_verify_receipt', {
+      const action = isDiamond ? 'wallet_topup_verify' : 'iap_verify_receipt';
+      const r = await apiCall(action, {
         platform: Platform.OS,
-        product_id: purchase.productId,
+        sku: purchase.productId,             // wallet_topup_verify reads this
+        product_id: purchase.productId,      // iap_verify_receipt reads this
         receipt,
         transaction_id: txId,
       }, 'POST');
       verified = !!r?.success;
+      resultData = r?.data || null;
     }
   } catch (e) {
-    if (__DEV__) console.warn('[IAP] verify_receipt failed:', e?.message);
+    if (__DEV__) console.warn('[IAP] verify failed:', e?.message);
   }
   // Só finaliza a transação se o backend confirmou. Senão deixa pendente
   // pra retry no próximo listener/restore — finishTransaction sem verify
   // bem-sucedido fazia o usuário pagar e ficar sem upgrade.
-  if (!verified) return;
+  if (!verified) {
+    if (isDiamond && _pendingTopupCallback) {
+      try { _pendingTopupCallback({ success: false, message: 'verify_failed' }); } catch {}
+      _pendingTopupCallback = null;
+    }
+    return;
+  }
   try {
     const mod = _getIAP();
     if (mod?.finishTransaction) {
-      await mod.finishTransaction({ purchase, isConsumable: false });
+      // Diamond packs are consumables — Apple requires isConsumable:true so
+      // the same SKU can be purchased again. Subscriptions stay non-consumable.
+      await mod.finishTransaction({ purchase, isConsumable: isDiamond });
     }
   } catch (e) {
     if (__DEV__) console.warn('[IAP] finishTransaction failed:', e?.message);
   }
+  if (isDiamond && _pendingTopupCallback) {
+    try {
+      _pendingTopupCallback({
+        success: true,
+        sku: purchase.productId,
+        diamondBalance: Number(resultData?.diamond_balance) || 0,
+        diamondsAdded: Number(resultData?.diamonds_added) || 0,
+      });
+    } catch {}
+    _pendingTopupCallback = null;
+  }
+}
+
+/** Start a consumable diamond top-up purchase via StoreKit sheet.
+ *  Resolves once the purchase listener fires (success/fail). Web/Android-
+ *  unsupported callers get web_fallback so the UI can route to /plans.
+ *
+ *  Returns: { success, sku?, diamondBalance?, diamondsAdded?, message? }
+ */
+export async function purchaseDiamonds(productId) {
+  const mod = _getIAP();
+  if (Platform.OS === 'web' || !mod) {
+    try { Linking.openURL(`${getBaseUrl()}/#/plans`); } catch {}
+    return { success: false, message: 'web_fallback' };
+  }
+  if (!_available) {
+    try { await initIAP(); } catch {}
+    if (!_available) return { success: false, message: 'iap_unavailable' };
+  }
+  // Wire a one-shot callback that the purchase listener resolves once the
+  // backend wallet credit lands. Timeout after 90s — Apple sometimes spins
+  // on the success sheet without firing the JS listener.
+  let resolve;
+  const done = new Promise((r) => { resolve = r; });
+  _pendingTopupCallback = (payload) => resolve(payload);
+  const timer = setTimeout(() => {
+    if (_pendingTopupCallback) {
+      _pendingTopupCallback = null;
+      resolve({ success: false, message: 'timeout' });
+    }
+  }, 90000);
+  try {
+    await mod.requestPurchase({
+      request: {
+        ios: { sku: productId },
+        android: { skus: [productId] },
+      },
+      type: 'inapp', // consumable, not subs
+    });
+  } catch (e) {
+    clearTimeout(timer);
+    _pendingTopupCallback = null;
+    const code = e?.code || '';
+    if (code === 'E_USER_CANCELLED' || code === 'USER_CANCELLED') {
+      return { success: false, message: 'cancelled' };
+    }
+    return { success: false, message: e?.message || 'purchase_failed' };
+  }
+  const result = await done;
+  clearTimeout(timer);
+  return result;
+}
+
+export function getDiamondProducts() { return _diamondProducts; }
+export function getDiamondLocalizedPrice(productId) {
+  const p = _diamondProducts.find(x => x.id === productId || x.productId === productId);
+  return p?.localizedPrice || p?.displayPrice || '';
 }
 
 /** Start a subscription purchase via StoreKit sheet. */

@@ -1073,6 +1073,15 @@ function FilesScreenInner() {
   const [newFolderModal, setNewFolderModal] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [shareModal, setShareModal] = useState(null);
+  // Public link share modal — { file_id, name, links: [...] }. Distinct from
+  // shareModal (which is email-based per-user sharing). See files.php's
+  // file_create_link / file_list_links / file_revoke_link endpoints.
+  const [linkShareModal, setLinkShareModal] = useState(null);
+  const [linkOptPassword, setLinkOptPassword] = useState('');
+  const [linkOptHasPassword, setLinkOptHasPassword] = useState(false);
+  const [linkOptExpires, setLinkOptExpires] = useState(0);       // 0 = never; else days
+  const [linkOptMaxDl, setLinkOptMaxDl] = useState(0);           // 0 = unlimited
+  const [linkCreating, setLinkCreating] = useState(false);
   // Drive-style version history modal: { file_id, name, versions[] }
   const [versionsModal, setVersionsModal] = useState(null);
   const [shareEmail, setShareEmail] = useState('');
@@ -3046,6 +3055,23 @@ function FilesScreenInner() {
                   <Text style={[styles.actionItemText, { color: colors.text }]}>{t('files.share')}</Text>
                 </TouchableOpacity>
 
+                <TouchableOpacity style={styles.actionItem} onPress={async () => {
+                  const fid = actionMenu.item.id;
+                  const fname = actionMenu.item.original_name || actionMenu.item.name || '';
+                  setActionMenu(null);
+                  let links = [];
+                  try {
+                    const r = await api.fileListLinks(fid);
+                    if (r?.success) links = r.data?.links || [];
+                  } catch {}
+                  setLinkShareModal({ file_id: fid, name: fname, links });
+                }}>
+                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#0ea5e918' : '#f0f9ff' }]}>
+                    <IconCloud size={18} color="#0ea5e9" />
+                  </View>
+                  <Text style={[styles.actionItemText, { color: colors.text }]}>{t('files.shareLink') || 'Compartilhar com link'}</Text>
+                </TouchableOpacity>
+
                 <TouchableOpacity style={styles.actionItem} onPress={() => handleDelete(actionMenu.item.id)}>
                   <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#dc262618' : '#fef2f2' }]}>
                     <IconTrash size={18} color="#dc2626" />
@@ -3343,6 +3369,226 @@ function FilesScreenInner() {
                 }
               }}>
                 <Text style={[styles.dialogBtnText, { color: '#fff' }]}>{t('files.share')}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* ============ PUBLIC LINK SHARE MODAL ============ */}
+      <Modal visible={!!linkShareModal} transparent animationType="fade" onRequestClose={() => setLinkShareModal(null)}>
+        <TouchableOpacity style={styles.modalBackdropCenter} activeOpacity={1} onPress={() => {
+          setLinkShareModal(null);
+          setLinkOptPassword(''); setLinkOptHasPassword(false); setLinkOptExpires(0); setLinkOptMaxDl(0);
+        }}>
+          <View style={[
+            styles.dialogBox,
+            {
+              backgroundColor: isDark ? 'rgba(21,30,46,0.95)' : 'rgba(255,255,255,0.98)',
+              borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+              maxHeight: '85%',
+            },
+            isWeb && { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' },
+          ]} onStartShouldSetResponder={() => true}>
+            <Text style={[styles.dialogTitle, { color: colors.text }]}>{t('files.shareLink') || 'Compartilhar com link'}</Text>
+            {linkShareModal?.name ? (
+              <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 14 }} numberOfLines={1}>
+                {linkShareModal.name}
+              </Text>
+            ) : null}
+
+            <ScrollView style={{ maxHeight: 460 }} keyboardShouldPersistTaps="handled">
+              {/* Existing links list */}
+              {linkShareModal?.links?.length > 0 && (
+                <View style={{ marginBottom: 14 }}>
+                  <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 6, fontWeight: '600' }}>
+                    {t('files.activeLinks') || 'Links ativos'}
+                  </Text>
+                  {linkShareModal.links.map((lnk) => (
+                    <View key={lnk.token} style={{
+                      flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 10, borderRadius: 8,
+                      backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)', marginBottom: 6,
+                    }}>
+                      <View style={{ flex: 1, marginRight: 8 }}>
+                        <Text style={{ fontSize: 13, color: colors.text, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }} numberOfLines={1}>
+                          {lnk.url}
+                        </Text>
+                        <Text style={{ fontSize: 11, color: colors.textTertiary, marginTop: 2 }}>
+                          {lnk.has_password ? (t('files.linkHasPassword') || 'Com senha') : (t('files.linkNoPassword') || 'Sem senha')}
+                          {lnk.expires_at ? ` • ${t('files.linkExpiresAt') || 'expira'} ${new Date(lnk.expires_at.replace(' ', 'T') + 'Z').toLocaleDateString()}` : ''}
+                          {lnk.max_downloads != null ? ` • ${lnk.downloads}/${lnk.max_downloads}` : ` • ${lnk.downloads} downloads`}
+                        </Text>
+                      </View>
+                      <TouchableOpacity onPress={async () => {
+                        try {
+                          if (Platform.OS === 'web' && navigator?.clipboard) await navigator.clipboard.writeText(lnk.url);
+                          else { const Clipboard = require('expo-clipboard'); await Clipboard.setStringAsync(lnk.url); }
+                          showToast(t('files.linkCopied') || 'Link copiado');
+                        } catch {}
+                      }} style={{ padding: 6, marginRight: 2 }} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                        <IconPaperclip size={16} color={colors.primary} />
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={async () => {
+                        try {
+                          const r = await api.fileRevokeLink(lnk.token);
+                          if (r?.success) {
+                            setLinkShareModal(prev => prev ? { ...prev, links: prev.links.filter(x => x.token !== lnk.token) } : prev);
+                            showToast(t('files.linkRevoked') || 'Link revogado');
+                          }
+                        } catch {}
+                      }} style={{ padding: 6 }} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                        <IconTrash size={16} color={colors.error || '#dc2626'} />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* Password toggle */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+                <TouchableOpacity
+                  onPress={() => { setLinkOptHasPassword(v => !v); if (linkOptHasPassword) setLinkOptPassword(''); }}
+                  style={{
+                    width: 20, height: 20, borderRadius: 4, marginRight: 10,
+                    borderWidth: 2, borderColor: linkOptHasPassword ? colors.primary : (isDark ? 'rgba(255,255,255,0.3)' : '#cbd5e1'),
+                    backgroundColor: linkOptHasPassword ? colors.primary : 'transparent',
+                    alignItems: 'center', justifyContent: 'center',
+                  }}
+                >
+                  {linkOptHasPassword ? <IconCheck size={14} color="#fff" /> : null}
+                </TouchableOpacity>
+                <Text style={{ fontSize: 13, color: colors.text, flex: 1 }}>
+                  {t('files.linkPasswordProtect') || 'Proteger com senha'}
+                </Text>
+              </View>
+              {linkOptHasPassword ? (
+                <TextInput
+                  style={[styles.dialogInput, {
+                    color: colors.text,
+                    borderColor: isDark ? 'rgba(255,255,255,0.12)' : colors.border,
+                    backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
+                    marginBottom: 14,
+                  }]}
+                  placeholder={t('files.linkPasswordPlaceholder') || 'Digite uma senha'}
+                  placeholderTextColor={colors.textTertiary}
+                  value={linkOptPassword}
+                  onChangeText={setLinkOptPassword}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              ) : null}
+
+              {/* Expires picker */}
+              <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 6, fontWeight: '600' }}>
+                {t('files.linkExpires') || 'Expira em'}
+              </Text>
+              <View style={[styles.permissionRow, { marginBottom: 12, flexWrap: 'wrap' }]}>
+                {[
+                  { v: 0, label: t('files.linkExpireNever') || 'Nunca' },
+                  { v: 1, label: t('files.linkExpire1d') || '1 dia' },
+                  { v: 7, label: t('files.linkExpire7d') || '7 dias' },
+                  { v: 30, label: t('files.linkExpire30d') || '30 dias' },
+                ].map(opt => (
+                  <TouchableOpacity
+                    key={opt.v}
+                    onPress={() => setLinkOptExpires(opt.v)}
+                    style={[
+                      styles.permissionBtn,
+                      {
+                        borderColor: isDark ? 'rgba(255,255,255,0.1)' : '#e2e8f0',
+                        backgroundColor: linkOptExpires === opt.v ? colors.primary : 'transparent',
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.permissionText, { color: linkOptExpires === opt.v ? '#fff' : colors.textSecondary }]}>
+                      {opt.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Max downloads picker */}
+              <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 6, fontWeight: '600' }}>
+                {t('files.linkLimitDownloads') || 'Limite de downloads'}
+              </Text>
+              <View style={[styles.permissionRow, { marginBottom: 14, flexWrap: 'wrap' }]}>
+                {[
+                  { v: 0, label: t('files.linkUnlimited') || 'Ilimitado' },
+                  { v: 10, label: '10' },
+                  { v: 50, label: '50' },
+                  { v: 100, label: '100' },
+                ].map(opt => (
+                  <TouchableOpacity
+                    key={opt.v}
+                    onPress={() => setLinkOptMaxDl(opt.v)}
+                    style={[
+                      styles.permissionBtn,
+                      {
+                        borderColor: isDark ? 'rgba(255,255,255,0.1)' : '#e2e8f0',
+                        backgroundColor: linkOptMaxDl === opt.v ? colors.primary : 'transparent',
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.permissionText, { color: linkOptMaxDl === opt.v ? '#fff' : colors.textSecondary }]}>
+                      {opt.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+
+            <View style={styles.dialogBtns}>
+              <TouchableOpacity style={[styles.dialogBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]} onPress={() => {
+                setLinkShareModal(null);
+                setLinkOptPassword(''); setLinkOptHasPassword(false); setLinkOptExpires(0); setLinkOptMaxDl(0);
+              }}>
+                <Text style={[styles.dialogBtnText, { color: colors.textSecondary }]}>{t('common.close') || 'Fechar'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                disabled={linkCreating || (linkOptHasPassword && !linkOptPassword.trim())}
+                style={[
+                  styles.dialogBtn,
+                  styles.dialogBtnPrimary,
+                  { backgroundColor: colors.primary, opacity: (linkCreating || (linkOptHasPassword && !linkOptPassword.trim())) ? 0.5 : 1 },
+                ]}
+                onPress={async () => {
+                  if (!linkShareModal?.file_id) return;
+                  setLinkCreating(true);
+                  try {
+                    const opts = {};
+                    if (linkOptHasPassword && linkOptPassword.trim()) opts.password = linkOptPassword.trim();
+                    if (linkOptExpires > 0) opts.expiresInDays = linkOptExpires;
+                    if (linkOptMaxDl > 0) opts.maxDownloads = linkOptMaxDl;
+                    const r = await api.fileCreateLink(linkShareModal.file_id, opts);
+                    if (r?.success && r.data?.url) {
+                      // Copy to clipboard immediately for instant share
+                      try {
+                        if (Platform.OS === 'web' && navigator?.clipboard) await navigator.clipboard.writeText(r.data.url);
+                        else { const Clipboard = require('expo-clipboard'); await Clipboard.setStringAsync(r.data.url); }
+                      } catch {}
+                      showToast(t('files.linkCreatedCopied') || 'Link criado e copiado!');
+                      // Refresh the list
+                      try {
+                        const lr = await api.fileListLinks(linkShareModal.file_id);
+                        if (lr?.success) {
+                          setLinkShareModal(prev => prev ? { ...prev, links: lr.data?.links || [] } : prev);
+                        }
+                      } catch {}
+                      setLinkOptPassword(''); setLinkOptHasPassword(false); setLinkOptExpires(0); setLinkOptMaxDl(0);
+                    } else {
+                      safeAlert(t('common.error'), mapApiError(r, t, 'files'));
+                    }
+                  } catch {
+                    safeAlert(t('common.error'), t('files.linkCreateFailed') || 'Não foi possível criar o link');
+                  } finally {
+                    setLinkCreating(false);
+                  }
+                }}
+              >
+                <Text style={[styles.dialogBtnText, { color: '#fff' }]}>
+                  {linkCreating ? (t('common.loading') || '...') : (t('files.linkGenerate') || 'Gerar link')}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>

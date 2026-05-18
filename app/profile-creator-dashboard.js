@@ -19,6 +19,7 @@ import { useLanguage } from '../context/LanguageContext';
 import AvatarCircle from '../components/AvatarCircle';
 import * as api from '../services/api';
 import { IconArrowLeft } from '../components/Icons';
+import DiamondTopUpSheet from '../components/DiamondTopUpSheet';
 
 const ACCENT = '#7C3AED';
 
@@ -74,6 +75,19 @@ export default function CreatorDashboardScreen() {
     top_tippers: [],
     tip_series_7d: [],
   });
+  const [topupOpen, setTopupOpen] = useState(false);
+  const [diamondBalance, setDiamondBalance] = useState(0);
+
+  // Pull the creator's own diamond balance — drives the "Comprar diamantes"
+  // chip + helps creators tip back the people who tip them.
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await api.walletBalance?.();
+        if (r?.success && r.data) setDiamondBalance(Number(r.data.diamond_balance) || 0);
+      } catch {}
+    })();
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -117,6 +131,29 @@ export default function CreatorDashboardScreen() {
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} />}
         >
+          {/* Diamond wallet — own balance + top-up CTA. Lets creators
+              both see their own ◆ stash and reload it. */}
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => setTopupOpen(true)}
+            style={[styles.card, styles.walletCard, { borderColor: cardBorder }]}
+            accessibilityRole="button"
+            accessibilityLabel={t?.('wallet.topup') || 'Comprar diamantes'}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.cardTitle, { color: 'rgba(255,255,255,0.85)' }]}>
+                {t?.('wallet.myDiamonds') || 'Meus diamantes'}
+              </Text>
+              <Text style={[styles.cardValue, { color: '#fff' }]}>{diamondBalance.toLocaleString('pt-BR')} ◆</Text>
+              <Text style={[styles.cardSub, { color: 'rgba(255,255,255,0.7)' }]}>
+                {t?.('wallet.topupCta') || 'Tocar para comprar diamantes'}
+              </Text>
+            </View>
+            <View style={styles.walletCta}>
+              <Text style={styles.walletCtaText}>+</Text>
+            </View>
+          </TouchableOpacity>
+
           {/* Top-line revenue cards */}
           <View style={[styles.card, { backgroundColor: cardBg, borderColor: cardBorder }]}>
             <Text style={[styles.cardTitle, { color: colors.textSecondary }]}>
@@ -185,6 +222,12 @@ export default function CreatorDashboardScreen() {
           </View>
         </ScrollView>
       )}
+
+      <DiamondTopUpSheet
+        visible={topupOpen}
+        onClose={() => setTopupOpen(false)}
+        onBalanceChange={(b) => { if (typeof b === 'number') setDiamondBalance(b); }}
+      />
     </View>
   );
 }
@@ -208,6 +251,18 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 4,
   },
+  walletCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: ACCENT,
+  },
+  walletCta: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    alignItems: 'center', justifyContent: 'center',
+    marginLeft: 12,
+  },
+  walletCtaText: { color: '#fff', fontSize: 28, fontWeight: '700', lineHeight: 30 },
   cardTitle: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.4 },
   cardValue: { fontSize: 22, fontWeight: '800', marginTop: 6 },
   cardSub: { fontSize: 12 },

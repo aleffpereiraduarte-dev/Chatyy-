@@ -573,36 +573,12 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
     finally { setCaptionTranslating(false); }
   }, [post.caption, captionTranslation, _appLang]);
 
-  // If the viewer hid this post, render a small collapsed banner with an
-  // "Undo" affordance instead of yanking it out of the layout. Avoids the
-  // jump-to-bottom scroll glitch RN's VirtualizedList does on data shrink.
-  if (hidden) {
-    return (
-      <View style={[styles.container, {
-        backgroundColor: isDark ? colors.surface : '#ffffff',
-        borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-        paddingVertical: 18,
-        paddingHorizontal: 16,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-      }]}>
-        <Text style={{ color: colors.textSecondary, fontSize: 13, flex: 1 }} numberOfLines={2}>
-          {t?.('feed.postHidden') || 'Este post foi ocultado.'}
-        </Text>
-        <TouchableOpacity
-          onPress={() => setHidden(false)}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          accessibilityRole="button"
-          accessibilityLabel={t?.('common.undo') || 'Desfazer'}
-        >
-          <Text style={{ color: ACCENT, fontWeight: '700', fontSize: 13 }}>
-            {t?.('common.undo') || 'Desfazer'}
-          </Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
+  // [hooks-order-fix] Hidden-post early return was here, but it sat ABOVE
+  // ~15 more hooks (togglePin, useEffect for like-count pop, toggleLike,
+  // toggleBookmark, handleScroll, etc.). When the user hid a post, those
+  // hooks stopped executing → "Rendered more hooks than during the previous
+  // render". The hidden-banner branch now lives at the bottom of the
+  // component, just before the main return — after every hook has run.
 
   // Sync with prop changes
   useEffect(() => {
@@ -823,6 +799,39 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
   const cardBg = isDark ? colors.surface : '#ffffff';
   const needsTruncation = post.caption && post.caption.length > CAPTION_TRUNCATE;
   const commentCount = Number(post.comment_count) || 0;
+
+  // If the viewer hid this post, render a small collapsed banner with an
+  // "Undo" affordance instead of yanking it out of the layout. Avoids the
+  // jump-to-bottom scroll glitch RN's VirtualizedList does on data shrink.
+  // NOTE: this conditional return MUST stay below every hook call above so
+  // the hook order stays stable across renders (see hooks-order-fix comment).
+  if (hidden) {
+    return (
+      <View style={[styles.container, {
+        backgroundColor: isDark ? colors.surface : '#ffffff',
+        borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+        paddingVertical: 18,
+        paddingHorizontal: 16,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+      }]}>
+        <Text style={{ color: colors.textSecondary, fontSize: 13, flex: 1 }} numberOfLines={2}>
+          {t?.('feed.postHidden') || 'Este post foi ocultado.'}
+        </Text>
+        <TouchableOpacity
+          onPress={() => setHidden(false)}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel={t?.('common.undo') || 'Desfazer'}
+        >
+          <Text style={{ color: ACCENT, fontWeight: '700', fontSize: 13 }}>
+            {t?.('common.undo') || 'Desfazer'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.container, {

@@ -16,6 +16,7 @@ import {
   getBackedUpMap, saveBackedUpMap, clearBackedUpMap,
   getLastSync, setLastSync, getLastRun, setLastRun,
   resetAllBackupState, DEFAULT_SETTINGS,
+  isBackupKilled, setBackupKilled,
 } from './backupStorage';
 
 // Lazy imports to avoid circular deps at module level
@@ -243,4 +244,34 @@ export {
   setLastSync,
   migrateBackupStateV2,
   DEFAULT_SETTINGS,
+  isBackupKilled,
+  setBackupKilled,
 };
+
+/**
+ * Emergency killswitch (2026-05-18) — halts every backup entry point.
+ * Use when the "Backup do Chatyy" phantom-progress banner appears and
+ * needs to be silenced immediately. After flipping ON, the next time the
+ * user backgrounds + foregrounds the app, no notification will fire.
+ * Backend can set this remotely by pushing a feature flag that calls
+ * setBackupKilled(true) from the response handler.
+ */
+export async function killBackup() {
+  await setBackupKilled(true);
+  try {
+    const autoBackup = require('../autoBackup');
+    if (autoBackup.getIsRunning?.()) autoBackup.pause();
+    autoBackup.stopAutoBackup?.();
+  } catch {}
+  // Also dismiss any currently-visible "Backup do Chatyy" notification.
+  try {
+    if (Platform.OS !== 'web') {
+      const Notifications = require('expo-notifications');
+      await Notifications.dismissNotificationAsync('upload_progress_chatyy_photo_backup').catch(() => {});
+    }
+  } catch {}
+}
+
+export async function reviveBackup() {
+  await setBackupKilled(false);
+}

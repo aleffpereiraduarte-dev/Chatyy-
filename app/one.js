@@ -26,6 +26,29 @@ import * as ImagePicker from 'expo-image-picker';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import { OneRealtimeSession, isRealtimeSupported } from '../services/oneRealtime';
+import SmartReplyChips from '../components/SmartReplyChips';
+
+// Strip the trailing `<followups>q1|q2|q3</followups>` marker the server-side
+// prompt appends to every One reply. Lets us hide it from rendered markdown
+// during streaming (DB-side it's already stripped before persist). Returns
+// the cleaned text + the parsed list (empty if marker incomplete/malformed).
+const FOLLOWUPS_RE = /\s*<followups>([\s\S]*?)<\/followups>\s*$/i;
+const FOLLOWUPS_OPEN_RE = /\s*<followups>[\s\S]*$/i;
+function extractFollowups(text) {
+  if (!text || typeof text !== 'string') return { text: text || '', followups: [] };
+  if (text.indexOf('<followups>') === -1) return { text, followups: [] };
+  const m = FOLLOWUPS_RE.exec(text);
+  if (m) {
+    const parts = m[1].split('|')
+      .map(s => s.trim().replace(/^[-*\d.)\s]+/, ''))
+      .filter(Boolean)
+      .map(s => s.length > 60 ? s.slice(0, 60) : s)
+      .slice(0, 3);
+    return { text: text.replace(FOLLOWUPS_RE, ''), followups: parts };
+  }
+  // Marker started but not closed (mid-stream) — hide the open fragment.
+  return { text: text.replace(FOLLOWUPS_OPEN_RE, ''), followups: [] };
+}
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const isWide = SCREEN_W > 700;
@@ -1504,7 +1527,10 @@ function MessageRow({ item, colors, isDark, onSpeak, speakingId, t, onCopy, onRe
           <ToolTypingIndicator toolName={item._toolName} isDark={isDark} t={t} />
         ) : (
           <View style={st.aiBody}>
-            {parseMarkdown(item.content, isDark ? '#ECECEC' : '#0D0D0D', isDark)}
+            {/* Hide the trailing <followups>...</followups> marker the model
+                appends — it's surfaced as chips below the last AI message
+                (handled in the parent). */}
+            {parseMarkdown(extractFollowups(item.content).text, isDark ? '#ECECEC' : '#0D0D0D', isDark)}
             {/* Streaming dots (•••) inline at end during generation. */}
             {isStreaming && !isToolPending && <InlineStreamingDots isDark={isDark} />}
           </View>
@@ -1751,6 +1777,11 @@ export default function OneScreen() {
   const [attachedImage, setAttachedImage] = useState(null); // { uri, base64, mimeType }
   const [loading, setLoading] = useState(false);
   const [conversationId, setConversationId] = useState(null);
+  // Suggested follow-up chips for the most-recent AI reply. Rendered as a
+  // SmartReplyChips strip under the last assistant message — tap = autosend.
+  // Cleared whenever the user types, picks an image, switches threads, or
+  // sends a new prompt (so stale chips never linger).
+  const [lastFollowups, setLastFollowups] = useState([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   // ChatGPT-style model picker pill at top center.
   const [selectedModel, setSelectedModel] = useState(MODEL_OPTIONS[0]);
@@ -2034,6 +2065,7 @@ export default function OneScreen() {
   const loadConversation = useCallback(async (conv) => {
     setConversationId(conv.id);
     setMessages([]);
+    setLastFollowups([]); // Chips belong to the just-finished thread, not the switched-to one.
     setLoading(true);
     try {
       const res = await api.oneHistory(conv.id);
@@ -2297,7 +2329,16 @@ export default function OneScreen() {
       );
       if (result?.success && result.data) {
         if (result.data.conversation_id) setConversationId(result.data.conversation_id);
-        const responseText = result.data.response || t('one.errorProcess');
+        const responseTextRaw = result.data.response || t('one.errorProcess');
+        // Backend already strips <followups> for the JSON path, but parse
+        // defensively in case an old PHP-FPM worker still has the old code
+        // cached.
+        const { text: responseText, followups: parsedFollowups } = extractFollowups(responseTextRaw);
+        const followupsFromMeta = Array.isArray(result.data.suggested_followups)
+          ? result.data.suggested_followups.slice(0, 3)
+          : [];
+        const finalFollowups = followupsFromMeta.length ? followupsFromMeta : parsedFollowups;
+        if (finalFollowups.length > 0) setLastFollowups(finalFollowups);
         setMessages(prev => [...prev, {
           id: aiMsgId, role: 'assistant',
           content: responseText,
@@ -2320,14 +2361,21 @@ export default function OneScreen() {
           });
         }
       }
-    } catch {
-      const errText = t('one.error');
+    } catch (e) {
+      // [bug-fix 2026-05-18] Suffix the actual exception message so users +
+      // QA see *why* it failed (network, parse, abort, etc.) instead of a
+      // dead-end "Não consegui conectar com o servidor.".
+      const base = t('one.error');
+      const detail = (e && (e.message || String(e))) || '';
+      const errText = detail ? base + '\n\n_' + detail + '_' : base;
       setMessages(prev => [...prev, { id: aiMsgId, role: 'assistant', content: errText }]);
       if (voiceModeRef.current) {
         setVoiceState('speaking');
         haptic('light');
         const lang = getTTSLang(locale);
-        speakSentenceBysentence(errText, lang, () => {
+        // Speak only the base message — the technical detail is for the UI
+        // bubble, not the TTS read-out.
+        speakSentenceBysentence(base, lang, () => {
           if (voiceModeRef.current) {
             setTimeout(() => {
               if (voiceModeRef.current) { playReactivationSound(); haptic('light'); setVoiceState('listening'); startListeningForVoiceMode(); }
@@ -2372,6 +2420,9 @@ export default function OneScreen() {
     if (!opts.proactive) setInputText('');
     setVoiceTranscript('');
     setAttachedImage(null);
+    // Sending a new prompt invalidates the prior reply's chips. New ones
+    // arrive via meta.suggested_followups when this turn lands.
+    setLastFollowups([]);
     const displayMsg = msg || (currentImage ? t('one.analyzingImage') : '');
     setMessages(prev => [...prev, {
       id: Date.now(), role: 'user', content: displayMsg, userName: firstName,
@@ -2442,18 +2493,28 @@ export default function OneScreen() {
               setConversationId(meta.conversation_id);
             }
             if (meta.actions) streamActions = meta.actions;
+            // Suggested follow-ups arrive in the final meta event — surface
+            // them as chips under the last AI reply.
+            if (Array.isArray(meta.suggested_followups) && meta.suggested_followups.length > 0) {
+              setLastFollowups(meta.suggested_followups.slice(0, 3));
+            }
           },
           onDone: () => {
             if (!isMountedRef.current) return;
-            const finalText = streamedText || t('one.errorProcess');
+            const finalRaw = streamedText || t('one.errorProcess');
+            // Fallback parse: if the meta event somehow didn't carry chips
+            // (older server, partial flush) we recover them from the marker
+            // still embedded in the streamed text.
+            const { text: cleanText, followups: parsedFollowups } = extractFollowups(finalRaw);
+            if (parsedFollowups.length > 0) setLastFollowups(parsedFollowups);
             setMessages(prev => prev.map(m =>
               m.id === aiMsgId
-                ? { ...m, content: finalText, actions: streamActions, _streaming: false, _toolPending: false, _toolName: null }
+                ? { ...m, content: cleanText, actions: streamActions, _streaming: false, _toolPending: false, _toolName: null }
                 : m
             ));
             setLoading(false);
             loadConversations(false);
-            handleAIResponse(finalText, streamActions, aiMsgId);
+            handleAIResponse(cleanText, streamActions, aiMsgId);
           },
           onError: (errMsg) => {
             if (!isMountedRef.current) return;
@@ -2492,7 +2553,7 @@ export default function OneScreen() {
   useEffect(() => { handleSendRef.current = sendMessage; }, [sendMessage]);
 
   const newChat = useCallback(() => {
-    setMessages([]); setConversationId(null); loadConversations(false);
+    setMessages([]); setConversationId(null); setLastFollowups([]); loadConversations(false);
   }, [loadConversations]);
 
   // ─── Voice Input (Speech-to-Text) ───
@@ -3332,15 +3393,36 @@ export default function OneScreen() {
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="interactive"
             automaticallyAdjustKeyboardInsets={true}
-            ListFooterComponent={loading && !messages.some(m => m._streaming) ? (
-              <View style={{ paddingHorizontal: 4, marginTop: 8 }}>
-                <View style={st.aiHeaderRow}>
-                  <View style={st.aiHeaderAvatar}><IconSparkles size={11} color="#fff" /></View>
-                  <Text style={[st.aiHeaderLabel, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>One</Text>
+            ListFooterComponent={
+              loading && !messages.some(m => m._streaming) ? (
+                <View style={{ paddingHorizontal: 4, marginTop: 8 }}>
+                  <View style={st.aiHeaderRow}>
+                    <View style={st.aiHeaderAvatar}><IconSparkles size={11} color="#fff" /></View>
+                    <Text style={[st.aiHeaderLabel, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>One</Text>
+                  </View>
+                  <InlineStreamingDots isDark={isDark} />
                 </View>
-                <InlineStreamingDots isDark={isDark} />
-              </View>
-            ) : null}
+              ) : (
+                // Suggested follow-up chips — only shown when:
+                //   • we have follow-ups from the latest AI reply
+                //   • nothing is streaming/loading right now
+                //   • user hasn't started typing (their own intent wins)
+                //   • there IS a finished AI reply to attach them to
+                !loading
+                && lastFollowups.length > 0
+                && !inputText.trim()
+                && messages.some(m => m.role === 'assistant' && !m._streaming)
+                  ? (
+                    <SmartReplyChips
+                      replies={lastFollowups}
+                      label={t('one.followupSuggested') || 'Sugestões'}
+                      onSelectReply={(chip) => setInputText(chip)}
+                      onSendReply={(chip) => { setLastFollowups([]); sendMessage(chip); }}
+                    />
+                  )
+                  : null
+              )
+            }
           />
         ) : (
           renderEmpty()

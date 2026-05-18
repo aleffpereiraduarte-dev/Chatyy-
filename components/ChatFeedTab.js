@@ -1325,6 +1325,27 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
     </View>
   );
 
+  // ── Posts mode data — interleaved list ──
+  // [hooks-order-fix] This useMemo MUST sit before any conditional `return`
+  // below (search / profile / reels short-circuits). Hooks must run in the
+  // same order every render — placing it after the early-returns caused
+  // "Rendered more hooks than during the previous render" when the user
+  // flipped feedMode or activated search. The memo itself short-circuits
+  // when there are no suggestions or posts, so it stays cheap for the
+  // non-Posts branches.
+  const interleavedPosts = useMemo(() => {
+    if (!suggestionsLoaded || suggestions.length === 0 || posts.length === 0) return posts;
+    const out = [];
+    const RAIL_OFFSETS = new Set([3, 10, 17, 24, 31, 38, 45, 52, 59, 66, 73, 80, 87, 94]);
+    posts.forEach((p, idx) => {
+      out.push(p);
+      if (RAIL_OFFSETS.has(idx + 1)) {
+        out.push({ __type: 'suggestionsRail', __key: `rec-rail-${idx + 1}`, id: `__rail_${idx + 1}` });
+      }
+    });
+    return out;
+  }, [posts, suggestionsLoaded, suggestions.length]);
+
   // ── Search mode ──
   if (isSearchActive && searchQuery.length > 0) {
     return (
@@ -1382,24 +1403,8 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
   }
 
   // ── Posts mode (existing) ──
-  // Build the interleaved data list: post rows + suggestion rail sentinels.
-  // First rail goes after position 3 (so the user sees real content first),
-  // then every 7 posts (positions 10, 17, 24, ...). Rails only inject when
-  // we actually have suggestions to show; otherwise the array is identical
-  // to the bare posts list.
-  const interleavedPosts = useMemo(() => {
-    if (!suggestionsLoaded || suggestions.length === 0 || posts.length === 0) return posts;
-    const out = [];
-    const RAIL_OFFSETS = new Set([3, 10, 17, 24, 31, 38, 45, 52, 59, 66, 73, 80, 87, 94]);
-    posts.forEach((p, idx) => {
-      out.push(p);
-      if (RAIL_OFFSETS.has(idx + 1)) {
-        out.push({ __type: 'suggestionsRail', __key: `rec-rail-${idx + 1}`, id: `__rail_${idx + 1}` });
-      }
-    });
-    return out;
-  }, [posts, suggestionsLoaded, suggestions.length]);
-
+  // `interleavedPosts` is computed above (before early returns) so the hook
+  // order stays stable when the user flips between search / profile / reels.
   if (loading) {
     return (
       <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f6f8fa' }]}>

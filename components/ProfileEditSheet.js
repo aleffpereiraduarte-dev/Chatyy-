@@ -9,11 +9,11 @@ import React, { useEffect, useState, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, Modal, Pressable,
   ScrollView, ActivityIndicator, Platform, StyleSheet, KeyboardAvoidingView,
-  Alert, Switch, Animated, Easing,
+  Alert, Animated, Easing,
 } from 'react-native';
 import * as api from '../services/api';
 import AvatarCircle from './AvatarCircle';
-import { IconX, IconCamera } from './Icons';
+import { IconX, IconCamera, IconLink, IconPlus, IconTrash } from './Icons';
 import { Image as ExpoImage } from 'expo-image';
 
 const MAX_BIO = 150;
@@ -181,9 +181,21 @@ export default function ProfileEditSheet({
   const [bio, setBio] = useState('');
   const [website, setWebsite] = useState('');
   const [pronouns, setPronouns] = useState('');
-  const [showProfessional, setShowProfessional] = useState(false);
+  // Legacy professional info — proCategory/proContact still exist on
+  // data.json, now gated by accountType (radio) instead of a switch.
   const [proCategory, setProCategory] = useState('');
   const [proContact, setProContact] = useState('');
+  // Profile-upgrade combo (2026-05-18): cover photo, multi-link list,
+  // account type. Cover follows the same preview-overrides-server cache
+  // pattern as the avatar so the user sees their new banner instantly.
+  const [coverUrl, setCoverUrl] = useState('');
+  const [coverPreview, setCoverPreview] = useState(null);
+  const [uploadingCover, setUploadingCover] = useState(false);
+  const [links, setLinks] = useState([]); // array of { label, url }
+  const [accountType, setAccountType] = useState('personal'); // personal | creator | business
+  const _initialLinksRef = useRef('[]');
+  const _initialAccountTypeRef = useRef('personal');
+  const _initialCoverRef = useRef('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
   // Avatar preview takes priority over the cached AvatarCircle image so the
@@ -206,12 +218,97 @@ export default function ProfileEditSheet({
     setBio(initial?.bio || '');
     setWebsite(initial?.website || '');
     setPronouns(initial?.pronouns || '');
-    setShowProfessional(!!(initial?.proCategory || initial?.proContact));
     setProCategory(initial?.proCategory || '');
     setProContact(initial?.proContact || '');
+    // Profile-upgrade combo hydrate
+    setCoverUrl(initial?.cover_url || initial?.coverUrl || '');
+    _initialCoverRef.current = initial?.cover_url || initial?.coverUrl || '';
+    setCoverPreview(null);
+    const initLinks = Array.isArray(initial?.links) ? initial.links.slice(0, 5) : [];
+    setLinks(initLinks);
+    _initialLinksRef.current = JSON.stringify(initLinks);
+    const initAcc = ['personal','creator','business'].includes(initial?.account_type || initial?.accountType)
+      ? (initial?.account_type || initial?.accountType)
+      : 'personal';
+    setAccountType(initAcc);
+    _initialAccountTypeRef.current = initAcc;
     setErr('');
     setAvatarPreview(null);
   }, [visible, initial]);
+
+  // Cover photo picker — same flow as handlePickAvatar but skips the
+  // circular preview modal (cover is a 3:1 banner, no crop overlay needed).
+  // Backend resizes 1500×500 centre-out on receipt so portrait picks still
+  // compose acceptably.
+  const handlePickCover = async () => {
+    if (uploadingCover) return;
+    setErr('');
+    try {
+      let file = null;
+      if (Platform.OS === 'web') {
+        await new Promise((resolve) => {
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = 'image/*';
+          input.onchange = (e) => { const f = e.target.files?.[0]; if (f) file = f; resolve(); };
+          input.click();
+        });
+      } else {
+        const ImagePicker = require('expo-image-picker');
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync?.();
+        if (!perm?.granted) {
+          setErr(t?.('profile.photoPermissionDenied') || 'Permissão de fotos necessária');
+          return;
+        }
+        const result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ['images'],
+          allowsEditing: true,
+          aspect: [3, 1],
+          quality: 0.85,
+        });
+        if (result.canceled || !result.assets?.[0]) return;
+        const a = result.assets[0];
+        file = { uri: a.uri, name: 'cover.jpg', type: 'image/jpeg' };
+      }
+      if (!file) return;
+      // Optimistic preview swap — we paint the local URI immediately so the
+      // banner doesn't flash empty during the upload. On failure we revert.
+      const localUri = Platform.OS === 'web' && file instanceof File
+        ? URL.createObjectURL(file)
+        : (file.uri || null);
+      if (localUri) setCoverPreview(localUri);
+      setUploadingCover(true);
+      try {
+        const r = await api.uploadCover(file);
+        if (r?.success && r?.data?.cover_url) {
+          setCoverUrl(r.data.cover_url);
+          // Keep coverPreview around until the new URL has had a tick to
+          // load — the cross-fade reads cleaner than a hard cut.
+        } else {
+          setCoverPreview(null);
+          setErr(r?.message || t?.('profile.coverUploadFailed') || 'Falha ao enviar capa');
+        }
+      } catch (e) {
+        setCoverPreview(null);
+        setErr(e?.message || t?.('common.networkError') || 'Erro de rede');
+      } finally {
+        setUploadingCover(false);
+      }
+    } catch (e) {
+      setErr(e?.message || t?.('common.networkError') || 'Erro de rede');
+    }
+  };
+
+  const handleAddLink = () => {
+    if (links.length >= 5) return;
+    setLinks([...links, { label: '', url: '' }]);
+  };
+  const handleUpdateLink = (idx, key, value) => {
+    setLinks(links.map((l, i) => i === idx ? { ...l, [key]: value } : l));
+  };
+  const handleRemoveLink = (idx) => {
+    setLinks(links.filter((_, i) => i !== idx));
+  };
 
   const handlePickAvatar = async () => {
     if (uploadingAvatar) return;
@@ -310,7 +407,11 @@ export default function ProfileEditSheet({
     (website || '') !== (initial?.website || '') ||
     (pronouns || '') !== (initial?.pronouns || '') ||
     (proCategory || '') !== (initial?.proCategory || '') ||
-    (proContact || '') !== (initial?.proContact || '');
+    (proContact || '') !== (initial?.proContact || '') ||
+    // Profile-upgrade combo dirty checks
+    (coverUrl || '') !== (_initialCoverRef.current || '') ||
+    JSON.stringify(links || []) !== _initialLinksRef.current ||
+    (accountType || 'personal') !== (_initialAccountTypeRef.current || 'personal');
 
   // Intercepts close attempts. If form has unsaved edits, prompt the user
   // before dismissing — same pattern iOS Settings / Instagram use.
@@ -337,21 +438,39 @@ export default function ProfileEditSheet({
     setSaving(true);
     setErr('');
     try {
+      // Drop blank links before sending — empty rows are placeholder UI
+      // and have no business persisting. Label may be empty (we fall back
+      // to the host in the renderer), but URL is required.
+      const cleanedLinks = (links || [])
+        .map(l => ({ label: (l?.label || '').trim(), url: (l?.url || '').trim() }))
+        .filter(l => l.url !== '')
+        .slice(0, 5);
+      // proCategory/proContact are only persisted for non-personal accounts;
+      // dropping the showProfessional toggle in favour of the radio means
+      // the account type itself gates visibility now.
+      const showPro = (accountType === 'business' || accountType === 'creator');
       const r = await api.updateProfile({
         name: name.trim(),
         username: cleanedUsername,
         bio: bio.trim(),
         website: website.trim(),
         pronouns: pronouns.trim(),
-        proCategory: showProfessional ? proCategory.trim() : '',
-        proContact: showProfessional ? proContact.trim() : '',
+        proCategory: showPro ? proCategory.trim() : '',
+        proContact: showPro ? proContact.trim() : '',
+        // Profile-upgrade combo
+        cover_url: coverUrl || '',
+        links: cleanedLinks,
+        account_type: accountType || 'personal',
       });
       if (r?.success) {
         onSaved?.({
           name, username: cleanedUsername, bio, website,
           pronouns,
-          proCategory: showProfessional ? proCategory : '',
-          proContact: showProfessional ? proContact : '',
+          proCategory: showPro ? proCategory : '',
+          proContact: showPro ? proContact : '',
+          cover_url: coverUrl,
+          links: cleanedLinks,
+          account_type: accountType,
         });
         onClose?.();
       } else {
@@ -435,6 +554,54 @@ export default function ProfileEditSheet({
             </View>
 
             <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              {/* Cover photo banner — 150px Instagram/X-style 3:1 strip
+                  sitting above the avatar. Tap or use the "Alterar capa"
+                  button to swap. Preview (coverPreview) wins over coverUrl
+                  during upload so the user sees the new banner instantly.
+                  Empty state shows a faint purple wash + camera prompt. */}
+              <View style={{ width: '100%', height: 150, backgroundColor: 'rgba(124,58,237,0.08)', position: 'relative' }}>
+                {(coverPreview || coverUrl) ? (
+                  <ExpoImage
+                    source={{ uri: coverPreview || coverUrl }}
+                    style={{ width: '100%', height: '100%' }}
+                    contentFit="cover"
+                  />
+                ) : (
+                  <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                    <IconCamera size={28} color="rgba(124,58,237,0.4)" />
+                    <Text style={{ fontSize: 12, color: 'rgba(124,58,237,0.6)', marginTop: 6, fontWeight: '600' }}>
+                      {t?.('profile.cover') || 'Capa'}
+                    </Text>
+                  </View>
+                )}
+                {uploadingCover && (
+                  <View style={{
+                    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+                    backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <ActivityIndicator color="#fff" />
+                  </View>
+                )}
+                {/* "Alterar capa" floating pill — bottom-right of the banner */}
+                <TouchableOpacity
+                  onPress={handlePickCover}
+                  disabled={uploadingCover}
+                  activeOpacity={0.85}
+                  style={{
+                    position: 'absolute', right: 12, bottom: 12,
+                    flexDirection: 'row', alignItems: 'center', gap: 6,
+                    paddingHorizontal: 12, paddingVertical: 7,
+                    borderRadius: 16, backgroundColor: 'rgba(0,0,0,0.55)',
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={t?.('profile.changeCover') || 'Alterar capa'}
+                >
+                  <IconCamera size={14} color="#fff" />
+                  <Text style={{ fontSize: 12, color: '#fff', fontWeight: '700' }}>
+                    {t?.('profile.changeCover') || 'Alterar capa'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
               {/* Hero photo section — 96px avatar centered over a subtle
                   purple radial-ish gradient. "Trocar foto" link below acts
                   as the secondary tap affordance (the avatar itself is also
@@ -602,41 +769,140 @@ export default function ProfileEditSheet({
                 colors={colors}
               />
 
-              {/* Professional info section — collapsed by default. Toggle row
-                  mirrors Instagram's "Mostrar conta profissional" switch.
-                  Sub-fields slide in below when enabled. */}
+              {/* Multi-link section — up to 5 link-in-bio chips that render
+                  below the bio on the public profile. Each row: label (left,
+                  optional, falls back to host in renderer) + URL (right) +
+                  trash icon. "+ Adicionar link" button appears below the
+                  list until the 5-link cap is hit. */}
               <View style={{ marginTop: 16, marginBottom: 4, paddingHorizontal: 16 }}>
                 <Text style={{
                   fontSize: 12, fontWeight: '700', letterSpacing: 0.6,
                   color: colors?.textSecondary || '#6b7280',
                   textTransform: 'uppercase',
                 }}>
-                  {t?.('profile.businessSection') || 'Informações comerciais'}
+                  {t?.('profile.links') || 'Links'}
                 </Text>
               </View>
-              <View style={{
-                paddingHorizontal: 16, paddingVertical: 12,
-                flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-                borderBottomWidth: showProfessional ? 0 : StyleSheet.hairlineWidth,
-                borderBottomColor: colors?.border || 'rgba(0,0,0,0.08)',
-              }}>
-                <View style={{ flex: 1, paddingRight: 12 }}>
-                  <Text style={{ fontSize: 16, fontWeight: '500', color: colors?.text }}>
-                    {t?.('profile.showBusinessInfo') || 'Mostrar info profissional'}
-                  </Text>
-                  <Text style={{ fontSize: 12, color: colors?.textSecondary || '#6b7280', marginTop: 2 }}>
-                    {t?.('profile.showBusinessInfoHint') || 'Categoria e contato visíveis no perfil'}
-                  </Text>
+              {(links || []).map((lk, idx) => (
+                <View key={`lk-${idx}`} style={{
+                  paddingHorizontal: 16, paddingVertical: 10,
+                  borderBottomWidth: StyleSheet.hairlineWidth,
+                  borderBottomColor: colors?.border || 'rgba(0,0,0,0.08)',
+                  flexDirection: 'row', alignItems: 'center', gap: 8,
+                }}>
+                  <IconLink size={16} color={colors?.textSecondary || '#6b7280'} />
+                  <View style={{ flex: 1 }}>
+                    <TextInput
+                      value={lk.label || ''}
+                      onChangeText={(v) => handleUpdateLink(idx, 'label', v)}
+                      placeholder={t?.('profile.linkLabelPh') || 'Rótulo (opcional)'}
+                      placeholderTextColor={colors?.textTertiary || '#9ca3af'}
+                      maxLength={30}
+                      style={{ fontSize: 14, fontWeight: '600', color: colors?.text, paddingVertical: 2 }}
+                    />
+                    <TextInput
+                      value={lk.url || ''}
+                      onChangeText={(v) => handleUpdateLink(idx, 'url', v)}
+                      placeholder="https://..."
+                      placeholderTextColor={colors?.textTertiary || '#9ca3af'}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      keyboardType="url"
+                      maxLength={200}
+                      style={{ fontSize: 13, color: colors?.textSecondary || '#6b7280', paddingVertical: 2 }}
+                    />
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => handleRemoveLink(idx)}
+                    style={{ padding: 6 }}
+                    accessibilityRole="button"
+                    accessibilityLabel={t?.('common.remove') || 'Remover'}
+                  >
+                    <IconTrash size={18} color={colors?.textTertiary || '#9ca3af'} />
+                  </TouchableOpacity>
                 </View>
-                <Switch
-                  value={showProfessional}
-                  onValueChange={setShowProfessional}
-                  trackColor={{ false: '#d1d5db', true: '#7C3AED' }}
-                  thumbColor={Platform.OS === 'android' ? (showProfessional ? '#fff' : '#f4f3f4') : undefined}
-                  ios_backgroundColor="#d1d5db"
-                />
+              ))}
+              {(links || []).length < 5 ? (
+                <TouchableOpacity
+                  onPress={handleAddLink}
+                  activeOpacity={0.7}
+                  style={{
+                    paddingHorizontal: 16, paddingVertical: 14,
+                    flexDirection: 'row', alignItems: 'center', gap: 8,
+                    borderBottomWidth: StyleSheet.hairlineWidth,
+                    borderBottomColor: colors?.border || 'rgba(0,0,0,0.08)',
+                  }}
+                  accessibilityRole="button"
+                >
+                  <IconPlus size={16} color="#7C3AED" />
+                  <Text style={{ fontSize: 14, color: '#7C3AED', fontWeight: '600' }}>
+                    {t?.('profile.addLink') || 'Adicionar link'}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+
+              {/* Account type — radio list. Replaces the prior "show
+                  professional" toggle since the type now drives the
+                  business-info section visibility AND gates monetization
+                  features (creator dashboard, business analytics). */}
+              <View style={{ marginTop: 16, marginBottom: 4, paddingHorizontal: 16 }}>
+                <Text style={{
+                  fontSize: 12, fontWeight: '700', letterSpacing: 0.6,
+                  color: colors?.textSecondary || '#6b7280',
+                  textTransform: 'uppercase',
+                }}>
+                  {t?.('profile.accountType') || 'Tipo de conta'}
+                </Text>
               </View>
-              {showProfessional ? (
+              {[
+                { key: 'personal',  label: t?.('profile.accountTypePersonal') || 'Pessoal',
+                  hint: t?.('profile.accountTypePersonalHint') || 'Perfil padrão, sem recursos comerciais.' },
+                { key: 'creator',   label: t?.('profile.accountTypeCreator')  || 'Criador',
+                  hint: t?.('profile.accountTypeCreatorHint')  || 'Analytics, ferramentas de monetização e insights.' },
+                { key: 'business',  label: t?.('profile.accountTypeBusiness') || 'Negócio',
+                  hint: t?.('profile.accountTypeBusinessHint') || 'Categoria + contato + métricas comerciais.' },
+              ].map((opt) => {
+                const selected = accountType === opt.key;
+                const accent = opt.key === 'creator' ? '#9333EA' : opt.key === 'business' ? '#2563EB' : '#7C3AED';
+                return (
+                  <TouchableOpacity
+                    key={opt.key}
+                    onPress={() => setAccountType(opt.key)}
+                    activeOpacity={0.75}
+                    style={{
+                      paddingHorizontal: 16, paddingVertical: 12,
+                      flexDirection: 'row', alignItems: 'center', gap: 12,
+                      borderBottomWidth: StyleSheet.hairlineWidth,
+                      borderBottomColor: colors?.border || 'rgba(0,0,0,0.08)',
+                      backgroundColor: selected ? (isDark ? 'rgba(124,58,237,0.10)' : 'rgba(124,58,237,0.04)') : 'transparent',
+                    }}
+                    accessibilityRole="radio"
+                    accessibilityState={{ selected }}
+                  >
+                    <View style={{
+                      width: 20, height: 20, borderRadius: 10,
+                      borderWidth: 2, borderColor: selected ? accent : (colors?.border || '#d1d5db'),
+                      alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      {selected ? (
+                        <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: accent }} />
+                      ) : null}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 15, fontWeight: '600', color: colors?.text }}>
+                        {opt.label}
+                      </Text>
+                      <Text style={{ fontSize: 12, color: colors?.textSecondary || '#6b7280', marginTop: 2 }}>
+                        {opt.hint}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+              {/* Business / creator sub-fields — category + contact, only
+                  visible when the user picks a non-personal type. Carries
+                  forward the legacy proCategory/proContact fields. */}
+              {(accountType === 'business' || accountType === 'creator') ? (
                 <View>
                   <Row
                     label={t?.('profile.proCategory') || 'Categoria'}

@@ -27,6 +27,7 @@ import * as api from '../services/api';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconX } from './Icons';
+import DiamondTopUpSheet from './DiamondTopUpSheet';
 
 // Fallback static catalog so the sheet renders even if the network call
 // fails on first paint. Backend response always wins when it lands.
@@ -114,16 +115,9 @@ export default function LivePaidGiftSheet({ visible, onClose, sessionId, hostEma
     }
   }, [balance, onClose, sending, sessionId, t]);
 
-  const onBuyPack = useCallback(async (pack) => {
-    // Real IAP integration TODO. For now we surface a placeholder so QA can
-    // exercise the UI flow. When expo-in-app-purchases ships we'll call
-    // requestPurchaseAsync(pack.sku), then walletBuyDiamonds with the receipt.
-    Alert.alert(
-      t('live.buyDiamonds') || 'Comprar diamantes',
-      `${pack.sku}\n${pack.diamonds} diamantes — ${formatPriceCents(pack.price_cents)}\n\nIAP integration pending — wire to expo-in-app-purchases in a follow-up build.`,
-      [{ text: 'OK' }],
-    );
-  }, [t]);
+  const onTopupBalanceChange = useCallback((b) => {
+    if (typeof b === 'number') setBalance(b);
+  }, []);
 
   const renderGift = ({ item }) => {
     const affordable = balance >= (item.diamonds_cost || 0);
@@ -185,27 +179,12 @@ export default function LivePaidGiftSheet({ visible, onClose, sessionId, hostEma
           {sending ? <View style={styles.sendingOverlay}><ActivityIndicator color="#fff" /></View> : null}
         </View>
 
-        {/* Top-up modal: 6 diamond packs */}
-        <Modal visible={topupOpen} animationType="slide" transparent onRequestClose={() => setTopupOpen(false)}>
-          <View style={styles.scrim}>
-            <View style={[styles.sheet, { backgroundColor: isDark ? '#0F172A' : '#F8FAFC' }]}>
-              <View style={styles.head}>
-                <Text style={[styles.title, { color: colors.text }]}>
-                  {t('live.buyDiamonds') || 'Comprar diamantes'}
-                </Text>
-                <TouchableOpacity onPress={() => setTopupOpen(false)} style={styles.closeBtn}>
-                  <IconX size={18} color={colors.text} />
-                </TouchableOpacity>
-              </View>
-              {packs.map(p => (
-                <TouchableOpacity key={p.sku} onPress={() => onBuyPack(p)} style={styles.packRow} accessibilityRole="button">
-                  <Text style={[styles.packDiamonds, { color: colors.text }]}>{p.diamonds} ◆</Text>
-                  <Text style={[styles.packPrice, { color: colors.text }]}>{formatPriceCents(p.price_cents)}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-        </Modal>
+        {/* Top-up sheet — real StoreKit IAP via DiamondTopUpSheet. */}
+        <DiamondTopUpSheet
+          visible={topupOpen}
+          onClose={() => setTopupOpen(false)}
+          onBalanceChange={onTopupBalanceChange}
+        />
       </View>
     </Modal>
   );

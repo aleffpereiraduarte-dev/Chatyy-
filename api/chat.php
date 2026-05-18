@@ -1166,6 +1166,43 @@ function chatCallerIdentity($email) {
 }
 
 /**
+ * Public absolute URL for a user's avatar. Used to populate `caller_avatar`
+ * in FCM/VoIP call payloads so the native incoming-call UIs
+ * (IncomingCallActivity / CallNotificationService / CallKit) can show the
+ * caller's real photo instead of just an initials letter.
+ *
+ * When the user has no uploaded avatar, `get_avatar` falls back to a
+ * server-rendered gradient PNG with their initials — still way better
+ * than the bare single-letter gradient the native code drew before
+ * (incident 2026-05-18: incoming-call screen showed only the letter "S"
+ * for a "Suporte" call because the FCM payload never carried an avatar
+ * URL, so the Android native UI hit the gradient+initial fallback).
+ *
+ * Pins `?v=<avatar_version>` when available so cache-bust stays in
+ * lockstep with avatar uploads (same scheme used by chat_users / chat
+ * list / message rows).
+ */
+function chatCallerAvatarUrl(string $email): string {
+    static $cache = [];
+    $key = strtolower(trim($email));
+    if (isset($cache[$key])) return $cache[$key];
+    if ($key === '' || strpos($key, '@') === false) return $cache[$key] = '';
+    $domain = substr(strrchr($key, '@'), 1);
+    $local  = strstr($key, '@', true);
+    $v = 0;
+    $path = "/var/mail/vhosts/{$domain}/{$local}/profile/data.json";
+    if (is_readable($path)) {
+        $j = json_decode(@file_get_contents($path), true);
+        if (is_array($j) && !empty($j['avatar_version']) && is_numeric($j['avatar_version'])) {
+            $v = (int)$j['avatar_version'];
+        }
+    }
+    $url = 'https://chatyy.com.br/api/email.php?action=get_avatar&email=' . urlencode($key);
+    if ($v > 0) $url .= '&v=' . $v;
+    return $cache[$key] = $url;
+}
+
+/**
  * Touch conversation updated_at timestamp (for sorting by last activity).
  */
 function touchConversation($db, $conversationId) {
@@ -6278,6 +6315,14 @@ function handleChatAction($action) {
                     'conversation_id' => (string)$conversationId,
                     'caller_email'    => $user['email'],
                     'caller_name'     => $callerName,
+                    // [avatar-on-incoming, 2026-05-18] Native IncomingCallActivity
+                    // (Android) and CallNotificationService both expect this key
+                    // and fall back to a single-letter gradient when it's empty
+                    // — incident report: incoming "Suporte" call showed just "S".
+                    // get_avatar always returns a usable image (real photo OR
+                    // gradient-with-initials PNG), so this is safe even when the
+                    // caller has no uploaded avatar.
+                    'caller_avatar'   => chatCallerAvatarUrl($user['email']),
                     'caller_phone'    => $ci['phone'],
                     'caller_verified' => $ci['verified'] ? '1' : '0',
                     'video'           => $video ? '1' : '0',
@@ -6880,6 +6925,8 @@ function handleChatAction($action) {
                     'conversation_id'  => (string)$conversationId,
                     'caller_email'     => $user['email'],
                     'caller_name'      => $callerName,
+                    // [avatar-on-incoming, 2026-05-18] see call_notify above.
+                    'caller_avatar'    => chatCallerAvatarUrl($user['email']),
                     'caller_phone'     => $ci['phone'],
                     'caller_verified'  => $ci['verified'] ? '1' : '0',
                     'group_name'       => $groupName,
@@ -6951,6 +6998,8 @@ function handleChatAction($action) {
                 'conversation_id' => (string)$conversationId,
                 'caller_email'    => $user['email'],
                 'caller_name'     => $callerName,
+                // [avatar-on-incoming, 2026-05-18] see call_notify above.
+                'caller_avatar'   => chatCallerAvatarUrl($user['email']),
                 'caller_phone'    => $ci['phone'],
                 'caller_verified' => $ci['verified'] ? '1' : '0',
                 'video'           => $video ? '1' : '0',
@@ -7475,8 +7524,19 @@ function handleChatAction($action) {
             // lazily by status_archive on first call, so this CREATE/ALTER is
             // here to keep status_list resilient if status_archive was never
             // invoked on this DB.
+            //
+            // [2026-05-18] Don't hard-delete rows referenced by any highlight —
+            // they need to survive so the destacado resolves later. Soft-archive
+            // referenced expired rows (set archived_at) instead. Unreferenced
+            // expired rows still get fully deleted to keep the table lean.
             try { @$db->exec("ALTER TABLE chat_user_status ADD COLUMN IF NOT EXISTS archived_at TEXT"); } catch (Throwable $_) {}
-            try { $db->exec("DELETE FROM chat_user_status WHERE expires_at < now()::text"); } catch (Throwable $e) {}
+            try {
+                $db->exec("UPDATE chat_user_status SET archived_at = (now() AT TIME ZONE 'UTC')::text
+                    WHERE expires_at < now()::text AND archived_at IS NULL
+                      AND id IN (SELECT DISTINCT (jsonb_array_elements_text(status_ids))::int
+                                 FROM chat_status_highlights WHERE status_ids <> '[]'::jsonb)");
+            } catch (Throwable $e) {}
+            try { $db->exec("DELETE FROM chat_user_status WHERE expires_at < now()::text AND archived_at IS NULL"); } catch (Throwable $e) {}
             // Load mute set so we can hide muted contacts' status from the top row.
             $__mutedSet = [];
             try {
@@ -8663,13 +8723,58 @@ function handleChatAction($action) {
                 $stmt = $db->prepare("SELECT id, owner_email, name, cover_url, status_ids, created_at FROM chat_status_highlights WHERE LOWER(owner_email) = LOWER(:e) ORDER BY created_at DESC LIMIT 200");
                 $stmt->execute([':e' => $target]);
                 $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+                // [2026-05-18] Self-heal + active_count: a highlight's
+                // status_ids JSONB can hold IDs whose chat_user_status row
+                // was hard-deleted in a previous run (pre soft-archive era).
+                // Resolve which IDs still exist in chat_user_status (any state,
+                // including archived) and compute the real `active_count` so
+                // the frontend can hide/badge empty highlights. We also prune
+                // tombstone IDs from status_ids inline to keep the JSONB
+                // honest going forward.
+                $allIds = [];
+                foreach ($rows as $r) {
+                    $ids = json_decode($r['status_ids'] ?: '[]', true);
+                    if (is_array($ids)) foreach ($ids as $sid) { $allIds[(int)$sid] = true; }
+                }
+                $existSet = [];
+                if (!empty($allIds)) {
+                    $idList = array_keys($allIds);
+                    $placeholders = implode(',', array_fill(0, count($idList), '?'));
+                    try {
+                        $q = $db->prepare("SELECT id FROM chat_user_status WHERE id IN ($placeholders) AND LOWER(email) = LOWER(?)");
+                        $q->execute(array_merge($idList, [$target]));
+                        foreach ($q->fetchAll(PDO::FETCH_ASSOC) as $er) { $existSet[(int)$er['id']] = true; }
+                    } catch (Throwable $e) { /* fall back to count from JSONB */ }
+                }
+
+                $cleaned = [];
                 foreach ($rows as &$r) {
                     $r['id'] = (int)$r['id'];
                     $ids = json_decode($r['status_ids'] ?: '[]', true);
-                    $r['status_ids'] = is_array($ids) ? array_map('intval', $ids) : [];
-                    $r['count'] = count($r['status_ids']);
+                    $ids = is_array($ids) ? array_map('intval', $ids) : [];
+                    $aliveIds = [];
+                    foreach ($ids as $sid) { if (!empty($existSet[$sid])) $aliveIds[] = $sid; }
+
+                    // Inline cleanup: if some IDs died, rewrite status_ids so
+                    // the next call doesn't carry the tombstones forward.
+                    if (count($aliveIds) !== count($ids)) {
+                        try {
+                            $db->prepare("UPDATE chat_status_highlights SET status_ids = :s::jsonb WHERE id = :id")
+                               ->execute([':s' => json_encode($aliveIds), ':id' => $r['id']]);
+                        } catch (Throwable $e) {}
+                    }
+
+                    $r['status_ids'] = $aliveIds;
+                    $r['count'] = count($aliveIds);          // legacy field, still used by clients
+                    $r['active_count'] = count($aliveIds);   // explicit alias for new clients
+                    // Skip empty highlights so the UI never shows a destaque
+                    // que abre vazio. Owner can still GC via status_highlight_list_all
+                    // if we expose one — for now, empties are invisible.
+                    if ($r['active_count'] === 0) continue;
+                    $cleaned[] = $r;
                 }
-                jsonResponse(true, ['highlights' => $rows]);
+                jsonResponse(true, ['highlights' => $cleaned]);
             } catch (Throwable $e) {
                 error_log('[status_highlight_list] ' . $e->getMessage());
                 jsonResponse(true, ['highlights' => []]);
@@ -8842,7 +8947,16 @@ function handleChatAction($action) {
             $user = requireChatAuth();
             $target = trim($input["email"] ?? $_GET["email"] ?? "");
             if ($target === "") jsonResponse(false, null, "email required", 400);
-            try { $db->exec("DELETE FROM chat_user_status WHERE expires_at < now()::text"); } catch (Throwable $e) {}
+            // [2026-05-18] Same soft-archive guard as status_list — keep
+            // highlight-referenced rows alive so destaques don't go vazio.
+            try { @$db->exec("ALTER TABLE chat_user_status ADD COLUMN IF NOT EXISTS archived_at TEXT"); } catch (Throwable $_) {}
+            try {
+                $db->exec("UPDATE chat_user_status SET archived_at = (now() AT TIME ZONE 'UTC')::text
+                    WHERE expires_at < now()::text AND archived_at IS NULL
+                      AND id IN (SELECT DISTINCT (jsonb_array_elements_text(status_ids))::int
+                                 FROM chat_status_highlights WHERE status_ids <> '[]'::jsonb)");
+            } catch (Throwable $e) {}
+            try { $db->exec("DELETE FROM chat_user_status WHERE expires_at < now()::text AND archived_at IS NULL"); } catch (Throwable $e) {}
             $stmt = $db->prepare("
                 SELECT su.*, (SELECT COUNT(*) FROM chat_status_views sv WHERE sv.status_id=su.id AND LOWER(sv.viewer_email) <> LOWER(su.email)) AS view_count,
                        (SELECT COUNT(*) FROM chat_status_views sv WHERE sv.status_id=su.id AND LOWER(sv.viewer_email)=LOWER(:me)) AS viewed

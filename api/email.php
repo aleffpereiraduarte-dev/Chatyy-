@@ -1058,6 +1058,183 @@ function parseSizeToBytes($sizeStr) {
 }
 
 // ============================================================
+// WELCOME CHAT — seed a Chatyy AI direct conversation right after
+// signup. Resolves the D1 "empty inbox" drop-off: new users open the
+// app and find an interactive greeting from Chatyy AI with 3 tap-able
+// quick replies (chips) instead of a blank list. Pinned by default.
+//
+// Counterpart is the synthetic `one@chatyy.ai` account (no Maildir,
+// no IMAP — handled exclusively inside the AI bot router in chat.php).
+// Strings are i18n'd by phone country code (default English).
+// ============================================================
+function chatyyAIDetectLang($verifiedPhone = '', $explicitLang = '') {
+    // Caller-supplied wins (e.g. mobile sends device locale).
+    $explicit = strtolower(substr((string)$explicitLang, 0, 2));
+    if (in_array($explicit, ['pt', 'es', 'en'], true)) return $explicit;
+    // Fall back to E.164 country code on the verified phone.
+    $digits = preg_replace('/\D/', '', (string)$verifiedPhone);
+    if ($digits === '') return 'en';
+    // BR (55) + PT (351) → Portuguese.
+    if (str_starts_with($digits, '55') || str_starts_with($digits, '351')) return 'pt';
+    // LatAm Spanish-speaking countries → Spanish.
+    // 52 MX, 54 AR, 56 CL, 57 CO, 58 VE, 51 PE, 591 BO, 593 EC, 595 PY,
+    // 598 UY, 53 CU, 502 GT, 503 SV, 504 HN, 505 NI, 506 CR, 507 PA,
+    // 509 HT (FR/HT but Spanish closer than EN), 34 ES.
+    $esPrefixes = ['52','54','56','57','58','51','591','593','595','598','53','502','503','504','505','506','507','34'];
+    foreach ($esPrefixes as $p) { if (str_starts_with($digits, $p)) return 'es'; }
+    return 'en';
+}
+
+function chatyyAIWelcomeStrings($lang) {
+    $bundles = [
+        'pt' => [
+            'name'  => 'Chatyy AI',
+            'msg1'  => 'Olá! 👋 Eu sou Chatyy AI, sua assistente. Posso te ajudar com:',
+            'msg2'  => "💬 Responder perguntas\n📸 Editar fotos\n📅 Agendar lembretes\n🌐 Traduzir textos",
+            'msg3'  => 'Toque em alguma sugestão abaixo pra começar 👇',
+            'chips' => ['Que dia é hoje?', 'Me conte uma piada', 'Como funciona o Chatyy?'],
+        ],
+        'es' => [
+            'name'  => 'Chatyy AI',
+            'msg1'  => '¡Hola! 👋 Soy Chatyy AI, tu asistente. Puedo ayudarte con:',
+            'msg2'  => "💬 Responder preguntas\n📸 Editar fotos\n📅 Agendar recordatorios\n🌐 Traducir textos",
+            'msg3'  => 'Toca una sugerencia abajo para empezar 👇',
+            'chips' => ['¿Qué día es hoy?', 'Cuéntame un chiste', '¿Cómo funciona Chatyy?'],
+        ],
+        'en' => [
+            'name'  => 'Chatyy AI',
+            'msg1'  => "Hi! 👋 I'm Chatyy AI, your assistant. I can help you with:",
+            'msg2'  => "💬 Answering questions\n📸 Editing photos\n📅 Scheduling reminders\n🌐 Translating text",
+            'msg3'  => 'Tap a suggestion below to get started 👇',
+            'chips' => ['What day is it today?', 'Tell me a joke', 'How does Chatyy work?'],
+        ],
+    ];
+    return $bundles[$lang] ?? $bundles['en'];
+}
+
+/**
+ * Create the Chatyy AI welcome direct conversation + 3 seeded messages
+ * + pin the conv for the new user. Idempotent (uses direct_key unique
+ * index — re-running silently no-ops). Non-fatal: any failure is
+ * logged but signup completes regardless.
+ *
+ * @param string $userEmail     New user's email (lowercase).
+ * @param string $verifiedPhone E.164 phone, used for country→lang fallback.
+ * @param string $explicitLang  Optional caller-provided BCP-47 (e.g. 'pt-BR').
+ */
+function seedChatyyAIWelcome($userEmail, $verifiedPhone = '', $explicitLang = '') {
+    try {
+        $userEmail = strtolower(trim((string)$userEmail));
+        if ($userEmail === '' || !str_contains($userEmail, '@')) return;
+        $botEmail  = 'one@chatyy.ai';
+        if ($userEmail === $botEmail) return;
+
+        require_once __DIR__ . '/db.php';
+        $db = getPGDB();
+
+        $lang   = chatyyAIDetectLang($verifiedPhone, $explicitLang);
+        $bundle = chatyyAIWelcomeStrings($lang);
+
+        // Canonical direct_key — sorted lowercase pair (matches chat.php).
+        $a = $userEmail; $b = $botEmail;
+        $directKey = ($a < $b) ? "$a|$b" : "$b|$a";
+
+        $db->beginTransaction();
+
+        // 1) Conversation row (idempotent via UNIQUE direct_key).
+        $ins = $db->prepare("
+            INSERT INTO chat_conversations (type, name, created_by, direct_key, created_at, updated_at)
+            VALUES ('direct', :n, :cb, :dk, now()::text, now()::text)
+            ON CONFLICT (direct_key) DO UPDATE SET updated_at = now()::text
+            RETURNING id
+        ");
+        $ins->execute([':n' => $bundle['name'], ':cb' => $botEmail, ':dk' => $directKey]);
+        $conversationId = (int)$ins->fetchColumn();
+        if (!$conversationId) {
+            // Some pg versions don't return on DO UPDATE — fetch explicitly.
+            $q = $db->prepare("SELECT id FROM chat_conversations WHERE direct_key = :k LIMIT 1");
+            $q->execute([':k' => $directKey]);
+            $conversationId = (int)$q->fetchColumn();
+        }
+        if (!$conversationId) { $db->rollBack(); return; }
+
+        // 2) Members — pin by default for the new user.
+        @$db->exec("ALTER TABLE chat_conversation_members ADD COLUMN IF NOT EXISTS pinned INT DEFAULT 0");
+        $insM = $db->prepare("
+            INSERT INTO chat_conversation_members
+              (conversation_id, email, display_name, role, pinned, joined_at)
+            VALUES (:cid, :em, :dn, :r, :p, now()::text)
+            ON CONFLICT DO NOTHING
+        ");
+        $insM->execute([
+            ':cid' => $conversationId,
+            ':em'  => $userEmail,
+            ':dn'  => '',
+            ':r'   => 'member',
+            ':p'   => 1,
+        ]);
+        $insM->execute([
+            ':cid' => $conversationId,
+            ':em'  => $botEmail,
+            ':dn'  => $bundle['name'],
+            ':r'   => 'admin',
+            ':p'   => 0,
+        ]);
+
+        // Backstop: if the conv pre-existed (no-op insert above), force pin.
+        $db->prepare("UPDATE chat_conversation_members SET pinned = 1 WHERE conversation_id = :cid AND LOWER(email) = LOWER(:e)")
+           ->execute([':cid' => $conversationId, ':e' => $userEmail]);
+
+        // 3) Seeded messages. Last one carries reply_markup.inline_keyboard
+        //    so the existing frontend chip renderer (chat-conversation.js)
+        //    picks them up without any UI change.
+        @$db->exec("ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS reply_markup JSONB");
+
+        // Idempotency: skip if we already seeded (any message from bot here).
+        $chk = $db->prepare("SELECT 1 FROM chat_messages WHERE conversation_id = :cid AND LOWER(sender_email) = LOWER(:b) LIMIT 1");
+        $chk->execute([':cid' => $conversationId, ':b' => $botEmail]);
+        if (!$chk->fetchColumn()) {
+            $insMsg = $db->prepare("
+                INSERT INTO chat_messages
+                  (conversation_id, sender_email, sender_name, content, type, created_at, reply_markup)
+                VALUES (:cid, :se, :sn, :c, 'text', now()::text, CAST(:rm AS JSONB))
+            ");
+
+            // msg 1
+            $insMsg->execute([
+                ':cid' => $conversationId, ':se' => $botEmail, ':sn' => $bundle['name'],
+                ':c'   => $bundle['msg1'], ':rm' => null,
+            ]);
+            // msg 2 (feature list)
+            $insMsg->execute([
+                ':cid' => $conversationId, ':se' => $botEmail, ':sn' => $bundle['name'],
+                ':c'   => $bundle['msg2'], ':rm' => null,
+            ]);
+            // msg 3 — quick-reply chips. Telegram-style inline_keyboard: each
+            // row is an array of {text, callback_data}. callback_data holds
+            // the literal prompt the bot should answer when tapped.
+            $inlineKb = [];
+            foreach ($bundle['chips'] as $chip) {
+                $inlineKb[] = [[ 'text' => $chip, 'callback_data' => $chip ]];
+            }
+            $rmJson = json_encode([
+                'inline_keyboard' => $inlineKb,
+                'quick_replies'   => $bundle['chips'], // back-compat for older clients
+            ], JSON_UNESCAPED_UNICODE);
+            $insMsg->execute([
+                ':cid' => $conversationId, ':se' => $botEmail, ':sn' => $bundle['name'],
+                ':c'   => $bundle['msg3'], ':rm' => $rmJson,
+            ]);
+        }
+
+        $db->commit();
+    } catch (\Throwable $e) {
+        try { if (isset($db) && $db->inTransaction()) $db->rollBack(); } catch (\Throwable $_) {}
+        error_log('[seedChatyyAIWelcome] ' . $e->getMessage());
+    }
+}
+
+// ============================================================
 // WELCOME EMAIL — direct Maildir delivery (no SMTP, no external dep).
 // Builds RFC2822 multipart/alternative message and drops it into the
 // new user's INBOX/new/ Maildir spool. Wrapped in try/catch so any
@@ -1530,6 +1707,11 @@ try {
 
             // Send welcome email (non-blocking, silent fail)
             sendWelcomeEmail($email, $input['first_name'] ?? $username, $domain);
+
+            // Seed Chatyy AI welcome chat (non-blocking, idempotent).
+            // No verified phone on legacy signup → fall through to lang from
+            // Accept-Language or default English.
+            seedChatyyAIWelcome($email, '', $_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? '');
 
             jsonResponse(true, ['email' => $email, 'name' => $_SESSION['name']], "Conta criada: {$email}");
             break;
@@ -3593,6 +3775,11 @@ try {
             // $name carries first+last from the signup payload; helper splits.
             sendWelcomeEmail($email, explode(' ', $name)[0] ?? $name, $domain);
 
+            // Seed Chatyy AI welcome chat (pinned, i18n by phone country).
+            // Non-blocking, idempotent. Client may pass `lang` (BCP-47) in
+            // the body to override the country-code heuristic.
+            seedChatyyAIWelcome($email, $verifiedPhone, $input['lang'] ?? ($_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? ''));
+
             // Best-effort: write to PG accounts table so contact discovery
             // and phone-lookup hits this user immediately. Failure is fine —
             // Maildir scan still finds them.
@@ -3843,6 +4030,10 @@ try {
 
             // Welcome email — direct Maildir drop, never blocks signup.
             sendWelcomeEmail($email, $name, $domain);
+
+            // Seed Chatyy AI welcome chat (pinned). No phone on this flow,
+            // so language falls through to client-supplied `lang` or Accept-Language.
+            seedChatyyAIWelcome($email, '', $input['lang'] ?? ($_SERVER['HTTP_ACCEPT_LANGUAGE'] ?? ''));
 
             // Best-effort PG accounts row so contact discovery hits this user.
             try {
@@ -4342,6 +4533,26 @@ try {
                 }
                 // 'nobody' → $phoneOut stays empty.
             }
+            // Sanitize links — backend re-validates on output so legacy
+            // profiles that wrote raw strings don't blow up the client.
+            $linksOut = [];
+            $rawLinks = $pData['links'] ?? [];
+            if (is_array($rawLinks)) {
+                foreach ($rawLinks as $L) {
+                    if (!is_array($L)) continue;
+                    $u = trim((string)($L['url'] ?? ''));
+                    if ($u === '') continue;
+                    if (!preg_match('#^https?://#i', $u)) $u = 'https://' . $u;
+                    $linksOut[] = [
+                        'label' => mb_substr(trim((string)($L['label'] ?? '')), 0, 30),
+                        'url'   => mb_substr($u, 0, 200),
+                        'icon'  => mb_substr(trim((string)($L['icon'] ?? '')), 0, 20),
+                    ];
+                    if (count($linksOut) >= 5) break;
+                }
+            }
+            $accountType = (string)($pData['account_type'] ?? 'personal');
+            if (!in_array($accountType, ['personal','creator','business'], true)) $accountType = 'personal';
             $identity = [
                 'email'       => $target,
                 'username'    => $pData['username'] ?? $tUser,
@@ -4350,6 +4561,13 @@ try {
                 'avatar_version' => $avatarV,
                 'bio'         => $pData['bio'] ?? ($pData['about'] ?? ''),
                 'website'     => $pData['website'] ?? ($pData['link'] ?? ''),
+                // Profile-upgrade combo (2026-05-18) — cover photo + multi-link
+                // chips + account type (personal/creator/business). Backed by
+                // data.json (same flat-file store as the rest of profile);
+                // no `accounts` table exists in this codebase.
+                'cover_url'    => (string)($pData['cover_url'] ?? ''),
+                'links'        => $linksOut,
+                'account_type' => $accountType,
                 'verified'    => !empty($pData['verified']),
                 'joined_at'   => $pData['created_at'] ?? null,
                 'phone'       => $phoneOut,
@@ -5618,6 +5836,39 @@ try {
                 $w = (string)$existing['website'];
                 if (!preg_match('#^https?://#i', $w)) $w = 'https://' . $w;
                 $existing['website'] = mb_substr($w, 0, 200);
+            }
+            // Profile-upgrade combo: cover_url + links[] + account_type.
+            // Each field guarded so callers can update them in isolation
+            // (and so the existing legacy clients keep working untouched).
+            if (isset($input['cover_url'])) {
+                $cu = trim((string)$input['cover_url']);
+                if ($cu !== '' && !preg_match('#^https?://#i', $cu)) $cu = '';
+                $existing['cover_url'] = mb_substr($cu, 0, 500);
+            }
+            if (isset($input['links']) && is_array($input['links'])) {
+                $cleaned = [];
+                foreach ($input['links'] as $L) {
+                    if (!is_array($L)) continue;
+                    $u = trim((string)($L['url'] ?? ''));
+                    if ($u === '') continue;
+                    if (!preg_match('#^https?://#i', $u)) $u = 'https://' . $u;
+                    // Drop obvious junk schemes that survived the regex test
+                    // (regex above already requires http/https; this is a
+                    // safety net against javascript:/data: URIs sneaking in).
+                    if (preg_match('#^(javascript|data|file|vbscript):#i', $u)) continue;
+                    $cleaned[] = [
+                        'label' => mb_substr(trim((string)($L['label'] ?? '')), 0, 30),
+                        'url'   => mb_substr($u, 0, 200),
+                        'icon'  => mb_substr(trim((string)($L['icon'] ?? '')), 0, 20),
+                    ];
+                    if (count($cleaned) >= 5) break;
+                }
+                $existing['links'] = $cleaned;
+            }
+            if (isset($input['account_type'])) {
+                $at = strtolower(trim((string)$input['account_type']));
+                if (!in_array($at, ['personal','creator','business'], true)) $at = 'personal';
+                $existing['account_type'] = $at;
             }
             $existing['updated_at'] = date('c');
 
@@ -9258,6 +9509,124 @@ try {
                 'avatar_url' => '/api/email.php?action=get_avatar&email=' . urlencode($auth['email']) . '&v=' . $avatarVersion,
             ], 'Foto atualizada');
             break;
+
+        // Cover photo upload — accepts a multipart `cover` file (preferred)
+        // OR a JSON `file_b64` payload, resizes to a 1500×500 banner and
+        // ships to R2 under profile-covers/<email>/<ts>.jpg. Returns the
+        // public URL that `update_profile` will persist into data.json.
+        // Same plan/storage cap + cache-bust pattern as upload_avatar so
+        // the new cover shows up everywhere on the next render.
+        case 'upload_cover': {
+            $auth = requireAuth();
+            [$uPart, $dPart] = array_pad(explode('@', $auth['email']), 2, '');
+            $profileDir = "/var/mail/vhosts/{$dPart}/{$uPart}/profile";
+            if (!is_dir($profileDir)) @mkdir($profileDir, 0755, true);
+
+            $tmp = null; $type = ''; $size = 0;
+            if (!empty($_FILES['cover'])) {
+                $f = $_FILES['cover'];
+                if (!empty($f['error'])) jsonResponse(false, null, 'Upload falhou (erro ' . (int)$f['error'] . ')', 400);
+                $tmp  = $f['tmp_name'];
+                $type = mime_content_type($tmp) ?: $f['type'];
+                $size = (int)$f['size'];
+            } else {
+                $input = getInput();
+                $b64 = (string)($input['file_b64'] ?? '');
+                if ($b64 === '') jsonResponse(false, null, 'Arquivo obrigatório', 400);
+                // Strip data: prefix if present
+                if (preg_match('#^data:[^;]+;base64,(.+)$#i', $b64, $m)) $b64 = $m[1];
+                $raw = base64_decode($b64, true);
+                if ($raw === false) jsonResponse(false, null, 'Base64 inválido', 400);
+                $size = strlen($raw);
+                $tmp = tempnam(sys_get_temp_dir(), 'cover_');
+                file_put_contents($tmp, $raw);
+                $type = mime_content_type($tmp) ?: 'application/octet-stream';
+            }
+            if ($size > 6 * 1024 * 1024) jsonResponse(false, null, 'Máximo 6MB', 400);
+            $allowed = ['image/jpeg', 'image/png', 'image/webp'];
+            if (!in_array($type, $allowed, true)) jsonResponse(false, null, 'Formato inválido (use JPG, PNG ou WebP)', 400);
+
+            require_once __DIR__ . '/plans.php';
+            enforceStorageCap($auth['email'], $size);
+
+            // Resize to 1500×500 banner (3:1 — Instagram/X cover ratio).
+            // Crop center-out so a portrait pick still gets a reasonable
+            // composition (no squashing).
+            $src = null;
+            if ($type === 'image/jpeg') $src = @imagecreatefromjpeg($tmp);
+            elseif ($type === 'image/png') $src = @imagecreatefrompng($tmp);
+            elseif ($type === 'image/webp') $src = @imagecreatefromwebp($tmp);
+            if (!$src) jsonResponse(false, null, 'Imagem inválida ou corrompida', 400);
+            $sw = imagesx($src); $sh = imagesy($src);
+            $targetW = 1500; $targetH = 500;
+            // Cover-fit crop: scale so the smaller of (w/W, h/H) hits 1.0,
+            // then center-crop the overflow.
+            $scale = max($targetW / $sw, $targetH / $sh);
+            $cropW = (int)round($targetW / $scale);
+            $cropH = (int)round($targetH / $scale);
+            $cropX = (int)max(0, ($sw - $cropW) / 2);
+            $cropY = (int)max(0, ($sh - $cropH) / 2);
+            $dst = imagecreatetruecolor($targetW, $targetH);
+            imagecopyresampled($dst, $src, 0, 0, $cropX, $cropY, $targetW, $targetH, $cropW, $cropH);
+
+            $localPath = $profileDir . '/cover.jpg';
+            $okJpg = @imagejpeg($dst, $localPath, 86);
+            imagedestroy($dst); imagedestroy($src);
+            if (!$okJpg) jsonResponse(false, null, 'Falha ao processar a capa', 500);
+            @chmod($localPath, 0644);
+
+            // Push to R2 (chatyy-media bucket) under a deterministic key
+            // so older covers get overwritten — bucket usage stays flat.
+            // Falls back to the local-served URL if R2 is unavailable so
+            // the user never sees a broken upload during an R2 outage.
+            $ts = time();
+            $objectKey = 'profile-covers/' . strtolower($auth['email']) . '/' . $ts . '.jpg';
+            $coverUrl = '';
+            try {
+                require_once __DIR__ . '/r2-helper.php';
+                if (function_exists('r2Upload') && r2Upload($objectKey, $localPath, 'image/jpeg')) {
+                    // Public CDN domain — same bucket fronted by Cloudflare.
+                    $coverUrl = 'https://media.chatyy.com.br/' . $objectKey;
+                }
+            } catch (Throwable $_) {}
+            if ($coverUrl === '') {
+                // Fallback: serve directly from the profile dir via nginx.
+                $coverUrl = '/api/email.php?action=get_cover&email=' . urlencode($auth['email']) . '&v=' . $ts;
+            }
+
+            // Persist into data.json so profile_get picks it up.
+            $profileFile = $profileDir . '/data.json';
+            $data = file_exists($profileFile) ? (json_decode(file_get_contents($profileFile), true) ?: []) : [];
+            if (!is_array($data)) $data = [];
+            $data['cover_url'] = $coverUrl;
+            $data['cover_version'] = $ts;
+            $data['cover_updated'] = date('c');
+            if (file_put_contents($profileFile, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE), LOCK_EX) === false) {
+                jsonResponse(false, null, 'Falha ao salvar perfil', 500);
+            }
+
+            try { require_once __DIR__ . '/cache.php'; cacheInvalidate("profile:v1:" . strtolower($auth['email'])); } catch (Throwable $_) {}
+
+            jsonResponse(true, [
+                'cover_url'     => $coverUrl,
+                'cover_version' => $ts,
+            ], 'Capa atualizada');
+            break;
+        }
+
+        // Local fallback serve when R2 is unavailable — mirrors get_avatar
+        // pattern. Frontend treats it as just another URL.
+        case 'get_cover': {
+            $email = strtolower(trim((string)($_GET['email'] ?? '')));
+            if (!filter_var($email, FILTER_VALIDATE_EMAIL)) { http_response_code(400); exit; }
+            [$uPart, $dPart] = array_pad(explode('@', $email), 2, '');
+            $path = "/var/mail/vhosts/{$dPart}/{$uPart}/profile/cover.jpg";
+            if (!file_exists($path)) { http_response_code(404); exit; }
+            header('Content-Type: image/jpeg');
+            header('Cache-Control: public, max-age=86400');
+            readfile($path);
+            exit;
+        }
 
         case 'get_avatar':
             $email = trim($_GET['email'] ?? '');
