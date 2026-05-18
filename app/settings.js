@@ -273,6 +273,8 @@ function SettingsScreenInner() {
   });
   const _chatDefaultsHydrated = useRef(false);
   const _chatDefaultsSaveTimer = useRef(null);
+  // [2026-05-18] Pending coalesced patch — see updateChatDefault comments.
+  const _chatDefaultsPendingPatch = useRef({});
 
   useEffect(() => {
     (async () => {
@@ -321,10 +323,23 @@ function SettingsScreenInner() {
           mc.setMediaDownloadPrefs?.(mediaPatch);
         } catch {}
       }
-      // Debounce backend save.
+      // [2026-05-18] Debounce backend save — COALESCE patches into a single
+      // PATCH body. Previously the closure captured only the most recent
+      // `patch` arg, so when the user toggled photos→wifi then videos→never
+      // within 500ms, the timer was cleared+rescheduled and only the LAST
+      // patch (videos) was sent — photos was lost on next page reload.
+      // Now we merge into `_chatDefaultsPendingPatch.current` and flush the
+      // accumulated patch when the timer fires. The frontend state was
+      // already correct via `setChatDefaults(prev => next)`; this fix just
+      // makes the backend match.
+      Object.assign(_chatDefaultsPendingPatch.current, patch);
       if (_chatDefaultsSaveTimer.current) clearTimeout(_chatDefaultsSaveTimer.current);
       _chatDefaultsSaveTimer.current = setTimeout(() => {
-        api.chatUserDefaultsSet?.(patch).catch(() => {});
+        const toSend = _chatDefaultsPendingPatch.current;
+        _chatDefaultsPendingPatch.current = {};
+        if (Object.keys(toSend).length) {
+          api.chatUserDefaultsSet?.(toSend).catch(() => {});
+        }
       }, 500);
       return next;
     });

@@ -17,10 +17,13 @@ import { useConfirm } from '../components/ConfirmModal';
 import {
   IconArrowLeft, IconVideo, IconCopy, IconCheck, IconX,
   IconClock, IconEdit, IconTrash, IconUsers, IconCalendar, IconUser,
+  IconMapPin, IconLock, IconShare, IconSparkles, IconPlus,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 
 const ACCENT = '#7C3AED';
+const ACCENT_DARK = '#5B21B6';
+const ACCENT_DEEP = '#3B0F75';
 
 function formatDate(dateStr, locale) {
   if (!dateStr) return '';
@@ -68,8 +71,7 @@ export default function MeetingDetailScreen() {
   const [copied, setCopied] = useState(false);
   const [myRsvp, setMyRsvp] = useState(null);
 
-  // Polish 2026-05-13: copy-link toast — slides in from top, fades out after 2s.
-  // Native-driver-safe (translateY + opacity only).
+  // Copy-link toast — slides down from header.
   const toastAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (copied) {
@@ -80,10 +82,24 @@ export default function MeetingDetailScreen() {
   }, [copied, toastAnim]);
   const toastTranslate = toastAnim.interpolate({ inputRange: [0, 1], outputRange: [-30, 0] });
 
+  // Live pulse anim for "Ao vivo" status badge — pulsing red dot.
+  const livePulse = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (meeting?.status !== 'active') return;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(livePulse, { toValue: 1, duration: 900, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(livePulse, { toValue: 0, duration: 900, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [meeting?.status, livePulse]);
+  const pulseScale = livePulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.55] });
+  const pulseOpacity = livePulse.interpolate({ inputRange: [0, 1], outputRange: [0.55, 0] });
+
   const loadInfo = useCallback(async () => {
     try {
-      // Usa room_id se existir, senão cai no id (legado) — antes só passava
-      // room_id e meetings antigas com só `id` não carregavam.
       const r = await api.meetInfo(room_id || id);
       if (r.success && r.data) {
         const m = r.data.meeting || r.data;
@@ -173,8 +189,6 @@ export default function MeetingDetailScreen() {
   };
 
   const handleCopyLink = async () => {
-    // Match meetings.js MEET_BASE: web prefers current origin (handles dev +
-    // chatyy.com.br + onemundo.com.br alike), native uses canonical prod host.
     const base = Platform.OS === 'web'
       ? (typeof window !== 'undefined' && window.location?.origin) || 'https://chatyy.com.br'
       : 'https://chatyy.com.br';
@@ -190,45 +204,20 @@ export default function MeetingDetailScreen() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const statusBadge = (status) => {
-    const map = {
-      active: { bg: ACCENT + '20', color: ACCENT, label: t('meetingDetail.statusActive') },
-      scheduled: { bg: colors.primary + '20', color: colors.primary, label: t('meetingDetail.statusScheduled') },
-      ended: { bg: colors.textTertiary + '20', color: colors.textSecondary, label: t('meetingDetail.statusEnded') },
-      cancelled: { bg: colors.error + '20', color: colors.error, label: t('meetingDetail.statusCancelled') },
-    };
-    const s = map[status] || map.scheduled;
-    return (
-      <View style={[styles.badge, { backgroundColor: s.bg }]}>
-        <Text style={[styles.badgeText, { color: s.color }]}>{s.label}</Text>
-      </View>
-    );
-  };
-
-  const rsvpIcon = (status) => {
-    if (status === 'accepted') return <IconCheck size={14} color={ACCENT} />;
-    if (status === 'declined') return <IconX size={14} color={colors.error} />;
-    if (status === 'tentative') return <IconClock size={14} color={colors.warning} />;
-    return <IconClock size={14} color={colors.textTertiary} />;
-  };
-
-  const rsvpLabel = (status) => {
-    if (status === 'accepted') return t('meetings.rsvpAccepted');
-    if (status === 'declined') return t('meetings.rsvpDeclined');
-    if (status === 'tentative') return t('meetings.rsvpTentative');
-    return t('meetingDetail.pending');
-  };
-
   if (loading && !meeting) {
     return (
-      <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]} />
+      <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={ACCENT} />
+        </View>
+      </View>
     );
   }
 
   if (!meeting) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-        <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+        <View style={[styles.headerBar, { backgroundColor: colors.background }]}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
             <IconArrowLeft size={22} color={colors.text} />
           </TouchableOpacity>
@@ -246,287 +235,473 @@ export default function MeetingDetailScreen() {
   }
 
   const ended = meeting.status === 'ended';
+  const cancelled = meeting.status === 'cancelled';
+  const active = meeting.status === 'active';
+  const scheduled = meeting.status === 'scheduled';
   const joinable = canJoin(meeting);
+  const isFinished = ended || cancelled || meeting.is_finished;
+  const recapId = meeting.recap_id || (isFinished ? (meeting.room_id || id) : null);
+
+  // Status pill config.
+  let statusCfg;
+  if (active) statusCfg = { label: t('meetingDetail.statusActive') || 'Ao vivo', bg: '#ef4444', dotColor: '#fff', pulse: true };
+  else if (scheduled) statusCfg = { label: t('meetingDetail.statusScheduled') || 'Em breve', bg: '#f59e0b', dotColor: '#fff', pulse: false };
+  else if (ended) statusCfg = { label: t('meetingDetail.statusEnded') || 'Finalizada', bg: 'rgba(255,255,255,0.22)', dotColor: 'rgba(255,255,255,0.9)', pulse: false };
+  else statusCfg = { label: t('meetingDetail.statusCancelled') || 'Cancelada', bg: 'rgba(255,255,255,0.22)', dotColor: 'rgba(255,255,255,0.9)', pulse: false };
+
+  const hostParticipant = (participants || []).find(p => p.role === 'host');
+  const hostName = meeting.host_name
+    || (hostParticipant && (hostParticipant.display_name || hostParticipant.email))
+    || meeting.host_email
+    || t('meetingDetail.unknown');
+  const hostEmail = (hostParticipant && hostParticipant.email) || meeting.host_email;
+  const locale = t('_locale');
+
+  // Detail pills data.
+  const pills = [];
+  if (meeting.scheduled_at) {
+    pills.push({
+      icon: IconCalendar,
+      tint: ACCENT,
+      label: t('meetingDetail.dateLabel') || 'Data',
+      value: formatDate(meeting.scheduled_at, locale),
+      sub: formatTime(meeting.scheduled_at, locale),
+    });
+  }
+  if (meeting.duration_minutes > 0) {
+    const dm = meeting.duration_minutes;
+    const valueText = dm >= 60
+      ? `${Math.floor(dm / 60)}h${dm % 60 ? ` ${dm % 60}m` : ''}`
+      : `${dm} min`;
+    pills.push({
+      icon: IconClock,
+      tint: '#f59e0b',
+      label: t('meetingDetail.durationLabel') || 'Duração',
+      value: valueText,
+    });
+  }
+  if (meeting.location) {
+    pills.push({
+      icon: IconMapPin,
+      tint: '#10b981',
+      label: t('meetingDetail.locationLabel') || 'Local',
+      value: meeting.location,
+    });
+  }
+  pills.push({
+    icon: IconUsers,
+    tint: '#3b82f6',
+    label: t('meetingDetail.participantsLabel') || 'Participantes',
+    value: String(participants.length || 0),
+  });
+  if (meeting.is_private || meeting.private) {
+    pills.push({
+      icon: IconLock,
+      tint: '#64748b',
+      label: t('meetingDetail.privacyLabel') || 'Privacidade',
+      value: t('meetingDetail.private') || 'Privada',
+    });
+  }
+
+  const attachments = Array.isArray(meeting.attachments) ? meeting.attachments : [];
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      <View style={[styles.header, { backgroundColor: isDark ? colors.surface : '#fff', borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <IconArrowLeft size={22} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
-          {meeting.title || t('meetingDetail.title')}
-        </Text>
-      </View>
-
-      {/* Copy-link toast (Polish 2026-05-13) — sits below header, slides in
-          when copied=true, fades back. Não bloqueia interação. */}
-      {copied && (
-        <Animated.View pointerEvents="none" style={[
-          styles.copyToast,
-          { backgroundColor: isDark ? colors.surface : colors.text, opacity: toastAnim, transform: [{ translateY: toastTranslate }] },
-        ]}>
-          <IconCheck size={14} color={isDark ? ACCENT : colors.background} />
-          <Text style={[styles.copyToastText, { color: isDark ? colors.text : colors.background }]}>
-            {t('meetingDetail.copied')}
-          </Text>
-        </Animated.View>
-      )}
-
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, Spacing.lg) + Spacing.lg }}
+        showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadInfo(); }} colors={[ACCENT]} tintColor={ACCENT} />}
       >
-        {/* Info Card */}
-        <View style={[styles.card, { backgroundColor: colors.surface, shadowColor: isDark ? '#000' : '#94a3b8' }]}>
-          <View style={styles.titleRow}>
-            <Text style={[styles.meetingTitle, { color: colors.text }]}>{meeting.title || t('meetingDetail.untitled')}</Text>
-            {statusBadge(meeting.status)}
+        {/* HERO — purple gradient effect via stacked overlays */}
+        <View style={[styles.hero, { paddingTop: insets.top + Spacing.sm }]}>
+          <View style={[styles.heroBg, { backgroundColor: ACCENT_DEEP }]} />
+          <View style={[styles.heroBgOverlay1, { backgroundColor: ACCENT_DARK }]} />
+          <View style={[styles.heroBgOverlay2, { backgroundColor: ACCENT }]} />
+          {/* soft glow blobs (visual gradient feel without expo-linear-gradient) */}
+          <View style={styles.heroGlow1} />
+          <View style={styles.heroGlow2} />
+
+          <View style={styles.heroTopRow}>
+            <TouchableOpacity onPress={() => router.back()} style={styles.backBtnHero} activeOpacity={0.7}>
+              <IconArrowLeft size={22} color="#fff" />
+            </TouchableOpacity>
+            <View style={[styles.statusPill, { backgroundColor: statusCfg.bg }]}>
+              {statusCfg.pulse && (
+                <View style={styles.pulseWrap}>
+                  <Animated.View style={[styles.pulseRing, { backgroundColor: statusCfg.dotColor, transform: [{ scale: pulseScale }], opacity: pulseOpacity }]} />
+                  <View style={[styles.pulseDot, { backgroundColor: statusCfg.dotColor }]} />
+                </View>
+              )}
+              {!statusCfg.pulse && <View style={[styles.pulseDot, { backgroundColor: statusCfg.dotColor }]} />}
+              <Text style={styles.statusPillText}>{statusCfg.label}</Text>
+            </View>
           </View>
 
-          <View style={[styles.infoRow, styles.infoRowBorder, { borderBottomColor: colors.borderLight || colors.border + '40' }]}>
-            <View style={[styles.infoIconWrap, { backgroundColor: colors.primary + '15' }]}>
-              <IconUser size={15} color={colors.primary} />
+          <Text style={styles.heroTitle} numberOfLines={3}>
+            {meeting.title || t('meetingDetail.untitled')}
+          </Text>
+
+          <View style={styles.heroOrganizerRow}>
+            <AvatarCircle name={hostName} email={hostEmail} size={36} style={{ marginRight: Spacing.sm }} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.heroOrganizerName} numberOfLines={1}>{hostName}</Text>
+              <Text style={styles.heroOrganizerLabel}>
+                {t('meetingDetail.organizer')}
+              </Text>
             </View>
-            <Text style={[styles.infoText, { color: colors.text }]}>
-              {(() => {
-                const hp = (participants || []).find(p => p.role === 'host');
-                return meeting.host_name
-                  || (hp && (hp.display_name || hp.email))
-                  || meeting.host_email
-                  || t('meetingDetail.unknown');
-              })()} <Text style={[styles.roleLabel, { color: colors.textTertiary }]}>{t('meetingDetail.organizer')}</Text>
+            {meeting.scheduled_at && (
+              <View style={styles.heroDateBox}>
+                <Text style={styles.heroDateText}>{formatDate(meeting.scheduled_at, locale)}</Text>
+                <Text style={styles.heroTimeText}>{formatTime(meeting.scheduled_at, locale)}</Text>
+              </View>
+            )}
+          </View>
+        </View>
+
+        {/* Copy-link toast — overlay below hero. */}
+        {copied && (
+          <Animated.View pointerEvents="none" style={[
+            styles.copyToast,
+            { top: insets.top + 56, backgroundColor: isDark ? colors.surface : colors.text, opacity: toastAnim, transform: [{ translateY: toastTranslate }] },
+          ]}>
+            <IconCheck size={14} color={isDark ? ACCENT : colors.background} />
+            <Text style={[styles.copyToastText, { color: isDark ? colors.text : colors.background }]}>
+              {t('meetingDetail.copied')}
             </Text>
-          </View>
+          </Animated.View>
+        )}
 
-          {meeting.scheduled_at && (
-            <View style={[styles.infoRow, styles.infoRowBorder, { borderBottomColor: colors.borderLight || colors.border + '40' }]}>
-              <View style={[styles.infoIconWrap, { backgroundColor: ACCENT + '15' }]}>
-                <IconCalendar size={15} color={ACCENT} />
+        {/* PRIMARY CTA — sticky-ish (top of action area, big purple) */}
+        <View style={styles.actionsWrap}>
+          {!isFinished && (active || joinable) && (
+            <TouchableOpacity
+              style={[styles.primaryCta, joining && { opacity: 0.7 }]}
+              onPress={handleJoin}
+              disabled={joining}
+              activeOpacity={0.85}
+            >
+              {joining ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <IconVideo size={20} color="#fff" style={{ marginRight: Spacing.sm }} />
+                  <Text style={styles.primaryCtaText}>{t('meetingDetail.joinMeeting') || 'Entrar na reunião'}</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
+          {!isFinished && scheduled && !joinable && meeting.scheduled_at && (
+            <View style={[styles.primaryCtaDisabled, { backgroundColor: isDark ? colors.surfaceVariant || '#2a2a35' : '#eef2f7' }]}>
+              <IconClock size={18} color={isDark ? colors.textSecondary : '#64748b'} style={{ marginRight: Spacing.sm }} />
+              <Text style={[styles.primaryCtaDisabledText, { color: isDark ? colors.textSecondary : '#64748b' }]}>
+                {(() => {
+                  const start = new Date(meeting.scheduled_at).getTime();
+                  const mins = Math.ceil((start - 10 * 60 * 1000 - Date.now()) / 60000);
+                  return mins > 60
+                    ? `${t('meetingDetail.availableIn') || 'Disponível em'} ${Math.ceil(mins / 60)}h`
+                    : `${t('meetingDetail.availableIn') || 'Disponível em'} ${mins} min`;
+                })()}
+              </Text>
+            </View>
+          )}
+
+          {/* RECAP card — show when ended/finished */}
+          {isFinished && recapId && (
+            <TouchableOpacity
+              style={[styles.recapCard, { backgroundColor: isDark ? '#1c1430' : '#f5f0ff', borderColor: ACCENT + '55' }]}
+              onPress={() => router.push('/meeting-recap?id=' + recapId)}
+              activeOpacity={0.85}
+            >
+              <View style={[styles.recapIconWrap, { backgroundColor: ACCENT }]}>
+                <IconSparkles size={22} color="#fff" />
               </View>
-              <Text style={[styles.infoText, { color: colors.text }]}>
-                {formatDate(meeting.scheduled_at, t('_locale'))} {t('meetingDetail.at')} {formatTime(meeting.scheduled_at, t('_locale'))}
-              </Text>
-            </View>
-          )}
-
-          {meeting.duration_minutes > 0 && (
-            <View style={[styles.infoRow, styles.infoRowBorder, { borderBottomColor: colors.borderLight || colors.border + '40' }]}>
-              <View style={[styles.infoIconWrap, { backgroundColor: colors.warning + '15' }]}>
-                <IconClock size={15} color={colors.warning} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.recapTitle, { color: isDark ? '#fff' : ACCENT_DARK }]}>
+                  {t('meetingDetail.viewRecapTitle') || 'Resumo da IA'}
+                </Text>
+                <Text style={[styles.recapSubtitle, { color: isDark ? colors.textSecondary : '#6b5b8a' }]}>
+                  {t('meetingDetail.viewRecapSub') || 'Veja insights, tópicos e decisões'}
+                </Text>
               </View>
-              <Text style={[styles.infoText, { color: colors.text }]}>
-                {meeting.duration_minutes} min
-              </Text>
-            </View>
-          )}
-
-          {!!meeting.description && (
-            <Text style={[styles.description, { color: colors.text }]}>{meeting.description}</Text>
-          )}
-
-          {ended && meeting.ended_at && (
-            <View style={[styles.endedBanner, { backgroundColor: isDark ? colors.error + '15' : '#fef2f2' }]}>
-              <Text style={[styles.endedText, { color: colors.error }]}>
-                {t('meetingDetail.meetingEndedAt', { date: formatDate(meeting.ended_at, t('_locale')), time: formatTime(meeting.ended_at, t('_locale')) })}
-              </Text>
-            </View>
+              <Text style={[styles.recapArrow, { color: ACCENT }]}>›</Text>
+            </TouchableOpacity>
           )}
         </View>
 
-        {/* RSVP Section (non-host, non-ended) */}
-        {!isHost && !ended && meeting.status !== 'cancelled' && (
-          <View style={[styles.card, { backgroundColor: colors.surface, shadowColor: isDark ? '#000' : '#94a3b8' }]}>
-            <Text style={[styles.sectionTitle, { color: colors.text }]}>{t('meetingDetail.yourResponse')}</Text>
-            <View style={styles.rsvpRow}>
-              {['accepted', 'tentative', 'declined'].map((s) => {
-                const active = myRsvp === s;
-                const cfg = {
-                  accepted: { bg: ACCENT, label: t('meetingDetail.accept') },
-                  tentative: { bg: colors.warning, label: t('meetingDetail.maybe') },
-                  declined: { bg: colors.error, label: t('meetingDetail.decline') },
-                };
-                const c = cfg[s];
+        {/* DETALHES grid — 2-col pills */}
+        {pills.length > 0 && (
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>
+              {t('meetingDetail.detailsSection') || 'Detalhes'}
+            </Text>
+            <View style={styles.pillGrid}>
+              {pills.map((p, i) => {
+                const Icon = p.icon;
                 return (
-                  <TouchableOpacity
-                    key={s}
-                    style={[
-                      styles.rsvpBtn,
-                      { borderColor: c.bg },
-                      active && { backgroundColor: c.bg },
-                    ]}
-                    onPress={() => handleRsvp(s)}
-                    disabled={rsvpLoading !== null}
-                    activeOpacity={0.7}
+                  <View
+                    key={i}
+                    style={[styles.detailPill, {
+                      backgroundColor: colors.surface,
+                      borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.06)',
+                      shadowColor: isDark ? '#000' : '#94a3b8',
+                    }]}
                   >
-                    {rsvpLoading === s ? (
-                      <ActivityIndicator size="small" color={active ? '#fff' : c.bg} />
-                    ) : (
-                      <Text style={[styles.rsvpBtnText, { color: active ? '#fff' : c.bg }]}>{c.label}</Text>
-                    )}
-                  </TouchableOpacity>
+                    <View style={[styles.detailPillIcon, { backgroundColor: p.tint + '1a' }]}>
+                      <Icon size={18} color={p.tint} />
+                    </View>
+                    <Text style={[styles.detailPillLabel, { color: colors.textSecondary }]}>{p.label}</Text>
+                    <Text style={[styles.detailPillValue, { color: colors.text }]} numberOfLines={2}>{p.value}</Text>
+                    {p.sub ? (
+                      <Text style={[styles.detailPillSub, { color: colors.textTertiary }]}>{p.sub}</Text>
+                    ) : null}
+                  </View>
                 );
               })}
             </View>
           </View>
         )}
 
-        {/* Participants */}
-        <View style={[styles.card, { backgroundColor: colors.surface, shadowColor: isDark ? '#000' : '#94a3b8' }]}>
-          <View style={styles.sectionTitleRow}>
-            <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 0 }]}>
-              {t('meetingDetail.participantsCount', { count: participants.length })}
-            </Text>
-            <View style={[styles.countBadge, { backgroundColor: ACCENT + '20' }]}>
-              <Text style={[styles.countBadgeText, { color: ACCENT }]}>{participants.length}</Text>
+        {/* RSVP card (non-host, not ended/cancelled) */}
+        {!isHost && !isFinished && (
+          <View style={styles.section}>
+            <View style={[styles.cardSoft, { backgroundColor: colors.surface, borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.06)' }]}>
+              <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: Spacing.md, marginTop: 0 }]}>
+                {t('meetingDetail.yourResponse')}
+              </Text>
+              <View style={styles.rsvpRow}>
+                {['accepted', 'tentative', 'declined'].map((s) => {
+                  const active = myRsvp === s;
+                  const cfg = {
+                    accepted: { bg: ACCENT, label: t('meetingDetail.accept') },
+                    tentative: { bg: '#f59e0b', label: t('meetingDetail.maybe') },
+                    declined: { bg: '#ef4444', label: t('meetingDetail.decline') },
+                  };
+                  const c = cfg[s];
+                  return (
+                    <TouchableOpacity
+                      key={s}
+                      style={[
+                        styles.rsvpBtn,
+                        { borderColor: c.bg },
+                        active && { backgroundColor: c.bg },
+                      ]}
+                      onPress={() => handleRsvp(s)}
+                      disabled={rsvpLoading !== null}
+                      activeOpacity={0.7}
+                    >
+                      {rsvpLoading === s ? (
+                        <ActivityIndicator size="small" color={active ? '#fff' : c.bg} />
+                      ) : (
+                        <Text style={[styles.rsvpBtnText, { color: active ? '#fff' : c.bg }]}>{c.label}</Text>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
             </View>
           </View>
-          {participants.map((p, i) => (
-            <View key={p.user_id || p.email || i} style={[styles.participantRow, i < participants.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight || colors.border + '30' }]}>
-              {/* Polish 2026-05-13: 32px avatar (grid-style density), role chip
-                  reads as proper pill (existing roleBadge style already capped). */}
-              <AvatarCircle name={p.display_name || p.email} email={p.email} size={32} style={{ marginRight: Spacing.md }} />
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.participantName, { color: colors.text }]}>
-                  {p.display_name || p.email}
-                </Text>
-                {p.email && p.display_name && (
-                  <Text style={{ color: colors.textTertiary, fontSize: FontSize.sm }}>{p.email}</Text>
-                )}
-              </View>
-              {p.role === 'host' && (
-                <View style={[styles.roleBadge, { backgroundColor: ACCENT + '18' }]}>
-                  <Text style={[styles.roleBadgeText, { color: ACCENT }]}>{t('meetingDetail.organizer')}</Text>
-                </View>
-              )}
-              {p.role === 'co-host' && (
-                <View style={[styles.roleBadge, { backgroundColor: colors.warning + '20' }]}>
-                  <Text style={[styles.roleBadgeText, { color: colors.warning }]}>{t('meetingDetail.coOrganizer')}</Text>
-                </View>
-              )}
-              <View style={[styles.rsvpStatusWrap, { marginLeft: Spacing.sm }]}>
-                {rsvpIcon(p.rsvp_status)}
-                <Text style={[styles.rsvpStatusText, {
-                  color: p.rsvp_status === 'accepted' ? ACCENT
-                    : p.rsvp_status === 'declined' ? colors.error
-                    : p.rsvp_status === 'tentative' ? colors.warning
-                    : colors.textTertiary
-                }]}>{rsvpLabel(p.rsvp_status)}</Text>
-              </View>
+        )}
+
+        {/* PARTICIPANTES — horizontal scroll */}
+        <View style={styles.section}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 0, marginTop: 0 }]}>
+              {t('meetingDetail.participantsSection') || 'Participantes'}
+            </Text>
+            <View style={[styles.countChip, { backgroundColor: ACCENT + '1a' }]}>
+              <Text style={[styles.countChipText, { color: ACCENT }]}>{participants.length}</Text>
             </View>
-          ))}
-          {participants.length === 0 && (
-            <View style={styles.emptyParticipants}>
-              <IconUsers size={40} color={colors.textTertiary} />
-              <Text style={{ color: colors.textTertiary, fontSize: FontSize.base, textAlign: 'center', marginTop: Spacing.sm }}>
+          </View>
+
+          {participants.length > 0 ? (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.participantsScroll}
+            >
+              {participants.map((p, i) => (
+                <TouchableOpacity
+                  key={p.user_id || p.email || i}
+                  style={styles.participantTile}
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    if (p.email) router.push('/profile?email=' + encodeURIComponent(p.email));
+                  }}
+                >
+                  <View style={styles.participantAvatarWrap}>
+                    <AvatarCircle name={p.display_name || p.email} email={p.email} size={48} />
+                    {p.role === 'host' && (
+                      <View style={[styles.hostStar, { backgroundColor: ACCENT, borderColor: colors.background }]}>
+                        <Text style={styles.hostStarText}>★</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={[styles.participantTileName, { color: colors.text }]} numberOfLines={1}>
+                    {p.display_name || (p.email || '').split('@')[0]}
+                  </Text>
+                  {p.rsvp_status === 'accepted' && (
+                    <Text style={[styles.participantRsvp, { color: ACCENT }]} numberOfLines={1}>✓ {t('meetings.rsvpAccepted')}</Text>
+                  )}
+                  {p.rsvp_status === 'declined' && (
+                    <Text style={[styles.participantRsvp, { color: '#ef4444' }]} numberOfLines={1}>✕ {t('meetings.rsvpDeclined')}</Text>
+                  )}
+                  {p.rsvp_status === 'tentative' && (
+                    <Text style={[styles.participantRsvp, { color: '#f59e0b' }]} numberOfLines={1}>? {t('meetings.rsvpTentative')}</Text>
+                  )}
+                </TouchableOpacity>
+              ))}
+              {isHost && (
+                <TouchableOpacity
+                  style={[styles.inviteTile, { borderColor: ACCENT + '55', backgroundColor: ACCENT + '10' }]}
+                  activeOpacity={0.7}
+                  onPress={() => router.push('/contacts?pick=1&room_id=' + (meeting.room_id || room_id))}
+                >
+                  <View style={[styles.inviteIconWrap, { backgroundColor: ACCENT }]}>
+                    <IconPlus size={22} color="#fff" />
+                  </View>
+                  <Text style={[styles.inviteLabel, { color: ACCENT }]} numberOfLines={1}>
+                    {t('meetingDetail.invite') || 'Convidar'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </ScrollView>
+          ) : (
+            <View style={[styles.emptyParticipants, { backgroundColor: colors.surface, borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.06)' }]}>
+              <IconUsers size={36} color={colors.textTertiary} />
+              <Text style={{ color: colors.textTertiary, fontSize: FontSize.sm, marginTop: Spacing.xs }}>
                 {t('meetingDetail.noParticipants')}
               </Text>
             </View>
           )}
         </View>
 
-        {/* Spacer for bottom buttons */}
-        <View style={{ height: 120 }} />
-      </ScrollView>
-
-      {/* Bottom Actions */}
-      <View style={[styles.bottomBar, { backgroundColor: colors.surface, borderTopColor: colors.border, shadowColor: isDark ? '#000' : '#94a3b8' }]}>
-        <View style={{ paddingBottom: Math.max(insets.bottom, Spacing.md) }}>
-          {ended ? (
-            <TouchableOpacity
-              style={[styles.primaryBtn, { backgroundColor: ACCENT }]}
-              onPress={() => router.push('/meeting-recap?id=' + (meeting.room_id || id))}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.primaryBtnText}>{t('meetingDetail.viewRecap')}</Text>
-            </TouchableOpacity>
-          ) : (
-            <>
-              {joinable ? (
-                <TouchableOpacity
-                  style={[styles.primaryBtn, { backgroundColor: ACCENT }, joining && { opacity: 0.6 }]}
-                  onPress={handleJoin}
-                  disabled={joining}
-                  activeOpacity={0.8}
-                >
-                  {joining ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <>
-                      <IconVideo size={18} color="#fff" style={{ marginRight: Spacing.sm }} />
-                      <Text style={styles.primaryBtnText}>{t('meetingDetail.joinMeeting')}</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              ) : meeting?.status === 'scheduled' && meeting?.scheduled_at ? (
-                <View style={[styles.primaryBtn, { backgroundColor: isDark ? '#333' : '#e0e0e0' }]}>
-                  <Text style={[styles.primaryBtnText, { color: isDark ? '#999' : '#666' }]}>
-                    {(() => {
-                      const start = new Date(meeting.scheduled_at).getTime();
-                      const mins = Math.ceil((start - 10 * 60 * 1000 - Date.now()) / 60000);
-                      return mins > 60
-                        ? `${t('meetingDetail.availableIn') || 'Disponível em'} ${Math.ceil(mins / 60)}h`
-                        : `${t('meetingDetail.availableIn') || 'Disponível em'} ${mins} min`;
-                    })()}
-                  </Text>
-                </View>
-              ) : null}
-            </>
-          )}
-
-          <View style={styles.secondaryRow}>
-            <TouchableOpacity style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: isDark ? colors.surfaceVariant : '#f8fafc' }]} onPress={handleCopyLink} activeOpacity={0.7}>
-              {copied ? <IconCheck size={16} color={ACCENT} /> : <IconCopy size={16} color={colors.textSecondary} />}
-              <Text style={[styles.secondaryBtnText, { color: copied ? ACCENT : colors.textSecondary }]}>
-                {copied ? t('meetingDetail.copied') : t('meetingDetail.copyLink')}
+        {/* DESCRIÇÃO */}
+        {!!meeting.description && (
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>
+              {t('meetingDetail.descriptionSection') || 'Descrição'}
+            </Text>
+            <View style={[styles.cardSoft, { backgroundColor: colors.surface, borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.06)' }]}>
+              <Text style={[styles.descriptionText, { color: colors.text }]}>
+                {meeting.description}
               </Text>
-            </TouchableOpacity>
+            </View>
+          </View>
+        )}
 
-            {isHost && !ended && (
-              <>
+        {/* ANEXOS */}
+        {attachments.length > 0 && (
+          <View style={styles.section}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>
+              {t('meetingDetail.attachmentsSection') || 'Anexos'}
+            </Text>
+            <View style={styles.attachmentsWrap}>
+              {attachments.map((a, i) => (
                 <TouchableOpacity
-                  style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: isDark ? colors.surfaceVariant : '#f8fafc' }]}
-                  onPress={() => router.push('/meeting-create?edit=' + (meeting.room_id || room_id))}
+                  key={a.id || a.url || i}
+                  style={[styles.attachmentChip, { backgroundColor: colors.surface, borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.06)' }]}
                   activeOpacity={0.7}
+                  onPress={() => {
+                    if (a.url && Platform.OS === 'web' && typeof window !== 'undefined') {
+                      window.open(a.url, '_blank');
+                    }
+                  }}
                 >
-                  <IconEdit size={16} color={colors.primary} />
-                  <Text style={[styles.secondaryBtnText, { color: colors.primary }]}>{t('meetingDetail.edit')}</Text>
+                  <View style={[styles.attachmentIconWrap, { backgroundColor: ACCENT + '18' }]}>
+                    <IconCopy size={16} color={ACCENT} />
+                  </View>
+                  <Text style={[styles.attachmentName, { color: colors.text }]} numberOfLines={1}>
+                    {a.name || a.filename || t('meetingDetail.attachment') || 'Anexo'}
+                  </Text>
                 </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
 
-                <TouchableOpacity
-                  style={[styles.secondaryBtn, { borderColor: colors.error + '30', backgroundColor: isDark ? colors.error + '10' : '#fef2f2' }]}
-                  onPress={handleCancel}
-                  activeOpacity={0.7}
-                >
-                  <IconX size={16} color={colors.error} />
-                  <Text style={[styles.secondaryBtnText, { color: colors.error }]}>{t('common.cancel')}</Text>
-                </TouchableOpacity>
-              </>
+        {/* AÇÕES SECUNDÁRIAS — 4 icon button row */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>
+            {t('meetingDetail.actionsSection') || 'Ações'}
+          </Text>
+          <View style={styles.secondaryActionsRow}>
+            <SecondaryAction
+              icon={IconCalendar}
+              tint={ACCENT}
+              label={t('meetingDetail.addToCalendar') || 'Agenda'}
+              onPress={() => router.push('/calendar?meeting=' + (meeting.room_id || id))}
+              colors={colors}
+              isDark={isDark}
+            />
+            <SecondaryAction
+              icon={copied ? IconCheck : IconShare}
+              tint={copied ? ACCENT : '#3b82f6'}
+              label={copied ? (t('meetingDetail.copied') || 'Copiado') : (t('meetingDetail.share') || 'Compartilhar')}
+              onPress={handleCopyLink}
+              colors={colors}
+              isDark={isDark}
+            />
+            {isHost && !isFinished && (
+              <SecondaryAction
+                icon={IconEdit}
+                tint="#10b981"
+                label={t('meetingDetail.edit') || 'Editar'}
+                onPress={() => router.push('/meeting-create?edit=' + (meeting.room_id || room_id))}
+                colors={colors}
+                isDark={isDark}
+              />
             )}
-
-            {isHost && (
-              <TouchableOpacity
-                style={[styles.secondaryBtn, { borderColor: colors.error + '30', backgroundColor: isDark ? colors.error + '15' : '#fef2f2', marginTop: ended ? 0 : Spacing.xs }]}
+            {isHost && !isFinished && (
+              <SecondaryAction
+                icon={IconX}
+                tint="#ef4444"
+                label={t('common.cancel') || 'Cancelar'}
+                onPress={handleCancel}
+                colors={colors}
+                isDark={isDark}
+              />
+            )}
+            {isHost && (isFinished) && (
+              <SecondaryAction
+                icon={IconTrash}
+                tint="#ef4444"
+                label={t('meetingDetail.deleteMeeting') || 'Excluir'}
                 onPress={handleDelete}
-                activeOpacity={0.7}
-              >
-                <IconTrash size={16} color={colors.error} />
-                <Text style={[styles.secondaryBtnText, { color: colors.error }]}>{t('meetingDetail.deleteMeeting')}</Text>
-              </TouchableOpacity>
+                colors={colors}
+                isDark={isDark}
+              />
             )}
           </View>
         </View>
-      </View>
+      </ScrollView>
     </View>
+  );
+}
+
+function SecondaryAction({ icon: Icon, tint, label, onPress, colors, isDark }) {
+  return (
+    <TouchableOpacity style={styles.secondaryAction} onPress={onPress} activeOpacity={0.7}>
+      <View style={[styles.secondaryActionIcon, {
+        backgroundColor: tint + '18',
+        borderColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.04)',
+      }]}>
+        <Icon size={20} color={tint} />
+      </View>
+      <Text style={[styles.secondaryActionLabel, { color: colors.textSecondary }]} numberOfLines={1}>
+        {label}
+      </Text>
+    </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: {
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: Spacing.xl, paddingVertical: Spacing.xl * 2 },
+  emptyTitle: { fontSize: FontSize.lg, fontWeight: '700', marginTop: Spacing.md },
+  emptySubtitle: { fontSize: FontSize.sm, textAlign: 'center', marginTop: Spacing.xs },
+  headerBar: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: Spacing.md, paddingVertical: Spacing.md,
-    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   backBtn: {
     width: 40, height: 40, borderRadius: 20,
@@ -534,108 +709,78 @@ const styles = StyleSheet.create({
     marginRight: Spacing.sm,
   },
   headerTitle: { flex: 1, fontSize: FontSize.xl, fontWeight: '700' },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: Spacing.xl },
-  emptyTitle: { fontSize: FontSize.lg, fontWeight: '600', marginTop: Spacing.md },
-  emptySubtitle: { fontSize: FontSize.sm, textAlign: 'center', marginTop: Spacing.xs },
-  content: { padding: Spacing.md },
-  card: {
-    borderRadius: 16, padding: Spacing.lg, marginBottom: Spacing.md,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    elevation: 3,
+
+  /* HERO */
+  hero: {
+    position: 'relative',
+    paddingHorizontal: Spacing.lg,
+    paddingBottom: Spacing.xl,
+    overflow: 'hidden',
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
   },
-  titleRow: {
-    flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between',
+  heroBg: { ...StyleSheet.absoluteFillObject },
+  heroBgOverlay1: {
+    position: 'absolute', left: 0, right: 0, top: '30%', bottom: 0,
+    opacity: 0.95,
+  },
+  heroBgOverlay2: {
+    position: 'absolute', left: 0, right: 0, top: '65%', bottom: 0,
+    opacity: 0.55,
+  },
+  heroGlow1: {
+    position: 'absolute', width: 280, height: 280, borderRadius: 140,
+    backgroundColor: 'rgba(255,255,255,0.10)',
+    top: -80, right: -60,
+  },
+  heroGlow2: {
+    position: 'absolute', width: 200, height: 200, borderRadius: 100,
+    backgroundColor: 'rgba(124,58,237,0.45)',
+    bottom: -40, left: -40,
+  },
+  heroTopRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     marginBottom: Spacing.lg,
   },
-  meetingTitle: { fontSize: FontSize.xxl || 22, fontWeight: '700', flex: 1, marginRight: Spacing.md },
-  badge: {
-    paddingHorizontal: 12, paddingVertical: 5,
-    borderRadius: 20,
-  },
-  badgeText: { fontSize: FontSize.xs, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
-  infoRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, gap: Spacing.sm },
-  infoRowBorder: { borderBottomWidth: StyleSheet.hairlineWidth },
-  infoIconWrap: {
-    width: 32, height: 32, borderRadius: 10,
+  backBtnHero: {
+    width: 40, height: 40, borderRadius: 20,
     alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.15)',
   },
-  infoText: { fontSize: FontSize.base, fontWeight: '500' },
-  roleLabel: { fontStyle: 'italic', fontSize: FontSize.sm, fontWeight: '400' },
-  description: { fontSize: FontSize.base, lineHeight: 22, marginTop: Spacing.lg, opacity: 0.85 },
-  endedBanner: {
-    marginTop: Spacing.lg, padding: Spacing.md, borderRadius: 12, alignItems: 'center',
+  statusPill: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20,
+    gap: 8,
   },
-  endedText: { fontSize: FontSize.sm, fontWeight: '500' },
-  sectionTitle: { fontSize: FontSize.lg, fontWeight: '700', marginBottom: Spacing.md },
-  sectionTitleRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    marginBottom: Spacing.md,
+  pulseWrap: { width: 10, height: 10, alignItems: 'center', justifyContent: 'center' },
+  pulseRing: {
+    position: 'absolute', width: 10, height: 10, borderRadius: 5,
   },
-  countBadge: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 12 },
-  countBadgeText: { fontSize: FontSize.sm, fontWeight: '700' },
-  rsvpRow: { flexDirection: 'row', gap: Spacing.sm },
-  rsvpBtn: {
-    flex: 1, borderWidth: 2, borderRadius: 14,
-    paddingVertical: 12, alignItems: 'center', justifyContent: 'center',
-    minHeight: 44,
+  pulseDot: { width: 8, height: 8, borderRadius: 4 },
+  statusPillText: {
+    color: '#fff', fontSize: FontSize.xs, fontWeight: '800',
+    letterSpacing: 0.6, textTransform: 'uppercase',
   },
-  rsvpBtnText: { fontWeight: '700', fontSize: FontSize.base },
-  // Why: participant row felt cramped at 14px — bumped to 15 with web hover
-  // so it reads as a tappable row not a static list. Name went 600→700 with
-  // letter-spacing for the "person label" weight (matches contacts polish).
-  // Role badge gets bigger radius + uppercase letter-spacing so it reads as
-  // a real chip, not just colored text.
-  participantRow: {
-    flexDirection: 'row', alignItems: 'center', paddingVertical: 15,
-    ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease', cursor: 'default' } : {}),
+  heroTitle: {
+    color: '#fff', fontSize: 28, fontWeight: '800',
+    letterSpacing: -0.5, lineHeight: 34,
+    marginBottom: Spacing.lg,
   },
-  participantName: { fontSize: FontSize.base, fontWeight: '700', letterSpacing: -0.2 },
-  roleBadge: {
-    paddingHorizontal: 9, paddingVertical: 3, borderRadius: 10, marginLeft: Spacing.sm,
+  heroOrganizerRow: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm + 2,
+    borderRadius: 16,
   },
-  roleBadgeText: { fontSize: FontSize.xs, fontWeight: '800', letterSpacing: 0.4, textTransform: 'uppercase' },
-  rsvpStatusWrap: {
-    flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: Spacing.xs,
-  },
-  rsvpStatusText: { fontSize: FontSize.xs, fontWeight: '600' },
-  emptyParticipants: {
-    alignItems: 'center', paddingVertical: Spacing.xl,
-  },
-  bottomBar: {
-    position: 'absolute', bottom: 0, left: 0, right: 0,
-    paddingHorizontal: Spacing.md, paddingTop: Spacing.md,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 16,
-    elevation: 8,
-  },
-  // Why: primary CTA radius 14→16, deeper purple shadow, web transition for
-  // hover lift; secondary buttons get matching radius bump + transition.
-  primaryBtn: {
-    flexDirection: 'row', borderRadius: 16,
-    paddingVertical: 15, alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.sm,
-    shadowColor: '#7C3AED',
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.35,
-    shadowRadius: 12,
-    elevation: 5,
-    ...(Platform.OS === 'web' ? { transition: 'transform 180ms ease, box-shadow 200ms ease', cursor: 'pointer', boxShadow: '0 5px 16px rgba(124,58,237,0.38)' } : {}),
-  },
-  primaryBtnText: { color: '#fff', fontSize: FontSize.lg, fontWeight: '700', letterSpacing: -0.2 },
-  secondaryRow: { flexDirection: 'row', gap: Spacing.sm },
-  secondaryBtn: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    borderWidth: 1, borderRadius: 14,
-    paddingVertical: 12, gap: Spacing.xs,
-    ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease, transform 160ms ease', cursor: 'pointer' } : {}),
-  },
-  secondaryBtnText: { fontSize: FontSize.sm, fontWeight: '700', letterSpacing: -0.1 },
-  // Polish 2026-05-13: copy-link toast — floats below header, fade+slide-down.
+  heroOrganizerName: { color: '#fff', fontSize: FontSize.base, fontWeight: '700' },
+  heroOrganizerLabel: { color: 'rgba(255,255,255,0.7)', fontSize: FontSize.xs, fontWeight: '500', marginTop: 1 },
+  heroDateBox: { alignItems: 'flex-end', marginLeft: Spacing.sm },
+  heroDateText: { color: '#fff', fontSize: FontSize.xs, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.4 },
+  heroTimeText: { color: 'rgba(255,255,255,0.75)', fontSize: FontSize.xs, fontWeight: '500', marginTop: 1 },
+
+  /* Copy toast */
   copyToast: {
-    position: 'absolute', top: 70, alignSelf: 'center', zIndex: 100,
+    position: 'absolute', alignSelf: 'center', zIndex: 100,
     flexDirection: 'row', alignItems: 'center', gap: 6,
     paddingHorizontal: 16, paddingVertical: 10,
     borderRadius: 22,
@@ -646,4 +791,194 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   copyToastText: { fontSize: FontSize.sm, fontWeight: '700', letterSpacing: -0.1 },
+
+  /* PRIMARY CTA + RECAP */
+  actionsWrap: {
+    paddingHorizontal: Spacing.lg,
+    marginTop: -Spacing.md,
+  },
+  primaryCta: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: ACCENT,
+    paddingVertical: 16,
+    borderRadius: 18,
+    shadowColor: ACCENT,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.35,
+    shadowRadius: 18,
+    elevation: 8,
+    ...(Platform.OS === 'web' ? { boxShadow: '0 8px 22px rgba(124,58,237,0.4)', cursor: 'pointer', transition: 'transform 180ms ease' } : {}),
+  },
+  primaryCtaText: { color: '#fff', fontSize: FontSize.lg, fontWeight: '800', letterSpacing: -0.3 },
+  primaryCtaDisabled: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 16,
+    borderRadius: 18,
+  },
+  primaryCtaDisabledText: { fontSize: FontSize.base, fontWeight: '700' },
+
+  recapCard: {
+    flexDirection: 'row', alignItems: 'center',
+    padding: Spacing.md,
+    borderRadius: 18,
+    borderWidth: 1.5,
+    marginTop: Spacing.md,
+  },
+  recapIconWrap: {
+    width: 44, height: 44, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center',
+    marginRight: Spacing.md,
+  },
+  recapTitle: { fontSize: FontSize.base, fontWeight: '800', letterSpacing: -0.2 },
+  recapSubtitle: { fontSize: FontSize.sm, fontWeight: '500', marginTop: 2 },
+  recapArrow: { fontSize: 26, fontWeight: '300', marginLeft: Spacing.sm },
+
+  /* Sections */
+  section: {
+    paddingHorizontal: Spacing.lg,
+    marginTop: Spacing.xl,
+  },
+  sectionTitle: {
+    fontSize: FontSize.base,
+    fontWeight: '800',
+    letterSpacing: -0.2,
+    marginBottom: Spacing.md,
+    marginTop: 0,
+    textTransform: 'uppercase',
+    opacity: 0.85,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginBottom: Spacing.md,
+  },
+  countChip: { paddingHorizontal: 10, paddingVertical: 3, borderRadius: 12, minWidth: 28, alignItems: 'center' },
+  countChipText: { fontSize: FontSize.sm, fontWeight: '800' },
+
+  cardSoft: {
+    borderRadius: 16,
+    padding: Spacing.md,
+    borderWidth: 1,
+  },
+
+  /* Detail pills */
+  pillGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+  },
+  detailPill: {
+    width: '48%',
+    flexGrow: 1,
+    minWidth: 140,
+    borderRadius: 16,
+    padding: Spacing.md,
+    borderWidth: 1,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  detailPillIcon: {
+    width: 36, height: 36, borderRadius: 12,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: Spacing.sm,
+  },
+  detailPillLabel: {
+    fontSize: FontSize.xs, fontWeight: '700',
+    textTransform: 'uppercase', letterSpacing: 0.4,
+    marginBottom: 2,
+  },
+  detailPillValue: { fontSize: FontSize.base, fontWeight: '700', letterSpacing: -0.2 },
+  detailPillSub: { fontSize: FontSize.sm, fontWeight: '500', marginTop: 2 },
+
+  /* RSVP */
+  rsvpRow: { flexDirection: 'row', gap: Spacing.sm },
+  rsvpBtn: {
+    flex: 1, borderWidth: 2, borderRadius: 14,
+    paddingVertical: 12, alignItems: 'center', justifyContent: 'center',
+    minHeight: 44,
+  },
+  rsvpBtnText: { fontWeight: '700', fontSize: FontSize.base },
+
+  /* Participants horizontal */
+  participantsScroll: { paddingVertical: Spacing.xs, gap: Spacing.md },
+  participantTile: {
+    width: 76,
+    alignItems: 'center',
+  },
+  participantAvatarWrap: { position: 'relative', marginBottom: Spacing.xs },
+  hostStar: {
+    position: 'absolute', right: -2, bottom: -2,
+    width: 18, height: 18, borderRadius: 9,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2,
+  },
+  hostStarText: { color: '#fff', fontSize: 10, fontWeight: '900', lineHeight: 12 },
+  participantTileName: {
+    fontSize: FontSize.sm, fontWeight: '700',
+    textAlign: 'center', marginTop: 2,
+  },
+  participantRsvp: { fontSize: 10, fontWeight: '700', marginTop: 1 },
+  inviteTile: {
+    width: 76,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    paddingVertical: Spacing.sm,
+  },
+  inviteIconWrap: {
+    width: 48, height: 48, borderRadius: 24,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: Spacing.xs,
+  },
+  inviteLabel: { fontSize: FontSize.sm, fontWeight: '800' },
+  emptyParticipants: {
+    alignItems: 'center', paddingVertical: Spacing.xl,
+    borderRadius: 16, borderWidth: 1,
+  },
+
+  /* Description */
+  descriptionText: { fontSize: FontSize.base, lineHeight: 24, fontWeight: '400' },
+
+  /* Attachments */
+  attachmentsWrap: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm,
+  },
+  attachmentChip: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: Spacing.sm + 2, paddingVertical: Spacing.sm,
+    borderRadius: 14,
+    borderWidth: 1,
+    maxWidth: '100%',
+    gap: Spacing.sm,
+  },
+  attachmentIconWrap: {
+    width: 30, height: 30, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  attachmentName: { fontSize: FontSize.sm, fontWeight: '600', maxWidth: 200 },
+
+  /* Secondary actions */
+  secondaryActionsRow: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    flexWrap: 'wrap',
+  },
+  secondaryAction: {
+    alignItems: 'center',
+    minWidth: 64,
+    flexGrow: 0,
+  },
+  secondaryActionIcon: {
+    width: 52, height: 52, borderRadius: 16,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1,
+    marginBottom: Spacing.xs,
+  },
+  secondaryActionLabel: {
+    fontSize: FontSize.xs, fontWeight: '700',
+    textAlign: 'center', maxWidth: 76,
+  },
 });

@@ -18,7 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
-import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
+import { BorderRadius, FontSize, Spacing, Shadow, haptic } from '../constants/theme';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import { CalendarSkeleton } from '../components/SkeletonLoader';
@@ -326,20 +326,18 @@ function parseICSEvents(icsContent) {
 }
 
 // ============================================================
-// Day cell with subtle scale spring when selected
+// Day cell — today is a filled purple circle with soft glow; selected
+// (non-today) gets a purple outline + light tint. Other-month days mute.
 // ============================================================
 function DayCellInner({ isSelected, isToday, isOtherMonth, day, colors }) {
-  const scale = useRef(new Animated.Value(isSelected ? 1.08 : 1)).current;
-  // Subtle slow pulse on today's ring — gives the cell a "live" beat without
-  // distracting. Only animates when isToday is true; pauses otherwise so the
-  // animation loop doesn't burn frames on every other cell.
+  const scale = useRef(new Animated.Value(isSelected ? 1.06 : 1)).current;
+  // Subtle slow pulse on today's outer halo — gives the cell a "live" beat
+  // without distracting. Only animates when isToday is true; pauses otherwise.
   const todayPulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.spring(scale, {
-      toValue: isSelected ? 1.08 : 1,
-      friction: 6,
-      tension: 180,
-      useNativeDriver: true,
+      toValue: isSelected ? 1.06 : 1,
+      friction: 6, tension: 180, useNativeDriver: true,
     }).start();
   }, [isSelected, scale]);
   useEffect(() => {
@@ -353,23 +351,32 @@ function DayCellInner({ isSelected, isToday, isOtherMonth, day, colors }) {
     loop.start();
     return () => loop.stop();
   }, [isToday, todayPulse]);
-  const pulseScale = todayPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.18] });
-  const pulseOpacity = todayPulse.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0] });
+  const pulseScale = todayPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.22] });
+  const pulseOpacity = todayPulse.interpolate({ inputRange: [0, 1], outputRange: [0.40, 0] });
+
+  // Today = filled purple circle + glow shadow; Selected (non-today) =
+  // outlined purple ring + tinted purple bg; default = transparent.
+  const todayFillStyle = isToday ? {
+    backgroundColor: colors.primary,
+    ...Platform.select({
+      ios: { shadowColor: colors.primary, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.45, shadowRadius: 8 },
+      android: { elevation: 4 },
+      web: { boxShadow: `0 2px 10px ${colors.primary}55, 0 0 0 1px ${colors.primary}33` },
+    }),
+  } : null;
+  const selectedOutlineStyle = (isSelected && !isToday) ? {
+    backgroundColor: (colors.primaryLight || '#EDE9FE'),
+    borderWidth: 2, borderColor: colors.primary,
+  } : null;
+
   return (
-    <Animated.View style={[styles.dayCellInner, { transform: [{ scale }] },
-      // Today: 2px ring purple (no fill)
-      isToday && { borderWidth: 2, borderColor: colors.primary, backgroundColor: 'transparent' },
-      // Selected (and not today): solid fill so selection still reads strong
-      isSelected && !isToday && { backgroundColor: colors.primary,
-        ...(Platform.OS === 'web' ? { background: `linear-gradient(135deg, ${colors.primary}, #8b5cf6)`, boxShadow: `0 2px 8px ${colors.primary}40` } : {}),
-      },
-    ]}>
+    <Animated.View style={[styles.dayCellInner, { transform: [{ scale }] }, todayFillStyle, selectedOutlineStyle]}>
       {isToday && (
         <Animated.View
           pointerEvents="none"
           style={{
-            position: 'absolute', top: -3, left: -3, right: -3, bottom: -3,
-            borderRadius: 17, borderWidth: 2, borderColor: colors.primary,
+            position: 'absolute', top: -4, left: -4, right: -4, bottom: -4,
+            borderRadius: 18, borderWidth: 2, borderColor: colors.primary,
             opacity: pulseOpacity, transform: [{ scale: pulseScale }],
           }}
         />
@@ -377,13 +384,64 @@ function DayCellInner({ isSelected, isToday, isOtherMonth, day, colors }) {
       <Text style={[
         styles.dayCellText,
         { color: isOtherMonth ? colors.textTertiary : colors.text },
-        isToday && { color: colors.primary, fontWeight: '800' },
-        isSelected && !isToday && { color: '#fff', fontWeight: '800' },
+        isToday && { color: '#fff', fontWeight: '800' },
+        isSelected && !isToday && { color: colors.primary, fontWeight: '800' },
       ]}>
         {day}
       </Text>
     </Animated.View>
   );
+}
+
+// Mini AO VIVO badge (live broadcast attached to event). Pulses a red dot
+// so it reads as "happening now" without ever taking the whole chip.
+function LiveBadge({ size = 8 }) {
+  const blink = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(blink, { toValue: 0.3, duration: 700, useNativeDriver: true }),
+        Animated.timing(blink, { toValue: 1, duration: 700, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [blink]);
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3,
+      backgroundColor: '#dc2626', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }}>
+      <Animated.View style={{ width: size - 2, height: size - 2, borderRadius: (size - 2) / 2,
+        backgroundColor: '#fff', opacity: blink }} />
+      <Text style={{ color: '#fff', fontSize: 8, fontWeight: '800', letterSpacing: 0.4 }}>AO VIVO</Text>
+    </View>
+  );
+}
+
+// Recurring chevron — tiny SVG-ish triangle from existing IconRepeat,
+// stuffed into a 10px circle so it reads as a glyph next to titles.
+function RecurringBadge({ color }) {
+  return (
+    <View style={{ width: 10, height: 10, alignItems: 'center', justifyContent: 'center' }}>
+      <IconRepeat size={9} color={color} />
+    </View>
+  );
+}
+
+// Helper: detect whether an event spans multiple calendar days. Used by the
+// grid to render a continuous color stripe across cells.
+function spansMultipleDays(evt) {
+  if (!evt || !evt.start_at || !evt.end_at) return false;
+  const s = new Date(evt.start_at), e = new Date(evt.end_at);
+  if (isNaN(s.getTime()) || isNaN(e.getTime())) return false;
+  if (e <= s) return false;
+  return !isSameDay(s, e);
+}
+
+// Helper: is event "live" attached? Falls back gracefully if backend hasn't
+// populated either field yet — we just return false and the badge stays off.
+function eventIsLive(evt) {
+  if (!evt) return false;
+  return !!(evt.is_live || evt.live_id);
 }
 
 // Small wrapper around the month-nav chevrons. Press tugs the arrow ~3px in
@@ -411,7 +469,7 @@ function MonthNavBtn({ dir, onPress, colors, children }) {
 // ============================================================
 // Calendar Grid Component
 // ============================================================
-function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate, onPrevMonth, onNextMonth, onQuickAdd, t }) {
+function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate, onPrevMonth, onNextMonth, onQuickAdd, onEventOpen, t, hideMonthHeader, hideDayHeaders }) {
   const daysInMonth = getDaysInMonth(year, month);
   const firstDay = getFirstDayOfWeek(year, month);
   const today = new Date();
@@ -485,34 +543,39 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
     <View style={styles.calendarGrid}>
       {/* Month header — chevrons get a subtle press nudge (translateX) so the
           arrow visibly "leans" in the direction of navigation. Keeps the
-          press feedback distinct from a generic ripple. */}
-      <View style={styles.monthHeader}>
-        <MonthNavBtn dir="prev" onPress={onPrevMonth} colors={colors}>
-          <IconChevronLeft size={22} color={colors.text} />
-        </MonthNavBtn>
-        <View style={{ alignItems: 'center' }}>
-          <Text style={[styles.monthTitle, { color: colors.text }]}>
-            {(Array.isArray(t('calendar.months')) ? t('calendar.months') : [])[month] || ''} {year}
-          </Text>
-          {monthEventCount > 0 && (
-            <Text style={[styles.monthEventCount, { color: colors.textSecondary }]}>
-              {t('calendar.eventCount', { count: monthEventCount })}
+          press feedback distinct from a generic ripple. Hidden when the
+          parent header band already owns title + nav (new redesign). */}
+      {!hideMonthHeader && (
+        <View style={styles.monthHeader}>
+          <MonthNavBtn dir="prev" onPress={onPrevMonth} colors={colors}>
+            <IconChevronLeft size={22} color={colors.text} />
+          </MonthNavBtn>
+          <View style={{ alignItems: 'center' }}>
+            <Text style={[styles.monthTitle, { color: colors.text }]}>
+              {(Array.isArray(t('calendar.months')) ? t('calendar.months') : [])[month] || ''} {year}
             </Text>
-          )}
-        </View>
-        <MonthNavBtn dir="next" onPress={onNextMonth} colors={colors}>
-          <IconChevronRight size={22} color={colors.text} />
-        </MonthNavBtn>
-      </View>
-
-      {/* Day headers */}
-      <View style={styles.dayHeaders}>
-        {(Array.isArray(t('calendar.dayNames')) ? t('calendar.dayNames') : []).map(d => (
-          <View key={d} style={styles.dayHeaderCell}>
-            <Text style={[styles.dayHeaderText, { color: colors.textTertiary }]}>{d}</Text>
+            {monthEventCount > 0 && (
+              <Text style={[styles.monthEventCount, { color: colors.textSecondary }]}>
+                {t('calendar.eventCount', { count: monthEventCount })}
+              </Text>
+            )}
           </View>
-        ))}
-      </View>
+          <MonthNavBtn dir="next" onPress={onNextMonth} colors={colors}>
+            <IconChevronRight size={22} color={colors.text} />
+          </MonthNavBtn>
+        </View>
+      )}
+
+      {/* Day headers — also hidden when parent band renders the day strip. */}
+      {!hideDayHeaders && (
+        <View style={styles.dayHeaders}>
+          {(Array.isArray(t('calendar.dayNames')) ? t('calendar.dayNames') : []).map(d => (
+            <View key={d} style={styles.dayHeaderCell}>
+              <Text style={[styles.dayHeaderText, { color: colors.textTertiary }]}>{d}</Text>
+            </View>
+          ))}
+        </View>
+      )}
 
       {/* Calendar rows */}
       <Animated.View style={{ opacity: fade, transform: [{ translateX: slide }] }}>
@@ -524,16 +587,25 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
             const isOtherMonth = cell.type !== 'current';
             const dateKey = `${cell.date.getFullYear()}-${cell.date.getMonth()}-${cell.date.getDate()}`;
             const cellEvents = eventsByDate[dateKey] || [];
+            const hasEvents = cellEvents.length > 0;
+            // Has-events dot row: surface up to 3 colored dots matching each
+            // event.color so categories register at a glance even on small
+            // cells. "+N" fills in when more events overflow.
+            const dotEvents = cellEvents.slice(0, 3);
+            // Multi-day stripe: thin continuous color bar at the bottom of
+            // cells that fall inside an event's [start_at, end_at] range so
+            // a 3-day trip visually links across cells. Max 2 stripes
+            // stacked so overlapping multi-day events both surface.
+            const multiDayEvents = cellEvents.filter(spansMultipleDays).slice(0, 2);
+            const anyLive = cellEvents.some(eventIsLive);
+            const anyRecurring = cellEvents.some(e => e && e.recurring);
 
             return (
-              <TouchableOpacity
+              <DayCellPressable
                 key={ci}
-                style={[
-                  styles.calendarCell,
-                  isSelected && { backgroundColor: colors.primary + '18' },
-                ]}
-                onPress={() => onSelectDate(cell.date)}
-                activeOpacity={0.7}
+                colors={colors}
+                isSelected={!!isSelected}
+                onPress={() => { haptic.select(); onSelectDate(cell.date); }}
               >
                 <View style={styles.cellTopRow}>
                   <DayCellInner
@@ -543,55 +615,172 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
                     day={cell.day}
                     colors={colors}
                   />
-                  {!isOtherMonth && onQuickAdd && (
-                    <TouchableOpacity
-                      onPress={(e) => { e.stopPropagation && e.stopPropagation(); onQuickAdd(cell.date); }}
-                      style={styles.cellAddBtn}
-                      hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
-                    >
-                      <IconPlus size={10} color={colors.textTertiary} />
-                    </TouchableOpacity>
-                  )}
-                </View>
-                {/* Mini event previews — long-press surfaces a quick peek
-                    (title + time + location) without leaving the grid view. */}
-                {cellEvents.length > 0 && (
-                  <View style={styles.cellEventPreviews}>
-                    {cellEvents.slice(0, 2).map((evt, ei) => {
-                      const accent = evt.color || evt.calendar_color || colors.primary;
-                      return (
+                  <View style={styles.cellBadges}>
+                    {anyLive && <LiveBadge size={6} />}
+                    {anyRecurring && !anyLive && <RecurringBadge color={colors.textTertiary} />}
+                    {!isOtherMonth && onQuickAdd && !hasEvents && (
                       <TouchableOpacity
-                        key={ei}
-                        activeOpacity={0.7}
-                        style={[styles.cellEventPreview, { backgroundColor: accent + '14', borderLeftWidth: 3, borderLeftColor: accent }]}
-                        onPress={() => onSelectDate(cell.date)}
-                        onLongPress={() => {
-                          const time = evt.all_day
-                            ? (t ? t('calendar.allDay') : 'All day')
-                            : `${formatTime(evt.start_at)} - ${formatTime(evt.end_at)}`;
-                          const loc = evt.location ? `\n${evt.location}` : '';
-                          safeAlert(evt.title || (t ? t('calendar.untitledEvent') : 'Untitled'), `${time}${loc}`);
-                        }}
-                        delayLongPress={300}
+                        onPress={(e) => { e.stopPropagation && e.stopPropagation(); haptic.light(); onQuickAdd(cell.date); }}
+                        style={styles.cellAddBtn}
+                        hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
                       >
-                        <Text style={[styles.cellEventText, { color: isOtherMonth ? colors.textTertiary : colors.text }]} numberOfLines={1}>
-                          {evt.title || ''}
-                        </Text>
+                        <IconPlus size={10} color={colors.textTertiary} />
                       </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+
+                {/* Has-events dot row: small colored dots below the day number.
+                    Each dot adopts the event's category color (event.color) and
+                    "+N" overflows when more than 3. */}
+                {hasEvents && (
+                  <View style={styles.cellDotRow}>
+                    {dotEvents.map((evt, di) => {
+                      const dotColor = evt.color || evt.calendar_color || colors.primary;
+                      return (
+                        <View
+                          key={di}
+                          style={[
+                            styles.cellDot,
+                            { backgroundColor: dotColor, opacity: isOtherMonth ? 0.45 : 1 },
+                          ]}
+                        />
                       );
                     })}
-                    {cellEvents.length > 2 && (
-                      <Text style={[styles.cellEventMore, { color: colors.textTertiary }]}>+{cellEvents.length - 2}</Text>
+                    {cellEvents.length > 3 && (
+                      <Text style={[styles.cellDotMore, { color: colors.textTertiary }]}>
+                        +{cellEvents.length - 3}
+                      </Text>
                     )}
                   </View>
                 )}
-              </TouchableOpacity>
+
+                {/* Event chip overlay — rounded pill h:24 with left vertical
+                    color bar, 12px medium font, 1-line ellipsis. Tap opens
+                    event-detail directly. Long-press = quick peek modal. */}
+                {hasEvents && (
+                  <View style={styles.cellEventPreviews}>
+                    {cellEvents.slice(0, 2).map((evt, ei) => {
+                      const accent = evt.color || evt.calendar_color || colors.primary;
+                      const live = eventIsLive(evt);
+                      return (
+                        <TouchableOpacity
+                          key={ei}
+                          activeOpacity={0.7}
+                          style={[styles.cellEventChip, { backgroundColor: accent + '1A', borderLeftColor: accent }]}
+                          onPress={(e) => {
+                            e.stopPropagation && e.stopPropagation();
+                            haptic.select();
+                            if (onEventOpen) onEventOpen(evt);
+                            else onSelectDate(cell.date);
+                          }}
+                          onLongPress={() => {
+                            const time = evt.all_day
+                              ? (t ? t('calendar.allDay') : 'All day')
+                              : `${formatTime(evt.start_at)} - ${formatTime(evt.end_at)}`;
+                            const loc = evt.location ? `\n${evt.location}` : '';
+                            safeAlert(evt.title || (t ? t('calendar.untitledEvent') : 'Untitled'), `${time}${loc}`);
+                          }}
+                          delayLongPress={300}
+                        >
+                          {live && <View style={styles.cellEventLiveDot} />}
+                          <Text
+                            style={[styles.cellEventText, { color: isOtherMonth ? colors.textTertiary : colors.text }]}
+                            numberOfLines={1}
+                          >
+                            {evt.title || ''}
+                          </Text>
+                          {evt.recurring && (
+                            <View style={{ marginLeft: 2 }}>
+                              <IconRepeat size={8} color={isOtherMonth ? colors.textTertiary : colors.textSecondary} />
+                            </View>
+                          )}
+                        </TouchableOpacity>
+                      );
+                    })}
+                    {cellEvents.length > 2 && (
+                      <Text style={[styles.cellEventMore, { color: colors.textTertiary }]}>
+                        +{cellEvents.length - 2}
+                      </Text>
+                    )}
+                  </View>
+                )}
+
+                {/* Multi-day stripe — continuous color bar pinned to the
+                    bottom of the cell with rounded caps on the first/last
+                    day so the stripe visually links across cells. */}
+                {multiDayEvents.length > 0 && (
+                  <View style={styles.cellStripeStack} pointerEvents="none">
+                    {multiDayEvents.map((evt, mi) => {
+                      const accent = evt.color || evt.calendar_color || colors.primary;
+                      const s = new Date(evt.start_at), e = new Date(evt.end_at);
+                      const isFirst = isSameDay(s, cell.date);
+                      const isLast = isSameDay(e, cell.date);
+                      return (
+                        <View
+                          key={mi}
+                          style={[
+                            styles.cellMultiDayStripe,
+                            {
+                              backgroundColor: accent,
+                              opacity: isOtherMonth ? 0.35 : 0.85,
+                              borderTopLeftRadius: isFirst ? 3 : 0,
+                              borderBottomLeftRadius: isFirst ? 3 : 0,
+                              borderTopRightRadius: isLast ? 3 : 0,
+                              borderBottomRightRadius: isLast ? 3 : 0,
+                              marginLeft: isFirst ? 2 : 0,
+                              marginRight: isLast ? 2 : 0,
+                            },
+                          ]}
+                        />
+                      );
+                    })}
+                  </View>
+                )}
+
+                {/* Empty-day CTA — selected day with no events gets an inline
+                    "Adicionar evento" pill so the empty cell stays useful. */}
+                {isSelected && !isOtherMonth && !hasEvents && onQuickAdd && (
+                  <TouchableOpacity
+                    activeOpacity={0.75}
+                    onPress={(e) => { e.stopPropagation && e.stopPropagation(); haptic.light(); onQuickAdd(cell.date); }}
+                    style={[styles.cellEmptyCta, { borderColor: colors.primary, backgroundColor: colors.surface }]}
+                  >
+                    <IconPlus size={9} color={colors.primary} />
+                    <Text style={[styles.cellEmptyCtaText, { color: colors.primary }]} numberOfLines={1}>
+                      {(t && t('calendar.quickAdd')) || 'Adicionar'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </DayCellPressable>
             );
           })}
         </View>
       ))}
       </Animated.View>
     </View>
+  );
+}
+
+// Day-cell pressable wrapper — owns the scale-0.95 spring on press so the
+// whole cell feels tactile without re-creating an Animated.Value per render.
+function DayCellPressable({ colors, isSelected, onPress, children }) {
+  const pressScale = useRef(new Animated.Value(1)).current;
+  return (
+    <TouchableOpacity
+      activeOpacity={1}
+      onPressIn={() => Animated.spring(pressScale, { toValue: 0.95, useNativeDriver: true, friction: 6, tension: 220 }).start()}
+      onPressOut={() => Animated.spring(pressScale, { toValue: 1, useNativeDriver: true, friction: 5, tension: 200 }).start()}
+      onPress={onPress}
+      style={[
+        styles.calendarCell,
+        isSelected && { backgroundColor: (colors.primaryLight || '#EDE9FE') + '88' },
+      ]}
+    >
+      <Animated.View style={{ transform: [{ scale: pressScale }], flex: 1 }}>
+        {children}
+      </Animated.View>
+    </TouchableOpacity>
   );
 }
 
@@ -1523,8 +1712,25 @@ function CalendarScreenInner() {
   const [importResult, setImportResult] = useState(null); // { total, success, failed }
   const [syncingDevice, setSyncingDevice] = useState(false);
   const [deviceCalPermission, setDeviceCalPermission] = useState(null);
-  const [calendarView, setCalendarView] = useState('month');
+  const [calendarView, setCalendarView] = useState('month'); // 'month' | 'week' | 'agenda'
   const [weekStartDate, setWeekStartDate] = useState(() => getWeekStart(new Date()));
+  // Search UI scaffold — opens a TextInput in the gradient band that filters
+  // the visible event list by title (also matches location/description).
+  // Empty = no filter. Stays in JS (events array is already in memory).
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchInputRef = useRef(null);
+  const searchHeight = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(searchHeight, {
+      toValue: searchOpen ? 1 : 0,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start(() => {
+      if (searchOpen && searchInputRef.current?.focus) searchInputRef.current.focus();
+    });
+  }, [searchOpen, searchHeight]);
   // "Show timezone" toggle — appends a "(GMT-3)" suffix to event time ranges.
   // Persisted in localStorage on web / AsyncStorage on native, key `cal_show_tz`.
   const [showTz, setShowTz] = useState(false);
@@ -2075,21 +2281,67 @@ function CalendarScreenInner() {
     }
   };
 
-  // Filter events for selected day
+  // Filter events for selected day. When search is active, the list switches
+  // to month-wide matches by title/location/description so the search feels
+  // global (matches Gmail/Calendar conventions). Day filter still applies
+  // when query is empty.
   const dayEvents = useMemo(() => {
     if (!selectedDate) return [];
-    return events.filter(evt => {
-      const evtStart = new Date(evt.start_at);
-      const evtEnd = new Date(evt.end_at);
-      const dayStart = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
-      const dayEnd = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate(), 23, 59, 59);
-      return evtStart <= dayEnd && evtEnd >= dayStart;
-    }).sort((a, b) => {
+    const q = (searchQuery || '').trim().toLowerCase();
+    const base = q
+      ? events.filter(evt => {
+          const hay = [evt.title, evt.location, evt.description]
+            .filter(Boolean).join(' ').toLowerCase();
+          return hay.includes(q);
+        })
+      : events.filter(evt => {
+          const evtStart = new Date(evt.start_at);
+          const evtEnd = new Date(evt.end_at);
+          const dayStart = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
+          const dayEnd = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate(), 23, 59, 59);
+          return evtStart <= dayEnd && evtEnd >= dayStart;
+        });
+    return base.sort((a, b) => {
       if (a.all_day && !b.all_day) return -1;
       if (!a.all_day && b.all_day) return 1;
       return new Date(a.start_at) - new Date(b.start_at);
     });
-  }, [events, selectedDate]);
+  }, [events, selectedDate, searchQuery]);
+
+  // "Hoje" pill is only useful when the user has drifted off the current
+  // month/week — hide it when they're already viewing today, so the band
+  // doesn't have a no-op button taking up space.
+  const realToday = new Date();
+  const isViewingCurrentMonth =
+    currentYear === realToday.getFullYear() && currentMonth === realToday.getMonth();
+  const todayPillAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(todayPillAnim, {
+      toValue: isViewingCurrentMonth ? 0 : 1,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [isViewingCurrentMonth, todayPillAnim]);
+
+  // Animated month label — slide in from the direction of navigation.
+  const monthLabelSlide = useRef(new Animated.Value(0)).current;
+  const monthLabelFade = useRef(new Animated.Value(1)).current;
+  const prevMonthLabelRef = useRef(currentMonth);
+  useEffect(() => {
+    const dir =
+      currentMonth > prevMonthLabelRef.current ||
+      (currentMonth === 0 && prevMonthLabelRef.current === 11)
+        ? 1
+        : -1;
+    prevMonthLabelRef.current = currentMonth;
+    monthLabelSlide.setValue(dir * 18);
+    monthLabelFade.setValue(0);
+    Animated.parallel([
+      Animated.timing(monthLabelSlide, { toValue: 0, duration: 240, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(monthLabelFade, { toValue: 1, duration: 220, useNativeDriver: true }),
+    ]).start();
+  }, [currentYear, currentMonth, monthLabelSlide, monthLabelFade]);
 
   const selectedDateStr = selectedDate
     ? selectedDate.toLocaleDateString(t('_locale') || 'en-US', { weekday: 'long', month: 'long', day: 'numeric' })
@@ -2146,72 +2398,207 @@ function CalendarScreenInner() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      {/* Header — unified Chatyy purple gradient (matches Inbox/Chat) */}
+      {/* Header — unified Chatyy purple→pink gradient (matches Inbox/Chat
+          but with a richer fade). REDESIGN 2026-05-18: two-row stack:
+          (1) top bar: back, title, search/sync/add actions
+          (2) month band: big animated label + chevrons + "Hoje" pill +
+              segmented view toggle + day-of-week strip with today highlight
+          The diagonal purple→pink gradient gives the band a brand spotlight
+          that the rest of the screen pivots around. */}
       <View style={[
-        styles.header,
+        styles.headerBand,
         Platform.OS === 'web'
-          ? { background: isDark ? 'linear-gradient(180deg, #1a0a2e 0%, #0a0a0a 100%)' : 'linear-gradient(180deg, #5B21B6 0%, #7C3AED 100%)' }
-          : { backgroundColor: isDark ? '#0d0a14' : '#6D28D9' },
+          ? {
+              background: isDark
+                ? 'linear-gradient(140deg, #1a0a2e 0%, #2a0e3a 55%, #3a1148 100%)'
+                : 'linear-gradient(135deg, #6D28D9 0%, #8B5CF6 55%, #DB2777 100%)',
+            }
+          : { backgroundColor: isDark ? '#1a0a2e' : '#7C3AED' },
       ]}>
-        <TouchableOpacity onPress={() => { if (Platform.OS === "web" && window.parent !== window) { try { window.parent.postMessage({ type: "close-side-panel", route: "/calendar" }, "*"); } catch {} } else { router.back(); } }} style={styles.headerBtn}>
-          <IconArrowLeft size={22} color="#fff" />
-        </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: '#fff' }]}>{t('calendar.title')}</Text>
-        <View style={styles.headerRight}>
-          {/* View Toggle — full pill on tablet+, dropped on narrow phones
-              (user reported 2026-05-15: too many buttons → header quebrando) */}
-          {!_CAL_HEADER_COMPACT && (
-            <View style={[styles.viewToggle, { borderColor: 'rgba(255,255,255,0.35)' }]}>
-              <TouchableOpacity
-                onPress={() => setCalendarView('month')}
-                style={[styles.viewToggleBtn, calendarView === 'month' && { backgroundColor: 'rgba(255,255,255,0.22)' }]}
-              >
-                <Text style={[styles.viewToggleBtnText, { color: '#fff', opacity: calendarView === 'month' ? 1 : 0.75 }]}>
-                  {t('calendar.monthView')}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => setCalendarView('week')}
-                style={[styles.viewToggleBtn, calendarView === 'week' && { backgroundColor: 'rgba(255,255,255,0.22)' }]}
-              >
-                <Text style={[styles.viewToggleBtnText, { color: '#fff', opacity: calendarView === 'week' ? 1 : 0.75 }]}>
-                  {t('calendar.weekView')}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          )}
-          <TouchableOpacity onPress={handleToday} style={[styles.todayBtn, { borderColor: 'rgba(255,255,255,0.35)' }]}>
-            <Text style={[styles.todayBtnText, { color: '#fff' }]}>{t('calendar.today')}</Text>
+        {/* Row 1 — top bar */}
+        <View style={styles.headerTopRow}>
+          <TouchableOpacity
+            onPress={() => {
+              if (Platform.OS === 'web' && window.parent !== window) {
+                try { window.parent.postMessage({ type: 'close-side-panel', route: '/calendar' }, '*'); } catch {}
+              } else { router.back(); }
+            }}
+            style={styles.headerBtn}
+            accessibilityLabel={t('common.back') || 'Voltar'}
+          >
+            <IconArrowLeft size={22} color="#fff" />
           </TouchableOpacity>
+          <Text style={[styles.headerTitle, { color: '#fff' }]}>{t('calendar.title')}</Text>
+          <View style={styles.headerRight}>
+            <TouchableOpacity
+              onPress={() => { setSearchOpen(s => !s); if (searchOpen) setSearchQuery(''); }}
+              style={[styles.headerBtn, searchOpen && styles.headerBtnActive]}
+              accessibilityLabel={t('calendar.searchEvents') || 'Buscar eventos'}
+            >
+              <IconSearch size={20} color="#fff" />
+            </TouchableOpacity>
+            {!_CAL_HEADER_COMPACT && Platform.OS !== 'web' && ExpoCalendar && (
+              <TouchableOpacity
+                onPress={handleSyncDeviceCalendar}
+                disabled={syncingDevice}
+                style={styles.headerBtn}
+                accessibilityLabel={t('calendar.syncNow')}
+              >
+                {syncingDevice ? <ActivityIndicator size="small" color="#fff" /> : <IconRefresh size={20} color="#fff" />}
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              onPress={() => setShowAddModal(true)}
+              style={[styles.headerBtn, styles.headerFab]}
+              accessibilityLabel={t('calendar.newEvent')}
+            >
+              <IconPlus size={22} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Animated search input — collapses out when closed */}
+        <Animated.View
+          style={[
+            styles.headerSearchWrap,
+            {
+              maxHeight: searchHeight.interpolate({ inputRange: [0, 1], outputRange: [0, 56] }),
+              opacity: searchHeight,
+              marginTop: searchHeight.interpolate({ inputRange: [0, 1], outputRange: [0, 6] }),
+            },
+          ]}
+          pointerEvents={searchOpen ? 'auto' : 'none'}
+        >
+          <View style={styles.headerSearchInner}>
+            <IconSearch size={16} color="rgba(255,255,255,0.85)" />
+            <TextInput
+              ref={searchInputRef}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder={t('calendar.searchPlaceholder') || 'Buscar por título, local, descrição…'}
+              placeholderTextColor="rgba(255,255,255,0.6)"
+              style={styles.headerSearchInput}
+              returnKeyType="search"
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <IconX size={16} color="rgba(255,255,255,0.9)" />
+              </TouchableOpacity>
+            )}
+          </View>
+        </Animated.View>
+
+        {/* Row 2 — Month nav band (chevrons + animated label + Hoje pill) */}
+        <View style={styles.monthBand}>
+          <TouchableOpacity
+            onPress={calendarView === 'week' ? handlePrevWeek : handlePrevMonth}
+            style={styles.monthBandChevron}
+            accessibilityLabel={t('calendar.prevMonth') || 'Mês anterior'}
+          >
+            <IconChevronLeft size={22} color="#fff" />
+          </TouchableOpacity>
+
+          <View style={styles.monthBandCenter}>
+            <Animated.View
+              style={{
+                opacity: monthLabelFade,
+                transform: [{ translateX: monthLabelSlide }],
+                alignItems: 'center',
+              }}
+            >
+              <Text style={styles.monthBandLabel} numberOfLines={1}>
+                {(Array.isArray(t('calendar.months')) ? t('calendar.months') : [])[currentMonth] || ''}
+                {'  '}
+                <Text style={styles.monthBandYear}>{currentYear}</Text>
+              </Text>
+            </Animated.View>
+
+            <Animated.View
+              style={[
+                styles.todayPillWrap,
+                {
+                  opacity: todayPillAnim,
+                  transform: [{ scale: todayPillAnim.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }) }],
+                },
+              ]}
+              pointerEvents={isViewingCurrentMonth ? 'none' : 'auto'}
+            >
+              <TouchableOpacity onPress={handleToday} style={styles.todayPill} accessibilityLabel={t('calendar.today')}>
+                <Text style={styles.todayPillText}>{t('calendar.today')}</Text>
+              </TouchableOpacity>
+            </Animated.View>
+          </View>
+
+          <TouchableOpacity
+            onPress={calendarView === 'week' ? handleNextWeek : handleNextMonth}
+            style={styles.monthBandChevron}
+            accessibilityLabel={t('calendar.nextMonth') || 'Próximo mês'}
+          >
+            <IconChevronRight size={22} color="#fff" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Segmented view toggle — Mês / Semana / Agenda */}
+        <View style={styles.viewSegmentRow}>
+          <View style={styles.viewSegment}>
+            {[
+              { key: 'month', label: t('calendar.monthView') },
+              { key: 'week', label: t('calendar.weekView') },
+              { key: 'agenda', label: t('calendar.agendaView') || 'Agenda' },
+            ].map(opt => {
+              const active = calendarView === opt.key;
+              return (
+                <TouchableOpacity
+                  key={opt.key}
+                  onPress={() => setCalendarView(opt.key)}
+                  style={[styles.viewSegmentBtn, active && styles.viewSegmentBtnActive]}
+                  accessibilityLabel={opt.label}
+                  accessibilityState={{ selected: active }}
+                >
+                  <Text style={[styles.viewSegmentText, active && styles.viewSegmentTextActive]}>
+                    {opt.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
           {!_CAL_HEADER_COMPACT && (
             <TouchableOpacity
               onPress={() => persistShowTz(!showTz)}
-              style={[styles.todayBtn, { borderColor: 'rgba(255,255,255,0.35)', backgroundColor: showTz ? 'rgba(255,255,255,0.22)' : 'transparent' }]}
-              accessibilityLabel={t('calendar.showTz')}
+              style={[styles.tzGhostBtn, showTz && styles.tzGhostBtnActive]}
+              accessibilityLabel={t('calendar.showTz') || t('calendar.timezones')}
             >
-              <Text style={[styles.todayBtnText, { color: '#fff', opacity: showTz ? 1 : 0.75 }]}>
+              <IconClock size={14} color="#fff" />
+              <Text style={[styles.tzGhostBtnText, { opacity: showTz ? 1 : 0.78 }]}>
                 {t('calendar.timezones')}
               </Text>
             </TouchableOpacity>
           )}
-          {!_CAL_HEADER_COMPACT && Platform.OS !== 'web' && ExpoCalendar && (
-            <TouchableOpacity
-              onPress={handleSyncDeviceCalendar}
-              disabled={syncingDevice}
-              style={styles.headerBtn}
-              accessibilityLabel={t('calendar.syncNow')}
-            >
-              {syncingDevice ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <IconRefresh size={20} color="#fff" />
-              )}
-            </TouchableOpacity>
-          )}
-          <TouchableOpacity onPress={() => setShowAddModal(true)} style={[styles.headerBtn, styles.headerFab]}>
-            <IconPlus size={22} color="#fff" />
-          </TouchableOpacity>
         </View>
+
+        {/* Day-of-week strip — current weekday highlighted in white pill */}
+        {calendarView !== 'agenda' && (
+          <View style={styles.weekStrip}>
+            {(Array.isArray(t('calendar.dayNames')) ? t('calendar.dayNames') : []).map((d, i) => {
+              const isTodayDow = i === realToday.getDay();
+              return (
+                <View key={d + i} style={styles.weekStripCell}>
+                  <View style={[
+                    styles.weekStripPill,
+                    isTodayDow && styles.weekStripPillToday,
+                  ]}>
+                    <Text style={[
+                      styles.weekStripText,
+                      isTodayDow && styles.weekStripTextToday,
+                    ]}>
+                      {d}
+                    </Text>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        )}
       </View>
 
       {calendarView === 'week' ? (
@@ -2247,19 +2634,25 @@ function CalendarScreenInner() {
                 </View>
               )}
 
-              {/* Calendar Grid */}
-              <CalendarGrid
-                year={currentYear}
-                month={currentMonth}
-                selectedDate={selectedDate}
-                events={events}
-                colors={colors}
-                onSelectDate={handleSelectDate}
-                onPrevMonth={handlePrevMonth}
-                onNextMonth={handleNextMonth}
-                onQuickAdd={handleQuickAdd}
-                t={t}
-              />
+              {/* Calendar Grid — hidden in agenda view. Month/day-headers are
+                  owned by the new gradient band so the grid suppresses both. */}
+              {calendarView !== 'agenda' && (
+                <CalendarGrid
+                  year={currentYear}
+                  month={currentMonth}
+                  selectedDate={selectedDate}
+                  events={events}
+                  colors={colors}
+                  onSelectDate={handleSelectDate}
+                  onPrevMonth={handlePrevMonth}
+                  onNextMonth={handleNextMonth}
+                  onQuickAdd={handleQuickAdd}
+                  onEventOpen={handleEventPress}
+                  t={t}
+                  hideMonthHeader
+                  hideDayHeaders
+                />
+              )}
 
               {/* Sync / Import / Export bar */}
               <View style={[styles.syncBar, { backgroundColor: colors.surface, borderColor: colors.border }]}>
@@ -2379,6 +2772,7 @@ function CalendarScreenInner() {
 // ============================================================
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  // Legacy single-row header — kept for any nested screen that still uses it.
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm + 2,
@@ -2389,6 +2783,142 @@ const styles = StyleSheet.create({
       web: { boxShadow: '0 2px 16px rgba(0,0,0,0.05)', backdropFilter: 'blur(24px) saturate(180%)', WebkitBackdropFilter: 'blur(24px) saturate(180%)' },
     }),
   },
+  // New: multi-row gradient header band (top bar + month nav + segmented
+  // toggle + day strip). Lives under the safe-area top inset.
+  headerBand: {
+    paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.sm,
+    paddingBottom: Spacing.sm + 2,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.16, shadowRadius: 18 },
+      android: { elevation: 6 },
+      web: { boxShadow: '0 8px 28px rgba(91,33,182,0.28)' },
+    }),
+  },
+  headerTopRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+  },
+  headerBtnActive: {
+    backgroundColor: 'rgba(255,255,255,0.18)',
+  },
+  // Animated search wrap — collapses height + opacity together.
+  headerSearchWrap: { overflow: 'hidden' },
+  headerSearchInner: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 12, paddingVertical: 8,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.22)',
+  },
+  headerSearchInput: {
+    flex: 1, color: '#fff', fontSize: FontSize.sm + 1,
+    paddingVertical: 2,
+    ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+  },
+  // Month nav band — big animated label flanked by chevrons. Hoje pill
+  // floats just under the label and fades in only when off the current month.
+  monthBand: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginTop: Spacing.sm + 2,
+    marginBottom: Spacing.xs,
+  },
+  monthBandChevron: {
+    width: 40, height: 40, borderRadius: 20,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+    ...(Platform.OS === 'web' ? { transition: 'background-color 180ms ease, transform 160ms ease' } : {}),
+  },
+  monthBandCenter: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 56 },
+  monthBandLabel: {
+    fontSize: 28, fontWeight: '600',
+    color: '#fff', letterSpacing: -0.6,
+    textAlign: 'center',
+  },
+  monthBandYear: {
+    fontSize: 26, fontWeight: '300',
+    color: 'rgba(255,255,255,0.78)', letterSpacing: -0.4,
+  },
+  // "Hoje" pill — only visible when not viewing current month.
+  todayPillWrap: { marginTop: 4 },
+  todayPill: {
+    paddingHorizontal: 12, paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: '#fff',
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.18, shadowRadius: 6 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 2px 10px rgba(0,0,0,0.18)' },
+    }),
+  },
+  todayPillText: {
+    color: '#7C3AED', fontSize: FontSize.xs, fontWeight: '800', letterSpacing: 0.3, textTransform: 'uppercase',
+  },
+  // Segmented view toggle — Mês / Semana / Agenda
+  viewSegmentRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    gap: 8, marginTop: Spacing.xs,
+  },
+  viewSegment: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    borderRadius: 12,
+    padding: 3,
+    flex: 1,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+  },
+  viewSegmentBtn: {
+    flex: 1, alignItems: 'center', justifyContent: 'center',
+    paddingVertical: 6, paddingHorizontal: 6,
+    borderRadius: 9,
+    ...(Platform.OS === 'web' ? { transition: 'background-color 180ms ease' } : {}),
+  },
+  viewSegmentBtnActive: {
+    backgroundColor: '#fff',
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.15, shadowRadius: 4 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 1px 6px rgba(0,0,0,0.18)' },
+    }),
+  },
+  viewSegmentText: { color: 'rgba(255,255,255,0.85)', fontSize: FontSize.xs + 1, fontWeight: '700', letterSpacing: 0.1 },
+  viewSegmentTextActive: { color: '#7C3AED' },
+  // Timezones toggle (ghost pill on the right of the segment row)
+  tzGhostBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 5,
+    paddingHorizontal: 10, paddingVertical: 7,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+  },
+  tzGhostBtnActive: { backgroundColor: 'rgba(255,255,255,0.24)' },
+  tzGhostBtnText: { color: '#fff', fontSize: FontSize.xs, fontWeight: '700' },
+  // Day-of-week strip — pills aligned to columns, today highlighted.
+  weekStrip: {
+    flexDirection: 'row', justifyContent: 'space-between',
+    marginTop: Spacing.sm,
+    marginHorizontal: -2,
+  },
+  weekStripCell: { flex: 1, alignItems: 'center' },
+  weekStripPill: {
+    minWidth: 36, paddingHorizontal: 8, paddingVertical: 4,
+    borderRadius: 999,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  weekStripPillToday: {
+    backgroundColor: '#fff',
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 5 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 2px 8px rgba(0,0,0,0.18)' },
+    }),
+  },
+  weekStripText: {
+    color: 'rgba(255,255,255,0.85)', fontSize: FontSize.xs, fontWeight: '700',
+    textTransform: 'uppercase', letterSpacing: 0.6,
+  },
+  weekStripTextToday: { color: '#7C3AED' },
   headerBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 12 },
   // Mini-FAB inside header — same brand-accented style as the floating FABs
   // in Inbox/Chat (purple gradient orb + soft glow), so the "novo evento"
@@ -2471,8 +3001,39 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease' } : {}),
   },
   cellEventDot: { width: 3, height: 12, borderRadius: 1.5, flexShrink: 0 },
-  cellEventText: { fontSize: 9.5, fontWeight: '600', flex: 1, letterSpacing: -0.1 },
-  cellEventMore: { fontSize: 9.5, fontWeight: '700', paddingLeft: 2, letterSpacing: -0.1 },
+  cellEventText: { fontSize: 12, fontWeight: '500', flex: 1, letterSpacing: -0.1 },
+  cellEventMore: { fontSize: 10, fontWeight: '700', paddingLeft: 2, letterSpacing: -0.1 },
+  // Rounded pill chip with left vertical color bar (3px). h:24 absolute when
+  // possible; collapses to ~22 on tight cells. 12px medium font, 1-line.
+  cellEventChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    minHeight: 22, borderRadius: 999,
+    paddingHorizontal: 6, paddingVertical: 2,
+    borderLeftWidth: 3, overflow: 'hidden',
+    ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease, transform 160ms ease' } : {}),
+  },
+  cellEventLiveDot: { width: 5, height: 5, borderRadius: 2.5, backgroundColor: '#dc2626' },
+  // Badge column (top-right of each cell): may hold the live dot + recurring
+  // glyph + the empty-day quick-add icon — kept right-aligned so day number
+  // breathes on the left.
+  cellBadges: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  // Has-events dot row beneath the day number — each dot adopts that event's
+  // category color (event.color). Used in dense months when chips overflow.
+  cellDotRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2, paddingHorizontal: 4 },
+  cellDot: { width: 5, height: 5, borderRadius: 2.5 },
+  cellDotMore: { fontSize: 9, fontWeight: '700', marginLeft: 2 },
+  // Multi-day stripe: stacked thin bars pinned to the bottom of the cell.
+  cellStripeStack: { marginTop: 'auto', gap: 2, paddingBottom: 2 },
+  cellMultiDayStripe: { height: 3 },
+  // Empty-day inline CTA (selected day, no events).
+  cellEmptyCta: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 6, paddingVertical: 2,
+    borderRadius: 999, borderWidth: 1,
+    marginTop: 4, marginHorizontal: 2,
+  },
+  cellEmptyCtaText: { fontSize: 9.5, fontWeight: '700', letterSpacing: 0.1 },
   dotRow: { flexDirection: 'row', gap: 2, marginTop: 2 },
   eventDot: { width: 6, height: 6, borderRadius: 3 },
 

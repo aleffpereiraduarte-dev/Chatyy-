@@ -6266,8 +6266,12 @@ export async function liveCategories() {
 // Top-50 active lives ordered by current_viewers DESC, started_at DESC.
 // `category` optional — pass '' or null for "all categories" rail.
 // Backend hides subscriber-only lives the viewer doesn't have access to.
-export async function liveDiscover(category = '') {
-  const payload = category ? { category } : {};
+export async function liveDiscover(category = '', opts = {}) {
+  const payload = {};
+  // `for_you` is a client-side pseudo-category — it maps to the
+  // personalized feed flag, not a backend category key.
+  if (category && category !== 'for_you') payload.category = category;
+  if (category === 'for_you' || opts.personalized) payload.personalized = 1;
   return apiCall('live_discover', payload, 'POST');
 }
 // Host updates the category / subscriber-gate of their active live. The

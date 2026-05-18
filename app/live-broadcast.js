@@ -19,6 +19,7 @@ import LiveTopGifters from '../components/LiveTopGifters';
 import LiveGiftAnimation from '../components/LiveGiftAnimation';
 import LivePollOverlay from '../components/live/LivePollOverlay';
 import * as liveBroadcastNotification from '../services/liveBroadcastNotification';
+import * as Haptics from 'expo-haptics';
 
 // Cross-platform WebRTC — same pattern as call.js
 let RTC_PeerConnection, RTC_SessionDescription, RTC_IceCandidate, getUserMediaFn, NativeRTCView;
@@ -1404,6 +1405,13 @@ export default function LiveBroadcastScreen() {
     // end modal. Without this, on Android the keyboard is mid-hide animation
     // while the modal mounts; the modal card jumps to sit above the keyboard
     // and action buttons fall offscreen.
+    // Step 0: warning haptic so the host physically feels the gravity of
+    // tapping the red orb before the modal opens (TikTok/IG parity).
+    try {
+      if (Platform.OS !== 'web') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+      }
+    } catch {}
     // Step 1: blur composer (forces willHide to fire immediately).
     try { composerInputRef.current?.blur?.(); } catch {}
     try { Keyboard.dismiss(); } catch {}
@@ -3341,10 +3349,10 @@ export default function LiveBroadcastScreen() {
           <View style={styles.endModalCard}>
             <View style={styles.endModalHeader}>
               <View style={styles.endModalLiveDot} />
-              <Text style={styles.endModalTitle}>{t('live.endLive') || 'Encerrar Live?'}</Text>
+              <Text style={styles.endModalTitle}>{t('live.endLiveQ') || 'Encerrar transmissão?'}</Text>
             </View>
             <Text style={styles.endModalSubtitle}>
-              {t('live.endConfirm') || 'Sua transmissão vai ser encerrada e os espectadores vão sair.'}
+              {t('live.endConfirm2') || 'Os espectadores serão desconectados.'}
             </Text>
             <View style={styles.endModalStats}>
               <View style={styles.endModalStat}>
@@ -3390,7 +3398,7 @@ export default function LiveBroadcastScreen() {
                 accessibilityLabel={t('common.cancel') || 'Cancel'}
                 accessibilityRole="button"
               >
-                <Text style={styles.endModalCancelText}>{t('common.cancel') || 'Continuar live'}</Text>
+                <Text style={styles.endModalCancelText}>{t('common.cancel') || 'Cancelar'}</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={performEndLive}
@@ -5163,7 +5171,24 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
     minWidth: 64,
   },
-  arChipActive: { borderColor: '#ec4899', backgroundColor: 'rgba(236,72,153,0.25)' },
+  // Purple gradient ring around the active filter thumbnail — TikTok's
+  // signature pink→purple glow. We can't drop a real LinearGradient inline
+  // without a SVG/gradient import on this hot path, so we lean on a
+  // multi-color border + boxShadow (web) + a brand-purple drop shadow
+  // (native) for the same visual read.
+  arChipActive: {
+    borderColor: '#a855f7',
+    backgroundColor: 'rgba(168,85,247,0.22)',
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 0 0 1px #ec4899, 0 0 12px rgba(168,85,247,0.6), 0 0 18px rgba(236,72,153,0.35)',
+    } : {
+      shadowColor: '#a855f7',
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: 0.7,
+      shadowRadius: 8,
+      elevation: 6,
+    }),
+  },
   arChipLabel: {
     color: 'rgba(255,255,255,0.85)',
     fontSize: 10,

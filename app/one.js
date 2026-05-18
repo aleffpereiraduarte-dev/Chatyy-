@@ -1896,18 +1896,47 @@ export default function OneScreen() {
       // ONE_RESET_WINDOW_MS in the focus-effect above). Two independent gates
       // would let a "fresh" focus-effect re-hydrate a thread the auto-restore
       // would have rejected. Keep them in sync.
+      //
+      // [bug-fix #one-ai-2h, 2026-05-18] PG returns `updated_at` as TEXT (the
+      // schema uses `TEXT NOT NULL DEFAULT NOW()` — see migrate-sqlite-to-pg.php).
+      // Depending on PG session config + driver, the string can land here as
+      // `"2026-05-17 14:30:45"` (no TZ — JS engine-dependent parsing, often
+      // local-time) or as `"2026-05-17 14:30:45.123456+00"` (parsed reliably).
+      // Worse, if the field is somehow missing/null, `new Date(undefined)` →
+      // `Invalid Date` → `.getTime()` → `NaN`. The old check
+      // `if (msAgo >= ONE_RESET_WINDOW_MS) return` then evaluated `NaN >= ...`
+      // which is ALWAYS `false`, falling through to `setConversationId(last.id)`
+      // and re-hydrating the OLD thread (task #944 regression — the gate
+      // failed OPEN on parse error instead of failing SAFE to "fresh").
+      // Now we fail SAFE: any non-finite/negative/exceed-window value starts
+      // a fresh conversation. Also cross-check with the local `lastActiveAt`
+      // ref bumped on every send/reply — if local activity is older than 2h,
+      // we ALWAYS start fresh regardless of what the server timestamp says.
       if (autoRestore && convos.length > 0 && !conversationId && messages.length === 0) {
         const last = convos[0]; // most recent
         const lastUpdated = new Date(last.updated_at || last.created_at);
-        const msAgo = Date.now() - lastUpdated.getTime();
-        if (msAgo >= ONE_RESET_WINDOW_MS) {
+        const lastUpdatedMs = lastUpdated.getTime();
+        const msAgo = Date.now() - lastUpdatedMs;
+        // Local activity stamp — wins over server timestamp on disagreement.
+        // If we have no local stamp (first ever open or a fresh device) we
+        // fall back to the server gate; otherwise both must agree on "fresh".
+        const localActiveMs = lastActiveAtRef.current;
+        const localSince = Date.now() - localActiveMs;
+        const isStaleByServer = !Number.isFinite(msAgo) || msAgo < 0 || msAgo >= ONE_RESET_WINDOW_MS;
+        const isStaleByLocal = Number.isFinite(localSince) && localSince >= ONE_RESET_WINDOW_MS;
+        if (isStaleByServer || isStaleByLocal) {
           // Server-side convo is stale too — make sure local timestamp matches
           // so future focuses don't oscillate between "restore" and "reset".
           try {
             const key = `oneAi.lastActiveAt.${user?.email || 'anon'}`;
             setCache(key, Date.now(), 86400000 * 30).catch(() => {});
           } catch {}
-          return; // older than window → start fresh
+          // Also drop the cached messages blob for this convo so a future
+          // cold-open can't flash the abandoned thread before the gate runs.
+          try {
+            if (last?.id) setCache('one_messages_' + last.id, [], 1).catch(() => {});
+          } catch {}
+          return; // older than window OR parse failed → start fresh
         }
         setConversationId(last.id);
         // Show cached messages instantly

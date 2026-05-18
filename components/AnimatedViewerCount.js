@@ -47,8 +47,12 @@ export default function AnimatedViewerCount({ count, style }) {
   // The interpolated display number — animated from prev → target.
   const animValue = useRef(new Animated.Value(target)).current;
   const [display, setDisplay] = useState(target);
-  // Pulse scale for the wrapper Text.
+  // Bump scale for the wrapper Text on increase.
   const pulse = useRef(new Animated.Value(1)).current;
+  // Glow strength (0..1) — drives a brief white textShadow halo on the
+  // freshly-bumped digit so the "+1 viewer" event reads as a small spark
+  // even at a glance (TikTok/IG parity).
+  const glow = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     const prev = prevRef.current;
@@ -75,20 +79,29 @@ export default function AnimatedViewerCount({ count, style }) {
       setDisplay(target);
     });
 
-    // Pulse only on increase (matches IG/TikTok behavior — count going down
-    // when a viewer leaves shouldn't draw attention).
+    // Bump + glow only on increase (matches IG/TikTok behavior — count
+    // going down when a viewer leaves shouldn't draw attention).
     if (target > prev) {
       Animated.sequence([
-        Animated.timing(pulse, { toValue: 1.1, duration: 100, useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 1, duration: 100, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1.18, duration: 120, useNativeDriver: true }),
+        Animated.spring(pulse, { toValue: 1, friction: 4, tension: 140, useNativeDriver: true }),
+      ]).start();
+      Animated.sequence([
+        Animated.timing(glow, { toValue: 1, duration: 120, useNativeDriver: true }),
+        Animated.timing(glow, { toValue: 0, duration: 360, useNativeDriver: true }),
       ]).start();
     }
 
     return () => { animValue.removeListener(id); };
-  }, [target, animValue, pulse]);
+  }, [target, animValue, pulse, glow]);
 
   return (
-    <Animated.Text style={[style, { transform: [{ scale: pulse }] }]}>
+    <Animated.Text style={[style, {
+      transform: [{ scale: pulse }],
+      textShadowColor: 'rgba(255,255,255,0.9)',
+      textShadowOffset: { width: 0, height: 0 },
+      textShadowRadius: glow.interpolate({ inputRange: [0, 1], outputRange: [0, 8] }),
+    }]}>
       {formatCount(display)}
     </Animated.Text>
   );
