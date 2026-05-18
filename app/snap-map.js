@@ -304,9 +304,9 @@ function bootGmaps() {
 //   Console toggle. Until billing is turned on we MUST use a non-Google
 //   tile provider.
 //
-// Why CartoCDN `light_all`/`dark_all` (not raw OSM):
+// Why CartoCDN 'light_all'/'dark_all' (not raw OSM):
 //   This is the SAME tile source the in-chat location bubble uses (via the
-//   backend `static_map.php` proxy → CartoCDN). Using it here makes the
+//   backend 'static_map.php' proxy → CartoCDN). Using it here makes the
 //   snap-map background visually match what users see in chat — which is
 //   what the user asked for ("o google maps tá funcionando no chat"; in
 //   reality chat is CartoCDN, not Google, but the look is the same and
@@ -420,7 +420,7 @@ window.addEventListener('message', function(ev) {
 });
 
 // ──────────────────────────── Loader ─────────────────────────────────────
-// `initMap` exists as the Google Maps JS callback contract. The bootGmaps
+// 'initMap' exists as the Google Maps JS callback contract. The bootGmaps
 // path is intentionally NOT reachable today because the GCP project tied
 // to GOOGLE_MAPS_KEY has billing disabled — Static Maps 403s and JS API
 // paints the "For development purposes only" watermark. When billing is
