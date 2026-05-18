@@ -7143,9 +7143,7 @@ export default function ChatConversationScreen() {
   // ever want to inform the peer.
   useEffect(() => {
     if (Platform.OS === 'web') return;
-    const secretMode = !!conversation?.secret_mode || !!conversation?.is_secret;
-    const shouldBlock = !!chatLocked || !!secretMode;
-    if (!shouldBlock) return;
+    if (!chatLocked) return;
     let SC;
     try { SC = require('expo-screen-capture'); } catch { return; }
     (async () => {
@@ -7154,7 +7152,7 @@ export default function ChatConversationScreen() {
     return () => {
       try { SC.allowScreenCaptureAsync?.('chatyy-chat-private'); } catch {}
     };
-  }, [chatLocked, conversation?.secret_mode, conversation?.is_secret]);
+  }, [chatLocked]);
 
   // Lock a chat. WhatsApp parity: try Face ID / fingerprint first
   // (much faster + matches OS expectations), fall back to password only
