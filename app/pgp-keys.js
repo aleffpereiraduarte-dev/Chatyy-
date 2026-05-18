@@ -35,7 +35,9 @@ import * as Clipboard from 'expo-clipboard';
 let openpgp = null;
 async function loadOpenPGP() {
   if (openpgp) return openpgp;
-  openpgp = await import('openpgp');
+  // Use the browser bundle directly — the package's "main" field points to the
+  // Node build which imports "module" (Node built-in unavailable in RN).
+  openpgp = await import('openpgp/dist/openpgp.min.mjs');
   return openpgp;
 }
 

@@ -958,7 +958,7 @@ export default function ComposeScreen() {
         if (pgpEncrypt) {
           try {
             const firstRecipient = (sendTo[0]?.email || toStr.split(/[,;]/)[0] || '').trim();
-            const pgpMod = await import('openpgp');
+            const pgpMod = await import('openpgp/dist/openpgp.min.mjs');
             const apiPgp = await import('../services/api');
             const r = await apiPgp.pgpKeyGet(firstRecipient);
             if (r?.success && r.data?.found && r.data?.public_key_armor) {
