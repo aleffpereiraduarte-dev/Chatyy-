@@ -93,15 +93,14 @@ export default function LiveTopBar({
 
   return (
     <View style={[styles.topBar, { paddingTop: paddingTop + 6 }]} pointerEvents="box-none">
-      {/* Soft gradient sheen — black-50% fading to transparent. Faked via
-          stacked layers on native (no LinearGradient dep). */}
+      {/* Soft gradient sheen — black-50% fading to transparent. Web gets a
+          real CSS gradient; native got stacked layers in older rounds but
+          those painted a visible 80px black band over the status bar even
+          on transparent live video underneath (#1135 — "essa lista preta
+          que ainda continua na live amigo"). Now native carries the dark
+          backdrop INSIDE each chip (livePill, viewerChip, iconBtn) instead
+          of striping the whole header. */}
       <View style={styles.scrim} pointerEvents="none" />
-      {Platform.OS !== 'web' ? (
-        <>
-          <View style={styles.scrimStep1} pointerEvents="none" />
-          <View style={styles.scrimStep2} pointerEvents="none" />
-        </>
-      ) : null}
 
       {/* LEFT cluster — avatar + name + LIVE pill + viewer chip */}
       <TouchableOpacity
@@ -192,19 +191,11 @@ const styles = StyleSheet.create({
       WebkitBackdropFilter: 'blur(14px)',
     } : {}),
   },
-  // Round 64 polish (2026-05-18) — softened the native top scrim. Previous
-  // 0.42 / 0.18 stack painted a visible black band over the status bar area
-  // on iOS/Android even when there was nothing under it (status bar is
-  // translucent). Halved the opacity so the host video bleeds through the
-  // header subtly instead of being capped by a hard dark strip.
-  scrimStep1: {
-    position: 'absolute', top: 0, left: 0, right: 0, height: 50,
-    backgroundColor: 'rgba(0,0,0,0.22)', zIndex: -1,
-  },
-  scrimStep2: {
-    position: 'absolute', top: 50, left: 0, right: 0, height: 30,
-    backgroundColor: 'rgba(0,0,0,0.08)', zIndex: -1,
-  },
+  // Round 65 #1135 (2026-05-18) — scrimStep1/scrimStep2 deleted. Even at
+  // 0.22/0.08 opacity they painted a visible full-width band over the
+  // status-bar area on native ("mancha preta"). Native now relies on each
+  // chip's own backdrop (livePill, viewerChip, iconBtn) so the header reads
+  // as floating glass chips over the live frame instead of a dark strip.
 
   hostBlock: {
     width: 36, height: 36,

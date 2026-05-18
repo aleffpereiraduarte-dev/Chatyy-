@@ -2722,15 +2722,12 @@ export default function LiveViewerScreen() {
           All UI pieces extracted into dedicated components. Pure layout glue
           here — state lives in the screen, components are presentational. */}
       <View style={[styles.bottomArea, { paddingBottom: insets.bottom + 10 + (Platform.OS === 'android' ? kbHeight : 0) }]} pointerEvents="box-none">
-        {/* Bottom dark blend — gradient on web, layered scrim on native. */}
+        {/* Round 65 #1135 (2026-05-18) — native bottomGradientStep1/2/3 bands
+            removed. Even at 0.28/0.14/0.06 the stacked 150px tall strip read
+            as a full-width black band over the live frame. Each bottom chip
+            (joinPill, composer input, action icons) carries its own
+            backdrop, so the area reads as floating chips over the video. */}
         <View style={styles.bottomGradient} pointerEvents="none" />
-        {Platform.OS !== 'web' ? (
-          <>
-            <View style={styles.bottomGradientStep1} pointerEvents="none" />
-            <View style={styles.bottomGradientStep2} pointerEvents="none" />
-            <View style={styles.bottomGradientStep3} pointerEvents="none" />
-          </>
-        ) : null}
 
         {/* Pinned host chip (only when host pinned). */}
         {!chatHidden ? (
@@ -3276,12 +3273,17 @@ const styles = StyleSheet.create({
     paddingBottom: 14,
     zIndex: 10,
     gap: 8,
+    // Round 65 #1135 (2026-05-18) — native bg removed. The 0.32 strip painted
+    // a visible full-width dark band over the status-bar / host header area,
+    // capping the live frame. Each chip (host pill, viewer pill, close btn)
+    // carries its own backdrop — they now read as floating chips over the
+    // video instead of being capped by a horizontal band.
     ...(Platform.OS === 'web' ? {
-      background: 'linear-gradient(to bottom, rgba(0,0,0,0.55), rgba(0,0,0,0.05))',
+      background: 'linear-gradient(to bottom, rgba(0,0,0,0.32), rgba(0,0,0,0.04))',
       backdropFilter: 'blur(14px)',
       WebkitBackdropFilter: 'blur(14px)',
     } : {
-      backgroundColor: 'rgba(0,0,0,0.32)',
+      backgroundColor: 'transparent',
     }),
   },
   // Host avatar block — pulsing red ring + LIVE pill anchored at the bottom.

@@ -4772,14 +4772,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 14,
     zIndex: 10,
-    // Round 2026-05-18 — softer scrim so the live frame breathes underneath
-    // instead of looking like a fully opaque header strip ("mancha preta"
-    // complaint). Web keeps the backdrop blur; native gets a slim gradient
-    // via a stacked underlay below.
-    backgroundColor: Platform.OS === 'web' ? 'rgba(0,0,0,0.18)' : 'rgba(0,0,0,0.32)',
+    // Round 65 #1135 (2026-05-18) — KILLED the full-width black strip on
+    // native. User screenshot showed an edge-to-edge dark band at the top
+    // capping the live frame ("mancha preta amigo"). Previous attempt only
+    // softened opacity (0.32) but the band was still solid full-width. Now
+    // the bar is fully transparent on native — each chip (LIVE badge, viewer
+    // pill, duration timer, close btn) carries its own dark backdrop, so the
+    // header reads as a row of floating chips over the live video instead
+    // of a horizontal band. Web keeps the subtle blur gradient (looks fine
+    // in browsers where backdrop-filter actually renders glass).
+    backgroundColor: 'transparent',
     ...(Platform.OS === 'web' ? {
       backdropFilter: 'blur(14px)', WebkitBackdropFilter: 'blur(14px)',
-      background: 'linear-gradient(to bottom, rgba(0,0,0,0.42), rgba(0,0,0,0.08))',
+      background: 'linear-gradient(to bottom, rgba(0,0,0,0.32), rgba(0,0,0,0.04))',
     } : {}),
   },
   topLeft: {
