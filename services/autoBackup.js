@@ -42,7 +42,10 @@ try {
 // CONSTANTS
 // ============================================================
 const TASK_NAME = 'CHATYY_AUTO_BACKUP';
-const APP_STATE_COOLDOWN = 30 * 1000; // 30s cooldown — iOS kills background often, user expects backup to resume fast on every foreground
+// 30min cooldown: 30s causava notif "Backup do Chatyy" toda vez que user
+// minimizava+abria o app (loop infinito reportado 2026-05-18). BGTaskScheduler
+// nativo já cobre wake-ups periódicos pra completar uploads pendentes.
+const APP_STATE_COOLDOWN = 30 * 60 * 1000;
 
 // ============================================================
 // MODULE STATE
@@ -755,7 +758,10 @@ function setupMediaListener() {
         // same lock and dropping silently).
         let mlDebounceTimer = null;
         let mlLastTrigger = 0;
-        const MIN_GAP_MS = 30 * 1000;
+        // 10min gap: bursts (200 screenshots, live photo, iCloud thumb downloads)
+        // antes disparavam 200 starts em fila, todos perdendo o lock e mostrando
+        // notif "Backup do Chatyy" duplicada. 10min é o ritmo natural de uso.
+        const MIN_GAP_MS = 10 * 60 * 1000;
         mediaSubscription = ML.addListener((event) => {
           if (!event.hasIncrementalChanges) return;
           if (isLocked()) return;
@@ -947,9 +953,22 @@ export async function initAutoBackup() {
   // token rotated since the early call above, this catches it.
   persistBackupCreds();
 
-  // Start immediately on app launch
+  // Start immediately on app launch — BUT só se realmente tem foto pendente.
+  // Antes (sem esse guard), cada cold start disparava startForegroundBackup
+  // que mostrava notif "Backup do Chatyy" mesmo com 0 pending → user via
+  // notif chata toda vez que abria o app.
   if (!isLocked()) {
-    startForegroundBackup(null).catch((e) => console.warn('[backup] Foreground start error:', e?.message));
+    try {
+      const pending = await getPendingCount().catch(() => 0);
+      if (pending > 0) {
+        startForegroundBackup(null).catch((e) => console.warn('[backup] Foreground start error:', e?.message));
+      } else {
+        console.log('[backup] Skipping boot fire — 0 pending photos');
+      }
+    } catch {
+      // If pending check fails, fall back to old behavior
+      startForegroundBackup(null).catch((e) => console.warn('[backup] Foreground start error:', e?.message));
+    }
   }
 }
 
