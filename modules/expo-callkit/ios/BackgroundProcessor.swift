@@ -193,7 +193,10 @@ import LiveKitClient
     func processVideoFrame(_ frame: Any) -> Any {
         let mirror = Mirror(reflecting: frame)
         for child in mirror.children {
-            if child.label == "pixelBuffer", let pb = (child.value as AnyObject) as? CVPixelBuffer {
+            if child.label == "pixelBuffer" {
+                let raw = child.value as AnyObject
+                guard CFGetTypeID(raw) == CVPixelBufferGetTypeID() else { continue }
+                let pb = raw as! CVPixelBuffer
                 let out = BackgroundProcessor.shared.processPixelBuffer(pb)
                 if out !== pb {
                     // We can't easily rebuild a VideoFrame here without
