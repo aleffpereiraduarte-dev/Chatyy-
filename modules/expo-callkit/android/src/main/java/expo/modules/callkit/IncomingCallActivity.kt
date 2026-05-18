@@ -823,9 +823,9 @@ class IncomingCallActivity : AppCompatActivity() {
    * This happens when user taps "Atender" on notification while IncomingCallActivity
    * is already showing from the fullScreenIntent.
    */
-  override fun onNewIntent(newIntent: Intent?) {
+  override fun onNewIntent(newIntent: Intent) {
     super.onNewIntent(newIntent)
-    if (newIntent?.getBooleanExtra("auto_accept", false) == true) {
+    if (newIntent.getBooleanExtra("auto_accept", false) == true) {
       // [2026-05-15] singleInstance launchMode means a 2nd incoming call's
       // "Atender" notification action would route through THIS activity's
       // onNewIntent, silently overwriting callId/callerName/etc. — i.e. we'd

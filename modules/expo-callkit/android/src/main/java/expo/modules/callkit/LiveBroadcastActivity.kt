@@ -150,6 +150,7 @@ import expo.modules.screenshare.LiveKitRoomHolder
 import io.livekit.android.LiveKit
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
+import io.livekit.android.room.participant.LocalParticipant
 import io.livekit.android.renderer.SurfaceViewRenderer
 import io.livekit.android.room.Room
 import io.livekit.android.room.track.LocalVideoTrack
@@ -457,7 +458,9 @@ class LiveBroadcastActivity : ComponentActivity() {
                             }
                         }
                     }
-                    is RoomEvent.LocalTrackPublished -> {
+                    // [2026-05-18] LiveKit 2.x merged LocalTrackPublished into
+                    // TrackPublished — gate on participant type.
+                    is RoomEvent.TrackPublished -> if (event.participant is LocalParticipant) {
                         // Camera track just landed — push it into Compose state so
                         // CameraFill swaps from the placeholder avatar to the
                         // SurfaceView renderer.

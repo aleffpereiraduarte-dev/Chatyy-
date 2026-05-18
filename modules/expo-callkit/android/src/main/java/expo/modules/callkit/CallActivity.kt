@@ -94,6 +94,7 @@ import expo.modules.screenshare.LiveKitRoomHolder
 import io.livekit.android.LiveKit
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
+import io.livekit.android.room.participant.LocalParticipant
 import io.livekit.android.renderer.SurfaceViewRenderer
 import io.livekit.android.room.Room
 import io.livekit.android.room.track.LocalVideoTrack
@@ -606,7 +607,11 @@ class CallActivity : ComponentActivity() {
           Log.d(TAG, "TrackSubscribed (audio) sid=${event.publication.sid}")
         }
       }
-      is RoomEvent.LocalTrackPublished -> {
+      // [2026-05-18] LiveKit 2.x consolidated LocalTrackPublished + RemoteTrackPublished
+      // into a single TrackPublished event. Disambiguate by checking the
+      // participant — local-only frames need different routing (we install our
+      // own renderer + MediaPipe BackgroundProcessor) than remote frames.
+      is RoomEvent.TrackPublished -> if (event.participant is LocalParticipant) {
         val track = event.publication.track
         if (track is LocalVideoTrack) {
           Log.d(TAG, "LocalTrackPublished (video)")
