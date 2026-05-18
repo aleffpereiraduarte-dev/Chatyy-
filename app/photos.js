@@ -986,14 +986,55 @@ export default function PhotosScreen() {
     }
   }, [deviceTotalCount, backedUpTotal, backupStatus]);
 
-  // Mark device photos that are already backed up
+  // Mark device photos that are already backed up.
+  //
+  // BUG 2026-05-18 (#1126): per-photo "cloud-slash" overlay kept rendering on
+  // already-backed-up photos because the previous match used filename equality
+  // against `cloudPhotos[]` — but cloudPhotos is paginated (only page 1 on
+  // mobile, ~PAGE_SIZE items), AND the server stores files under a generated
+  // name (md5(asset_id) suffix) that rarely equals the device filename. So the
+  // overlay would scream "not backed up" on libraries that the global counter
+  // (backedUpTotal vs deviceTotalCount) reported as 100% complete.
+  //
+  // Truth source = `getBackedUpMap()` from services/backup/backupStorage,
+  // which is keyed by `asset_id` (the same identifier the server uses) and is
+  // refreshed by the engine after every server precheck. That's what the
+  // native iOS module syncs into too (NativeUpload.setBackedUpIds).
   useEffect(() => {
-    if (devicePhotos.length > 0) {
+    if (devicePhotos.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      let backedUpIdSet = new Set();
+      try {
+        const bs = require('../services/backup/backupStorage');
+        if (bs?.getBackedUpMap) {
+          const map = await bs.getBackedUpMap();
+          if (map && typeof map === 'object') backedUpIdSet = new Set(Object.keys(map));
+        }
+      } catch {}
+      if (cancelled) return;
+      // Fall-back: keep the legacy name-match as a secondary signal (still
+      // helps web where there is no asset_id). Union of both signals.
       const cloudNames = new Set(cloudPhotos.map(p => p.name?.toLowerCase()));
-      const backedUpCount = devicePhotos.filter(dp => cloudNames.has(dp.name?.toLowerCase())).length;
+      // Global "complete" override — if the screen as a whole has decided
+      // backup is complete (server count caught up to device total), every
+      // device photo MUST show cloud-check, otherwise the per-photo overlay
+      // contradicts the banner. Without this, the user sees "100% complete"
+      // alongside a sea of cloud-slash icons.
+      const dt = deviceTotalCount || devicePhotos.length || 0;
+      const globalComplete =
+        backupStatus === 'complete' ||
+        (dt > 0 && (backedUpTotal || 0) >= dt);
+      const isPhotoBackedUp = (dp) => {
+        if (globalComplete) return true;
+        if (dp.deviceId && backedUpIdSet.has(dp.deviceId)) return true;
+        if (dp.name && cloudNames.has(dp.name.toLowerCase())) return true;
+        return false;
+      };
+      const backedUpCount = devicePhotos.filter(isPhotoBackedUp).length;
       setDevicePhotos(prev => prev.map(dp => ({
         ...dp,
-        backedUp: cloudNames.has(dp.name?.toLowerCase()),
+        backedUp: isPhotoBackedUp(dp),
       })));
       // Calculate pending: use deviceTotalCount (from MediaLibrary) if available
       const totalOnDevice = deviceTotalCount || 0;

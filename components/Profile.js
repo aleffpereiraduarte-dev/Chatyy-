@@ -1673,7 +1673,7 @@ export default function Profile({
                 { text: t?.('common.delete') || 'Apagar', style: 'destructive', onPress: async () => {
                   try {
                     await api.statusHighlightDelete?.(h.id);
-                    setData(prev => prev ? { ...prev, highlights: (prev.highlights || []).filter(x => x.id !== h.id) } : prev);
+                    setHighlights(prev => prev.filter(x => x.id !== h.id));
                   } catch {}
                 }},
               ]
