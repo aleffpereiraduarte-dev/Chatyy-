@@ -1414,6 +1414,9 @@ export default function PhotosScreen() {
     backupInFlightRef.current = false;
     backupAbortRef.current = false;
     autoStartedRef.current = false;
+    // User explicitly asked to repair — bust the post-complete cooldown
+    // (#1126) so the next startBackup actually runs through the native engine.
+    backupCompletedAtRef.current = 0;
 
     // Drift check: if the JS/native dedup map claims >100 more photos backed
     // up than the server actually has, the dedup got corrupt and is making
