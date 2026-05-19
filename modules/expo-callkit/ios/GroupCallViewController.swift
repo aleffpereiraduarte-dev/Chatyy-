@@ -25,7 +25,9 @@ import LiveKitClient
 import AVFoundation
 import Combine
 
-final class GroupCallViewController: UIViewController {
+// [Wave B/C forward-fix 2026-05-19] `@unchecked Sendable` — LK Swift 2.5+
+// RoomDelegate conform requires Sendable. Same rationale as CallViewController.
+final class GroupCallViewController: UIViewController, @unchecked Sendable {
 
     static let groupCallEndedNotification = Notification.Name("ExpoCallKitNativeCallEnded")
 
@@ -102,21 +104,52 @@ final class GroupCallViewController: UIViewController {
             return
         }
         print("[GroupCallVC] connecting — room=\(roomName) url=\(lkUrl)")
-        let r = Room(delegate: self)
+        // [Wave B audio, 2026-05-18 / restored 2026-05-19] Centralize audio
+        // routing for group calls too — speaker default on (everyone wants
+        // hands-free in a group video call); BT/wired headset wins.
+        AudioRouter.shared.configureForCall(hasVideo: hasVideo)
+        self.session.speakerOn = AudioRouter.shared.speakerOn
+        // [Wave C, 2026-05-18 / restored 2026-05-19] Adaptive simulcast +
+        // dynacast for groups so each subscriber gets the right tier (low
+        // for thumbnails, high for focused tile). Dynacast lets the SFU
+        // pause publishing of layers nobody is consuming, saving uplink
+        // under N>2 calls. Also pin AudioCaptureOptions (AEC+AGC+NS) for the
+        // same reasons as the 1:1 path.
+        let roomOptions = RoomOptions(
+            defaultCameraCaptureOptions: CallViewController.defaultCameraCaptureOptions(),
+            defaultAudioCaptureOptions: CallViewController.defaultAudioCaptureOptions(),
+            defaultVideoPublishOptions: CallViewController.defaultVideoPublishOptions(),
+            adaptiveStream: true,
+            dynacast: true
+        )
+        let r = Room(delegate: self, roomOptions: roomOptions)
         self.room = r
         Task { [weak self] in
             guard let self = self else { return }
             do {
                 try await r.connect(url: self.lkUrl, token: self.lkToken)
-                try await r.localParticipant.setMicrophone(enabled: true)
-                print("[GroupCallVC] mic published — room=\(self.roomName)")
+                // [Wave B audio, 2026-05-18 / restored 2026-05-19] Pin
+                // AudioCaptureOptions per-publish defense-in-depth.
+                try await r.localParticipant.setMicrophone(
+                    enabled: true,
+                    captureOptions: CallViewController.defaultAudioCaptureOptions()
+                )
+                print("[GroupCallVC] mic published (aec+agc+ns) — room=\(self.roomName)")
                 if self.hasVideo {
-                    if let pub = try? await r.localParticipant.setCamera(enabled: true),
-                       let track = pub.track as? LocalVideoTrack {
+                    // [Wave C, 2026-05-18 / restored 2026-05-19] Pin explicit
+                    // captureOptions + publishOptions on first publish so the
+                    // simulcast tiers are wired from the very first frame.
+                    let captureOpts = CallViewController.defaultCameraCaptureOptions(position: self.currentCameraPosition)
+                    let publishOpts = CallViewController.defaultVideoPublishOptions()
+                    if let pub = try? await r.localParticipant.setCamera(
+                        enabled: true,
+                        captureOptions: captureOpts,
+                        publishOptions: publishOpts
+                    ), let track = pub.track as? LocalVideoTrack {
                         await MainActor.run {
                             self.updateLocalParticipant(videoTrack: track)
                         }
-                        print("[GroupCallVC] camera published — room=\(self.roomName)")
+                        print("[GroupCallVC] camera published (simulcast=true preset=h720_169) — room=\(self.roomName)")
                     }
                 }
             } catch {
@@ -131,6 +164,9 @@ final class GroupCallViewController: UIViewController {
     // MARK: - Actions
 
     private func handleHangup() {
+        // [Wave B audio, 2026-05-18 / restored 2026-05-19] Clear AVAudioSession
+        // route override + route-change listener before LK disconnect.
+        AudioRouter.shared.teardown()
         NotificationCenter.default.post(
             name: GroupCallViewController.groupCallEndedNotification,
             object: nil,
@@ -147,7 +183,14 @@ final class GroupCallViewController: UIViewController {
         guard let r = self.room else { return }
         Task { [weak self] in
             do {
-                try await r.localParticipant.setMicrophone(enabled: enabled)
+                // [Wave B audio, 2026-05-18 / restored 2026-05-19] Pin
+                // AudioCaptureOptions on every mic toggle so re-publish (some
+                // LK revs re-create the track on unmute) keeps AEC + AGC +
+                // noise suppression on.
+                try await r.localParticipant.setMicrophone(
+                    enabled: enabled,
+                    captureOptions: CallViewController.defaultAudioCaptureOptions()
+                )
                 await MainActor.run { self?.updateLocalParticipant(audioMuted: !enabled) }
             } catch {
                 print("[GroupCallVC] setMicrophone(\(enabled)) failed: \(error)")
@@ -176,12 +219,12 @@ final class GroupCallViewController: UIViewController {
         }
     }
 
+    /// [Wave B audio, 2026-05-18 / restored 2026-05-19] Speaker toggle now
+    /// delegates to AudioRouter (same rationale as 1:1 path).
     private func applySpeaker(_ enabled: Bool) {
-        let audio = AVAudioSession.sharedInstance()
-        do {
-            try audio.overrideOutputAudioPort(enabled ? .speaker : .none)
-        } catch {
-            print("[GroupCallVC] setSpeaker failed: \(error)")
+        let actual = AudioRouter.shared.setSpeaker(enabled)
+        DispatchQueue.main.async { [weak self] in
+            self?.session.speakerOn = actual
         }
     }
 
