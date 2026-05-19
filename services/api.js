@@ -699,8 +699,32 @@ if (Platform.OS === 'web') {
       // getStoredToken already loaded meta; nothing else to do here.
     } finally {
       _tokenReadyResolve();
+      // [#1175 2026-05-18] Defensive: push hydrated bearer into native
+      // SharedPreferences (Android) / App Group UserDefaults (iOS) so the
+      // LkTokenFetcher cold-path can mint a LiveKit token even on a cold
+      // start where the user never re-logged in this process. Without this
+      // the SharedPreferences "auth_token" can be empty for a freshly
+      // installed/cleared Android app whose JS already restored the bearer
+      // via SecureStore — the call accept then shows "sem token".
+      try {
+        if (authToken) _persistAuthForNative(authToken).catch(() => {});
+      } catch {}
     }
   })();
+
+  // [#1175 2026-05-18] AppState 'active' re-persist. The Android system
+  // can wipe SharedPreferences on "Clear cache" without nuking
+  // EncryptedSharedPreferences (where expo-secure-store lives). Re-syncing
+  // on every foreground guarantees the native side stays in sync with the
+  // JS bearer even if SharedPreferences was cleared out-of-band.
+  try {
+    const { AppState } = require('react-native');
+    AppState.addEventListener('change', (next) => {
+      if (next === 'active' && authToken) {
+        _persistAuthForNative(authToken).catch(() => {});
+      }
+    });
+  } catch {}
 }
 
 let _reloginPromise = null;
@@ -1248,6 +1272,12 @@ export async function refreshAuthToken() {
         const tk = await SecureStore.getItemAsync('mail_token');
         if (tk && tk.length > 0) {
           if (tk !== authToken) authToken = tk;
+          // [#1175 2026-05-18] Re-stash to native after every successful
+          // refresh — covers the case where SharedPreferences was wiped
+          // (Clear Cache, Reset App Preferences, etc.) but SecureStore /
+          // EncryptedSharedPreferences still has the bearer. Without
+          // this, LkTokenFetcher fails on the next call → "sem token".
+          _persistAuthForNative(authToken).catch(() => {});
           return true;
         }
       } catch {}
@@ -1255,6 +1285,7 @@ export async function refreshAuthToken() {
         const tk2 = await _readAsyncStorage(TOKEN_FALLBACK_KEY);
         if (tk2 && tk2.length > 0) {
           if (tk2 !== authToken) authToken = tk2;
+          _persistAuthForNative(authToken).catch(() => {});
           return true;
         }
       } catch {}

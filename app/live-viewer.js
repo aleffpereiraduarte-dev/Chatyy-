@@ -1269,20 +1269,17 @@ export default function LiveViewerScreen() {
           // Server fans the event out to `chat_user_{viewer_email}`, so
           // anyone receiving this message IS the approved viewer.
           //
-          // GATED until Stage 3 (host LK subscribe) is shipped. Without
-          // the host subscribing to the LK room, the cohost would publish
-          // into an empty room — viewers + host would only see the
-          // cohost video via the legacy `live_join_approve` P2P path
-          // anyway. Set `globalThis.__chatyy_cohost_lk` = true to opt-in
-          // for testing. The dual-path race (LK vs P2P both grabbing
-          // getUserMedia) is the reason we don't auto-enable yet.
-          if (globalThis.__chatyy_cohost_lk) {
-            (async () => {
-              try { await joinCohost(); } catch (e) { console.warn('[Live] joinCohost failed:', e?.message); }
-            })();
-          } else {
-            console.log('[Live] cohost approval received, LK path gated (set globalThis.__chatyy_cohost_lk=true to enable)');
-          }
+          // [#1174 fix, 2026-05-18] Stage 3 (host LK subscribe) IS shipped
+          // — see live-broadcast.js `ensureCohostSubscriber` which the
+          // host's approveJoinRequest already calls. The `__chatyy_cohost_lk`
+          // gate was a Stage 2 safety valve to avoid publishing into an
+          // empty room before the host could subscribe. Removing it now
+          // because both sides are wired. User report: "amigo eu mandei o
+          // pedido ele aceitou mas n licou a camera e faz colabe abe" was
+          // exactly this gate silently dropping the approval.
+          (async () => {
+            try { await joinCohost(); } catch (e) { console.warn('[Live] joinCohost failed:', e?.message); }
+          })();
           break;
         case 'live_ended':
           // Round 66 (2026-05-18) — issue #8. Previously we auto-router.back'd

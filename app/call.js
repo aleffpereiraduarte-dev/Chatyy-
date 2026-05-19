@@ -1408,7 +1408,17 @@ function CallScreenInner() {
 
     _diag('connect_start', { url });
     try {
-      await r.connect(url, token);
+      // [#1173 WebSocketRTC audit, 2026-05-18] LiveKit's r.connect has no
+      // built-in timeout — on a sustained network outage the promise hangs
+      // forever and the "Conectando..." UI stays stuck instead of flipping
+      // to "connection failed" so the user can retry. WhatsApp times out at
+      // ~12s. We use 15s to match LK's internal ICE-gathering ceiling.
+      const CONNECT_TIMEOUT_MS = 15000;
+      const connectPromise = r.connect(url, token);
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('LK connect timeout (15s)')), CONNECT_TIMEOUT_MS);
+      });
+      await Promise.race([connectPromise, timeoutPromise]);
       _diag('connect_ok');
     } catch (e) {
       _diag('connect_err', { msg: String(e?.message || e), stack: String(e?.stack || '').slice(0, 500), url });

@@ -688,8 +688,29 @@ class ExpoCallKitModule : Module() {
       lkToken: String?
       ->
       try {
+        // [#1172 native-call-in-background fix, 2026-05-18] When MainActivity
+        // is foreground (user tapping "Ligar" from chat), launching with just
+        // FLAG_ACTIVITY_NEW_TASK + manifest singleTop is NOT enough — the OS
+        // sees the new task but keeps MainActivity's task on top because
+        // taskAffinity="" puts CallActivity in its own affinity-less task and
+        // the launcher task stays "more important". Result: native UI builds
+        // (LK Room connects, audio captures) but the user never sees it,
+        // they only see the JS "Conectando..." stale state.
+        //
+        // FLAG_ACTIVITY_REORDER_TO_FRONT forces the OS to bring CallActivity's
+        // task to the foreground even if MainActivity's task currently owns
+        // it. FLAG_ACTIVITY_SINGLE_TOP avoids a second instance when the
+        // activity is already active (e.g. user navigates back to chat and
+        // re-taps Ligar within the same call). Combined with the manifest
+        // singleTop launchMode this guarantees exactly one foreground
+        // CallActivity instance per call.
         val intent = Intent(context, CallActivity::class.java).apply {
-          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK
+              or Intent.FLAG_ACTIVITY_SINGLE_TOP
+              or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+              or Intent.FLAG_ACTIVITY_CLEAR_TOP
+          )
           putExtra(CallActivity.EXTRA_CALL_ID, callId)
           putExtra(CallActivity.EXTRA_CALLER_NAME, callerName)
           putExtra(CallActivity.EXTRA_CALLER_EMAIL, callerEmail)
@@ -698,6 +719,7 @@ class ExpoCallKitModule : Module() {
           if (lkToken != null) putExtra(CallActivity.EXTRA_LK_TOKEN, lkToken)
         }
         context.startActivity(intent)
+        Log.d(TAG, "openNativeCall: launched CallActivity callId=$callId with foreground flags")
       } catch (t: Throwable) {
         Log.e(TAG, "openNativeCall failed: ${t.message}", t)
       }
@@ -737,8 +759,18 @@ class ExpoCallKitModule : Module() {
         ?: "call_${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().substring(0, 8)}"
 
       try {
+        // [#1172 native-call-in-background fix, 2026-05-18] Same foreground-
+        // forcing flag set as openNativeCall above. Without REORDER_TO_FRONT
+        // the OS keeps MainActivity's task on top and CallActivity (in its
+        // own affinity-less task) builds invisibly in the background — user
+        // sees only the JS "Calling…" overlay even though LK Room is alive.
         val intent = Intent(context, CallActivity::class.java).apply {
-          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+          addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK
+              or Intent.FLAG_ACTIVITY_SINGLE_TOP
+              or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+              or Intent.FLAG_ACTIVITY_CLEAR_TOP
+          )
           putExtra(CallActivity.EXTRA_CALL_ID, callId)
           // For an outgoing call the "caller_name" displayed on the screen is
           // actually the *callee* — that's who we're calling. Mirroring iOS.
@@ -771,8 +803,16 @@ class ExpoCallKitModule : Module() {
       hasVideo: Boolean
       ->
       try {
+        // [#1172 fix, 2026-05-18] Force GroupCallActivity to the foreground —
+        // mirrors openNativeCall. Without REORDER_TO_FRONT the group-call
+        // task lives behind MainActivity (silent LK Room, no UI visible).
         val intent = Intent(context, GroupCallActivity::class.java).apply {
-          addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+          addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK
+              or Intent.FLAG_ACTIVITY_SINGLE_TOP
+              or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+              or Intent.FLAG_ACTIVITY_CLEAR_TOP
+          )
           putExtra(GroupCallActivity.EXTRA_ROOM_NAME, roomName)
           putExtra(GroupCallActivity.EXTRA_LK_URL, lkUrl)
           putExtra(GroupCallActivity.EXTRA_LK_TOKEN, lkToken)

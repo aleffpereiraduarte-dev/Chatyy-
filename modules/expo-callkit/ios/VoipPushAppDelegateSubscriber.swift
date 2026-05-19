@@ -347,10 +347,12 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
                                                  hasVideo: Bool,
                                                  lkUrl: String,
                                                  lkToken: String) {
-        guard let root = UIApplication.shared.connectedScenes
-            .compactMap({ ($0 as? UIWindowScene)?.keyWindow?.rootViewController })
-            .first else {
-            print("[VoipSubscriber] auto-accept: no keyWindow rootVC yet — deferring (JS path will handle)")
+        // [#1172 fix, 2026-05-18] Robust window/VC resolver — falls back
+        // across scene activation states and presented VCs so a cold-start
+        // VoIP push auto-accept actually surfaces CallViewController instead
+        // of silently bailing on a nil keyWindow.
+        guard let root = robustPresentingViewController() else {
+            print("[VoipSubscriber] auto-accept: no presenting VC yet — deferring (JS path will handle)")
             return
         }
         CallViewController.present(
@@ -571,4 +573,45 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
         print("[VoipSubscriber] stub didDeactivate — disabling RTCAudioSession")
         VoipPushAppDelegateSubscriber.setRTCAudioEnabled(false)
     }
+}
+
+// MARK: - Robust window resolver
+//
+// [#1172 native-call-in-background fix, 2026-05-18] See full docstring in
+// ExpoCallKitModule.swift's `resolvePresentingViewController`. Duplicated
+// here so the AppDelegate-tier code (cold-start, no JS bundle yet) doesn't
+// need to cross-import the module file.
+// NOT @MainActor-annotated: callers (DispatchQueue.main.async, MainActor.run,
+// PushKit delegate-on-main) are already main-thread. See sibling helper in
+// ExpoCallKitModule.swift for the full rationale.
+fileprivate func robustPresentingViewController() -> UIViewController? {
+    let scenes = UIApplication.shared.connectedScenes
+
+    func windowFrom(_ scene: UIWindowScene) -> UIWindow? {
+        if let key = scene.windows.first(where: { $0.isKeyWindow }) { return key }
+        return scene.windows.first { !$0.isHidden }
+    }
+
+    if let active = scenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
+       let win = windowFrom(active),
+       let vc = win.rootViewController {
+        return vc
+    }
+    if let inactive = scenes.first(where: { $0.activationState == .foregroundInactive }) as? UIWindowScene,
+       let win = windowFrom(inactive),
+       let vc = win.rootViewController {
+        return vc
+    }
+    for s in scenes {
+        if let ws = s as? UIWindowScene,
+           let win = windowFrom(ws),
+           let vc = win.rootViewController {
+            return vc
+        }
+    }
+    if let appWin = (UIApplication.shared.delegate as? UIResponder)?.value(forKey: "window") as? UIWindow,
+       let vc = appWin.rootViewController {
+        return vc
+    }
+    return nil
 }

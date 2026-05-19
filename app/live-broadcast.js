@@ -2058,9 +2058,10 @@ export default function LiveBroadcastScreen() {
   // `live_{sessionId}`. Called the first time a cohost gets approved.
   // Idempotent: if already connecting/connected, no-op.
   const ensureCohostSubscriber = useCallback(async () => {
-    // Gated behind the same flag as live-viewer's join. Until viewers ship
-    // the LK publish path widely, the host has nothing to subscribe to.
-    if (!globalThis.__chatyy_cohost_lk) return;
+    // [#1174 fix, 2026-05-18] Removed `__chatyy_cohost_lk` gate. Both the
+    // viewer's joinCohost (live-viewer.js) and this host-side subscriber
+    // are wired; the gate was a Stage 2 safety valve that prevented
+    // approvals from ever causing a camera publish in the wild.
     if (cohostRoomRef.current) return;
     if (cohostConnectingRef.current) return;
     cohostConnectingRef.current = true;

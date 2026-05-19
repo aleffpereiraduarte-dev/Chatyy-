@@ -3,6 +3,7 @@ import CallKit
 import PushKit
 import AVFoundation
 import Network
+import UIKit
 
 // [bug 2026-05-15 cold-start-voip-drop] PKPushRegistry is OWNED by
 // AppDelegate (created in didFinishLaunchingWithOptions). This module
@@ -471,9 +472,13 @@ public class ExpoCallKitModule: Module {
     // path stays in charge (fallback for unmigrated callers).
     AsyncFunction("openNativeCall") { (callId: String, callerName: String, callerEmail: String, hasVideo: Bool, lkUrl: String?, lkToken: String?) -> Void in
       await MainActor.run {
-        guard let root = UIApplication.shared.connectedScenes
-            .compactMap({ ($0 as? UIWindowScene)?.keyWindow?.rootViewController })
-            .first else { return }
+        // [#1172 fix, 2026-05-18] resolvePresentingViewController handles
+        // backgrounded scenes, CallKit ring-sheet contention, and multi-scene
+        // iPad windows — see helper docstring.
+        guard let root = resolvePresentingViewController() else {
+          print("[ExpoCallKit] openNativeCall: no presenting VC available — call will not foreground")
+          return
+        }
         CallViewController.present(from: root,
             callId: callId, callerName: callerName,
             callerEmail: callerEmail, hasVideo: hasVideo,
@@ -579,9 +584,10 @@ public class ExpoCallKitModule: Module {
     AsyncFunction("openGroupCall") {
       (roomName: String, lkUrl: String, lkToken: String, participantsJson: String, hasVideo: Bool) -> Void in
       await MainActor.run {
-        guard let root = UIApplication.shared.connectedScenes
-          .compactMap({ ($0 as? UIWindowScene)?.keyWindow?.rootViewController })
-          .first else { return }
+        guard let root = resolvePresentingViewController() else {
+          print("[ExpoCallKit] openGroupCall: no presenting VC available")
+          return
+        }
         GroupCallViewController.present(from: root,
           roomName: roomName, lkUrl: lkUrl, lkToken: lkToken,
           participantsJson: participantsJson, hasVideo: hasVideo)
@@ -598,9 +604,10 @@ public class ExpoCallKitModule: Module {
       (liveSessionId: String, lkUrl: String, lkToken: String,
        hostEmail: String, hostName: String, hostAvatar: String?) -> Void in
       await MainActor.run {
-        guard let root = UIApplication.shared.connectedScenes
-          .compactMap({ ($0 as? UIWindowScene)?.keyWindow?.rootViewController })
-          .first else { return }
+        guard let root = resolvePresentingViewController() else {
+          print("[ExpoCallKit] startLiveBroadcast: no presenting VC available")
+          return
+        }
         LiveBroadcastViewController.present(
           from: root,
           liveSessionId: liveSessionId,
@@ -624,9 +631,10 @@ public class ExpoCallKitModule: Module {
        pinnedCommentText: String?, pinnedCommentAuthor: String?,
        slowModeSeconds: Int) -> Void in
       await MainActor.run {
-        guard let root = UIApplication.shared.connectedScenes
-          .compactMap({ ($0 as? UIWindowScene)?.keyWindow?.rootViewController })
-          .first else { return }
+        guard let root = resolvePresentingViewController() else {
+          print("[ExpoCallKit] startLiveViewer: no presenting VC available")
+          return
+        }
         let pinned: LivePinnedComment? = {
           guard let txt = pinnedCommentText, !txt.isEmpty else { return nil }
           let name = pinnedCommentAuthor ?? "?"
@@ -1208,10 +1216,12 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
                                               lkUrl: String,
                                               lkToken: String,
                                               conversationId: String = "") {
-    guard let root = UIApplication.shared.connectedScenes
-        .compactMap({ ($0 as? UIWindowScene)?.keyWindow?.rootViewController })
-        .first else {
-      print("[ExpoCallKit] presentNativeCallVC: no keyWindow rootViewController — skipping native present")
+    // [#1172 fix, 2026-05-18] resolvePresentingViewController is robust to
+    // backgrounded scenes + CallKit ring-sheet contention; the old
+    // keyWindow-first chain silently bailed when the app was cold-starting
+    // from a VoIP push and the user had not yet returned to foreground.
+    guard let root = resolvePresentingViewController() else {
+      print("[ExpoCallKit] presentNativeCallVC: no presenting VC — skipping native present")
       return
     }
     // [2026-05-16 Stage 2] isOutgoing stays false for the CXAnswer path —
@@ -1325,10 +1335,9 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     lkUrl: String?,
     lkToken: String?
   ) {
-    guard let root = UIApplication.shared.connectedScenes
-        .compactMap({ ($0 as? UIWindowScene)?.keyWindow?.rootViewController })
-        .first else {
-      print("[ExpoCallKit] presentOutgoingCallVC: no keyWindow rootViewController — skipping native present")
+    // [#1172 fix, 2026-05-18] resolvePresentingViewController — see helper.
+    guard let root = resolvePresentingViewController() else {
+      print("[ExpoCallKit] presentOutgoingCallVC: no presenting VC — skipping native present")
       return
     }
     CallViewController.present(
@@ -1545,4 +1554,76 @@ extension ExpoCallKitModule: NativeCallRoomListener {
       ])
     }
   }
+}
+
+// MARK: - Window/RootVC resolver
+//
+// [#1172 native-call-in-background fix, 2026-05-18] Apple deprecated
+// UIWindow.isKeyWindow / keyWindow lookup on iOS 15+, and the legacy
+// `connectedScenes.first.keyWindow` chain returns nil in three real-world
+// situations we hit during call presentation:
+//
+//   * Background scene: when the app is backgrounded mid-cold-start (VoIP
+//     push arrived but user hasn't opened the app yet), connectedScenes
+//     contains a UISceneActivationState.background scene whose keyWindow is
+//     nil because the window has not yet attached to a window scene.
+//   * CallKit ring sheet: while CallKit's native ring sheet is on screen
+//     (incoming call UI), the host app's window is NOT the key window —
+//     CallKit's UIWindow temporarily owns the key. `keyWindow?` returns nil
+//     and our present-on-keyWindow path silently bails.
+//   * Multi-scene (iPad): connectedScenes is an unordered set; .first picks
+//     a deterministic-by-hash scene which may not be the visible one.
+//
+// resolvePresentingViewController walks the scenes in this order:
+//   1. foregroundActive UIWindowScene -> isKeyWindow window
+//   2. foregroundActive UIWindowScene -> first non-hidden window
+//   3. foregroundInactive scene fallback (transitioning into foreground)
+//   4. Any scene's first window (cold-start)
+//
+// Then it traverses presentedViewController to land on the top-most VC so
+// CallViewController.present (which does `top.present(...)` internally) works
+// even when another modal (PHPicker, ProMode picker, system action sheet) is
+// already on screen.
+// NOT @MainActor-annotated: callers are already guaranteed main-thread via
+// DispatchQueue.main.async / MainActor.run / Task.detached → await MainActor.run.
+// Annotating would require every caller to `await` even from a non-async
+// context (CXProvider delegate callbacks, DispatchQueue closures), forcing
+// a wider refactor for no real benefit — UIApplication.shared APIs are
+// main-thread-safe at runtime in practice and Apple's runtime check is
+// only enforced under Swift 6 strict concurrency.
+fileprivate func resolvePresentingViewController() -> UIViewController? {
+  let scenes = UIApplication.shared.connectedScenes
+
+  func windowFrom(_ scene: UIWindowScene) -> UIWindow? {
+    if let key = scene.windows.first(where: { $0.isKeyWindow }) { return key }
+    return scene.windows.first { !$0.isHidden }
+  }
+
+  // 1+2. Active foreground scene.
+  if let active = scenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
+     let win = windowFrom(active),
+     let vc = win.rootViewController {
+    return vc
+  }
+  // 3. Inactive foreground scene (transitioning).
+  if let inactive = scenes.first(where: { $0.activationState == .foregroundInactive }) as? UIWindowScene,
+     let win = windowFrom(inactive),
+     let vc = win.rootViewController {
+    return vc
+  }
+  // 4. Any scene with a window — covers backgrounded cold-start.
+  for s in scenes {
+    if let ws = s as? UIWindowScene,
+       let win = windowFrom(ws),
+       let vc = win.rootViewController {
+      return vc
+    }
+  }
+  // 5. Last-resort: AppDelegate.window (deprecated but still set on most
+  //    Expo apps that haven't fully migrated to SceneDelegate).
+  if let appWin = (UIApplication.shared.delegate as? UIResponder)?.value(forKey: "window") as? UIWindow,
+     let vc = appWin.rootViewController {
+    return vc
+  }
+  return nil
 }
