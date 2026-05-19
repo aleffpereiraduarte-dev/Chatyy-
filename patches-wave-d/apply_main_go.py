@@ -67,14 +67,14 @@ func (h *Hub) notifyBackendCallEvent(eventType, callID, callerEmail, calleeEmail
 \t}
 \tgo func() {
 \t\tbody, _ := json.Marshal(map[string]string{
-\t\t\t"action":        "ws_call_event",
+\t\t\t"action":        "chat_ws_call_event",
 \t\t\t"event":         eventType,
 \t\t\t"call_id":       callID,
 \t\t\t"caller_email":  callerEmail,
 \t\t\t"callee_email":  calleeEmail,
 \t\t})
 \t\treq, err := http.NewRequest("POST",
-\t\t\t"https://chatyy.com.br/api/chat.php?action=ws_call_event",
+\t\t\t"https://chatyy.com.br/api/email.php?action=chat_ws_call_event",
 \t\t\tstrings.NewReader(string(body)))
 \t\tif err != nil {
 \t\t\treturn

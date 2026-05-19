@@ -33,7 +33,7 @@ PATCH_BODY = r"""
         // Auth: shared MAIL_WS_KEY via X-WS-Internal header — same secret
         // the Go server uses for verifyChatMembership.
         // ============================================================
-        case 'ws_call_event': {
+        case 'chat_ws_call_event': {
             // Internal-only — bail unless the WS server presented the shared key.
             $wsInternalKey = $_SERVER['HTTP_X_WS_INTERNAL'] ?? '';
             $expected = getenv('MAIL_WS_KEY') ?: '';
