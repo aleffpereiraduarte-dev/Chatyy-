@@ -50,10 +50,36 @@ export function isDocExt(name)   { return DOC_EXTENSIONS.includes(getFileExt(nam
 /**
  * Strip HTML tags. Used by compose body counter, email previews, search
  * highlighting. Centralized to avoid each call site reinventing the regex.
+ *
+ * Critically also strips the CONTENT of <style>, <script>, <head> and HTML
+ * comments before removing tags. Without that pre-pass, marketing emails
+ * (Serasa, banks, newsletters) leak raw CSS into the inbox preview line
+ * (e.g. "p { margin: 0; } .img-responsive { max-width: 100% !important; }").
  */
 export function stripHtmlTags(html) {
   if (typeof html !== 'string') return '';
-  return html.replace(/<[^>]*>/g, '');
+  return html
+    // Drop non-visible block content first — the tag-stripper below would
+    // otherwise turn each <style> body into plain CSS text in the output.
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<head\b[^>]*>[\s\S]*?<\/head>/gi, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    // Now strip remaining tags.
+    .replace(/<[^>]*>/g, '')
+    // Decode the bare-minimum HTML entities so previews don't show `&nbsp;`,
+    // `&amp;` literally. Full decoding is intentionally avoided to keep this
+    // hot path cheap; if a preview slips through with an exotic entity the
+    // user will see it, not a security issue.
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    // Collapse runs of whitespace so the preview is a single tidy line.
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 /**
