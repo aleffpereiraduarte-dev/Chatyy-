@@ -84,6 +84,23 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
             // (CHANNEL_ID_SILENT) so the FSI/heads-up still surfaces but
             // without sound or vibration.
             val muteRingtone = data["mute_ringtone"] == "1" || data["mute_ringtone"] == "true"
+            // [#1183-followup, 2026-05-19] Pre-minted LK creds for the receiver
+            // shipped IN the FCM data (backend chat.php call_notify now mints
+            // per-recipient via _mintLivekitTokenForUser). When present, we
+            // forward them all the way to IncomingCallActivity →
+            // CallActivity, which short-circuits the LkTokenFetcher fallback
+            // — the path that surfaces "Sessao expirada" when the
+            // SharedPreferences bearer is stale on lock-screen wake.
+            val preLkUrl = data["lk_url"]?.takeIf { it.isNotBlank() }
+            val preLkToken = data["lk_token"]?.takeIf { it.isNotBlank() }
+            if (preLkUrl != null && preLkToken != null) {
+                try {
+                    LkTokenFetcher.setCached(applicationContext, callId, preLkToken, preLkUrl)
+                    Log.d(TAG, "Seeded LkTokenFetcher cache with pre-minted creds for callId=$callId")
+                } catch (t: Throwable) {
+                    Log.w(TAG, "Failed to seed LK cache: ${t.message}")
+                }
+            }
             // [2026-05-16 Stage 4] Cold-start auto-accept signal. Set by
             // backend (e.g. when a VoIP "answered on another device" push
             // is converted into a CallKit accept on this device, or when
