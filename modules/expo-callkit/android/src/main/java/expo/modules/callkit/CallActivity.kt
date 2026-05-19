@@ -50,13 +50,19 @@ import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.BlurOn
 import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.Cameraswitch
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Dialpad
 import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.FrontHand
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.PhoneInTalk
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SpeakerPhone
+import androidx.compose.material.icons.filled.Usb
 import androidx.compose.material.icons.filled.VideocamOff
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material.icons.filled.VolumeUp
@@ -162,6 +168,10 @@ class CallActivity : ComponentActivity() {
   companion object {
     private const val TAG = "CallActivity"
     const val ACTION_CLOSE = "expo.modules.callkit.CLOSE_CALL_ACTIVITY"
+    /** [DTMF, 2026-05-19] In-process broadcast from ExpoCallKitModule.playDTMF
+     *  carrying `digit` extra. We publish the digit over the LK data channel
+     *  as `D:<digit>` so the peer / SIP bridge picks it up. */
+    const val ACTION_PLAY_DTMF = "expo.modules.callkit.PLAY_DTMF"
     /** Local broadcast fired when this activity hangs up. JS bridges
      *  subscribe to react (e.g. cleanup the chat UI). Matches the
      *  iOS NotificationCenter name used by CallViewController. */
@@ -239,6 +249,16 @@ class CallActivity : ComponentActivity() {
     override fun onReceive(ctx: Context?, intent: Intent?) {
       Log.d(TAG, "closeReceiver: finishing activity")
       finishCall(reason = "close_broadcast")
+    }
+  }
+
+  /** [DTMF, 2026-05-19] Receives the digit from ExpoCallKitModule.playDTMF
+   *  and pipes it to publishDtmfFrame. We register/unregister with the
+   *  activity lifecycle so the receiver doesn't fire after teardown. */
+  private val dtmfReceiver = object : BroadcastReceiver() {
+    override fun onReceive(ctx: Context?, intent: Intent?) {
+      val digit = intent?.getStringExtra("digit") ?: return
+      publishDtmfFrame(digit)
     }
   }
 
@@ -362,6 +382,9 @@ class CallActivity : ComponentActivity() {
               try { room?.localParticipant?.setMicrophoneEnabled(desired) }
               catch (t: Throwable) { Log.w(TAG, "setMicrophoneEnabled: ${t.message}") }
             }
+            // __chatyy_native_call_sync — surface to JS so analytics, recording
+            // banner, and the (rare) hybrid JS overlay see the same mute state.
+            try { ExpoCallKitModule.emitLkLocalAudioChanged(desired) } catch (_: Throwable) {}
           },
           onToggleCam = { desired ->
             state.isCameraOn = desired
@@ -403,10 +426,19 @@ class CallActivity : ComponentActivity() {
                 catch (t2: Throwable) { Log.w(TAG, "setCameraEnabled fallback: ${t2.message}") }
               }
             }
+            // __chatyy_native_call_sync — JS sees the toggle so peer-video
+            // gating / recording banner / analytics stay synced.
+            try { ExpoCallKitModule.emitLkLocalVideoChanged(desired) } catch (_: Throwable) {}
           },
           onToggleSpeaker = { desired ->
             state.isSpeakerOn = desired
             applyAudioRoute(desired)
+            // __chatyy_native_call_sync — speaker route was previously a
+            // 2-writer split (JS callkeep.setSpeakerEnabled + native router)
+            // with no cross-talk. Now the native side is the single source of
+            // truth and JS mirrors via this event.
+            try { ExpoCallKitModule.emitLkSpeakerChanged(desired) } catch (_: Throwable) {}
+            try { ExpoCallKitModule.emitAudioRouteChanged(if (desired) "speaker" else if (state.audioOutputPreferBluetooth) "bluetooth" else "earpiece") } catch (_: Throwable) {}
           },
           onFlipCamera = { flipCamera() },
           onMinimize = { tryEnterPip() },
@@ -428,6 +460,15 @@ class CallActivity : ComponentActivity() {
             // the speaker button just flips the BT route.
             state.audioOutputPreferBluetooth = !state.audioOutputPreferBluetooth
             applyAudioRoute(state.isSpeakerOn)
+            // __chatyy_native_call_sync — emit the resolved audio route so JS
+            // analytics / settings UI surfaces "Bluetooth" or "Earpiece" the
+            // moment the user picks it instead of polling.
+            val route = when {
+              state.isSpeakerOn -> "speaker"
+              state.audioOutputPreferBluetooth -> "bluetooth"
+              else -> "earpiece"
+            }
+            try { ExpoCallKitModule.emitAudioRouteChanged(route) } catch (_: Throwable) {}
           },
           onToggleNoiseSuppression = { desired ->
             state.noiseSuppression = desired
@@ -475,6 +516,72 @@ class CallActivity : ComponentActivity() {
               Log.w(TAG, "startScreenshare bridge: ${t.message}")
             }
           },
+          onPlayDTMF = { digit ->
+            // Local tone via ToneGenerator + LK data fan-out. The receiver
+            // installed in onCreate also handles the network publish path
+            // for digits originating from the JS-side playDTMF Function;
+            // hitting both is intentional so we cover the JS-triggered case
+            // (e.g. /call.js automation) AND the native-UI case symmetrically.
+            try {
+              val toneId = when (digit) {
+                "0" -> ToneGenerator.TONE_DTMF_0
+                "1" -> ToneGenerator.TONE_DTMF_1
+                "2" -> ToneGenerator.TONE_DTMF_2
+                "3" -> ToneGenerator.TONE_DTMF_3
+                "4" -> ToneGenerator.TONE_DTMF_4
+                "5" -> ToneGenerator.TONE_DTMF_5
+                "6" -> ToneGenerator.TONE_DTMF_6
+                "7" -> ToneGenerator.TONE_DTMF_7
+                "8" -> ToneGenerator.TONE_DTMF_8
+                "9" -> ToneGenerator.TONE_DTMF_9
+                "*" -> ToneGenerator.TONE_DTMF_S
+                "#" -> ToneGenerator.TONE_DTMF_P
+                else -> -1
+              }
+              if (toneId >= 0) {
+                val gen = ToneGenerator(AudioManager.STREAM_VOICE_CALL, 80)
+                gen.startTone(toneId, 150)
+                lifecycleScope.launch {
+                  delay(220)
+                  try { gen.release() } catch (_: Throwable) {}
+                }
+              }
+            } catch (t: Throwable) { Log.w(TAG, "dtmf tone failed: ${t.message}") }
+            publishDtmfFrame(digit)
+          },
+          onPickAudioDevice = { type ->
+            // [Audio output picker, 2026-05-19] Real route switch via
+            // AudioRouter. Type is one of: "speaker", "earpiece",
+            // "bluetooth", "wired" (the sheet hides options that aren't
+            // currently connected). For BT we start SCO so the mic also
+            // routes through the headset; for the others we just clear SCO
+            // and toggle speakerphone.
+            val router = expo.modules.callkit.audio.AudioRouter.get(applicationContext)
+            when (type) {
+              "speaker" -> {
+                state.audioOutputPreferBluetooth = false
+                router.setSpeaker(true)
+                state.isSpeakerOn = true
+              }
+              "earpiece" -> {
+                state.audioOutputPreferBluetooth = false
+                router.setSpeaker(false)
+                state.isSpeakerOn = false
+              }
+              "bluetooth" -> {
+                state.audioOutputPreferBluetooth = true
+                router.preferBluetooth()
+                state.isSpeakerOn = false
+              }
+              "wired" -> {
+                // Wired headset takes priority on its own when plugged in;
+                // we just drop speakerphone/SCO so the system route wins.
+                state.audioOutputPreferBluetooth = false
+                router.setSpeaker(false)
+                state.isSpeakerOn = false
+              }
+            }
+          },
         )
       }
     }
@@ -504,6 +611,16 @@ class CallActivity : ComponentActivity() {
     } else {
       @Suppress("UnspecifiedRegisterReceiverFlag")
       registerReceiver(closeReceiver, filter)
+    }
+
+    // [DTMF, 2026-05-19] Internal broadcast so the JS-facing playDTMF
+    // Function can pipe digits into the active room.
+    val dtmfFilter = IntentFilter(ACTION_PLAY_DTMF)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      registerReceiver(dtmfReceiver, dtmfFilter, Context.RECEIVER_NOT_EXPORTED)
+    } else {
+      @Suppress("UnspecifiedRegisterReceiverFlag")
+      registerReceiver(dtmfReceiver, dtmfFilter)
     }
 
     // Bring up LiveKit. If url/token missing, try the 4-source fallback
@@ -557,6 +674,7 @@ class CallActivity : ComponentActivity() {
   @OptIn(DelicateCoroutinesApi::class)
   override fun onDestroy() {
     try { unregisterReceiver(closeReceiver) } catch (_: Exception) {}
+    try { unregisterReceiver(dtmfReceiver) } catch (_: Exception) {}
     stopRingback()
     // [Wave B audio, 2026-05-18] Drop the BT route listener + reset
     // speakerphone / MODE_NORMAL before LK disconnect so the next foreground
@@ -1088,6 +1206,10 @@ class CallActivity : ComponentActivity() {
           track.switchCamera()
           state.isFrontCamera = !state.isFrontCamera
           Log.d(TAG, "flipCamera: front=${state.isFrontCamera}")
+          // __chatyy_native_call_sync — JS local-preview mirror flag follows
+          // the native camera position so the on-screen avatar/PiP renderer
+          // can mirror the front-facing image without bridging another call.
+          try { ExpoCallKitModule.emitLkCameraFlipped(state.isFrontCamera) } catch (_: Throwable) {}
         } else {
           Log.w(TAG, "flipCamera: no local camera publication")
         }
@@ -1102,6 +1224,8 @@ class CallActivity : ComponentActivity() {
           // the previous renderer binding is on the (now released) old track.
           // Re-bind to the freshly published one.
           bindLocalCameraIfReady(r)
+          // __chatyy_native_call_sync — same JS notify as the smooth path.
+          try { ExpoCallKitModule.emitLkCameraFlipped(state.isFrontCamera) } catch (_: Throwable) {}
         } catch (_: Throwable) {}
       }
     }
@@ -1125,6 +1249,25 @@ class CallActivity : ComponentActivity() {
   }
 
   // ────────────── Reactions
+
+  /**
+   * [DTMF, 2026-05-19] Publish a single keypad digit over the LK data
+   * channel as `D:<digit>`. The ExpoCallKitModule.playDTMF Function plays
+   * the local tone via ToneGenerator; this method only handles the network
+   * fan-out so receivers (PSTN bridge, peer Chatyy client) see the press.
+   */
+  private fun publishDtmfFrame(digit: String) {
+    val r = room ?: return
+    if (digit.isEmpty()) return
+    val payload = ("D:" + digit).toByteArray(Charsets.UTF_8)
+    lifecycleScope.launch {
+      try {
+        r.localParticipant.publishData(payload)
+      } catch (t: Throwable) {
+        Log.w(TAG, "publishData DTMF '$digit' failed: ${t.message}")
+      }
+    }
+  }
 
   private fun spawnReaction(emoji: String) {
     val now = System.currentTimeMillis()
@@ -1196,6 +1339,9 @@ class CallActivity : ComponentActivity() {
     super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
     state.isInPip = isInPictureInPictureMode
     Log.d(TAG, "onPictureInPictureModeChanged isInPip=$isInPictureInPictureMode")
+    // __chatyy_native_call_sync — let JS know PiP entered/exited so OngoingCallBar,
+    // analytics, and any hybrid overlay can dock/undock UI accordingly.
+    try { ExpoCallKitModule.emitPipChanged(isInPictureInPictureMode) } catch (_: Throwable) {}
   }
 }
 
@@ -1299,9 +1445,22 @@ private fun CallScreen(
   onToggleNoiseSuppression: (Boolean) -> Unit,
   onCycleBackground: () -> Unit,
   onStartScreenshare: () -> Unit,
+  /** [DTMF, 2026-05-19] Forward a tapped digit. */
+  onPlayDTMF: (String) -> Unit,
+  /** [Audio picker, 2026-05-19] One of "speaker"/"earpiece"/"bluetooth"/"wired". */
+  onPickAudioDevice: (String) -> Unit,
 ) {
   var elapsedSeconds by remember { mutableStateOf(0) }
   var showReactions by remember { mutableStateOf(false) }
+  /** [DTMF, 2026-05-19] Toggles the 4×3 keypad overlay. */
+  var showKeypad by remember { mutableStateOf(false) }
+  /** Live readback of digits tapped this keypad session. */
+  var dtmfBuffer by remember { mutableStateOf("") }
+  /** [Audio picker, 2026-05-19] Whether the audio output sheet is visible. */
+  var showAudioPicker by remember { mutableStateOf(false) }
+  /** Real list of connected output devices, refreshed on sheet open. */
+  val ctx = androidx.compose.ui.platform.LocalContext.current
+  var audioDevices by remember { mutableStateOf(emptyList<AudioOutputEntry>()) }
 
   // 1s timer driving the connected-call duration HUD.
   LaunchedEffect(state.status) {
@@ -1396,13 +1555,22 @@ private fun CallScreen(
         onToggleMute = onToggleMute,
         onToggleCam = onToggleCam,
         onToggleSpeaker = onToggleSpeaker,
-        onPickAudioOutput = onPickAudioOutput,
+        onPickAudioOutput = {
+          // Refresh the device list right before showing so we reflect a
+          // headset that just got plugged in / paired.
+          audioDevices = enumerateAudioOutputs(ctx)
+          showAudioPicker = true
+        },
         onHangup = onHangup,
         onToggleHand = onToggleHand,
         onShowReactions = { showReactions = !showReactions },
         onToggleNoiseSuppression = onToggleNoiseSuppression,
         onCycleBackground = onCycleBackground,
         onStartScreenshare = onStartScreenshare,
+        onShowKeypad = {
+          showKeypad = true
+          dtmfBuffer = ""
+        },
       )
       Spacer(Modifier.height(36.dp))
     }
@@ -1436,6 +1604,50 @@ private fun CallScreen(
           onSendReaction(emoji)
           showReactions = false
         }
+      )
+    }
+
+    // 7. [DTMF, 2026-05-19] Keypad overlay. Renders above the action bar
+    //    so the user can still see (but not tap) the hangup button. Tap
+    //    outside the card dismisses.
+    AnimatedVisibility(
+      visible = showKeypad,
+      enter = slideInVertically { it } + fadeIn(),
+      exit = slideOutVertically { it } + fadeOut(),
+      modifier = Modifier.fillMaxSize(),
+    ) {
+      KeypadOverlay(
+        buffer = dtmfBuffer,
+        onTap = { digit ->
+          // Cap the buffer so it never overflows horizontally on small
+          // viewports. iOS keeps 24 chars; mirror.
+          dtmfBuffer = (dtmfBuffer + digit).takeLast(24)
+          onPlayDTMF(digit)
+        },
+        onDismiss = {
+          showKeypad = false
+          dtmfBuffer = ""
+        },
+      )
+    }
+
+    // 8. [Audio picker, 2026-05-19] Bottom sheet with the real list of
+    //    output devices. Calls onPickAudioDevice with a route id.
+    AnimatedVisibility(
+      visible = showAudioPicker,
+      enter = slideInVertically { it } + fadeIn(),
+      exit = slideOutVertically { it } + fadeOut(),
+      modifier = Modifier.fillMaxSize(),
+    ) {
+      AudioOutputSheet(
+        devices = audioDevices,
+        currentSpeaker = state.isSpeakerOn,
+        preferBluetooth = state.audioOutputPreferBluetooth,
+        onPick = { type ->
+          onPickAudioDevice(type)
+          showAudioPicker = false
+        },
+        onDismiss = { showAudioPicker = false },
       )
     }
   }
@@ -1798,6 +2010,8 @@ private fun BottomActionBar(
   onToggleNoiseSuppression: (Boolean) -> Unit,
   onCycleBackground: () -> Unit,
   onStartScreenshare: () -> Unit,
+  /** [DTMF, 2026-05-19] Open the 4×3 keypad overlay. */
+  onShowKeypad: () -> Unit,
 ) {
   Column(
     modifier = Modifier
@@ -1847,6 +2061,15 @@ private fun BottomActionBar(
         label = "Áudio",
         active = state.audioOutputPreferBluetooth,
         onClick = onPickAudioOutput,
+      )
+      // [DTMF, 2026-05-19] Keypad — opens the 4×3 DTMF grid overlay. Useful
+      // mainly for PSTN bridge calls hitting an IVR; for Chatyy↔Chatyy
+      // peer calls it still publishes the digit + tone so the receiver
+      // sees the press (useful for games / collaborative tools).
+      ActionPill(
+        icon = Icons.Filled.Dialpad,
+        label = "Teclado",
+        onClick = onShowKeypad,
       )
       // [Screen share, 2026-05-17] Optional screenshare pill for video calls.
       // Calls into the native start-screenshare bridge which forwards to the
@@ -2107,5 +2330,263 @@ private fun NeedsLoginBanner(onTap: () -> Unit, message: String) {
       fontSize = 14.sp,
       fontWeight = FontWeight.Medium,
     )
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// [DTMF, 2026-05-19] Keypad overlay
+// ══════════════════════════════════════════════════════════════════════════
+
+/// Cell descriptor — same shape as iOS dtmfDigits for parity. Letters under
+/// each digit follow the ITU-T E.161 layout WhatsApp / Phone use.
+private val DtmfRows: List<List<Pair<String, String>>> = listOf(
+  listOf("1" to " ", "2" to "ABC", "3" to "DEF"),
+  listOf("4" to "GHI", "5" to "JKL", "6" to "MNO"),
+  listOf("7" to "PQRS", "8" to "TUV", "9" to "WXYZ"),
+  listOf("*" to "", "0" to "+", "#" to ""),
+)
+
+@Composable
+private fun KeypadOverlay(
+  buffer: String,
+  onTap: (String) -> Unit,
+  onDismiss: () -> Unit,
+) {
+  Box(
+    modifier = Modifier
+      .fillMaxSize()
+      .background(Color.Black.copy(alpha = 0.55f))
+      .clickable(
+        indication = null,
+        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+      ) { onDismiss() },
+    contentAlignment = Alignment.BottomCenter,
+  ) {
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 8.dp, vertical = 24.dp)
+        .clip(RoundedCornerShape(24.dp))
+        .background(Color(0xFF14_1F_27))
+        .clickable(
+          indication = null,
+          interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+        ) { /* swallow taps so the dismiss layer doesn't fire */ }
+        .padding(vertical = 16.dp),
+      horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+      Box(
+        modifier = Modifier
+          .width(40.dp)
+          .height(4.dp)
+          .clip(RoundedCornerShape(2.dp))
+          .background(Color.White.copy(alpha = 0.3f))
+      )
+      Spacer(Modifier.height(12.dp))
+      Text(
+        text = buffer.ifEmpty { "Teclado" },
+        color = Color.White,
+        fontSize = if (buffer.isEmpty()) 17.sp else 26.sp,
+        fontWeight = FontWeight.Medium,
+        maxLines = 1,
+      )
+      Spacer(Modifier.height(14.dp))
+      DtmfRows.forEach { row ->
+        Row(
+          horizontalArrangement = Arrangement.spacedBy(22.dp),
+          modifier = Modifier.padding(vertical = 6.dp),
+        ) {
+          row.forEach { (digit, letters) ->
+            DtmfKey(digit = digit, letters = letters, onTap = onTap)
+          }
+        }
+      }
+      Spacer(Modifier.height(14.dp))
+      Box(
+        modifier = Modifier
+          .clip(CircleShape)
+          .background(Color.White.copy(alpha = 0.12f))
+          .clickable { onDismiss() }
+          .padding(horizontal = 28.dp, vertical = 10.dp),
+      ) {
+        Text(text = "Fechar", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+      }
+    }
+  }
+}
+
+@Composable
+private fun DtmfKey(digit: String, letters: String, onTap: (String) -> Unit) {
+  Box(
+    modifier = Modifier
+      .size(68.dp)
+      .clip(CircleShape)
+      .background(Color.White.copy(alpha = 0.08f))
+      .clickable { onTap(digit) },
+    contentAlignment = Alignment.Center,
+  ) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+      Text(text = digit, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Normal)
+      if (letters.isNotEmpty()) {
+        Text(
+          text = letters,
+          color = Color.White.copy(alpha = 0.55f),
+          fontSize = 10.sp,
+          fontWeight = FontWeight.SemiBold,
+        )
+      }
+    }
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// [Audio picker, 2026-05-19] Real device enumeration + bottom sheet
+// ══════════════════════════════════════════════════════════════════════════
+
+/// One available audio output. `type` is the route id we pass back through
+/// onPickAudioDevice; `label` is what the user sees on the sheet row.
+data class AudioOutputEntry(val type: String, val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector)
+
+/// Walks AudioManager.getDevices(GET_DEVICES_OUTPUTS) and returns a stable
+/// list with the system speaker + earpiece (always present), plus any
+/// external devices currently connected (BT headset, wired headphones,
+/// USB audio, hearing aid). The CallActivity refreshes this list each time
+/// the sheet is opened so a freshly-paired BT device shows up.
+private fun enumerateAudioOutputs(ctx: android.content.Context): List<AudioOutputEntry> {
+  val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+  val out = mutableListOf<AudioOutputEntry>()
+  // Built-in routes — always present, always offered.
+  out.add(AudioOutputEntry("earpiece", "Telefone", Icons.Filled.PhoneInTalk))
+  out.add(AudioOutputEntry("speaker", "Alto-falante", Icons.Filled.SpeakerPhone))
+
+  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+    val devices = try {
+      am.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+    } catch (_: Throwable) { return out }
+    var btSeen = false
+    var wiredSeen = false
+    var usbSeen = false
+    for (d in devices) {
+      when (d.type) {
+        android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+        android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> {
+          if (!btSeen) {
+            val name = try { d.productName?.toString().orEmpty() } catch (_: Throwable) { "" }
+            val label = if (name.isNotBlank()) name else "Bluetooth"
+            out.add(AudioOutputEntry("bluetooth", label, Icons.Filled.Bluetooth))
+            btSeen = true
+          }
+        }
+        android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET,
+        android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> {
+          if (!wiredSeen) {
+            out.add(AudioOutputEntry("wired", "Fone com fio", Icons.Filled.Headphones))
+            wiredSeen = true
+          }
+        }
+        android.media.AudioDeviceInfo.TYPE_USB_DEVICE,
+        android.media.AudioDeviceInfo.TYPE_USB_HEADSET,
+        android.media.AudioDeviceInfo.TYPE_USB_ACCESSORY -> {
+          if (!usbSeen) {
+            out.add(AudioOutputEntry("wired", "USB", Icons.Filled.Usb))
+            usbSeen = true
+          }
+        }
+        else -> { /* ignore built-ins, telephony, FM, HDMI, … */ }
+      }
+    }
+  }
+  return out
+}
+
+@Composable
+private fun AudioOutputSheet(
+  devices: List<AudioOutputEntry>,
+  currentSpeaker: Boolean,
+  preferBluetooth: Boolean,
+  onPick: (String) -> Unit,
+  onDismiss: () -> Unit,
+) {
+  Box(
+    modifier = Modifier
+      .fillMaxSize()
+      .background(Color.Black.copy(alpha = 0.55f))
+      .clickable(
+        indication = null,
+        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+      ) { onDismiss() },
+    contentAlignment = Alignment.BottomCenter,
+  ) {
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 8.dp, vertical = 24.dp)
+        .clip(RoundedCornerShape(24.dp))
+        .background(Color(0xFF14_1F_27))
+        .clickable(
+          indication = null,
+          interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+        ) { /* swallow */ }
+        .padding(vertical = 16.dp),
+      horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+      Box(
+        modifier = Modifier
+          .width(40.dp)
+          .height(4.dp)
+          .clip(RoundedCornerShape(2.dp))
+          .background(Color.White.copy(alpha = 0.3f))
+      )
+      Spacer(Modifier.height(10.dp))
+      Text(text = "Saída de áudio", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+      Spacer(Modifier.height(12.dp))
+      Column(
+        modifier = Modifier
+          .fillMaxWidth()
+          .padding(horizontal = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        devices.forEach { entry ->
+          val selected = when (entry.type) {
+            "speaker" -> currentSpeaker && !preferBluetooth
+            "earpiece" -> !currentSpeaker && !preferBluetooth
+            "bluetooth" -> preferBluetooth
+            else -> false
+          }
+          AudioRouteRow(entry = entry, selected = selected, onPick = { onPick(entry.type) })
+        }
+      }
+      Spacer(Modifier.height(16.dp))
+    }
+  }
+}
+
+@Composable
+private fun AudioRouteRow(entry: AudioOutputEntry, selected: Boolean, onPick: () -> Unit) {
+  Row(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(12.dp))
+      .background(Color.White.copy(alpha = if (selected) 0.1f else 0.04f))
+      .clickable { onPick() }
+      .padding(horizontal = 14.dp, vertical = 12.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Icon(
+      imageVector = entry.icon,
+      contentDescription = entry.label,
+      tint = if (selected) SpeakerRing else Color.White,
+      modifier = Modifier.size(20.dp),
+    )
+    Spacer(Modifier.width(12.dp))
+    Text(text = entry.label, color = Color.White, fontSize = 16.sp, modifier = Modifier.weight(1f))
+    if (selected) {
+      Icon(
+        imageVector = Icons.Filled.Check,
+        contentDescription = "Selecionado",
+        tint = SpeakerRing,
+        modifier = Modifier.size(18.dp),
+      )
+    }
   }
 }

@@ -816,5 +816,9 @@ class GroupCallActivity : ComponentActivity() {
     statusBar?.visibility = vis
     localRenderer?.visibility = vis
     Log.d(TAG, "onPictureInPictureModeChanged isInPip=$isInPictureInPictureMode")
+    // [Bridge #2 2026-05-19] Same JS bridge as 1:1 CallActivity — chat header
+    // / OngoingCallBar reads `globalThis.__chatyyCallInPip` to decide whether
+    // to shrink while a group call is docked.
+    try { ExpoCallKitModule.emitPipChanged(isInPictureInPictureMode) } catch (_: Throwable) {}
   }
 }

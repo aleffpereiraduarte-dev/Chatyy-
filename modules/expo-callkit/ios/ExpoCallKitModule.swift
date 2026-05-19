@@ -48,6 +48,17 @@ public class ExpoCallKitModule: Module {
   // the JS `onCallEnded` event so /call state stays consistent.
   private var nativeCallEndedObserver: Any?
 
+  // __chatyy_native_call_sync 2026-05-19 — call-state observers (mute, cam,
+  // speaker, route, hold, PiP, camera flip). CallViewController posts the
+  // matching ExpoCallKitLk* notifications; we forward them to JS as typed
+  // events. Stored as [Any] so removeObserver(_:) cleans them up in deinit.
+  private var callStateObservers: [Any] = []
+  // [share outbox feedback, 2026-05-19] Observer for the AppDelegate-rebroadcast
+  // ShareDidSend NSNotification (originally a Darwin notification posted by
+  // the ShareExtension). Bridges to JS via the `onShareDidSend` event so JS
+  // can drain the App Group `chatyy.share_outbox` queue and refresh chat list.
+  private var shareDidSendObserver: Any?
+
   // Serial queue for thread-safe access to activeCalls, callPayloads, pendingEvents
   private let stateQueue = DispatchQueue(label: "com.onemundo.callkit.state")
 
@@ -161,7 +172,27 @@ public class ExpoCallKitModule: Module {
       "onLkParticipantDisconnected",
       "onLkTrackSubscribed",
       "onLkTrackUnsubscribed",
-      "onLkConnectionQuality"
+      "onLkConnectionQuality",
+      // __chatyy_native_call_sync 2026-05-19 — native call-state changes
+      // mirrored to JS so analytics, recording banner, peek UI, and post-call
+      // rating see the same mute/cam/speaker/route/hold/PiP state the native
+      // UI is rendering. Without these the JS overlay drifts out of sync
+      // (mute toggle from native CallKit UI never updates analytics, speaker
+      // route had 2 writers with no cross-talk, camera flip not mirrored,
+      // timer started at different points → wrong end-card duration).
+      "onLkLocalAudioChanged",
+      "onLkLocalVideoChanged",
+      "onLkSpeakerChanged",
+      "onLkCameraFlipped",
+      "onAudioRouteChanged",
+      "onCallHoldChanged",
+      "onPipChanged",
+      // [share outbox feedback, 2026-05-19] Emitted when the native
+      // ShareExtension finishes sending shares; JS drains the App Group
+      // queue via getShareOutbox() and refreshes the chat list for any
+      // affected conversations so users see their share messages without
+      // pull-to-refresh.
+      "onShareDidSend"
     )
 
     // Auto-initialize on module load (skip CallKit in China per Apple requirement)
@@ -182,6 +213,7 @@ public class ExpoCallKitModule: Module {
         self.setupNetworkMonitor()
         self.installAppDelegateBridges()
         self.installNativeCallEndedObserver()
+        self.installShareDidSendObserver()
         self.flushVoipTokenFromAppGroup()
         self.adoptPendingCallsFromAppGroup()
         // [bug 2026-05-15 #4] Removed AVAudioSession pre-arm.
@@ -743,6 +775,127 @@ public class ExpoCallKitModule: Module {
     Function("warmCallSignalWs") { () -> Void in
       CallSignalWs.shared.warmConnect()
     }
+
+    // ─── DTMF keypad (2026-05-19) ────────────────────────────────────────
+    //
+    // Two-tier dispatch:
+    //   1. Post `ExpoCallKitPlayDTMF` so CallViewController (which owns the
+    //      LK Room) publishes a `{type:"dtmf", digit:"5"}` data frame to the
+    //      peer. The peer's call screen can show the digit feedback / play
+    //      a tone, but more importantly: when the peer is the SIP/Telnyx
+    //      bridge (PSTN gateway), the bridge listens for these frames and
+    //      injects RFC 2833 in-band tones into the carrier leg so IVRs see
+    //      the keypress.
+    //   2. Locally trigger the iOS DTMF tone via `AudioServicesPlaySystemSound`
+    //      so the user hears their tap matches the digit (WhatsApp pattern).
+    //
+    // JS callers: ExpoCallKit.playDTMF("5"). Accepts a single character of
+    // 0-9, *, #, or letters A-D (rare but spec-allowed).
+    Function("playDTMF") { (digit: String) -> Void in
+      let cleaned = digit.trimmingCharacters(in: .whitespacesAndNewlines)
+      guard let first = cleaned.first else { return }
+      let ch = String(first)
+      // Validate — silently drop unknown characters.
+      let validChars: Set<Character> = ["0","1","2","3","4","5","6","7","8","9","*","#","A","B","C","D"]
+      guard let c = ch.first, validChars.contains(c) else { return }
+
+      // Local audible feedback: play the matching DTMF tone briefly. Codes
+      // from the iOS system sound table:
+      //   1209-1633Hz row tones — system sounds 1200..1209 are reserved
+      //   for the dialer tones (kSystemSoundID_DTMF_*). Using the public
+      //   AudioServicesPlaySystemSound stable IDs:
+      //     '0' -> 1200, '1' -> 1201, '2' -> 1202, …, '9' -> 1209,
+      //     '*' -> 1210, '#' -> 1211, 'A'..'D' -> 1212..1215.
+      let baseId: UInt32 = {
+        switch c {
+        case "0": return 1200
+        case "1": return 1201
+        case "2": return 1202
+        case "3": return 1203
+        case "4": return 1204
+        case "5": return 1205
+        case "6": return 1206
+        case "7": return 1207
+        case "8": return 1208
+        case "9": return 1209
+        case "*": return 1210
+        case "#": return 1211
+        case "A": return 1212
+        case "B": return 1213
+        case "C": return 1214
+        case "D": return 1215
+        default: return 0
+        }
+      }()
+      if baseId != 0 {
+        AudioServicesPlaySystemSound(SystemSoundID(baseId))
+      }
+
+      // Forward to the active CallViewController via NotificationCenter so
+      // the Room.localParticipant.publish(data:) call happens on the VC's
+      // owned Task scope. The VC ignores when there is no active room
+      // (e.g. during ringing pre-connect).
+      NotificationCenter.default.post(
+        name: Notification.Name("ExpoCallKitPlayDTMF"),
+        object: nil,
+        userInfo: ["digit": ch]
+      )
+    }
+
+    // ─── ShareExtension outbox JS bridge (2026-05-19) ────────────────────
+    //
+    // The ShareExtension writes successful sends to App Group UserDefaults
+    // key `chatyy.share_outbox` and posts a Darwin notification. The host
+    // observes via Darwin → NSNotification → this module's
+    // installShareDidSendObserver(), which then fires `onShareDidSend` to JS.
+    //
+    // JS reads the queue with getShareOutbox(), reacts to it (refresh chat
+    // list / affected conv), then calls clearShareOutbox() to drain.
+    //
+    // We deliberately don't auto-clear inside the event — JS needs the
+    // entries to know which conv to refresh, and a crash between read and
+    // refresh shouldn't lose them. The "ack the queue" model keeps the
+    // contract simple.
+
+    Function("getShareOutbox") { () -> [[String: Any]] in
+      guard let ud = UserDefaults(suiteName: kAppGroupId),
+            let queue = ud.array(forKey: "chatyy.share_outbox") as? [[String: Any]]
+      else { return [] }
+      return queue
+    }
+
+    Function("clearShareOutbox") { () -> Void in
+      guard let ud = UserDefaults(suiteName: kAppGroupId) else { return }
+      ud.removeObject(forKey: "chatyy.share_outbox")
+      ud.synchronize()
+    }
+  }
+
+  // [share outbox feedback, 2026-05-19] Subscribe to the NSNotification the
+  // host AppDelegate posts whenever the ShareExtension's Darwin notification
+  // fires. We forward to JS as `onShareDidSend`. The event body carries the
+  // entire current queue so the JS handler can dispatch per-conversation
+  // refreshes in one pass; JS is expected to call clearShareOutbox() after
+  // it has dispatched its refreshes.
+  private func installShareDidSendObserver() {
+    if shareDidSendObserver != nil { return }
+    shareDidSendObserver = NotificationCenter.default.addObserver(
+      forName: Notification.Name("ShareDidSend"),
+      object: nil,
+      queue: .main
+    ) { [weak self] _ in
+      guard let self = self else { return }
+      var entries: [[String: Any]] = []
+      if let ud = UserDefaults(suiteName: kAppGroupId),
+         let queue = ud.array(forKey: "chatyy.share_outbox") as? [[String: Any]] {
+        entries = queue
+      }
+      self.safeSendEvent("onShareDidSend", [
+        "entries": entries,
+        "count": entries.count,
+      ])
+      print("[ExpoCallKit] onShareDidSend fired — \(entries.count) entries")
+    }
   }
 
   private func setupProvider() {
@@ -816,6 +969,33 @@ public class ExpoCallKitModule: Module {
       // it down. Dismiss it explicitly here. Idempotent vs. the local-hangup
       // CXEndCallAction path which also dismisses.
       ProviderDelegate.dismissActiveCallSurfaces(reason: "remote_call_end")
+    }
+
+    // __chatyy_native_call_sync 2026-05-19 — observe call-state notifications
+    // posted by CallViewController.apply* (mute, cam, speaker, route, hold,
+    // PiP, camera flip) and forward them to JS as typed events. Using
+    // NotificationCenter avoids needing a strong CallVC→Module ref (CallVC
+    // is a UIKit-presented modal owned by ProviderDelegate, not the RN
+    // bridge). The state names are stable across iOS minor revs.
+    guard callStateObservers.isEmpty else { return }
+    let nc = NotificationCenter.default
+    let q = OperationQueue.main
+    let triples: [(String, String, String)] = [
+      // (postedName, jsEvent, payloadKey)
+      ("ExpoCallKitLkLocalAudioChanged", "onLkLocalAudioChanged", "enabled"),
+      ("ExpoCallKitLkLocalVideoChanged", "onLkLocalVideoChanged", "enabled"),
+      ("ExpoCallKitLkSpeakerChanged", "onLkSpeakerChanged", "enabled"),
+      ("ExpoCallKitLkCameraFlipped", "onLkCameraFlipped", "front"),
+      ("ExpoCallKitAudioRouteChanged", "onAudioRouteChanged", "route"),
+      ("ExpoCallKitCallHoldChanged", "onCallHoldChanged", "held"),
+      ("ExpoCallKitPipChanged", "onPipChanged", "inPip"),
+    ]
+    for (name, jsEvent, key) in triples {
+      let token = nc.addObserver(forName: Notification.Name(name), object: nil, queue: q) { [weak self] note in
+        guard let raw = note.userInfo?[key] else { return }
+        self?.safeSendEvent(jsEvent, [key: raw])
+      }
+      callStateObservers.append(token)
     }
   }
 
@@ -929,6 +1109,14 @@ public class ExpoCallKitModule: Module {
     if let obs = nativeCallEndedObserver {
       NotificationCenter.default.removeObserver(obs)
     }
+    if let obs = shareDidSendObserver {
+      NotificationCenter.default.removeObserver(obs)
+    }
+    // __chatyy_native_call_sync — drop the call-state observers too.
+    for obs in callStateObservers {
+      NotificationCenter.default.removeObserver(obs)
+    }
+    callStateObservers.removeAll()
     pathMonitor?.cancel()
   }
 
@@ -977,7 +1165,11 @@ public class ExpoCallKitModule: Module {
     update.supportsGrouping = false
     update.supportsUngrouping = false
     update.supportsHolding = true
-    update.supportsDTMF = false
+    // [DTMF, 2026-05-19] Set true so the CallKit system call bar
+    // exposes the keypad button alongside our in-app keypad overlay.
+    // Both paths route through `playDTMF` (LK data channel) and the
+    // ProviderDelegate CXPlayDTMFCallAction handler.
+    update.supportsDTMF = true
 
     try await provider.reportNewIncomingCall(with: uuid, update: update)
   }
@@ -1551,6 +1743,25 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
         return
       }
       module?.safeSendEvent("onCallAnswered", ["callId": callIdForEvent, "resumed": true])
+    }
+    action.fulfill()
+  }
+
+  /// [DTMF, 2026-05-19] CXPlayDTMFCallAction — fires when the user taps a
+  /// digit on the CallKit system call bar's built-in keypad (visible because
+  /// we set `update.supportsDTMF = true`). The action carries `digits`
+  /// (typically 1 char; CallKit batches paste-of-multiple via the
+  /// `type` discriminator). We forward each character through the same
+  /// NotificationCenter channel the SwiftUI overlay uses, so the LK Room
+  /// publishes the data frame regardless of which UI fired the action.
+  func provider(_ provider: CXProvider, perform action: CXPlayDTMFCallAction) {
+    let digits = action.digits
+    for ch in digits {
+      NotificationCenter.default.post(
+        name: Notification.Name("ExpoCallKitPlayDTMF"),
+        object: nil,
+        userInfo: ["digit": String(ch)]
+      )
     }
     action.fulfill()
   }

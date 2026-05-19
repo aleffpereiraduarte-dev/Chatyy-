@@ -76,6 +76,28 @@ class ExpoLiveNativeModule : Module() {
       }
     }
 
+    /**
+     * [Bridge #5 2026-05-19] Viewer disconnected from the LK room. Mirrors
+     * `emitViewerJoined` — JS overlay subtracts from the viewer count and
+     * removes the avatar pip. Fired from LiveHostActivity's RoomEvent
+     * .ParticipantDisconnected branch + the iOS LiveHostViewController's
+     * RoomDelegate participantDidDisconnect.
+     */
+    fun emitViewerLeft(roomName: String?, identity: String) {
+      val inst = instance.get() ?: return
+      try {
+        inst.sendEvent(
+          "onViewerLeft",
+          mapOf(
+            "roomName" to (roomName ?: ""),
+            "identity" to identity
+          )
+        )
+      } catch (t: Throwable) {
+        Log.w(TAG, "emitViewerLeft failed: ${t.message}")
+      }
+    }
+
     fun emitLikeReceived(roomName: String?, identity: String?, count: Int) {
       val inst = instance.get() ?: return
       try {
@@ -103,6 +125,7 @@ class ExpoLiveNativeModule : Module() {
       "onLiveEnded",
       "onLiveError",
       "onViewerJoined",
+      "onViewerLeft",
       "onLikeReceived"
     )
 

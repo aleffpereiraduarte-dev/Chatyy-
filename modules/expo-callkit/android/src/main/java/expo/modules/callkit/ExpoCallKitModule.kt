@@ -175,6 +175,33 @@ class ExpoCallKitModule : Module() {
         mapOf("callId" to callId, "message" to message))
     }
 
+    // __chatyy_native_call_sync 2026-05-19 — control-state mirrors fired by
+    // CallActivity (Compose) so JS overlays/analytics see the SAME state the
+    // native UI is rendering. Without these the native pill toggles (mute,
+    // cam, speaker, hold, PiP, route, camera flip) were silent black holes
+    // from the JS side and the post-call rating + recording banner drifted.
+    fun emitLkLocalAudioChanged(enabled: Boolean) {
+      instance.get()?.sendEvent("onLkLocalAudioChanged", mapOf("enabled" to enabled))
+    }
+    fun emitLkLocalVideoChanged(enabled: Boolean) {
+      instance.get()?.sendEvent("onLkLocalVideoChanged", mapOf("enabled" to enabled))
+    }
+    fun emitLkSpeakerChanged(enabled: Boolean) {
+      instance.get()?.sendEvent("onLkSpeakerChanged", mapOf("enabled" to enabled))
+    }
+    fun emitLkCameraFlipped(front: Boolean) {
+      instance.get()?.sendEvent("onLkCameraFlipped", mapOf("front" to front))
+    }
+    fun emitAudioRouteChanged(route: String) {
+      instance.get()?.sendEvent("onAudioRouteChanged", mapOf("route" to route))
+    }
+    fun emitCallHoldChanged(held: Boolean) {
+      instance.get()?.sendEvent("onCallHoldChanged", mapOf("held" to held))
+    }
+    fun emitPipChanged(inPip: Boolean) {
+      instance.get()?.sendEvent("onPipChanged", mapOf("inPip" to inPip))
+    }
+
     /**
      * Save accepted call data to SharedPreferences so JS can read it on cold start.
      * Called from IncomingCallActivity and CallActionReceiver when instance is null.
@@ -231,7 +258,15 @@ class ExpoCallKitModule : Module() {
       // [2026-05-15 #992] Native LiveKit Room events fired by NativeCallRoom.
       "onLkConnected", "onLkParticipantConnected", "onLkParticipantDisconnected",
       "onLkTrackSubscribed", "onLkTrackUnsubscribed", "onLkConnectionQuality",
-      "onLkDisconnected", "onLkDataReceived", "onLkError"
+      "onLkDisconnected", "onLkDataReceived", "onLkError",
+      // __chatyy_native_call_sync 2026-05-19 — native call-state changes
+      // mirrored to JS (mute / cam / speaker / route / camera-flip / hold /
+      // PiP) so the JS overlay, analytics, recording banner, and post-call
+      // rating share state with the native Compose UI. Without these the
+      // native button taps were silent black holes from the JS side.
+      "onLkLocalAudioChanged", "onLkLocalVideoChanged", "onLkSpeakerChanged",
+      "onLkCameraFlipped", "onAudioRouteChanged", "onCallHoldChanged",
+      "onPipChanged"
     )
 
     OnCreate {
@@ -924,6 +959,65 @@ class ExpoCallKitModule : Module() {
     // safe to call from any JS hook (login, foreground, even on every render).
     Function("warmCallSignalWs") {
       try { CallSignalWs.warmConnect(context.applicationContext) } catch (_: Throwable) {}
+    }
+
+    // ─── DTMF keypad (2026-05-19) ────────────────────────────────────────
+    //
+    // Mirrors the iOS playDTMF Function. Two-tier dispatch:
+    //   1. ToneGenerator.startTone(...) plays the matching DTMF beep
+    //      locally so the user hears their tap registered.
+    //   2. LocalBroadcastManager-style broadcast routes the digit into
+    //      the active CallActivity which forwards it onto the LK Room
+    //      data channel as `D:<digit>` (peer / SIP bridge consumes).
+    //
+    // Valid chars: 0-9, *, #, A-D. Anything else is silently dropped.
+    Function("playDTMF") { digit: String ->
+      val trimmed = digit.trim()
+      if (trimmed.isEmpty()) return@Function
+      val ch = trimmed[0]
+      val toneId = when (ch) {
+        '0' -> android.media.ToneGenerator.TONE_DTMF_0
+        '1' -> android.media.ToneGenerator.TONE_DTMF_1
+        '2' -> android.media.ToneGenerator.TONE_DTMF_2
+        '3' -> android.media.ToneGenerator.TONE_DTMF_3
+        '4' -> android.media.ToneGenerator.TONE_DTMF_4
+        '5' -> android.media.ToneGenerator.TONE_DTMF_5
+        '6' -> android.media.ToneGenerator.TONE_DTMF_6
+        '7' -> android.media.ToneGenerator.TONE_DTMF_7
+        '8' -> android.media.ToneGenerator.TONE_DTMF_8
+        '9' -> android.media.ToneGenerator.TONE_DTMF_9
+        '*' -> android.media.ToneGenerator.TONE_DTMF_S
+        '#' -> android.media.ToneGenerator.TONE_DTMF_P
+        'A' -> android.media.ToneGenerator.TONE_DTMF_A
+        'B' -> android.media.ToneGenerator.TONE_DTMF_B
+        'C' -> android.media.ToneGenerator.TONE_DTMF_C
+        'D' -> android.media.ToneGenerator.TONE_DTMF_D
+        else -> -1
+      }
+      if (toneId < 0) return@Function
+      try {
+        val gen = android.media.ToneGenerator(
+          android.media.AudioManager.STREAM_VOICE_CALL,
+          80
+        )
+        gen.startTone(toneId, 150)
+        // Release after 200ms so concurrent presses don't pile up
+        // resources. ToneGenerator is single-shot per instance.
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+          try { gen.release() } catch (_: Throwable) {}
+        }, 220)
+      } catch (_: Throwable) {}
+
+      // Forward to CallActivity if it's currently up. Implicit-action
+      // broadcast inside our own package + setPackage() makes this safe
+      // without the BROADCAST_PACKAGE_REPLACED permission.
+      try {
+        val intent = android.content.Intent("expo.modules.callkit.PLAY_DTMF").apply {
+          setPackage(context.applicationContext.packageName)
+          putExtra("digit", ch.toString())
+        }
+        context.applicationContext.sendBroadcast(intent)
+      } catch (_: Throwable) {}
     }
   }
 }

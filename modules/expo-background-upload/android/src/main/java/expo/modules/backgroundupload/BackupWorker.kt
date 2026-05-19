@@ -1,9 +1,11 @@
 package expo.modules.backgroundupload
 
 import android.content.Context
+import android.content.Intent
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -49,6 +51,19 @@ class BackupWorker(
     // the foreground multipart flow that JS still drives. Trying to push a
     // 500MB video through a 15-min worker window just wastes battery.
     private const val MAX_FILE_SIZE_BG = 100L * 1024L * 1024L
+
+    // [JS bridge, 2026-05-19] Delta file the JS layer reads on cold start
+    // to reconcile what the worker uploaded while the app was killed.
+    // Lives in the app's internal files dir (context.filesDir) so it
+    // survives WorkManager restarts but is wiped on app uninstall (same
+    // lifecycle as the SharedPreferences backed_up_ids set).
+    private const val DELTA_FILE_NAME = "chatyy-backup-delta.json"
+    // [JS bridge, 2026-05-19] LocalBroadcast intent for in-process delivery
+    // when JS is alive. Observers in ExpoBackgroundUploadModule re-emit as
+    // the `onBatchComplete` Expo event so the JS UI can bump its counter
+    // without round-tripping through the delta file.
+    const val ACTION_BACKUP_PROGRESS = "com.onemundo.mail.BACKUP_PROGRESS"
+    const val EXTRA_IDS = "ids"
   }
 
   override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
@@ -69,6 +84,11 @@ class BackupWorker(
 
       var uploaded = 0
       var failed = 0
+      // [JS bridge, 2026-05-19] Track newly uploaded ids this run so we can
+      // hand them to JS via delta-file + LocalBroadcast at the end. We
+      // intentionally don't include rows that were already in `backedUp`
+      // (i.e. duplicates already known) — JS already has those.
+      val uploadedIds = ArrayList<String>()
       // Helper for the per-file primitives — we don't need the Expo Module
       // lifecycle, just the same code paths.
       val helper = WorkerHelper(applicationContext)
@@ -90,8 +110,12 @@ class BackupWorker(
           )
 
           if (initResp.optBoolean("duplicate", false)) {
-            // Server already has it — mark and move on.
+            // Server already has it — mark and move on. Counts as a JS
+            // delta entry too because JS may not have this id in its map
+            // yet (e.g. another device uploaded it; this device just
+            // verified via content_hash precheck).
             backedUp.add(row.id); uploaded++
+            uploadedIds.add(row.id)
             continue
           }
 
@@ -120,6 +144,7 @@ class BackupWorker(
             )
             backedUp.add(row.id)
             uploaded++
+            uploadedIds.add(row.id)
           } else {
             failed++
           }
@@ -130,17 +155,86 @@ class BackupWorker(
           if (failed >= 5 && uploaded == 0) {
             Log.w(TAG, "5 fails before first success — backing off, will retry on next window")
             saveBackedUpIds(prefs, backedUp)
+            // Still emit any partial delta — better to have JS reconcile
+            // 1-2 ids than lose them entirely.
+            if (uploadedIds.isNotEmpty()) emitDelta(applicationContext, uploadedIds)
             return@withContext Result.retry()
           }
         }
       }
 
       saveBackedUpIds(prefs, backedUp)
-      Log.i(TAG, "doWork complete: uploaded=$uploaded failed=$failed remaining=${rows.size - backedUp.size}")
+
+      // [JS bridge, 2026-05-19] Persist + broadcast the run's delta. The
+      // file path is the durable channel (survives process death); the
+      // LocalBroadcast is the live channel (fires only if JS is alive).
+      // The JS layer uses both: AppState 'active' / cold-start reads the
+      // file via reconcileWorkerBackedUp(), and onBatchComplete listeners
+      // get the live broadcast.
+      if (uploadedIds.isNotEmpty()) {
+        emitDelta(applicationContext, uploadedIds)
+      }
+
+      Log.i(TAG, "doWork complete: uploaded=$uploaded failed=$failed remaining=${rows.size - backedUp.size} delta=${uploadedIds.size}")
       Result.success()
     } catch (e: Exception) {
       Log.e(TAG, "doWork fatal", e)
       Result.retry()
+    }
+  }
+
+  /**
+   * [JS bridge, 2026-05-19] Persist the run's delta + emit a LocalBroadcast.
+   *
+   * File contract:
+   *   ~/files/chatyy-backup-delta.json -> { "ids": [...], "updated_at": <ms> }
+   * The JS reconcile path:
+   *   1. Read file (expo-file-system documentDirectory + "chatyy-backup-delta.json")
+   *   2. Merge ids into AsyncStorage @chatyy_backup/backed_up_map
+   *   3. Delete the file
+   *
+   * The file is append-merged across multiple worker runs so a JS app that
+   * never opens between runs doesn't lose ids — we merge with what's
+   * already on disk.
+   */
+  private fun emitDelta(context: Context, newIds: List<String>) {
+    try {
+      val file = File(context.filesDir, DELTA_FILE_NAME)
+      // Merge with any existing delta so back-to-back runs accumulate
+      // until JS picks them up.
+      val merged = HashSet<String>(newIds.size)
+      if (file.exists()) {
+        try {
+          val raw = file.readText()
+          val obj = JSONObject(raw)
+          val arr = obj.optJSONArray("ids") ?: JSONArray()
+          for (i in 0 until arr.length()) {
+            val s = arr.optString(i)
+            if (s.isNotEmpty()) merged.add(s)
+          }
+        } catch (_: Exception) {
+          // Corrupt file — overwrite from scratch.
+        }
+      }
+      for (id in newIds) merged.add(id)
+
+      val arr = JSONArray()
+      for (id in merged) arr.put(id)
+      val obj = JSONObject().apply {
+        put("ids", arr)
+        put("updated_at", System.currentTimeMillis())
+      }
+      file.writeText(obj.toString())
+    } catch (e: Exception) {
+      Log.w(TAG, "emitDelta file write failed: ${e.message}")
+    }
+
+    try {
+      val intent = Intent(ACTION_BACKUP_PROGRESS)
+      intent.putStringArrayListExtra(EXTRA_IDS, ArrayList(newIds))
+      LocalBroadcastManager.getInstance(context).sendBroadcast(intent)
+    } catch (e: Exception) {
+      Log.w(TAG, "emitDelta broadcast failed: ${e.message}")
     }
   }
 

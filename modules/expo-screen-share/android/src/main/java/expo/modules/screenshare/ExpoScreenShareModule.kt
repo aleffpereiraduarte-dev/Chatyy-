@@ -7,6 +7,7 @@ import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.modules.Module
@@ -45,6 +46,25 @@ class ExpoScreenShareModule : Module() {
   }
 
   private var pendingPromise: Promise? = null
+
+  // [Bridge #1 2026-05-19] LocalBroadcast receiver that catches
+  // ScreenShareService.ACTION_STOPPED (fired from stopSelfClean) and turns
+  // it into an `onBroadcastStopped` JS event. Without this, when the user
+  // taps "Stop sharing" in the system status bar the MediaProjection
+  // Callback.onStop teardown runs entirely inside the service process and
+  // JS never learns the broadcast ended — UI shows "Sharing…" forever.
+  private val stoppedReceiver = object : android.content.BroadcastReceiver() {
+    override fun onReceive(ctx: Context?, intent: Intent?) {
+      if (intent?.action != ScreenShareService.ACTION_STOPPED) return
+      val reason = intent.getStringExtra(ScreenShareService.EXTRA_STOP_REASON) ?: "unknown"
+      Log.d(TAG, "stoppedReceiver: reason=$reason")
+      try {
+        sendEvent("onBroadcastStopped", mapOf("reason" to reason))
+      } catch (t: Throwable) {
+        Log.w(TAG, "sendEvent onBroadcastStopped failed: ${t.message}")
+      }
+    }
+  }
 
   // [2026-05-17 Stage 4 bridge] expo-callkit's startScreenshare() dispatches
   // a broadcast that we observe here. Lifecycle is tied to the module
@@ -95,6 +115,15 @@ class ExpoScreenShareModule : Module() {
           @Suppress("UnspecifiedRegisterReceiverFlag")
           ctx.registerReceiver(bridgeReceiver, filter)
         }
+        // [Bridge #1 2026-05-19] LocalBroadcastManager bus for in-process
+        // service → module signalling. Separate from bridgeReceiver above
+        // because that one rides the OS broadcast bus (cross-process); the
+        // STOPPED event is purely intra-app and benefits from the LBM's
+        // synchronous delivery + no manifest gymnastics.
+        LocalBroadcastManager.getInstance(ctx).registerReceiver(
+          stoppedReceiver,
+          android.content.IntentFilter(ScreenShareService.ACTION_STOPPED)
+        )
       } catch (t: Throwable) {
         Log.w(TAG, "bridgeReceiver register failed: ${t.message}")
       }
@@ -103,6 +132,11 @@ class ExpoScreenShareModule : Module() {
     OnDestroy {
       try {
         appContext.reactContext?.unregisterReceiver(bridgeReceiver)
+      } catch (_: Throwable) {}
+      try {
+        appContext.reactContext?.let {
+          LocalBroadcastManager.getInstance(it).unregisterReceiver(stoppedReceiver)
+        }
       } catch (_: Throwable) {}
     }
 

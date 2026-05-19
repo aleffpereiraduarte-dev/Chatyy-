@@ -1107,6 +1107,46 @@ function CallScreenInner() {
     };
     _diag('connectToRoom_start');
 
+    // __chatyy_native_call_sync 2026-05-19 — adopt the native LiveKit Room.
+    // When a cold-start incoming call (PushKit on iOS, FCM-spawned
+    // CallActivity on Android) has already pre-connected the LK Room before
+    // the JS bundle parsed, calling `new Room().connect()` here creates a
+    // second Room → two audio sessions fighting for the mic, mute-toggle
+    // desync, and the "delay no áudio" bug. Always probe
+    // `adoptNativeRoom(callId)` first.
+    //
+    // Behavior when adopted:
+    //   - Peer tracks are already attached on the native renderer (Compose
+    //     on Android / SwiftUI on iOS), so the hybrid /call overlay flips
+    //     `peerConnected = true` and relies on the onLk* native emitter
+    //     events (wired in services/callkeep.installNativeCallStateBridge)
+    //     for live state updates (participant join/leave, track sub/unsub,
+    //     quality, mute, cam, speaker, route, hold, PiP).
+    //   - We bail out before Room.connect / track publish / statsPoller.
+    //     The native side is already publishing local mic + (optionally) cam
+    //     and running its own adaptive bitrate loop.
+    if (Platform.OS !== 'web') {
+      try {
+        const ExpoCallKit = require('../modules/expo-callkit');
+        const snap = await ExpoCallKit.adoptNativeRoom?.(callId);
+        if (snap && (snap.alreadyConnected || snap.connected || snap.roomName || snap.localIdentity)) {
+          console.log('[Call] adopting native Room — skip JS Room.connect', { callId, snap });
+          _diag('adopted_native_room', { snap_keys: Object.keys(snap || {}).join(',') });
+          setPeerConnected(true);
+          // Flip the global flag so the WS chat_call_end gate
+          // (isNativeRoomConnected helper below) knows the native side owns
+          // the call lifecycle and JS must NOT race a duplicate hangup.
+          try { globalThis.__chatyyNativeCallActive = true; } catch {}
+          return;
+        }
+      } catch (e) {
+        // Adoption failure is non-fatal — fall through to the legacy JS
+        // Room.connect path. The new-second-Room race is back, but the call
+        // still works for users on builds without the native call screen.
+        _diag('adopt_native_room_err', { msg: String(e?.message || e).slice(0, 200) });
+      }
+    }
+
     let token, url, room, iceServers;
     try {
       ({ token, url, room, iceServers } = await fetchLivekitToken());
@@ -1732,22 +1772,45 @@ function CallScreenInner() {
       }
     } catch {}
 
-    // WS BYE — peer's ringing-screen / CallKit needs this for cleanup if they
-    // never accepted. Send a few times spaced out in case of WS flap.
-    const delays = [0, 800, 1800];
-    (async () => {
-      for (let i = 0; i < delays.length; i++) {
-        if (delays[i] > 0) await new Promise(r => setTimeout(r, delays[i]));
-        try {
-          sendSignaling('call_end', {
-            call_id: callId,
-            target_email: contactEmail,
-            reason: 'hangup',
-            attempt: i + 1,
-          });
-        } catch {}
-      }
-    })().catch(() => {});
+    // __chatyy_native_call_sync 2026-05-19 — gate the WS hangup. When the
+    // native CallActivity (Android Compose) or CallViewController + CallKit
+    // (iOS) owns the Room, the CXEndCallAction / finishCall flow has already
+    // posted `call_end` to the server via the native CallSignalWs path. JS
+    // racing a duplicate `chat_call_end` here is what made the caller side
+    // see "Chamada encerrada" before the callee even finished joining
+    // (Gap 4 of the earlier native-call audit).
+    //
+    // Native sets `globalThis.__chatyyNativeCallActive = true` on
+    // `onLkConnected` (services/callkeep.installNativeCallStateBridge) and
+    // clears it on `onCallEnded`/`onLkDisconnected`. Skip the JS BYE only
+    // while the flag is true; web (no native call screen) always falls
+    // through to the legacy path.
+    const _isNativeRoomConnected = () => {
+      try {
+        if (Platform.OS === 'web') return false;
+        return globalThis.__chatyyNativeCallActive === true;
+      } catch { return false; }
+    };
+    if (!_isNativeRoomConnected()) {
+      // WS BYE — peer's ringing-screen / CallKit needs this for cleanup if
+      // they never accepted. Send a few times spaced out in case of WS flap.
+      const delays = [0, 800, 1800];
+      (async () => {
+        for (let i = 0; i < delays.length; i++) {
+          if (delays[i] > 0) await new Promise(r => setTimeout(r, delays[i]));
+          try {
+            sendSignaling('call_end', {
+              call_id: callId,
+              target_email: contactEmail,
+              reason: 'hangup',
+              attempt: i + 1,
+            });
+          } catch {}
+        }
+      })().catch(() => {});
+    } else {
+      console.log('[Call] skip WS call_end — native CallActivity/CallKit owns hangup');
+    }
 
     // Persist to history.
     const dur = Number(callDurationRef.current) || 0;

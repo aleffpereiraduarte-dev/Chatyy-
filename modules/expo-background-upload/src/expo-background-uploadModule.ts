@@ -21,6 +21,12 @@ declare class ExpoBackgroundUploadModuleClass extends NativeModule<ExpoBackgroun
   scheduleBackup?(wifiOnly: boolean, chargingOnly: boolean): Promise<void>;
   cancelBackup?(): Promise<void>;
   setBackupCreds?(bearer: string, apiBase: string, email: string): Promise<void>;
+  /** [JS bridge, 2026-05-19] Drain the worker's delta file (Android only).
+   *  Returns { ids: string[], updated_at: number } — JS merges the ids into
+   *  the @chatyy_backup/backed_up_map AsyncStorage key. Deletes the file on
+   *  read so subsequent calls return an empty list (until the worker runs
+   *  again). On iOS / web returns `{ ids: [], updated_at: 0 }`. */
+  reconcileWorkerBackedUp?(): Promise<{ ids: string[]; updated_at: number }>;
   // 2026-05-18: gate the native "X fotos salvas" / "Backup concluído"
   // local notification posted by notifyBackupComplete. Default ON.
   setBackupNotificationsEnabled?(enabled: boolean): void;
@@ -51,6 +57,7 @@ const NoOpModule: any = {
   requestBackgroundBackupNow: () => {},
   setBackupNotificationsEnabled: () => {},
   isBackupNotificationsEnabled: () => true,
+  reconcileWorkerBackedUp: async () => ({ ids: [], updated_at: 0 }),
 };
 
 let mod: ExpoBackgroundUploadModuleClass | any = NoOpModule;

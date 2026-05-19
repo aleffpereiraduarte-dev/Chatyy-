@@ -142,6 +142,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     private var ringbackResignObserver: NSObjectProtocol?
     private var ringbackActive: Bool = false
 
+    // [DTMF, 2026-05-19] Listen for ExpoCallKitPlayDTMF (posted by the
+    // module's playDTMF Function + the CXPlayDTMFCallAction handler) and
+    // publish the digit over the LK data channel so the peer (or a SIP
+    // bridge) can react. Cleared in deinit.
+    private var dtmfObserver: NSObjectProtocol?
+
     init(callId: String,
          callerName: String,
          callerEmail: String,
@@ -197,6 +203,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         AudioRouter.shared.configureForCall(hasVideo: hasVideo)
         self.session.speakerOn = AudioRouter.shared.speakerOn
 
+        // [DTMF, 2026-05-19] Install the digit-publish bridge.
+        installDTMFObserver()
+
         // Build the SwiftUI tree with the full closure set Stage #995 demands.
         let rootView = CallView(
             callId: callId,
@@ -215,7 +224,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             onSendReaction: { [weak self] emoji in self?.sendReaction(emoji) },
             onToggleNoiseSuppression: { [weak self] desired in self?.applyNoiseSuppression(desired) },
             onCycleBackground: { [weak self] in self?.cycleBackground() },
-            onToggleHold: { [weak self] desired in self?.applyHold(desired) }
+            onToggleHold: { [weak self] desired in self?.applyHold(desired) },
+            onPlayDTMF: { [weak self] digit in self?.handlePlayDTMF(digit) }
         )
 
         let host = UIHostingController(rootView: rootView)
@@ -407,6 +417,14 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 await MainActor.run { self?.session.micEnabled = !enabled }
             }
         }
+        // __chatyy_native_call_sync 2026-05-19 — module observer forwards
+        // to onLkLocalAudioChanged so JS analytics + recording banner reflect
+        // the native toggle (was a silent black hole before).
+        NotificationCenter.default.post(
+            name: Notification.Name("ExpoCallKitLkLocalAudioChanged"),
+            object: nil,
+            userInfo: ["enabled": enabled]
+        )
     }
 
     /// [Wave C, 2026-05-18] Video toggle now mutes the published track instead
@@ -454,6 +472,13 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 await MainActor.run { self.session.camEnabled = !enabled }
             }
         }
+        // __chatyy_native_call_sync 2026-05-19 — mirror to JS so peer-video
+        // gating + recording banner + post-call rating see the toggle.
+        NotificationCenter.default.post(
+            name: Notification.Name("ExpoCallKitLkLocalVideoChanged"),
+            object: nil,
+            userInfo: ["enabled": enabled]
+        )
     }
 
     /// [Wave B audio, 2026-05-18 / restored 2026-05-19] Speaker toggle now
@@ -469,6 +494,31 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         DispatchQueue.main.async { [weak self] in
             self?.session.speakerOn = actual
         }
+        // __chatyy_native_call_sync 2026-05-19 — fire both onLkSpeakerChanged
+        // (boolean) and onAudioRouteChanged (string) so JS sees the resolved
+        // route. setSpeaker(...) may clamp to BT/wired if they're connected —
+        // onAudioRouteChanged carries the truth from AVAudioSession itself.
+        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+        let route: String
+        if actual {
+            route = "speaker"
+        } else if outputs.contains(where: { $0.portType == .bluetoothA2DP || $0.portType == .bluetoothHFP || $0.portType == .bluetoothLE }) {
+            route = "bluetooth"
+        } else if outputs.contains(where: { $0.portType == .headphones || $0.portType == .headsetMic || $0.portType == .usbAudio }) {
+            route = "headset"
+        } else {
+            route = "earpiece"
+        }
+        NotificationCenter.default.post(
+            name: Notification.Name("ExpoCallKitLkSpeakerChanged"),
+            object: nil,
+            userInfo: ["enabled": actual]
+        )
+        NotificationCenter.default.post(
+            name: Notification.Name("ExpoCallKitAudioRouteChanged"),
+            object: nil,
+            userInfo: ["route": route]
+        )
     }
 
     /// [Wave C, 2026-05-18] Flip front/back camera WITHOUT unpublish/republish.
@@ -493,6 +543,14 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         guard let r = self.room else { return }
         let next: AVCaptureDevice.Position = currentCameraPosition == .front ? .back : .front
         currentCameraPosition = next
+        // __chatyy_native_call_sync 2026-05-19 — JS local-preview mirror flag
+        // follows the native camera position so the PiP renderer (or any
+        // hybrid overlay) can mirror the front-facing image correctly.
+        NotificationCenter.default.post(
+            name: Notification.Name("ExpoCallKitLkCameraFlipped"),
+            object: nil,
+            userInfo: ["front": next == .front]
+        )
         Task { [weak self] in
             guard let self = self else { return }
             // Path 1: LK-provided CameraCapturer publishes the position swap
@@ -628,6 +686,14 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 return
             }
             DispatchQueue.main.async { self?.session.onHold = held }
+            // __chatyy_native_call_sync 2026-05-19 — module observer forwards
+            // to onCallHoldChanged so JS analytics and the recording banner
+            // pause/resume in lockstep with the CallKit system hold glyph.
+            NotificationCenter.default.post(
+                name: Notification.Name("ExpoCallKitCallHoldChanged"),
+                object: nil,
+                userInfo: ["held": held]
+            )
         }
     }
 
@@ -739,6 +805,81 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             conversationId: self.conversationId,
             emoji: emoji.isEmpty ? "🖐️" : emoji
         )
+    }
+
+    // MARK: - DTMF keypad (2026-05-19)
+    //
+    // The module's `playDTMF` Expo function + the ProviderDelegate's
+    // CXPlayDTMFCallAction handler both post `ExpoCallKitPlayDTMF` so we
+    // have a single path to test: subscribe here, marshal the digit to the
+    // LK Room as a data frame, and let the system tone play on its own
+    // (AudioServicesPlaySystemSound is fired from the module + tone-handed
+    // CallKit dispatches its own tone for the system keypad).
+    //
+    // Data frame format: `D:<digit>`. Mirrors the `R:<emoji>` reaction
+    // protocol so receivers demux easily. A SIP/PSTN bridge consuming this
+    // can convert to RFC 2833 in-band tones, which is how PSTN IVRs see
+    // keypad input. For peer-to-peer Chatyy↔Chatyy calls the receiver can
+    // optionally flash the digit as an in-call toast (future polish).
+    private func installDTMFObserver() {
+        guard dtmfObserver == nil else { return }
+        dtmfObserver = NotificationCenter.default.addObserver(
+            forName: Notification.Name("ExpoCallKitPlayDTMF"),
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let digit = note.userInfo?["digit"] as? String,
+                  !digit.isEmpty else { return }
+            self?.publishDTMF(digit: digit)
+        }
+    }
+
+    /// Local handler — called by the SwiftUI CallView keypad. Plays the
+    /// matching system tone (so the user gets immediate audible feedback
+    /// even before the data frame is acked) and forwards to the same path
+    /// the NotificationCenter observer uses so logic stays single-source.
+    private func handlePlayDTMF(_ digit: String) {
+        guard let first = digit.first else { return }
+        let baseId: UInt32 = {
+            switch first {
+            case "0": return 1200
+            case "1": return 1201
+            case "2": return 1202
+            case "3": return 1203
+            case "4": return 1204
+            case "5": return 1205
+            case "6": return 1206
+            case "7": return 1207
+            case "8": return 1208
+            case "9": return 1209
+            case "*": return 1210
+            case "#": return 1211
+            case "A": return 1212
+            case "B": return 1213
+            case "C": return 1214
+            case "D": return 1215
+            default: return 0
+            }
+        }()
+        if baseId != 0 {
+            AudioServicesPlaySystemSound(SystemSoundID(baseId))
+        }
+        publishDTMF(digit: String(first))
+    }
+
+    /// Send `D:<digit>` on the LK data channel. No-op if the room isn't
+    /// connected yet (e.g. during early ringing before answer).
+    private func publishDTMF(digit: String) {
+        guard let r = self.room else { return }
+        let payload = "D:" + digit
+        guard let data = payload.data(using: .utf8) else { return }
+        Task {
+            do {
+                try await r.localParticipant.publish(data: data)
+            } catch {
+                print("[CallVC] publish DTMF '\(digit)' failed: \(error)")
+            }
+        }
     }
 
     // MARK: - Ringback (unchanged from prior round)
@@ -987,6 +1128,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     deinit {
         if let r = self.room { Task { await r.disconnect() } }
         if let obs = pipResignObserver { NotificationCenter.default.removeObserver(obs) }
+        if let obs = dtmfObserver { NotificationCenter.default.removeObserver(obs); dtmfObserver = nil }
         if #available(iOS 15.0, *), let pip = pipController, pip.isPictureInPictureActive {
             pip.stopPictureInPicture()
         }
@@ -1196,6 +1338,16 @@ extension CallViewController: RoomDelegate {
 extension CallViewController: AVPictureInPictureControllerDelegate {
     func pictureInPictureControllerWillStartPictureInPicture(_ controller: AVPictureInPictureController) {
         print("[CallVC] PiP will start")
+        // [Bridge #3 2026-05-19] Notify JS so the chat header / OngoingCallBar
+        // can shrink while the call docks. Mirrors the Android path
+        // CallActivity.onPictureInPictureModeChanged → emitPipChanged. The
+        // module's PiP notification observer translates this NSNotification
+        // into the `onPipChanged` JS event (Events list line 183).
+        NotificationCenter.default.post(
+            name: Notification.Name("ExpoCallKitPipChanged"),
+            object: nil,
+            userInfo: ["inPip": true]
+        )
     }
     func pictureInPictureControllerDidStartPictureInPicture(_ controller: AVPictureInPictureController) {
         print("[CallVC] PiP did start — dismissing fullscreen presentation")
@@ -1211,6 +1363,12 @@ extension CallViewController: AVPictureInPictureControllerDelegate {
     }
     func pictureInPictureControllerWillStopPictureInPicture(_ controller: AVPictureInPictureController) {
         print("[CallVC] PiP will stop")
+        // [Bridge #3 2026-05-19] Symmetric exit event.
+        NotificationCenter.default.post(
+            name: Notification.Name("ExpoCallKitPipChanged"),
+            object: nil,
+            userInfo: ["inPip": false]
+        )
     }
     func pictureInPictureController(_ controller: AVPictureInPictureController,
                                     restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {

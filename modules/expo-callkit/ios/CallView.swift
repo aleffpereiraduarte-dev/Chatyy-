@@ -28,6 +28,7 @@ import SwiftUI
 import UIKit
 import Combine
 import LiveKitClient
+import AVKit
 
 // MARK: - Floating reaction model
 
@@ -77,6 +78,11 @@ struct CallView: View {
     /// The VC fires CXSetHeldCallAction so the system call bar + LK Room
     /// stay in sync; the boolean is the desired held state (true = hold).
     let onToggleHold: ((Bool) -> Void)?
+    /// [DTMF, 2026-05-19] Forward a tapped digit to the module's playDTMF
+    /// function. The VC publishes the digit over the LK data channel +
+    /// plays the local feedback tone. Optional so existing call sites that
+    /// haven't been migrated still compile.
+    var onPlayDTMF: ((String) -> Void)? = nil
 
     // MARK: - Local UI state
     //
@@ -86,6 +92,14 @@ struct CallView: View {
     @State private var showAudioPicker: Bool = false
     @State private var showEmojiBar: Bool = false
     @State private var showMoreSheet: Bool = false
+    /// [DTMF, 2026-05-19] When true, the 4×3 keypad overlay is presented
+    /// above the action bar so the user can tap digits during a PSTN /
+    /// IVR call. Dismisses on tap outside, on hangup, or on the close pill.
+    @State private var showKeypad: Bool = false
+    /// [DTMF, 2026-05-19] Live readback of digits the user tapped this
+    /// keypad session. Cleared on dismiss. Shown as a "type" preview at
+    /// the top of the overlay so the user sees their entry.
+    @State private var dtmfBuffer: String = ""
     @State private var pipOffset: CGSize = CGSize(width: 0, height: 0)
     @State private var pipDragOffset: CGSize = CGSize(width: 0, height: 0)
     @State private var controlsVisible: Bool = true
@@ -186,6 +200,15 @@ struct CallView: View {
             if showMoreSheet {
                 moreSheetOverlay
                     .transition(.opacity)
+            }
+
+            // ── 8. [DTMF, 2026-05-19] Keypad overlay. Sits between the
+            // background and the action bar so the user can still see the
+            // hangup button (the overlay leaves the bottom of the action bar
+            // exposed via padding). Tap outside the keypad card dismisses.
+            if showKeypad {
+                keypadOverlay
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .preferredColorScheme(.dark)
@@ -494,6 +517,23 @@ struct CallView: View {
                         label: "Adicionar",
                         enabled: true,
                         action: { hapticTap(); onAddMember() }
+                    )
+
+                    // [DTMF, 2026-05-19] Keypad — opens the 4×3 DTMF
+                    // overlay. Visible during any connected call (audio or
+                    // video) so PSTN/IVR scenarios work.
+                    actionPillButton(
+                        icon: "circle.grid.3x3.fill",
+                        label: "Teclado",
+                        enabled: true,
+                        active: showKeypad,
+                        action: {
+                            hapticTap()
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showKeypad.toggle()
+                                if !showKeypad { dtmfBuffer = "" }
+                            }
+                        }
                     )
 
                     // [RNNoise, 2026-05-17] Cancelar ruído — flips the
@@ -833,6 +873,16 @@ struct CallView: View {
 
     // MARK: - Audio picker
 
+    // [Audio output picker, 2026-05-19] WhatsApp/Phone-grade real picker.
+    // The fake speaker-only toggle previously here couldn't expose AirPods,
+    // car Bluetooth, or wired headsets — users had to leave the app to
+    // switch route. AVRoutePickerView is the system-blessed picker that
+    // lists every connected output device + the call audio (earpiece +
+    // speaker) options. We embed it as a hidden trigger (a UIView with size
+    // 1×1 placed off-screen) and call `.routePickerButtonTapped`-equivalent
+    // by sending the underlying button a touchUpInside on first appear, so
+    // the sheet doesn't show two pickers stacked. The wrapper is also
+    // visible inline as a normal labelled row so users can re-trigger it.
     private var audioPickerSheet: some View {
         VStack(spacing: 0) {
             Capsule()
@@ -846,6 +896,9 @@ struct CallView: View {
                 .padding(.top, 14)
                 .padding(.bottom, 8)
 
+            // Quick toggles for the two routes AVRoutePickerView won't
+            // surface (earpiece via override + loudspeaker). BT/wired/AirPlay
+            // are listed automatically by the system picker triggered below.
             VStack(spacing: 8) {
                 audioRouteRow(icon: "speaker.wave.3.fill", title: "Alto-falante", selected: session.speakerOn) {
                     session.speakerOn = true
@@ -857,13 +910,21 @@ struct CallView: View {
                     onToggleSpeaker(false)
                     showAudioPicker = false
                 }
-                // Bluetooth + wired headset routing is owned by AVAudioSession
-                // — tapping these forwards `routeBluetooth` / `routeWired` to
-                // the VC, which calls overrideOutputAudioPort accordingly.
-                audioRouteRow(icon: "headphones", title: "Bluetooth", selected: false) {
-                    onToggleSpeaker(false)
-                    showAudioPicker = false
-                }
+
+                // Real system picker entry — opens the iOS-native list of
+                // every available output (AirPods, car BT, USB-C headphones,
+                // AirPlay receivers, …). Wrapped via UIViewRepresentable so
+                // SwiftUI can host the UIKit AVRoutePickerView. Tapping the
+                // row sends a touch to the embedded picker (which is sized
+                // to fill the row), so the system sheet appears.
+                AVRoutePickerRow()
+                    .frame(height: 48)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 0)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.white.opacity(0.04))
+                    )
             }
             .padding(.horizontal, 20)
 
@@ -894,6 +955,128 @@ struct CallView: View {
             .background(
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Color.white.opacity(selected ? 0.1 : 0.04))
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - DTMF keypad overlay
+    //
+    // [DTMF, 2026-05-19] WhatsApp/Phone-style 4×3 grid. Each cell renders the
+    // digit + its letter group (e.g. "2 ABC"), fires a haptic, and forwards
+    // through `onPlayDTMF` which the VC routes into:
+    //   - AudioServicesPlaySystemSound (the iOS DTMF beep family) for local
+    //     audible feedback so the user knows their tap registered.
+    //   - room.localParticipant.publish(data:) with payload
+    //     `D:5` → peer can render the keypress in real time and a SIP/PSTN
+    //     bridge converts to RFC 2833 in-band tones for IVRs.
+    private let dtmfDigits: [[(digit: String, letters: String)]] = [
+        [("1", " "), ("2", "ABC"), ("3", "DEF")],
+        [("4", "GHI"), ("5", "JKL"), ("6", "MNO")],
+        [("7", "PQRS"), ("8", "TUV"), ("9", "WXYZ")],
+        [("*", ""), ("0", "+"), ("#", "")],
+    ]
+
+    private var keypadOverlay: some View {
+        ZStack {
+            // Tap-outside dismiss layer. Half-opaque black so the underlying
+            // call surface still reads.
+            Color.black.opacity(0.45)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showKeypad = false
+                        dtmfBuffer = ""
+                    }
+                }
+
+            VStack {
+                Spacer()
+                VStack(spacing: 16) {
+                    // Drag handle + tapped-digit readback
+                    Capsule()
+                        .fill(Color.white.opacity(0.3))
+                        .frame(width: 40, height: 4)
+                        .padding(.top, 10)
+
+                    Text(dtmfBuffer.isEmpty ? "Teclado" : dtmfBuffer)
+                        .font(.system(size: dtmfBuffer.isEmpty ? 17 : 26, weight: .medium, design: .rounded))
+                        .foregroundColor(.white)
+                        .padding(.bottom, 4)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.5)
+
+                    VStack(spacing: 12) {
+                        ForEach(0..<dtmfDigits.count, id: \.self) { rowIdx in
+                            HStack(spacing: 22) {
+                                ForEach(0..<dtmfDigits[rowIdx].count, id: \.self) { colIdx in
+                                    let cell = dtmfDigits[rowIdx][colIdx]
+                                    dtmfButton(digit: cell.digit, letters: cell.letters)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+
+                    // Close pill — explicit dismissal so users who don't
+                    // discover the tap-outside gesture still have a way out.
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showKeypad = false
+                            dtmfBuffer = ""
+                        }
+                    }) {
+                        Text("Fechar")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 28)
+                            .padding(.vertical, 10)
+                            .background(
+                                Capsule().fill(Color.white.opacity(0.12))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.bottom, 24)
+                }
+                .frame(maxWidth: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: 24)
+                        .fill(Color(red: 0x14/255.0, green: 0x1F/255.0, blue: 0x27/255.0))
+                )
+                .padding(.horizontal, 8)
+                .padding(.bottom, 24)
+            }
+        }
+    }
+
+    /// One key on the DTMF pad. 68pt circle, digit + letter group below.
+    @ViewBuilder
+    private func dtmfButton(digit: String, letters: String) -> some View {
+        Button(action: {
+            hapticTap()
+            dtmfBuffer = String((dtmfBuffer + digit).suffix(24)) // cap to avoid horizontal overflow
+            onPlayDTMF?(digit)
+        }) {
+            VStack(spacing: 2) {
+                Text(digit)
+                    .font(.system(size: 30, weight: .regular, design: .rounded))
+                    .foregroundColor(.white)
+                if !letters.isEmpty {
+                    Text(letters)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.55))
+                        .tracking(1)
+                } else {
+                    Spacer().frame(height: 12)
+                }
+            }
+            .frame(width: 68, height: 68)
+            .background(
+                Circle().fill(Color.white.opacity(0.08))
+            )
+            .overlay(
+                Circle().stroke(Color.white.opacity(0.06), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -1045,6 +1228,77 @@ struct FloatingEmojiView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 withAnimation(.easeOut(duration: 1.0)) {
                     fadeOpacity = 0
+                }
+            }
+        }
+    }
+}
+
+// MARK: - AVRoutePickerView wrapper
+
+/// [Audio output picker, 2026-05-19] SwiftUI bridge to the system
+/// AVRoutePickerView. Lists every available output (built-in speaker /
+/// earpiece via override, AirPods, BT headphones, AirPlay receivers, USB-C /
+/// Lightning headsets, CarPlay) and switches the active route on tap.
+/// We color the icon white over the dark sheet background.
+struct AVRoutePickerRow: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        // Build a horizontal stack: icon (system picker) on the left + label
+        // on the right. AVRoutePickerView is the actual tap target (it
+        // expands its hit area to the entire bounds) so the user can tap
+        // anywhere on the row.
+        let container = UIView()
+        container.backgroundColor = .clear
+
+        let pickerView = AVRoutePickerView()
+        pickerView.translatesAutoresizingMaskIntoConstraints = false
+        pickerView.activeTintColor = UIColor(red: 0x2E/255.0, green: 0xCC/255.0, blue: 0x71/255.0, alpha: 1.0)
+        pickerView.tintColor = .white
+        pickerView.prioritizesVideoDevices = false
+        container.addSubview(pickerView)
+
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.text = "Mais dispositivos…"
+        label.textColor = .white
+        label.font = .systemFont(ofSize: 16)
+        container.addSubview(label)
+
+        NSLayoutConstraint.activate([
+            pickerView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            pickerView.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            pickerView.widthAnchor.constraint(equalToConstant: 28),
+            pickerView.heightAnchor.constraint(equalToConstant: 28),
+
+            label.leadingAnchor.constraint(equalTo: pickerView.trailingAnchor, constant: 12),
+            label.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor),
+        ])
+
+        // Forward taps on the whole row to the embedded picker button.
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.rowTapped))
+        container.addGestureRecognizer(tap)
+        context.coordinator.pickerView = pickerView
+        return container
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator: NSObject {
+        weak var pickerView: AVRoutePickerView?
+        @objc func rowTapped() {
+            // Walk the subview tree to find the underlying UIButton that
+            // AVRoutePickerView wraps; sending touchUpInside opens the
+            // native picker sheet. iOS doesn't expose a public method to
+            // open it programmatically, so this is the standard trick used
+            // by SwiftUI bridges across the community.
+            guard let pickerView = pickerView else { return }
+            for sub in pickerView.subviews {
+                if let btn = sub as? UIButton {
+                    btn.sendActions(for: .touchUpInside)
+                    return
                 }
             }
         }

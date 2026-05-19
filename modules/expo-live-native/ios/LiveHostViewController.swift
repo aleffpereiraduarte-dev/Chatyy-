@@ -494,6 +494,21 @@ extension LiveHostViewController: RoomDelegate {
             ]
         )
     }
+
+    // [Bridge #5 2026-05-19] Viewer left — mirror of participantDidConnect.
+    // JS overlay subtracts from the viewer count + drops the avatar pip.
+    func room(_ room: Room, participantDidDisconnect participant: RemoteParticipant) {
+        let identity = participant.identity?.stringValue ?? ""
+        print("[LiveHostVC] participantDidDisconnect \(identity)")
+        NotificationCenter.default.post(
+            name: LiveNativeNotifications.viewerLeft,
+            object: nil,
+            userInfo: [
+                "roomName": roomName,
+                "identity": identity,
+            ]
+        )
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────

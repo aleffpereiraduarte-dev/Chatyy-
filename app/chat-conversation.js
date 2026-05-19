@@ -21802,6 +21802,16 @@ export default function ChatConversationScreen() {
                       const mailWs = require('../services/websocket').default;
                       mailWs.sendTyping(conversationId);
                     } catch {}
+                    // HTTP belt-and-suspenders — the WS hub (C++ rewrite,
+                    // 2026-05-19) doesn't relay `type: typing` frames yet,
+                    // so the WS-only path is a dead-end. POSTing to
+                    // chat_typing makes chat.php fan out via _broadcast-
+                    // TypingToConv to every member's chat_user_ channel.
+                    // Fire-and-forget; throttled by the same 3s gate
+                    // above so we never burst.
+                    try {
+                      require('../services/api').chatTyping?.(conversationId);
+                    } catch {}
                   }
                   // Reset auto-stop timer on every keystroke
                   if (typingStopTimerRef.current) clearTimeout(typingStopTimerRef.current);
@@ -21814,6 +21824,15 @@ export default function ChatConversationScreen() {
                       const mailWs = require('../services/websocket').default;
                       mailWs.sendStoppedTyping?.(conversationId);
                     } catch {}
+                    // HTTP fallback for the stop signal — same reason as
+                    // above. chat_typing accepts `typing: false` to fire
+                    // a synthetic `stopped_typing` event on peers' WS.
+                    try {
+                      require('../services/api').apiCall?.('chat_typing', {
+                        conversation_id: conversationId,
+                        typing: false,
+                      }, 'POST');
+                    } catch {}
                     typingLastSentAt.current = 0;
                   }, TYPING_STOP_MS);
                 } else if (typingStopTimerRef.current) {
@@ -21823,6 +21842,12 @@ export default function ChatConversationScreen() {
                   try {
                     const mailWs = require('../services/websocket').default;
                     mailWs.sendStoppedTyping?.(conversationId);
+                  } catch {}
+                  try {
+                    require('../services/api').apiCall?.('chat_typing', {
+                      conversation_id: conversationId,
+                      typing: false,
+                    }, 'POST');
                   } catch {}
                   typingLastSentAt.current = 0;
                 }

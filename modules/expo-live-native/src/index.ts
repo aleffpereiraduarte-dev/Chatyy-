@@ -29,6 +29,10 @@ export interface ExpoLiveNativeEvents {
   onLiveError: { roomName?: string; message: string };
   /** Host-only: fired when a remote viewer participant joins the room. */
   onViewerJoined: { roomName?: string; identity: string; name?: string };
+  /** [Bridge #5 2026-05-19] Host-only: fired when a remote viewer disconnects
+   *  from the LK room. JS overlay decrements the viewer count + drops the
+   *  avatar pip keyed by `identity` (typically the viewer's email). */
+  onViewerLeft: { roomName?: string; identity: string };
   /** Host-only: fired when a viewer sends a like reaction over the data channel. */
   onLikeReceived: { roomName?: string; identity?: string; count?: number };
 }
@@ -202,6 +206,11 @@ export function onLiveError(cb: (data: ExpoLiveNativeEvents['onLiveError']) => v
 export function onViewerJoined(cb: (data: ExpoLiveNativeEvents['onViewerJoined']) => void) {
   return on('onViewerJoined', cb);
 }
+/** [Bridge #5 2026-05-19] Subscribe to remote viewer disconnect on the native
+ *  Live host. Returns an unsubscribe. */
+export function onViewerLeft(cb: (data: ExpoLiveNativeEvents['onViewerLeft']) => void) {
+  return on('onViewerLeft', cb);
+}
 export function onLikeReceived(cb: (data: ExpoLiveNativeEvents['onLikeReceived']) => void) {
   return on('onLikeReceived', cb);
 }
@@ -221,6 +230,7 @@ export default {
   onLiveEnded,
   onLiveError,
   onViewerJoined,
+  onViewerLeft,
   onLikeReceived,
   addListener,
 };

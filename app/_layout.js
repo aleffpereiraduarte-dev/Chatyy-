@@ -600,6 +600,36 @@ function AppInit({ onNotification, setOtaToast }) {
       });
     } catch {}
 
+    // [share outbox bridge, 2026-05-19] Subscribe to native iOS ShareExtension
+    // completion events. Without this, shares sent via the iOS Share Sheet
+    // never update the in-app chat list until the user pull-to-refreshes —
+    // the extension uploads silently in its own process. The bridge fires
+    // when the extension finishes a share session (Darwin notification →
+    // AppDelegate NSNotification → ExpoCallKit `onShareDidSend` event) and
+    // triggers a deltaSync.syncNow() so the chat list + affected
+    // conversation reflect the newly-sent message.
+    try {
+      import('../services/shareOutbox').then(m => {
+        try {
+          m.subscribeShareOutbox?.(m.defaultShareOutboxHandler);
+        } catch {}
+      });
+    } catch {}
+
+    // [photo backup worker reconcile, 2026-05-19] Android-only — when the
+    // BackupWorker uploads photos in the background while the app is
+    // killed, it writes a delta file (~/files/chatyy-backup-delta.json)
+    // and emits a LocalBroadcast. JS reads the file on AppState 'active'
+    // and listens for the live broadcast so the in-app backed_up_map
+    // stays consistent and the backup screen shows correct counts. Without
+    // this, the next foreground re-attempts already-uploaded files
+    // (server dedups via content_hash but wastes battery on the rescan).
+    try {
+      import('../services/photoBackup').then(m => {
+        try { m.wireWorkerReconcile?.(); } catch {}
+      });
+    } catch {}
+
     // Share-intent: one-shot check at startup. The CONTINUOUS live listener
     // (for shares that arrive while the app is already running in the
     // background) is wired via `useShareIntent()` hook below in RootLayout.

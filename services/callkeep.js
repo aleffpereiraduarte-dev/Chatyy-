@@ -134,6 +134,25 @@ export async function setupCallKeep() {
       });
     } catch {}
 
+    // [Bridge #2/#3 2026-05-19] Native call PiP enter/exit — set a global
+    // flag the chat header / OngoingCallBar reads to shrink the in-call
+    // status pill while the call is docked in PiP. Both Android (CallActivity
+    // onPictureInPictureModeChanged) and iOS (CallViewController PiP delegate
+    // will-start/stop) emit `onPipChanged`; we mirror to globalThis so any
+    // component can synchronously read the current state without subscribing.
+    try {
+      ExpoCallKit.onPipChanged?.(({ inPip }) => {
+        try {
+          globalThis.__chatyyCallInPip = !!inPip;
+          // Also push through callState so listeners get a typed event for
+          // reactivity (chat header reads the global synchronously, but
+          // analytics + recording banner subscribe via callState bus).
+          const callState = require('./callState');
+          callState.notifyPipChanged?.(!!inPip);
+        } catch {}
+      });
+    } catch {}
+
     // Register for VoIP push (iOS)
     if (Platform.OS === 'ios') {
       try {
@@ -452,3 +471,113 @@ export function onCallKitAudioDeactivated(cb) {
 
 export const CallKeeper = null;
 export const isSetup = false;
+
+// __chatyy_native_call_sync 2026-05-19
+// ============================================================================
+// JS subscribers for the new native call-state events. The native UI (Compose
+// on Android, SwiftUI on iOS) is the single source of truth for mute / cam /
+// speaker / route / hold / PiP / camera flip — these subscribers fan the
+// state out to JS-side analytics + recording banner + OngoingCallBar so the
+// app surfaces never drift from what the native UI is rendering. They also
+// flip a global flag (`__chatyyNativeCallActive`) consumed by
+// `isNativeCallActive()` so app/call.js can gate the WS `chat_call_end`
+// race (Gap 4 of the earlier agent audit — JS overlay was posting HTTP/WS
+// hangups while the native Room owned the only live audio path).
+// ============================================================================
+
+let _stateSyncInstalled = false;
+const _stateListeners = [];
+
+/** Read the current native-call active flag. Set by `installNativeCallStateBridge`
+ *  in response to onLkConnected / onCallEnded. Mobile-only — on web this
+ *  always returns false. */
+export function isNativeCallActive() {
+  try {
+    return globalThis.__chatyyNativeCallActive === true;
+  } catch {
+    return false;
+  }
+}
+
+/** Subscribe to one of the native call-state events. `cb` is called with the
+ *  payload shape declared in `index.ts#ExpoCallKitEvents` (e.g.
+ *  `{ enabled }` for `onLkLocalAudioChanged`, `{ route }` for
+ *  `onAudioRouteChanged`, etc.). Returns a teardown closure. */
+export function onNativeCallState(event, cb) {
+  if (!loadModule()) return () => {};
+  try {
+    if (event === 'onLkLocalAudioChanged' && typeof ExpoCallKit.onLkEvent === 'function') {
+      return ExpoCallKit.onLkEvent(event, cb) || (() => {});
+    }
+    if (typeof ExpoCallKit.onLkEvent === 'function') {
+      return ExpoCallKit.onLkEvent(event, cb) || (() => {});
+    }
+  } catch {}
+  return () => {};
+}
+
+/** Install the global native-call-state → JS bridge. Called once from
+ *  `setupCallKeep()` so the flag + the analytics fan-out work even before
+ *  /call.js mounts. Idempotent (no-ops on the 2nd call). */
+function installNativeCallStateBridge() {
+  if (_stateSyncInstalled) return;
+  if (!loadModule()) return;
+  if (typeof ExpoCallKit.onLkEvent !== 'function') return;
+  _stateSyncInstalled = true;
+
+  // Native Room is connected → JS knows the audio path is owned by the OS.
+  _stateListeners.push(ExpoCallKit.onLkEvent('onLkConnected', () => {
+    try { globalThis.__chatyyNativeCallActive = true; } catch {}
+  }));
+  // Native Room ended → flag drops so the post-call HTTP/WS hangup path can
+  // run as it did before (no race vs. the native CXEndCallAction tear-down).
+  _stateListeners.push(ExpoCallKit.onCallEnded(() => {
+    try { globalThis.__chatyyNativeCallActive = false; } catch {}
+  }));
+  _stateListeners.push(ExpoCallKit.onLkEvent('onLkDisconnected', () => {
+    try { globalThis.__chatyyNativeCallActive = false; } catch {}
+  }));
+
+  // The actual state mirrors — fan out into a single analytics surface that
+  // any JS consumer (services/analytics, ChatStatusBar, recording banner) can
+  // tail. We dispatch via `callState.notify*` if those helpers exist (the
+  // module is intentionally optional so this bridge ships even before the
+  // listener side does).
+  const safeNotify = (name, data) => {
+    try {
+      const callState = require('./callState');
+      const fn = callState?.[name];
+      if (typeof fn === 'function') fn(data);
+    } catch {}
+    try {
+      const analytics = require('./analytics');
+      if (typeof analytics?.track === 'function') analytics.track(name, data);
+    } catch {}
+  };
+
+  _stateListeners.push(ExpoCallKit.onLkEvent('onLkLocalAudioChanged', ({ enabled }) => {
+    safeNotify('notifyMuteChanged', { muted: !enabled });
+  }));
+  _stateListeners.push(ExpoCallKit.onLkEvent('onLkLocalVideoChanged', ({ enabled }) => {
+    safeNotify('notifyCamChanged', { enabled });
+  }));
+  _stateListeners.push(ExpoCallKit.onLkEvent('onLkSpeakerChanged', ({ enabled }) => {
+    safeNotify('notifySpeakerChanged', { speakerOn: enabled });
+  }));
+  _stateListeners.push(ExpoCallKit.onLkEvent('onAudioRouteChanged', ({ route }) => {
+    safeNotify('notifyAudioRouteChanged', { route });
+  }));
+  _stateListeners.push(ExpoCallKit.onLkEvent('onLkCameraFlipped', ({ front }) => {
+    safeNotify('notifyCameraFlipped', { front });
+  }));
+  _stateListeners.push(ExpoCallKit.onLkEvent('onCallHoldChanged', ({ held }) => {
+    safeNotify('notifyHoldChanged', { held });
+  }));
+  _stateListeners.push(ExpoCallKit.onLkEvent('onPipChanged', ({ inPip }) => {
+    safeNotify('notifyPipChanged', { inPip });
+  }));
+}
+
+// Auto-install on first module load. setupCallKeep() also calls this so the
+// bridge is up before the first incoming call.
+try { installNativeCallStateBridge(); } catch {}

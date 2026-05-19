@@ -24,6 +24,10 @@ public class ExpoLiveNativeModule: Module {
   // reference to the Module; the Module fans them back into JS events.
   private var errorObserver: Any?
   private var viewerJoinedObserver: Any?
+  // [Bridge #5 2026-05-19] Viewer-left observer — translates the
+  // LiveHostViewController NotificationCenter post into an `onViewerLeft`
+  // JS event so the overlay can decrement the viewer count.
+  private var viewerLeftObserver: Any?
 
   public func definition() -> ModuleDefinition {
     Name("ExpoLiveNative")
@@ -32,6 +36,7 @@ public class ExpoLiveNativeModule: Module {
       "onLiveEnded",
       "onLiveError",
       "onViewerJoined",
+      "onViewerLeft",
       "onLikeReceived"
     )
 
@@ -51,6 +56,10 @@ public class ExpoLiveNativeModule: Module {
       if let obs = self.viewerJoinedObserver {
         NotificationCenter.default.removeObserver(obs)
         self.viewerJoinedObserver = nil
+      }
+      if let obs = self.viewerLeftObserver {
+        NotificationCenter.default.removeObserver(obs)
+        self.viewerLeftObserver = nil
       }
     }
 
@@ -179,6 +188,23 @@ public class ExpoLiveNativeModule: Module {
         ])
       }
     }
+    // [Bridge #5 2026-05-19] Viewer left observer.
+    if viewerLeftObserver == nil {
+      viewerLeftObserver = NotificationCenter.default.addObserver(
+        forName: LiveNativeNotifications.viewerLeft,
+        object: nil,
+        queue: .main
+      ) { [weak self] note in
+        guard let self = self else { return }
+        let info = note.userInfo ?? [:]
+        let roomName = (info["roomName"] as? String) ?? ""
+        let identity = (info["identity"] as? String) ?? ""
+        self.sendEvent("onViewerLeft", [
+          "roomName": roomName,
+          "identity": identity,
+        ])
+      }
+    }
   }
 
   private static func findRootViewController() -> UIViewController? {
@@ -197,4 +223,6 @@ enum LiveNativeNotifications {
   // posts didError on LK connect failure / camera permission denied.
   static let didError = Notification.Name("ExpoLiveNativeLiveError")
   static let viewerJoined = Notification.Name("ExpoLiveNativeViewerJoined")
+  // [Bridge #5 2026-05-19] Viewer disconnected mirror of viewerJoined.
+  static let viewerLeft = Notification.Name("ExpoLiveNativeViewerLeft")
 }

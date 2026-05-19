@@ -228,7 +228,22 @@ async function startScreenShareIOS({ onFrame, onStarted, onStopped, onError } = 
   };
 }
 
+/**
+ * [Bridge #1 2026-05-19] Subscribe to the native module's onBroadcastStopped
+ * event without going through startScreenShare. Useful for the call screen
+ * to dismiss its "Sharing…" UI when the user taps "Stop sharing" in the
+ * system bar (MediaProjection.Callback.onStop on Android, ReplayKit
+ * broadcastFinished on iOS) — paths that don't run through the JS-managed
+ * `stop()` handle returned by startScreenShare. Returns an unsubscribe.
+ */
+export function onScreenShareStopped(cb) {
+  const mod = getMod();
+  if (!mod || typeof mod.onBroadcastStopped !== 'function') return () => {};
+  try { return mod.onBroadcastStopped(cb) || (() => {}); } catch { return () => {}; }
+}
+
 export default {
   isScreenShareSupported,
   startScreenShare,
+  onScreenShareStopped,
 };

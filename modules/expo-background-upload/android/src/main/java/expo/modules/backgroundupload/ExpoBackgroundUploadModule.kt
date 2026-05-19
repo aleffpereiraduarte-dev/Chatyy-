@@ -1,10 +1,14 @@
 package expo.modules.backgroundupload
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Log
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
@@ -23,6 +27,8 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import okio.BufferedSink
 import okio.source
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
@@ -68,15 +74,60 @@ class ExpoBackgroundUploadModule : Module() {
   private val context: Context
     get() = requireNotNull(appContext.reactContext) { "React context not ready" }
 
+  // [JS bridge, 2026-05-19] Receiver listening for the BackupWorker's
+  // LocalBroadcast — re-emits as the `onBatchComplete` Expo event so the JS
+  // UI can bump its counter live while the worker is still uploading. Only
+  // alive when the JS process is alive; the durable channel is the delta
+  // file (see reconcileWorkerBackedUp). Lifetime: registered in OnCreate,
+  // unregistered in OnDestroy.
+  private var backupProgressReceiver: BroadcastReceiver? = null
+
   override fun definition() = ModuleDefinition {
     Name("ExpoBackgroundUpload")
 
     Events(
       "onProgress",        // per-file upload byte progress
       "onComplete",        // per-file done
-      "onBatchComplete",   // queue drained
+      "onBatchComplete",   // queue drained — also fired by BackupWorker via LocalBroadcast w/ `ids`
       "onError"            // soft error (caller decides to retry)
     )
+
+    // [JS bridge, 2026-05-19] Wire the LocalBroadcastReceiver that listens
+    // for BackupWorker.ACTION_BACKUP_PROGRESS. The worker fires a broadcast
+    // after each run with the list of newly-uploaded asset ids; we re-emit
+    // here as `onBatchComplete` so JS can merge into AsyncStorage and bump
+    // the UI counter without waiting for the next AppState 'active' →
+    // reconcileWorkerBackedUp() pass.
+    OnCreate {
+      val receiver = object : BroadcastReceiver() {
+        override fun onReceive(_ctx: Context?, intent: Intent?) {
+          val ids = intent?.getStringArrayListExtra(BackupWorker.EXTRA_IDS) ?: return
+          if (ids.isEmpty()) return
+          try {
+            sendEvent("onBatchComplete", mapOf(
+              "ids" to ids.toList(),
+              "remaining" to 0  // worker doesn't know remaining; JS recalculates on next scan
+            ))
+          } catch (_: Throwable) { /* bridge gone — durable channel (file) covers us */ }
+        }
+      }
+      backupProgressReceiver = receiver
+      try {
+        LocalBroadcastManager.getInstance(context)
+          .registerReceiver(receiver, IntentFilter(BackupWorker.ACTION_BACKUP_PROGRESS))
+      } catch (e: Exception) {
+        Log.w(TAG, "Failed to register backup-progress receiver: ${e.message}")
+      }
+    }
+
+    OnDestroy {
+      backupProgressReceiver?.let { r ->
+        try {
+          LocalBroadcastManager.getInstance(context).unregisterReceiver(r)
+        } catch (_: Exception) {}
+      }
+      backupProgressReceiver = null
+    }
 
     // ── Scan MediaStore ───────────────────────────────────────────────
     // Returns the entire delta since `sinceMs` (null = full library).
@@ -178,6 +229,48 @@ class ExpoBackgroundUploadModule : Module() {
         .getWorkInfosForUniqueWork(WORK_NAME)
         .get()
       infos.count { !it.state.isFinished }
+    }
+
+    // ── Reconcile worker-uploaded ids (JS bridge, 2026-05-19) ─────────
+    //
+    // Reads the worker's delta file at ~/files/chatyy-backup-delta.json,
+    // returns the ids array, and deletes the file. JS is expected to merge
+    // these into its AsyncStorage @chatyy_backup/backed_up_map keyed map
+    // (idempotent — markAssetBackedUp is set-like). Call on AppState 'active'
+    // and on cold start.
+    //
+    // Why both this AND the onBatchComplete event? The event fires only
+    // when JS is alive. The worker also runs after process death (that's
+    // the whole point), in which case the broadcast goes into the void.
+    // The file is the durable channel — it accumulates ids across worker
+    // runs until JS picks them up.
+    AsyncFunction("reconcileWorkerBackedUp") {
+      runBlocking {
+        withContext(Dispatchers.IO) {
+          val file = File(context.filesDir, "chatyy-backup-delta.json")
+          if (!file.exists()) {
+            return@withContext mapOf("ids" to emptyList<String>(), "updated_at" to 0L)
+          }
+          val ids = mutableListOf<String>()
+          var updatedAt = 0L
+          try {
+            val raw = file.readText()
+            val obj = JSONObject(raw)
+            val arr = obj.optJSONArray("ids") ?: JSONArray()
+            for (i in 0 until arr.length()) {
+              val s = arr.optString(i)
+              if (s.isNotEmpty()) ids.add(s)
+            }
+            updatedAt = obj.optLong("updated_at", 0L)
+          } catch (e: Exception) {
+            Log.w(TAG, "reconcileWorkerBackedUp: parse failed, deleting: ${e.message}")
+          }
+          // Best-effort delete — if it fails JS will get duplicate ids on
+          // next call, which is fine (the JS merge is idempotent).
+          try { file.delete() } catch (_: Exception) {}
+          return@withContext mapOf("ids" to ids.toList(), "updated_at" to updatedAt)
+        }
+      }
     }
 
     // ── No-op stubs so the TS-side iOS API surface compiles cleanly ───

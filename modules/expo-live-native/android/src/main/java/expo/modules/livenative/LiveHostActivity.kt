@@ -262,6 +262,18 @@ class LiveHostActivity : ComponentActivity() {
               ExpoLiveNativeModule.emitViewerJoined(roomName, identity, event.participant.name)
             } catch (_: Throwable) {}
           }
+          is RoomEvent.ParticipantDisconnected -> {
+            // [Bridge #5 2026-05-19] Viewer left the LK room — JS overlay
+            // decrements the viewer count and removes any avatar pip. Identity
+            // is the SFU-side string the viewer joined with (typically their
+            // email); JS matches on that to dedup if the local list was
+            // already updated via the WS `viewer_left` path.
+            val identity = event.participant.identity?.value ?: ""
+            Log.d(TAG, "ParticipantDisconnected $identity")
+            try {
+              ExpoLiveNativeModule.emitViewerLeft(roomName, identity)
+            } catch (_: Throwable) {}
+          }
           else -> { /* no-op — local camera renderer is bound after setCameraEnabled in connectJob below */ }
         }
       }

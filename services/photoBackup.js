@@ -9,7 +9,7 @@
  * All exports maintain the same interface so existing callers
  * (photos.js, ChatProfileTab.js, etc.) work without changes.
  */
-import { Platform } from 'react-native';
+import { Platform, AppState } from 'react-native';
 
 // ─── Web no-ops ──────────────────────────────────────────────
 const DEFAULT_SETTINGS = {
@@ -243,4 +243,94 @@ export async function setBackupSettings(settings) {
   } catch (err) {
     console.warn('[photoBackup] setBackupSettings error:', err);
   }
+}
+
+// ─── Worker-side delta reconciliation (Android, 2026-05-19) ─────────────
+//
+// The Android BackupWorker continues uploading photos after the app is
+// swiped away. When the app re-opens, it needs to learn which ids the
+// worker uploaded while it wasn't watching — otherwise the backup screen
+// will show stale counts AND the next foreground run will re-attempt the
+// same files (the same content_hash precheck will dedup them server-side,
+// but the device wastes battery hashing+POSTing).
+//
+// The worker writes a delta file (~/files/chatyy-backup-delta.json) plus
+// emits a LocalBroadcast every run. We listen to both:
+//   1. AppState 'active' / cold-start: call reconcileWorkerBackedUp() to
+//      drain the file and merge into AsyncStorage backedUpMap.
+//   2. onBatchComplete native event: merge in-process when JS is alive.
+//
+// The native module's getBackedUpCount / scan path then naturally treats
+// these as already-uploaded.
+
+let _reconcileWired = false;
+
+export function wireWorkerReconcile() {
+  if (Platform.OS !== 'android' || _reconcileWired) return;
+  _reconcileWired = true;
+
+  const doReconcile = async () => {
+    try {
+      const native = require('../modules/expo-background-upload').default;
+      if (!native || typeof native.reconcileWorkerBackedUp !== 'function') return;
+      const delta = await native.reconcileWorkerBackedUp();
+      const ids = delta?.ids || [];
+      if (ids.length === 0) return;
+      // Merge into AsyncStorage backedUpMap. Idempotent — re-running this
+      // with the same ids is a no-op.
+      try {
+        const { getBackedUpMap, saveBackedUpMap } = require('./backup/backupStorage');
+        const map = await getBackedUpMap();
+        const now = Date.now();
+        let changed = 0;
+        for (const id of ids) {
+          if (!map[id]) { map[id] = now; changed++; }
+        }
+        if (changed > 0) {
+          await saveBackedUpMap(map);
+          if (__DEV__) console.log(`[photoBackup] reconciled ${changed} worker-uploaded ids`);
+        }
+      } catch (e) {
+        if (__DEV__) console.warn('[photoBackup] reconcile merge failed:', e?.message);
+      }
+    } catch (e) {
+      if (__DEV__) console.warn('[photoBackup] reconcileWorkerBackedUp failed:', e?.message);
+    }
+  };
+
+  // Cold-start: run immediately. The first AppState event sometimes
+  // arrives 1-2s after mount because the listener doesn't get the
+  // current state — better to just pull on first wire.
+  doReconcile();
+
+  // Foreground transitions: when the user returns to the app, drain
+  // anything the worker uploaded while we were backgrounded.
+  AppState.addEventListener('change', (state) => {
+    if (state === 'active') {
+      doReconcile();
+    }
+  });
+
+  // Live event: when the worker fires its LocalBroadcast and JS happens
+  // to be running, merge ids into the map directly (skips the file
+  // round-trip; the file still gets cleaned on the next AppState pass).
+  try {
+    const native = require('../modules/expo-background-upload').default;
+    if (native && typeof native.addListener === 'function') {
+      native.addListener('onBatchComplete', async (event) => {
+        const ids = event?.ids;
+        if (!Array.isArray(ids) || ids.length === 0) return;
+        try {
+          const { getBackedUpMap, saveBackedUpMap } = require('./backup/backupStorage');
+          const map = await getBackedUpMap();
+          const now = Date.now();
+          let changed = 0;
+          for (const id of ids) {
+            if (!map[id]) { map[id] = now; changed++; }
+          }
+          if (changed > 0) await saveBackedUpMap(map);
+        } catch {}
+      });
+    }
+  } catch {}
 }

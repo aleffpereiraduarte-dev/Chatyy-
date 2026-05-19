@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
@@ -60,6 +61,16 @@ class ScreenShareService : Service() {
     const val EXTRA_RESULT_CODE = "result_code"
     const val EXTRA_RESULT_DATA = "result_data"
     const val ACTION_STOP = "expo.modules.screenshare.STOP"
+    /** [Bridge #1 2026-05-19] LocalBroadcast action fired right before the
+     *  foreground service tears itself down. The module's BroadcastReceiver
+     *  catches this and forwards an "onBroadcastStopped" event to JS so the
+     *  "Sharing…" UI can dismiss when the user taps "Stop sharing" in the
+     *  system status bar (MediaProjection.Callback.onStop path) — without
+     *  this the JS button stays stuck on "Sharing…" forever because
+     *  MediaProjection.Callback fires on a binder thread inside the service
+     *  process and JS never learns about it. */
+    const val ACTION_STOPPED = "expo.modules.screenshare.STOPPED"
+    const val EXTRA_STOP_REASON = "reason"
 
     @Volatile var isRunning: Boolean = false
       private set
@@ -81,7 +92,7 @@ class ScreenShareService : Service() {
 
     if (intent?.action == ACTION_STOP) {
       Log.d(TAG, "stop action received")
-      stopSelfClean()
+      stopSelfClean(reason = "user_stop")
       return START_NOT_STICKY
     }
 
@@ -89,7 +100,7 @@ class ScreenShareService : Service() {
     val resultData = intent?.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
     if (resultCode == 0 || resultData == null) {
       Log.w(TAG, "missing MediaProjection result — stopping")
-      stopSelfClean()
+      stopSelfClean(reason = "missing_result")
       return START_NOT_STICKY
     }
 
@@ -111,12 +122,12 @@ class ScreenShareService : Service() {
       mpm.getMediaProjection(resultCode, resultData)
     } catch (t: Throwable) {
       Log.e(TAG, "getMediaProjection failed: ${t.message}", t)
-      stopSelfClean()
+      stopSelfClean(reason = "mp_failed")
       return START_NOT_STICKY
     }
     if (mp == null) {
       Log.w(TAG, "getMediaProjection returned null — likely user revoked")
-      stopSelfClean()
+      stopSelfClean(reason = "mp_null")
       return START_NOT_STICKY
     }
     mediaProjection = mp
@@ -127,7 +138,11 @@ class ScreenShareService : Service() {
     val cb = object : MediaProjection.Callback() {
       override fun onStop() {
         Log.d(TAG, "MediaProjection.onStop")
-        stopSelfClean()
+        // [Bridge #1 2026-05-19] User tapped "Stop sharing" in the system
+        // status bar — distinguish from the user_stop reason (Stop button in
+        // our own notification) so the JS layer can tell apart user-initiated
+        // dismiss-via-notification vs system-bar revocation.
+        stopSelfClean(reason = "system_stop")
       }
     }
     mediaProjectionCallback = cb
@@ -196,7 +211,7 @@ class ScreenShareService : Service() {
       // ~50ms of CallActivity.onCreate). On null we stop the FGS cleanly so
       // the user gets visible feedback (notification disappears) rather than
       // a phantom "sharing screen" that publishes nothing.
-      stopSelfClean()
+      stopSelfClean(reason = "no_room")
       return
     }
 
@@ -217,9 +232,24 @@ class ScreenShareService : Service() {
   }
 
   @OptIn(DelicateCoroutinesApi::class)
-  private fun stopSelfClean() {
-    Log.d(TAG, "stopSelfClean")
+  private fun stopSelfClean(reason: String = "unknown") {
+    Log.d(TAG, "stopSelfClean reason=$reason")
     isRunning = false
+
+    // [Bridge #1 2026-05-19] Notify the module process (same app, but a
+    // BroadcastReceiver inside ExpoScreenShareModule listens for this) BEFORE
+    // we tear down the foreground service. LocalBroadcastManager keeps the
+    // broadcast in-process — no external app can intercept and we don't need
+    // RECEIVER_NOT_EXPORTED gymnastics. Fire-and-forget; failure to deliver
+    // shouldn't block the FGS teardown.
+    try {
+      val intent = Intent(ACTION_STOPPED).apply {
+        putExtra(EXTRA_STOP_REASON, reason)
+      }
+      LocalBroadcastManager.getInstance(applicationContext).sendBroadcast(intent)
+    } catch (t: Throwable) {
+      Log.w(TAG, "STOPPED broadcast failed: ${t.message}")
+    }
 
     // Best-effort: stop screen share on the Room before releasing the
     // MediaProjection so the SDK can flush its capturer cleanly. We fire on

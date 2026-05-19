@@ -28,6 +28,14 @@ dependencies {
   implementation 'androidx.core:core-ktx:1.13.1'
   implementation 'androidx.appcompat:appcompat:1.7.0'
 
+  // [JS bridge, 2026-05-19] LocalBroadcastManager — used by BackupWorker to
+  // emit `onBatchComplete` events to ExpoBackgroundUploadModule when JS is
+  // alive. Deprecated by AndroidX but kept in legacy artifact because the
+  // alternative (LiveData/Flow + JobIntentService) would require restructuring
+  // the worker's coroutine ownership for a single intent broadcast. The
+  // LocalBroadcastManager class is still shipped and works exactly as before.
+  implementation 'androidx.localbroadcastmanager:localbroadcastmanager:1.1.0'
+
   // [2026-05-16] WorkManager for surviving app process death — replaces the JS-driven
   // TaskManager.defineTask path that was getting killed by Android battery saver.
   // PeriodicWorkRequest runs in the WorkManager system process so background uploads

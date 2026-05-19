@@ -36,4 +36,10 @@ dependencies {
 
   // lifecycleScope for coroutine launches inside the module.
   implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
+
+  // [Bridge #1 2026-05-19] In-process broadcast bus used by
+  // ScreenShareService.stopSelfClean → ExpoScreenShareModule.bridgeReceiver
+  // so the "Stop sharing" system bar press surfaces an onBroadcastStopped
+  // event in JS (otherwise the "Sharing…" UI button stays stuck forever).
+  implementation 'androidx.localbroadcastmanager:localbroadcastmanager:1.1.0'
 }
