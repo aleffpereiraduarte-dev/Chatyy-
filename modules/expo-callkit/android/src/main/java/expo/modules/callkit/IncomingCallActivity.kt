@@ -703,7 +703,20 @@ class IncomingCallActivity : AppCompatActivity() {
   ) {
     try {
       val intent = Intent(this, CallActivity::class.java).apply {
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // [#1172 native-call-in-background fix, 2026-05-19] Same foreground-
+        // forcing flag set as ExpoCallKitModule.openNativeCall. Without
+        // REORDER_TO_FRONT the lockscreen ringing task / launcher task can
+        // keep itself on top while CallActivity builds invisibly in its own
+        // affinity-less task — i.e. activity does start, LK connects, audio
+        // captures, but the user never sees the UI ("native call screen
+        // opens in background"). SINGLE_TOP avoids a 2nd instance; CLEAR_TOP
+        // clears anything stale sitting between this and the call screen.
+        addFlags(
+          Intent.FLAG_ACTIVITY_NEW_TASK
+            or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        )
         putExtra(CallActivity.EXTRA_CALL_ID, id)
         putExtra(CallActivity.EXTRA_CALLER_NAME, name)
         putExtra(CallActivity.EXTRA_CALLER_EMAIL, email)
@@ -714,6 +727,13 @@ class IncomingCallActivity : AppCompatActivity() {
         putExtra(CallActivity.EXTRA_CONVERSATION_ID, conversationId ?: "")
         if (!url.isNullOrEmpty()) putExtra(CallActivity.EXTRA_LK_URL, url)
         if (!token.isNullOrEmpty()) putExtra(CallActivity.EXTRA_LK_TOKEN, token)
+        // [#1114 avatar handoff, 2026-05-19] Forward caller_avatar so the
+        // in-call SwiftUI/Compose screen renders the real photo instead of
+        // the initials letter. Backend already populates this in FCM data
+        // payload via chatCallerAvatarUrl(); IncomingCallActivity holds it
+        // in `callerAvatar` since onCreate. Was being dropped when handing
+        // off to CallActivity — that's why "Suporte" showed only the "S".
+        if (!callerAvatar.isNullOrEmpty()) putExtra(CallActivity.EXTRA_CALLER_AVATAR, callerAvatar)
         // [#1175 2026-05-18] Carry the bearer + base URL in the Intent so
         // CallActivity's onCreate has them even if the SharedPreferences
         // was cleared between the FCM push (which seeded them) and the

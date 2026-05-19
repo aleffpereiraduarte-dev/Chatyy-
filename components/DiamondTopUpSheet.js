@@ -25,7 +25,8 @@ import { useLanguage } from '../context/LanguageContext';
 import { IconX } from './Icons';
 import * as api from '../services/api';
 import {
-  DIAMOND_PACKS, getDiamondLocalizedPrice, initIAP, purchaseDiamonds,
+  DIAMOND_PACKS, getDiamondLocalizedPrice, initIAP, isDiamondSkuAvailable,
+  purchaseDiamonds,
 } from '../services/iap';
 
 function formatBrl(value) {
@@ -72,7 +73,18 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
     return () => { alive = false; };
   }, [visible, onBalanceChange]);
 
-  const packs = useMemo(() => DIAMOND_PACKS, []);
+  // Filter packs to what StoreKit actually returned. On iOS, if a SKU was
+  // never registered in App Store Connect (or is still propagating after a
+  // create), `requestPurchase` throws "SKU not found" — we'd rather hide the
+  // tile than render a button that always errors. `iapReady` triggers the
+  // re-eval once fetchProducts resolves. Android keeps every pack visible
+  // (the row's onBuy already shows the "coming soon" alert).
+  const packs = useMemo(() => {
+    if (Platform.OS !== 'ios') return DIAMOND_PACKS;
+    if (!iapReady) return DIAMOND_PACKS; // show grid while loading; rows just disabled
+    const filtered = DIAMOND_PACKS.filter(p => isDiamondSkuAvailable(p.sku));
+    return filtered.length ? filtered : DIAMOND_PACKS;
+  }, [iapReady]);
 
   const onBuy = useCallback(async (pack) => {
     if (pendingSku) return;
@@ -101,6 +113,14 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
         Alert.alert(
           t('wallet.topupUnavailableTitle') || 'Compra indisponível',
           t('wallet.topupUnavailableBody') || 'Não conseguimos iniciar a compra. Tente novamente em alguns minutos.',
+        );
+      } else if (r?.message === 'sku_not_in_catalog') {
+        // SKU exists in our ladder but App Store Connect hasn't activated it
+        // (or it's still propagating). Show a friendly note instead of the raw
+        // "SKU not found" error that StoreKit would have thrown.
+        Alert.alert(
+          t('wallet.topupUnavailableTitle') || 'Pacote indisponível',
+          t('wallet.topupSkuPending') || 'Este pacote ainda está em aprovação na App Store. Tente outro pacote por enquanto.',
         );
       } else {
         Alert.alert(

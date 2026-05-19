@@ -43,6 +43,11 @@ class CallActionReceiver : BroadcastReceiver() {
         val callerEmail = intent.getStringExtra("caller_email") ?: ""
         val conversationId = intent.getStringExtra("conversation_id") ?: ""
         val hasVideo = intent.getBooleanExtra("has_video", false)
+        // [#1114 avatar handoff, 2026-05-19] Pull avatar URL seeded by
+        // CallNotificationService.buildAcceptIntent so we can hand it down
+        // to CallActivity. Missing on this path was why the in-call screen
+        // fell back to initials (e.g. "S" for Suporte).
+        val callerAvatar = intent.getStringExtra("caller_avatar") ?: ""
 
         Log.d(TAG, "ACTION_ACCEPT_CALL callId=$callId caller=$callerName video=$hasVideo")
 
@@ -77,7 +82,7 @@ class CallActionReceiver : BroadcastReceiver() {
         // user transitions cleanly from IncomingCallActivity → CallActivity.
         closeIncomingCallActivity(context)
 
-        launchCallActivity(context.applicationContext, callId, callerName, callerEmail, conversationId, hasVideo)
+        launchCallActivity(context.applicationContext, callId, callerName, callerEmail, conversationId, hasVideo, callerAvatar)
 
         // [2026-05-16 Stage 2 native WS signaling] Fire call_answered from
         // native after the CallActivity launch is scheduled. This path is
@@ -178,12 +183,13 @@ class CallActionReceiver : BroadcastReceiver() {
     callerName: String,
     callerEmail: String,
     conversationId: String,
-    hasVideo: Boolean
+    hasVideo: Boolean,
+    callerAvatar: String = ""
   ) {
     val cached = LkTokenFetcher.getCached(context, callId)
     if (cached != null) {
       Log.d(TAG, "[stage4] cache hit — launching CallActivity sync")
-      startCallActivityWith(context, callId, callerName, callerEmail, conversationId, hasVideo, cached.url, cached.token)
+      startCallActivityWith(context, callId, callerName, callerEmail, conversationId, hasVideo, cached.url, cached.token, callerAvatar)
       return
     }
 
@@ -195,10 +201,10 @@ class CallActionReceiver : BroadcastReceiver() {
         val tk = LkTokenFetcher.fetch(context, callId, identity)
         if (tk == null) {
           Log.w(TAG, "[stage4] token fetch failed — launching CallActivity w/o token")
-          startCallActivityWith(context, callId, callerName, callerEmail, conversationId, hasVideo, null, null)
+          startCallActivityWith(context, callId, callerName, callerEmail, conversationId, hasVideo, null, null, callerAvatar)
         } else {
           Log.d(TAG, "[stage4] token fetched — launching CallActivity")
-          startCallActivityWith(context, callId, callerName, callerEmail, conversationId, hasVideo, tk.url, tk.token)
+          startCallActivityWith(context, callId, callerName, callerEmail, conversationId, hasVideo, tk.url, tk.token, callerAvatar)
         }
       } catch (t: Throwable) {
         Log.e(TAG, "launchCallActivity async failed: ${t.message}")
@@ -216,11 +222,24 @@ class CallActionReceiver : BroadcastReceiver() {
     conversationId: String,
     hasVideo: Boolean,
     url: String?,
-    token: String?
+    token: String?,
+    callerAvatar: String = ""
   ) {
     try {
       val intent = Intent(context, CallActivity::class.java).apply {
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        // [#1172 native-call-in-background fix, 2026-05-19] Same foreground-
+        // forcing flag set as ExpoCallKitModule.openNativeCall. Without
+        // REORDER_TO_FRONT the launcher / lockscreen task can stay on top
+        // while CallActivity builds invisibly in its own affinity-less task —
+        // user accepts via the heads-up "Atender" button but the UI never
+        // surfaces. SINGLE_TOP + CLEAR_TOP ensure exactly one instance ends
+        // up on top.
+        addFlags(
+          Intent.FLAG_ACTIVITY_NEW_TASK
+            or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        )
         putExtra(CallActivity.EXTRA_CALL_ID, callId)
         putExtra(CallActivity.EXTRA_CALLER_NAME, callerName)
         putExtra(CallActivity.EXTRA_CALLER_EMAIL, callerEmail)
@@ -231,6 +250,12 @@ class CallActionReceiver : BroadcastReceiver() {
         putExtra(CallActivity.EXTRA_CONVERSATION_ID, conversationId)
         if (!url.isNullOrEmpty()) putExtra(CallActivity.EXTRA_LK_URL, url)
         if (!token.isNullOrEmpty()) putExtra(CallActivity.EXTRA_LK_TOKEN, token)
+        // [#1114 avatar handoff, 2026-05-19] Same fix as IncomingCallActivity:
+        // pipe the FCM-supplied caller_avatar URL down to CallActivity so the
+        // in-call SwiftUI/Compose screen renders the real photo (loaded via
+        // CallNotificationService.fetchAvatarBitmap) instead of the initials
+        // letter. Backend already populates this via chatCallerAvatarUrl().
+        if (callerAvatar.isNotEmpty()) putExtra(CallActivity.EXTRA_CALLER_AVATAR, callerAvatar)
         // [#1175 2026-05-18] Carry auth in intent so CallActivity onCreate
         // has an independent copy even if SharedPreferences is wiped
         // between this broadcast and the activity onCreate.

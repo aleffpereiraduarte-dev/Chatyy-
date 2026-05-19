@@ -370,7 +370,20 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
     ) {
         try {
             val intent = Intent(applicationContext, CallActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                // [#1172 native-call-in-background fix, 2026-05-19] Same
+                // foreground-forcing flag set as ExpoCallKitModule.openNativeCall.
+                // Without REORDER_TO_FRONT the OS keeps whatever task is on top
+                // (launcher / lockscreen / pending FCM task) above CallActivity,
+                // which builds invisibly in its own affinity-less task — Room
+                // connects + audio captures but user never sees the UI. Fires
+                // here on the cold-start auto-accept path (server flags
+                // auto_accept=1 in the FCM payload).
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK
+                        or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                        or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                )
                 putExtra(CallActivity.EXTRA_CALL_ID, callId)
                 putExtra(CallActivity.EXTRA_CALLER_NAME, callerName)
                 putExtra(CallActivity.EXTRA_CALLER_EMAIL, callerEmail)

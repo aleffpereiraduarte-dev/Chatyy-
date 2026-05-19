@@ -9155,7 +9155,9 @@ export default function ChatConversationScreen() {
                 return prev.filter(m => m.id !== p.temp_id && m._client_id !== clientId);
               }
               // [#1188 fix] Preserve sender_email — envelope mode returns null.
-              return prev.map(m => (m.id === p.temp_id || m._client_id === clientId) ? { ...r.data, _pending: false, sender_email: r.data.sender_email || m.sender_email || currentEmail } : m);
+              // [#1182 bubble-flip] Preserve _client_id so FlatList key stays
+              // stable across the swap (no row unmount/remount = no flip).
+              return prev.map(m => (m.id === p.temp_id || m._client_id === clientId) ? { ...r.data, _pending: false, sender_email: r.data.sender_email || m.sender_email || currentEmail, _client_id: m._client_id || clientId } : m);
             });
             removePendingMessage(conversationId, p.temp_id).catch(() => {});
             _cacheOne(conversationId, r.data);
@@ -9553,8 +9555,29 @@ export default function ChatConversationScreen() {
                 // (`isOwn = sender_email === currentEmail`). 2-3s after send
                 // the user sees their bubble jump to the left + ticks disappear.
                 const preservedSenderEmail = msg.sender_email || existing?.sender_email || '';
+                // [#1182 bubble-flip] Preserve `_client_id` from the optimistic
+                // row so msgKeyExtractor returns the SAME FlatList key before
+                // and after the WS confirmation. Without this, the keyExtractor
+                // falls back to `id` (now the server numeric id, was tmp_) →
+                // FlatList unmount+remount → bubble re-animates ("flips").
+                // [#1182 outbox-replay] Also clear the persisted outbox row
+                // when the existing optimistic was a tmp_-id pending send. The
+                // HTTP success path normally clears it, but if WS arrives
+                // first and HTTP later times out (network jitter, slow
+                // cellular), the outbox stays and outboxDrainer re-sends on
+                // next reconnect/boot. Server dedups by CMI but the local
+                // pending row keeps growing.
+                const preservedClientId = existing?._client_id || msg._client_id || msg.client_message_id || incomingCid;
+                const existingTempId = (existing && typeof existing.id === 'string' && existing.id.startsWith('tmp_')) ? existing.id : null;
+                if (existingTempId) {
+                  try { removePendingMessage(conversationId, existingTempId).catch(() => {}); } catch {}
+                  try {
+                    const { removeChatSendFromQueueByClientMsgId } = require('../services/offlineCache');
+                    if (preservedClientId) removeChatSendFromQueueByClientMsgId(preservedClientId).catch(() => {});
+                  } catch {}
+                }
                 const next = [...prev];
-                next[existingIdx] = { ...msg, _pending: false, reply_to: preservedReplyTo, sender_email: preservedSenderEmail };
+                next[existingIdx] = { ...msg, _pending: false, reply_to: preservedReplyTo, sender_email: preservedSenderEmail, _client_id: preservedClientId };
                 return next;
               }
             }
@@ -9582,7 +9605,22 @@ export default function ChatConversationScreen() {
               // from outgoing → incoming when WS delivers a scrubbed/empty
               // sender_email.
               const preservedSenderEmail = msg.sender_email || optimistic?.sender_email || currentEmail || '';
-              next[tempIdx] = { ...msg, _pending: false, reply_to: preservedReplyTo, sender_email: preservedSenderEmail };
+              // [#1182 bubble-flip] Preserve _client_id from the optimistic
+              // row so the FlatList key stays stable across the swap.
+              const preservedClientId = optimistic?._client_id || msg._client_id || msg.client_message_id || clientMsgId;
+              // [#1182 outbox-replay] Clear the persisted outbox/queue entry
+              // since this WS event is the canonical confirmation. Without
+              // this, the row sits in chatCache pending and outboxDrainer
+              // re-sends on next reconnect (server dedups but local outbox
+              // grows + UI may briefly flicker on the dup attempt).
+              if (typeof optimistic?.id === 'string' && optimistic.id.startsWith('tmp_')) {
+                try { removePendingMessage(conversationId, optimistic.id).catch(() => {}); } catch {}
+                try {
+                  const { removeChatSendFromQueueByClientMsgId } = require('../services/offlineCache');
+                  if (preservedClientId) removeChatSendFromQueueByClientMsgId(preservedClientId).catch(() => {});
+                } catch {}
+              }
+              next[tempIdx] = { ...msg, _pending: false, reply_to: preservedReplyTo, sender_email: preservedSenderEmail, _client_id: preservedClientId };
               return next;
             }
             // Out-of-order arrival guard: if msg.id is numeric AND smaller
@@ -10384,8 +10422,25 @@ export default function ChatConversationScreen() {
               // [#1188 fix] Preserve sender_email — TCP delivery with
               // empty/null sender_email would flip outgoing bubbles.
               const preservedSenderEmail = msg.sender_email || existing?.sender_email || '';
+              // [#1182 bubble-flip] Same fix as WS path — preserve _client_id
+              // so msgKeyExtractor returns a stable key across the
+              // optimistic→server swap (FlatList doesn't unmount the row).
+              const preservedClientId = existing?._client_id || msg._client_id || msg.client_message_id || tcpCid;
+              // [#1182 outbox-replay] Clear the persisted pending row when the
+              // existing was a tmp_-id optimistic. TCP confirmations are
+              // canonical and the HTTP success path may never run (timeout,
+              // backgrounded tab) — without this the outbox stays around and
+              // re-sends on reconnect.
+              const existingTempId = (existing && typeof existing.id === 'string' && existing.id.startsWith('tmp_')) ? existing.id : null;
+              if (existingTempId) {
+                try { removePendingMessage(conversationId, existingTempId).catch(() => {}); } catch {}
+                try {
+                  const { removeChatSendFromQueueByClientMsgId } = require('../services/offlineCache');
+                  if (preservedClientId) removeChatSendFromQueueByClientMsgId(preservedClientId).catch(() => {});
+                } catch {}
+              }
               const next = [...prev];
-              next[existingIdx] = { ...msg, _pending: false, reply_to: preservedReplyTo, sender_email: preservedSenderEmail };
+              next[existingIdx] = { ...msg, _pending: false, reply_to: preservedReplyTo, sender_email: preservedSenderEmail, _client_id: preservedClientId };
               return next;
             }
           }
@@ -10403,7 +10458,19 @@ export default function ChatConversationScreen() {
             const next = [...prev];
             const optimistic = prev[tempIdx];
             const preservedSenderEmail = msg.sender_email || optimistic?.sender_email || currentEmail || '';
-            next[tempIdx] = { ...msg, _pending: false, sender_email: preservedSenderEmail };
+            // [#1182 bubble-flip] Preserve _client_id so FlatList key stays
+            // stable across the swap. [#1182 outbox-replay] Clear the
+            // persisted outbox row — canonical TCP confirmation means HTTP
+            // outcome no longer matters for this message.
+            const preservedClientId = optimistic?._client_id || msg._client_id || msg.client_message_id || tcpClientMsgIdOuter;
+            if (typeof optimistic?.id === 'string' && optimistic.id.startsWith('tmp_')) {
+              try { removePendingMessage(conversationId, optimistic.id).catch(() => {}); } catch {}
+              try {
+                const { removeChatSendFromQueueByClientMsgId } = require('../services/offlineCache');
+                if (preservedClientId) removeChatSendFromQueueByClientMsgId(preservedClientId).catch(() => {});
+              } catch {}
+            }
+            next[tempIdx] = { ...msg, _pending: false, sender_email: preservedSenderEmail, _client_id: preservedClientId };
             return next;
           }
           // Save to native cache and reload — await before reload so the
@@ -11393,9 +11460,11 @@ export default function ChatConversationScreen() {
               // [#1188 fix 2026-05-19] Preserve sender_email from optimistic
               // row — envelope mode synth data returns null and would flip
               // the bubble to incoming on the swap.
+              // [#1182 bubble-flip] Preserve _client_id so msgKeyExtractor
+              // returns a stable key across the optimistic→server swap.
               setMessages(prev => prev.map(m => {
                 if (m.id !== tempId && m._client_id !== msgId) return m;
-                return { ...serverMsg, sender_email: serverMsg.sender_email || m.sender_email || currentEmail };
+                return { ...serverMsg, sender_email: serverMsg.sender_email || m.sender_email || currentEmail, _client_id: m._client_id || msgId };
               }));
               removePendingMessage(conversationId, tempId).catch(() => {});
               try {
@@ -11442,9 +11511,12 @@ export default function ChatConversationScreen() {
           serverMsg.content = text; // We already know the plaintext
           serverMsg._e2e = true;
         }
+        // [#1182 bubble-flip] Preserve _client_id so msgKeyExtractor returns
+        // a stable FlatList key across the optimistic→server swap. Without
+        // this the row unmounts/remounts and the send animation "flips".
         setMessages(prev => prev.map(m => {
           if (m.id !== tempId) return m;
-          return { ...serverMsg, sender_email: serverMsg.sender_email || m.sender_email || currentEmail };
+          return { ...serverMsg, sender_email: serverMsg.sender_email || m.sender_email || currentEmail, _client_id: m._client_id || msgId };
         }));
         // Remove from pending storage now that it's confirmed
         removePendingMessage(conversationId, tempId).catch(() => {});
@@ -11540,9 +11612,11 @@ export default function ChatConversationScreen() {
                   if (e2eEnabled) { serverMsg.content = text; serverMsg._e2e = true; }
                   // [#1188 fix 2026-05-19] Preserve sender_email so envelope-
                   // mode synth (null) doesn't flip the bubble to incoming.
+                  // [#1182 bubble-flip] Preserve _client_id so msgKeyExtractor
+                  // returns a stable key.
                   setMessages(prev => prev.map(m => {
                     if (m.id !== tempId) return m;
-                    return { ...serverMsg, sender_email: serverMsg.sender_email || m.sender_email || currentEmail };
+                    return { ...serverMsg, sender_email: serverMsg.sender_email || m.sender_email || currentEmail, _client_id: m._client_id || msgId };
                   }));
                   removePendingMessage(conversationId, tempId).catch(() => {});
                   try { cacheSingleMessage(conversationId, serverMsg); } catch {}
@@ -15297,9 +15371,25 @@ export default function ChatConversationScreen() {
   // MemoizedMessageRow instance is reused and React sees a different hook
   // count (ViewOnceMessage mounted before → unmounted after) → "Rendered
   // more hooks than during the previous render" crash on delete-for-all.
-  const msgKeyExtractor = useCallback((item) => (
-    item._key || (item.deleted_at ? `${item.id}_d` : String(item.id))
-  ), []);
+  //
+  // [#1182 2026-05-19 bubble-flip] For OUTGOING messages, prefer `_client_id`
+  // (the client-generated msg_xxx UUID) over `id` as the FlatList key. The
+  // optimistic row enters with id="tmp_…" and `_client_id` set. When WS/HTTP
+  // confirms, `id` swaps to the server-issued numeric id but `_client_id`
+  // STAYS. Keying on `_client_id` (when present) keeps the bubble's
+  // MemoizedMessageRow + MessageBubbleEffect instance stable across the
+  // optimistic→confirmed transition, so the row doesn't unmount/remount and
+  // the send animation doesn't "flip" mid-confirm. Server id is preserved
+  // on the item itself for everything else (reactions, reply-to lookup,
+  // delivery acks). Fallback to `id` for inbound and historical rows.
+  const msgKeyExtractor = useCallback((item) => {
+    if (item._key) return item._key;
+    const persistent = item._client_id || item.client_message_id;
+    if (persistent) {
+      return item.deleted_at ? `c:${persistent}_d` : `c:${persistent}`;
+    }
+    return item.deleted_at ? `${item.id}_d` : String(item.id);
+  }, []);
 
   // Defensive client-side expiry filter for pinned messages. Server already
   // hides expired pins via `pinned_until > NOW()` in the SELECT, but a stale

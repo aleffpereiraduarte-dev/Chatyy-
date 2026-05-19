@@ -276,6 +276,22 @@ export async function purchaseDiamonds(productId) {
     try { await initIAP(); } catch {}
     if (!_available) return { success: false, message: 'iap_unavailable' };
   }
+  // [#1188-followup, 2026-05-19] Guard against "SKU not found" — happens
+  // when the StoreKit catalog doesn't have this product registered (the
+  // chatyy_diamond_* IDs were never created in App Store Connect for some
+  // builds). Without this check, requestPurchase throws raw "SKU not found"
+  // and the user sees the iOS modal-over-modal error stack. With it, we
+  // surface a friendly message and route to web checkout when available.
+  const hasInCatalog = _diamondProducts.some(
+    p => (p?.id || p?.productId) === productId
+  );
+  if (!hasInCatalog) {
+    return {
+      success: false,
+      message: 'sku_not_in_catalog',
+      sku: productId,
+    };
+  }
   // Wire a one-shot callback that the purchase listener resolves once the
   // backend wallet credit lands. Timeout after 90s — Apple sometimes spins
   // on the success sheet without firing the JS listener.
@@ -314,6 +330,14 @@ export function getDiamondProducts() { return _diamondProducts; }
 export function getDiamondLocalizedPrice(productId) {
   const p = _diamondProducts.find(x => x.id === productId || x.productId === productId);
   return p?.localizedPrice || p?.displayPrice || '';
+}
+/** True iff this SKU was returned by StoreKit fetchProducts. UI uses this
+ *  to grey out / hide diamond packs that aren't registered in App Store
+ *  Connect, instead of showing a raw "SKU not found" purchase error. */
+export function isDiamondSkuAvailable(productId) {
+  if (Platform.OS !== 'ios') return true; // Android/web don't hit StoreKit
+  if (!_diamondProducts.length) return false;
+  return _diamondProducts.some(p => (p?.id || p?.productId) === productId);
 }
 
 /** Start a subscription purchase via StoreKit sheet. */

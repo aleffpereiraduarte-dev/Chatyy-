@@ -227,6 +227,18 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
         kPendingAnswerPayloads[uuid] = sp
         kPendingAnswerPayloadsLock.unlock()
 
+        // [#1114 avatar handoff, 2026-05-19] Side-channel the caller's avatar
+        // URL into App Group UserDefaults under `callAvatar:<callId>`. CallView
+        // already reads this key in .onAppear — the outgoing path
+        // (ExpoCallKitModule.startOutgoingCall) populates it, but the answer
+        // path used to leave it empty and fall back to the initials letter
+        // (e.g. "S" for a Suporte call). Backend now ships `caller_avatar` in
+        // the VoIP push payload via chatCallerAvatarUrl().
+        if let avatarUrl = (dict["caller_avatar"] as? String), !avatarUrl.isEmpty,
+           let ud = UserDefaults(suiteName: kAppGroupId) {
+            ud.set(avatarUrl, forKey: "callAvatar:\(callId)")
+        }
+
         let provider = VoipPushAppDelegateSubscriber.earlyProvider ?? makeEphemeralProvider()
         provider.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
             if let error = error {
