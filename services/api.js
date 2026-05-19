@@ -1305,54 +1305,82 @@ export function noteApiSuccess() { _consecutive401 = 0; }
 // paused the JS thread mid-hydrate). Returns true if a token is in memory
 // after the refresh attempt.
 let _refreshInFlight = null;
+// [#1189 2026-05-19] refreshAuthToken used to ONLY re-read the existing
+// bearer from local storage — never asked the server for a new one. When
+// the JWT expired (Go WS rejects exp), it returned the SAME dead token
+// back to websocket.js, which immediately reconnected with it → auth_error
+// loop forever (97% auth fail observed in production logs). Fix: also hit
+// `check_auth` against the backend which extends the sliding token (PHP
+// rotates expires_at on every authenticated call). The Go WS reads the
+// updated expires_at from the same /var/www/mail/data/tokens/<hash>.json
+// file via httpFallback, so a successful check_auth makes the next WS
+// reconnect succeed.
+let _lastRenewAt = 0;
 export async function refreshAuthToken() {
   if (_refreshInFlight) return _refreshInFlight;
   _refreshInFlight = (async () => {
     try {
-      // Web: bearer lives in localStorage and (best-effort) sessionStorage.
+      // Step 1: re-hydrate from local storage (covers cases where the
+      // in-memory `authToken` got cleared but storage still has it).
       if (Platform.OS === 'web') {
         try {
           if (typeof localStorage !== 'undefined') {
             const tk = localStorage.getItem('mail_token');
-            if (tk && tk.length > 0) {
-              if (tk !== authToken) authToken = tk;
-              return true;
-            }
+            if (tk && tk.length > 0 && tk !== authToken) authToken = tk;
           }
-          if (typeof sessionStorage !== 'undefined') {
+          if (!authToken && typeof sessionStorage !== 'undefined') {
             const tk2 = sessionStorage.getItem(TOKEN_FALLBACK_KEY);
-            if (tk2 && tk2.length > 0) {
-              if (tk2 !== authToken) authToken = tk2;
-              return true;
-            }
+            if (tk2 && tk2.length > 0) authToken = tk2;
           }
         } catch {}
-        return !!authToken;
+      } else {
+        try {
+          const SecureStore = require('expo-secure-store');
+          const tk = await SecureStore.getItemAsync('mail_token');
+          if (tk && tk.length > 0 && tk !== authToken) {
+            authToken = tk;
+            _persistAuthForNative(authToken).catch(() => {});
+          }
+        } catch {}
+        if (!authToken) {
+          try {
+            const tk2 = await _readAsyncStorage(TOKEN_FALLBACK_KEY);
+            if (tk2 && tk2.length > 0) {
+              authToken = tk2;
+              _persistAuthForNative(authToken).catch(() => {});
+            }
+          } catch {}
+        }
       }
-      // Native: SecureStore is the primary, AsyncStorage is the mirror.
-      try {
-        const SecureStore = require('expo-secure-store');
-        const tk = await SecureStore.getItemAsync('mail_token');
-        if (tk && tk.length > 0) {
-          if (tk !== authToken) authToken = tk;
-          // [#1175 2026-05-18] Re-stash to native after every successful
-          // refresh — covers the case where SharedPreferences was wiped
-          // (Clear Cache, Reset App Preferences, etc.) but SecureStore /
-          // EncryptedSharedPreferences still has the bearer. Without
-          // this, LkTokenFetcher fails on the next call → "sem token".
-          _persistAuthForNative(authToken).catch(() => {});
+      if (!authToken) return false;
+
+      // Step 2: real sliding renewal. Hit check_auth — backend bumps
+      // expires_at if token is valid. Throttle to once per 60s so the WS
+      // auth_error storm can't hammer the server.
+      const now = Date.now();
+      if (now - _lastRenewAt > 60000) {
+        _lastRenewAt = now;
+        try {
+          const r = await _rawApiCall('check_auth', {}, 'GET');
+          if (r?.status === 401) {
+            // Server says the bearer is dead. Don't pretend it's valid —
+            // let websocket.js give up reconnecting and let api.js's normal
+            // 401 streak handle the logout/redirect.
+            return false;
+          }
+          if (r?.status >= 200 && r?.status < 300) {
+            try { _noteAuthOk(); } catch {}
+            return true;
+          }
+        } catch {
+          // Network error — treat as transient, return optimistic true so
+          // the WS reconnects on the next backoff tick. If the token IS
+          // dead, next reconnect will get auth_error and we'll retry the
+          // HTTP renewal then.
           return true;
         }
-      } catch {}
-      try {
-        const tk2 = await _readAsyncStorage(TOKEN_FALLBACK_KEY);
-        if (tk2 && tk2.length > 0) {
-          if (tk2 !== authToken) authToken = tk2;
-          _persistAuthForNative(authToken).catch(() => {});
-          return true;
-        }
-      } catch {}
-      return !!authToken;
+      }
+      return true;
     } finally {
       _refreshInFlight = null;
     }

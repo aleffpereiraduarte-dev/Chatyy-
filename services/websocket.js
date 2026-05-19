@@ -833,16 +833,40 @@ class MailWebSocket {
               callActive = true;
             }
           } catch {}
+          // [#1189 2026-05-19] AWAIT the refresh BEFORE reconnecting.
+          // Previously fire-and-forget meant reconnect fired in 3s with the
+          // SAME expired JWT → auth_error → loop forever (97% fail rate
+          // observed). _handleMessage isn't async, so we kick off the
+          // refresh, hold off the reconnect, and re-enter via the .then().
+          // If refresh returns false (server said dead), schedule a long
+          // backoff (60s+) instead of storming 3s reconnects.
+          const apiMod = require('./api');
+          if (typeof apiMod.refreshAuthToken === 'function' && !this._authRefreshInFlight) {
+            this._authRefreshInFlight = true;
+            apiMod.refreshAuthToken()
+              .catch(() => true)
+              .then((refreshOk) => {
+                this._authRefreshInFlight = false;
+                if (this.destroyed) return;
+                if (refreshOk === false && !callActive) {
+                  try { console.warn('[WS] refreshAuthToken returned false — bearer revoked, slowing reconnect'); } catch {}
+                  this._authErrorBackoff = Math.min((this._authErrorBackoff || 30000) * 1.5, 300000);
+                  setTimeout(() => { if (!this.destroyed) this.connect(this.token); }, this._authErrorBackoff);
+                  return;
+                }
+                // Successful refresh → reset auth-error backoff and reconnect now.
+                this._authErrorBackoff = 0;
+                const freshToken = apiMod.getAuthToken?.();
+                if (freshToken && freshToken.length > 0 && freshToken !== this.token) {
+                  this.token = freshToken;
+                }
+                this._scheduleReconnect();
+              });
+            // Don't fall through to the legacy reconnect path while refresh
+            // is in-flight — we'll reconnect from inside the .then().
+            break;
+          }
           try {
-            const apiMod = require('./api');
-            // Active refresh path: if the API layer exposes a refreshToken()
-            // (HTTP layer's silent renew), kick it off so the next reconnect
-            // picks up a fresh bearer instead of retrying with the same
-            // already-rejected one. Fire-and-forget — _scheduleReconnect's
-            // backoff gives it time to land.
-            if (typeof apiMod.refreshAuthToken === 'function') {
-              try { apiMod.refreshAuthToken().catch(() => {}); } catch {}
-            }
             const freshToken = apiMod.getAuthToken?.();
             if (freshToken && freshToken.length > 0) {
               hasToken = true;
