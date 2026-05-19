@@ -15,6 +15,7 @@ import {
   Platform, Dimensions, StyleSheet, ActivityIndicator,
 } from 'react-native';
 import CachedImage from './CachedImage';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconX, IconHeart, IconMessageSquare } from './Icons';
 import { BASE_URL } from '../services/api';
 import * as api from '../services/api';
@@ -196,6 +197,10 @@ function PostItem({ post, author, colors, width, onClose, router, t, onOpenLiker
 export default function ProfilePostViewer({
   visible, posts = [], startIndex = 0, author, onClose, colors, isDark, t, router, user,
 }) {
+  // Safe-area top — the top bar used a hardcoded `top: 20` on Android which
+  // tucked the close button under the system clock on edge-to-edge windows.
+  const insets = useSafeAreaInsets();
+  const topBarOffset = Math.max(insets.top, Platform.OS === 'android' ? 12 : 44) + 10;
   const [index, setIndex] = useState(startIndex);
   const listRef = useRef(null);
   const [likersPost, setLikersPost] = useState(null);
@@ -223,7 +228,7 @@ export default function ProfilePostViewer({
       <View style={{ flex: 1, backgroundColor: '#000' }}>
         {/* Top bar */}
         <View style={{
-          position: 'absolute', top: Platform.OS === 'ios' ? 54 : 20, left: 0, right: 0, zIndex: 10,
+          position: 'absolute', top: topBarOffset, left: 0, right: 0, zIndex: 10,
           flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
           paddingHorizontal: 14,
         }}>

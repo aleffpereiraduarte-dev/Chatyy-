@@ -2463,8 +2463,14 @@ export default function LiveBroadcastScreen() {
       );
     }
     if (NativeRTCView && localStreamUrl) {
+      // Round 66 (2026-05-18) — collapsable={false} on the wrapper so RN
+      // doesn't flatten this view out (which on Android re-parents the
+      // underlying SurfaceView and exposes a black square = mancha preta).
       return (
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000', overflow: 'hidden' }]}>
+        <View
+          collapsable={false}
+          style={[StyleSheet.absoluteFill, { backgroundColor: '#000', overflow: 'hidden' }]}
+        >
           <NativeRTCView
             key={localStreamUrl}
             streamURL={localStreamUrl}
@@ -2476,7 +2482,31 @@ export default function LiveBroadcastScreen() {
         </View>
       );
     }
-    return <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }]} />;
+    // Pre-stream fallback — soft purple gradient + centered host avatar so
+    // the camera-warm-up moment isn't a flat black void (issue #1).
+    return (
+      <View style={[StyleSheet.absoluteFill, {
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#0a0a14',
+        ...(Platform.OS === 'web' ? {
+          background: 'radial-gradient(circle at 50% 40%, rgba(124,58,237,0.28), rgba(10,10,20,0.92) 60%, #050510 100%)',
+        } : {}),
+      }]}>
+        <View pointerEvents="none" style={{
+          position: 'absolute',
+          width: 320, height: 320, borderRadius: 160,
+          backgroundColor: 'rgba(124,58,237,0.18)',
+          ...(Platform.OS === 'web' ? { display: 'none' } : {}),
+        }} />
+        <AvatarCircle
+          name={user?.name || user?.email}
+          email={user?.email}
+          size={88}
+          style={{ borderWidth: 2, borderColor: 'rgba(255,255,255,0.18)' }}
+        />
+      </View>
+    );
   };
 
   // Ended state — rich summary card with duration / unique viewers / likes
@@ -2939,7 +2969,13 @@ export default function LiveBroadcastScreen() {
               style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             />
           ) : (NativeRTCView && guestPeer.streamUrl ? (
-            <NativeRTCView streamURL={guestPeer.streamUrl} style={StyleSheet.absoluteFill} objectFit="cover" zOrder={1} />
+            // Round 66 — keyed remount + collapsable wrapper so the PiP card
+            // doesn't paint a black hole on Android when the guest reconnects
+            // (single-hole-per-window rule means the recycled SurfaceView
+            // loses its overlay flag and renders solid black underneath).
+            <View collapsable={false} style={StyleSheet.absoluteFill}>
+              <NativeRTCView key={guestPeer.streamUrl} streamURL={guestPeer.streamUrl} style={StyleSheet.absoluteFill} objectFit="cover" zOrder={1} />
+            </View>
           ) : (
             <View style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
               <AvatarCircle name={guestPeer.name} email={guestPeer.email} size={48} />
@@ -3017,7 +3053,18 @@ export default function LiveBroadcastScreen() {
               }]} />
               <Text style={styles.liveBadgeText}>LIVE</Text>
             </View>
-            <View style={styles.viewerPill}>
+            {/* Round 66 (2026-05-18) issue #5 — tap the "N assistindo" pill
+                to open the Insights/viewers BottomSheet. Before this, the pill
+                was a plain <View> (no tap surface) and the only way to see who
+                joined was the bottom-left insights pill. Now both surfaces open
+                the same sheet — TikTok/Instagram parity. */}
+            <TouchableOpacity
+              onPress={() => setInsightsOpen(true)}
+              activeOpacity={0.7}
+              style={styles.viewerPill}
+              accessibilityRole="button"
+              accessibilityLabel={t('live.openViewersList') || 'Abrir lista de espectadores'}
+            >
               <View style={styles.viewerDot} />
               {/* AnimatedViewerCount drives the smooth 0→N tween + small
                   pulse on increase. Replaces the static Animated.Text that
@@ -3025,7 +3072,7 @@ export default function LiveBroadcastScreen() {
                   the component handles the "k"/"M" formatting. */}
               <AnimatedViewerCount count={viewerCount} style={styles.viewerCountText} />
               <Text style={styles.viewerWatchText}>{t('live.watching') || 'assistindo'}</Text>
-            </View>
+            </TouchableOpacity>
           </View>
         </View>
         <View style={styles.topRight}>
@@ -3813,8 +3860,23 @@ export default function LiveBroadcastScreen() {
           into the LK room render as a 2×2 grid (TikTok parity for multi-guest
           colab). flexWrap + row direction = items reflow to a new line every
           two cards. gap:8 between rows AND columns. Stage 4 will replace this
-          with a proper compositor that re-layouts host + cohorts together. */}
-      {cohostParticipants.length > 0 ? (
+          with a proper compositor that re-layouts host + cohorts together.
+
+          Round 66 (2026-05-18) issue #2 — dedup against guestPeer. When a
+          viewer is approved, BOTH the legacy P2P path (renders as the small
+          PiP card above with `guestPeer`) AND the LK SFU path
+          (renders here in cohostParticipants) fire — so the same person
+          appears twice on the host's stage ("aparece a mesma duplicada na
+          grid"). Filter out any LK participant whose identity matches the
+          current guestPeer.email; the P2P PiP wins because it's already
+          on-screen and has the kick (×) affordance. */}
+      {(() => {
+        const guestEmailNorm = String(guestPeer?.email || '').toLowerCase();
+        const dedupedCohosts = guestEmailNorm
+          ? cohostParticipants.filter(p => String(p.identity || '').toLowerCase() !== guestEmailNorm)
+          : cohostParticipants;
+        if (dedupedCohosts.length === 0) return null;
+        return (
         <View
           pointerEvents="none"
           style={{
@@ -3829,7 +3891,7 @@ export default function LiveBroadcastScreen() {
             justifyContent: 'flex-end',
           }}
         >
-          {cohostParticipants.slice(0, 4).map((p) => {
+          {dedupedCohosts.slice(0, 4).map((p) => {
             // Lazy resolve VideoView from livekit react-native at render
             // time so the import is gated to the actually-attached track.
             let VV = null;
@@ -3893,7 +3955,8 @@ export default function LiveBroadcastScreen() {
             );
           })}
         </View>
-      ) : null}
+        );
+      })()}
 
       {/* Requests sheet — list of viewers who tapped "Pedir pra entrar". Host
           approves (we send live_join_approve via WS — actual SFU guest join

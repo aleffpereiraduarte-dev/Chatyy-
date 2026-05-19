@@ -4338,7 +4338,7 @@ async function _probeRustUpload() {
   return _rustUploadAvailable;
 }
 
-export async function rustUpload(file, userEmail, context = 'chat', externalSignal = null) {
+export async function rustUpload(file, userEmail, context = 'chat', externalSignal = null, onProgress = null) {
   if ((await _probeRustUpload()) === false) return { success: false, error: 'unavailable' };
   try {
     const formData = new FormData();
@@ -4369,6 +4369,45 @@ export async function rustUpload(file, userEmail, context = 'chat', externalSign
     formData.append('user_email', userEmail || '');
     formData.append('context', context);
     if (file.name) formData.append('filename', file.name);
+
+    // XHR path — fetch() on React Native does NOT emit upload-progress events,
+    // so any caller that passed `onProgress` would see a frozen 0% bar until
+    // the whole upload finished. XMLHttpRequest exposes xhr.upload.onprogress
+    // which fires every ~50ms during the body transfer — same plumbing we
+    // already use in chatUploadFile. Use this branch whenever onProgress is
+    // wired (chat photo path: ~500KB compressed JPEG took the rustUpload
+    // branch since it falls under the 1MB chunked threshold, so the bar was
+    // stuck at 0% the whole upload).
+    if (onProgress && typeof XMLHttpRequest !== 'undefined') {
+      return await new Promise((resolve) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${BASE_URL}/api/rust/upload`);
+        xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
+        if (Platform.OS === 'web') xhr.withCredentials = true;
+        xhr.timeout = 90000;
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            try { onProgress(e.loaded / e.total); } catch {}
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try { resolve(JSON.parse(xhr.responseText)); }
+            catch { resolve({ success: false, error: `parse_${xhr.status}` }); }
+          } else {
+            resolve({ success: false, error: `http_${xhr.status}` });
+          }
+        };
+        xhr.onerror = () => resolve({ success: false, error: 'network' });
+        xhr.ontimeout = () => resolve({ success: false, error: 'timeout' });
+        xhr.onabort = () => resolve({ success: false, error: 'aborted', aborted: true });
+        if (externalSignal) {
+          if (externalSignal.aborted) { try { xhr.abort(); } catch {} }
+          else externalSignal.addEventListener('abort', () => { try { xhr.abort(); } catch {} }, { once: true });
+        }
+        xhr.send(formData);
+      });
+    }
 
     // 90s timeout — if Rust doesn't respond, abort so the worker can move on.
     // Also wire the external signal (from the upload bubble X button) so user

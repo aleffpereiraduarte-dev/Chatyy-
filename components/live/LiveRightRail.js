@@ -23,7 +23,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Animated,
 } from 'react-native';
 import {
-  IconHeart, IconShare, IconMoreVert, IconCamera, IconMessageCircle,
+  IconHeart, IconShare, IconMoreVert, IconCamera, IconMessageCircle, IconDiamond,
 } from '../Icons';
 
 const LIVE_RED = '#dc2626';
@@ -112,17 +112,26 @@ export default function LiveRightRail({
 
       {/* Diamond tip — wave 16 (2026-05-17). 1 diamond = 1 paid heart with
           a gold-sparkle particle on all viewers' screens. Falls back silently
-          to a toast if the wallet is empty. */}
+          to a toast if the wallet is empty.
+          Round 66 (2026-05-18) — replaced 💎 emoji with IconDiamond SVG
+          (project rule: SVG only in UI), wrapped in its own slot so we can
+          surface the "Diamante" caption below it (matches the Like slot,
+          gives the action a clear label so users know what tapping does). */}
       {typeof onDiamondPress === 'function' ? (
-        <TouchableOpacity
-          style={[styles.btn, styles.btnDiamond]}
-          onPress={onDiamondPress}
-          activeOpacity={0.7}
-          accessibilityRole="button"
-          accessibilityLabel={i18n.diamond || 'Diamante'}
-        >
-          <Text style={{ fontSize: 20 }}>💎</Text>
-        </TouchableOpacity>
+        <View style={styles.slot}>
+          <TouchableOpacity
+            style={[styles.btn, styles.btnDiamond]}
+            onPress={onDiamondPress}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel={i18n.diamond || 'Diamante'}
+          >
+            <IconDiamond size={24} color="#60a5fa" />
+          </TouchableOpacity>
+          <Text style={styles.diamondCaption} numberOfLines={1}>
+            {i18n.diamond || 'Diamante'}
+          </Text>
+        </View>
       ) : null}
 
       {/* Chat toggle */}
@@ -206,8 +215,17 @@ const styles = StyleSheet.create({
     opacity: 0.72,
   },
   btnDiamond: {
-    backgroundColor: 'rgba(255,215,0,0.18)',
-    borderColor: 'rgba(255,215,0,0.45)',
+    backgroundColor: 'rgba(96,165,250,0.18)',
+    borderColor: 'rgba(96,165,250,0.5)',
+  },
+  diamondCaption: {
+    color: '#bfdbfe',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+    marginTop: 1,
+    textAlign: 'center',
+    ...(Platform.OS === 'web' ? { textShadow: '0 1px 3px rgba(0,0,0,0.7)' } : {}),
   },
   countText: {
     color: '#fff',

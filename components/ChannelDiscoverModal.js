@@ -7,6 +7,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconArrowLeft, IconSearch, IconX } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import Svg, { Path, Rect, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
@@ -117,6 +118,10 @@ export default function ChannelDiscoverModal({ visible, onClose, onJoined }) {
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
   const { t } = useLanguage();
+  // Safe-area top — modal header had hardcoded `paddingTop: 12` on
+  // Android which tucked the back arrow under the status bar.
+  const insets = useSafeAreaInsets();
+  const headerPadTop = Math.max(insets.top, Platform.OS === 'android' ? 12 : 44) + 8;
 
   const [channels, setChannels] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -221,7 +226,7 @@ export default function ChannelDiscoverModal({ visible, onClose, onJoined }) {
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} transparent={false}>
       <View style={[sty.container, { backgroundColor: colors.background }]}>
         {/* Header */}
-        <View style={[sty.header, { backgroundColor: isDark ? '#1F2C33' : '#6D28D9' }]}>
+        <View style={[sty.header, { backgroundColor: isDark ? '#1F2C33' : '#6D28D9', paddingTop: headerPadTop }]}>
           <TouchableOpacity onPress={onClose} style={sty.headerBtn}>
             <IconArrowLeft size={22} color="#fff" />
           </TouchableOpacity>

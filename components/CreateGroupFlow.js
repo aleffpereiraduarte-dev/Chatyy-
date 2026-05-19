@@ -8,6 +8,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconArrowLeft, IconSearch, IconX, IconUsers, IconCheck, IconPlus } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import Svg, { Path, Circle as SvgCircle } from 'react-native-svg';
@@ -37,6 +38,10 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
   const { t } = useLanguage();
+  // Safe-area top — modal header had `paddingTop: 12` on Android which
+  // tucked the back arrow under the status bar on Pixel/Galaxy edge-to-edge.
+  const insets = useSafeAreaInsets();
+  const headerPadTop = Math.max(insets.top, Platform.OS === 'android' ? 12 : 44) + 8;
 
   const [step, setStep] = useState(1);
   const [selectedMembers, setSelectedMembers] = useState([]);
@@ -195,7 +200,7 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         {/* Header */}
-        <View style={[sty.header, { backgroundColor: isDark ? '#1F2C33' : '#6D28D9' }]}>
+        <View style={[sty.header, { backgroundColor: isDark ? '#1F2C33' : '#6D28D9', paddingTop: headerPadTop }]}>
           <TouchableOpacity onPress={handleBack} style={sty.headerBtn}>
             <IconArrowLeft size={22} color="#fff" />
           </TouchableOpacity>

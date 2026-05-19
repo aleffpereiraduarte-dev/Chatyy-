@@ -166,6 +166,13 @@ function FilterThumb({ filter, uri, selected, onPress }) {
 }
 
 export default function StatusCamera({ visible, onClose, onCapture, t, initialSeed = null }) {
+  // Safe-area insets — the absolute overlays (close button, music pill,
+  // right-side action stack) used a fixed Platform.OS check that fell short
+  // on Android edge-to-edge windows (close was tucking under the status
+  // bar clock on Pixel-style devices reporting 36dp). Use runtime insets
+  // with a small floor so the chrome always clears the system UI.
+  const insets = useSafeAreaInsets();
+  const safeTop = Math.max(insets.top, Platform.OS === 'android' ? 12 : 44);
   const [permission, requestPermission] = useCameraPermissions();
   const [facing, setFacing] = useState('front');
   const [flash, setFlash] = useState('off');
@@ -1071,7 +1078,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
       {/* Top-left close (TikTok pattern, Feature 5) */}
       <TouchableOpacity
         onPress={() => { haptic('light'); onClose?.(); }}
-        style={s.closeBtn}
+        style={[s.closeBtn, { top: safeTop + 16 }]}
         accessibilityLabel="Close camera"
         accessibilityRole="button"
       >
@@ -1081,7 +1088,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
       {/* Top music tile (Feature 6) — pill above mode tabs */}
       <TouchableOpacity
         onPress={() => { haptic('light'); setMusicPickerOpen(true); }}
-        style={s.musicPill}
+        style={[s.musicPill, { top: safeTop + 20 }]}
         accessibilityLabel="Add music"
         accessibilityRole="button"
       >
@@ -1092,7 +1099,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
       </TouchableOpacity>
 
       {/* Right-side action stack (Feature 3) — TikTok vertical column */}
-      <View style={s.rightStack} pointerEvents="box-none">
+      <View style={[s.rightStack, { top: safeTop + 86 }]} pointerEvents="box-none">
         <TouchableOpacity
           onPress={() => { haptic('light'); setFacing(f => f === 'front' ? 'back' : 'front'); }}
           style={s.stackBtn}
@@ -1180,7 +1187,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
           label so the user knows hands-free recording is live. The label
           aliases to the localized string via t() when available. */}
       {recording && (
-        <View style={s.recBadge}>
+        <View style={[s.recBadge, { top: safeTop + 60 }]}>
           <View style={s.recDot} />
           <Text style={s.recTxt}>{fmtTime(recordTimer)}</Text>
           <Text style={[s.recTxt, { fontSize: 11, opacity: 0.9, marginLeft: 4 }]}>

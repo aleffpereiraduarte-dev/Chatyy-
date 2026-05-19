@@ -235,6 +235,20 @@ export function IconSparkles({ size, color, style }) {
   );
 }
 
+// Diamond/Gem — used for paid reactions in live (replaces 💎 emoji, project
+// rule: SVG only in UI). Filled shape with a subtle white sparkle inset so
+// it reads as a "diamond" and not just a generic hexagon.
+export function IconDiamond({ size = 22, color = '#60a5fa', style }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" style={style}>
+      <Path d="M6 3h12l4 6-10 12L2 9l4-6Z" fill={color} stroke="#1d4ed8" strokeWidth={0.9} strokeLinejoin="round" />
+      <Path d="M6 3l3 6h6l3-6" stroke="#bfdbfe" strokeWidth={0.9} fill="none" strokeLinecap="round" />
+      <Path d="M9 9l3 12 3-12" stroke="#bfdbfe" strokeWidth={0.9} fill="none" strokeLinecap="round" />
+      <Path d="M8 5.5l1.2 2" stroke="#fff" strokeWidth={0.8} fill="none" strokeLinecap="round" opacity={0.7} />
+    </Svg>
+  );
+}
+
 export function IconMessageSquare({ size, color, style }) {
   return <I size={size} color={color} style={style}><Path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></I>;
 }

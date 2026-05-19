@@ -29,6 +29,7 @@ import LiveConnectingOverlay from '../components/live/LiveConnectingOverlay';
 import LiveTopGifters from '../components/LiveTopGifters';
 import LiveGiftAnimation from '../components/LiveGiftAnimation';
 import LiveGiftPicker, { IconGiftBox } from '../components/LiveGiftPicker';
+import DiamondTopUpSheet from '../components/DiamondTopUpSheet';
 import LivePollOverlay from '../components/live/LivePollOverlay';
 import ConnectionBars from '../components/ConnectionBars';
 
@@ -214,24 +215,31 @@ export default function LiveViewerScreen() {
   //
   // Root cause: bottomArea uses position:absolute,bottom:0. On Android the
   // windowSoftInputMode + abs-pos combo means the keyboard slides UP over
-  // the input instead of pushing it up — user types blind. iOS doesn't have
-  // this issue because keyboardWillShow + safe-area handles the inset.
+  // the input instead of pushing it up — user types blind.
   //
-  // Fix: track the keyboard height and add it to bottomArea's paddingBottom
-  // on Android only (iOS keyboard avoidance already works via the input's
-  // own focus path). On hide, the padding collapses back.
+  // Round 66 (2026-05-18) — same fix now applies on iOS too. The comment
+  // input is absolute-positioned and lives OUTSIDE a KeyboardAvoidingView,
+  // so the iOS soft keyboard slides over it ("teclado corta o campo"). We
+  // listen to keyboardWillShow (iOS animates) / keyboardDidShow (Android)
+  // and inflate bottomArea.paddingBottom by the keyboard height on BOTH
+  // platforms. On hide, the padding collapses back via keyboardWillHide.
   const [kbHeight, setKbHeight] = useState(0);
   useEffect(() => {
-    if (Platform.OS !== 'android') return undefined;
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
     const onShow = (e) => {
       const h = e?.endCoordinates?.height || 0;
-      setKbHeight(h);
+      // Subtract the bottom safe-area inset on iOS — the system keyboard
+      // height already INCLUDES the home-bar zone, so adding it raw on top
+      // of insets.bottom over-lifts the composer (gap above keyboard).
+      const adj = Platform.OS === 'ios' ? Math.max(0, h - (insets?.bottom || 0)) : h;
+      setKbHeight(adj);
     };
     const onHide = () => setKbHeight(0);
-    const s = Keyboard.addListener('keyboardDidShow', onShow);
-    const h = Keyboard.addListener('keyboardDidHide', onHide);
+    const s = Keyboard.addListener(showEvent, onShow);
+    const h = Keyboard.addListener(hideEvent, onHide);
     return () => { try { s.remove(); } catch {} try { h.remove(); } catch {} };
-  }, []);
+  }, [insets?.bottom]);
   // Stream-type branch: backend tells us via `live_session_info` whether this
   // session streams via Cloudflare Stream HLS (`cf_hls`) or legacy WebRTC P2P
   // (`webrtc`). Default `webrtc` so a backend that hasn't shipped the new
@@ -341,6 +349,51 @@ export default function LiveViewerScreen() {
   // though each tap still spawns a local heart animation instantly.
   const lastChatSendAtRef = useRef(0);
   const lastReactionSendAtRef = useRef(0);
+  // Round 66 (2026-05-18) — absolute cap on reactions per minute. TikTok
+  // pattern: even with the 300ms wire throttle, a viewer holding the heart
+  // for 60s sends ~200 packets — backend cron + DB writes balloon for a
+  // single mash. Cap: 60 hearts/min (1/s sustained avg). Window slides on
+  // every send so we don't penalize bursty taps that go quiet for a while.
+  // Local heart-animation spawn stays unlimited so the tapper's screen
+  // still feels generous; only the WS broadcast wire is capped.
+  const reactionWindowRef = useRef([]); // array of timestamps (ms)
+  const REACTION_LIMIT_PER_MIN = 60;
+  const REACTION_WINDOW_MS = 60 * 1000;
+  const reactionToastShownAtRef = useRef(0);
+  // Returns true if the reaction wire is still under the per-minute cap.
+  // Side-effect: drops stale entries + records the new send. Caller should
+  // ONLY call when actually about to send on the wire.
+  const _checkReactionCap = useCallback(() => {
+    const now = Date.now();
+    const arr = reactionWindowRef.current;
+    // Drop entries older than the window in one O(n) pass — cheap since
+    // arr length is bounded by REACTION_LIMIT_PER_MIN.
+    const cutoff = now - REACTION_WINDOW_MS;
+    let i = 0;
+    while (i < arr.length && arr[i] < cutoff) i++;
+    if (i > 0) arr.splice(0, i);
+    if (arr.length >= REACTION_LIMIT_PER_MIN) {
+      // Throttle the toast itself — at most once per 6s so a held-heart
+      // doesn't spam ToastAndroid the whole window.
+      if (now - reactionToastShownAtRef.current > 6000) {
+        reactionToastShownAtRef.current = now;
+        try {
+          const { ToastAndroid, Platform: P } = require('react-native');
+          const msg = (typeof t === 'function' && (t('live.tooManyHearts') || t('live.slowDown'))) ||
+            'Calma com os corações 💜';
+          if (P.OS === 'android' && ToastAndroid?.show) {
+            ToastAndroid.show(msg, ToastAndroid.SHORT);
+          } else {
+            // iOS: piggy-back on the existing snapshot toast pipeline
+            try { showToastRef.current?.(msg); } catch {}
+          }
+        } catch {}
+      }
+      return false;
+    }
+    arr.push(now);
+    return true;
+  }, [t]);
   // Tracks liveEnded as a ref so HLS retry timers (which fire from native
   // listeners outside the React state cycle) can short-circuit without a
   // re-render hop. Without this, a 404 retry after `live_ended` would race
@@ -972,11 +1025,24 @@ export default function LiveViewerScreen() {
             setViewers(prev => {
               const exists = prev.some(v => v.email === msg.viewer_email);
               if (exists) return prev;
-              return [{
+              const next = [{
                 email: msg.viewer_email,
                 name: msg.viewer_name || msg.viewer_email.split('@')[0],
                 joinedAt: Date.now(),
               }, ...prev].slice(0, 100); // cap at 100 most-recent
+              // Round 66 (2026-05-18, bug #3) fix — viewer count fallback.
+              // Go WS (chatyy-ws-go on :8084) doesn't emit `live_viewer_count`;
+              // only the Node WS does, and that's used for HTTP /broadcast
+              // only. Result: host sees N (uses local peer-set fallback),
+              // viewer sees 0 (no fallback). Compute from the local viewers
+              // Set + self (+1) so the count matches host within a join/leave
+              // tick. Authoritative `live_viewer_count` still wins above when
+              // it does arrive (Node WS for HTTP-broadcasted events).
+              try {
+                const localCount = next.length + 1; // +1 for self
+                setViewerCount(prevCount => Math.max(prevCount || 0, localCount));
+              } catch {}
+              return next;
             });
             // Surface as a system chip on the left-bottom stack (round 62
             // redesign — joins/leaves no longer mix with the comment column).
@@ -994,7 +1060,23 @@ export default function LiveViewerScreen() {
           break;
         case 'live_viewer_left':
           if (msg.viewer_email) {
-            setViewers(prev => prev.filter(v => v.email !== msg.viewer_email));
+            setViewers(prev => {
+              const next = prev.filter(v => v.email !== msg.viewer_email);
+              // Round 66 fix — also bump count down so viewer-side stays
+              // honest when server doesn't send a `live_viewer_count`.
+              try {
+                const localCount = next.length + 1;
+                setViewerCount(prevCount => {
+                  // Never overshoot DOWN past the authoritative count if
+                  // it was higher than what we tracked locally (server may
+                  // have more accurate channel-subs view). Take min only
+                  // when local is already higher than the authoritative.
+                  if ((prevCount || 0) <= localCount) return prevCount || 0;
+                  return Math.max(localCount, prevCount - 1);
+                });
+              } catch {}
+              return next;
+            });
           }
           break;
         case 'live_reaction':
@@ -1193,8 +1275,14 @@ export default function LiveViewerScreen() {
           }
           break;
         case 'live_ended':
+          // Round 66 (2026-05-18) — issue #8. Previously we auto-router.back'd
+          // after 4s. User reported "tela apaga se não encontra host" — the
+          // overlay disappears before they can tap Salvar replay / Seguir.
+          // Now the ended card stays on-screen until the user explicitly
+          // taps Voltar or Descobrir mais. The card already exposes Salvar
+          // replay + Seguir + Compartilhar + Descobrir mais lives, so the
+          // user has a clear next step instead of being yanked back.
           setLiveEnded(true);
-          endTimerRef.current = setTimeout(() => { if (alive) router.back(); }, 4000);
           break;
       }
     };
@@ -1629,16 +1717,19 @@ export default function LiveViewerScreen() {
         spawnHeart({ color: '#FFD700' });
         popHeartButton();
       } else if (r?.message === 'insufficient_diamonds') {
-        try {
-          const { Alert: AL, ToastAndroid } = require('react-native');
-          const hint = t('live.diamondsEmpty') || 'Sem diamantes. Toque em Mais → comprar.';
-          if (Platform.OS === 'android' && ToastAndroid?.show) {
-            ToastAndroid.show(hint, ToastAndroid.SHORT);
-          } else if (AL?.alert) AL.alert(hint);
-        } catch {}
+        // Round 66 — open the IAP top-up sheet inline instead of a dead-end
+        // toast. After purchase the sheet auto-refreshes balance; user can
+        // close and re-tap the diamond button to send.
+        try { showToastRef.current?.(t('live.diamondsEmptyOpening') || 'Sem diamantes — abrindo loja…'); } catch {}
+        setTopUpVisible(true);
+      } else if (r?.message) {
+        // Surface any other backend reason (rate limit, session ended) as a
+        // soft toast so the user understands why the tap didn't fire a heart.
+        try { showToastRef.current?.(String(r.message)); } catch {}
       }
     } catch (e) {
       console.warn('[Live] diamond tap failed:', e?.message);
+      try { showToastRef.current?.(t('live.diamondTapFailed') || 'Falha ao enviar diamante'); } catch {}
     }
   }, [paramSessionId, spawnHeart, popHeartButton, t]);
 
@@ -1654,6 +1745,9 @@ export default function LiveViewerScreen() {
     const now = Date.now();
     if (now - lastReactionSendAtRef.current < 300) return;
     lastReactionSendAtRef.current = now;
+    // Round 66 — per-minute hard cap on the wire (does NOT block local
+    // animation). Surfaces a soft toast when the user is at the limit.
+    if (!_checkReactionCap()) return;
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       // Spawn point sits on the right rail — normalize so receivers can
       // place the heart at the same horizontal fraction of their screen
@@ -1668,7 +1762,7 @@ export default function LiveViewerScreen() {
         color,
       }));
     }
-  }, [paramSessionId, user, spawnHeart, popHeartButton]);
+  }, [paramSessionId, user, spawnHeart, popHeartButton, _checkReactionCap]);
 
   // Tap-spam (Periscope/TikTok). Viewer taps anywhere on the video stage,
   // we spawn a heart at the tap point and broadcast a `live_reaction` with
@@ -1687,6 +1781,8 @@ export default function LiveViewerScreen() {
     const now = Date.now();
     if (now - lastReactionSendAtRef.current < 300) return;
     lastReactionSendAtRef.current = now;
+    // Round 66 — per-minute hard cap on the wire.
+    if (!_checkReactionCap()) return;
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       const xNorm = Math.max(0, Math.min(1, tapX / SCREEN_W));
       wsRef.current.send(JSON.stringify({
@@ -1697,7 +1793,7 @@ export default function LiveViewerScreen() {
         color,
       }));
     }
-  }, [paramSessionId, spawnHeart]);
+  }, [paramSessionId, spawnHeart, _checkReactionCap]);
 
   // Central particle burst on double-tap. Spawns 8 hearts in a radial pattern
   // from screen center so it reads like an Instagram-style "love bomb."
@@ -2032,7 +2128,10 @@ export default function LiveViewerScreen() {
       // doesn't get flooded even if a viewer mashes the heart button.
       const now = Date.now();
       if (now - lastReactionSendAtRef.current >= 200 &&
-          wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current?.readyState === WebSocket.OPEN &&
+          _checkReactionCap()) {
+        // Round 66 — per-minute cap gates wire sends. _checkReactionCap
+        // also records the timestamp so it counts toward the window.
         lastReactionSendAtRef.current = now;
         wsRef.current.send(JSON.stringify({
           type: 'live_reaction',
@@ -2043,13 +2142,18 @@ export default function LiveViewerScreen() {
       setTimeout(fire, 90);
     };
     fire();
-  }, [paramSessionId, spawnHeart, popHeartButton]);
+  }, [paramSessionId, spawnHeart, popHeartButton, _checkReactionCap]);
 
   // Free emoji gifts (no IAP) — tap a gift in the picker to send it to the
   // stream. The emoji floats up across everyone's screen via the same
   // live_reaction WS message the heart button uses. Paid gifts will be a
   // future addition once the coin wallet ships.
   const [giftPickerVisible, setGiftPickerVisible] = useState(false);
+  // Round 66 (2026-05-18) issue #7 — diamond UX. When the viewer taps the
+  // diamond rail button with an empty wallet, open the top-up sheet right
+  // there instead of just toasting "Sem diamantes". Reduces friction from
+  // "tap → toast → close → navigate to wallet → tap top-up" to one tap.
+  const [topUpVisible, setTopUpVisible] = useState(false);
   const FREE_GIFTS = ['🌹', '🎉', '🔥', '💎', '🎁', '🥳', '👑', '⭐'];
   const sendGift = useCallback((emoji) => {
     // Spawn a local animation instantly
@@ -2348,14 +2452,40 @@ export default function LiveViewerScreen() {
             }}
           />
         ) : NativeRTCView && remoteStreamUrl ? (
-          <NativeRTCView
-            streamURL={remoteStreamUrl}
-            style={StyleSheet.absoluteFill}
-            objectFit="cover"
-            zOrder={0}
-          />
+          // Round 66 (2026-05-18) issue #1 — wrap RTCView in an opaque View
+          // with collapsable={false} so React Native NEVER folds it out of
+          // the hierarchy during reconciliation (Android only — when the
+          // wrapping View is collapsed, the SurfaceView re-parents to the
+          // root, and the punched window-hole gets covered by sibling views
+          // = mancha preta). Keying the RTCView on the stream URL also forces
+          // a fresh SurfaceView when the stream rotates.
+          <View
+            collapsable={false}
+            style={[StyleSheet.absoluteFill, { backgroundColor: '#0f0f1a', overflow: 'hidden' }]}
+          >
+            <NativeRTCView
+              key={remoteStreamUrl}
+              streamURL={remoteStreamUrl}
+              style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
+              objectFit="cover"
+              zOrder={0}
+            />
+          </View>
         ) : (
-          <View style={[StyleSheet.absoluteFill, { backgroundColor: '#0f0f1a' }]} />
+          // Round 66 — soft fallback instead of solid black. While the stream
+          // is connecting (or briefly gone after a reconnect), show the host
+          // avatar centered on a dark gradient instead of a flat #0f0f1a slab
+          // — feels much less "mancha preta" and gives the viewer a visual
+          // anchor that the screen isn't dead.
+          <View style={[StyleSheet.absoluteFill, styles.preStreamFallback]}>
+            <View style={styles.preStreamWash} pointerEvents="none" />
+            <AvatarCircle
+              name={displayHostName}
+              email={displayHostEmail}
+              size={88}
+              style={styles.preStreamAvatar}
+            />
+          </View>
         )}
       </Pressable>
 
@@ -2721,7 +2851,7 @@ export default function LiveViewerScreen() {
       {/* Bottom: pinned + comments + join pill + input (round 62 redesign).
           All UI pieces extracted into dedicated components. Pure layout glue
           here — state lives in the screen, components are presentational. */}
-      <View style={[styles.bottomArea, { paddingBottom: insets.bottom + 10 + (Platform.OS === 'android' ? kbHeight : 0) }]} pointerEvents="box-none">
+      <View style={[styles.bottomArea, { paddingBottom: insets.bottom + 10 + kbHeight }]} pointerEvents="box-none">
         {/* Round 65 #1135 (2026-05-18) — native bottomGradientStep1/2/3 bands
             removed. Even at 0.28/0.14/0.06 the stacked 150px tall strip read
             as a full-width black band over the live frame. Each bottom chip
@@ -2852,6 +2982,13 @@ export default function LiveViewerScreen() {
           rocket) with SVG glyphs. Tap → POST chat_live_send_gift → backend
           writes chat_live_gifts row + broadcasts `live_gift` WS event so
           every client renders LiveGiftAnimation in sync. */}
+      {/* Round 66 (2026-05-18) issue #7 — IAP top-up sheet wired so empty
+          wallet UX is a single tap to buy diamonds, no nav round-trip. */}
+      <DiamondTopUpSheet
+        visible={topUpVisible}
+        onClose={() => setTopUpVisible(false)}
+      />
+
       <LiveGiftPicker
         visible={giftPickerVisible}
         onClose={() => setGiftPickerVisible(false)}
@@ -3131,6 +3268,28 @@ const styles = StyleSheet.create({
     } : {
       backgroundColor: '#0a0a14',
     }),
+  },
+  // Round 66 (2026-05-18) — pre-stream fallback. Used when the WebRTC remote
+  // stream URL isn't ready yet (handshake in flight or briefly gone after a
+  // reconnect). Soft purple wash + centered host avatar feels much more alive
+  // than a flat black slab ("mancha preta" reported).
+  preStreamFallback: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0a0a14',
+    ...(Platform.OS === 'web' ? {
+      background: 'radial-gradient(circle at 50% 40%, rgba(124,58,237,0.28), rgba(10,10,20,0.92) 60%, #050510 100%)',
+    } : {}),
+  },
+  preStreamWash: {
+    position: 'absolute',
+    width: 320, height: 320, borderRadius: 160,
+    backgroundColor: 'rgba(124,58,237,0.18)',
+    ...(Platform.OS === 'web' ? { display: 'none' } : {}),
+  },
+  preStreamAvatar: {
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.18)',
   },
   // Native fallback radial wash — two stacked translucent circles centered
   // behind the avatar so the dark scrim has a soft purple bloom even without

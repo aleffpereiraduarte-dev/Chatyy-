@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 // FlatList only (FlashList crashes iOS)
 const ListComponent = FlatList;
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AvatarCircle, { bumpAvatarCache } from './AvatarCircle';
 import FeedPost from './FeedPost';
 import FeedComments from './FeedComments';
@@ -298,6 +299,11 @@ function StoriesStrip({ user, colors, isDark, t, router }) {
 }
 
 export default function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedModeConsumed }) {
+  // Safe-area top — the back-to-posts pill (reels mode) used a hardcoded
+  // `top: 18` on Android, which was tucking under the system clock on
+  // edge-to-edge windows. Use runtime insets with a small floor.
+  const insets = useSafeAreaInsets();
+  const safeTopPill = Math.max(insets.top, Platform.OS === 'android' ? 12 : 44) + 8;
   const [feedMode, setFeedMode] = useState(initialFeedMode === 'reels' ? 'reels' : 'posts'); // 'posts' | 'reels' | 'profile'
   // Note: the "Para você / Seguindo" sub-tab is already handled via the
   // existing `algorithm` state below — `algorithm='following'` routes to
@@ -1390,7 +1396,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
         <ReelsViewer colors={colors} isDark={isDark} t={t} user={user} router={router} />
         {/* Small back-to-posts pill at top-left */}
         <TouchableOpacity
-          style={styles.backToPostsPill}
+          style={[styles.backToPostsPill, { top: safeTopPill }]}
           onPress={() => setFeedMode('posts')}
           activeOpacity={0.7}
           accessibilityLabel={t('feed.posts') || 'Posts'}

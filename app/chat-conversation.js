@@ -81,6 +81,9 @@ import SyncBar from '../components/SyncBar';
 // Chat 2026 features (top-3): video notes recorder, AI summarize, smart replies.
 // Lazy-required inside the file when needed to keep the initial parse fast.
 let VideoNoteRecorder = null; try { VideoNoteRecorder = require('../components/chat/VideoNoteRecorder').default; } catch {}
+// WhatsApp-style mic trigger — bigger circle, ambient pulse, haptic.
+// Extracted so we can tune the visuals without touching the chat surface.
+let VoiceMicButton = null; try { VoiceMicButton = require('../components/chat/VoiceMicButton').default; } catch {}
 // 2026-05-18: video send pipeline (poster + compress + GIF detection).
 // Used by handleSendVideoNote to land a poster frame in the optimistic
 // bubble BEFORE upload starts — fixes the "blank black bubble" delay
@@ -12015,6 +12018,12 @@ export default function ChatConversationScreen() {
       // Try Rust upload first (direct to R2, 10x faster, no PHP workers)
       // Use chunked upload for files >1MB so progress callback fires; smaller
       // files take <1s anyway and the indeterminate spinner is enough.
+      // ⚠️ Photo path: compressed JPEGs land around 400-800KB, which falls
+      // under the chunked threshold and used to take the rustUpload fetch()
+      // branch — fetch() doesn't emit upload-progress on RN, so the bar sat
+      // at 0% the entire upload. We now forward onProgress to rustUpload too
+      // (it switches to XHR internally) so small photos animate the bar
+      // smoothly from 0 → 100% just like the chunked path.
       const fileSize = file.size || file.blob?.size || 0;
       let rustResult = null;
       if (isAborted()) return;
@@ -12023,7 +12032,9 @@ export default function ChatConversationScreen() {
           if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(pct * 100) }));
         }, abortCtrl.signal));
       } else if (api.rustUpload) {
-        rustResult = await withUploadTimeout(api.rustUpload(file, user?.email, 'chat', abortCtrl.signal));
+        rustResult = await withUploadTimeout(api.rustUpload(file, user?.email, 'chat', abortCtrl.signal, (pct) => {
+          if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(pct * 100) }));
+        }));
       }
       if (isAborted()) return;
       if (rustResult?.success && rustResult.cdn_url) {
@@ -21692,26 +21703,44 @@ export default function ChatConversationScreen() {
                   <IconVideoNote size={20} color="#7C3AED" />
                 </TouchableOpacity>
               ) : null}
-              <TouchableOpacity
-                onPress={() => {
-                  setIsRecording(true);
-                  // Switch from "typing" → "recording" presence: cancel any
-                  // pending typing-stop timer and tell peers we stopped typing
-                  // so they don't see a stale indicator under the mic UI.
-                  if (typingStopTimerRef.current) { clearTimeout(typingStopTimerRef.current); typingStopTimerRef.current = null; }
-                  typingLastSentAt.current = 0;
-                  try {
-                    const mailWs = require('../services/websocket').default;
-                    mailWs.sendStoppedTyping?.(conversationId);
-                    mailWs.sendTyping(conversationId, true);
-                  } catch {}
-                }}
-                style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center', marginLeft: 6, ...(Platform.OS === 'web' ? { cursor: 'pointer', boxShadow: '0 4px 14px rgba(124,58,237,0.35)' } : {}), ...Platform.select({ ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.35, shadowRadius: 8 }, android: { elevation: 5 }, default: {} }) }}
-                accessibilityLabel={t('chatConv.recordAudio') || 'Record audio'}
-                accessibilityRole="button"
-              >
-                <IconMic size={22} color="#fff" />
-              </TouchableOpacity>
+              {VoiceMicButton ? (
+                <VoiceMicButton
+                  onActivate={() => {
+                    setIsRecording(true);
+                    // Switch from "typing" → "recording" presence: cancel any
+                    // pending typing-stop timer and tell peers we stopped typing
+                    // so they don't see a stale indicator under the mic UI.
+                    if (typingStopTimerRef.current) { clearTimeout(typingStopTimerRef.current); typingStopTimerRef.current = null; }
+                    typingLastSentAt.current = 0;
+                    try {
+                      const mailWs = require('../services/websocket').default;
+                      mailWs.sendStoppedTyping?.(conversationId);
+                      mailWs.sendTyping(conversationId, true);
+                    } catch {}
+                  }}
+                  accessibilityLabel={t('chatConv.recordAudio') || 'Record audio'}
+                />
+              ) : (
+                /* Fallback (require failed): keep the old inline button so
+                   composer still works even if the new component isn't bundled. */
+                <TouchableOpacity
+                  onPress={() => {
+                    setIsRecording(true);
+                    if (typingStopTimerRef.current) { clearTimeout(typingStopTimerRef.current); typingStopTimerRef.current = null; }
+                    typingLastSentAt.current = 0;
+                    try {
+                      const mailWs = require('../services/websocket').default;
+                      mailWs.sendStoppedTyping?.(conversationId);
+                      mailWs.sendTyping(conversationId, true);
+                    } catch {}
+                  }}
+                  style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center', marginLeft: 6 }}
+                  accessibilityLabel={t('chatConv.recordAudio') || 'Record audio'}
+                  accessibilityRole="button"
+                >
+                  <IconMic size={22} color="#fff" />
+                </TouchableOpacity>
+              )}
             </View>
           )}
           </SendButtonAnim>
