@@ -1,7 +1,7 @@
 /**
  * SendStatusText — humanized outbox state for a message bubble.
  *
- * Replaces the cryptic <IconWifiOff /> indicator below queued bubbles with
+ * Replaces the cryptic wifi-off icon indicator below queued bubbles with
  * a short text line that mirrors WhatsApp's UX:
  *   queued      → "Enviando..."
  *   sending     → "Enviando..."

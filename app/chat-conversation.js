@@ -71,6 +71,7 @@ import RichTextOverlay from '../components/RichTextOverlay';
 import LocationPickerSheet from '../components/LocationPickerSheet';
 import ChatNotificationSettingsSheet from '../components/ChatNotificationSettingsSheet';
 import SafetyNumberSheet from '../components/SafetyNumberSheet';
+import SendStatusText from '../components/SendStatusText';
 import { getCachedUri, preCacheUrls, cacheMedia, saveMediaPermanent, saveConversationMedia, initSyncCache } from '../services/mediaCache';
 const ExpoImage = Image;
 import { cacheMessages, getCachedMessages, getLastSyncId, cacheSingleMessage, savePendingMessage, removePendingMessage, getPendingMessages, purgeStalePending } from '../services/chatCache';
@@ -18880,7 +18881,7 @@ export default function ChatConversationScreen() {
                     style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 3, gap: 2, opacity: 0.7 }}
                     accessibilityLabel="Queued - tap for details"
                   >
-                    <IconWifiOff size={11} color={ownMetaColor} />
+                    <SendStatusText msg={msg} color={ownMetaColor} fontSize={10} />
                     <IconClock size={11} color={ownMetaColor} />
                   </TouchableOpacity>
                 );
