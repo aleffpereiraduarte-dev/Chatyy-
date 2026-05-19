@@ -1,5 +1,6 @@
 package expo.modules.callkit
 
+import android.app.ActivityOptions
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
@@ -820,7 +821,23 @@ class ExpoCallKitModule : Module() {
           // as openNativeCall above.
           enrichIntentWithAuth(context, this)
         }
-        context.startActivity(intent)
+        // [#1176 polish, 2026-05-18] Slide-up enter animation so the
+        // transition reads as a modal surface coming on top of the chat,
+        // not the default "whoosh from right" Activity transition. Uses the
+        // calling Activity when available so the framework can apply the
+        // matching exit animation to the chat screen behind us. Falls back
+        // to context.startActivity (no anim) when called from background.
+        val opts = ActivityOptions.makeCustomAnimation(
+          context,
+          R.anim.call_slide_up_enter,
+          R.anim.call_fade_out,
+        )
+        val act = appContext.currentActivity
+        if (act != null) {
+          act.startActivity(intent, opts.toBundle())
+        } else {
+          context.startActivity(intent, opts.toBundle())
+        }
         Log.d(TAG, "startOutgoingCall: started CallActivity callId=$callId callee=$calleeEmail video=$isVideo hasToken=${!lkToken.isNullOrEmpty()} hasAvatar=${calleeAvatar.isNotEmpty()}")
         return@AsyncFunction true
       } catch (t: Throwable) {

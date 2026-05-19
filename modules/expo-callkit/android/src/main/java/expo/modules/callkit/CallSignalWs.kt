@@ -325,10 +325,74 @@ object CallSignalWs {
                 // suspenders so the callee always rings.
                 handleIncomingCallInvite(obj)
             }
+            "call_end" -> {
+                // [#1179 cleanup, 2026-05-19] Native dismissal fallback for
+                // REMOTE hangup.
+                //
+                // Before: only the JS WS (services/websocket.js) handled
+                // inbound `call_end`. If JS was paused (CPU-throttled
+                // background, AppState lag, Suspense unmounted), our native
+                // CallActivity / IncomingCallActivity / CallRingingService
+                // stayed alive — user kept seeing "Calling..." / ringing
+                // screen forever even though the peer had ended the call.
+                // Worse: LK Room stayed connected, draining mic + data.
+                //
+                // Now: broadcast ACTION_CLOSE so CallActivity.closeReceiver
+                // and IncomingCallActivity.closeReceiver finish themselves
+                // (CallActivity's path also fires call_end + Room.disconnect
+                // + stopForeground inside finishCall — finishing is now
+                // idempotent so the WS echo is harmless). Stop the ringing
+                // service and cancel the notification too. JS still has
+                // `mailWs.on('call_end')` for in-app UI cleanup; this is
+                // belt-and-suspenders so native UIs always come down.
+                handleIncomingCallEnd(obj)
+            }
             // We don't consume any other server-pushed frames; the JS WS owns
             // the real call event surface (incoming_call, call_answered, …).
             else -> { /* no-op */ }
         }
+    }
+
+    /**
+     * [#1179 cleanup, 2026-05-19] Native cleanup for inbound `call_end`.
+     * Mirrors handleIncomingCallInvite but in reverse — tears down every
+     * native UI / service that may be holding the call open. Safe to call
+     * even when no call is active (every step is best-effort).
+     */
+    private fun handleIncomingCallEnd(obj: JSONObject) {
+        val ctx = appContext ?: return
+        val callId = obj.optString("call_id").ifEmpty { obj.optString("room_id") }
+        val reason = obj.optString("reason").ifEmpty { "remote_hangup" }
+        Log.d(TAG, "call_end $callId reason=$reason — dismissing native call UIs")
+
+        // 1. Broadcast ACTION_CLOSE — CallActivity and IncomingCallActivity
+        //    both listen on this filter and finish themselves cleanly
+        //    (CallActivity.closeReceiver → finishCall("close_broadcast")
+        //    which tears down LK Room + ongoing FGS; IncomingCallActivity.
+        //    closeReceiver → finish()).
+        try {
+            val closeIntent = Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY")
+            ctx.sendBroadcast(closeIntent)
+        } catch (t: Throwable) {
+            Log.w(TAG, "broadcast CLOSE_CALL_ACTIVITY failed: ${t.message}")
+        }
+
+        // 2. Cancel the incoming-call notification (no-op if not posted).
+        try {
+            CallNotificationService.cancelNotification(ctx, callId)
+        } catch (_: Throwable) {}
+
+        // 3. Stop the ringing foreground service explicitly. The activity
+        //    closeReceiver doesn't stop the service; if the user never
+        //    accepted, the FGS is still ringing.
+        try {
+            val stopIntent = Intent(ctx, CallRingingService::class.java)
+            ctx.stopService(stopIntent)
+        } catch (_: Throwable) {}
+
+        // 4. Dedup table: forget this call so a stale retransmit of the
+        //    invite (server retry, race) wouldn't be filtered out.
+        seenIncomingInvites.remove(callId)
     }
 
     private fun handleIncomingCallInvite(obj: JSONObject) {

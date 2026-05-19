@@ -213,6 +213,17 @@ class CallActivity : ComponentActivity() {
    *  tears down. */
   private var ongoingSvcIntent: Intent? = null
 
+  /** [#1179 cleanup, 2026-05-19] Idempotency guard for finishCall.
+   *  Without this, multiple end paths (user hangup → RoomEvent.Disconnected
+   *  echo, closeReceiver broadcast → emitCallEnded → JS WS call_end echo
+   *  → server fanout back to us) each fired CallSignalWs.fireCallEnd +
+   *  stopService + emitCallEnded + finish(). The WS server logged 3-8x
+   *  call_end frames per call and emitCallEnded leaked to JS as repeated
+   *  onCallEnded events. Setting the flag on first entry makes all
+   *  subsequent calls no-op. */
+  @Volatile
+  private var finishing: Boolean = false
+
   /** Mirrors iOS CallSessionState; the source of truth for the Compose
    *  tree. Public so future GroupCallActivity can share the holder. */
   private val state = CallSessionStateAndroid()
@@ -867,6 +878,17 @@ class CallActivity : ComponentActivity() {
   // ────────────── Hangup
 
   private fun finishCall(reason: String) {
+    // [#1179 cleanup, 2026-05-19] Idempotent — multiple end paths (user
+    // hangup → RoomEvent.Disconnected → closeReceiver re-broadcast →
+    // server WS call_end echo) all converge here. Without this guard each
+    // path fired a duplicate fireCallEnd + duplicate emitCallEnded + an
+    // extra finish() which logged "Activity already finishing" warnings.
+    if (finishing) {
+      Log.d(TAG, "finishCall reason=$reason — already finishing, no-op")
+      return
+    }
+    finishing = true
+
     Log.d(TAG, "finishCall reason=$reason callId=$callId")
     stopRingback()
 
