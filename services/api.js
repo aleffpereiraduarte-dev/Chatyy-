@@ -2891,6 +2891,9 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
   // The local row is now the source of truth. Server is a delivery target.
   // Failures here are logged but never block the POST; absolute worst case
   // is the optimistic row is missing from cache but the server has it.
+  // [#1188 fix 2026-05-19] Pass senderEmail so SQLite row has correct
+  // owner — without this, cold-start cache read shows the user's own
+  // messages as incoming (sender_email NULL !== currentEmail).
   await _localOptimisticSend({
     tempId: localTempId,
     conversationId,
@@ -2899,6 +2902,7 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
     replyToId,
     fileUrl,
     clientMessageId: stableCMI,
+    senderEmail: _tokenMeta.email || null,
   });
 
   const payload = {
@@ -3052,7 +3056,20 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
             reply_to_id: replyToId || null,
             client_message_id: stableCMI,
             client_temp_id: localTempId,
-            sender_email: null, // filled by caller from auth context
+            // [#1188 fix 2026-05-19] CRITICAL: sender_email MUST be the
+            // authenticated user, NOT null. Downstream code spreads r.data
+            // onto the optimistic message row (chat-conversation.js:11369
+            // and ~6 other sites: `{ ...r.data, _pending: false }`). If
+            // sender_email is null here, that spread overwrites the
+            // optimistic row's correct sender_email → MessageRow's
+            // `isOwn = msg.sender_email === currentEmail` evaluates false
+            // → the user's OWN bubble flips from outgoing (right) to
+            // incoming (left) ~200ms after send. Worse: in envelope mode
+            // the keptEnvelope reducer (chat-conversation.js:8725) keeps
+            // this row alive across loadMessages refreshes, so the flip
+            // is sticky until the user force-quits and re-opens (cold
+            // start re-fetches from server which DOES have sender_email).
+            sender_email: _tokenMeta.email || null,
             created_at: new Date().toISOString(),
             _envelope_mode: true,
             inserted: envResp?.data?.inserted ?? 0,

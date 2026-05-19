@@ -9154,7 +9154,8 @@ export default function ChatConversationScreen() {
                 // Real row wins; remove any tmp/_client_id dupes
                 return prev.filter(m => m.id !== p.temp_id && m._client_id !== clientId);
               }
-              return prev.map(m => (m.id === p.temp_id || m._client_id === clientId) ? { ...r.data, _pending: false } : m);
+              // [#1188 fix] Preserve sender_email — envelope mode returns null.
+              return prev.map(m => (m.id === p.temp_id || m._client_id === clientId) ? { ...r.data, _pending: false, sender_email: r.data.sender_email || m.sender_email || currentEmail } : m);
             });
             removePendingMessage(conversationId, p.temp_id).catch(() => {});
             _cacheOne(conversationId, r.data);
@@ -10268,7 +10269,8 @@ export default function ChatConversationScreen() {
                     if (mountedRef.current && r.data?.id) {
                       setMessages(prev => prev.map(m =>
                         (m.id === a.temp_id || m._client_id === a.client_message_id || m._client_id === a.id)
-                          ? { ...r.data, _pending: false, _failed: false, _queued: false }
+                          // [#1188 fix] Preserve sender_email — envelope mode returns null.
+                          ? { ...r.data, _pending: false, _failed: false, _queued: false, sender_email: r.data.sender_email || m.sender_email || currentEmail }
                           : m
                       ));
                     }
@@ -11329,7 +11331,13 @@ export default function ChatConversationScreen() {
             if (res?.success && res.data?.id) {
               const serverMsg = { ...res.data, _pending: false };
               if (e2eEnabled) { serverMsg.content = text; serverMsg._e2e = true; }
-              setMessages(prev => prev.map(m => m.id === tempId || m._client_id === msgId ? serverMsg : m));
+              // [#1188 fix 2026-05-19] Preserve sender_email from optimistic
+              // row — envelope mode synth data returns null and would flip
+              // the bubble to incoming on the swap.
+              setMessages(prev => prev.map(m => {
+                if (m.id !== tempId && m._client_id !== msgId) return m;
+                return { ...serverMsg, sender_email: serverMsg.sender_email || m.sender_email || currentEmail };
+              }));
               removePendingMessage(conversationId, tempId).catch(() => {});
               try {
                 const { removeChatSendFromQueueByClientMsgId } = require('../services/offlineCache');
@@ -11366,12 +11374,19 @@ export default function ChatConversationScreen() {
       const r = await Promise.race([sendPromise, timeoutPromise]);
       if (r.success && r.data?.id) {
         // Replace temp message with real server message (show decrypted text)
+        // [#1188 fix 2026-05-19] NEVER let sender_email become falsy on the
+        // swap — envelope-mode synth data may return sender_email:null which
+        // would flip the bubble to incoming (left side). Preserve from the
+        // optimistic row, falling back to currentEmail as last resort.
         const serverMsg = { ...r.data, _pending: false };
         if (e2eEnabled) {
           serverMsg.content = text; // We already know the plaintext
           serverMsg._e2e = true;
         }
-        setMessages(prev => prev.map(m => m.id === tempId ? serverMsg : m));
+        setMessages(prev => prev.map(m => {
+          if (m.id !== tempId) return m;
+          return { ...serverMsg, sender_email: serverMsg.sender_email || m.sender_email || currentEmail };
+        }));
         // Remove from pending storage now that it's confirmed
         removePendingMessage(conversationId, tempId).catch(() => {});
         // Delete the synthetic-id row from native cache, then add the real
@@ -11464,7 +11479,12 @@ export default function ChatConversationScreen() {
                   _rescued = true;
                   const serverMsg = { ...retry.data, _pending: false };
                   if (e2eEnabled) { serverMsg.content = text; serverMsg._e2e = true; }
-                  setMessages(prev => prev.map(m => m.id === tempId ? serverMsg : m));
+                  // [#1188 fix 2026-05-19] Preserve sender_email so envelope-
+                  // mode synth (null) doesn't flip the bubble to incoming.
+                  setMessages(prev => prev.map(m => {
+                    if (m.id !== tempId) return m;
+                    return { ...serverMsg, sender_email: serverMsg.sender_email || m.sender_email || currentEmail };
+                  }));
                   removePendingMessage(conversationId, tempId).catch(() => {});
                   try { cacheSingleMessage(conversationId, serverMsg); } catch {}
                   try { SmartCache.cacheSingleMessage(conversationId, serverMsg); } catch {}
@@ -11603,7 +11623,9 @@ export default function ChatConversationScreen() {
     try {
       const r = await enqueueChatSend(() => api.chatSend(conversationId, sendUrl, 'gif', null, null, null, tempId, msgId));
       if (r.success && r.data?.id) {
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...r.data, _pending: false } : m));
+        // [#1188 fix] Preserve sender_email — envelope mode returns null and
+        // would flip the bubble to incoming side.
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...r.data, _pending: false, sender_email: r.data.sender_email || m.sender_email || currentEmail } : m));
         removePendingMessage(conversationId, tempId).catch(() => {});
         try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, r.data, tempId, getMemberEmails()); } catch {}
       } else {
@@ -11661,7 +11683,8 @@ export default function ChatConversationScreen() {
     try {
       const r = await enqueueChatSend(() => api.chatSend(conversationId, sticker, 'sticker', null, null, isImage ? sticker : null, tempId, msgId));
       if (r.success && r.data?.id) {
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...r.data, _pending: false } : m));
+        // [#1188 fix] Preserve sender_email — envelope mode returns null.
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...r.data, _pending: false, sender_email: r.data.sender_email || m.sender_email || currentEmail } : m));
         removePendingMessage(conversationId, tempId).catch(() => {});
         try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, r.data, tempId, getMemberEmails()); } catch {}
       } else {
@@ -19063,7 +19086,8 @@ export default function ChatConversationScreen() {
                         const sendContent = isText ? msg.content : (msg.file_url || msg.content || '');
                         const r = await enqueueChatSend(() => api.chatSend(conversationId, sendContent, msg.type, msg.reply_to_id, null, null, retryTempId, retryMsgId));
                         if (r.success && r.data?.id) {
-                          setMessages(prev => prev.map(m => m.id === msg.id ? { ...r.data, _pending: false } : m));
+                          // [#1188 fix] Preserve sender_email — envelope mode returns null.
+                          setMessages(prev => prev.map(m => m.id === msg.id ? { ...r.data, _pending: false, sender_email: r.data.sender_email || m.sender_email || currentEmail } : m));
                           if (typeof msg.id === 'string' && msg.id.startsWith('tmp_')) {
                             removePendingMessage(conversationId, msg.id).catch(() => {});
                           }
