@@ -12630,8 +12630,24 @@ export default function ChatConversationScreen() {
         const wasUserCancel = userCancelledUploadsRef.current.has(tempId);
         userCancelledUploadsRef.current.delete(tempId);
         if (!wasUserCancel) {
-          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
-          setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
+          // WhatsApp-grade offline behavior: distinguish "no network" from
+          // a hard server reject. "Upload failed (network: HTTP 0)" / fetch
+          // exceptions / timeouts mean the bytes never reached the server —
+          // we silently queue and let outboxDrainer replay on reconnect.
+          // Only show the red ❗ bubble + alert for PERMANENT errors the
+          // user can act on (413 too large, 415 unsupported, 403 blocked).
+          const _errMsg = String(lastError?.message || '').toLowerCase();
+          const _isHard = /\b41[35]\b|\b403\b|too large|size|mime|rejected|blocked|forbidden|unsupported/i.test(_errMsg);
+          const _isNetwork = !_isHard && (
+            _errMsg.includes('http 0') ||
+            _errMsg.includes('network') ||
+            _errMsg.includes('timeout') ||
+            _errMsg.includes('failed to fetch') ||
+            _errMsg.includes('aborted') ||
+            _errMsg.includes('chunk_') ||
+            _errMsg.includes('init_failed') ||
+            /\b50[023]\b|\b504\b|\b429\b/.test(_errMsg)
+          );
           // Persist falha pra retry automático quando net voltar. Áudio + texto
           // já tinham essa rede de proteção (handleSendAudio L11541, handleSend
           // L10546); foto/video ficavam só como _failed e morriam se o user
@@ -12653,8 +12669,30 @@ export default function ChatConversationScreen() {
               view_once: forceViewOnce ? 1 : 0,
             });
           } catch {}
-          const detail = lastError?.message ? ` (${lastError.message})` : '';
-          safeAlert(t('common.error') || 'Error', (t('chatConv.uploadError') || 'Failed to send file') + detail);
+          if (_isNetwork) {
+            // Silent offline path — bubble keeps the WhatsApp ⏱ clock icon
+            // (MediaStatusFooter: _pending && !_failed). When the device
+            // reconnects, NetInfo listener in OfflineNotice triggers
+            // replayOfflineQueue which redrives the upload via case
+            // 'chat_file_upload' in offlineCache. No alert, no red bubble.
+            setMessages(prev => prev.map(m => m.id === tempId ? {
+              ...m,
+              _failed: false,
+              _pending: true,
+              _queued: true,
+              _uploading: false,
+              pending_state: 'queued',
+            } : m));
+            setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
+          } else {
+            // Hard error (413/415/403/etc.) — user needs to know so they
+            // can pick a smaller file / different format. Keep the red ❗
+            // bubble + alert that surfaces the HTTP code.
+            setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+            setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
+            const detail = lastError?.message ? ` (${lastError.message})` : '';
+            safeAlert(t('common.error') || 'Error', (t('chatConv.uploadError') || 'Failed to send file') + detail);
+          }
         } else {
           setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
         }

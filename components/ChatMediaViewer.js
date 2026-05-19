@@ -56,7 +56,30 @@ function getFullUrl(url) {
   if (typeof url === 'string' && (url.startsWith('file://') || url.startsWith('content://') || url.startsWith('blob:'))) {
     return url;
   }
-  const full = url.startsWith('http') ? url : `https://chatyy.com.br${url}`;
+  // CRITICAL (2026-05-19): route through api.getMediaUrl() so we produce the
+  // SAME canonical URL that the chat bubble used at render time (CDN host:
+  // media.chatyy.com.br for /data/chat-files/). Previously this hardcoded
+  // `https://chatyy.com.br${url}` for relative paths AND left existing
+  // chatyy.com.br absolute URLs untouched — but the bubble caches under the
+  // CDN-rewritten URL (see app/chat-conversation.js#resolveMediaUri which
+  // uses api.getMediaUrl). Result: tap-to-open computed a DIFFERENT
+  // urlToKey() hash than the bubble's cache entry, getLocalUriIfCached
+  // returned null, the viewer tried to fetch from the origin host (slower /
+  // sometimes unreachable behind Cloudflare), and the user saw a blank
+  // viewer or eternal spinner ("fotos não tá abrindo no celular"). Routing
+  // through api.getMediaUrl unifies the cache lookup with the bubble path.
+  let full;
+  try {
+    const _api = require('../services/api');
+    if (_api?.getMediaUrl) {
+      full = _api.getMediaUrl(url);
+    } else {
+      full = url.startsWith('http') ? url : `https://chatyy.com.br${url}`;
+    }
+  } catch {
+    full = url.startsWith('http') ? url : `https://chatyy.com.br${url}`;
+  }
+  if (!full) full = url.startsWith('http') ? url : `https://chatyy.com.br${url}`;
   // OFFLINE-FIRST: if we already have the file on disk (mediaCache.syncIndex),
   // return that path instead of the CDN URL. ImageViewer / VideoPlayer /
   // PreviewViewer / GenericFileViewer all hand the result straight to native
@@ -69,6 +92,13 @@ function getFullUrl(url) {
       const { getLocalUriIfCached } = require('../services/mediaCache');
       const local = getLocalUriIfCached(full);
       if (local) return local;
+      // Belt-and-suspenders: also try the original (non-CDN-rewritten) URL
+      // in case the cache was populated by a code path that didn't go
+      // through api.getMediaUrl (older sessions, manual saves, etc.).
+      if (full !== url && url.startsWith('http')) {
+        const alt = getLocalUriIfCached(url);
+        if (alt) return alt;
+      }
     } catch {}
   }
   // WKWebView (iOS) is strict about reserved-but-unencoded characters in URLs.

@@ -540,27 +540,33 @@ function ChatHub() {
     try {
       const { getString, setString } = require('../services/mmkv');
       const gateKey = `initial_sync_done:${email}`;
-      if (getString?.(gateKey) === '1') return; // already done for this account
       const api = require('../services/api');
+
+      // WhatsApp-grade "tudo no celular" (#1194/#1196): kick off the
+      // per-conversation FULL history bootstrap UNCONDITIONALLY here.
+      // It MUST NOT be gated by `initial_sync_done:<email>` — that flag
+      // gets sealed on the user's first launch (well before #1194
+      // shipped), so existing installs would never get the new bootstrap
+      // if we piggybacked on the initial-sync gate. The bootstrap has its
+      // own SQLite-backed gate (`chat_full_bootstrap:<email>` in
+      // sync_state); calling it on every chat-screen mount is cheap —
+      // a single sync_state lookup short-circuits to skipped='already_done'.
+      try {
+        const { bootstrapFullHistoryOnce } = require('../services/fullHistorySync');
+        // Defer past first paint so the chat list animates in cleanly
+        // before the network traffic starts.
+        setTimeout(() => {
+          bootstrapFullHistoryOnce(api.apiCall, email).catch(() => {});
+        }, 2500);
+      } catch {}
+
+      if (getString?.(gateKey) === '1') return; // initial sync already done for this account
       runInitialSync(api).then((r) => {
         // Mark done only on success (or skip path). Avoid sealing the
         // gate on transient errors so the user gets another chance.
         if (r && !r.error) {
           try { setString?.(gateKey, '1'); } catch {}
         }
-        // WhatsApp-grade "tudo no celular" (#1194): after the lightweight
-        // initial sync seeds the chat list, kick off the per-conversation
-        // FULL history bootstrap in the background. Idempotent — internal
-        // gate is `chat_full_bootstrap:<email>` in SQLite sync_state, so
-        // this only does the heavy walk on the very first launch.
-        try {
-          const { bootstrapFullHistoryOnce } = require('../services/fullHistorySync');
-          // Defer past first paint so the chat list animates in cleanly
-          // before the network traffic starts.
-          setTimeout(() => {
-            bootstrapFullHistoryOnce(api.apiCall, email).catch(() => {});
-          }, 2500);
-        } catch {}
       }).catch(() => {});
     } catch {}
   }, [user?.email, user?.token]);
