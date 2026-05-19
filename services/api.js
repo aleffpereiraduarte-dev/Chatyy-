@@ -2539,23 +2539,25 @@ export function setEnvelopeMode(enabled) {
       globalThis.__chatyy_envelope_mode = flag;
     }
   } catch {}
-  // Persist for next bundle load. Web uses localStorage; native uses
-  // AsyncStorage via the helper already in this file.
+  // Persist for next bundle load. Stage 7 (E2E default-ON):
+  //  - flag=true  → persist '1'  (loadEnvelopeMode → ON via raw!=='0')
+  //  - flag=false → persist '0'  (explicit opt-out; loadEnvelopeMode → OFF)
+  // We do NOT remove the key on opt-out because empty/null now means ON.
   try {
     if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
-      if (flag) localStorage.setItem(_ENVELOPE_MODE_KEY, '1');
-      else localStorage.removeItem(_ENVELOPE_MODE_KEY);
+      localStorage.setItem(_ENVELOPE_MODE_KEY, flag ? '1' : '0');
     } else {
-      _writeAsyncStorage(_ENVELOPE_MODE_KEY, flag ? '1' : null);
+      _writeAsyncStorage(_ENVELOPE_MODE_KEY, flag ? '1' : '0');
     }
   } catch {}
   return flag;
 }
 
 export async function loadEnvelopeMode() {
-  // Reads the persisted flag and mirrors it onto globalThis. Default OFF
-  // is preserved when storage has no value or read fails — we only flip
-  // ON when explicitly persisted.
+  // Stage 7 (2026-05-18): E2E default-ON, WhatsApp-style. Every conversation
+  // is encrypted unless the user explicitly opts out (persisted as '0').
+  // Legacy persisted '1' from Stage 6 still resolves ON. Anything else
+  // (null / unset / first-launch) → ON.
   let raw = null;
   try {
     if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
@@ -2564,7 +2566,8 @@ export async function loadEnvelopeMode() {
       raw = await _readAsyncStorage(_ENVELOPE_MODE_KEY);
     }
   } catch {}
-  const flag = raw === '1';
+  // Default ON: only an explicit '0' opt-out turns it off.
+  const flag = raw !== '0';
   try {
     if (typeof globalThis !== 'undefined') {
       globalThis.__chatyy_envelope_mode = flag;
@@ -2573,11 +2576,15 @@ export async function loadEnvelopeMode() {
   return flag;
 }
 
-// Fire-and-forget bootstrap: pull the persisted flag once on bundle load so
-// every call site (including `chatSend` further down) sees the right value
-// without any caller having to wait. Default OFF is preserved if anything
-// here throws — `globalThis.__chatyy_envelope_mode` stays undefined and the
-// `=== true` guard in chatSend evaluates false.
+// Stage 7 (E2E default-ON): set the global immediately to ON so the very
+// first chatSend in a cold-start session is already encrypted, even before
+// AsyncStorage resolves below. loadEnvelopeMode() then either confirms ON
+// (default / persisted '1') or downgrades to OFF (explicit '0' opt-out).
+try {
+  if (typeof globalThis !== 'undefined' && globalThis.__chatyy_envelope_mode === undefined) {
+    globalThis.__chatyy_envelope_mode = true;
+  }
+} catch {}
 try { loadEnvelopeMode().catch(() => {}); } catch {}
 
 export async function chatSend(conversationId, content, type = 'text', replyToId = null, mentions = null, fileUrl = null, tempId = null, clientMessageId = null, topicId = null, opts = null) {
@@ -2668,16 +2675,15 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
   // the PHP path so the persisted row carries the effect for replay.
   // ── 2. Send to server ──
   //
-  // Stage 5 envelope mode (feature-flagged): when globalThis.__chatyy_envelope_mode
-  // is ON, we encrypt the body per-recipient-device with nacl.box and
-  // upload only the ciphertexts to chat_envelope_send. The plaintext
-  // chat_send / Rust path is *fully skipped* so the server never sees the
-  // body — no chat_messages row gets created. The optimistic SQLite row
-  // is the only plaintext copy until the receiver pulls + acks.
+  // Stage 7 (2026-05-18) — E2E default-ON, WhatsApp-style. The
+  // chat_envelope_send path encrypts the body per-recipient-device with
+  // nacl.box and uploads only the ciphertexts. The plaintext chat_send /
+  // Rust path is *fully skipped* so the server never sees the body — no
+  // chat_messages row gets created. The optimistic SQLite row is the only
+  // plaintext copy until the receiver pulls + acks.
   //
-  // Default OFF. Toggle for dev: `globalThis.__chatyy_envelope_mode = true`.
-  // Stage 6 will roll the flag on per-account; Stage 7 deprecates the
-  // legacy plaintext path entirely.
+  // Users can still opt out via setEnvelopeMode(false), which persists a
+  // '0' marker and downgrades subsequent sends to the plaintext branch.
   let result = null;
   const envelopeMode = (typeof globalThis !== 'undefined') && globalThis.__chatyy_envelope_mode === true;
   if (envelopeMode) {

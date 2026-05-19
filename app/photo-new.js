@@ -311,7 +311,7 @@ export default function PhotoNew() {
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
     },
-    headerBtn: { padding: 6, minWidth: 40 },
+    headerBtn: { padding: 8, minWidth: 44, minHeight: 44, justifyContent: 'center', alignItems: 'center' },
     headerTitle: { fontSize: FontSize.lg, fontWeight: '600', color: colors.text },
     publishBtn: {
       paddingHorizontal: 14, paddingVertical: 8, borderRadius: BorderRadius.lg,
@@ -323,11 +323,15 @@ export default function PhotoNew() {
     slide: { width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center' },
     slideMedia: { width: '100%', height: '100%' },
     perItemBtns: {
-      position: 'absolute', top: 12, right: 12, flexDirection: 'row', gap: 8,
+      // Anchor inside the slide with a safe-margin so the X never sits under the
+      // notch / header divider. Each button is 44pt (WCAG hit-target min) which
+      // visually nudges the row down naturally without breaking the carousel.
+      position: 'absolute', top: 16, right: 16, flexDirection: 'row', gap: 10,
+      zIndex: 50, elevation: 50,
     },
     iconBtn: {
-      width: 36, height: 36, borderRadius: 18,
-      backgroundColor: 'rgba(0,0,0,0.55)',
+      width: 44, height: 44, borderRadius: 22,
+      backgroundColor: 'rgba(0,0,0,0.6)',
       justifyContent: 'center', alignItems: 'center',
       ...Shadow.sm,
     },
@@ -383,11 +387,11 @@ export default function PhotoNew() {
   const captionRemaining = MAX_CAPTION - caption.length;
 
   return (
-    <View style={[s.root, { paddingTop: insets.top }]}>
+    <View style={[s.root, { paddingTop: insets.top + 4 }]}>
       {/* Header */}
       <View style={s.header}>
-        <TouchableOpacity onPress={() => router.back()} style={s.headerBtn} accessibilityLabel={t('common.back') || 'Voltar'}>
-          <IconArrowLeft size={26} color={colors.text} />
+        <TouchableOpacity onPress={() => router.back()} style={s.headerBtn} accessibilityLabel={t('common.close') || 'Fechar'} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+          <IconX size={26} color={colors.text} />
         </TouchableOpacity>
         <Text style={s.headerTitle}>{t('photoNew.title') || 'Nova publicação'}</Text>
         <TouchableOpacity

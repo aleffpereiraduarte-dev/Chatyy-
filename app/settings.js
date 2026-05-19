@@ -17,6 +17,7 @@ import {
   IconShield, IconFileText, IconUser, IconUsers, IconPlus, IconShare, IconCheck,
   IconMail, IconPhone, IconAlertTriangle, IconCopy, IconDatabase,
 } from '../components/Icons';
+import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect, Circle as SvgCircle } from 'react-native-svg';
 import { useBiometric } from '../context/BiometricContext';
 import { useConfirm } from '../components/ConfirmModal';
 import { useAuth } from '../context/AuthContext';
@@ -146,7 +147,10 @@ function SettingsScreenInner() {
   const [bubbleShape, setBubbleShape] = useState('rounded'); // 'rounded' | 'square' | 'classic'
   const [notifLedColor, setNotifLedColor] = useState('#7C3AED');
   const [mediaRoaming, setMediaRoaming] = useState(false);
-  const [wallpaperDefault, setWallpaperDefault] = useState('#075E54');
+  // Default = Chatyy purple (was WhatsApp green '#075E54'). Stored as a
+  // hex so chat-conversation.js renders it correctly — gradient swatches
+  // below are previews; the dominant hex is what we actually persist.
+  const [wallpaperDefault, setWallpaperDefault] = useState('#7C3AED');
   // Modal state
   const [aboutOpen, setAboutOpen] = useState(false);
   const [backupKeyOpen, setBackupKeyOpen] = useState(false);
@@ -1685,58 +1689,80 @@ function SettingsScreenInner() {
         )}
 
         {/* Wallpaper global default — picks the default chat background
-            for new conversations. 8 colors + 4 gradients + custom upload. */}
+            for new conversations. Curated Chatyy-branded presets with SVG
+            gradient previews. The stored value is always a single hex so
+            chat-conversation.js can render it via backgroundColor; the
+            gradient swatches here are visual previews only. Custom photo
+            upload remains supported (stored as the image URI). */}
         {sectionMatches(t('settings.wallpaperDefault.title') || 'Papel de parede padrão', 'wallpaper', 'papel de parede') && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.wallpaperDefault.title') || 'Papel de parede padrão'}</Text>
           <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
             {t('settings.wallpaperDefault.desc') || 'Aplica em conversas novas. Cada chat pode ter o seu próprio.'}
           </Text>
-          {/* Solid colors */}
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: Spacing.md }}>
-            {['#075E54', '#1F2937', '#374151', '#7C3AED', '#DB2777', '#0EA5E9', '#16A34A', '#F59E0B'].map(c => (
-              <TouchableOpacity
-                key={c}
-                onPress={() => { setWallpaperDefault(c); setStorage('wallpaper_default', c); }}
-                style={{
-                  width: 56, height: 56, borderRadius: 12,
-                  backgroundColor: c,
-                  borderWidth: 3,
-                  borderColor: wallpaperDefault === c ? colors.primary : 'transparent',
-                  alignItems: 'center', justifyContent: 'center',
-                }}
-                accessibilityRole="button"
-                accessibilityLabel={`Wallpaper ${c}`}
-              >
-                {wallpaperDefault === c && <IconCheck size={18} color="#fff" />}
-              </TouchableOpacity>
-            ))}
-          </View>
-          {/* Gradients — stored as `grad:<id>` */}
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: Spacing.md }}>
+          {/* Brand-curated preset grid. Each tile is 76×76 with a 2-stop
+              SVG gradient preview, a label below, and a check overlay when
+              selected. The persisted `wallpaperDefault` is the dominant
+              hex (compatible with chat-conversation.js render path). */}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: Spacing.md }}>
             {[
-              { id: 'grad:purple', preview: '#7C3AED', label: 'Roxo' },
-              { id: 'grad:sunset', preview: '#F59E0B', label: 'Pôr-do-sol' },
-              { id: 'grad:ocean',  preview: '#0EA5E9', label: 'Oceano' },
-              { id: 'grad:forest', preview: '#16A34A', label: 'Floresta' },
-            ].map(g => (
-              <TouchableOpacity
-                key={g.id}
-                onPress={() => { setWallpaperDefault(g.id); setStorage('wallpaper_default', g.id); }}
-                style={{
-                  width: 56, height: 56, borderRadius: 12,
-                  backgroundColor: g.preview,
-                  borderWidth: 3,
-                  borderColor: wallpaperDefault === g.id ? colors.primary : 'transparent',
-                  alignItems: 'center', justifyContent: 'center',
-                  opacity: 0.85,
-                }}
-                accessibilityRole="button"
-                accessibilityLabel={`Gradient ${g.label}`}
-              >
-                {wallpaperDefault === g.id && <IconCheck size={18} color="#fff" />}
-              </TouchableOpacity>
-            ))}
+              { id: '#7C3AED', from: '#A855F7', to: '#6D28D9', label: t('settings.wallpaperDefault.p1') || 'Roxo Chatyy' },
+              { id: '#DB2777', from: '#F472B6', to: '#BE185D', label: t('settings.wallpaperDefault.p2') || 'Rosa' },
+              { id: '#F59E0B', from: '#FBBF24', to: '#D97706', label: t('settings.wallpaperDefault.p3') || 'Pôr-do-sol' },
+              { id: '#0EA5E9', from: '#38BDF8', to: '#0369A1', label: t('settings.wallpaperDefault.p4') || 'Oceano' },
+              { id: '#16A34A', from: '#4ADE80', to: '#15803D', label: t('settings.wallpaperDefault.p5') || 'Floresta' },
+              { id: '#1F2937', from: '#374151', to: '#0F172A', label: t('settings.wallpaperDefault.p6') || 'Carbono' },
+              { id: '#EDE9FE', from: '#F5F3FF', to: '#DDD6FE', label: t('settings.wallpaperDefault.p7') || 'Lavanda' },
+              { id: '#FECACA', from: '#FECACA', to: '#FCA5A5', label: t('settings.wallpaperDefault.p8') || 'Coral' },
+            ].map(g => {
+              const selected = wallpaperDefault === g.id;
+              return (
+                <TouchableOpacity
+                  key={g.id}
+                  onPress={() => { setWallpaperDefault(g.id); setStorage('wallpaper_default', g.id); }}
+                  activeOpacity={0.75}
+                  style={{ alignItems: 'center', width: 76 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Wallpaper ${g.label}`}
+                >
+                  <View style={{
+                    width: 64, height: 64, borderRadius: 14, overflow: 'hidden',
+                    borderWidth: selected ? 3 : 1,
+                    borderColor: selected ? colors.primary : colors.borderLight,
+                    alignItems: 'center', justifyContent: 'center',
+                  }}>
+                    <Svg width={62} height={62} style={{ position: 'absolute', top: 0, left: 0 }}>
+                      <Defs>
+                        <SvgLinearGradient id={`wp_${g.id.replace('#','')}`} x1="0" y1="0" x2="1" y2="1">
+                          <Stop offset="0" stopColor={g.from} stopOpacity="1" />
+                          <Stop offset="1" stopColor={g.to} stopOpacity="1" />
+                        </SvgLinearGradient>
+                      </Defs>
+                      <SvgRect x="0" y="0" width="62" height="62" fill={`url(#wp_${g.id.replace('#','')})`} />
+                    </Svg>
+                    {selected && (
+                      <View style={{
+                        width: 28, height: 28, borderRadius: 14,
+                        backgroundColor: 'rgba(0,0,0,0.35)',
+                        alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        <IconCheck size={18} color="#fff" />
+                      </View>
+                    )}
+                  </View>
+                  <Text
+                    numberOfLines={1}
+                    style={{
+                      fontSize: 11, color: selected ? colors.primary : colors.textSecondary,
+                      marginTop: 6, fontWeight: selected ? '700' : '500',
+                      textAlign: 'center', maxWidth: 76,
+                    }}
+                  >
+                    {g.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
           {/* Custom upload — reuses ImagePicker */}
           <TouchableOpacity
@@ -1750,7 +1776,9 @@ function SettingsScreenInner() {
                   quality: 0.85,
                 });
                 if (!result.canceled && result.assets?.[0]?.uri) {
-                  const v = `custom:${result.assets[0].uri}`;
+                  // Chat render path treats any non-`#` string as an image
+                  // URI — store the raw URI so existing Image source works.
+                  const v = result.assets[0].uri;
                   setWallpaperDefault(v);
                   setStorage('wallpaper_default', v);
                 }

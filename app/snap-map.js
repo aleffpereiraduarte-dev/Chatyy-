@@ -48,8 +48,9 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform,
   ScrollView, Dimensions, Modal, Pressable, ActivityIndicator, Alert,
-  Linking,
+  Linking, StatusBar,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { triggerLocationRequestModal } from '../components/LocationRequestModal';
@@ -472,6 +473,15 @@ export default function SnapMapScreen() {
   const { t } = useLanguage();
   const { user } = useAuth();
   const router = useRouter();
+  // User feedback 2026-05-18 ("no android mapa de amigos tá muito encima ai
+  // tá cortando"): hardcoded paddingTop:14 on Android sat under the translucent
+  // status bar, clipping the back button + title. iOS was fine because we used
+  // 50. Use real insets here, falling back to StatusBar.currentHeight on
+  // Android where insets.top can come back 0 with a translucent status bar.
+  const insets = useSafeAreaInsets();
+  const topInset = Platform.OS === 'android'
+    ? Math.max(insets.top || 0, StatusBar.currentHeight || 0)
+    : (insets.top || 0);
   // `incoming_request` is set when the user lands here from tapping a
   // location-request push (see services/pushNotifications.js). We auto-show
   // the global accept/decline sheet once on mount; further requests during
@@ -754,7 +764,7 @@ export default function SnapMapScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: isDark ? '#0d0d0d' : '#fff' }}>
       {/* Header */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 50 : 14, paddingBottom: 14, backgroundColor: isDark ? '#0d0d0d' : '#fff', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)', zIndex: 10 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: topInset + 8, paddingBottom: 14, backgroundColor: isDark ? '#0d0d0d' : '#fff', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)', zIndex: 10 }}>
         <TouchableOpacity onPress={() => router.back()} style={{ padding: 8 }} accessibilityLabel="Voltar">
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
