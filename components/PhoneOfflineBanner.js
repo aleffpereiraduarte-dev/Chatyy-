@@ -17,6 +17,7 @@
 import React, { useEffect, useState } from 'react';
 import { Platform, View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { IconX, IconWifiOff } from './Icons';
+import { useLanguage } from '../context/LanguageContext';
 
 const POLL_MS = 1000;
 
@@ -26,6 +27,7 @@ export default function PhoneOfflineBanner() {
   // returns null for native.
   const [visible, setVisible] = useState(false);
   const [dismissed, setDismissed] = useState(false);
+  const { t } = useLanguage();
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -34,6 +36,17 @@ export default function PhoneOfflineBanner() {
       if (!mounted) return;
       let flag = false;
       try { flag = !!globalThis.__chatyy_phone_offline; } catch {}
+      // Banner dedup: if the BROWSER itself is offline, the root-level
+      // <OfflineNotice/> already paints a yellow "Sem conexão · Tentar"
+      // bar. Painting "Celular offline" on top of that stacks two yellow
+      // banners on the same line — looks broken and the user has no idea
+      // which is which. Suppress this one when the browser is offline;
+      // OfflineNotice's message is the higher-priority signal in that case.
+      try {
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+          flag = false;
+        }
+      } catch {}
       setVisible(flag);
       // Auto-clear dismissed state once the flag flips back to false so a
       // subsequent re-occurrence shows the banner again.
@@ -41,7 +54,24 @@ export default function PhoneOfflineBanner() {
     };
     tick();
     const id = setInterval(tick, POLL_MS);
-    return () => { mounted = false; clearInterval(id); };
+    // Also re-evaluate on the browser online/offline events so the dedup
+    // reacts instantly instead of waiting for the 1s poll tick.
+    let onOnline = null;
+    let onOffline = null;
+    try {
+      onOnline = () => tick();
+      onOffline = () => tick();
+      window.addEventListener('online', onOnline);
+      window.addEventListener('offline', onOffline);
+    } catch {}
+    return () => {
+      mounted = false;
+      clearInterval(id);
+      try {
+        if (onOnline) window.removeEventListener('online', onOnline);
+        if (onOffline) window.removeEventListener('offline', onOffline);
+      } catch {}
+    };
   }, []);
 
   if (Platform.OS !== 'web') return null;
@@ -51,12 +81,12 @@ export default function PhoneOfflineBanner() {
     <View style={s.bar} accessibilityLiveRegion="polite" accessibilityRole="alert">
       {IconWifiOff ? <IconWifiOff size={16} color="#7c5e00" /> : null}
       <Text style={s.text} numberOfLines={2}>
-        Celular offline — mostrando dados em cache. Conecte o celular pra ver as conversas mais recentes.
+        {t?.('offline.phoneOffline') || 'Celular offline — mostrando dados em cache. Conecte o celular pra ver as conversas mais recentes.'}
       </Text>
       <TouchableOpacity
         onPress={() => setDismissed(true)}
         style={s.closeBtn}
-        accessibilityLabel="Fechar aviso"
+        accessibilityLabel={t?.('common.dismiss') || 'Fechar aviso'}
         accessibilityRole="button"
         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
       >

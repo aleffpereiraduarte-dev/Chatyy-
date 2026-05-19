@@ -355,8 +355,46 @@ function ImageViewer({ url, messageId, fileSize, createdAt, t }) {
           onLoadEnd={() => setLoading(false)}
           onError={(e) => {
             setLoading(false);
-            const msg = e?.nativeEvent?.error || 'Erro desconhecido ao carregar a imagem';
-            setImageError(String(msg));
+            // OFFLINE-FIRST: if the URL we tried IS a remote URL (i.e. cache
+            // missed BEFORE getFullUrl), one more sync check — the syncIndex
+            // may have been populated by a parallel cacheMedia that finished
+            // between mount and the Image fetch. Same for retry storms.
+            try {
+              const { getLocalUriIfCached } = require('../services/mediaCache');
+              if (effectiveUrl && !effectiveUrl.startsWith('file://')) {
+                const local = getLocalUriIfCached(effectiveUrl);
+                if (local && local !== effectiveUrl) {
+                  // We have it on disk — switch source and clear error.
+                  setFreshUrl(local);
+                  setImageError(null);
+                  setLoading(true);
+                  setRetryEpoch(epc => epc + 1);
+                  return;
+                }
+              }
+            } catch {}
+            const raw = e?.nativeEvent?.error || '';
+            // iOS WKWebView/NSURLSession surfaces NSURLErrorNotConnectedToInternet
+            // as the English string "The Internet connection appears to be
+            // offline." We catch known offline phrasings (also Android's "Unable
+            // to resolve host" etc.) and substitute the localized cache-miss
+            // copy. Anything else falls through to the original native message.
+            const lower = String(raw).toLowerCase();
+            const offlineLike = !raw
+              || lower.includes('offline')
+              || lower.includes('internet connection')
+              || lower.includes('not connected')
+              || lower.includes('unable to resolve')
+              || lower.includes('no address associated')
+              || lower.includes('failed to connect')
+              || lower.includes('network connection was lost')
+              || lower.includes('-1009')
+              || lower.includes('econnreset');
+            if (offlineLike) {
+              setImageError(t?.('media.offlineCacheMiss') || 'Sem internet — esta mídia ainda não foi baixada.');
+            } else {
+              setImageError(String(raw));
+            }
           }}
         />
       </Animated.View>
@@ -964,7 +1002,11 @@ function WebViewWithErrorFallback({ source, url, filename, messageId, fileSize, 
             ? (t?.('media.messageDeletedHint') || 'O remetente apagou essa mensagem.')
             : (errored.code === 404
                 ? (t?.('media.cacheEvictedHint') || 'Toque em "Baixar de novo" para recuperar do servidor.')
-                : (t?.('media.fileUnavailableHint') || 'Não foi possível carregar. Tente novamente em alguns segundos.'))}
+                : (errored.code === 0
+                    // code 0 = native onError (network/offline) — surface
+                    // localized copy, NOT the raw English NSURLError message.
+                    ? (t?.('media.offlineCacheMiss') || 'Sem internet — esta mídia ainda não foi baixada.')
+                    : (t?.('media.fileUnavailableHint') || 'Não foi possível carregar. Tente novamente em alguns segundos.')))}
         </Text>
         <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, marginTop: 12, textAlign: 'center' }} numberOfLines={2}>
           {filename}

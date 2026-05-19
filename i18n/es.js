@@ -3066,6 +3066,7 @@ export default {
   // Offline notice
   'offline.noConnection': 'Sin conexión a internet',
   'offline.retry': 'Reintentar',
+  'offline.phoneOffline': 'Teléfono sin conexión — mostrando datos en caché. Conecta el teléfono para ver las conversaciones más recientes.',
   'sync.offline': 'Sin internet',
   'sync.connecting': 'Conectando...',
   'sync.syncing': 'Sincronizando mensajes...',
@@ -6343,6 +6344,7 @@ export default {
   'media.messageDeletedHint': 'El remitente eliminó este mensaje.',
   'media.fileUnavailable': 'Archivo no disponible',
   'media.fileUnavailableHint': 'No se pudo cargar. Intenta de nuevo en unos segundos.',
+  'media.offlineCacheMiss': 'Sin internet — este medio aún no se ha descargado.',
 
   'status.saveToHighlight': 'Guardar en destacados',
   'status.highlights': 'Destacados',
@@ -7080,6 +7082,8 @@ export default {
   'chatConv.inviteLinkReset': 'Enlace restablecido. El anterior ya no funciona.',
   'chatConv.loadError': 'No se pudieron cargar los mensajes.',
   'chatConv.loadErrorTitle': 'No se pudo cargar',
+  'chatConv.offlineEmpty.title': 'Estás sin conexión',
+  'chatConv.offlineEmpty.subtitle': 'No hay mensajes en caché para esta conversación. Vuelve cuando estés en línea.',
   'chatConv.lockBioPrompt': 'Confirma para bloquear este chat',
   'chatConv.lockBioSet': 'Este chat ahora pide Face ID / huella',
   'chatConv.noPendingRequests': 'Sin solicitudes pendientes',

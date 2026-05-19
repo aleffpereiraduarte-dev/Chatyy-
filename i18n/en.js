@@ -3066,6 +3066,7 @@ export default {
   // Offline notice
   'offline.noConnection': 'No internet connection',
   'offline.retry': 'Retry',
+  'offline.phoneOffline': 'Phone offline — showing cached data. Connect the phone to see the latest conversations.',
   'sync.offline': 'No internet',
   'sync.connecting': 'Connecting...',
   'sync.syncing': 'Syncing messages...',
@@ -6342,6 +6343,7 @@ export default {
   'media.messageDeletedHint': 'The sender deleted this message.',
   'media.fileUnavailable': 'File unavailable',
   'media.fileUnavailableHint': 'Couldn’t load. Try again in a few seconds.',
+  'media.offlineCacheMiss': 'No internet — this media hasn’t been downloaded yet.',
 
   'status.saveToHighlight': 'Save to highlights',
   'status.highlights': 'Highlights',
@@ -7079,6 +7081,8 @@ export default {
   'chatConv.inviteLinkReset': 'Link reset. The old one no longer works.',
   'chatConv.loadError': 'Could not load messages.',
   'chatConv.loadErrorTitle': 'Could not load',
+  'chatConv.offlineEmpty.title': 'You are offline',
+  'chatConv.offlineEmpty.subtitle': 'No cached messages for this conversation. Come back when you are online.',
   'chatConv.lockBioPrompt': 'Confirm to lock this chat',
   'chatConv.lockBioSet': 'This chat now requires Face ID / fingerprint',
   'chatConv.noPendingRequests': 'No pending requests',

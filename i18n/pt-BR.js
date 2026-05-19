@@ -3097,6 +3097,7 @@ export default {
   // Offline / Sync
   'offline.noConnection': 'Sem conexão com a internet',
   'offline.retry': 'Tentar',
+  'offline.phoneOffline': 'Celular offline — mostrando dados em cache. Conecte o celular pra ver as conversas mais recentes.',
   'sync.offline': 'Sem internet',
   'sync.connecting': 'Conectando...',
   'sync.syncing': 'Sincronizando mensagens...',
@@ -6400,6 +6401,11 @@ export default {
   'media.messageDeletedHint': 'O remetente apagou essa mensagem.',
   'media.fileUnavailable': 'Arquivo indisponível',
   'media.fileUnavailableHint': 'Não foi possível carregar. Tente novamente em alguns segundos.',
+  // Offline-first: shown when we tried to load a remote URL but the device is
+  // offline AND the file isn't in the local media cache (i.e. user never
+  // viewed it while online). Distinct from cacheEvicted (was cached, then
+  // dropped by LRU) — this one means "not yet cached, no way to fetch now".
+  'media.offlineCacheMiss': 'Sem internet — esta mídia ainda não foi baixada.',
 
   // Highlights (Stories permanentes salvos no perfil)
   'status.saveToHighlight': 'Salvar em destaques',
@@ -7153,6 +7159,8 @@ export default {
   'chatConv.inviteLinkReset': 'Link resetado. O antigo não funciona mais.',
   'chatConv.loadError': 'Não foi possível carregar as mensagens.',
   'chatConv.loadErrorTitle': 'Não foi possível carregar',
+  'chatConv.offlineEmpty.title': 'Você está offline',
+  'chatConv.offlineEmpty.subtitle': 'Nenhuma mensagem em cache para esta conversa. Volte quando estiver online.',
   'chatConv.lockBioPrompt': 'Confirme para bloquear este chat',
   'chatConv.lockBioSet': 'Este chat agora pede Face ID / digital',
   'chatConv.noPendingRequests': 'Nenhuma solicitação pendente',

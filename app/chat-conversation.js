@@ -8616,7 +8616,22 @@ export default function ChatConversationScreen() {
       // wiping content) but log so the next pass can pick it up.
       if (!r.success && mountedRef.current && !beforeId) {
         if (_messagesCountRef.current === 0) {
-          setLoadError(r.message || (t('chatConv.loadError') || 'Não foi possível carregar as mensagens.'));
+          // OFFLINE-FIRST (#1098): before declaring failure, fall back to the
+          // SQLite cache one more time. If we have any rows persisted from
+          // a previous session, paint those — empty error screen would be a
+          // regression of the SQLite-first contract.
+          try {
+            const cached = await getCachedMessages(conversationId, 100);
+            if (Array.isArray(cached) && cached.length > 0 && mountedRef.current) {
+              const cachedNorm = normalizeMessageTypes(cached);
+              setMessages(cachedNorm);
+              setLoadError(null);
+              return; // keep cached view, retry in background later
+            }
+          } catch (cacheErr) {
+            console.warn('[loadMessages] sqlite fallback fail:', cacheErr?.message);
+          }
+          setLoadError(r.message || (t('chatConv.offlineEmpty.subtitle') || t('chatConv.loadError') || 'Não foi possível carregar as mensagens.'));
         } else {
           console.warn('[loadMessages] non-success with cached rows', r.message);
         }
@@ -8950,7 +8965,22 @@ export default function ChatConversationScreen() {
       // so the empty-state component can render a retry CTA.
       console.warn('[loadMessages] threw', e?.message);
       if (mountedRef.current && !beforeId && _messagesCountRef.current === 0) {
-        setLoadError(e?.message || (t('chatConv.loadError') || 'Não foi possível carregar as mensagens.'));
+        // OFFLINE-FIRST: same SQLite fallback as the !r.success branch above.
+        // Network errors (radio off, DNS fail, TLS fail) land here and used
+        // to short-circuit straight to the red error screen, even when a
+        // perfectly good local snapshot was sitting on disk.
+        try {
+          const cached = await getCachedMessages(conversationId, 100);
+          if (Array.isArray(cached) && cached.length > 0 && mountedRef.current) {
+            const cachedNorm = normalizeMessageTypes(cached);
+            setMessages(cachedNorm);
+            setLoadError(null);
+            return;
+          }
+        } catch (cacheErr) {
+          console.warn('[loadMessages] sqlite fallback (catch) fail:', cacheErr?.message);
+        }
+        setLoadError(e?.message || (t('chatConv.offlineEmpty.subtitle') || t('chatConv.loadError') || 'Não foi possível carregar as mensagens.'));
       }
     } finally {
       if (!mountedRef.current) return;
@@ -15531,7 +15561,14 @@ export default function ChatConversationScreen() {
         </View>
       );
     }
-    if (loadError) {
+    if (loadError && netReachable) {
+      // WhatsApp parity: only show the explicit error UI when the device
+      // ACTUALLY has internet (so the failure is server-side or transient).
+      // When offline, fall through to the regular empty/"Diga olá" state —
+      // the global yellow banner at the top of the app already tells the
+      // user they're offline, no need to repeat it here with a big retry
+      // button. This is what WhatsApp does: conversation just looks empty
+      // when offline + cache miss; tapping anywhere lets you compose.
       return (
         <View style={[styles.emptyMessages, { transform: [{ scaleY: -1 }], paddingHorizontal: 32 }]}>
           <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600', textAlign: 'center', marginBottom: 8 }}>
@@ -15600,7 +15637,7 @@ export default function ChatConversationScreen() {
         </View>
       </View>
     );
-  }, [loading, loadError, e2eEnabled, isDark, colors, t, loadMessages]);
+  }, [loading, loadError, e2eEnabled, isDark, colors, t, loadMessages, netReachable]);
 
   // Edit history viewer
   const [editHistoryModal, setEditHistoryModal] = useState({ visible: false, loading: false, versions: [], currentContent: '' });
@@ -20283,19 +20320,19 @@ export default function ChatConversationScreen() {
           handshake on cold-start — looked like the app was broken.
           Visual: muted gray (not alarming orange) — matches WhatsApp's subtle
           informational treatment. The 5s grace timer means this only paints
-          for genuine outages, not for transient network blips. */}
-      {!netReachable ? (
-        // Hard offline — no IP route at all. Gray banner with WiFi-off icon
-        // (no spinner: we're not "trying", we literally cannot try). Distinct
-        // from the amber "Reconectando..." state so the user understands the
-        // root cause is local network, not our server.
-        <View style={{ backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)', paddingVertical: 6, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-          <IconWifiOff size={13} color={isDark ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.55)'} />
-          <Text style={{ color: isDark ? 'rgba(255,255,255,0.75)' : 'rgba(0,0,0,0.65)', fontSize: 12, fontWeight: '500' }}>
-            {t('chatConv.waitingNetwork') || 'Aguardando rede'}
-          </Text>
-        </View>
-      ) : !wsConnected ? (
+          for genuine outages, not for transient network blips.
+
+          OFFLINE-FIRST CONSOLIDATION: when the device is hard-offline
+          (!netReachable), the root-level <OfflineNotice/> already paints the
+          yellow "Sem conexão · Tentar" banner at the top of the screen.
+          Painting a second gray "Aguardando rede" row inside the chat
+          stacks two/three offline banners (yellow OfflineNotice + gray
+          inline + PhoneOfflineBanner on web). WhatsApp shows ONE row total.
+          Drop the inline "Aguardando rede" entirely — the global banner
+          carries the message and has a retry CTA.  Reconnecting (network
+          is up, WS is down) IS still surfaced inline because that's a
+          chat-specific concern OfflineNotice does NOT know about. */}
+      {!netReachable ? null : !wsConnected ? (
         <View style={{ backgroundColor: isDark ? 'rgba(245,158,11,0.10)' : 'rgba(245,158,11,0.10)', paddingVertical: 6, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
           <ActivityIndicator size={12} color="#f59e0b" />
           <Text style={{ color: '#f59e0b', fontSize: 12, fontWeight: '500' }}>

@@ -88,60 +88,47 @@ export default function OfflineNotice() {
 
   if (!isOffline) return null;
 
+  // WhatsApp-style: slim, neutral-gray bar — NOT a loud yellow alert. The
+  // user already knows they're offline (system status bar shows airplane /
+  // wifi-off icon). Our job is a subtle reminder that pending actions are
+  // queued. No retry button: auto-reconnect drains the outbox naturally.
+  const bg = isDarkMode(colors) ? 'rgba(202,210,217,0.10)' : '#f0f2f5';
+  const fg = isDarkMode(colors) ? 'rgba(202,210,217,0.92)' : '#3b4a54';
   return (
-    <Animated.View style={[s.container, { backgroundColor: colors.warningBg || '#fef3c7', transform: [{ translateY: slideAnim }] }]}>
-      <IconWifiOff size={16} color={colors.warning || '#f59e0b'} />
-      <Text style={[s.text, { color: colors.warning || '#f59e0b' }]}>
-        {t('offline.noConnection')}{queueCount > 0 ? ` · ${queueCount} ${t('offline.pendingActions') || 'pending'}` : ''}
+    <Animated.View style={[s.container, { backgroundColor: bg, transform: [{ translateY: slideAnim }] }]}>
+      <IconWifiOff size={13} color={fg} />
+      <Text style={[s.text, { color: fg }]} numberOfLines={1}>
+        {t('offline.noConnection')}{queueCount > 0 ? ` · ${queueCount}` : ''}
       </Text>
-      <TouchableOpacity
-        style={[s.retryBtn, { backgroundColor: (colors.warning || '#f59e0b') + '20' }]}
-        onPress={() => {
-          // Try to drain the outbox + invalidate stale SWR rather than
-          // reloading the page — `window.location.reload()` blows away
-          // unsaved compose drafts, in-flight uploads and component state.
-          // The drain hook is best-effort: if it can't import, fall back
-          // to a soft network probe that wakes the browser online state.
-          try {
-            const { drainOutbox } = require('../services/outboxDrainer');
-            drainOutbox?.();
-          } catch {}
-          try {
-            const { swrInvalidate } = require('../services/api');
-            swrInvalidate?.();
-          } catch {}
-          if (Platform.OS === 'web' && navigator.onLine === false) {
-            // Browser still thinks it's offline — fire a no-op fetch to
-            // give the OS a nudge to re-check connectivity, then let the
-            // 'online' event clear the banner naturally.
-            try { fetch('/?_probe=' + Date.now(), { method: 'HEAD', cache: 'no-store' }).catch(() => {}); } catch {}
-          }
-        }}
-      >
-        <IconRefresh size={14} color={colors.warning || '#f59e0b'} />
-        <Text style={[s.retryText, { color: colors.warning || '#f59e0b' }]}>{t('offline.retry')}</Text>
-      </TouchableOpacity>
     </Animated.View>
   );
+}
+
+// Cheap dark-mode detector — most ThemeContexts expose `isDark` but the
+// shared ones pass only `colors`. Fall back to luminance of the background.
+function isDarkMode(colors) {
+  if (colors?.background) {
+    const hex = (colors.background || '').replace('#', '');
+    if (hex.length === 6) {
+      const r = parseInt(hex.slice(0, 2), 16);
+      const g = parseInt(hex.slice(2, 4), 16);
+      const b = parseInt(hex.slice(4, 6), 16);
+      const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+      return lum < 0.5;
+    }
+  }
+  return false;
 }
 
 const s = StyleSheet.create({
   container: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.sm,
-    gap: Spacing.sm,
+    paddingVertical: 5,
+    gap: 6,
     zIndex: 100,
   },
-  text: { flex: 1, fontSize: FontSize.sm, fontWeight: '500' },
-  retryBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 4,
-    borderRadius: BorderRadius.md,
-    gap: 4,
-  },
-  retryText: { fontSize: FontSize.sm, fontWeight: '600' },
+  text: { fontSize: 12, fontWeight: '500', letterSpacing: 0.1 },
 });
