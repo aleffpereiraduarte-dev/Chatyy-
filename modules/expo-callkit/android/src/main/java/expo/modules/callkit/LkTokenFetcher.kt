@@ -57,12 +57,37 @@ object LkTokenFetcher {
      * Dispatchers.IO coroutine, so blocking I/O here is fine.
      */
     fun fetch(ctx: Context, roomName: String, identity: String): Result? {
+        return fetch(ctx, roomName, identity, null)
+    }
+
+    /**
+     * [#1175 2026-05-18] Variant accepting Intent extras as an additional
+     * auth source (fallback B). Lets IncomingCallActivity / CallActivity
+     * carry the bearer + base in the Intent so the activity can mint a
+     * token even if SharedPreferences was wiped between the FCM push and
+     * the user tapping Accept.
+     */
+    fun fetch(ctx: Context, roomName: String, identity: String, intentExtras: Bundle?): Result? {
         return try {
-            doFetch(ctx, roomName, identity)
+            doFetch(ctx, roomName, identity, intentExtras)
         } catch (t: Throwable) {
             Log.w(TAG, "fetch failed: ${t.message}")
             null
         }
+    }
+
+    /**
+     * [#1175 2026-05-18] Resolve auth from any of the 4 sources without
+     * actually performing the HTTP fetch. Useful for callers that just
+     * want to know "do we have credentials for the call path?" — e.g.
+     * IncomingCallActivity surfacing a "log in again" banner when there's
+     * NO auth anywhere, so the user gets a useful next step instead of
+     * staring at "Sem token".
+     *
+     * Returns a Pair(authToken, apiBase) or null if no source has both.
+     */
+    fun resolveAuth(ctx: Context, intentExtras: Bundle? = null): Pair<String, String>? {
+        return resolveAuthInternal(ctx, intentExtras)
     }
 
     /**
@@ -77,6 +102,14 @@ object LkTokenFetcher {
      * audio-only publisher token, etc.) doesn't require touching callers.
      */
     suspend fun fetchToken(ctx: Context, callId: String, isVideo: Boolean): Result? {
+        return fetchToken(ctx, callId, isVideo, null)
+    }
+
+    /**
+     * [#1175 2026-05-18] Coroutine variant accepting Intent extras for
+     * fallback B. CallActivity calls this from lifecycleScope on cold-start.
+     */
+    suspend fun fetchToken(ctx: Context, callId: String, isVideo: Boolean, intentExtras: Bundle?): Result? {
         if (callId.isEmpty()) return null
         return withContext(Dispatchers.IO) {
             val identity = resolveIdentity(ctx)
@@ -86,7 +119,7 @@ object LkTokenFetcher {
                 Log.d(TAG, "fetchToken: cache hit for $callId")
                 return@withContext cached
             }
-            doFetch(ctx, callId, identity)
+            doFetch(ctx, callId, identity, intentExtras)
         }
     }
 
@@ -166,22 +199,151 @@ object LkTokenFetcher {
     }
 
     /**
+     * [#1175 2026-05-18] 4-source auth resolution. Walks in priority order:
+     *
+     *   1. `expo_callkit_prefs` SharedPreferences — primary path written by
+     *      JS via persistAuthForNativeCall. Fastest, no I/O beyond the
+     *      already-open prefs file.
+     *   2. Intent extras — call site (IncomingCallActivity / CallActivity /
+     *      CallActionReceiver) may have carried the bearer in the intent so
+     *      the activity has an independent copy even if SharedPreferences
+     *      was wiped between FCM push and accept tap.
+     *   3. AsyncStorage SQLite (`RKStorage` DB, `catalystLocalStorage` table)
+     *      — read the `mail_token_fb` row that services/api.js maintains as
+     *      a redundant mirror of the SecureStore bearer. Survives the
+     *      "Clear cache" path that nukes SharedPreferences but leaves
+     *      app SQLite intact.
+     *   4. EncryptedSharedPreferences `SecureStore` file — the canonical
+     *      home of the bearer. Values are AES-encrypted JSON so we can't
+     *      decrypt without the same KeyStore handshake expo-secure-store
+     *      runs; we treat presence-of-key as a signal that the user is
+     *      logged in but couldn't surface the cleartext. Last-ditch
+     *      check used only for the "show humanized banner" decision in
+     *      resolveAuth() — `doFetch` doesn't use this source because the
+     *      cleartext is unavailable.
+     *
+     * The base URL is treated the same way (sources 1+2+3); when no source
+     * supplies one we fall back to the hard-coded production URL
+     * `https://chatyy.com.br` so a cold-start cleared-cache user can still
+     * mint a token if the bearer was found via fallback C.
+     *
+     * Returns Pair(token, apiBase) or null if no source yielded a bearer.
+     */
+    private fun resolveAuthInternal(ctx: Context, intentExtras: Bundle?): Pair<String, String>? {
+        // ── Source 1: SharedPreferences (expo_callkit_prefs) — primary
+        try {
+            val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val tk = prefs.getString("auth_token", null)
+            val base = prefs.getString("api_base", null)
+            if (!tk.isNullOrEmpty() && !base.isNullOrEmpty()) {
+                Log.d(TAG, "resolveAuth: source=prefs OK (len=${tk.length})")
+                return Pair(tk, base)
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "resolveAuth source=prefs failed: ${t.message}")
+        }
+
+        // ── Source 2: Intent extras — call-site carried copy
+        try {
+            if (intentExtras != null) {
+                val tk = intentExtras.getString("auth_token") ?: intentExtras.getString("authToken")
+                val base = intentExtras.getString("api_base")
+                    ?: intentExtras.getString("apiBase")
+                    ?: "https://chatyy.com.br"
+                if (!tk.isNullOrEmpty()) {
+                    Log.d(TAG, "resolveAuth: source=intent OK (len=${tk.length})")
+                    // Heal the SharedPreferences write so the next attempt
+                    // hits source 1 instead of paying the Intent walk again.
+                    try {
+                        ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                            .putString("auth_token", tk)
+                            .putString("api_base", base)
+                            .apply()
+                    } catch (_: Throwable) {}
+                    return Pair(tk, base)
+                }
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "resolveAuth source=intent failed: ${t.message}")
+        }
+
+        // ── Source 3: AsyncStorage SQLite (mail_token_fb)
+        try {
+            val tk = readFromAsyncStorage(ctx, "mail_token_fb")
+            if (!tk.isNullOrEmpty()) {
+                val base = "https://chatyy.com.br"
+                Log.d(TAG, "resolveAuth: source=asyncstorage OK (len=${tk.length})")
+                // Heal SharedPreferences so subsequent paths hit source 1.
+                try {
+                    ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+                        .putString("auth_token", tk)
+                        .putString("api_base", base)
+                        .apply()
+                } catch (_: Throwable) {}
+                return Pair(tk, base)
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "resolveAuth source=asyncstorage failed: ${t.message}")
+        }
+
+        // ── Source 4: EncryptedSharedPreferences "SecureStore" — presence
+        // only. We can't decrypt without the KeyStore session; the caller
+        // uses this to tell the user "session exists but app needs to
+        // wake the bearer" (humanized banner) vs "log in again from
+        // scratch".
+        try {
+            val ss = ctx.getSharedPreferences("SecureStore", Context.MODE_PRIVATE)
+            if (ss.all.isNotEmpty()) {
+                Log.d(TAG, "resolveAuth: SecureStore present but encrypted — humanized banner path")
+            }
+        } catch (_: Throwable) {}
+
+        return null
+    }
+
+    /**
+     * Open the AsyncStorage RKStorage SQLite db read-only and pull a value
+     * by key. Returns null if the db doesn't exist, the table is missing,
+     * the row isn't there, or anything else goes wrong. Never throws.
+     */
+    private fun readFromAsyncStorage(ctx: Context, key: String): String? {
+        var db: SQLiteDatabase? = null
+        return try {
+            val dbFile = ctx.getDatabasePath("RKStorage")
+            if (!dbFile.exists()) return null
+            db = SQLiteDatabase.openDatabase(
+                dbFile.absolutePath, null, SQLiteDatabase.OPEN_READONLY
+            )
+            db.rawQuery(
+                "SELECT value FROM catalystLocalStorage WHERE key = ? LIMIT 1",
+                arrayOf(key)
+            ).use { c ->
+                if (c.moveToFirst()) c.getString(0) else null
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "readFromAsyncStorage($key) failed: ${t.message}")
+            null
+        } finally {
+            try { db?.close() } catch (_: Throwable) {}
+        }
+    }
+
+    /**
      * Blocking HTTP fetch. Returns null on any failure path:
-     *   - missing auth_token / api_base in SharedPreferences
+     *   - missing auth_token / api_base across all 4 sources
      *   - non-2xx status code
      *   - malformed JSON
      *   - network error / timeout
      *
      * Never throws.
      */
-    private fun doFetch(ctx: Context, roomName: String, identity: String): Result? {
-        val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val authToken = prefs.getString("auth_token", null)
-        val apiBase = prefs.getString("api_base", null)
-        if (authToken.isNullOrEmpty() || apiBase.isNullOrEmpty()) {
-            Log.w(TAG, "doFetch: missing auth_token or api_base in prefs — JS hasn't called persistAuthForNativeCall yet")
+    private fun doFetch(ctx: Context, roomName: String, identity: String, intentExtras: Bundle?): Result? {
+        val resolved = resolveAuthInternal(ctx, intentExtras)
+        if (resolved == null) {
+            Log.w(TAG, "doFetch: NO auth across 4 sources (prefs/intent/asyncstorage/securestore) — user must log in again")
             return null
         }
+        val (authToken, apiBase) = resolved
         // Normalize base: strip trailing slash so we control the path joining.
         val base = apiBase.trimEnd('/')
         val urlStr = "$base/api/email.php?action=chat_livekit_token"

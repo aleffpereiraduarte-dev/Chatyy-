@@ -710,6 +710,14 @@ class IncomingCallActivity : AppCompatActivity() {
         putExtra(CallActivity.EXTRA_CONVERSATION_ID, conversationId ?: "")
         if (!url.isNullOrEmpty()) putExtra(CallActivity.EXTRA_LK_URL, url)
         if (!token.isNullOrEmpty()) putExtra(CallActivity.EXTRA_LK_TOKEN, token)
+        // [#1175 2026-05-18] Carry the bearer + base URL in the Intent so
+        // CallActivity's onCreate has them even if the SharedPreferences
+        // was cleared between the FCM push (which seeded them) and the
+        // user tapping Accept (which we honour right now). Without this,
+        // a fallback fetchToken would fail and the user would see the
+        // "Sem token" string on the receiver side — exactly the bug
+        // #1175 is targeting.
+        ExpoCallKitModule.enrichIntentWithAuth(applicationContext, this)
       }
       startActivity(intent)
     } catch (t: Throwable) {

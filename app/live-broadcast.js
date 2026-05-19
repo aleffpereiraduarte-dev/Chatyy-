@@ -1382,6 +1382,17 @@ export default function LiveBroadcastScreen() {
         }
         setCountdown(null);
 
+        // Round 69 #1166 (2026-05-19) — bump videoEpoch BEFORE flipping
+        // preStart → false so the NativeRTCView mounted in the live
+        // broadcasting tree gets a fresh React key, forcing iOS to allocate
+        // a brand-new RTCMTLVideoView instead of recycling the one that
+        // had been painting inside the preStart tree during the 3s
+        // countdown. Without this bump, iOS view-recycle pool reuses the
+        // same Metal layer + its stale texture buffer → first live frame
+        // paints over only part of the surface → horizontal "barra preta"
+        // through the host's face at second ~3 of the broadcast (5th
+        // regression — rounds 52/64/66/67 each missed this code path).
+        setVideoEpoch(e => e + 1);
         setPreStart(false);
 
         // Start duration timer
@@ -2560,7 +2571,7 @@ export default function LiveBroadcastScreen() {
           style={[StyleSheet.absoluteFill, { backgroundColor: '#000', overflow: 'hidden' }]}
         >
           <NativeRTCView
-            key={`local:${videoEpoch}:${localStreamUrl}`}
+            key={`local:${preStart ? 'pre' : 'live'}:${videoEpoch}:${localStreamUrl}`}
             streamURL={localStreamUrl}
             style={StyleSheet.absoluteFillObject}
             objectFit="cover"

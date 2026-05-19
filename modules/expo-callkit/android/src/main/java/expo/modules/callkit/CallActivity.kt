@@ -174,6 +174,12 @@ class CallActivity : ComponentActivity() {
     const val EXTRA_LK_TOKEN = "lk_token"
     const val EXTRA_IS_OUTGOING = "is_outgoing"
     const val EXTRA_CONVERSATION_ID = "conversation_id"
+    // [#1175 2026-05-18] Auth carried in the Intent so the activity is
+    // self-sufficient even if SharedPreferences was wiped between FCM push
+    // and the user tapping Accept (Clear Cache, Reset App Preferences, …).
+    // LkTokenFetcher walks these as fallback B during resolveAuth.
+    const val EXTRA_AUTH_TOKEN = "auth_token"
+    const val EXTRA_API_BASE = "api_base"
   }
 
   // ────────────── Intent-derived params (immutable for life of activity)
@@ -462,13 +468,51 @@ class CallActivity : ComponentActivity() {
       registerReceiver(closeReceiver, filter)
     }
 
-    // Bring up LiveKit. If url/token missing, the screen just idles on
-    // "Conectando…" so the user can still hangup gracefully.
+    // Bring up LiveKit. If url/token missing, try the 4-source fallback
+    // (LkTokenFetcher.fetchToken with intentExtras) before giving up. Only
+    // if NO source has the bearer do we surface the humanized banner.
     if (!lkUrl.isNullOrEmpty() && !lkToken.isNullOrEmpty()) {
       bringUpRoom(lkUrl!!, lkToken!!)
     } else {
-      Log.w(TAG, "missing lk_url or lk_token — skipping connect")
-      state.status = "Sem token"
+      Log.w(TAG, "missing lk_url or lk_token — attempting LkTokenFetcher fallback")
+      state.status = "Conectando…"
+      lifecycleScope.launch {
+        // [#1175 2026-05-18] Pull whatever extras the launcher carried so
+        // LkTokenFetcher can use Intent fallback B even if SharedPreferences
+        // is empty.
+        val extras = intent?.extras
+        val tk = try {
+          LkTokenFetcher.fetchToken(applicationContext, callId, hasVideo, extras)
+        } catch (t: Throwable) {
+          Log.w(TAG, "fallback fetchToken threw: ${t.message}")
+          null
+        }
+        if (tk != null) {
+          Log.d(TAG, "fallback fetchToken: OK — connecting")
+          lkUrl = tk.url
+          lkToken = tk.token
+          bringUpRoom(tk.url, tk.token)
+        } else {
+          // No bearer available across all 4 sources. Decide which message
+          // to show:
+          //   • If at least the SecureStore key file exists → session is
+          //     present but unreadable (encrypted) — ask user to reopen
+          //     the app so the JS layer can rewrite the prefs.
+          //   • Otherwise → user is genuinely logged out — ask them to
+          //     sign in again.
+          val hasSecureStoreSignal = try {
+            applicationContext.getSharedPreferences("SecureStore", Context.MODE_PRIVATE)
+              .all.isNotEmpty()
+          } catch (_: Throwable) { false }
+          state.status = if (hasSecureStoreSignal) {
+            "Sessao expirada — abra o app para reconectar"
+          } else {
+            "Faca login novamente para receber chamadas"
+          }
+          state.needsLogin = true
+          Log.w(TAG, "fallback fetchToken: NO auth — humanized banner shown (secureStoreSignal=$hasSecureStoreSignal)")
+        }
+      }
     }
   }
 
@@ -1000,6 +1044,11 @@ class CallSessionStateAndroid {
   /** [MediaPipe, 2026-05-17] Current background mode: "off" / "blur_medium" /
    *  "blur_high" / "image". Persisted under `bg_mode`. */
   var backgroundMode by mutableStateOf("off")
+  /** [#1175 2026-05-18] Set when LkTokenFetcher fails across all 4 fallback
+   *  sources. UI displays a humanized banner ("Faca login novamente…") with
+   *  a tap target that emits an event JS picks up to route to /login,
+   *  instead of the raw "Sem token" string that confused users. */
+  var needsLogin by mutableStateOf(false)
   /** Live list of floating emoji bursts. Compose redraws when items are
    *  added or removed; the activity scope prunes each entry after 3s. */
   val floatingReactions: SnapshotStateList<FloatingReactionAndroid> = mutableStateListOf()

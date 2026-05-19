@@ -67,7 +67,13 @@ export async function startOutgoingCall({
   const cid = callId || generateCallId();
 
   // Fire-and-forget push notification so the callee's phone rings. Server
-  // returns immediately — we don't block the native present on this.
+  // returns immediately — we don't block the native present on this. Bug
+  // history (#1176, 2026-05-18): we used to AWAIT this + chatLivekitToken
+  // sequentially before calling ExpoCallKit.startOutgoingCall, which meant
+  // the user tapped "Ligar" and saw nothing for 300-800ms while the chat
+  // screen stayed up. The native call UI only appeared AFTER both HTTPs
+  // resolved. Now we fire callNotify in the background and kick the native
+  // surface immediately so CallKit / CallActivity is visible in <100ms.
   if (conversationId) {
     api.callNotify(conversationId, cid, isVideo).catch((e) => {
       console.warn(TAG, 'callNotify failed (non-fatal):', e?.message || e);
@@ -86,40 +92,87 @@ export async function startOutgoingCall({
     return { callId: cid, native: false };
   }
 
-  // Best-effort warm-up: mint the LiveKit token on the JS side so the native
-  // screen can connect to LK without an extra HTTP round trip after the
-  // CXStartCallAction / CallActivity start. If the mint fails the native side
-  // will fall back to its own NativeCallTokenFetcher / LkTokenFetcher.
-  let lkUrl = null;
-  let lkToken = null;
+  // Pre-resolve the callee avatar URL so the native screen can paint a real
+  // avatar (not just the initial letter) before LK Room is even up. The URL
+  // points at the backend /get_avatar?email=... endpoint, which is cached on
+  // CDN; both iOS (AsyncImage) and Android (Coil-less HttpURLConnection in
+  // CallNotificationService.fetchAvatarBitmap) load it directly.
+  let calleeAvatar = '';
   try {
-    const tokenResp = await api.chatLivekitToken(conversationId || '', cid);
-    if (tokenResp?.success && tokenResp.data) {
-      lkUrl = tokenResp.data.url || null;
-      lkToken = tokenResp.data.token || null;
-      // Cache into native so the answer path (if it races) can pick it up.
-      if (lkUrl && lkToken) {
-        try {
-          await ExpoCallKit.persistPendingLkToken(cid, lkToken, lkUrl);
-        } catch {}
+    calleeAvatar = api.getAvatarUrlForEmail(calleeEmail) || '';
+  } catch {}
+
+  // [#1176 polish, 2026-05-18] Fire the native present IMMEDIATELY. We do
+  // NOT await chatLivekitToken first — that HTTP round-trip is 200-500ms
+  // on a warm network and was the visible "delay between tap and native
+  // fullscreen". Instead:
+  //
+  //   1. Kick native startOutgoingCall now → CallKit / CallActivity surfaces
+  //      in <100ms with avatar + name + "Chamando…" placeholder.
+  //   2. In parallel, mint chat_livekit_token in the background.
+  //   3. When the token resolves, persist it via persistPendingLkToken.
+  //      iOS: CXStartCallAction's delegate handler calls
+  //      NativeCallTokenFetcher when the JS-supplied token is nil, so this
+  //      path "just works". Android: CallActivity reads EXTRA_LK_URL /
+  //      EXTRA_LK_TOKEN at onCreate; the persistPendingLkToken cache is
+  //      consulted by LkTokenFetcher (used by IncomingCallActivity), so we
+  //      also fire a second startActivity with the populated extras — the
+  //      activity's onNewIntent picks up the late token and calls
+  //      bringUpRoom() without re-creating the UI.
+  const nativePresent = ExpoCallKit.startOutgoingCall({
+    calleeEmail,
+    calleeName: calleeName || calleeEmail,
+    calleeAvatar,
+    callerName: callerName || '',
+    isVideo: !!isVideo,
+    roomName: cid,
+    conversationId: conversationId || '',
+    callId: cid,
+  });
+
+  // Background: mint LK token then forward it to native.
+  (async () => {
+    try {
+      const tokenResp = await api.chatLivekitToken(conversationId || '', cid);
+      if (tokenResp?.success && tokenResp.data) {
+        const lkUrl = tokenResp.data.url || '';
+        const lkToken = tokenResp.data.token || '';
+        if (lkUrl && lkToken) {
+          // Cache for the iOS CX delegate fetcher AND for the Android
+          // CallActivity.onNewIntent late-token path.
+          try {
+            await ExpoCallKit.persistPendingLkToken(cid, lkToken, lkUrl);
+          } catch {}
+          // Android needs a second startActivity with the token in extras so
+          // onNewIntent fires bringUpRoom. iOS doesn't need this — its
+          // delegate path consults NativeCallTokenFetcher directly.
+          if (Platform.OS === 'android') {
+            try {
+              await ExpoCallKit.startOutgoingCall({
+                calleeEmail,
+                calleeName: calleeName || calleeEmail,
+                calleeAvatar,
+                callerName: callerName || '',
+                isVideo: !!isVideo,
+                roomName: cid,
+                conversationId: conversationId || '',
+                callId: cid,
+                lkUrl,
+                lkToken,
+              });
+            } catch (e) {
+              console.warn(TAG, 'android late-token re-launch failed:', e?.message || e);
+            }
+          }
+        }
       }
+    } catch (e) {
+      console.warn(TAG, 'chatLivekitToken failed (non-fatal):', e?.message || e);
     }
-  } catch (e) {
-    console.warn(TAG, 'chatLivekitToken failed (non-fatal):', e?.message || e);
-  }
+  })();
 
   try {
-    await ExpoCallKit.startOutgoingCall({
-      calleeEmail,
-      calleeName: calleeName || calleeEmail,
-      callerName: callerName || '',
-      isVideo: !!isVideo,
-      roomName: cid,
-      conversationId: conversationId || '',
-      callId: cid,
-      lkUrl: lkUrl || undefined,
-      lkToken: lkToken || undefined,
-    });
+    await nativePresent;
     return { callId: cid, native: true };
   } catch (e) {
     console.warn(TAG, 'native startOutgoingCall failed:', e?.message || e);

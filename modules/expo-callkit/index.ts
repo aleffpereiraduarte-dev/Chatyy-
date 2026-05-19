@@ -71,6 +71,11 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
   startOutgoingCall(params: {
     callee_email: string;
     callee_name?: string;
+    /** [#1176 polish, 2026-05-18] HTTPS URL of the callee's avatar
+     *  (typically the backend get_avatar?email=... endpoint). Passed in so
+     *  the native call screen can render the real photo while LiveKit Room
+     *  is still connecting — instead of just the initial letter. */
+    callee_avatar?: string;
     caller_name?: string;
     is_video: boolean;
     room_name?: string;

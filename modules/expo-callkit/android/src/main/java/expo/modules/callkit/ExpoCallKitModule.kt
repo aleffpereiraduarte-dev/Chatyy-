@@ -178,6 +178,29 @@ class ExpoCallKitModule : Module() {
      * Save accepted call data to SharedPreferences so JS can read it on cold start.
      * Called from IncomingCallActivity and CallActionReceiver when instance is null.
      */
+    /**
+     * [#1175 2026-05-18] Copy the persisted auth_token + api_base from
+     * SharedPreferences into the Intent so the receiving Activity has an
+     * independent copy. Helps LkTokenFetcher resolve credentials via the
+     * "Intent extras" fallback (source B) even if SharedPreferences was
+     * wiped between intent creation and the activity reading them (rare
+     * but observed during "Clear cache" + "Reset app preferences" tests).
+     *
+     * Idempotent — safe to call on any intent, even one that already
+     * has the extras (last value wins, identical writes are no-ops).
+     */
+    fun enrichIntentWithAuth(context: Context, intent: Intent) {
+      try {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val tk = prefs.getString("auth_token", null)
+        val base = prefs.getString("api_base", null)
+        if (!tk.isNullOrEmpty()) intent.putExtra("auth_token", tk)
+        if (!base.isNullOrEmpty()) intent.putExtra("api_base", base)
+      } catch (t: Throwable) {
+        Log.w(TAG, "enrichIntentWithAuth failed: ${t.message}")
+      }
+    }
+
     fun savePendingAcceptedCall(context: Context, callId: String, callerName: String, callerEmail: String, conversationId: String, hasVideo: Boolean) {
       val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
       val data = org.json.JSONObject().apply {
@@ -717,6 +740,11 @@ class ExpoCallKitModule : Module() {
           putExtra(CallActivity.EXTRA_HAS_VIDEO, hasVideo)
           if (lkUrl != null) putExtra(CallActivity.EXTRA_LK_URL, lkUrl)
           if (lkToken != null) putExtra(CallActivity.EXTRA_LK_TOKEN, lkToken)
+          // [#1175 2026-05-18] Carry auth in the intent so CallActivity
+          // has an independent copy even if SharedPreferences is wiped
+          // between this launch and onCreate (rare but possible during
+          // "Clear cache" or "Reset app preferences").
+          enrichIntentWithAuth(context, this)
         }
         context.startActivity(intent)
         Log.d(TAG, "openNativeCall: launched CallActivity callId=$callId with foreground flags")
@@ -781,6 +809,9 @@ class ExpoCallKitModule : Module() {
           putExtra(CallActivity.EXTRA_CONVERSATION_ID, conversationId)
           if (!lkUrl.isNullOrEmpty()) putExtra(CallActivity.EXTRA_LK_URL, lkUrl)
           if (!lkToken.isNullOrEmpty()) putExtra(CallActivity.EXTRA_LK_TOKEN, lkToken)
+          // [#1175 2026-05-18] Carry auth in the intent — same rationale
+          // as openNativeCall above.
+          enrichIntentWithAuth(context, this)
         }
         context.startActivity(intent)
         Log.d(TAG, "startOutgoingCall: started CallActivity callId=$callId callee=$calleeEmail video=$isVideo hasToken=${!lkToken.isNullOrEmpty()}")
@@ -818,6 +849,8 @@ class ExpoCallKitModule : Module() {
           putExtra(GroupCallActivity.EXTRA_LK_TOKEN, lkToken)
           putExtra(GroupCallActivity.EXTRA_PARTICIPANTS_JSON, participantsJson)
           putExtra(GroupCallActivity.EXTRA_HAS_VIDEO, hasVideo)
+          // [#1175 2026-05-18] Carry auth — same rationale as CallActivity.
+          enrichIntentWithAuth(context, this)
         }
         context.startActivity(intent)
       } catch (t: Throwable) {

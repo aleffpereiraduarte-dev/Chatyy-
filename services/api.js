@@ -2939,14 +2939,54 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
       }
       const envResp = await chatEnvelopeSend(envelopePayload);
       if (envResp && (envResp.success || envResp.data)) {
-        // Mark the local optimistic row as 'sent' even though there's no
-        // server message_id yet — the receiver acks per-device and the
-        // sender's UI flips to delivered via chat_message_receipts.
+        // [#1177 2026-05-18] Envelope mode has no server message_id (there
+        // is no chat_messages row in this mode — only chat_pending_envelopes
+        // shards). BUT every downstream consumer in this codebase checks
+        // `r.data?.id` to decide if the send succeeded:
+        //   - chat-conversation.js:11147 (text), :11385 (gif), :11443 (sticker), :12619 (loc), :13025 (contact), :18840 (retry)
+        //   - services/offlineCache.js:612 — throws 'chat_send_failed' when missing
+        //   - services/outboxDrainer.js:108 — soft-fails and bumps backoff
+        // Before this fix, every envelope-mode send returned { success: true,
+        // envelope_mode: true } with NO data.id. Each consumer treated it
+        // as failure → optimistic bubble stuck at _queued: true → user sees
+        // "Enviando..." for a "tempão" → offline replay fires again →
+        // server dedups (idempotent) → still no data.id → loop. After ~5
+        // attempts the bubble flips to red ❗ even though the envelope rows
+        // were persisted in PG on the very first call. That's the
+        // "mensagens só fica enviando" user report.
+        // Fix: synthesize a `data` object with a stable string id using the
+        // CMI. Downstream code's setMessages(m => m.id === tempId ? {...r.data, _pending:false} : m)
+        // happily swaps the temp bubble for one keyed by CMI, the bubble
+        // loses the spinner, and the queued retry is removed. The recipient's
+        // envelopePuller delivers + acks independently; the sender's
+        // delivered/read marker still arrives via chat_message_receipts.
+        const syntheticId = 'env_' + stableCMI;
         result = {
           success: true,
           envelope_mode: true,
           inserted: envResp?.data?.inserted ?? 0,
           client_message_id: stableCMI,
+          // Downstream contract: r.data.id must exist for the UI to flip
+          // the optimistic bubble out of _pending state.
+          data: {
+            id: syntheticId,
+            envelope_id: syntheticId,
+            conversation_id: conversationId,
+            content,
+            type: type || 'text',
+            file_url: fileUrl || null,
+            reply_to_id: replyToId || null,
+            client_message_id: stableCMI,
+            client_temp_id: localTempId,
+            sender_email: null, // filled by caller from auth context
+            created_at: new Date().toISOString(),
+            _envelope_mode: true,
+            inserted: envResp?.data?.inserted ?? 0,
+          },
+          // Also surface message_id at top level so paths checking either
+          // shape (`r.message_id || r.data?.message_id`) see envelope mode
+          // as a real send.
+          message_id: syntheticId,
         };
       } else {
         // Server rejected — surface as failure but DO NOT fall back to
