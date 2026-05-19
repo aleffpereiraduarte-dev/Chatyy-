@@ -8629,6 +8629,22 @@ export default function ChatConversationScreen() {
               if (typeof nm.id === 'number' && nm.id < oldestNewId) oldestNewId = nm.id;
             }
             const keptOlder = prev.filter(m => typeof m.id === 'number' && m.id < oldestNewId);
+            // [#1188 Agent investigation 2026-05-19] Envelope-mode messages
+            // get a CMI-string id (not tmp_*, not numeric) because the
+            // server never creates a chat_messages row for them — only
+            // chat_pending_envelopes. They'd be silently dropped by both
+            // keptOlder (numeric-only) and keptPending (tmp_-prefix-only),
+            // causing the "ele envia e depois ele some" symptom every
+            // time loadMessages re-ran while the app stayed open.
+            const keptEnvelope = prev.filter(m => {
+              if (m._envelope_mode !== true) return false;
+              if (typeof m.id === 'string' && m.id.startsWith('tmp_')) return false; // tmp_ rows handled by keptPending
+              if (typeof m.id === 'number') return false; // numeric handled by keptOlder
+              if (newById.has(m.id)) return false;
+              const myCid = m._client_id || m.client_message_id || m.id;
+              if (myCid && ackedClientIds.has(String(myCid))) return false;
+              return true;
+            });
             const keptPending = prev.filter(m => {
               if (!(typeof m.id === 'string' && m.id.startsWith('tmp_'))) return false;
               if (newById.has(m.id)) return false;
@@ -8678,7 +8694,7 @@ export default function ChatConversationScreen() {
               }
               return withTx;
             });
-            const merged = [...keptOlder, ...reconciled, ...keptPending];
+            const merged = [...keptOlder, ...reconciled, ...keptPending, ...keptEnvelope];
             // Stable ordering: primary by numeric id, secondary by created_at
             // ms. Bursts on slow networks can let two messages land with
             // identical fall-back negative ids (Date.now()*1000 collision when
