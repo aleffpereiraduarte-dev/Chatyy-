@@ -21,6 +21,13 @@ import LivePollOverlay from '../components/live/LivePollOverlay';
 import * as liveBroadcastNotification from '../services/liveBroadcastNotification';
 import { publishToCfStream } from '../services/cfStreamPublisher';
 import * as Haptics from 'expo-haptics';
+// Round 67 #1158 (2026-05-18) — user: "a tela ainda desliga mesmo
+// rolando a live". expo-keep-awake holds the OS display awake while
+// the host is broadcasting. Module is JS-side autolinked; the native
+// counterpart was already in build 442 (transitive expo dep) so no
+// rebuild needed for OTA delivery. The tag scopes the activation to
+// the live-broadcast screen — unmounting auto-releases.
+import { useKeepAwake } from 'expo-keep-awake';
 
 // Cross-platform WebRTC — same pattern as call.js
 let RTC_PeerConnection, RTC_SessionDescription, RTC_IceCandidate, getUserMediaFn, NativeRTCView;
@@ -53,6 +60,11 @@ const MAX_HEARTS = 20;
 const HEART_COLORS = ['#ff4d6d', '#ff7eb9', '#ff006e', '#c70039', '#ef4444'];
 
 export default function LiveBroadcastScreen() {
+  // Round 67 #1158 (2026-05-18) — keep the display on for the entire
+  // host session. Tag scopes the lock so multi-screen mounts don't
+  // collide. Unmount auto-releases via expo-keep-awake's effect.
+  useKeepAwake('live-broadcast');
+
   const params = useLocalSearchParams();
   const router = useRouter();
   const { user } = useAuth();
@@ -682,17 +694,29 @@ export default function LiveBroadcastScreen() {
             Animated.spring(entry, { toValue: 1, friction: 7, tension: 120, useNativeDriver: true }).start();
           }
           break;
-        case 'live_join_request':
+        case 'live_join_request': {
           // Viewer wants to come on as a guest (TikTok-style colab — host
           // accepts, both go split-screen). Stack the request and surface
           // a prominent prompt: auto-open the requests sheet so the host
           // can't miss it while filming. Without the auto-open the chip
           // top-right was easy to ignore and user complained the system
           // "didn't work" — they never noticed the chip.
-          if (msg.viewer_email) {
+          //
+          // Round 67 #1158 (2026-05-18) — payload shape depends on the
+          // delivery path. Legacy raw-WS Node path delivered flat
+          // (`msg.viewer_email`) but that path is now dead. The active
+          // delivery is REST `chat_live_cohost_request` → /broadcast
+          // which wraps as `{type, data:{viewer_email,...}}` (see Go
+          // main.go handleBroadcast at line ~2985). Read from both
+          // shapes so the host UI works regardless of which transport
+          // wins the race.
+          const reqData = msg.data || msg;
+          const viewerEmail = msg.viewer_email || reqData?.viewer_email;
+          const viewerName = msg.viewer_name || reqData?.viewer_name;
+          if (viewerEmail) {
             setJoinRequests(prev => {
-              if (prev.some(r => r.email === msg.viewer_email)) return prev;
-              return [{ email: msg.viewer_email, name: msg.viewer_name || msg.viewer_email.split('@')[0], ts: Date.now() }, ...prev].slice(0, 30);
+              if (prev.some(r => r.email === viewerEmail)) return prev;
+              return [{ email: viewerEmail, name: viewerName || viewerEmail.split('@')[0], ts: Date.now() }, ...prev].slice(0, 30);
             });
             // Strong buzz so host feels it on cheek/hand mid-stream.
             try { require('react-native').Vibration.vibrate([0, 80, 60, 80]); } catch {}
@@ -700,6 +724,7 @@ export default function LiveBroadcastScreen() {
             setRequestsOpen(true);
           }
           break;
+        }
         case 'live_pin_comment':
           // Backend persisted-pin WS echo. Keep local pinnedComment in sync
           // so the host UI matches what viewers see. Empty content = unpin.
@@ -4608,11 +4633,21 @@ function EndLiveConfetti() {
 const styles = StyleSheet.create({
   fullScreen: {
     flex: 1,
-    backgroundColor: '#000',
+    // Round 67 #1158 (2026-05-18) — user still sees "barra preta" after
+    // rounds #1135 + #1152. Root container was hard-pinned to '#000', so
+    // anywhere the SurfaceView's punched hole didn't quite fill (notch
+    // band, navigation gesture area, brief layout thrash on rotate) the
+    // pure black bled through and the user read it as a literal black
+    // bar. Brand off-black '#0f0f1a' (matches live-viewer's fullScreen)
+    // keeps the anti-ghost backstop logic but loses the "vamp slab"
+    // pure-black bands. The inner NativeRTCView wrappers still carry
+    // '#000' so ghost-frame protection is unchanged where it matters
+    // (clipped to the camera surface, never visible to the user).
+    backgroundColor: '#0f0f1a',
     // Round 52 polish — Android SurfaceView (NativeRTCView for the host
     // camera) punches a window-hole through the view tree. overflow:hidden
     // here ensures any partial-paint glitches stay clipped to the screen
-    // bounds + the explicit #000 fill backstops any black-band ghosting.
+    // bounds.
     overflow: 'hidden',
   },
   centered: {

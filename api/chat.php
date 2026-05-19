@@ -6810,6 +6810,94 @@ function handleChatAction($action) {
         }
 
         // ============================================================
+        // chat_live_cohost_request — Viewer asks the host to bring them on
+        // as a cohost. The raw-WS `live_join_request` is silently dropped
+        // by the active Go WS hub (no case in main.go switch — legacy
+        // Node server.js had one but is `inactive (dead)` post-migration
+        // 2026-04-27). This REST path fans out a `live_join_request`
+        // event onto the host's auto-subscribed `chat_user_{host_email}`
+        // channel via /broadcast so live-broadcast.js sees the request
+        // and pops the "X pediu pra entrar" sheet.
+        //
+        // Round 67 #1158 (2026-05-18) — user report: "pedido enviado
+        // amigo não chega pra pessoa para poder dividir live".
+        // ============================================================
+        case 'chat_live_cohost_request': {
+            $user = requireChatAuth();
+            $sessionId = trim((string)($input['session_id'] ?? ''));
+            $hostEmail = strtolower(trim((string)($input['host_email'] ?? '')));
+            if ($sessionId === '') {
+                jsonResponse(false, null, 'session_id required', 400);
+            }
+            // Verify the session exists + is live; pull the host email as
+            // the authoritative target (don't trust client-supplied
+            // host_email blindly — fall back to it only when the row is
+            // missing for any reason).
+            $resolvedHost = $hostEmail;
+            try {
+                $sStmt = $db->prepare("SELECT host_email, status FROM chat_live_sessions WHERE id = :id");
+                $sStmt->execute([':id' => $sessionId]);
+                $session = $sStmt->fetch();
+                if ($session) {
+                    $resolvedHost = strtolower((string)$session['host_email']);
+                    if (!empty($session['status']) && $session['status'] !== 'live') {
+                        jsonResponse(false, null, 'Live session is not active', 409);
+                    }
+                }
+            } catch (\Throwable $e) { /* fallback to client-supplied host */ }
+            if ($resolvedHost === '') {
+                jsonResponse(false, null, 'host_email required', 400);
+            }
+            // Guard: viewer can't request to cohost their own live.
+            if (strcasecmp($resolvedHost, $user['email']) === 0) {
+                jsonResponse(false, null, 'Cannot request to cohost your own live', 400);
+            }
+            // Resolve viewer display name from user_profiles (matches the
+            // Go ws-live JoinSession path) so the host's request sheet
+            // shows "Maria pediu" not "maria@chatyy.com.br".
+            $viewerName = explode('@', $user['email'])[0];
+            try {
+                $nStmt = $db->prepare("SELECT COALESCE(display_name, split_part(email,'@',1)) AS nm FROM user_profiles WHERE LOWER(email) = LOWER(:e)");
+                $nStmt->execute([':e' => $user['email']]);
+                $nm = $nStmt->fetch();
+                if ($nm && !empty($nm['nm'])) $viewerName = $nm['nm'];
+            } catch (\Throwable $e) { /* keep email-prefix fallback */ }
+
+            try {
+                $wsKey = getenv('MAIL_WS_KEY') ?: '';
+                if ($wsKey) {
+                    $payload = [
+                        'session_id'   => $sessionId,
+                        'viewer_email' => $user['email'],
+                        'viewer_name'  => $viewerName,
+                    ];
+                    $body = json_encode([
+                        'channel' => 'chat_user_' . $resolvedHost,
+                        'event'   => 'live_join_request',
+                        'data'    => $payload,
+                    ], JSON_UNESCAPED_UNICODE);
+                    // Same dual-endpoint pattern as _broadcastToOwnDevices —
+                    // hit chat-relay (8081) AND ws-go (8084) so whichever
+                    // service holds the host's live socket delivers it.
+                    foreach (['http://127.0.0.1:8081/broadcast', 'http://127.0.0.1:8084/broadcast'] as $endpoint) {
+                        $cu = curl_init($endpoint);
+                        curl_setopt_array($cu, [
+                            CURLOPT_POST            => true,
+                            CURLOPT_POSTFIELDS      => $body,
+                            CURLOPT_HTTPHEADER      => ['Content-Type: application/json', 'X-API-Key: ' . $wsKey],
+                            CURLOPT_RETURNTRANSFER  => true,
+                            CURLOPT_TIMEOUT_MS      => 1500,
+                            CURLOPT_CONNECTTIMEOUT_MS => 500,
+                        ]);
+                        curl_exec($cu); curl_close($cu);
+                    }
+                }
+            } catch (\Throwable $e) { error_log('[live_cohost_request.ws] ' . $e->getMessage()); }
+            jsonResponse(true, ['session_id' => $sessionId, 'host_email' => $resolvedHost], 'Request sent');
+            break;
+        }
+
+        // ============================================================
         // chat_live_cohost_approve — Host approves a viewer to become co-host.
         // Inserts an auth row so the viewer can later request a publisher
         // token for the live session's LiveKit room. Idempotent.

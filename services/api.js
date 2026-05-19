@@ -8193,6 +8193,19 @@ export async function chatCallCreateLink(conversationId, callId) {
 }
 
 // ─── Live broadcast cohost (TikTok-style) ───
+// Viewer calls this to ask the host to bring them on as a cohost. The
+// raw-WS `live_join_request` path is silently dropped by the active Go WS
+// hub (no case in main.go switch — only the legacy Node server had it
+// and that's `inactive (dead)` post-migration). This REST endpoint
+// publishes a `live_join_request` event onto the host's auto-subscribed
+// `chat_user_{host_email}` channel via /broadcast, so the host's
+// live-broadcast.js handler fires "X pediu pra entrar" reliably.
+export async function liveCohostRequest(sessionId, hostEmail) {
+  return apiCall('chat_live_cohost_request', {
+    session_id: sessionId,
+    host_email: hostEmail,
+  }, 'POST');
+}
 // Host calls this to approve a viewer as cohost. Backend inserts auth row
 // and pushes `live_cohost_approved` via WS to the viewer's channel.
 export async function liveCohostApprove(sessionId, viewerEmail) {

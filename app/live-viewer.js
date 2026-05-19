@@ -32,6 +32,10 @@ import LiveGiftPicker, { IconGiftBox } from '../components/LiveGiftPicker';
 import DiamondTopUpSheet from '../components/DiamondTopUpSheet';
 import LivePollOverlay from '../components/live/LivePollOverlay';
 import ConnectionBars from '../components/ConnectionBars';
+// Round 67 #1158 (2026-05-18) — keep the display on while watching a
+// live. User: "a tela ainda desliga mesmo rolando a live". Tag scopes
+// the wake-lock to this screen; unmount auto-releases.
+import { useKeepAwake } from 'expo-keep-awake';
 
 // Humanize big counts the way Instagram/TikTok do: 999 → 999, 1.2K, 12.4K, 1.2M.
 // We localize the decimal separator from the user locale where possible.
@@ -192,6 +196,12 @@ const SheetCommentRow = memo(function SheetCommentRow({ item }) {
 const sheetCommentKey = (item, idx) => String(item?.id ?? `m-${idx}`);
 
 export default function LiveViewerScreen() {
+  // Round 67 #1158 (2026-05-18) — keep the screen awake while the viewer
+  // is engaged in the live. Tagged so simultaneous mounts (e.g. PiP
+  // race during navigation) don't race the lock. Auto-released on
+  // unmount via expo-keep-awake's effect.
+  useKeepAwake('live-viewer');
+
   const params = useLocalSearchParams();
   // Accept all common param aliases so deep links work regardless of source:
   //   • push tap notification → ?session_id=… (snake_case, from FCM payload)
@@ -1902,6 +1912,28 @@ export default function LiveViewerScreen() {
         sent = true;
       }
     } catch {}
+    // Round 67 #1158 (2026-05-18) — user: "pedido enviado amigo não chega
+    // pra pessoa". Root cause: the legacy Node WS server.js HAD a
+    // `case 'live_join_request'` relay; the active Go WS hub
+    // (chatyy-ws-go) does NOT — the old Node service is `inactive (dead)`
+    // post-migration so viewer ws.send was being silently dropped. Fix:
+    // also POST a REST request that the backend fans out via
+    // /broadcast → host's chat_user_{host_email} channel (host is
+    // auto-subscribed there on auth — see Go main.go:1776). Belt-and-
+    // suspenders: WS attempt above stays so if either path survives a
+    // future infra rework the request still lands.
+    try {
+      const api = require('../services/api');
+      const targetHost = displayHostEmail;
+      if (paramSessionId && targetHost && api?.liveCohostRequest) {
+        api.liveCohostRequest(paramSessionId, targetHost).then(() => {
+          sent = true;
+          fireToast(t('live.requestSent') || 'Pedido enviado ao host');
+        }).catch((err) => {
+          console.warn('[Live] liveCohostRequest REST failed:', err?.message || err);
+        });
+      }
+    } catch (e) { console.warn('[Live] cohost REST send threw:', e?.message); }
     if (sent) {
       // Optimistic flip + a tiny haptic so the user feels the tap landed.
       setJoinRequested(true);
@@ -1954,7 +1986,7 @@ export default function LiveViewerScreen() {
       if (joinResetTimerRef.current) clearTimeout(joinResetTimerRef.current);
       joinResetTimerRef.current = setTimeout(() => setJoinRequested(false), 60000);
     }
-  }, [paramSessionId, user?.email, user?.name, joinRequested, t]);
+  }, [paramSessionId, user?.email, user?.name, joinRequested, t, displayHostEmail]);
 
   // Share the live broadcast link. Uses the native share sheet on iOS/Android
   // and navigator.share (or clipboard fallback) on web. The URL resolves to
