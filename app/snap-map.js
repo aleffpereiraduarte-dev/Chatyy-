@@ -61,7 +61,7 @@ import * as api from '../services/api';
 import AvatarCircle from '../components/AvatarCircle';
 import { getAvatarUrlForEmail } from '../services/api';
 import {
-  IconArrowLeft, IconMapPin, IconUser, IconMessageSquare, IconX,
+  IconArrowLeft, IconMapPin, IconUser, IconMessageSquare, IconX, IconNavigation,
 } from '../components/Icons';
 
 // Google Maps JS API key. Read from app.json `extra.GOOGLE_MAPS_KEY` —
@@ -125,7 +125,12 @@ function buildMapHtml({ apiKey, center, zoom, isDark, initialPins, initialMe }) 
   .pin .ring .ini{width:100%;height:100%;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:18px;background:#7C3AED}
   .pin .label{margin-top:3px;background:rgba(0,0,0,0.78);color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .me{position:absolute;transform:translate(-50%,-50%);pointer-events:none}
-  .me .dot{width:18px;height:18px;border-radius:50%;background:#3B82F6;border:3px solid #fff;box-shadow:0 0 0 6px rgba(59,130,246,0.25),0 2px 6px rgba(0,0,0,0.4)}
+  .me .dot{width:18px;height:18px;border-radius:50%;background:#3B82F6;border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4);position:relative}
+  /* WhatsApp/Google-style breathing pulse around the blue dot. The outer
+     ring expands+fades to telegraph "you are here, GPS live". */
+  .me .dot::before{content:'';position:absolute;left:50%;top:50%;width:18px;height:18px;border-radius:50%;background:rgba(59,130,246,0.35);transform:translate(-50%,-50%);animation:mePulse 2s ease-out infinite;z-index:-1}
+  .me .dot::after{content:'';position:absolute;left:50%;top:50%;width:18px;height:18px;border-radius:50%;background:rgba(59,130,246,0.25);transform:translate(-50%,-50%);animation:mePulse 2s ease-out infinite 1s;z-index:-1}
+  @keyframes mePulse{0%{transform:translate(-50%,-50%) scale(1);opacity:.7}100%{transform:translate(-50%,-50%) scale(4);opacity:0}}
 </style>
 </head><body>
 <div id="map"></div>
@@ -844,6 +849,43 @@ export default function SnapMapScreen() {
             <ActivityIndicator size="small" color="#fff" />
             <Text style={{ color: '#fff', fontSize: 13 }}>{t?.('common.loading') || 'Carregando…'}</Text>
           </View>
+        )}
+
+        {/* "Centralize-me" FAB — WhatsApp/Maps-style. Pan/zooms the map to
+            the user's current GPS. Pulls a fresh fix on tap so even if the
+            initial reading was stale the user gets the latest location. */}
+        {myLocation && (
+          <TouchableOpacity
+            onPress={async () => {
+              try {
+                let target = myLocation;
+                if (Platform.OS !== 'web') {
+                  try {
+                    const Location = require('expo-location');
+                    const fresh = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+                    if (fresh?.coords) {
+                      target = { lat: fresh.coords.latitude, lng: fresh.coords.longitude };
+                      setMyLocation(target);
+                    }
+                  } catch {}
+                }
+                pushToMap({ type: 'pan', lat: target.lat, lng: target.lng });
+              } catch {}
+            }}
+            style={{
+              position: 'absolute', right: 16, bottom: 24,
+              width: 52, height: 52, borderRadius: 26,
+              backgroundColor: colors.surface,
+              alignItems: 'center', justifyContent: 'center',
+              shadowColor: '#000', shadowOpacity: 0.25,
+              shadowRadius: 8, shadowOffset: { width: 0, height: 4 },
+              elevation: 6,
+              borderWidth: 1, borderColor: colors.border || 'rgba(0,0,0,0.08)',
+            }}
+            accessibilityLabel={t?.('snapmap.centerOnMe') || 'Minha localização'}
+          >
+            <IconNavigation size={22} color={colors.primary} />
+          </TouchableOpacity>
         )}
 
         {/* Empty state */}
