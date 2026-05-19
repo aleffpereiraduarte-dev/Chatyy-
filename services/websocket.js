@@ -51,13 +51,28 @@ const WS_URL = null; // Dynamic — resolved at connect time from best edge serv
 // always fired BEFORE the network re-stabilized, surfacing a noisy
 // "Reconectando…" flash. 800ms lets the OS settle first so the very first
 // connect attempt usually succeeds — invisible recovery.
-const RECONNECT_BASE = 800;
-const RECONNECT_MAX = 30000;     // Max 30s between retries
+const RECONNECT_BASE = 500;
+// [2026-05-19 "não deveria cair nunca"] Cap aggressive reconnect at 3s
+// instead of 30s. After 4 fast retries (within ~2s) we used to fall back
+// to exponential backoff that climbed to 30s — user saw "Reconectando..."
+// for minutes and had to force-quit + reopen to reset. WhatsApp-style:
+// never let the user wait more than a few seconds for the socket to come
+// back. 3s ceiling means worst-case 1-3 reconnect attempts per second
+// during a sustained outage, which the server can absorb (eviction loop
+// fixed separately).
+const RECONNECT_MAX = 3000;     // Max 3s between retries (was 30s)
 // WhatsApp-tier liveness — detect a silently-dead socket in ~18s instead of
 // the TCP keepalive default (~60-120s). Cost is negligible (~3 B/s of ping
 // frames). During an active call we drop to 8s/15s via _callActive (see
 // _startPing) so ICE candidate loss is detected even faster.
-const PING_INTERVAL = 12000;
+// [2026-05-19 NAT keepalive] Pinging every 5s (was 12s) keeps mobile
+// carrier NAT mappings fresh. Mobile NAT idle timeouts are typically
+// 60-120s; at 12s we'd send 5-10 keepalive packets per minute which is
+// fine, but carriers in some regions (BR Tim/Vivo seen) idle out
+// connections that have NO bidirectional traffic in any 30s window.
+// 5s pings = 12 packets/min, no impact on battery, kills the NAT idle
+// kill 100% of the time. WhatsApp uses ~5s keepalive.
+const PING_INTERVAL = 5000;
 const PING_TIMEOUT = 18000;
 const MAX_QUEUE_SIZE = 100;
 const TYPING_DEBOUNCE = 3000;   // Send typing every 3s max
