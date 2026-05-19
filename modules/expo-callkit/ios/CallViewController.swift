@@ -256,15 +256,13 @@ final class CallViewController: UIViewController {
                 guard let self = self else { return }
                 do {
                     try await r.connect(url: url, token: token)
-                    // [Wave B audio, 2026-05-18] Pin AudioCaptureOptions on the
-                    // first publish too — RoomOptions defaults usually carry
-                    // it, but pinning per-call defense-in-depth: WhatsApp-grade
-                    // means AEC + AGC + noise suppression on *every* connect.
-                    try await r.localParticipant.setMicrophone(
-                        enabled: true,
-                        captureOptions: Self.defaultAudioCaptureOptions()
-                    )
-                    print("[CallVC] Mic published (aec+agc+ns) — callId=\(self.callId)")
+                    // [Wave B audio, 2026-05-18] AEC + AGC + noise suppression
+                    // come from RoomOptions.defaultAudioCaptureOptions which is
+                    // pinned above. Some LK Swift revs don't expose the
+                    // captureOptions parameter on setMicrophone — relying on
+                    // RoomOptions is portable across SDK versions.
+                    try await r.localParticipant.setMicrophone(enabled: true)
+                    print("[CallVC] Mic published (aec+agc+ns via RoomOptions) — callId=\(self.callId)")
                     if self.hasVideo {
                         // [Wave C, 2026-05-18] Pass explicit captureOptions +
                         // publishOptions so the *first* publish carries our
@@ -346,13 +344,11 @@ final class CallViewController: UIViewController {
         guard let r = self.room else { return }
         Task { [weak self] in
             do {
-                // [Wave B audio, 2026-05-18] Pass AudioCaptureOptions on every
-                // mic toggle so re-publish (some LK revs re-create the track
-                // on unmute) keeps AEC + AGC + noise suppression on.
-                try await r.localParticipant.setMicrophone(
-                    enabled: enabled,
-                    captureOptions: Self.defaultAudioCaptureOptions()
-                )
+                // [Wave B audio, 2026-05-18] RoomOptions.defaultAudioCaptureOptions
+                // already pinned AEC+AGC+NS at connect time; mic toggle just
+                // mutes/unmutes the existing track. Avoids LK SDK signature
+                // mismatch on setMicrophone(enabled:captureOptions:).
+                try await r.localParticipant.setMicrophone(enabled: enabled)
             } catch {
                 print("[CallVC] setMicrophone(\(enabled)) failed: \(error)")
                 await MainActor.run { self?.session.micEnabled = !enabled }
