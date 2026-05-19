@@ -607,8 +607,65 @@ function CallScreenInner() {
   // Mark call active so IncomingCallListener doesn't fire over it.
   useEffect(() => {
     setCallActive(true, callId);
+    // [#1165 2026-05-18] Also publish a global flag the WS auth_error
+    // handler reads so it can suppress streak escalation during the call.
+    // User report: "na hora que liga parece que perde token, ai não envia
+    // mais mensagem, ai tenho que deslogar e logar denovo". Root cause is
+    // the JS WS reconnects during the call (CallActivity covers the RN
+    // surface on Android, iOS suspends background sockets), hits a few
+    // transient auth_error frames, and the streak races to the logout
+    // threshold mid-call. The marker lives 30s past call_end so the post-
+    // call WS settle (subscribe re-emit, presence sync) is also protected.
+    try {
+      if (typeof globalThis !== 'undefined') {
+        globalThis.__chatyyCallActive = true;
+        if (globalThis.__chatyyCallActiveClearTimer) {
+          clearTimeout(globalThis.__chatyyCallActiveClearTimer);
+          globalThis.__chatyyCallActiveClearTimer = null;
+        }
+      }
+    } catch {}
+    // Also flip the WS instance flag (drives ping cadence + intra-class
+    // gating) so the protections share a single source of truth.
+    try {
+      const mailWs = require('../services/websocket').default;
+      mailWs.setCallActive?.(true);
+    } catch {}
     return () => {
       if (!minimizedRef.current) setCallActive(false, callId);
+      try {
+        if (typeof globalThis !== 'undefined') {
+          // Delay clearing 30s — see comment above. Schedule on global so
+          // re-mounting the screen doesn't double-arm.
+          if (globalThis.__chatyyCallActiveClearTimer) {
+            clearTimeout(globalThis.__chatyyCallActiveClearTimer);
+          }
+          globalThis.__chatyyCallActiveClearTimer = setTimeout(() => {
+            try {
+              globalThis.__chatyyCallActive = false;
+              globalThis.__chatyyCallActiveClearTimer = null;
+              // After the protection window expires, proactively confirm
+              // the token via HTTP. If 200, also reset the WS streak so a
+              // late auth_error storm caused by the call doesn't tip us
+              // over. Bug #1165 mitigation.
+              const apiMod = require('../services/api');
+              apiMod.checkAuth?.().then((r) => {
+                if (r && (r.success || r.data)) {
+                  try { apiMod.resetAuthFailureSignal?.(); } catch {}
+                  try {
+                    const mailWs = require('../services/websocket').default;
+                    if (mailWs) mailWs._authFailStreak = 0;
+                  } catch {}
+                }
+              }).catch(() => {});
+            } catch {}
+          }, 30000);
+        }
+      } catch {}
+      try {
+        const mailWs = require('../services/websocket').default;
+        mailWs.setCallActive?.(false);
+      } catch {}
     };
   }, [callId]);
 

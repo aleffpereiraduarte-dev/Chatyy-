@@ -1160,9 +1160,24 @@ export function AuthProvider({ children }) {
   // users got stuck on an empty chat screen until they clicked Sair.
   useEffect(() => {
     let _handled = 0;
-    const handleAuthFailure = () => {
+    const handleAuthFailure = async () => {
       if (Date.now() - _handled < 1500) return; // debounce duplicate fires
       _handled = Date.now();
+      // [#1165 2026-05-18] In-call protection: if a call is happening (or
+      // recently ended) the WS auth_error storm is a known transient — the
+      // native CallSignalWs and the JS WS hold the same bearer and the
+      // edge hub can briefly race. Refuse to logout while the marker is
+      // live; the post-call cleanup window will also verify via HTTP.
+      try {
+        if (typeof globalThis !== 'undefined' && globalThis.__chatyyCallActive) {
+          api.recordLogoutAttempt?.('refused_during_call', {
+            source: 'authcontext_signal',
+          });
+          api.resetAuthFailureSignal?.();
+          console.warn('[auth] Auth-failure signal during active call — refusing logout (#1165)');
+          return;
+        }
+      } catch {}
       // WhatsApp-grade refusal: if the token has been confirmed alive in
       // the last 90 days, the 401 signal almost certainly came from an
       // edge hiccup, not a true revocation. Refuse to logout, reset the
@@ -1175,6 +1190,41 @@ export function AuthProvider({ children }) {
           });
           api.resetAuthFailureSignal?.();
           console.warn('[auth] Auth-failure signal received but token <90d old — refusing logout');
+          return;
+        }
+      } catch {}
+      // [#1165] Last-chance HTTP confirmation. Many WS auth_error streaks
+      // are false alarms — the bearer is actually fine, the edge hub just
+      // lost state. Do a single HTTP check_auth before tearing down the
+      // session. If HTTP comes back 200, treat the WS signal as noise.
+      // Bounded by a 4s timeout so a flaky edge can't hold logout hostage.
+      try {
+        const confirmed = await Promise.race([
+          api.checkAuth().then((r) => !!(r && (r.success || r.data))).catch(() => false),
+          new Promise((resolve) => setTimeout(() => resolve(null), 4000)),
+        ]);
+        if (confirmed === true) {
+          api.recordLogoutAttempt?.('refused_http_confirmed', {
+            source: 'authcontext_signal',
+          });
+          api.resetAuthFailureSignal?.();
+          // Clear any in-memory WS streak so the next auth_error doesn't
+          // immediately re-trigger.
+          try {
+            const ws = require('../services/websocket').default;
+            if (ws) ws._authFailStreak = 0;
+          } catch {}
+          console.warn('[auth] Auth-failure signal but HTTP check_auth=200 — refusing logout (#1165)');
+          return;
+        }
+        // null = timeout (no answer) — don't trust the WS signal alone if
+        // the HTTP path was also unreachable. Network is probably broken.
+        if (confirmed === null) {
+          api.recordLogoutAttempt?.('refused_http_timeout', {
+            source: 'authcontext_signal',
+          });
+          api.resetAuthFailureSignal?.();
+          console.warn('[auth] Auth-failure signal but HTTP timed out — refusing logout, will retry');
           return;
         }
       } catch {}
