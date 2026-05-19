@@ -59,7 +59,22 @@ const SIDE_PANEL_ROUTES = {
   '/notes': { key: 'notes', icon: IconStickyNote, label: 'sidebar.notes', color: '#f59e0b' },
 };
 
-export default function InboxScreen() {
+// Wrap the inner screen in an ErrorBoundary so that any crash inside
+// (e.g. a dynamic native-module require throwing synchronously on iOS,
+// a TDZ from a fast-refresh OTA mismatch, etc.) shows the friendly
+// "Tentar novamente" screen INSIDE the inbox route instead of returning
+// undefined from the screen render and tripping expo-router with the
+// generic "Algo deu errado" overlay that blocks navigation entirely.
+// (#1197 iOS Apps→Email click error fix, 2026-05-19.)
+export default function InboxScreen(props) {
+  return (
+    <ErrorBoundary>
+      <InboxScreenInner {...props} />
+    </ErrorBoundary>
+  );
+}
+
+function InboxScreenInner() {
   const { user, loading: authLoading, logout, login, accounts, switchAccount, removeAccount, switching } = useAuth();
   // Kids accounts go straight to chat — never show inbox
   const _kidsRouter = useRouter();
