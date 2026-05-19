@@ -823,9 +823,12 @@ final class CallViewController: UIViewController {
         // The 16:9 preset matches portrait-rotated phones (LK auto-rotates).
         // If the device can't hit 720p (older iPhone SE), LK clamps down to
         // the nearest supported resolution automatically.
+        // [2026-05-19 fix] Dimensions(width:Int32, height:Int32) — must cast
+        // Int literals; Swift does NOT auto-promote Int → Int32. Was breaking
+        // Archive compile.
         return CameraCaptureOptions(
             position: position,
-            dimensions: Dimensions(width: 1280, height: 720),
+            dimensions: Dimensions(width: Int32(1280), height: Int32(720)),
             fps: 30
         )
     }
