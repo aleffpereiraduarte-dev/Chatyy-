@@ -1702,6 +1702,8 @@ export default {
   'chat.vanishModeChanged': '{name} turned on vanish mode',
   'chat.vanishModeChangedOff': '{name} turned off vanish mode',
   'chatConv.systemScreenshot': '{name} took a screenshot',
+  'chatConv.userLeft': '{name} left the group',
+  'chatConv.permSaveFailed': 'Could not save permissions',
   'chat.vanishBanner': 'Vanish mode active - messages disappear after reading',
   'chat.effectConfetti': 'Confetti!',
   'chat.effectHearts': 'Hearts!',

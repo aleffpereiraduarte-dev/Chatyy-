@@ -556,6 +556,47 @@ function ScrollDownFabAnim({ onPress, isDark, colors, newMsgCount, t }) {
   );
 }
 
+// [VISUAL-G1, 2026-05-19] Module-scope sender color palette + djb2 hash (avoid re-alloc per render).
+// 20 distinct high-contrast colors, all chosen to read clearly against both the
+// purple own bubble (#5B21B6 dark / #E6DBFF light) AND the received bubble
+// (#FFFFFF light / #231835 dark). No near-duplicates, no near-purples.
+const SENDER_COLORS = [
+  '#E11D48', // rose
+  '#F97316', // orange
+  '#F59E0B', // amber
+  '#84CC16', // lime
+  '#10B981', // emerald
+  '#14B8A6', // teal
+  '#06B6D4', // cyan
+  '#0EA5E9', // sky
+  '#3B82F6', // blue
+  '#6366F1', // indigo
+  '#A855F7', // purple-light (distinct from #5B21B6)
+  '#D946EF', // fuchsia
+  '#EC4899', // pink
+  '#F43F5E', // rose-dark
+  '#EAB308', // yellow
+  '#22C55E', // green
+  '#0891B2', // cyan-dark
+  '#7C2D12', // brown
+  '#BE185D', // pink-dark
+  '#15803D', // green-dark
+];
+// djb2 hash — better distribution than charCodeAt sum (which collides on anagrams).
+// Cached at module scope (≈ useMemo by sender_email) — keeps the lookup O(1) per
+// render in a chat with the same N senders, regardless of how many bubbles.
+const _senderColorCache = new Map();
+function senderColorFromEmail(email) {
+  const key = String(email || '');
+  const cached = _senderColorCache.get(key);
+  if (cached !== undefined) return cached;
+  let h = 5381;
+  for (let i = 0; i < key.length; i++) h = ((h * 33) ^ key.charCodeAt(i)) | 0;
+  const color = SENDER_COLORS[Math.abs(h) % SENDER_COLORS.length];
+  _senderColorCache.set(key, color);
+  return color;
+}
+
 // ============================================================
 // ANIMATED CHECK STATUS (sent → delivered → read)
 // ============================================================
@@ -607,15 +648,16 @@ function AnimatedCheckStatus({ status, color, pending = false }) {
     // Single check (sent)
     return (
       <Animated.View style={{ marginLeft: 3, flexShrink: 0, opacity }}>
-        <IconCheck size={13} color={color} />
+        {/* [VISUAL-G6, 2026-05-19] Check size 13→15 + read color #C4B5FD→#53BDEB (WA blue, visible on purple). */}
+        <IconCheck size={15} color={color} />
       </Animated.View>
     );
   }
 
-  // Double check — crossfade gray ↔ purple via two stacked layers.
+  // Double check — crossfade gray ↔ blue via two stacked layers.
   // (Animated color on SVG doesn't propagate without createAnimatedComponent;
   // crossfading two pre-colored copies is simpler and still 60fps.)
-  const purpleOpacity = readPulse; // 0 → 1 when reaching status 2
+  const readOpacity = readPulse; // 0 → 1 when reaching status 2
   const grayOpacity = readPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 0] });
   const pulseScale = readPulse.interpolate({
     inputRange: [0, 0.5, 1],
@@ -629,22 +671,22 @@ function AnimatedCheckStatus({ status, color, pending = false }) {
       marginLeft: 3, flexShrink: 0, flexDirection: 'row',
       opacity, transform: [{ scale: pulseScale }],
     }}>
-      {/* First check (always rendered) — gray + purple stacked, crossfade. */}
+      {/* [VISUAL-G6, 2026-05-19] First check — gray + WhatsApp-blue stacked, crossfade. */}
       <View style={{ marginRight: -6 }}>
         <Animated.View style={{ opacity: grayOpacity }}>
-          <IconCheck size={13} color={color} />
+          <IconCheck size={15} color={color} />
         </Animated.View>
-        <Animated.View style={{ position: 'absolute', opacity: purpleOpacity }}>
-          <IconCheck size={13} strokeWidth={2.6} color="#C4B5FD" />
+        <Animated.View style={{ position: 'absolute', opacity: readOpacity }}>
+          <IconCheck size={15} strokeWidth={2.6} color="#53BDEB" />
         </Animated.View>
       </View>
       {/* Second check (slides in on delivered) — same crossfade pair. */}
       <Animated.View style={{ transform: [{ translateX: slideX }], opacity: slideOpacity }}>
         <Animated.View style={{ opacity: grayOpacity }}>
-          <IconCheck size={13} color={color} />
+          <IconCheck size={15} color={color} />
         </Animated.View>
-        <Animated.View style={{ position: 'absolute', opacity: purpleOpacity }}>
-          <IconCheck size={13} strokeWidth={2.6} color="#C4B5FD" />
+        <Animated.View style={{ position: 'absolute', opacity: readOpacity }}>
+          <IconCheck size={15} strokeWidth={2.6} color="#53BDEB" />
         </Animated.View>
       </Animated.View>
     </Animated.View>
@@ -746,35 +788,23 @@ function MediaStatusFooter({ msg, isOwn, variant }) {
 // pill pulses at 1.0 → 1.06 scale for ~2 cycles, then settles. Draws the eye
 // to the exact spot where new messages start.
 function UnreadSeparatorPulse({ isDark, t }) {
+  // [VISUAL-G5, 2026-05-19] Unread divider: violet→WA red, drop pulse loop, sentence-case label.
   const opacity = useRef(new Animated.Value(0)).current;
-  const pulse = useRef(new Animated.Value(1)).current;
   useEffect(() => {
     Animated.timing(opacity, { toValue: 1, duration: 260, useNativeDriver: true }).start();
-    Animated.sequence([
-      Animated.timing(pulse, { toValue: 1.08, duration: 500, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-      Animated.timing(pulse, { toValue: 1.0, duration: 500, easing: Easing.in(Easing.quad), useNativeDriver: true }),
-      Animated.timing(pulse, { toValue: 1.06, duration: 500, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-      Animated.timing(pulse, { toValue: 1.0, duration: 500, easing: Easing.in(Easing.quad), useNativeDriver: true }),
-    ]).start();
   }, []);
   return (
     <Animated.View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 8, paddingHorizontal: 12, opacity }}>
-      <View style={{ flex: 1, height: 1, backgroundColor: '#A78BFA' }} />
-      <Animated.View style={{
+      <View style={{ flex: 1, height: 1, backgroundColor: '#E74C3C' }} />
+      <View style={{
         marginHorizontal: 12, paddingHorizontal: 10, paddingVertical: 3,
-        backgroundColor: isDark ? '#0B3F5C' : '#DCF1FA', borderRadius: 12,
-        transform: [{ scale: pulse }],
-        ...Platform.select({
-          ios: { shadowColor: '#A78BFA', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.35, shadowRadius: 6 },
-          web: { boxShadow: '0 0 10px rgba(167,139,250,0.4)' },
-          default: {},
-        }),
+        backgroundColor: isDark ? '#3A1416' : '#FDECEA', borderRadius: 12,
       }}>
-        <Text style={{ fontSize: 11, fontWeight: '700', color: '#A78BFA', letterSpacing: 0.3 }}>
-          {(t('chatConv.unreadMessages') || 'NÃO LIDAS').toUpperCase()}
+        <Text style={{ fontSize: 11, fontWeight: '700', color: '#E74C3C', letterSpacing: 0.2 }}>
+          {t('chatConv.unreadMessages') || 'Mensagens não lidas'}
         </Text>
-      </Animated.View>
-      <View style={{ flex: 1, height: 1, backgroundColor: '#A78BFA' }} />
+      </View>
+      <View style={{ flex: 1, height: 1, backgroundColor: '#E74C3C' }} />
     </Animated.View>
   );
 }
@@ -11002,12 +11032,23 @@ export default function ChatConversationScreen() {
   // user never lands on a stale thread. Also runs on first visibility.
   useEffect(() => {
     const onChange = (state) => {
+      // [SEND-10, 2026-05-19] Flush pending delivery acks on background so
+      // the 250ms batch window doesn't eat unconfirmed acks when phone sleeps.
+      if (state === 'background' || state === 'inactive') {
+        try { api.chatDeliveryAckFlush?.(); } catch {}
+        return;
+      }
       if (state !== 'active') return;
       if (!mountedRef.current || !conversationId) return;
       try { loadMessages(false); } catch {}
     };
     const sub = AppState.addEventListener('change', onChange);
-    return () => { try { sub.remove(); } catch {} };
+    return () => {
+      try { sub.remove(); } catch {}
+      // [SEND-10, 2026-05-19] Flush pending acks on screen unmount so an
+      // ack batched in the last 250ms window survives navigation away.
+      try { api.chatDeliveryAckFlush?.(); } catch {}
+    };
   }, [conversationId, loadMessages]);
 
   const handleLoadMore = useCallback(async () => {
@@ -11358,6 +11399,48 @@ export default function ChatConversationScreen() {
     //      flushes it on reconnect. Gating the call on `wsOk` was throwing
     //      away the durable-relay guarantee that the WS class explicitly
     //      provides.
+
+    // [SEND-07, 2026-05-19] Encrypt FIRST, then relay — never broadcast
+    // plaintext over WS. Previously the relay fired before encryption,
+    // so when encrypt failed the bubble flipped _failed locally but
+    // peers had already seen the plaintext optimistic msg.
+    let contentToSend = text;
+    if (e2eEnabled && e2eKeys) {
+      let encrypted = null;
+      const usableV3 = e2eBundles && Object.keys(e2eBundles).length > 0;
+      if (usableV3) {
+        try { encrypted = await e2eService.createEnvelopeV3(text, currentEmail, e2eBundles, myDeviceIdRef.current); }
+        catch {
+          try { encrypted = await e2eService.createEnvelopeV2(text, currentEmail, e2eBundles); }
+          catch {
+            try { encrypted = e2eService.createEnvelope(text, currentEmail, e2eKeys); } catch {}
+          }
+        }
+      } else {
+        try { encrypted = e2eService.createEnvelope(text, currentEmail, e2eKeys); } catch {}
+      }
+      if (!encrypted || typeof encrypted !== 'string' || encrypted === text) {
+        // [SEND-07, 2026-05-19] Fail-secure: return BEFORE relay so peers
+        // never see plaintext when encryption falls over.
+        // [bug 2026-05-15 #980 e2ee-silent-fail] Surface Alert so user
+        // understands this isn't a network issue.
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: 'encryption_failed' } : m));
+        removePendingMessage(conversationId, tempId).catch(() => {});
+        setSending(false);
+        try {
+          const { Alert: A } = require('react-native');
+          if (A?.alert) {
+            A.alert(
+              t('chat.e2eeFailedTitle') || 'Falha na criptografia',
+              t('chat.e2eeFailedBody') || 'Não foi possível criptografar a mensagem. Peça pro contato abrir o app pra publicar a chave dele, ou tente novamente em alguns instantes.',
+            );
+          }
+        } catch {}
+        return;
+      }
+      contentToSend = encrypted;
+    }
+
     try {
       const mailWs = require('../services/websocket').default;
       const wsOk = !!(mailWs.isConnected && mailWs.authenticated);
@@ -11376,8 +11459,11 @@ export default function ChatConversationScreen() {
       // immediately; when wsOk=false the WS class queues it and flushes
       // post-reconnect. Either way the peer eventually sees it without
       // waiting on their own poll cycle.
+      // [SEND-07, 2026-05-19] Carry ciphertext envelope (`contentToSend`),
+      // NOT the plaintext content. Peers decrypt locally from the envelope.
       mailWs.relayChatMessage(conversationId, {
         ...optimisticMsg,
+        content: contentToSend,
         _optimistic: true,
         _pending: false,
       }, tempId, memberList);
@@ -11418,49 +11504,8 @@ export default function ChatConversationScreen() {
       flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true });
     });
 
-    // Encrypt if E2E is enabled — prefer X3DH v2 (Signal-equivalent) when all
-    // recipient bundles include signed prekey; fall back to v1 single-DH.
-    // If EVERY encryption path throws we must NOT send plaintext (fail-secure):
-    // mark the bubble failed so the user can retry after E2E state recovers.
-    let contentToSend = text;
-    if (e2eEnabled && e2eKeys) {
-      let encrypted = null;
-      const usableV3 = e2eBundles && Object.keys(e2eBundles).length > 0;
-      if (usableV3) {
-        try { encrypted = await e2eService.createEnvelopeV3(text, currentEmail, e2eBundles, myDeviceIdRef.current); }
-        catch {
-          try { encrypted = await e2eService.createEnvelopeV2(text, currentEmail, e2eBundles); }
-          catch {
-            try { encrypted = e2eService.createEnvelope(text, currentEmail, e2eKeys); } catch {}
-          }
-        }
-      } else {
-        try { encrypted = e2eService.createEnvelope(text, currentEmail, e2eKeys); } catch {}
-      }
-      if (!encrypted || typeof encrypted !== 'string' || encrypted === text) {
-        // [bug 2026-05-15 #980 e2ee-silent-fail] Previously just marked
-        // bubble _failed without telling the user WHY. They'd retry 3-4×
-        // expecting a network fix, but the real problem was missing E2EE
-        // bundles (peer hasn't published one yet, or local key store is
-        // corrupt). Surface a one-shot Alert so user understands this isn't
-        // a network issue — the recipient needs to open the app once so
-        // the bundle gets published, or contact support.
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: 'encryption_failed' } : m));
-        removePendingMessage(conversationId, tempId).catch(() => {});
-        setSending(false);
-        try {
-          const { Alert: A } = require('react-native');
-          if (A?.alert) {
-            A.alert(
-              t('chat.e2eeFailedTitle') || 'Falha na criptografia',
-              t('chat.e2eeFailedBody') || 'Não foi possível criptografar a mensagem. Peça pro contato abrir o app pra publicar a chave dele, ou tente novamente em alguns instantes.',
-            );
-          }
-        } catch {}
-        return;
-      }
-      contentToSend = encrypted;
-    }
+    // [SEND-07, 2026-05-19] Encryption already happened above (before relay),
+    // contentToSend is already set. No-op here — kept marker for diff clarity.
 
     // Stop typing indicator immediately when sending
     try { const mailWs = require('../services/websocket').default; mailWs.sendStoppedTyping(conversationId); } catch {}
@@ -12371,6 +12416,25 @@ export default function ChatConversationScreen() {
       _batch_id: batchId || null,
     };
     setMessages(prev => [...prev, optimisticMsg]);
+    // [SEND-01, 2026-05-19] Persist optimistic media to local SQLite BEFORE
+    // upload kicks off so it survives app kill / network loss. Mirrors the
+    // text-send durability pattern. `_localUri` lets the bubble re-render
+    // the local preview on restart; removePendingMessage clears on success.
+    try {
+      const mediaPendingData = {
+        temp_id: tempId,
+        client_message_id: msgId,
+        conversation_id: conversationId,
+        content: caption || '',
+        type: fileType,
+        file_name: file.name,
+        file_url: localUri || '',
+        _localUri: localUri,
+        created_at: optimisticMsg.created_at,
+        sender_email: user?.email,
+      };
+      await savePendingMessage(conversationId, mediaPendingData);
+    } catch {}
     setUploadProgress(prev => ({ ...prev, [tempId]: 0 }));
     // Register an AbortController so the X button on the pending bubble can
     // actually cancel. rustUpload/chatUploadFile each accept a signal via
@@ -12754,6 +12818,23 @@ export default function ChatConversationScreen() {
       _client_id: audioMsgId,
     };
     setMessages(prev => [...prev, optimisticMsg]);
+    // [SEND-01, 2026-05-19] Persist voice msg to local SQLite BEFORE upload
+    // so it survives app kill mid-upload. Mirrors text-send durability.
+    try {
+      const audioPendingData = {
+        temp_id: tempId,
+        client_message_id: audioMsgId,
+        conversation_id: conversationId,
+        content: optimisticMsg.content,
+        type: 'audio',
+        file_url: localUri,
+        _localUri: localUri,
+        duration: audioData.duration,
+        created_at: optimisticMsg.created_at,
+        sender_email: user?.email,
+      };
+      await savePendingMessage(conversationId, audioPendingData);
+    } catch {}
     setUploadProgress(prev => ({ ...prev, [tempId]: 0 }));
     requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
     try {
@@ -12899,6 +12980,24 @@ export default function ChatConversationScreen() {
       _client_id: clientId,
     };
     setMessages(prev => [...prev, optimisticMsg]);
+    // [SEND-01, 2026-05-19] Persist video-note to local SQLite BEFORE upload
+    // so it survives app kill / network loss. Mirrors text-send durability.
+    try {
+      const vnotePendingData = {
+        temp_id: tempId,
+        client_message_id: clientId,
+        conversation_id: conversationId,
+        content: '',
+        type: 'video_note',
+        file_url: file.uri,
+        _localUri: file.uri,
+        file_name: file.name,
+        duration: file.duration || 0,
+        created_at: optimisticMsg.created_at,
+        sender_email: user?.email,
+      };
+      await savePendingMessage(conversationId, vnotePendingData);
+    } catch {}
     setUploadProgress(prev => ({ ...prev, [tempId]: 0 }));
     requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
 
@@ -16259,6 +16358,20 @@ export default function ChatConversationScreen() {
           </View>
         );
       }
+      // Tokenized "X left the group" — backend (chat_leave, chat.php
+      // L3463) emits content="__sys.user_left__|<displayName>" so the
+      // client can localize. Falls through to the generic render below
+      // for older rows that still have the hardcoded "X left the group"
+      // string (legacy data).
+      if (msg.content && msg.content.startsWith('__sys.user_left__|')) {
+        const name = msg.content.split('|').slice(1).join('|');
+        const text = (t('chatConv.userLeft') || '{name} saiu do grupo').replace('{name}', name);
+        return (
+          <View style={styles.systemMsg}>
+            <Text style={[styles.systemText, { color: colors.textTertiary }]}>{text}</Text>
+          </View>
+        );
+      }
       // Don't show raw JSON for any system message
       let displayText = msg.content;
       if (displayText && displayText.startsWith('{')) {
@@ -18907,10 +19020,8 @@ export default function ChatConversationScreen() {
             </View>
           )}
           {!isOwn && conversationType === 'group' && !isDeleted && isFirstInGroup && (() => {
-            // Generate consistent color from email hash (WhatsApp-style colored names)
-            const senderColors = ['#7C3AED', '#7C3AED', '#E6A919', '#FF6B6B', '#9B59B6', '#E67E22', '#2ECC71', '#3498DB', '#E91E63', '#00BCD4'];
-            const emailHash = (msg.sender_email || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-            const senderColor = senderColors[emailHash % senderColors.length];
+            // [VISUAL-G1, 2026-05-19] Module-scope SENDER_COLORS (20 distinct) + djb2 hash via cached helper.
+            const senderColor = senderColorFromEmail(msg.sender_email);
             return (
               <View style={styles.msgSenderRow}>
                 <TouchableOpacity activeOpacity={0.7} onPress={() => setProfileViewer({ name: msg.sender_name || msg.sender_email, email: msg.sender_email })}>
@@ -18939,7 +19050,8 @@ export default function ChatConversationScreen() {
               // so the contrast against the background is stronger.
               ? [styles.bubbleOwn, { backgroundColor: isDark ? '#5B21B6' : '#E6DBFF' }]
               : [styles.bubbleOther, { backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : (isDark ? '#231835' : '#FFFFFF'), ...(isDark ? {} : { borderWidth: 0.5, borderColor: 'rgba(0,0,0,0.06)' }) }],
-            isLastInGroup && (isOwn ? { borderBottomRightRadius: 0 } : { borderBottomLeftRadius: 0 }),
+            // [VISUAL-G2, 2026-05-19] Tail moved to TOP (isFirstInGroup) — WA places tail on first-of-group.
+            isFirstInGroup && (isOwn ? { borderTopRightRadius: 0 } : { borderTopLeftRadius: 0 }),
             isDeleted && styles.bubbleDeleted,
             (msg.type === 'sticker' || msg.type === 'gif') && { backgroundColor: 'transparent', borderWidth: 0, paddingHorizontal: 0, paddingVertical: 0, elevation: 0, shadowOpacity: 0 },
             (msg.type === 'image' || msg.type === 'video') && { paddingHorizontal: 3, paddingTop: 3, paddingBottom: 4, overflow: 'hidden' },
@@ -18947,24 +19059,25 @@ export default function ChatConversationScreen() {
             msg._failed && { opacity: 0.5 },
             msg._isHighlighted && { borderWidth: 2, borderColor: '#f59e0b' },
           ]}>
-          {/* WhatsApp bubble tail (SVG triangle) for last message in group.
-              Fill matches the bubble background exactly so the tail reads as
-              a continuation, not a separate shape. */}
-          {isLastInGroup && msg.type !== 'sticker' && msg.type !== 'gif' && (
+          {/* [VISUAL-G2, 2026-05-19] WhatsApp bubble tail (SVG triangle) — TOP of first-in-group.
+              Skips media bubbles (image/video) because they use overflow:'hidden' which would
+              clip the tail, AND WA itself doesn't draw a tail on photo bubbles. Bumped from
+              7x11 → 8x13 for retina visibility. Fill matches bubble bg exactly. */}
+          {isFirstInGroup && msg.type !== 'sticker' && msg.type !== 'gif' && msg.type !== 'image' && msg.type !== 'video' && (
             <Svg
-              width={7}
-              height={11}
-              viewBox="0 0 7 11"
+              width={8}
+              height={13}
+              viewBox="0 0 8 13"
               style={{
                 position: 'absolute',
-                bottom: 0,
-                ...(isOwn ? { right: -7 } : { left: -7 }),
+                top: 0,
+                ...(isOwn ? { right: -8 } : { left: -8 }),
               }}
             >
               <Path
                 d={isOwn
-                  ? 'M0,0 L0,11 C0,11 4,8.5 6,4.5 C7,2.5 7,0 7,0 Z'
-                  : 'M7,0 L7,11 C7,11 3,8.5 1,4.5 C0,2.5 0,0 0,0 Z'}
+                  ? 'M0,0 L8,0 C8,0 8,3 7,5.5 C5,9.5 0,13 0,13 Z'
+                  : 'M8,0 L0,0 C0,0 0,3 1,5.5 C3,9.5 8,13 8,13 Z'}
                 fill={isOwn
                   ? (isDark ? '#5B21B6' : '#E6DBFF')
                   : (isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : (isDark ? '#231835' : '#FFFFFF'))}
@@ -19068,9 +19181,8 @@ export default function ChatConversationScreen() {
             const replyDisplayName = resolvedEmail === currentEmail
               ? (t('chatConv.you') || 'Você')
               : (resolvedName || (resolvedEmail ? emailToDisplayName(resolvedEmail) : (t('chat.unknown') || 'Desconhecido')));
-            const replySenderColors = ['#7C3AED', '#7C3AED', '#E6A919', '#FF6B6B', '#9B59B6', '#E67E22', '#2ECC71', '#3498DB', '#E91E63', '#00BCD4'];
-            const replyHash = (resolvedEmail || resolvedName || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-            const replySenderColor = replySenderColors[replyHash % replySenderColors.length];
+            // [VISUAL-G8, 2026-05-19] Reply quote bar color = quoted sender's color (same djb2 palette).
+            const replySenderColor = senderColorFromEmail(resolvedEmail || resolvedName || '');
             return (
               <TouchableOpacity
                 activeOpacity={0.7}
@@ -19350,7 +19462,15 @@ export default function ChatConversationScreen() {
                       // direto é seguro: server tem dedup por client_message_id.
                       try {
                         const retryTempId = (typeof msg.id === 'string' && msg.id.startsWith('tmp_')) ? msg.id : `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-                        const retryMsgId = msg._client_id || msg.client_message_id || ('msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8));
+                        // [SEND-06, 2026-05-19] Preserve ORIGINAL client_message_id
+                        // on retry so server-side CMI dedup collapses stale-retry
+                        // to the same row. Falling back to a fresh msgId here was
+                        // creating a 2nd server row whenever an old failed bubble
+                        // got tapped — server treated it as a brand-new message.
+                        // If neither _client_id nor client_message_id is present
+                        // we DERIVE a stable id from the tempId so re-retries still
+                        // hit the same dedup bucket (was creating new CMI each tap).
+                        const retryMsgId = msg._client_id || msg.client_message_id || `cmi_from_${retryTempId}`;
                         const sendContent = isText ? msg.content : (msg.file_url || msg.content || '');
                         const r = await enqueueChatSend(() => api.chatSend(conversationId, sendContent, msg.type, msg.reply_to_id, null, null, retryTempId, retryMsgId));
                         if (r.success && r.data?.id) {
@@ -21386,12 +21506,18 @@ export default function ChatConversationScreen() {
 
       {/* Reply/Edit indicator — WhatsApp style with thick green left line.
           Animated entrance: slide up + fade in for the "I'm replying" cue. */}
-      {(replyTo || editingMsg) && (
+      {(replyTo || editingMsg) && (() => {
+        // [VISUAL-G8, 2026-05-19] Composer reply chip bar color = quoted sender's color.
+        // For edit-mode use brand purple (editing your own msg, no quoted sender).
+        const _composerReplyColor = editingMsg
+          ? '#7C3AED'
+          : senderColorFromEmail(replyTo?.sender_email || replyTo?.sender_name || '');
+        return (
         <ReplyPreviewBar style={[styles.replyBar, { backgroundColor: isDark ? '#1a2329' : '#f0f2f5', borderTopColor: colors.border }]}>
-          <View style={[styles.replyBarLine, { backgroundColor: '#7C3AED' }]} />
+          <View style={[styles.replyBarLine, { backgroundColor: _composerReplyColor }]} />
           <View style={[styles.replyBarContent, { flexDirection: 'row', alignItems: 'center', gap: 8 }]}>
             <View style={{ flex: 1 }}>
-              <Text style={[styles.replyBarLabel, { color: '#7C3AED' }]}>
+              <Text style={[styles.replyBarLabel, { color: _composerReplyColor }]}>
                 {editingMsg ? t('chat.editing') : t('chat.replyingTo', { name: replyTo?.sender_name || t('chat.message') })}
               </Text>
               <Text style={[styles.replyBarText, { color: colors.textSecondary }]} numberOfLines={1}>
@@ -21457,7 +21583,8 @@ export default function ChatConversationScreen() {
             <IconX size={20} color={isDark ? '#aebac1' : '#8696a0'} />
           </TouchableOpacity>
         </ReplyPreviewBar>
-      )}
+        );
+      })()}
 
       {/* Upload indicator */}
       {uploading && (
@@ -25367,6 +25494,36 @@ export default function ChatConversationScreen() {
                       <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff', alignSelf: approvalRequired ? 'flex-end' : 'flex-start' }} />
                     </View>
                   </TouchableOpacity>
+                  {/* Disappearing messages — per-group timer. Opens the
+                      shared showDisappearingModal picker (off / 24h / 7d /
+                      90d). Same chat_set_disappearing endpoint as the
+                      user-default version in ChatProfileTab; here it's
+                      scoped to this conv via chatSetDisappearing(id, sec). */}
+                  <TouchableOpacity
+                    onPress={() => { setShowGroupInfo(false); setShowDisappearingModal(true); }}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.md, gap: 10 }}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('chat.disappearing') || 'Mensagens temporárias'}
+                  >
+                    <IconClock size={20} color={disappearingTimer > 0 ? '#10b981' : colors.textSecondary} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: FontSize.md, color: colors.text, fontWeight: '600' }}>
+                        {t('chat.disappearing') || 'Mensagens temporárias'}
+                      </Text>
+                      <Text style={{ fontSize: 12, color: colors.textSecondary }}>
+                        {disappearingTimer > 0
+                          ? (disappearingTimer >= 90 * 86400
+                              ? (t('chat.disappearing90d') || '90 dias')
+                              : disappearingTimer >= 7 * 86400
+                                ? (t('chat.disappearing7d') || '7 dias')
+                                : disappearingTimer >= 86400
+                                  ? (t('chat.disappearing24h') || '24 horas')
+                                  : `${Math.round(disappearingTimer / 60)}m`)
+                          : (t('chat.disappearingOff') || 'Desativado')}
+                      </Text>
+                    </View>
+                    <Text style={{ fontSize: 22, color: colors.textTertiary, marginLeft: 4 }}>›</Text>
+                  </TouchableOpacity>
                 </View>
               );
             })()}
@@ -25706,13 +25863,11 @@ export default function ChatConversationScreen() {
       </Modal>
 
       {/* Custom roles / permissions sheet — opened from the "Editar
-          permissões" link on each admin row. Toggles are persisted in
-          local state for now (rolePermsLocal); the chat_group_admin call
-          ships them to the backend, which may or may not parse the
-          `permissions` payload yet.
-          TODO: backend `chat_group_admin` doesn't yet parse a
-          `permissions` object — when it does, drop the local-state
-          fallback and rely on chatGroupInfo to hydrate. */}
+          permissões" link on each admin row. Toggles are persisted both
+          locally (rolePermsLocal — optimistic) and shipped to the
+          backend via chat_group_admin's `permissions` payload, which
+          writes the JSONB column chat_conversation_members.permissions
+          (see chat.php L2657-2680). chatHasPermission() reads it. */}
       <Modal visible={!!roleEditTarget} transparent animationType="slide" onRequestClose={() => setRoleEditTarget(null)}>
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={() => setRoleEditTarget(null)}>
           <Pressable style={{ backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '85%' }} onPress={e => e.stopPropagation()}>
@@ -25764,16 +25919,39 @@ export default function ChatConversationScreen() {
                 onPress={async () => {
                   const email = roleEditTarget;
                   const perms = rolePermsDraft || {};
-                  // Persist locally first so the UI feels responsive even
-                  // if the backend ignores the payload.
+                  // Persist locally first so the UI feels responsive
+                  // even if the backend write fails (we rollback on error).
+                  const prevLocal = rolePermsLocal[email];
                   setRolePermsLocal(prev => ({ ...prev, [email]: perms }));
                   setRoleEditTarget(null);
                   setRolePermsDraft(null);
+                  const rollback = () => {
+                    setRolePermsLocal(prev => {
+                      const next = { ...prev };
+                      if (prevLocal === undefined) delete next[email];
+                      else next[email] = prevLocal;
+                      return next;
+                    });
+                  };
                   try {
-                    // Best-effort backend ship — backend may not parse
-                    // `permissions` yet (see TODO above).
-                    await api.chatGroupAdmin(conversationId, { target_email: email, permissions: perms });
-                  } catch {}
+                    // Ship to backend — chat_group_admin (chat.php L2657)
+                    // writes chat_conversation_members.permissions JSONB,
+                    // which chatHasPermission() reads on every gated action.
+                    const r = await api.chatGroupAdmin(conversationId, { target_email: email, permissions: perms });
+                    if (r && r.success === false) {
+                      rollback();
+                      safeAlert(
+                        t('common.error') || 'Erro',
+                        r?.message || (t('chatConv.permSaveFailed') || 'Não foi possível salvar as permissões')
+                      );
+                    }
+                  } catch (e) {
+                    rollback();
+                    safeAlert(
+                      t('common.error') || 'Erro',
+                      e?.message || (t('chatConv.permSaveFailed') || 'Não foi possível salvar as permissões')
+                    );
+                  }
                 }}
                 style={{ flex: 1, height: 46, borderRadius: 12, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' }}
               >

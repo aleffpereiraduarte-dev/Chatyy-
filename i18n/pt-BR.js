@@ -1717,6 +1717,8 @@ export default {
   'chat.vanishModeChanged': '{name} ativou o modo efemero',
   'chat.vanishModeChangedOff': '{name} desativou o modo efemero',
   'chatConv.systemScreenshot': '{name} fez uma captura de tela',
+  'chatConv.userLeft': '{name} saiu do grupo',
+  'chatConv.permSaveFailed': 'Não foi possível salvar as permissões',
   'chat.vanishBanner': 'Modo efemero ativo - mensagens somem após leitura',
   'chat.effectConfetti': 'Confete!',
   'chat.effectHearts': 'Coracoes!',
