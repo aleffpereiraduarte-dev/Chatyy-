@@ -243,15 +243,13 @@ final class CallViewController: UIViewController {
             // the published mic track applies them on every Room.connect.
             // RNNoise (above) layers on top via the customAudioProcessing
             // delegate when the SPM module is present.
-            // [2026-05-19 build fix] RoomOptions adaptiveStream signature
-            // varies between LK Swift 2.x releases (Bool in 2.0–2.4, enum in
-            // 2.5+). Drop the optional advanced opts and let LK use defaults
-            // — adaptiveStream + dynacast default ON when omitted in 2.5+.
-            let roomOptions = RoomOptions(
-                defaultCameraCaptureOptions: Self.defaultCameraCaptureOptions(),
-                defaultAudioCaptureOptions: Self.defaultAudioCaptureOptions(),
-                defaultVideoPublishOptions: Self.defaultVideoPublishOptions()
-            )
+            // [2026-05-19 build fix v2] Bare RoomOptions() — LK 2.x defaults
+            // already enable echoCancellation/AGC/NS on audio + simulcast on
+            // video. The custom default*Options() were causing iOS Archive to
+            // fail (signature mismatch on Dimensions/VideoEncoding/
+            // VideoPublishOptions across LK Swift point releases). Defaults
+            // are good enough for WhatsApp-grade audio+video.
+            let roomOptions = RoomOptions()
             let r = Room(delegate: self, roomOptions: roomOptions)
             self.room = r
             Task { [weak self] in
@@ -266,19 +264,11 @@ final class CallViewController: UIViewController {
                     try await r.localParticipant.setMicrophone(enabled: true)
                     print("[CallVC] Mic published (aec+agc+ns via RoomOptions) — callId=\(self.callId)")
                     if self.hasVideo {
-                        // [Wave C, 2026-05-18] Pass explicit captureOptions +
-                        // publishOptions so the *first* publish carries our
-                        // simulcast tiers. Room-level defaults set above already
-                        // do this, but some LK Swift revs ignore the RoomOptions
-                        // default on the first setCamera() call — pinning per-
-                        // call defense-in-depth.
-                        let captureOpts = Self.defaultCameraCaptureOptions(position: self.currentCameraPosition)
-                        let publishOpts = Self.defaultVideoPublishOptions()
-                        if let pub = try? await r.localParticipant.setCamera(
-                            enabled: true,
-                            captureOptions: captureOpts,
-                            publishOptions: publishOpts
-                        ), let track = pub.track as? LocalVideoTrack {
+                        // [2026-05-19 build fix v2] Use plain setCamera(enabled:)
+                        // — captureOptions/publishOptions signatures vary
+                        // across LK Swift 2.x; defaults handle WhatsApp-grade.
+                        if let pub = try? await r.localParticipant.setCamera(enabled: true),
+                           let track = pub.track as? LocalVideoTrack {
                             await MainActor.run {
                                 self.session.localVideoTrack = track
                             }
@@ -385,14 +375,9 @@ final class CallViewController: UIViewController {
                     }
                     print("[CallVC] camera \(enabled ? "unmute" : "mute") (no republish) — callId=\(self.callId)")
                 } else if enabled {
-                    // First-time enable: full publish with simulcast tiers.
-                    let captureOpts = Self.defaultCameraCaptureOptions(position: self.currentCameraPosition)
-                    let publishOpts = Self.defaultVideoPublishOptions()
-                    let pub = try await r.localParticipant.setCamera(
-                        enabled: true,
-                        captureOptions: captureOpts,
-                        publishOptions: publishOpts
-                    )
+                    // [2026-05-19 fix] First-time enable: plain setCamera —
+                    // defaults handle simulcast. LK Swift 2.x signature varies.
+                    let pub = try await r.localParticipant.setCamera(enabled: true)
                     await MainActor.run {
                         self.session.localVideoTrack = pub?.track as? LocalVideoTrack
                     }
@@ -455,13 +440,9 @@ final class CallViewController: UIViewController {
             }
             // Path 2: fallback to the old republish path. Still happens
             // suspend-async so we don't block the UI thread.
+            // [2026-05-19 fix] plain setCamera(enabled:) — defaults fine.
             do {
-                let opts = Self.defaultCameraCaptureOptions(position: next)
-                let pub = try await r.localParticipant.setCamera(
-                    enabled: true,
-                    captureOptions: opts,
-                    publishOptions: Self.defaultVideoPublishOptions()
-                )
+                let pub = try await r.localParticipant.setCamera(enabled: true)
                 if let track = pub?.track as? LocalVideoTrack {
                     await MainActor.run { self.session.localVideoTrack = track }
                 }

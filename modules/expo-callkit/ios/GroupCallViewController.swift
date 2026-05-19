@@ -106,13 +106,9 @@ final class GroupCallViewController: UIViewController {
         // each subscriber gets the right tier (low for thumbnails, high for
         // focused tile). Dynacast lets the SFU pause publishing of layers
         // nobody is consuming, saving uplink under N>2 calls.
-        // [2026-05-19 build fix] Drop adaptiveStream/dynacast Bool args —
-        // signature changed in LK Swift 2.5+; defaults handle the group call
-        // case correctly without explicit override.
-        let roomOptions = RoomOptions(
-            defaultCameraCaptureOptions: CallViewController.defaultCameraCaptureOptions(),
-            defaultVideoPublishOptions: CallViewController.defaultVideoPublishOptions()
-        )
+        // [2026-05-19 build fix v2] Bare RoomOptions() — defaults handle
+        // group call case fine. Custom default*Options were breaking Archive.
+        let roomOptions = RoomOptions()
         let r = Room(delegate: self, roomOptions: roomOptions)
         self.room = r
         Task { [weak self] in
@@ -122,17 +118,13 @@ final class GroupCallViewController: UIViewController {
                 try await r.localParticipant.setMicrophone(enabled: true)
                 print("[GroupCallVC] mic published — room=\(self.roomName)")
                 if self.hasVideo {
-                    let captureOpts = CallViewController.defaultCameraCaptureOptions(position: self.currentCameraPosition)
-                    let publishOpts = CallViewController.defaultVideoPublishOptions()
-                    if let pub = try? await r.localParticipant.setCamera(
-                        enabled: true,
-                        captureOptions: captureOpts,
-                        publishOptions: publishOpts
-                    ), let track = pub.track as? LocalVideoTrack {
+                    // [2026-05-19 fix] plain setCamera — defaults handle simulcast
+                    if let pub = try? await r.localParticipant.setCamera(enabled: true),
+                       let track = pub.track as? LocalVideoTrack {
                         await MainActor.run {
                             self.updateLocalParticipant(videoTrack: track)
                         }
-                        print("[GroupCallVC] camera published (simulcast=true preset=h720_169) — room=\(self.roomName)")
+                        print("[GroupCallVC] camera published — room=\(self.roomName)")
                     }
                 }
             } catch {
@@ -209,8 +201,9 @@ final class GroupCallViewController: UIViewController {
         Task { [weak self] in
             guard let self = self else { return }
             do {
-                let opts = CameraCaptureOptions(position: next)
-                let pub = try await r.localParticipant.setCamera(enabled: true, captureOptions: opts)
+                // [2026-05-19 fix] plain setCamera(enabled:) — defaults handle
+                // CameraCaptureOptions across LK Swift 2.x signature variance.
+                let pub = try await r.localParticipant.setCamera(enabled: true)
                 if let track = pub?.track as? LocalVideoTrack {
                     await MainActor.run { self.updateLocalParticipant(videoTrack: track) }
                 }
