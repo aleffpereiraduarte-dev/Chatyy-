@@ -3030,10 +3030,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       // unlock surfaced "Reconectando…" for a few seconds and the user
       // thought the app was always reconnecting.
       let lastForegroundTs = Date.now();
-      const appStateSub = AppState.addEventListener('change', (s) => {
+      const fgGraceAppStateSub = AppState.addEventListener('change', (s) => {
         if (s === 'active') lastForegroundTs = Date.now();
       });
-      unsubs.push(() => { try { appStateSub.remove(); } catch {} });
+      unsubs.push(() => { try { fgGraceAppStateSub.remove(); } catch {} });
       unsubs.push(mailWs.on('connection', (data) => {
         if (data?.status === 'authenticated') {
           if (!wasConnected) { try { loadConversations(false); } catch {} }
