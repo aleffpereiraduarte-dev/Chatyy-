@@ -70,8 +70,29 @@ const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 // playWhenInFocus=false + muted so the pool warms the URL but no playback
 // starts. AVPoolManager + ExoPoolManager pick up the same slot on focus,
 // so swiping to it paints the first frame already decoded.
+// [Android Reels fix 2026-05-19] On Android binaries that shipped before the
+// expo-shorts native module landed, `require('expo-shorts').ShortsPlayer`
+// returns the JS wrapper (truthy) but the native component "ExpoShortsPlayer"
+// isn't registered with UIManager — RN then renders the component NAME as
+// fallback text ("ShortsPlayer"), which is what the user reported seeing.
+// Probe UIManager + NativeModules to confirm the native side is actually
+// linked before trusting the wrapper. If not, fall through to expo-video.
 const ShortsPlayerLazy = (() => {
-  try { return require('expo-shorts').ShortsPlayer; } catch { return null; }
+  try {
+    const mod = require('expo-shorts');
+    const wrapper = mod?.ShortsPlayer;
+    if (!wrapper) return null;
+    if (Platform.OS === 'web') return null;
+    try {
+      const { UIManager, NativeModules } = require('react-native');
+      const hasViewManager = typeof UIManager?.getViewManagerConfig === 'function'
+        ? !!UIManager.getViewManagerConfig('ExpoShortsPlayer')
+        : true;
+      const hasNativeModule = !!(NativeModules?.ExpoShortsModule || NativeModules?.ExpoShorts);
+      if (!hasViewManager && !hasNativeModule) return null;
+    } catch { /* if probe fails, trust the wrapper */ }
+    return wrapper;
+  } catch { return null; }
 })();
 
 // Drop-in fallback that mirrors the relevant ShortsPlayer surface using

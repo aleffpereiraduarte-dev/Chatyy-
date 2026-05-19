@@ -563,6 +563,13 @@ function AppInit({ onNotification, setOtaToast }) {
     // Server dedup by client_message_id makes double-sends impossible.
     try { import('../services/outboxDrainer').then(m => m.initOutboxDrainer?.()); } catch {}
 
+    // WhatsApp-grade send worker (#1169) — SQLite-backed outbox state machine
+    // with WS-first delivery + exponential backoff + per-conversation FIFO.
+    // Lives alongside the legacy drainer above; both are idempotent (server
+    // dedups by client_message_id), the new worker just provides UI status
+    // visibility ("Enviando...", "Tentando de novo (3)") via SendStatusText.
+    try { import('../services/sendWorker').then(m => m.start?.()); } catch {}
+
     // Global chat persistence — WhatsApp-style local-first. Every WS / MQTT /
     // TCP chat event (msg, edit, delete, reaction) lands in SQLite + SmartCache
     // the instant it arrives, no matter which screen is open. Before this, only
