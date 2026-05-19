@@ -417,23 +417,44 @@ jobs:
           # Sem este POST, build trava em READY_FOR_BETA_SUBMISSION e testers
           # externos NUNCA recebem update (descoberto 2026-05-13: 6 builds órfãos
           # desde 467, last submitted manual). Apple aprova em <2h normalmente.
+          # Retry loop: 422 INVALID_QC_STATE is a known race — build can be VALID
+          # (processingState) but Apple's internal QC state still needs ~1-5min
+          # after upload before betaAppReviewSubmissions accepts. We poll up to
+          # 8 minutes with 30s backoff. If it never settles, downgrade to a
+          # warning (build is uploaded + attached to groups, just stuck in
+          # READY_FOR_BETA_SUBMISSION until someone manual-submits on ASC).
           sub_body = {"data": {"type": "betaAppReviewSubmissions",
                                "relationships": {"build": {"data": {"type": "builds", "id": build_id}}}}}
-          sub_req = urllib.request.Request(
-              "https://api.appstoreconnect.apple.com/v1/betaAppReviewSubmissions",
-              data=json.dumps(sub_body).encode(), headers=headers_post, method="POST")
-          try:
-              urllib.request.urlopen(sub_req)
-              print(f"✓ Build {VER} submitted to Beta App Review (Apple aprova <2h)")
-          except urllib.error.HTTPError as e:
-              code = e.code
-              body_txt = e.read().decode()[:500]
-              if code == 409:
-                  print(f"⚠ build already submitted to review (409) — OK")
-              elif code == 422 and 'already in review' in body_txt.lower():
-                  print(f"⚠ build already in review (422) — OK")
-              else:
-                  print(f"::error::beta submission failed {code}: {body_txt}"); sys.exit(1)
+          submitted = False
+          sub_deadline = time.time() + 8*60
+          attempt = 0
+          while time.time() < sub_deadline and not submitted:
+              attempt += 1
+              sub_req = urllib.request.Request(
+                  "https://api.appstoreconnect.apple.com/v1/betaAppReviewSubmissions",
+                  data=json.dumps(sub_body).encode(), headers=headers_post, method="POST")
+              try:
+                  urllib.request.urlopen(sub_req)
+                  print(f"✓ Build {VER} submitted to Beta App Review (attempt {attempt}, Apple aprova <2h)")
+                  submitted = True
+                  break
+              except urllib.error.HTTPError as e:
+                  code = e.code
+                  body_txt = e.read().decode()[:500]
+                  if code == 409:
+                      print(f"⚠ build already submitted to review (409) — OK"); submitted = True; break
+                  elif code == 422 and 'already in review' in body_txt.lower():
+                      print(f"⚠ build already in review (422) — OK"); submitted = True; break
+                  elif code == 422 and 'INVALID_QC_STATE' in body_txt:
+                      print(f"⏳ attempt {attempt}: QC state not ready yet — retry in 30s")
+                      time.sleep(30); continue
+                  else:
+                      print(f"::error::beta submission failed {code}: {body_txt}"); sys.exit(1)
+          if not submitted:
+              # Build IS on TestFlight + attached to groups; just not auto-submitted
+              # to review. Don't fail the workflow — manual submit on ASC is the
+              # documented fallback. Warning surfaces in the GH Actions summary.
+              print(f"::warning title=Beta submission deferred::Build {VER} ({build_id}) uploaded + attached to groups, but QC state never settled. Submit manually on App Store Connect → TestFlight → Build {VER} → Submit to Review.")
           PY
           rm -f ./asc_key.p8
 
