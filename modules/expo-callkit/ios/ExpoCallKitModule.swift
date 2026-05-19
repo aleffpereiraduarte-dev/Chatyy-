@@ -105,6 +105,33 @@ public class ExpoCallKitModule: Module {
     }
   }
 
+  /// [#1171 redux dismiss, 2026-05-19] Public bridge so CallViewController can
+  /// invoke ProviderDelegate.dismissActiveCallSurfaces as a last-resort
+  /// fallback when its own `self.dismiss(animated:)` is swallowed (no
+  /// presenter / mid-transition / sibling modal). ProviderDelegate is private
+  /// to this file so we forward through a static on the module.
+  static func dismissActiveCallSurfacesFromVC(reason: String) {
+    ProviderDelegate.dismissActiveCallSurfaces(reason: reason)
+  }
+
+  /// [#1171 redux dismiss, 2026-05-19] Race guard for the post-hangup
+  /// present window. `presentNativeCallVC` / `presentOutgoingCallVC` both
+  /// fire from a `Task.detached` that awaits the LK token fetch (200-500ms
+  /// typical, up to 8s on slow networks). If the user (or peer) hangs up
+  /// DURING that window, the call UUID is removed from `activeCalls` /
+  /// `sharedUUIDByCallId` but the Task continues and eventually presents a
+  /// CallViewController for a dead call — the VC then sits at "Conectando…"
+  /// forever (no peer to join, the user's tapHangup can't dismiss reliably
+  /// because the shared UUID map no longer has an entry, so CXEndCallAction
+  /// doesn't fire and the only path is the explicit `self.dismiss` which
+  /// has its own failure modes). This was the silent root cause of the
+  /// "after hangup screen stays on Conectando…" regression that kept
+  /// resurfacing (task #1171). The guard: BEFORE presenting, verify the
+  /// callId is still tracked.
+  static func isCallStillActive(callId: String) -> Bool {
+    return sharedCallKitUUID(forCallId: callId) != nil
+  }
+
   // Track active calls — access only via stateQueue.
   // [#1184 dismiss fix, 2026-05-19] All writes to `activeCalls` must be
   // mirrored to `sharedUUIDByCallId` via `_shared_setUUID` so the static
@@ -961,6 +988,27 @@ public class ExpoCallKitModule: Module {
       queue: .main
     ) { [weak self] note in
       guard let callId = note.userInfo?["callId"] as? String, !callId.isEmpty else { return }
+      // [#1171 redux dismiss, 2026-05-19] Drop the activeCalls / sharedUUID
+      // entries on remote-end paths too. Previously this observer only fired
+      // the JS event + UI dismiss; activeCalls stayed populated, so a
+      // concurrent CXAnswer / CXStart token-fetch Task that completed AFTER
+      // the remote end would pass the `isCallStillActive` guard (which it
+      // shouldn't) and present a stale CallViewController. Cleaning the
+      // maps here is idempotent vs. the local CXEndCallAction path
+      // (callEnded already cleared them) — both paths converge.
+      if let self = self {
+        let uuid: UUID? = self.stateQueue.sync {
+          let u = self.activeCalls[callId]
+          self.activeCalls.removeValue(forKey: callId)
+          self.callPayloads.removeValue(forKey: callId)
+          return u
+        }
+        // Mirror the static map so isCallStillActive sees the change.
+        ExpoCallKitModule._shared_setUUID(nil, forCallId: callId)
+        if uuid != nil {
+          print("[ExpoCallKit] remote-end \(callId): cleared activeCalls + sharedUUID")
+        }
+      }
       self?.safeSendEvent("onCallEnded", ["callId": callId])
       // [#1179 cleanup, 2026-05-19] When the peer hangs up via WS, CallSignalWs
       // posts this notification (handleIncomingCallEndLocked). The CallKit
@@ -1506,6 +1554,19 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
                                               lkUrl: String,
                                               lkToken: String,
                                               conversationId: String = "") {
+    // [#1171 redux dismiss, 2026-05-19] If the call was ended (user hung up
+    // from the CallKit ring sheet, peer cancelled via WS call_end, network
+    // dropped, or the CX action timed out) DURING the LK token fetch window,
+    // `activeCalls`/`sharedUUIDByCallId` no longer carry the UUID. Without
+    // this guard we present a CallViewController for an already-dead call and
+    // the user is stranded staring at "Conectando…" — exactly the recurring
+    // task #1171 complaint. The state cleanup in callEnded / endCallAction
+    // already happened on the main thread synchronously, so this check is
+    // race-free vs. the present that is also on main.
+    guard ExpoCallKitModule.isCallStillActive(callId: callId) else {
+      print("[ExpoCallKit] presentNativeCallVC: call \(callId) already ended — skipping stale present")
+      return
+    }
     // [#1172 fix, 2026-05-18] resolvePresentingViewController is robust to
     // backgrounded scenes + CallKit ring-sheet contention; the old
     // keyWindow-first chain silently bailed when the app was cold-starting
@@ -1625,6 +1686,19 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     lkUrl: String?,
     lkToken: String?
   ) {
+    // [#1171 redux dismiss, 2026-05-19] Same race guard as presentNativeCallVC.
+    // If the user tapped hangup on the CallKit outgoing-call sheet (system
+    // pill on the lock screen, or the green status-bar pill) BEFORE the
+    // LK token fetch resolved, CXEndCallAction fired, callEnded(uuid:)
+    // cleared activeCalls + sharedUUIDByCallId, and presenting now would
+    // leave a stranded "Conectando…" VC the user can't dismiss cleanly
+    // (no UUID = handleHangup's CXEndCallAction is a no-op; only
+    // self.dismiss covers it and that has its own failure modes — see
+    // CallViewController.forceDismissSelf).
+    guard ExpoCallKitModule.isCallStillActive(callId: params.callId) else {
+      print("[ExpoCallKit] presentOutgoingCallVC: call \(params.callId) already ended — skipping stale present")
+      return
+    }
     // [#1172 fix, 2026-05-18] resolvePresentingViewController — see helper.
     guard let root = resolvePresentingViewController() else {
       print("[ExpoCallKit] presentOutgoingCallVC: no presenting VC — skipping native present")

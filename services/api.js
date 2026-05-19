@@ -469,6 +469,15 @@ async function storeToken(token) {
       persistBackupCreds?.();
     }
   } catch {}
+
+  // Mirror the new token into the Android/iOS native-call SharedPrefs/App-Group
+  // so LkTokenFetcher (which runs from a Service without JS) sees the rotated
+  // bearer. Without this the native call activity uses a stale snapshot from
+  // login and falls into "Sessão expirada" the moment the JS bearer rotates
+  // (header `x-auth-token`, response.body.token, or auto-relogin).
+  if (token) {
+    try { _persistAuthForNative(token).catch(() => {}); } catch {}
+  }
 }
 
 function getStoredCredentials() {

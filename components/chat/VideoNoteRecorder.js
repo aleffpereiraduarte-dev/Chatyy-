@@ -99,6 +99,10 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
   const startedAtRef = useRef(0);
   const timerRef = useRef(null);
   const progressAnim = useRef(new Animated.Value(0)).current;
+  // Idle pulse on the trigger button — gently expands+contracts the
+  // brand-purple background ring while the user hasn't started recording,
+  // mirroring WhatsApp's instant-video "hold here" hint without text.
+  const idlePulse = useRef(new Animated.Value(0)).current;
   const slideY = useRef(new Animated.Value(0)).current;
   // Horizontal slide for swipe-left-to-cancel. Mirrors slideY but on X axis
   // so the trigger button visually tracks the finger while the user drags
@@ -136,10 +140,20 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
           Animated.timing(lockHintBounce, { toValue: 0, duration: 700, useNativeDriver: true }),
         ])
       ).start();
+      // Idle pulse on the trigger button — the brand-purple halo gently
+      // breathes while the user hasn't started yet, so the affordance feels
+      // alive (matches WhatsApp's instant-video idle hint).
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(idlePulse, { toValue: 1, duration: 1200, useNativeDriver: true }),
+          Animated.timing(idlePulse, { toValue: 0, duration: 1200, useNativeDriver: true }),
+        ])
+      ).start();
     }
     return () => {
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
       lockHintBounce.stopAnimation();
+      idlePulse.stopAnimation();
     };
   }, [visible]);
 
@@ -479,6 +493,22 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
             { transform: [{ translateY: slideY }, { translateX: slideX }] },
           ]}
         >
+          {/* Idle pulse halo (purple ring breathing) — only visible before
+              recording starts; replaced by the red progress ring after. */}
+          {!recording && !locked && (
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                s.idleHalo,
+                {
+                  transform: [{
+                    scale: idlePulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.18] }),
+                  }],
+                  opacity: idlePulse.interpolate({ inputRange: [0, 1], outputRange: [0.55, 0.12] }),
+                },
+              ]}
+            />
+          )}
           {locked ? (
             <TouchableOpacity
               onPress={() => stopRecording(false)}
@@ -619,6 +649,16 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 4,
     borderColor: 'rgba(255,255,255,0.4)',
+  },
+  // Halo behind the trigger button — breathes while idle to invite the
+  // press-and-hold gesture. Sits centered on the trigger and is masked by it.
+  idleHalo: {
+    position: 'absolute',
+    width: 110,
+    height: 110,
+    borderRadius: 55,
+    backgroundColor: '#7C3AED',
+    top: -12,
   },
   triggerInner: {
     width: 34,

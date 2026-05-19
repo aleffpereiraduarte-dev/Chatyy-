@@ -903,6 +903,22 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
   // ─── Guards ───
   if (!visible) return null;
 
+  // Wrap every render path in a fullscreen Modal so the composer covers the
+  // whole screen (including the underlying Profile/Chat tab). Without this,
+  // the camera sheet sat on top of the profile content and the user saw the
+  // profile header peeking through above the filters carousel.
+  const _wrap = (children) => (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="fullScreen"
+      statusBarTranslucent
+      onRequestClose={onClose}
+    >
+      {children}
+    </Modal>
+  );
+
   if (!permission?.granted) {
     // Apple App Review 5.1.1(iv) compliance: the pre-permission screen MUST
     // (a) lead to the native permission dialog (no "Cancel" exit before it)
@@ -910,7 +926,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
     // explicitly denies via the native dialog, `permission.canAskAgain` is
     // false; only THEN we offer a Settings deep-link.
     const denied = permission && permission.granted === false && permission.canAskAgain === false;
-    return (
+    return _wrap(
       <View style={s.container}>
         <View style={s.permBox}>
           <Text style={s.permText}>
@@ -934,7 +950,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
   // PREVIEW MODE — with Instagram filters
   // ═══════════════════════════════════════
   if (preview) {
-    return (
+    return _wrap(
       <View style={s.container}>
         {/* Main preview image + filter overlay */}
         <View style={{ flex: 1 }}>
@@ -1046,7 +1062,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
   // ═══════════════════════════════
   // CAMERA VIEW
   // ═══════════════════════════════
-  return (
+  return _wrap(
     <View style={s.container}>
       <View
         style={s.camera}

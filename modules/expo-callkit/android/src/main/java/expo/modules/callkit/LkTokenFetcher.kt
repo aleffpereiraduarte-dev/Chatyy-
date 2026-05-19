@@ -330,20 +330,53 @@ object LkTokenFetcher {
     /**
      * Blocking HTTP fetch. Returns null on any failure path:
      *   - missing auth_token / api_base across all 4 sources
-     *   - non-2xx status code
+     *   - non-2xx status code (after retry on 401)
      *   - malformed JSON
      *   - network error / timeout
+     *
+     * On HTTP 401, evict the prefs auth_token, re-resolve (falls back to
+     * AsyncStorage which JS keeps in sync via _persistAuthForNative on every
+     * bearer rotation), and retry ONCE before giving up. This is the WA-grade
+     * fix for "Sessão expirada — abra o app" that the user sees when JS has
+     * rotated the bearer but the native prefs snapshot is stale.
      *
      * Never throws.
      */
     private fun doFetch(ctx: Context, roomName: String, identity: String, intentExtras: Bundle?): Result? {
+        // First attempt with cached / freshly-resolved bearer.
+        val r1 = doFetchOnce(ctx, roomName, identity, intentExtras, evictFirst = false)
+        if (r1.result != null) return r1.result
+        if (r1.httpCode != 401) return null
+        // 401 path: prefs bearer is stale. Evict + re-resolve + retry once.
+        Log.w(TAG, "doFetch: HTTP 401 — evicting stale prefs auth and retrying")
+        val r2 = doFetchOnce(ctx, roomName, identity, intentExtras, evictFirst = true)
+        if (r2.result == null) {
+            Log.w(TAG, "doFetch: retry-after-401 also failed (httpCode=${r2.httpCode})")
+        }
+        return r2.result
+    }
+
+    private data class FetchAttempt(val result: Result?, val httpCode: Int)
+
+    private fun doFetchOnce(
+        ctx: Context,
+        roomName: String,
+        identity: String,
+        intentExtras: Bundle?,
+        evictFirst: Boolean,
+    ): FetchAttempt {
+        if (evictFirst) {
+            try {
+                val prefs = ctx.getSharedPreferences("expo_callkit_prefs", Context.MODE_PRIVATE)
+                prefs.edit().remove("auth_token").apply()
+            } catch (_: Throwable) {}
+        }
         val resolved = resolveAuthInternal(ctx, intentExtras)
         if (resolved == null) {
-            Log.w(TAG, "doFetch: NO auth across 4 sources (prefs/intent/asyncstorage/securestore) — user must log in again")
-            return null
+            Log.w(TAG, "doFetchOnce: NO auth across 4 sources — user must log in again")
+            return FetchAttempt(null, -1)
         }
         val (authToken, apiBase) = resolved
-        // Normalize base: strip trailing slash so we control the path joining.
         val base = apiBase.trimEnd('/')
         val urlStr = "$base/api/email.php?action=chat_livekit_token"
 
@@ -355,6 +388,7 @@ object LkTokenFetcher {
         }.toString()
 
         var conn: HttpURLConnection? = null
+        var code = -1
         return try {
             conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
@@ -371,37 +405,34 @@ object LkTokenFetcher {
                 os.write(body.toByteArray(StandardCharsets.UTF_8))
                 os.flush()
             }
-            val code = conn.responseCode
+            code = conn.responseCode
             if (code !in 200..299) {
-                Log.w(TAG, "doFetch: HTTP $code from $urlStr")
-                return null
+                Log.w(TAG, "doFetchOnce: HTTP $code from $urlStr")
+                return FetchAttempt(null, code)
             }
-            val text = conn.inputStream.use { it.readBytes() }
-                .toString(StandardCharsets.UTF_8)
+            val text = conn.inputStream.use { it.readBytes() }.toString(StandardCharsets.UTF_8)
             val json = JSONObject(text)
             if (!json.optBoolean("success", false)) {
-                Log.w(TAG, "doFetch: success=false (${json.optString("message")})")
-                return null
+                Log.w(TAG, "doFetchOnce: success=false (${json.optString("message")})")
+                return FetchAttempt(null, code)
             }
             val data = json.optJSONObject("data") ?: run {
-                Log.w(TAG, "doFetch: missing data object")
-                return null
+                Log.w(TAG, "doFetchOnce: missing data object")
+                return FetchAttempt(null, code)
             }
             val token = data.optString("token", "")
             val url = data.optString("url", "")
             if (token.isEmpty() || url.isEmpty()) {
-                Log.w(TAG, "doFetch: empty token/url in response")
-                return null
+                Log.w(TAG, "doFetchOnce: empty token/url in response")
+                return FetchAttempt(null, code)
             }
-            Log.d(TAG, "doFetch: OK for room=$roomName url=$url")
+            Log.d(TAG, "doFetchOnce: OK for room=$roomName url=$url")
             val result = Result(token, url)
-            // Cache for the next accept attempt on the same call (e.g. user
-            // taps Aceitar twice while the UI is transitioning).
             setCached(ctx, roomName, token, url)
-            result
+            FetchAttempt(result, code)
         } catch (t: Throwable) {
-            Log.w(TAG, "doFetch threw: ${t.message}")
-            null
+            Log.w(TAG, "doFetchOnce threw: ${t.message}")
+            FetchAttempt(null, code)
         } finally {
             try { conn?.disconnect() } catch (_: Exception) {}
         }

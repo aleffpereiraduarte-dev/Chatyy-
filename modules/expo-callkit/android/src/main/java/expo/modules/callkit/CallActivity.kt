@@ -636,11 +636,24 @@ class CallActivity : ComponentActivity() {
         // LkTokenFetcher can use Intent fallback B even if SharedPreferences
         // is empty.
         val extras = intent?.extras
-        val tk = try {
-          LkTokenFetcher.fetchToken(applicationContext, callId, hasVideo, extras)
-        } catch (t: Throwable) {
-          Log.w(TAG, "fallback fetchToken threw: ${t.message}")
-          null
+        // [#1183 2026-05-19] Two tries: first immediately; if it fails (often
+        // because LkTokenFetcher's prefs snapshot is stale right after a JS
+        // bearer rotation), wait 1500ms for storeToken→_persistAuthForNative
+        // to land, then retry once. doFetchOnce inside also evicts+retries on
+        // 401 — so this loop only re-runs when there was no bearer at all.
+        var tk: LkTokenFetcher.Result? = null
+        for (attempt in 0..1) {
+          if (attempt > 0) {
+            Log.d(TAG, "fallback fetchToken: retrying after 1500ms")
+            kotlinx.coroutines.delay(1500)
+          }
+          tk = try {
+            LkTokenFetcher.fetchToken(applicationContext, callId, hasVideo, extras)
+          } catch (t: Throwable) {
+            Log.w(TAG, "fallback fetchToken[$attempt] threw: ${t.message}")
+            null
+          }
+          if (tk != null) break
         }
         if (tk != null) {
           Log.d(TAG, "fallback fetchToken: OK — connecting")

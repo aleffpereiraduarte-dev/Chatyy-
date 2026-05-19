@@ -349,8 +349,35 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
     // MARK: - Action routes
 
+    // [#1171 redux dismiss, 2026-05-19] Guard so handleHangup only runs once.
+    // The SwiftUI red button can fire onHangup twice on rapid double-tap; the
+    // LK `didDisconnectWithError` delegate ALSO calls dismiss; CXEndCallAction
+    // (when fired by handleHangup) loops back through ProviderDelegate which
+    // calls dismissActiveCallSurfaces. Without this guard each path runs its
+    // full teardown (Room disconnect, CXEndCallAction, dismiss) which can
+    // race and leave the VC in a half-dismissed state on slower devices.
+    private var didHangup: Bool = false
+
     private func handleHangup() {
+        if didHangup {
+            // Second tap (or delegate-driven re-entry) — only re-issue the
+            // dismiss in case the first one was swallowed by a presentation
+            // race. Cheap and idempotent.
+            forceDismissSelf(reason: "handleHangup_reentry")
+            return
+        }
+        didHangup = true
         stopRingbackTone(reason: "handleHangup")
+        // [#1171 redux dismiss, 2026-05-19] Update the visible status BEFORE
+        // any async teardown. Previously the VC stayed at "Conectando…" while
+        // LK disconnect + CXEndCallAction churned for 200-800ms; if the
+        // dismiss animation was preempted (e.g. PiP, presenter mid-transition)
+        // the user was stranded staring at "Conectando…" with no signal that
+        // their hangup had registered. WhatsApp/FaceTime show "Encerrada"
+        // for ~250ms before the screen fades — mirror that.
+        DispatchQueue.main.async { [weak self] in
+            self?.session.status = "Encerrada"
+        }
         // [Wave B audio, 2026-05-18 / restored 2026-05-19] Drop the route-
         // change listener + clear the speakerphone override before LK
         // disconnect so the next call (or expo-audio session) starts with a
@@ -397,7 +424,60 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         } else {
             print("[CallVC] handleHangup: no shared UUID for \(callId) — CallKit may not dismiss; relying on JS path")
         }
-        dismiss(animated: true, completion: nil)
+        forceDismissSelf(reason: "handleHangup")
+    }
+
+    /// [#1171 redux dismiss, 2026-05-19] Robust dismiss that survives the
+    /// three real failure modes we've seen with `self.dismiss(animated:)`:
+    ///
+    ///   1. `self.presentingViewController` is nil — happens if the modal
+    ///      was presented and the presenter chain was reset (rare, but real
+    ///      on cold-start + VoIP push paths where the root VC swaps mid-call).
+    ///      In that case `self.dismiss` is a silent no-op and the modal sits
+    ///      forever — exactly the "Conectando…" complaint. Falling back to
+    ///      `presentingViewController?.dismiss` and to a window-level removal
+    ///      covers the gap.
+    ///   2. `self` is mid-presentation (the present transaction started but
+    ///      hasn't finished). Dismiss called during that window is dropped by
+    ///      UIKit. The 50ms retry on the next runloop tick catches this.
+    ///   3. A sibling modal (audio picker, share sheet) is on top of us when
+    ///      hangup fires; `self.dismiss` then dismisses the SIBLING and leaves
+    ///      the call VC up. Walking up via `presentingViewController` lets the
+    ///      presenter tear down its chain (which UIKit cascades through children).
+    private func forceDismissSelf(reason: String) {
+        // Path 1 — standard dismiss. UIKit cascades to children correctly when
+        // the receiver is the presenter.
+        let presenter = self.presentingViewController
+        self.dismiss(animated: true) { [weak self] in
+            print("[CallVC] forceDismissSelf(\(reason)) primary dismiss completed")
+            self?.verifyDismissed(reason: reason)
+        }
+        // Path 2 — belt-and-braces. If primary dismiss is a no-op (no
+        // presenter) UIKit silently swallows it; ask the presenter directly.
+        // UIKit dedupes if both succeed.
+        if let presenter = presenter, presenter.presentedViewController === self {
+            DispatchQueue.main.async { [weak presenter] in
+                presenter?.dismiss(animated: true, completion: nil)
+            }
+        }
+    }
+
+    /// Second-stage dismiss check — fires ~250ms after the primary dismiss
+    /// completion. If `view.window` is still non-nil, the VC is still
+    /// attached to a window scene; remove it from its parent or detach the
+    /// view manually so the user doesn't end up staring at a stuck
+    /// "Conectando…" forever.
+    private func verifyDismissed(reason: String) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self = self else { return }
+            guard self.view.window != nil else { return }
+            print("[CallVC] verifyDismissed(\(reason)): view still attached, forcing teardown")
+            // Last-resort: walk the chain via the active scene's root VC and
+            // dismiss any VC named CallViewController. This is what
+            // ProviderDelegate.dismissActiveCallSurfaces does and it's known
+            // to handle the cross-window cases.
+            ExpoCallKitModule.dismissActiveCallSurfacesFromVC(reason: "verify_" + reason)
+        }
     }
 
     private func applyMicEnabled(_ enabled: Bool) {
@@ -1192,6 +1272,17 @@ extension CallViewController: RoomDelegate {
         print("[CallVC] didDisconnectWithError — error=\(String(describing: error))")
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            // [#1171 redux dismiss, 2026-05-19] Mark didHangup so a follow-up
+            // user red-button tap doesn't run the full teardown a second time
+            // (Room is already gone; CXEndCallAction would still fire but
+            // CallSignalWs.fireCallEnd would duplicate the server-side BYE).
+            // Re-entrant calls still trigger forceDismissSelf via handleHangup.
+            self.didHangup = true
+            // [#1171 redux dismiss, 2026-05-19] Update visible status BEFORE
+            // teardown so the user sees the call is ending — same rationale
+            // as handleHangup. Mostly relevant for peer-end / network-drop
+            // where the user didn't tap hangup themselves.
+            self.session.status = "Encerrada"
             self.stopRingbackTone(reason: "didDisconnectWithError")
             NotificationCenter.default.post(
                 name: CallViewController.callEndedNotification,
@@ -1219,7 +1310,13 @@ extension CallViewController: RoomDelegate {
                     print("[CallVC] didDisconnectWithError: no earlyProvider — CallKit may stay visible")
                 }
             }
-            self.dismiss(animated: true, completion: nil)
+            // [#1171 redux dismiss, 2026-05-19] Use the robust path so
+            // peer-end / network-drop paths get the same fallback coverage
+            // (no-presenter, mid-transition, sibling modal) as user-initiated
+            // hangup. Old path was `self.dismiss(animated: true, completion: nil)`
+            // which silently no-op'd on the presenter-mid-transition case
+            // and stranded the user on "Conectando…".
+            self.forceDismissSelf(reason: "didDisconnectWithError")
         }
     }
 
