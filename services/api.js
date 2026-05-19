@@ -711,13 +711,53 @@ async function _rawApiCall(action, params = {}, method = 'GET') {
   // fire with empty Authorization header, get 401, and the auto-logout logic
   // at chat-conversation.js:5408 kicks the user out.
   // Skip the wait for login itself so it doesn't deadlock.
-  if (action !== 'login' && action !== 'check_username' && action !== 'signup') {
+  const SKIP_HYDRATE = (action === 'login' || action === 'check_username' || action === 'signup');
+  if (!SKIP_HYDRATE) {
     try {
       await Promise.race([
         _tokenReadyPromise,
         new Promise(r => setTimeout(r, 2000)), // max 2s wait — don't hang forever
       ]);
     } catch {}
+    // [#1167 2026-05-18] Defensive re-hydrate on EVERY authed request.
+    // Root cause of "do nada para de mandar mensagem":
+    // The in-memory `authToken` can drift to empty even though storage
+    // still has a valid token. Known drift paths:
+    //   - 401 streak >=100 nukes `authToken` (line ~1086) but storage
+    //     may not have been wiped yet because the nuke fires synchronously
+    //     before the storage delete promises resolve. Subsequent calls
+    //     hit this with empty in-memory + non-empty storage.
+    //   - Account-switch races where `setAuthTokenDirect('')` ran but the
+    //     stored account row still has a bearer.
+    //   - AuthContext remount during foreground (e.g. push wake) re-runs
+    //     the cold-hydrate path; if SecureStore is briefly slow the IIFE
+    //     finishes but the assignment `authToken = stored` was skipped on
+    //     a transient null. _tokenReadyPromise still resolved, so the wait
+    //     above does nothing — we keep firing anonymous requests.
+    // The fix: when in-memory is empty, peek storage SYNCHRONOUSLY on web
+    // and via the cheap refreshAuthToken() helper on native. Costs ~0ms
+    // when in-memory has a token (the !authToken guard short-circuits).
+    if (!authToken) {
+      try {
+        if (Platform.OS === 'web') {
+          if (typeof localStorage !== 'undefined') {
+            const tk = localStorage.getItem('mail_token');
+            if (tk && tk.length > 0) authToken = tk;
+          }
+          if (!authToken && typeof sessionStorage !== 'undefined') {
+            try {
+              const tk2 = sessionStorage.getItem(TOKEN_FALLBACK_KEY);
+              if (tk2 && tk2.length > 0) authToken = tk2;
+            } catch {}
+          }
+        } else {
+          // Native: refreshAuthToken reads SecureStore + AsyncStorage and
+          // updates the in-memory variable. Guarded by an internal in-flight
+          // promise so concurrent callers share the same read.
+          await refreshAuthToken();
+        }
+      } catch {}
+    }
   }
   const headers = {};
   if (sessionCookie) headers['Cookie'] = sessionCookie;
@@ -927,6 +967,45 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
   // Auto-relogin: if server returns 401 and we have in-memory credentials, try to re-authenticate
   // BUT don't block - if relogin takes too long, return the 401 result
   if (result.status === 401 && action !== 'login' && action !== 'check_auth' && action !== 'signup') {
+    // [#1167 2026-05-18] Defensive token re-hydrate + single silent retry.
+    // Root cause of "do nada para de mandar mensagem": the in-memory
+    // `authToken` drifts to empty (or stale) while storage still has a
+    // valid bearer. Before this fix, the request fired anonymously, the
+    // server returned 401, and the user was forced to logout + login to
+    // refill in-memory from the login response. Now we attempt a cheap
+    // storage re-read once; if it surfaces a token that differs from
+    // what we just sent, retry the request silently before falling
+    // through to the savedCredentials / streak path below.
+    let _retriedFromStorage = false;
+    try {
+      const tokenBefore = authToken;
+      await refreshAuthToken();
+      if (authToken && authToken !== tokenBefore) {
+        _retriedFromStorage = true;
+        const retry = await _rawApiCall(action, params, method);
+        if (retry.status !== 401) {
+          _consecutive401 = 0;
+          if (retry.status >= 200 && retry.status < 300) {
+            try { _noteAuthOk(); } catch {}
+          }
+          return retry.data;
+        }
+        // Retry also 401 → fall through to creds / streak path below.
+      } else if (!tokenBefore && authToken) {
+        // We had NO in-memory token at all; refresh just filled it.
+        // Retry once because the original request went out anonymous.
+        _retriedFromStorage = true;
+        const retry = await _rawApiCall(action, params, method);
+        if (retry.status !== 401) {
+          _consecutive401 = 0;
+          if (retry.status >= 200 && retry.status < 300) {
+            try { _noteAuthOk(); } catch {}
+          }
+          return retry.data;
+        }
+      }
+    } catch {}
+
     const creds = savedCredentials;
     if (creds?.email && creds?.password) {
       if (!_reloginPromise) {

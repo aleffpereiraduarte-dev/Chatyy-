@@ -11216,13 +11216,58 @@ export default function ChatConversationScreen() {
           }
         } catch (e) { console.warn('[ai-mention]', e?.message); }
       } else if (r.message === 'Unauthorized') {
-        // Auth error — mark failed and bounce to /login. AuthContext only
-        // exports `useAuth`/`AuthProvider` (no top-level `logout`), so a
-        // require-grab returned undefined and the previous code was a
-        // silent no-op for years. Routing to /login triggers the proper
-        // session-cleanup path the auth screen already runs on mount.
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
-        try { router.replace('/login?reason=expired'); } catch {}
+        // [#1167 2026-05-18] Defensive auth recovery before forcing the
+        // user to /login. Root cause was: in-memory authToken drifts to
+        // empty while storage still has a valid bearer → chat_send goes
+        // out anonymous → 401 → here. Bouncing to /login forces a manual
+        // re-login even though storage is fine. Now we try the storage
+        // re-hydrate path explicitly (api.js _rawApiCall already runs
+        // it before every authed request, but this is belt-and-suspenders
+        // for the case where THIS specific send raced past hydrate).
+        let _rescued = false;
+        try {
+          const apiMod = require('../services/api');
+          if (typeof apiMod.refreshAuthToken === 'function') {
+            const ok = await apiMod.refreshAuthToken();
+            if (ok) {
+              // Storage had a token — retry the send once. Same client_message_id
+              // so the server dedupes on the rare case the first one actually
+              // landed despite returning 401 at the proxy.
+              try {
+                const retry = await api.chatSend(
+                  conversationId, contentToSend, 'text', replyId,
+                  currentMentions, null, tempId, msgId,
+                  activeTopic?.id || null, _sendOpts,
+                );
+                if (retry?.success && retry?.data?.id) {
+                  _rescued = true;
+                  const serverMsg = { ...retry.data, _pending: false };
+                  if (e2eEnabled) { serverMsg.content = text; serverMsg._e2e = true; }
+                  setMessages(prev => prev.map(m => m.id === tempId ? serverMsg : m));
+                  removePendingMessage(conversationId, tempId).catch(() => {});
+                  try { cacheSingleMessage(conversationId, serverMsg); } catch {}
+                  try { SmartCache.cacheSingleMessage(conversationId, serverMsg); } catch {}
+                }
+              } catch {}
+            }
+          }
+        } catch {}
+        if (!_rescued) {
+          // Storage didn't help — queue offline (not /login). The offline
+          // drainer retries with backoff and the message survives a true
+          // session expiry across the next successful login. UI flips to
+          // pending+queued (clock icon) instead of red ❗, matching
+          // WhatsApp behavior. Only if the user explicitly hits "logout"
+          // or the api.js 401 streak (100 strikes) trips do they get
+          // routed to /login — see api.js _consecutive401 logic.
+          try {
+            const { queueOfflineAction } = require('../services/offlineCache');
+            await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: contentToSend, msgType: 'text', reply_to_id: replyId, mentions: currentMentions, temp_id: tempId, client_message_id: msgId, effect: stagedEffect || null, topic_id: activeTopic?.id || null });
+            setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _client_id: msgId, _sendError: 'unauthorized' } : m));
+          } catch {
+            setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: 'unauthorized' } : m));
+          }
+        }
       } else {
         // Server error — queue for retry instead of showing error (WhatsApp-style).
         // Carry the iMessage-style `effect` so the offline replay still

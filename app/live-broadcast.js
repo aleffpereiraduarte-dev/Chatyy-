@@ -398,6 +398,23 @@ export default function LiveBroadcastScreen() {
 
   // Native stream URL for RTCView
   const [localStreamUrl, setLocalStreamUrl] = useState(null);
+  // Round 68 #1157 (2026-05-18) — bumped on every stream URL change and on
+  // every camera-flip so the underlying RTCMTLVideoView (iOS) /
+  // SurfaceView (Android) is recreated cleanly. The previous `key={localStreamUrl}`
+  // wasn't enough: `stream.toURL()` returns the SAME URL after _switchCamera
+  // (and even sometimes across re-acquires), so React reused the native view
+  // and the iOS GPU texture cache exhibited a half-frame split (top half:
+  // stale buffered frame, bottom half: current frame — exactly the "barra
+  // preta horizontal" complaint, 4 reports running). Combined with the
+  // state-backed `mirror` below + fully numeric absoluteFill below, this
+  // resets the native renderer surface every time the source mutates.
+  const [videoEpoch, setVideoEpoch] = useState(0);
+  // Mirror prop must be STATE (not just ref) so the `mirror={...}` prop on
+  // NativeRTCView changes trigger a re-render. Before, the ref-only path
+  // left the underlying view with a stale transform flag even after camera
+  // flip, which on some iOS bridges also contributes to the half/half
+  // ghost stack.
+  const [mirrorOn, setMirrorOn] = useState(true);
 
   // Availability check only — do NOT request camera/mic on mount. Apple
   // review rejected eager prompts, and iPad deep-linking to /live-broadcast
@@ -430,12 +447,19 @@ export default function LiveBroadcastScreen() {
       // best-effort — desktops without a back camera fall back to default,
       // which matches Instagram Live behavior.
       facingRef.current = preFacing;
+      setMirrorOn(preFacing === 'user');
       const stream = await getUserMediaFn({ video: { facingMode: preFacing }, audio: true });
       localStreamRef.current = stream;
       if (Platform.OS === 'web') {
         if (localVideoRef.current) localVideoRef.current.srcObject = stream;
       } else {
         if (stream?.toURL) setLocalStreamUrl(stream.toURL());
+        // Round 68 #1157 — bump the epoch on initial stream acquisition so
+        // the very first NativeRTCView mount is keyed to a unique value
+        // (some iOS bridges hold onto a recycled surface from a previous
+        // mount of /live-broadcast that left a stale buffer in the GPU
+        // texture cache — split-face on first frame).
+        setVideoEpoch(e => e + 1);
       }
       // Drain any viewers that joined before the camera was ready.
       // Replay each buffered join through the normal handler now that
@@ -1605,12 +1629,20 @@ export default function LiveBroadcastScreen() {
           try {
             oldVideoTrack._switchCamera();
             facingRef.current = newFacing;
+            setMirrorOn(newFacing === 'user');
             // Refresh local preview URL so the mirror flag picks up. Some
             // platforms keep the same toURL — that's fine, mirror is the
             // only visible change there.
             try {
               if (stream.toURL) setLocalStreamUrl(stream.toURL());
             } catch {}
+            // Round 68 #1157 — also bump videoEpoch so the React `key`
+            // changes and React mounts a brand-new RTCMTLVideoView. Without
+            // this, _switchCamera left the iOS view holding the previous
+            // camera's last frame in half the texture surface while the
+            // new camera filled the other half → reported as a horizontal
+            // black/grey split through the face (4 user reports).
+            setVideoEpoch(e => e + 1);
             return; // success — done.
           } catch (errSwitch) {
             // Fall through to the getUserMedia path below.
@@ -1659,6 +1691,7 @@ export default function LiveBroadcastScreen() {
       // Commit facing ref AFTER the swap so the mirror flag flips with the
       // visible change.
       facingRef.current = newFacing;
+      setMirrorOn(newFacing === 'user');
 
       // Refresh preview surface.
       try {
@@ -1666,6 +1699,9 @@ export default function LiveBroadcastScreen() {
           localVideoRef.current.srcObject = stream;
         } else if (stream?.toURL) {
           setLocalStreamUrl(stream.toURL());
+          // Round 68 #1157 — bump epoch so React keys a fresh native view,
+          // releasing the previous RTCMTLVideoView texture buffer.
+          setVideoEpoch(e => e + 1);
         }
       } catch {}
     } catch (err) {
@@ -2491,17 +2527,43 @@ export default function LiveBroadcastScreen() {
       // Round 66 (2026-05-18) — collapsable={false} on the wrapper so RN
       // doesn't flatten this view out (which on Android re-parents the
       // underlying SurfaceView and exposes a black square = mancha preta).
+      //
+      // Round 68 #1157 (2026-05-18) — STRUCTURAL fix for the "barra preta
+      // horizontal" complaint (4 reports). User screenshot showed the host's
+      // face split horizontally with a dark band crossing the middle and a
+      // duplicate camera frame below — classic iOS RTCMTLVideoView texture-
+      // buffer tear: the native view holds a stale frame in part of its
+      // surface while the GPU renders new frames over only part of the
+      // texture (single-buffer race on first-render and on camera-flip).
+      //
+      // Fix is three-layered:
+      //   1. `key` now includes `videoEpoch` — every stream acquire / camera
+      //      flip bumps the epoch, so React mounts a BRAND-NEW native view
+      //      instance instead of recycling the old one. The previous key
+      //      (`localStreamUrl` alone) wasn't enough because `stream.toURL()`
+      //      often returns the same URL after _switchCamera → same key →
+      //      view recycle → torn texture stays put.
+      //   2. `mirror` is now state-backed (`mirrorOn`) so the prop change
+      //      actually triggers a re-render (the previous `facingRef.current`
+      //      ref-read was stale — RN doesn't subscribe to ref mutations).
+      //   3. style is now pure `StyleSheet.absoluteFillObject` (concrete
+      //      `top:0,bottom:0,left:0,right:0`) instead of `width:'100%',
+      //      height:'100%'`. iOS bridge sometimes leaves percentage-sized
+      //      WebRTC views ambiguous during initial layout pass → the view
+      //      mounts at zero height, the GPU pre-allocates a half-screen
+      //      texture, and the first frame paints into half before the
+      //      layout pass corrects to full screen.
       return (
         <View
           collapsable={false}
           style={[StyleSheet.absoluteFill, { backgroundColor: '#000', overflow: 'hidden' }]}
         >
           <NativeRTCView
-            key={localStreamUrl}
+            key={`local:${videoEpoch}:${localStreamUrl}`}
             streamURL={localStreamUrl}
-            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
+            style={StyleSheet.absoluteFillObject}
             objectFit="cover"
-            mirror={facingRef.current === 'user'}
+            mirror={mirrorOn}
             zOrder={0}
           />
         </View>
