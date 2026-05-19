@@ -827,6 +827,98 @@ let _cachedPushToken = null;
 export function _setCachedPushToken(tok) { _cachedPushToken = tok || null; }
 export function getCachedPushToken() { return _cachedPushToken; }
 
+// ============================================================
+// AUTO RE-REGISTER ON FOREGROUND (incident 2026-05-18)
+// ============================================================
+// Some users were losing their push token mid-life — the server-side
+// tokens.json went empty until the user logged out and back in. Root cause
+// is a mix of (a) silent backend write failures (now surfaced via the
+// defensive write in email.php case 'register_push_token' / 'register_voip_token')
+// and (b) FCM/APNs token rotation that the app didn't push back to the
+// server until the next cold-start.
+//
+// Fix: every time the app foregrounds, re-run registerForPushNotifications
+// + sendTokenToBackend, throttled to 1× per 6h so we don't flood the
+// backend for users who toggle in and out of the app. Persisted via
+// AsyncStorage so a cold restart still respects the throttle.
+const PUSH_REFRESH_THROTTLE_MS = 6 * 60 * 60 * 1000; // 6h
+const PUSH_REFRESH_LAST_KEY = 'push_refresh_last_at';
+const PUSH_REFRESH_FAIL_KEY = 'push_refresh_fail_count';
+
+async function _readJsonKey(key, fallback) {
+  try {
+    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+    const raw = await AsyncStorage.getItem(key);
+    if (!raw) return fallback;
+    try { return JSON.parse(raw); } catch { return fallback; }
+  } catch { return fallback; }
+}
+async function _writeJsonKey(key, val) {
+  try {
+    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+    await AsyncStorage.setItem(key, JSON.stringify(val));
+  } catch {}
+}
+
+/**
+ * Ensure the push token on the backend is fresh. Throttled to once every
+ * PUSH_REFRESH_THROTTLE_MS (6h). Safe to call on every AppState 'active'.
+ *
+ * @param {object} opts
+ * @param {boolean} [opts.force]  Bypass the 6h throttle (used by manual
+ *                                 retry from the stale-token banner tap).
+ * @returns {Promise<{ok:boolean, throttled?:boolean, token?:string}>}
+ */
+export async function ensurePushTokenFresh(opts = {}) {
+  if (Platform.OS === 'web') return { ok: false };
+  const now = Date.now();
+  if (!opts.force) {
+    const lastAt = await _readJsonKey(PUSH_REFRESH_LAST_KEY, 0);
+    if (typeof lastAt === 'number' && now - lastAt < PUSH_REFRESH_THROTTLE_MS) {
+      return { ok: true, throttled: true };
+    }
+  }
+  // Stamp BEFORE the call so a slow registration doesn't allow a second
+  // overlapping call from another AppState bounce. If it ultimately fails
+  // the failure-counter path still surfaces the banner.
+  await _writeJsonKey(PUSH_REFRESH_LAST_KEY, now);
+  let token = null;
+  try {
+    token = await registerForPushNotifications();
+  } catch (e) {
+    _diagPush('ensure_fresh_register_threw', e?.message || String(e));
+    token = null;
+  }
+  if (!token) {
+    const failCount = (await _readJsonKey(PUSH_REFRESH_FAIL_KEY, 0)) || 0;
+    const next = failCount + 1;
+    await _writeJsonKey(PUSH_REFRESH_FAIL_KEY, next);
+    // 2+ consecutive failures → surface a global banner flag so the UI can
+    // ask the user to tap-to-retry. Single failures stay silent (most users
+    // recover on the next foreground without ever noticing).
+    if (next >= 2) {
+      try { globalThis.__chatyy_push_token_stale = true; } catch {}
+    }
+    return { ok: false };
+  }
+  try {
+    await sendTokenToBackend(token);
+  } catch (e) {
+    _diagPush('ensure_fresh_send_threw', e?.message || String(e));
+  }
+  // Reset failure counter on any successful round-trip.
+  await _writeJsonKey(PUSH_REFRESH_FAIL_KEY, 0);
+  try { globalThis.__chatyy_push_token_stale = false; } catch {}
+  return { ok: true, token };
+}
+
+/**
+ * Manual retry from the PushTokenStaleBanner tap. Bypasses the 6h throttle.
+ */
+export async function retryPushTokenRegistration() {
+  return ensurePushTokenFresh({ force: true });
+}
+
 export async function removeTokenFromBackend(pushToken) {
   const tok = pushToken || _cachedPushToken;
   const { apiCall } = require('./api');

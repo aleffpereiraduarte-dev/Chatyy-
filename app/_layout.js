@@ -270,6 +270,10 @@ import WhatsNewSheet, { shouldShowWhatsNew } from '../components/WhatsNewSheet';
 // Stage 6 — surface "Phone offline" UI when web's relay reads fall back to
 // IndexedDB cache. Web-only; renders null on native.
 import PhoneOfflineBanner from '../components/PhoneOfflineBanner';
+// 2026-05-18 — surface push-token registration failures so the user can
+// tap-to-retry instead of going dark on incoming calls when their token
+// silently drops. Native-only; renders null on web.
+import PushTokenStaleBanner from '../components/PushTokenStaleBanner';
 import { registerBackgroundSync } from '../services/backgroundSync';
 // Side-effect import — patches expo-audio RecordingPresets.HIGH_QUALITY to
 // the WhatsApp Opus profile (32kbps mono 16/22kHz) before any chat screen
@@ -891,8 +895,7 @@ function AppInit({ onNotification, setOtaToast }) {
     (async () => {
       try {
         const {
-          registerForPushNotifications,
-          sendTokenToBackend,
+          ensurePushTokenFresh,
           setupNotificationListeners,
           clearBadge,
         } = await import('../services/pushNotifications');
@@ -901,10 +904,12 @@ function AppInit({ onNotification, setOtaToast }) {
 
         cleanupRef.current = await setupNotificationListeners();
 
-        const token = await registerForPushNotifications();
-        if (token && mounted) {
-          sendTokenToBackend(token);
-        }
+        // Boot-time registration. force:true so the helper's 6h throttle
+        // doesn't skip the cold-start call when AppState briefly fired
+        // 'active' during a previous session. AuthContext re-runs on login
+        // and on AppState 'active' (5min throttled) so the steady-state
+        // refresh path is covered there.
+        await ensurePushTokenFresh({ force: true });
 
         // Clear badge when app opens
         clearBadge();
@@ -1186,6 +1191,10 @@ export default function RootLayout() {
                     IndexedDB. Web-only; renders null on native. Above the
                     Stack so it sits at the top of every web route. */}
                 <PhoneOfflineBanner />
+                {/* 2026-05-18 — native-only; shows when push-token
+                    registration has failed 2+ times so the user can
+                    tap to retry before incoming calls silently drop. */}
+                <PushTokenStaleBanner />
                 <ChildRestrictionGuard>
                 <Stack screenOptions={{
                   headerShown: false,

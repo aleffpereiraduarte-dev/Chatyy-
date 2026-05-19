@@ -25,8 +25,7 @@ import LiveKitClient
 import AVFoundation
 import Combine
 
-// [2026-05-19 LK 2.5+ fix] `@unchecked Sendable` — RoomDelegate conform.
-final class GroupCallViewController: UIViewController, @unchecked Sendable {
+final class GroupCallViewController: UIViewController {
 
     static let groupCallEndedNotification = Notification.Name("ExpoCallKitNativeCallEnded")
 
@@ -103,14 +102,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
             return
         }
         print("[GroupCallVC] connecting — room=\(roomName) url=\(lkUrl)")
-        // [Wave C, 2026-05-18] Adaptive simulcast + dynacast for groups so
-        // each subscriber gets the right tier (low for thumbnails, high for
-        // focused tile). Dynacast lets the SFU pause publishing of layers
-        // nobody is consuming, saving uplink under N>2 calls.
-        // [2026-05-19 build fix v2] Bare RoomOptions() — defaults handle
-        // group call case fine. Custom default*Options were breaking Archive.
-        let roomOptions = RoomOptions()
-        let r = Room(delegate: self, roomOptions: roomOptions)
+        let r = Room(delegate: self)
         self.room = r
         Task { [weak self] in
             guard let self = self else { return }
@@ -119,7 +111,6 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
                 try await r.localParticipant.setMicrophone(enabled: true)
                 print("[GroupCallVC] mic published — room=\(self.roomName)")
                 if self.hasVideo {
-                    // [2026-05-19 fix] plain setCamera — defaults handle simulcast
                     if let pub = try? await r.localParticipant.setCamera(enabled: true),
                        let track = pub.track as? LocalVideoTrack {
                         await MainActor.run {
@@ -202,9 +193,8 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         Task { [weak self] in
             guard let self = self else { return }
             do {
-                // [2026-05-19 fix] plain setCamera(enabled:) — defaults handle
-                // CameraCaptureOptions across LK Swift 2.x signature variance.
-                let pub = try await r.localParticipant.setCamera(enabled: true)
+                let opts = CameraCaptureOptions(position: next)
+                let pub = try await r.localParticipant.setCamera(enabled: true, captureOptions: opts)
                 if let track = pub?.track as? LocalVideoTrack {
                     await MainActor.run { self.updateLocalParticipant(videoTrack: track) }
                 }

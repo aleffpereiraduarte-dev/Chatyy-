@@ -1110,6 +1110,63 @@ export function resetAuthFailureSignal() { _authFailureSignaled = false; _consec
 // across long sessions don't accumulate forever.
 export function noteApiSuccess() { _consecutive401 = 0; }
 
+// Soft-refresh the in-memory bearer from persistent storage. Used by the
+// WebSocket auth_error path so the next reconnect picks up a fresh bearer
+// after a parallel API call updated SecureStore / AsyncStorage. We do NOT
+// hit the network here — there's no separate refresh endpoint; bearers are
+// long-lived (10y). The point is to recover from in-memory token loss
+// (cold start hydrate race, AuthContext remount, native CallActivity
+// paused the JS thread mid-hydrate). Returns true if a token is in memory
+// after the refresh attempt.
+let _refreshInFlight = null;
+export async function refreshAuthToken() {
+  if (_refreshInFlight) return _refreshInFlight;
+  _refreshInFlight = (async () => {
+    try {
+      // Web: bearer lives in localStorage and (best-effort) sessionStorage.
+      if (Platform.OS === 'web') {
+        try {
+          if (typeof localStorage !== 'undefined') {
+            const tk = localStorage.getItem('mail_token');
+            if (tk && tk.length > 0) {
+              if (tk !== authToken) authToken = tk;
+              return true;
+            }
+          }
+          if (typeof sessionStorage !== 'undefined') {
+            const tk2 = sessionStorage.getItem(TOKEN_FALLBACK_KEY);
+            if (tk2 && tk2.length > 0) {
+              if (tk2 !== authToken) authToken = tk2;
+              return true;
+            }
+          }
+        } catch {}
+        return !!authToken;
+      }
+      // Native: SecureStore is the primary, AsyncStorage is the mirror.
+      try {
+        const SecureStore = require('expo-secure-store');
+        const tk = await SecureStore.getItemAsync('mail_token');
+        if (tk && tk.length > 0) {
+          if (tk !== authToken) authToken = tk;
+          return true;
+        }
+      } catch {}
+      try {
+        const tk2 = await _readAsyncStorage(TOKEN_FALLBACK_KEY);
+        if (tk2 && tk2.length > 0) {
+          if (tk2 !== authToken) authToken = tk2;
+          return true;
+        }
+      } catch {}
+      return !!authToken;
+    } finally {
+      _refreshInFlight = null;
+    }
+  })();
+  return _refreshInFlight;
+}
+
 export async function checkEmailExists(email) {
   return apiCall('check_email_exists', { email });
 }

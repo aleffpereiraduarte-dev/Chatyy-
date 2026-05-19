@@ -1241,17 +1241,37 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
   // posting status AND streaming live shows the red AO VIVO ring, with tap
   // going to /live-viewer instead of the story viewer.
   const [livesByEmail, setLivesByEmail] = useState({});
+  // [#1161, 2026-05-18] Per-host stale-tick guard. Mirrors the pattern in
+  // Profile.js (line ~1218): if a `live_ended` WS event lands while a
+  // `live_list` poll is in flight, the poll response carries a DB snapshot
+  // taken BEFORE the end committed — and would re-paint the AO VIVO badge
+  // for that host across the entire chat list + LiveBar. We track the
+  // moment each host's end signal landed; any poll response that started
+  // BEFORE that moment is rebased (the ended host is stripped from the
+  // map even if it's still in the response). 30s window covers backend
+  // write→read replication lag + WS round-trip.
+  const liveEndedAtByHostRef = useRef({});
   useEffect(() => {
     if (!user?.email) return undefined;
     let cancelled = false;
     const tick = async () => {
+      const startedAt = Date.now();
       try {
         const r = await api.apiCall?.('live_list', null, 'POST');
         if (cancelled) return;
         const lives = r?.data?.lives || r?.lives || [];
         const map = {};
         for (const l of lives) {
-          if (l?.host_email && l?.id) map[String(l.host_email).toLowerCase()] = { id: l.id, host_name: l.host_name, viewer_count: l.viewer_count };
+          if (l?.host_email && l?.id) {
+            const hostKey = String(l.host_email).toLowerCase();
+            // Stale-response guard — skip hosts that received an end
+            // signal AFTER this poll left. Without this, a poll fired
+            // T=0, host ends T=2 (clears state), poll lands T=3 carrying
+            // the still-live snapshot → badge re-sticks until next poll.
+            const endedAt = liveEndedAtByHostRef.current[hostKey] || 0;
+            if (endedAt >= startedAt && Date.now() - endedAt < 30000) continue;
+            map[hostKey] = { id: l.id, host_name: l.host_name, viewer_count: l.viewer_count };
+          }
         }
         setLivesByEmail(map);
       } catch {
@@ -2769,16 +2789,29 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         // carry only host_email or only session_id depending on which hub
         // forwarded it). Belt-and-suspenders so the strip always clears.
         if (!email && !sid) return;
+        // [#1161, 2026-05-18] Stamp the per-host end timestamp so an
+        // in-flight live_list poll that lands AFTER this WS event can't
+        // resurrect the badge. See `liveEndedAtByHostRef` declaration.
+        // We resolve host_email from the entry when the payload only
+        // carries session_id — covers both legacy + CF live_end payloads.
+        const stampedHosts = new Set();
+        if (email) stampedHosts.add(email);
         setLivesByEmail(prev => {
           let mutated = false;
           const next = { ...prev };
           for (const k of Object.keys(prev)) {
             const entry = prev[k];
-            if (email && k === email) { delete next[k]; mutated = true; continue; }
-            if (sid && String(entry?.id || '') === sid) { delete next[k]; mutated = true; }
+            if (email && k === email) { delete next[k]; mutated = true; stampedHosts.add(k); continue; }
+            if (sid && String(entry?.id || '') === sid) { delete next[k]; mutated = true; stampedHosts.add(k); }
           }
           return mutated ? next : prev;
         });
+        const now = Date.now();
+        try {
+          stampedHosts.forEach((h) => {
+            if (h) liveEndedAtByHostRef.current[h] = now;
+          });
+        } catch {}
       }));
 
       unsubs.push(mailWs.on('typing', (data) => {

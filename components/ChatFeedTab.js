@@ -370,6 +370,10 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
   const [createVisible, setCreateVisible] = useState(false);
   const [commentsPost, setCommentsPost] = useState(null);
   const [activeLives, setActiveLives] = useState([]);
+  // [#1161, 2026-05-18] Per-host end-stamp so an in-flight loadLives poll
+  // landing AFTER a `live_ended` WS event can't resurrect the host card.
+  // Mirrors the pattern in ChatListTab + Profile.js. 30s window.
+  const liveEndedAtByHostRef = useRef({});
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -518,6 +522,9 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
   //      yet). The backend's 5-min ghost sweep handles most of these but the
   //      window is wide enough to miss some on the very next poll.
   const loadLives = useCallback(async () => {
+    // [#1161] Capture poll-start time so we can rebase the response
+    // against any WS `live_ended` events that arrived while in flight.
+    const pollStartedAt = Date.now();
     try {
       const r = await api.liveList();
       if (r && r.success) {
@@ -540,6 +547,14 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
               if (vc <= 0) return false;
             }
           } catch {}
+          // 4) [#1161] Per-host stale-tick guard — drop any host whose
+          // `live_ended` WS event landed AFTER this poll left (within 30s
+          // grace). Without this the LiveBar/feed hero re-paints AO VIVO
+          // for friends right after the host ended their broadcast.
+          if (host) {
+            const endedAt = liveEndedAtByHostRef.current[host] || 0;
+            if (endedAt >= pollStartedAt && Date.now() - endedAt < 30000) return false;
+          }
           return true;
         });
         setActiveLives(list);
@@ -636,6 +651,8 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
         const data = payload?.data || payload || {};
         const sid = data.session_id || data.id;
         const host = String(data.host_email || '').toLowerCase();
+        const stampedHosts = new Set();
+        if (host) stampedHosts.add(host);
         setActiveLives(prev => {
           if (!Array.isArray(prev) || prev.length === 0) return prev;
           const next = prev.filter(l => {
@@ -644,12 +661,23 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
             // Drop if EITHER session_id matches OR host_email matches (handles
             // payloads missing one or the other; auto-stale broadcast carries
             // both, regular live_end_cf carries both).
-            if (sid && lid && String(lid) === String(sid)) return false;
+            if (sid && lid && String(lid) === String(sid)) {
+              if (lhost) stampedHosts.add(lhost);
+              return false;
+            }
             if (host && lhost && lhost === host) return false;
             return true;
           });
           return next.length === prev.length ? prev : next;
         });
+        // [#1161] Stamp the end-time per host so an in-flight loadLives
+        // can't paint AO VIVO back on the same host card after this.
+        const now = Date.now();
+        try {
+          stampedHosts.forEach((h) => {
+            if (h) liveEndedAtByHostRef.current[h] = now;
+          });
+        } catch {}
       });
     }
 

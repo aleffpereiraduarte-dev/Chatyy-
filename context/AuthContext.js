@@ -633,9 +633,23 @@ export function AuthProvider({ children }) {
   const registerPushAfterAuth = useCallback(async () => {
     try {
       if (Platform.OS === 'web') return;
-      const { registerForPushNotifications, sendTokenToBackend } = await import('../services/pushNotifications');
-      const token = await registerForPushNotifications();
-      if (token) sendTokenToBackend(token);
+      // ensurePushTokenFresh handles register + sendTokenToBackend, plus
+      // tracks consecutive failures and sets the global banner flag when
+      // the token registration silently breaks (incident 2026-05-18). We
+      // already throttle the outer call to once per 5min via the AppState
+      // hook, so pass force:true to bypass the helper's own 6h throttle —
+      // otherwise the AuthContext schedule would be a no-op after the
+      // first call of each 6h window.
+      const { ensurePushTokenFresh } = await import('../services/pushNotifications');
+      await ensurePushTokenFresh({ force: true });
+      // Mirror for iOS VoIP push token. Android piggybacks the FCM device
+      // token via ensurePushTokenFresh above, so this is iOS-only.
+      if (Platform.OS === 'ios') {
+        try {
+          const { ensureVoipTokenFresh } = await import('../services/callkeep');
+          await ensureVoipTokenFresh({ force: true });
+        } catch {}
+      }
     } catch {}
   }, []);
 

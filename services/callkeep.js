@@ -171,11 +171,94 @@ async function sendVoipToken(token) {
   if (!token) return;
   try {
     const api = require('./api');
-    await api.apiCall('register_voip_token', { token }, 'POST');
-    console.log('[CallKeep] VoIP token sent to server');
+    const resp = await api.apiCall('register_voip_token', { token }, 'POST');
+    if (resp?.success) {
+      console.log('[CallKeep] VoIP token sent to server');
+      _lastVoipTokenSent = token;
+      return true;
+    }
+    // Backend now returns success:false when the file_put_contents silently
+    // fails (incident 2026-05-18). Surface so the foreground retry path can
+    // try again next AppState change without waiting on the iOS PushKit
+    // re-registration (which only re-fires on token rotation).
+    console.warn('[CallKeep] register_voip_token returned failure:', resp?.error);
+    return false;
   } catch (e) {
     console.warn('[CallKeep] Failed to send VoIP token:', e);
+    return false;
   }
+}
+
+// Cache the most recently-sent VoIP token so ensureVoipTokenFresh can re-POST
+// it on AppState change without going through PushKit again (the
+// PKPushRegistry only re-fires on token rotation, not on every foreground).
+let _lastVoipTokenSent = null;
+
+// ============================================================
+// AUTO RE-REGISTER VOIP ON FOREGROUND (incident 2026-05-18)
+// ============================================================
+// Mirrors ensurePushTokenFresh() in pushNotifications.js. iOS-only; on
+// Android the call signaling tokens piggyback the FCM device token that
+// ensurePushTokenFresh handles. Throttle 6h, persisted via AsyncStorage.
+const VOIP_REFRESH_THROTTLE_MS = 6 * 60 * 60 * 1000;
+const VOIP_REFRESH_LAST_KEY = 'voip_refresh_last_at';
+
+async function _readJsonKey(key, fallback) {
+  try {
+    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+    const raw = await AsyncStorage.getItem(key);
+    if (!raw) return fallback;
+    try { return JSON.parse(raw); } catch { return fallback; }
+  } catch { return fallback; }
+}
+async function _writeJsonKey(key, val) {
+  try {
+    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+    await AsyncStorage.setItem(key, JSON.stringify(val));
+  } catch {}
+}
+
+/**
+ * Re-send the VoIP push token to the backend so the server has a fresh
+ * row whenever the user foregrounds the app. Throttled to 6h. iOS-only.
+ *
+ * @param {object} opts
+ * @param {boolean} [opts.force]  Bypass throttle (manual retry tap).
+ */
+export async function ensureVoipTokenFresh(opts = {}) {
+  if (Platform.OS !== 'ios') return { ok: false, skipped: 'not_ios' };
+  const now = Date.now();
+  if (!opts.force) {
+    const lastAt = await _readJsonKey(VOIP_REFRESH_LAST_KEY, 0);
+    if (typeof lastAt === 'number' && now - lastAt < VOIP_REFRESH_THROTTLE_MS) {
+      return { ok: true, throttled: true };
+    }
+  }
+  await _writeJsonKey(VOIP_REFRESH_LAST_KEY, now);
+  // Prefer the cached native token (already in memory); fall back to the
+  // module's getVoipToken() which reads NSUserDefaults (set by the
+  // PKPushRegistry callback). If neither is available the PushKit
+  // registration probably hasn't completed yet — re-trigger registration
+  // and let onVoipTokenReceived handle the next cycle.
+  if (!loadModule()) return { ok: false, skipped: 'no_module' };
+  let token = null;
+  try {
+    token = ExpoCallKit?.getVoipToken?.() || null;
+  } catch {}
+  if (!token && _lastVoipTokenSent) token = _lastVoipTokenSent;
+  if (!token) {
+    try { ExpoCallKit?.registerVoipPush?.(); } catch {}
+    return { ok: false, skipped: 'no_token_yet' };
+  }
+  const ok = await sendVoipToken(token);
+  return { ok: !!ok, token };
+}
+
+/**
+ * Manual retry from a banner tap. Bypasses the 6h throttle.
+ */
+export async function retryVoipTokenRegistration() {
+  return ensureVoipTokenFresh({ force: true });
 }
 
 export function displayIncomingCall(callId, callerName, callerEmail, isVideo = false, conversationId = '') {

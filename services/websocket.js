@@ -652,6 +652,27 @@ class MailWebSocket {
           this.reconnectAttempt = Math.max(this.reconnectAttempt, 3); // Start with longer delay
           let hasToken = false;
           let inGrace = false;
+          // [#1165 2026-05-18] Suppress auth-streak escalation while a call
+          // is in progress. During Chatyy↔Chatyy calls the native
+          // CallSignalWs opens a parallel WS session with the same bearer,
+          // and Android pauses the JS thread when CallActivity covers the
+          // RN view. The JS WS often reconnects mid-call and a transient
+          // edge-hub state mismatch can return auth_error 1-2 times before
+          // settling. Without this gate the streak counter races toward 8
+          // strikes during a 30-second call → forces logout → user has to
+          // log out + log in again before chat can resume. Bug report
+          // verbatim: "na hora que liga parece que perde token, ai não
+          // envia mais mensagem, ai tenho que deslogar e logar denovo".
+          let callActive = false;
+          try {
+            if (typeof globalThis !== 'undefined' && globalThis.__chatyyCallActive) {
+              callActive = true;
+            } else if (this._callActive) {
+              // Fallback to our own intra-class flag set via setCallActive()
+              // by webrtc.js / call.js — same signal, different code path.
+              callActive = true;
+            }
+          } catch {}
           try {
             const apiMod = require('./api');
             // Active refresh path: if the API layer exposes a refreshToken()
@@ -676,7 +697,15 @@ class MailWebSocket {
             try { inGrace = !!apiMod.isTokenWithinGracePeriod?.(); } catch {}
           } catch {}
           if (hasToken) {
-            this._authFailStreak = (this._authFailStreak || 0) + 1;
+            // Don't increment streak during an active call — see #1165
+            // comment above. The reconnect still fires, so a truly revoked
+            // token will fail again after the call ends and ratchet the
+            // streak from a clean baseline.
+            if (!callActive) {
+              this._authFailStreak = (this._authFailStreak || 0) + 1;
+            } else {
+              try { console.warn('[WS] auth_error during active call — not counting toward streak'); } catch {}
+            }
             // 8 auth_errors in a row matches the HTTP 401 streak threshold.
             // Was 2, which logged users out the moment the WS edge server
             // hiccuped twice during a call cold-start — token was fine, the
@@ -705,6 +734,25 @@ class MailWebSocket {
               this.destroyed = true;
               break;
             }
+            this._scheduleReconnect();
+          } else if (callActive) {
+            // #1165: in-memory token went missing mid-call (cold-start race
+            // or AuthContext remount). Don't tombstone the socket — try a
+            // refresh-from-storage and retry. If still nothing after the
+            // scheduled reconnect lands, the next auth_error will hit this
+            // branch again, harmless. Killing the socket here would make
+            // chat unsendable for the rest of the session.
+            try {
+              const apiMod = require('./api');
+              if (typeof apiMod.refreshAuthToken === 'function') {
+                apiMod.refreshAuthToken().then((ok) => {
+                  if (ok) {
+                    const tk = apiMod.getAuthToken?.();
+                    if (tk) this.token = tk;
+                  }
+                }).catch(() => {});
+              }
+            } catch {}
             this._scheduleReconnect();
           } else {
             this.destroyed = true;

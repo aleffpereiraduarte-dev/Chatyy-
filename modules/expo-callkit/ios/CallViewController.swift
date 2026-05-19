@@ -99,10 +99,7 @@ final class CallSessionState: ObservableObject {
 
 // MARK: - VC
 
-// [2026-05-19 LK 2.5+ fix] `@unchecked Sendable` — RoomDelegate now requires
-// Sendable conformance (Swift 6 strict concurrency). UIViewController isn't
-// auto-Sendable. We control concurrency manually (Tasks + MainActor.run).
-final class CallViewController: UIViewController, @unchecked Sendable {
+final class CallViewController: UIViewController {
 
     static let callEndedNotification = Notification.Name("ExpoCallKitNativeCallEnded")
 
@@ -177,16 +174,6 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             )
         }
 
-        // [Wave B audio, 2026-05-18] Centralize AVAudioSession routing.
-        //   - Audio call -> earpiece default
-        //   - Video call -> speaker default
-        //   - BT/wired headset present at start -> route to it (skips default)
-        //   - Mid-call BT connect/disconnect -> auto re-route via route listener
-        // CallKit owns setActive(); AudioRouter only owns category + port
-        // override + the routeChange listener.
-        AudioRouter.shared.configureForCall(hasVideo: hasVideo)
-        self.session.speakerOn = AudioRouter.shared.speakerOn
-
         // Build the SwiftUI tree with the full closure set Stage #995 demands.
         let rootView = CallView(
             callId: callId,
@@ -240,38 +227,34 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // dimensions preset (h720_169) gives us 1280x720 high → 640x360
             // mid → 320x180 low under simulcast; SFU picks per subscriber.
             // RoomOptions API is stable across LK Swift 2.0–2.x.
-            // [Wave B audio, 2026-05-18] Default audio capture options carry
-            // WebRTC's native AEC + AGC + noise suppression toggles. LiveKit
-            // forwards these to the underlying RTCAudioTrack constraints, so
-            // the published mic track applies them on every Room.connect.
-            // RNNoise (above) layers on top via the customAudioProcessing
-            // delegate when the SPM module is present.
-            // [2026-05-19 build fix v2] Bare RoomOptions() — LK 2.x defaults
-            // already enable echoCancellation/AGC/NS on audio + simulcast on
-            // video. The custom default*Options() were causing iOS Archive to
-            // fail (signature mismatch on Dimensions/VideoEncoding/
-            // VideoPublishOptions across LK Swift point releases). Defaults
-            // are good enough for WhatsApp-grade audio+video.
-            let roomOptions = RoomOptions()
+            let roomOptions = RoomOptions(
+                defaultCameraCaptureOptions: Self.defaultCameraCaptureOptions(),
+                defaultVideoPublishOptions: Self.defaultVideoPublishOptions(),
+                adaptiveStream: true,
+                dynacast: true
+            )
             let r = Room(delegate: self, roomOptions: roomOptions)
             self.room = r
             Task { [weak self] in
                 guard let self = self else { return }
                 do {
                     try await r.connect(url: url, token: token)
-                    // [Wave B audio, 2026-05-18] AEC + AGC + noise suppression
-                    // come from RoomOptions.defaultAudioCaptureOptions which is
-                    // pinned above. Some LK Swift revs don't expose the
-                    // captureOptions parameter on setMicrophone — relying on
-                    // RoomOptions is portable across SDK versions.
                     try await r.localParticipant.setMicrophone(enabled: true)
-                    print("[CallVC] Mic published (aec+agc+ns via RoomOptions) — callId=\(self.callId)")
+                    print("[CallVC] Mic published — callId=\(self.callId)")
                     if self.hasVideo {
-                        // [2026-05-19 build fix v2] Use plain setCamera(enabled:)
-                        // — captureOptions/publishOptions signatures vary
-                        // across LK Swift 2.x; defaults handle WhatsApp-grade.
-                        if let pub = try? await r.localParticipant.setCamera(enabled: true),
-                           let track = pub.track as? LocalVideoTrack {
+                        // [Wave C, 2026-05-18] Pass explicit captureOptions +
+                        // publishOptions so the *first* publish carries our
+                        // simulcast tiers. Room-level defaults set above already
+                        // do this, but some LK Swift revs ignore the RoomOptions
+                        // default on the first setCamera() call — pinning per-
+                        // call defense-in-depth.
+                        let captureOpts = Self.defaultCameraCaptureOptions(position: self.currentCameraPosition)
+                        let publishOpts = Self.defaultVideoPublishOptions()
+                        if let pub = try? await r.localParticipant.setCamera(
+                            enabled: true,
+                            captureOptions: captureOpts,
+                            publishOptions: publishOpts
+                        ), let track = pub.track as? LocalVideoTrack {
                             await MainActor.run {
                                 self.session.localVideoTrack = track
                             }
@@ -310,10 +293,6 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
     private func handleHangup() {
         stopRingbackTone(reason: "handleHangup")
-        // [Wave B audio, 2026-05-18] Drop the route-change listener + clear
-        // the speakerphone override before LK disconnect so the next call
-        // (or expo-audio session) starts with a clean AVAudioSession state.
-        AudioRouter.shared.teardown()
         // Stop PiP if still active so the system pill is clean on dismissal.
         if #available(iOS 15.0, *), let pip = pipController, pip.isPictureInPictureActive {
             pip.stopPictureInPicture()
@@ -339,10 +318,6 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         guard let r = self.room else { return }
         Task { [weak self] in
             do {
-                // [Wave B audio, 2026-05-18] RoomOptions.defaultAudioCaptureOptions
-                // already pinned AEC+AGC+NS at connect time; mic toggle just
-                // mutes/unmutes the existing track. Avoids LK SDK signature
-                // mismatch on setMicrophone(enabled:captureOptions:).
                 try await r.localParticipant.setMicrophone(enabled: enabled)
             } catch {
                 print("[CallVC] setMicrophone(\(enabled)) failed: \(error)")
@@ -378,9 +353,14 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                     }
                     print("[CallVC] camera \(enabled ? "unmute" : "mute") (no republish) — callId=\(self.callId)")
                 } else if enabled {
-                    // [2026-05-19 fix] First-time enable: plain setCamera —
-                    // defaults handle simulcast. LK Swift 2.x signature varies.
-                    let pub = try await r.localParticipant.setCamera(enabled: true)
+                    // First-time enable: full publish with simulcast tiers.
+                    let captureOpts = Self.defaultCameraCaptureOptions(position: self.currentCameraPosition)
+                    let publishOpts = Self.defaultVideoPublishOptions()
+                    let pub = try await r.localParticipant.setCamera(
+                        enabled: true,
+                        captureOptions: captureOpts,
+                        publishOptions: publishOpts
+                    )
                     await MainActor.run {
                         self.session.localVideoTrack = pub?.track as? LocalVideoTrack
                     }
@@ -393,17 +373,15 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         }
     }
 
-    /// [Wave B audio, 2026-05-18] Speaker toggle now delegates to AudioRouter
-    /// so route-change listener stays consistent with UI state. If a BT/wired
-    /// headset is connected, the router will keep it as the route — pressing
-    /// "speaker" still flips the loudspeaker on; pressing it again returns to
-    /// the headset rather than the earpiece (matches AudioRouter logic).
+    /// Speaker route override. AVAudioSession owns this; we just toggle
+    /// between `.speaker` and `.none`. CallKit configured the category at
+    /// answer time so we don't touch it here.
     private func applySpeaker(_ enabled: Bool) {
-        let actual = AudioRouter.shared.setSpeaker(enabled)
-        // Reflect the actual state into the SwiftUI session so the UI shows
-        // the right toggle position even if the router clamped it.
-        DispatchQueue.main.async { [weak self] in
-            self?.session.speakerOn = actual
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.overrideOutputAudioPort(enabled ? .speaker : .none)
+        } catch {
+            print("[CallVC] setSpeaker(\(enabled)) failed: \(error)")
         }
     }
 
@@ -443,9 +421,13 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             }
             // Path 2: fallback to the old republish path. Still happens
             // suspend-async so we don't block the UI thread.
-            // [2026-05-19 fix] plain setCamera(enabled:) — defaults fine.
             do {
-                let pub = try await r.localParticipant.setCamera(enabled: true)
+                let opts = Self.defaultCameraCaptureOptions(position: next)
+                let pub = try await r.localParticipant.setCamera(
+                    enabled: true,
+                    captureOptions: opts,
+                    publishOptions: Self.defaultVideoPublishOptions()
+                )
                 if let track = pub?.track as? LocalVideoTrack {
                     await MainActor.run { self.session.localVideoTrack = track }
                 }
@@ -826,12 +808,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // The 16:9 preset matches portrait-rotated phones (LK auto-rotates).
         // If the device can't hit 720p (older iPhone SE), LK clamps down to
         // the nearest supported resolution automatically.
-        // [2026-05-19 fix] Dimensions(width:Int32, height:Int32) — must cast
-        // Int literals; Swift does NOT auto-promote Int → Int32. Was breaking
-        // Archive compile.
         return CameraCaptureOptions(
             position: position,
-            dimensions: Dimensions(width: Int32(1280), height: Int32(720)),
+            dimensions: Dimensions(width: 1280, height: 720),
             fps: 30
         )
     }
@@ -856,29 +835,6 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         )
     }
 
-    /// [Wave B audio, 2026-05-18] AudioCaptureOptions tuned for WhatsApp-grade
-    /// voice. All three WebRTC DSP toggles are ON:
-    ///   - `echoCancellation`  → AEC3 strips the speaker feedback on
-    ///                            loudspeaker calls (mandatory for video calls
-    ///                            and any speaker-on toggle).
-    ///   - `autoGainControl`   → normalizes mic level so soft-spoken users
-    ///                            don't get drowned out and loud users don't
-    ///                            clip the encoder.
-    ///   - `noiseSuppression`  → WebRTC's built-in NS (separate from RNNoise).
-    ///                            Cheap baseline; RNNoise wraps on top as the
-    ///                            "ML-grade" upgrade when available.
-    ///   - `typingNoiseDetection` → suppresses keyboard click bursts.
-    ///   - `highpassFilter`    → low-cut removes 60Hz hum / mic handling rumble.
-    static func defaultAudioCaptureOptions() -> AudioCaptureOptions {
-        return AudioCaptureOptions(
-            echoCancellation: true,
-            autoGainControl: true,
-            noiseSuppression: true,
-            typingNoiseDetection: true,
-            highpassFilter: true
-        )
-    }
-
     // MARK: - Deinit
 
     deinit {
@@ -897,10 +853,6 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         pipRenderer = nil
         stopRingbackTone(reason: "deinit")
         if let obs = ringbackResignObserver { NotificationCenter.default.removeObserver(obs) }
-        // [Wave B audio, 2026-05-18] Belt-and-braces — handleHangup tears down
-        // the router on user-initiated end, deinit covers room-disconnect /
-        // PiP dismiss paths.
-        AudioRouter.shared.teardown()
     }
 
     // MARK: - Presentation helper
