@@ -28,6 +28,15 @@ const releaseShortsPoolFn = _expoShorts?.releaseShortsPool || null;
 const setShortsAudioSessionPlaybackFn = _expoShorts?.setShortsAudioSessionPlayback || null;
 const restoreShortsAudioSessionFn = _expoShorts?.restoreShortsAudioSession || null;
 
+// expo-video fallback — used when ExpoShortsPlayer isn't linked in the
+// current native binary (happens on builds that shipped before the
+// expo-shorts module landed, e.g. iOS 504/505). Without this the
+// NativeReelVideo just painted a black <View> and the Reels feed looked
+// dead. expo-video is already a project dep (~55.0.13) so it's always
+// importable on native; on web we still degrade to black.
+let _expoVideo = null;
+try { _expoVideo = require('expo-video'); } catch {}
+
 // Pick the active subtitle segment for a video time (in ms). Segments
 // arrive shaped like {start, end, text} with start/end in SECONDS. We
 // linear-scan because subtitle counts cap at 500 — a binary search would
@@ -65,6 +74,81 @@ const ShortsPlayerLazy = (() => {
   try { return require('expo-shorts').ShortsPlayer; } catch { return null; }
 })();
 
+// Drop-in fallback that mirrors the relevant ShortsPlayer surface using
+// expo-video's VideoView + useVideoPlayer. We can't conditionally call
+// useVideoPlayer inside NativeReelVideo (hooks must be top-level), so this
+// lives as a sibling component and we mount it only when ShortsPlayerLazy
+// is missing. Supports the same isActive/paused/muted semantics so the
+// rest of the feed (scroll-to-play, mute toggle) keeps working.
+function VideoFallbackPlayer({ videoUrl, isActive, paused, muted, playbackRate = 1, onTimeUpdate, onReady }) {
+  const VideoView = _expoVideo?.VideoView;
+  const useVideoPlayer = _expoVideo?.useVideoPlayer;
+  const player = useVideoPlayer && useVideoPlayer(videoUrl || '', (p) => {
+    try {
+      p.loop = true;
+      p.muted = !!muted;
+      p.playbackRate = Number(playbackRate) || 1;
+      if (isActive && !paused) p.play();
+    } catch {}
+  });
+
+  // Sync play/pause with the parent's isActive/paused flags so swiping
+  // between reels stops the off-screen ones.
+  useEffect(() => {
+    if (!player) return;
+    try {
+      if (isActive && !paused) player.play();
+      else player.pause();
+    } catch {}
+  }, [isActive, paused, player]);
+
+  // Mute toggle from the global Reels mute button.
+  useEffect(() => {
+    if (!player) return;
+    try { player.muted = !!muted; } catch {}
+  }, [muted, player]);
+
+  // Playback rate (rare, but supported by ShortsPlayer so we mirror it).
+  useEffect(() => {
+    if (!player) return;
+    try { player.playbackRate = Number(playbackRate) || 1; } catch {}
+  }, [playbackRate, player]);
+
+  // Time updates + onReady seek API — keeps subtitle sync + scrub working.
+  useEffect(() => {
+    if (!player) return;
+    if (onReady) {
+      const seekFn = (ms) => {
+        try { player.currentTime = (Number(ms) || 0) / 1000; } catch {}
+      };
+      onReady({ seek: seekFn });
+    }
+    if (!onTimeUpdate) return undefined;
+    const id = setInterval(() => {
+      try {
+        const ct = (player.currentTime || 0) * 1000;
+        const dur = (player.duration || 0) * 1000;
+        onTimeUpdate(ct, dur);
+      } catch {}
+    }, 125);
+    return () => clearInterval(id);
+  }, [player, onReady, onTimeUpdate]);
+
+  if (!VideoView || !player) {
+    return <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }]} />;
+  }
+  return (
+    <VideoView
+      style={StyleSheet.absoluteFill}
+      player={player}
+      contentFit="cover"
+      nativeControls={false}
+      allowsFullscreen={false}
+      allowsPictureInPicture={false}
+    />
+  );
+}
+
 const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActive, paused, playbackRate = 1, isPreload = false, muted = true, onTimeUpdate, onReady }) {
   const shortsRef = useRef(null);
 
@@ -84,9 +168,24 @@ const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActi
     if (onTimeUpdate) onTimeUpdate(ms, durMs);
   }, [onTimeUpdate]);
 
-  // Native-only — if for any reason the module didn't link (dev binary),
-  // surface a black placeholder rather than crash the feed.
+  // Native-only — if for any reason the module didn't link (e.g. iOS 504/505
+  // shipped before expo-shorts), fall back to expo-video's VideoView so the
+  // Reels feed still plays. Only surface a black placeholder if expo-video
+  // also isn't available (web or extremely old binaries).
   if (!ShortsPlayerLazy) {
+    if (_expoVideo) {
+      return (
+        <VideoFallbackPlayer
+          videoUrl={videoUrl}
+          isActive={isActive && !isPreload}
+          paused={paused}
+          muted={muted}
+          playbackRate={playbackRate}
+          onTimeUpdate={onTimeUpdate}
+          onReady={onReady}
+        />
+      );
+    }
     return <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }]} />;
   }
 
