@@ -15,8 +15,14 @@ import useIsMounted from '../hooks/useIsMounted';
 export default function SyncBar() {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
-  const [status, setStatus] = useState('hidden'); // hidden | connecting | syncing | offline
+  const [status, setStatus] = useState('hidden'); // hidden | connecting | syncing | offline | bootstrap
   const [progress, setProgress] = useState(0);
+  // Bootstrap-only state: counts of conversations downloaded vs total. We
+  // surface this as "Sincronizando histórico • 42/127 conversas" so the user
+  // can SEE that all their old chats are being pulled into the device, like
+  // WhatsApp's first-time message restore. (#1194)
+  const [bootConvDone, setBootConvDone] = useState(0);
+  const [bootConvTotal, setBootConvTotal] = useState(0);
   const slideAnim = useRef(new Animated.Value(-36)).current;
   const progressAnim = useRef(new Animated.Value(0)).current;
   const dotAnim = useRef(new Animated.Value(0)).current;
@@ -134,8 +140,33 @@ export default function SyncBar() {
       }
     };
 
+    // Per-conversation full-history bootstrap progress (#1194). Distinct
+    // from the 8-phase initial sync above: this runs ONCE on first login
+    // and walks every conversation's history into local SQLite. Shows a
+    // thin pill "Sincronizando histórico • N/M conversas" that auto-hides
+    // when the bootstrap reports phase=done.
+    const handleBootstrap = ({ phase, convDone = 0, convTotal = 0 }) => {
+      if (Platform.OS === 'web') return; // SQLite-only feature
+      if (phase === 'start') {
+        setBootConvDone(0);
+        setBootConvTotal(convTotal || 0);
+        // Don't show immediately on start when there are 0 convs — that
+        // means the user is brand new and has nothing to download.
+        if ((convTotal || 0) > 0) show('bootstrap');
+      } else if (phase === 'conv') {
+        setBootConvDone(convDone || 0);
+        setBootConvTotal(convTotal || 0);
+        if ((convTotal || 0) > 0 && status === 'hidden') show('bootstrap');
+      } else if (phase === 'done') {
+        setBootConvDone(convDone || 0);
+        // Brief "done" frame then slide out
+        setTimeout(() => { if (mountedRef.current) hide(); }, 1200);
+      }
+    };
+
     mailWs?.on?.('connection', handleConnection);
     mailWs?.on?.('sync_progress', handleSync);
+    mailWs?.on?.('chat_bootstrap_progress', handleBootstrap);
 
     // Network offline detection
     let netUnsub;
@@ -165,6 +196,7 @@ export default function SyncBar() {
       clearTimeout(syncStallTimer.current);
       mailWs?.off?.('connection', handleConnection);
       mailWs?.off?.('sync_progress', handleSync);
+      mailWs?.off?.('chat_bootstrap_progress', handleBootstrap);
       netUnsub?.();
     };
   }, []);
@@ -177,12 +209,18 @@ export default function SyncBar() {
   if (status === 'hidden') return null;
 
   const isOffline = status === 'offline';
+  const isBootstrap = status === 'bootstrap';
   const bgColor = isOffline ? (isDark ? '#7f1d1d' : '#fef2f2') : (isDark ? '#1e3a5f' : '#F5F3FF');
   const textColor = isOffline ? (isDark ? '#fca5a5' : '#dc2626') : (isDark ? '#93c5fd' : '#7C3AED');
 
   let label;
   if (status === 'offline') label = t('sync.offline') || 'No internet';
   else if (status === 'connecting') label = t('sync.connecting') || 'Connecting...';
+  else if (isBootstrap) {
+    const tmpl = t('sync.history') || 'Syncing history';
+    if (bootConvTotal > 0) label = `${tmpl} • ${bootConvDone}/${bootConvTotal}`;
+    else label = tmpl;
+  }
   else if (progress < 15) label = t('sync.conversations') || 'Loading conversations...';
   else if (progress < 55) label = t('sync.messages') || 'Downloading messages...';
   else if (progress < 65) label = t('sync.contacts') || 'Syncing contacts...';
@@ -191,6 +229,8 @@ export default function SyncBar() {
   else label = t('sync.finishing') || 'Finishing...';
 
   const progressW = progressAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] });
+  const bootProgressPct = bootConvTotal > 0 ? bootConvDone / bootConvTotal : 0;
+  const bootProgressW = `${Math.max(0, Math.min(1, bootProgressPct)) * 100}%`;
 
   return (
     <Animated.View style={[s.bar, { backgroundColor: bgColor, transform: [{ translateY: slideAnim }] }]}>
@@ -201,6 +241,11 @@ export default function SyncBar() {
       {status === 'syncing' && (
         <View style={[s.track, { backgroundColor: textColor + '20' }]}>
           <Animated.View style={[s.fill, { backgroundColor: textColor, width: progressW }]} />
+        </View>
+      )}
+      {isBootstrap && bootConvTotal > 0 && (
+        <View style={[s.track, { backgroundColor: textColor + '20' }]}>
+          <View style={[s.fill, { backgroundColor: textColor, width: bootProgressW }]} />
         </View>
       )}
     </Animated.View>

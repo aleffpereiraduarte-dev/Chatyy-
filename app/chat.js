@@ -548,6 +548,19 @@ function ChatHub() {
         if (r && !r.error) {
           try { setString?.(gateKey, '1'); } catch {}
         }
+        // WhatsApp-grade "tudo no celular" (#1194): after the lightweight
+        // initial sync seeds the chat list, kick off the per-conversation
+        // FULL history bootstrap in the background. Idempotent — internal
+        // gate is `chat_full_bootstrap:<email>` in SQLite sync_state, so
+        // this only does the heavy walk on the very first launch.
+        try {
+          const { bootstrapFullHistoryOnce } = require('../services/fullHistorySync');
+          // Defer past first paint so the chat list animates in cleanly
+          // before the network traffic starts.
+          setTimeout(() => {
+            bootstrapFullHistoryOnce(api.apiCall, email).catch(() => {});
+          }, 2500);
+        } catch {}
       }).catch(() => {});
     } catch {}
   }, [user?.email, user?.token]);

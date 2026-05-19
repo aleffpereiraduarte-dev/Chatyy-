@@ -210,6 +210,10 @@ function _teardownSyncEngines() {
   _syncBooted = false;
   try { stopDeltaSync(); } catch {}
   try {
+    const { abortFullHistorySync } = require('../services/fullHistorySync');
+    abortFullHistorySync();
+  } catch {}
+  try {
     const { stopEnvelopePuller } = require('../services/envelopePuller');
     stopEnvelopePuller();
   } catch {}

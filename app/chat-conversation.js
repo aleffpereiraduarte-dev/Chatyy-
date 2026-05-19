@@ -9060,6 +9060,38 @@ export default function ChatConversationScreen() {
           return;
         }
 
+        // WhatsApp-grade offline path (#1194): if the per-conv bootstrap has
+        // already drained this conversation's history into SQLite, skip the
+        // chat_messages network call entirely on the initial open. WS push +
+        // chat_sync (pts) keep the local copy current; cache is authoritative.
+        // We still need to fire the delta sync for messages that arrived while
+        // the app was offline / pre-WS-reconnect — that's cheap (returns 0
+        // events when caught up).
+        try {
+          const { isConvFullySynced } = require('../services/fullHistorySync');
+          const fully = await isConvFullySynced(conversationId);
+          if (fully && mountedRef.current) {
+            // Fully-synced: never hit chat_messages on open. Just delta-sync
+            // for new arrivals via pts. The cached paint above is the entire
+            // initial render.
+            try {
+              const { syncConversations: syncConvs2, applyEvents: applyEvents2 } = require('../services/chatSync');
+              const r2 = await syncConvs2([conversationId]);
+              const c2 = r2?.[0];
+              if (c2 && Array.isArray(c2.events) && c2.events.length > 0 && mountedRef.current) {
+                applyEvents2(c2.events, null, setMessages, c2.messages || []);
+              }
+              if (c2 && Number(c2.latest_pts) > 0) {
+                try {
+                  const { observePts } = require('../services/chatSync');
+                  observePts(conversationId, Number(c2.latest_pts));
+                } catch {}
+              }
+            } catch {}
+            return;
+          }
+        } catch {}
+
         const { syncConversations, applyEvents } = require('../services/chatSync');
         const results = await syncConversations([conversationId]);
         if (!mountedRef.current) return;

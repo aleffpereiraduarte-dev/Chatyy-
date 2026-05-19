@@ -3077,6 +3077,7 @@ export default {
   'sync.calendar': 'Sincronizando calendario...',
   'sync.files': 'Guardando archivos...',
   'sync.finishing': 'Finalizando...',
+  'sync.history': 'Sincronizando historial',
 
   // AI Semantic Search
   'search.aiSorted': 'Ordenado por IA',
