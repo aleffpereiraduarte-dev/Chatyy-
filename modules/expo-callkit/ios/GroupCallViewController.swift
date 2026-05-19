@@ -25,7 +25,8 @@ import LiveKitClient
 import AVFoundation
 import Combine
 
-final class GroupCallViewController: UIViewController {
+// [2026-05-19 LK 2.5+ fix] `@unchecked Sendable` — RoomDelegate conform.
+final class GroupCallViewController: UIViewController, @unchecked Sendable {
 
     static let groupCallEndedNotification = Notification.Name("ExpoCallKitNativeCallEnded")
 

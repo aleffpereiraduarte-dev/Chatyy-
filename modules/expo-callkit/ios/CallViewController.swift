@@ -99,7 +99,10 @@ final class CallSessionState: ObservableObject {
 
 // MARK: - VC
 
-final class CallViewController: UIViewController {
+// [2026-05-19 LK 2.5+ fix] `@unchecked Sendable` — RoomDelegate now requires
+// Sendable conformance (Swift 6 strict concurrency). UIViewController isn't
+// auto-Sendable. We control concurrency manually (Tasks + MainActor.run).
+final class CallViewController: UIViewController, @unchecked Sendable {
 
     static let callEndedNotification = Notification.Name("ExpoCallKitNativeCallEnded")
 
