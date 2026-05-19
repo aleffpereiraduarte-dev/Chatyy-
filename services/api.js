@@ -2903,13 +2903,18 @@ export async function loadEnvelopeMode() {
   return flag;
 }
 
-// Stage 7 (E2E default-ON): set the global immediately to ON so the very
-// first chatSend in a cold-start session is already encrypted, even before
-// AsyncStorage resolves below. loadEnvelopeMode() then either confirms ON
-// (default / persisted '1') or downgrades to OFF (explicit '0' opt-out).
+// [#1188 2026-05-19] KILL-SWITCH: E2EE envelope mode default OFF.
+// Reason: receiver-side decrypt has been failing silently for days. Even
+// after the getDeviceKeyPair fix, users still report messages not arriving
+// in real-time on Android+iOS. Until we can reproduce + verify decrypt
+// success end-to-end, default to plaintext PHP send (the path that ALWAYS
+// worked) — every chat message goes through chat_messages table +
+// `chat_message` WS broadcast, receiver renders instantly. Power users
+// can flip back via setEnvelopeMode(true). When the decrypt path is
+// proven stable in a future round, flip this back to default-ON.
 try {
   if (typeof globalThis !== 'undefined' && globalThis.__chatyy_envelope_mode === undefined) {
-    globalThis.__chatyy_envelope_mode = true;
+    globalThis.__chatyy_envelope_mode = false;
   }
 } catch {}
 try { loadEnvelopeMode().catch(() => {}); } catch {}

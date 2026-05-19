@@ -172,21 +172,15 @@ function _bootSyncEngines() {
   } catch (e) {
     console.warn('[Auth] deltaSync init failed:', e?.message);
   }
-  // [#1188 Agent H 2026-05-19] Flip the envelope-mode kill-switch on. The
-  // entire E2E foreground-pull stack in services/envelopePuller.js is gated
-  // behind globalThis.__chatyy_envelope_mode === true, and nothing else in
-  // app/ or services/ ever sets it — meaning startEnvelopePuller() was a
-  // no-op for everyone since the module landed. Enable it here as soon as
-  // auth boots so every login path (cold-start, email, phone, biometric,
-  // QR-pair) participates in envelope delivery.
-  try { globalThis.__chatyy_envelope_mode = true; } catch {}
-  try {
-    const { startEnvelopePuller } = require('../services/envelopePuller');
-    startEnvelopePuller();
-  } catch (e) {
-    // envelopePuller is feature-gated by globalThis.__chatyy_envelope_mode —
-    // and the module itself can be absent on web. Either way, swallow.
-  }
+  // [#1188 2026-05-19] KILL-SWITCH: envelope mode OFF. Receiver-side decrypt
+  // has been failing silently — users report messages not arriving in real
+  // time on Android+iOS even after multiple fix attempts. Falling back to
+  // plaintext PHP send path (chat_messages + WS chat_message broadcast) which
+  // ALWAYS worked. envelopePuller stays available behind setEnvelopeMode(true)
+  // for opt-in testing. Restore by removing this block when decrypt is
+  // proven stable end-to-end in QA.
+  try { globalThis.__chatyy_envelope_mode = false; } catch {}
+  // Don't start envelopePuller — there are no envelopes in plaintext mode.
 
   // [#1188 Agent H 2026-05-19] Publish this device's pubkey on EVERY auth.
   // Was previously called ONLY in QR-pair login (login.js:808 +
