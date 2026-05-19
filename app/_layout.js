@@ -838,19 +838,26 @@ function AppInit({ onNotification, setOtaToast }) {
           try {
             const fromName = data?.from_name || (data?.from_email || '').split('@')[0] || 'Alguém';
             const amount = Number(data?.amount) || 0;
-            const msg = data?.message ? ` — ${data.message}` : '';
+            const msg = data?.message ? `\n${data.message}` : '';
             // Pulse vibration on native; web silently no-ops.
             try {
               const { Vibration } = require('react-native');
               Vibration?.vibrate?.([0, 30, 60, 30]);
             } catch {}
-            // Best-effort global toast — uses the lozenge ◆ glyph (same as
-            // the wallet UI), not an emoji. Downstream toast bus picks
-            // this up if mounted; otherwise the push notif from the
-            // backend covers cold-app delivery.
+            // Visible surface: web → native browser notification (if granted),
+            // native → an Alert so the receiver immediately knows the
+            // transfer arrived. Push notification covers cold-app delivery
+            // already; this is the foreground/real-time path.
             try {
-              const evt = new (require('events').EventEmitter)();
-              evt.emit?.('toast', { title: `${fromName} te enviou ${amount} ◆`, body: msg });
+              const { Platform, Alert } = require('react-native');
+              const title = `${fromName} te enviou ${amount} ◆`;
+              if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                if (window.Notification && window.Notification.permission === 'granted') {
+                  try { new window.Notification(title, { body: msg.trim() || undefined }); } catch {}
+                }
+              } else {
+                Alert.alert(title, msg.trim() || undefined);
+              }
             } catch {}
           } catch {}
         });
@@ -1257,6 +1264,7 @@ export default function RootLayout() {
                   <Stack.Screen name="plans" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="wallet" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="diamond-shop" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="wallet-cashout" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="backup" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="chat-backup" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="u/[username]" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />

@@ -142,9 +142,21 @@ export default function WalletScreen() {
           {balance.toLocaleString('pt-BR')} <Text style={styles.balDiamond}>◆</Text>
         </Text>
         {pendingPayout > 0 ? (
-          <Text style={[styles.payoutPill, { color: '#10B981' }]}>
-            {t('wallet.pendingPayout') || 'Saque pendente'}: R$ {(pendingPayout / 100).toFixed(2).replace('.', ',')}
-          </Text>
+          <TouchableOpacity
+            onPress={() => router.push('/wallet-cashout')}
+            accessibilityRole="button"
+            accessibilityLabel={t('wallet.cashoutOpen') || 'Sacar'}
+            style={styles.payoutPillRow}
+          >
+            <Text style={[styles.payoutPill, { color: '#10B981' }]}>
+              {t('wallet.pendingPayout') || 'Saque pendente'}: R$ {(pendingPayout / 100).toFixed(2).replace('.', ',')}
+            </Text>
+            <View style={styles.payoutCta}>
+              <Text style={styles.payoutCtaText}>
+                {t('wallet.cashoutOpen') || 'Sacar'}
+              </Text>
+            </View>
+          </TouchableOpacity>
         ) : null}
 
         <View style={styles.ctaRow}>
@@ -218,7 +230,16 @@ const styles = StyleSheet.create({
   balLabel: { fontSize: 13 },
   balVal: { fontSize: 36, fontWeight: '900', marginTop: 4 },
   balDiamond: { fontSize: 28, color: '#A855F7' },
-  payoutPill: { marginTop: 6, fontSize: 12, fontWeight: '700' },
+  payoutPill: { fontSize: 12, fontWeight: '700' },
+  payoutPillRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginTop: 6, gap: 10,
+  },
+  payoutCta: {
+    paddingHorizontal: 10, paddingVertical: 5,
+    borderRadius: 999, backgroundColor: '#10B981',
+  },
+  payoutCtaText: { color: '#fff', fontSize: 11, fontWeight: '800' },
   ctaRow: { flexDirection: 'row', gap: 8, marginTop: 14 },
   ctaBtn: { flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
   ctaBtnText: { color: '#fff', fontSize: 14, fontWeight: '800' },

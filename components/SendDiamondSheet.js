@@ -340,7 +340,7 @@ export default function SendDiamondSheet({
               ) : (
                 <Text style={styles.sendBtnText}>
                   {insufficient
-                    ? (t('walletSend.topUpCta') || 'Comprar diamantes')
+                    ? `${t('walletSend.topUpCta') || 'Comprar diamantes'}  ·  +${(amount - balance).toLocaleString('pt-BR')} ◆`
                     : ((t('walletSend.cta') || 'Enviar {n} ◆').replace('{n}', amount.toLocaleString('pt-BR')))}
                 </Text>
               )}
