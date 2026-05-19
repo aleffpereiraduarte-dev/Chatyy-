@@ -8727,8 +8727,13 @@ export default function ChatConversationScreen() {
               if (typeof m.id === 'string' && m.id.startsWith('tmp_')) return false; // tmp_ rows handled by keptPending
               if (typeof m.id === 'number') return false; // numeric handled by keptOlder
               if (newById.has(m.id)) return false;
-              const myCid = m._client_id || m.client_message_id || m.id;
-              if (myCid && ackedClientIds.has(String(myCid))) return false;
+              // [2026-05-19 fix "mando msg ela some"] Do NOT drop on
+              // ackedClientIds — in envelope mode the row keyed by CMI IS
+              // the final state (no server chat_messages twin to swap to).
+              // message_ack arriving means "backend persisted the envelope
+              // shards" — we should KEEP the row, not remove it. The
+              // ackedClientIds check is correct for keptPending (tmp_ rows
+              // that have a numeric server twin) but wrong here.
               return true;
             });
             const keptPending = prev.filter(m => {
