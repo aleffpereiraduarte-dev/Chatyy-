@@ -1052,6 +1052,26 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
           try { console.warn('[auth] 401 streak hit but token <90d old — refusing logout'); } catch {}
         }
       }
+      // [#1165 2026-05-18] In-call gate. Same reasoning as the WS auth
+      // path: during a call the bearer may transiently fail because the
+      // CallSignalWs + JS WS race a brief edge-hub state mismatch, and we
+      // never want to nuke the session mid-call. We reset the counter so
+      // any post-call recovery doesn't immediately re-trip the threshold.
+      if (shouldSignal) {
+        try {
+          if (typeof globalThis !== 'undefined' && globalThis.__chatyyCallActive) {
+            shouldSignal = false;
+            _consecutive401 = 0;
+            try {
+              recordLogoutAttempt('refused_during_call', {
+                source: 'api_401_streak',
+                action,
+              });
+            } catch {}
+            try { console.warn('[auth] 401 streak during active call — refusing logout (#1165)'); } catch {}
+          }
+        } catch {}
+      }
 
       if (shouldSignal) {
         _authFailureSignaled = true;

@@ -173,6 +173,26 @@ export function setCallActive(active, callId = null) {
   if (prev && !_callActive && typeof _resetCallHandlingState === 'function') {
     try { _resetCallHandlingState(); } catch {}
   }
+  // [#1165 2026-05-18] Mirror the call-active state to a globalThis flag
+  // so services/websocket.js auth_error handler can suppress streak
+  // escalation during the call. Stays true while we're ringing or in-call;
+  // /call.js owns the 30s post-call decay timer via its own useEffect.
+  try {
+    if (typeof globalThis !== 'undefined') {
+      if (_callActive) {
+        globalThis.__chatyyCallActive = true;
+        if (globalThis.__chatyyCallActiveClearTimer) {
+          clearTimeout(globalThis.__chatyyCallActiveClearTimer);
+          globalThis.__chatyyCallActiveClearTimer = null;
+        }
+      }
+      // Note: don't clear on (active=false) here — call.js arms a 30s
+      // decay timer that owns the off-transition. This avoids a race where
+      // /call.js's setCallActive(false) on unmount races against the
+      // listener's setCallActive(false) on accept-handled and clobbers
+      // the post-call protection window.
+    }
+  } catch {}
 }
 export function isCallActive(callId = null) {
   if (!_callActive) return false;
