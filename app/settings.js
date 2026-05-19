@@ -534,6 +534,19 @@ function SettingsScreenInner() {
 
   useEffect(() => { refreshStorageStats(); }, [refreshStorageStats]);
 
+  // [2026-05-18] Re-scan storage every time the screen regains focus.
+  // User clears a chat / saves a media file in another screen → coming back
+  // to settings should reflect the new totals without a manual tap. Mobile
+  // only — web has no on-disk store so the stats are always zero.
+  useFocusEffect(
+    useCallback(() => {
+      if (Platform.OS !== 'web') {
+        refreshStorageStats();
+      }
+      return undefined;
+    }, [refreshStorageStats])
+  );
+
   useEffect(() => {
     loadSettings();
     // Load undo delay + smart compose + notif prefs

@@ -6370,6 +6370,35 @@ export async function statusHighlightItems(highlightId) {
   return apiCall('status_highlight_items', { highlight_id: highlightId }, 'POST');
 }
 
+// [2026-05-18 IG-Pro] Update the cover image of a highlight. Pass either a
+// raw cover_url (from a custom upload) OR a status_id whose media_url will
+// be used (Instagram's "choose from current stories" picker).
+export async function statusHighlightUpdateCover(highlightId, { coverUrl = '', statusId = 0 } = {}) {
+  const body = { highlight_id: highlightId };
+  if (statusId) body.status_id = statusId;
+  if (coverUrl) body.cover_url = coverUrl;
+  return apiCall('status_highlight_update_cover', body, 'POST');
+}
+// [2026-05-18 IG-Pro] Rename a highlight (title only; cover/contents unchanged).
+export async function statusHighlightRename(highlightId, title) {
+  return apiCall('status_highlight_rename', { highlight_id: highlightId, title }, 'POST');
+}
+// [2026-05-18 IG-Pro] Persist the user-chosen order. positions is an array of
+// highlight ids in the order they should display. Backend writes an INT
+// `position` column and list endpoint sorts by it.
+export async function statusHighlightReorder(positions) {
+  return apiCall('status_highlight_reorder', { positions }, 'POST');
+}
+// [2026-05-18 IG-Pro] Remove a single status from a highlight without
+// touching the underlying chat_user_status row.
+export async function statusHighlightRemoveStatus(highlightId, statusId) {
+  return apiCall('status_highlight_remove_status', { highlight_id: highlightId, status_id: statusId }, 'POST');
+}
+// [2026-05-18 IG-Pro] Owner-only aggregate viewer count across all clips.
+export async function statusHighlightStats(highlightId) {
+  return apiCall('status_highlight_stats', { highlight_id: highlightId }, 'POST');
+}
+
 // Voice comment on a feed post — multipart upload of an audio blob/uri.
 // Returns { success, data: { id, audio_url, ... } } same shape as feedComment.
 export async function feedVoiceComment(postId, audio, replyToId = null) {
