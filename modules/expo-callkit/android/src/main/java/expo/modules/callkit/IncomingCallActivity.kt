@@ -813,6 +813,21 @@ class IncomingCallActivity : AppCompatActivity() {
   private fun onDecline() {
     stopRinging()
 
+    // [#1179 cleanup, 2026-05-19] Notify the caller via WS that we declined.
+    // Without this, the caller's UI stayed on "Calling..." until the 30s
+    // ring timeout fired and the caller could not tell the call was rejected.
+    // CallSignalWs.fireCallEnd is idempotent on the server (dedup by call_id),
+    // so firing here AND the JS-side emitCallEnded path is safe — server
+    // collapses duplicates.
+    try {
+      CallSignalWs.fireCallEnd(
+        applicationContext,
+        callId ?: "",
+        conversationId ?: "",
+        "declined"
+      )
+    } catch (_: Exception) {}
+
     // Send event to JS via the module
     ExpoCallKitModule.emitCallEnded(callId ?: "")
 

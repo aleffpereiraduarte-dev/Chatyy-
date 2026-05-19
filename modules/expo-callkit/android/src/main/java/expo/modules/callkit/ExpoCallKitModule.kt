@@ -777,6 +777,10 @@ class ExpoCallKitModule : Module() {
         throw IllegalArgumentException("callee_email required")
       }
       val calleeName = (params["callee_name"] as? String) ?: calleeEmail
+      // [#1176 polish, 2026-05-18] Avatar URL forwarded into CallActivity so
+      // the Compose UI can paint the real photo instead of just an initial
+      // letter while LiveKit Room is still negotiating.
+      val calleeAvatar = (params["callee_avatar"] as? String) ?: ""
       val callerName = (params["caller_name"] as? String) ?: ""
       val isVideo = (params["is_video"] as? Boolean) ?: false
       val roomName = (params["room_name"] as? String) ?: ""
@@ -807,6 +811,9 @@ class ExpoCallKitModule : Module() {
           putExtra(CallActivity.EXTRA_HAS_VIDEO, isVideo)
           putExtra(CallActivity.EXTRA_IS_OUTGOING, true)
           putExtra(CallActivity.EXTRA_CONVERSATION_ID, conversationId)
+          if (calleeAvatar.isNotEmpty()) {
+            putExtra(CallActivity.EXTRA_CALLER_AVATAR, calleeAvatar)
+          }
           if (!lkUrl.isNullOrEmpty()) putExtra(CallActivity.EXTRA_LK_URL, lkUrl)
           if (!lkToken.isNullOrEmpty()) putExtra(CallActivity.EXTRA_LK_TOKEN, lkToken)
           // [#1175 2026-05-18] Carry auth in the intent — same rationale
@@ -814,7 +821,7 @@ class ExpoCallKitModule : Module() {
           enrichIntentWithAuth(context, this)
         }
         context.startActivity(intent)
-        Log.d(TAG, "startOutgoingCall: started CallActivity callId=$callId callee=$calleeEmail video=$isVideo hasToken=${!lkToken.isNullOrEmpty()}")
+        Log.d(TAG, "startOutgoingCall: started CallActivity callId=$callId callee=$calleeEmail video=$isVideo hasToken=${!lkToken.isNullOrEmpty()} hasAvatar=${calleeAvatar.isNotEmpty()}")
         return@AsyncFunction true
       } catch (t: Throwable) {
         Log.e(TAG, "startOutgoingCall failed: ${t.message}", t)

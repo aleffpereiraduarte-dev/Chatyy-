@@ -180,6 +180,10 @@ class CallActivity : ComponentActivity() {
     // LkTokenFetcher walks these as fallback B during resolveAuth.
     const val EXTRA_AUTH_TOKEN = "auth_token"
     const val EXTRA_API_BASE = "api_base"
+    // [#1176 polish, 2026-05-18] HTTPS URL of the callee/caller avatar so
+    // the Compose UI can render the real photo while LK is still
+    // connecting. Mirrors IncomingCallActivity's `caller_avatar` extra.
+    const val EXTRA_CALLER_AVATAR = "caller_avatar"
   }
 
   // ────────────── Intent-derived params (immutable for life of activity)
@@ -254,10 +258,12 @@ class CallActivity : ComponentActivity() {
     lkToken = extras.getString(EXTRA_LK_TOKEN)
     isOutgoing = extras.getBoolean(EXTRA_IS_OUTGOING, false)
     conversationId = extras.getString(EXTRA_CONVERSATION_ID) ?: ""
+    val callerAvatarUrl = extras.getString(EXTRA_CALLER_AVATAR) ?: ""
 
     Log.d(TAG, "onCreate: callId=$callId caller=$callerName video=$hasVideo " +
       "outgoing=$isOutgoing convId=$conversationId " +
-      "hasUrl=${!lkUrl.isNullOrEmpty()} hasToken=${!lkToken.isNullOrEmpty()}")
+      "hasUrl=${!lkUrl.isNullOrEmpty()} hasToken=${!lkToken.isNullOrEmpty()} " +
+      "hasAvatar=${callerAvatarUrl.isNotEmpty()}")
 
     // Seed the session state from intent extras so the first frame draws
     // with the right name + status string.
@@ -266,6 +272,20 @@ class CallActivity : ComponentActivity() {
     state.isVideo = hasVideo
     state.status = if (isOutgoing) "Chamando…" else "Conectando…"
     state.isCameraOn = hasVideo
+
+    // [#1176 polish, 2026-05-18] Kick the avatar fetch off the main thread
+    // immediately so the photo crossfades into the avatar circle as soon as
+    // bitmap decode completes (~200-500ms on warm CDN). Same fetcher as the
+    // incoming path (IncomingCallActivity), shares the LruCache so repeated
+    // calls to the same callee are instant.
+    if (callerAvatarUrl.isNotEmpty()) {
+      Thread {
+        val bmp = CallNotificationService.fetchAvatarBitmap(callerAvatarUrl)
+        if (bmp != null) {
+          runOnUiThread { state.callerAvatarBitmap = bmp }
+        }
+      }.start()
+    }
 
     // Seed the noise-suppression + background toggles from persisted prefs.
     val prefs = getSharedPreferences("expo_callkit_prefs", Context.MODE_PRIVATE)
@@ -1015,6 +1035,11 @@ class CallSessionStateAndroid {
   var status by mutableStateOf("Conectando…")
   var callerName by mutableStateOf("")
   var callerEmail by mutableStateOf("")
+  /** [#1176 polish, 2026-05-18] Decoded avatar bitmap shown over the
+   *  initial-letter placeholder. Decoded off the main thread on a worker
+   *  Thread that pumps through CallNotificationService.fetchAvatarBitmap;
+   *  Compose recomposes the AvatarCircle once this becomes non-null. */
+  var callerAvatarBitmap by mutableStateOf<android.graphics.Bitmap?>(null)
   var peerIdentity by mutableStateOf("")
   var isVideo by mutableStateOf(false)
   var isMuted by mutableStateOf(false)

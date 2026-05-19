@@ -4,7 +4,8 @@ import {
   Alert, TextInput, Dimensions, StatusBar, FlatList, Keyboard,
   ActionSheetIOS, Modal, ScrollView, DeviceEventEmitter,
 } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
+import { useIsFocused } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -67,6 +68,18 @@ export default function LiveBroadcastScreen() {
 
   const params = useLocalSearchParams();
   const router = useRouter();
+  // Round 69 #1166 (2026-05-19) — Gate the local NativeRTCView mount on
+  // route focus. Expo Router's `presentation: 'fullScreenModal'` in
+  // _layout.js:1273 keeps the previous screen mounted underneath the live
+  // broadcast. If that screen also has an active NativeRTCView bound to
+  // the same local camera (chat-conversation call preview, /call route,
+  // IncomingCallListener), iOS mounts TWO RTCMTLVideoView instances —
+  // each with its own crop of the same RTCVideoTrack at different
+  // container heights → two-faces-with-dark-gap (the "barra preta" bug).
+  // useIsFocused() returns false while another screen owns focus, so we
+  // skip the RTCView mount entirely until live-broadcast is the active
+  // route — guarantees only one RTCView for the local camera, ever.
+  const isFocused = useIsFocused();
   const { user } = useAuth();
   const { t } = useLanguage();
   const { colors } = useTheme();
@@ -2565,6 +2578,18 @@ export default function LiveBroadcastScreen() {
       //      mounts at zero height, the GPU pre-allocates a half-screen
       //      texture, and the first frame paints into half before the
       //      layout pass corrects to full screen.
+      // [#1166 round 5 — H1 fix] Don't mount the RTCView when route isn't
+      // focused. fullScreenModal keeps the previous screen mounted; if
+      // that screen owns an RTCView on the same camera, we'd have two
+      // mounts → split face. Soft black until focus arrives.
+      if (!isFocused) {
+        return (
+          <View
+            collapsable={false}
+            style={[StyleSheet.absoluteFill, { backgroundColor: '#000', overflow: 'hidden' }]}
+          />
+        );
+      }
       return (
         <View
           collapsable={false}
