@@ -61,7 +61,45 @@ public class ExpoCallKitModule: Module {
     }
   }
 
-  // Track active calls — access only via stateQueue
+  /// [#1184 dismiss fix, 2026-05-19] Shared snapshot of `callId → UUID` so
+  /// non-module static contexts (CallSignalWs.handleIncomingCallEndLocked,
+  /// CallViewController.room(_:didDisconnectWithError:)) can fall back to
+  /// the live module's `activeCalls` when their own UUID stash is empty.
+  /// Previously `inviteUUIDsByCallId` in CallSignalWs only tracked
+  /// WS-surfaced invites — for PushKit pushes (typical incoming path) and
+  /// outgoing answered calls, that map was empty, so the remote-end frame
+  /// failed to fire `provider.reportCall(with:endedAt:reason:.remoteEnded)`
+  /// and the CallKit system pill / lock-screen UI stayed visible after the
+  /// peer hung up.
+  ///
+  /// Updated atomically alongside `activeCalls` so a remote `call_end` that
+  /// races with the answer transaction still finds the UUID. Uses an
+  /// NSLock because Swift `static var` on a generic class can't share the
+  /// module's `stateQueue` (the module instance isn't yet alive at static
+  /// access time).
+  private static var sharedUUIDLock = NSLock()
+  private static var sharedUUIDByCallId: [String: UUID] = [:]
+  static func sharedCallKitUUID(forCallId callId: String) -> UUID? {
+    sharedUUIDLock.lock()
+    defer { sharedUUIDLock.unlock() }
+    return sharedUUIDByCallId[callId]
+  }
+  private static func _shared_setUUID(_ uuid: UUID?, forCallId callId: String) {
+    sharedUUIDLock.lock()
+    defer { sharedUUIDLock.unlock() }
+    if let uuid = uuid {
+      sharedUUIDByCallId[callId] = uuid
+    } else {
+      sharedUUIDByCallId.removeValue(forKey: callId)
+    }
+  }
+
+  // Track active calls — access only via stateQueue.
+  // [#1184 dismiss fix, 2026-05-19] All writes to `activeCalls` must be
+  // mirrored to `sharedUUIDByCallId` via `_shared_setUUID` so the static
+  // accessor stays in sync. The mirror is intentionally redundant — the
+  // module-internal lookup goes through the queue for ordering, the static
+  // mirror is the cross-class fallback.
   private var activeCalls: [String: UUID] = [:]
   // Store VoIP push payloads so we can pass full data in onCallAnswered
   private var callPayloads: [String: [AnyHashable: Any]] = [:]
@@ -535,6 +573,9 @@ public class ExpoCallKitModule: Module {
       // accepts (the answer event comes through the same CallKit channel).
       self.stateQueue.sync {
         self.activeCalls[callId] = uuid
+        // [#1184 dismiss fix, 2026-05-19] Mirror to static map so CallSignalWs
+        // can dismiss CallKit when a `call_end` frame arrives.
+        ExpoCallKitModule._shared_setUUID(uuid, forCallId: callId)
         self.pendingOutgoingCalls[uuid] = OutgoingCallParams(
           callId: callId,
           calleeEmail: calleeEmail,
@@ -580,6 +621,7 @@ public class ExpoCallKitModule: Module {
               self.activeCalls.removeValue(forKey: callId)
               self.pendingOutgoingCalls.removeValue(forKey: uuid)
             }
+            ExpoCallKitModule._shared_setUUID(nil, forCallId: callId)
             continuation.resume(throwing: error)
           } else {
             print("[ExpoCallKit] startOutgoingCall: transaction queued for callId=\(callId)")
@@ -825,6 +867,9 @@ public class ExpoCallKitModule: Module {
       activeCalls[callId] = uuid
       callPayloads[callId] = payload
     }
+    // [#1184 dismiss fix, 2026-05-19] Mirror to static map so CallSignalWs
+    // remote-end path can dismiss CallKit for VoIP-push-surfaced calls.
+    ExpoCallKitModule._shared_setUUID(uuid, forCallId: callId)
     print("[ExpoCallKit] Adopted call \(callId) uuid=\(uuid.uuidString)")
     safeSendEvent("onIncomingCall", [
       "callId": callId,
@@ -922,6 +967,8 @@ public class ExpoCallKitModule: Module {
       activeCalls[callId] = newUUID
       return newUUID
     }
+    // [#1184 dismiss fix, 2026-05-19] Mirror to static map.
+    ExpoCallKitModule._shared_setUUID(uuid, forCallId: callId)
 
     let update = CXCallUpdate()
     update.remoteHandle = CXHandle(type: .generic, value: callerName)
@@ -972,6 +1019,8 @@ public class ExpoCallKitModule: Module {
     stateQueue.sync {
       activeCalls.removeValue(forKey: callId)
     }
+    // [#1184 dismiss fix, 2026-05-19] Mirror remove.
+    ExpoCallKitModule._shared_setUUID(nil, forCallId: callId)
   }
 
   /// Send event to JS, buffering if JS isn't ready yet (cold start)
@@ -1036,6 +1085,9 @@ public class ExpoCallKitModule: Module {
       callPayloads.removeValue(forKey: callId)
       return callId
     }
+    // [#1184 dismiss fix, 2026-05-19] Mirror remove so a stale UUID stash
+    // can't accidentally drive a dismiss on the next call's surface.
+    if let cid = callId { ExpoCallKitModule._shared_setUUID(nil, forCallId: cid) }
     if let callId = callId {
       print("[ExpoCallKit] callEnded: callId=\(callId), jsReady=\(jsListenersReady)")
       safeSendEvent("onCallEnded", ["callId": callId])

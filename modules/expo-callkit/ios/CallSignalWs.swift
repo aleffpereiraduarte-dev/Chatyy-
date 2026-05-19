@@ -352,6 +352,21 @@ final class CallSignalWs: NSObject {
             stashedUUID = inviteUUIDsByCallId[idx].uuid
             inviteUUIDsByCallId.remove(at: idx)
         }
+        // [#1184 dismiss fix, 2026-05-19] Fall back to the module's shared
+        // map. inviteUUIDsByCallId only tracks invites this class itself
+        // surfaced to CallKit (WS-fast-path); for incoming via PushKit
+        // (VoipPushAppDelegateSubscriber) and answered/outgoing calls
+        // (ExpoCallKitModule.startOutgoingCall), the UUID lives in
+        // ExpoCallKitModule.activeCalls instead. Without this fallback the
+        // CallKit system pill/lock-screen UI stayed visible after the peer
+        // hung up because we never called reportCall(...:.remoteEnded) on
+        // its UUID — root cause of the "tela nativa fica aberta" bug.
+        if stashedUUID == nil {
+            stashedUUID = ExpoCallKitModule.sharedCallKitUUID(forCallId: callId)
+            if stashedUUID != nil {
+                NSLog("[CallSignalWs] call_end \(callId) UUID via shared map fallback")
+            }
+        }
 
         // Hop to main: CallKit and NotificationCenter posts must run on main.
         DispatchQueue.main.async {

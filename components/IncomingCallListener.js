@@ -586,21 +586,51 @@ export default function IncomingCallListener() {
         };
         callRef.current = callData;
         voipDiag('ws_call_invite_show_modal', callData.call_id);
-        // Fast-path: pre-fetch LiveKit JWT in background so when the user
-        // accepts, app/call.js can skip the network round-trip (saves
-        // 200-700ms of "Conectando..." on slow links). Stash by call_id in a
-        // module-global the screen reads on mount.
+        // [#1175 follow-up 2026-05-19] Fast-path: pre-fetch LiveKit JWT in
+        // background AND seed the native LkTokenFetcher cache so when the user
+        // accepts (native IncomingCallActivity → CallActivity), the cache hit
+        // skips the HTTP round-trip entirely. Without this seed, the native
+        // path falls into LkTokenFetcher.doFetch — and if resolveAuth can't
+        // find the bearer across SharedPreferences/Intent/AsyncStorage (e.g.
+        // expo_callkit_prefs was never written by an older login, or the
+        // accept fires before AuthContext hydration's persistAuthForNativeCall
+        // landed), the user sees the "Sessao expirada — abra o app" banner
+        // even though their session is perfectly valid.
+        //
+        // Two critical alignments vs the previous code:
+        //   1. Room name must match what native uses on its own fetch path.
+        //      services/voipNative.js (outgoing) and LkTokenFetcher (incoming)
+        //      both pass the raw `call_id` as the room. Previously this
+        //      prefetch used `call_${call_id}` which only fed the dead
+        //      globalThis path consumed by /call.js — that left the native
+        //      cache empty and produced two LK rooms (caller vs callee).
+        //   2. Persist into the NATIVE cache via ExpoCallKit.persistPendingLkToken
+        //      so LkTokenFetcher.getCached(callId) hits on accept. The legacy
+        //      globalThis stash is kept as a no-op safety net for any web
+        //      fallback paths.
         try {
           const api = require('../services/api');
           const convId = Number(callData.conversation_id) || 0;
-          const room = `call_${callData.call_id}`;
+          const room = callData.call_id; // raw call_id — matches native room name
           api.chatLivekitToken?.(convId, room).then(res => {
             const d = res?.data || res;
             if (d?.token) {
+              const tok = d.token;
+              const url = d.url || d.livekitUrl || 'wss://livekit.chatyy.com.br';
+              // Seed native cache (Android LkTokenFetcher / iOS NativeCallTokenFetcher)
+              if (Platform.OS !== 'web') {
+                try {
+                  const ck = require('../modules/expo-callkit');
+                  if (typeof ck?.persistPendingLkToken === 'function') {
+                    ck.persistPendingLkToken(callData.call_id, tok, url).catch(() => {});
+                  }
+                } catch {}
+              }
+              // Legacy JS-side stash (kept for web fallback paths).
               try { globalThis.__chatyy_prefetched_lk_token = {
                 call_id: callData.call_id,
-                token: d.token,
-                url: d.url || d.livekitUrl || 'wss://livekit.chatyy.com.br',
+                token: tok,
+                url,
                 room,
                 iceServers: Array.isArray(d.iceServers) ? d.iceServers : [],
                 ts: Date.now(),

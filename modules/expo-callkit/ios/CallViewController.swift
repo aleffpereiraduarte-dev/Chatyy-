@@ -30,6 +30,11 @@ import LiveKitClient
 import AVKit
 import AVFoundation
 import Combine
+// [#1184 dismiss fix, 2026-05-19] CXEndCallAction / CXCallController for the
+// handleHangup → CallKit dismissal path. Previously handleHangup only ended
+// the LK Room + dismissed the UIKit modal, leaving CallKit's system call UI
+// (status-bar pill, lock screen) visible until the user dragged it off.
+import CallKit
 
 // MARK: - Session state
 
@@ -357,6 +362,29 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         if let r = self.room {
             self.room = nil
             Task { await r.disconnect() }
+        }
+        // [#1184 dismiss fix, 2026-05-19] Fire CXEndCallAction so CallKit
+        // tears down its own state (system call bar, lock-screen UI, the
+        // green "ongoing call" pill at the top of the status bar). Without
+        // this, tapping the SwiftUI red button only dismissed our UIKit
+        // modal — CallKit still believed the call was active and left its
+        // surfaces visible after hangup, which the user reported as
+        // "depois que a ligação desliga, a tela nativa fica aberta".
+        //
+        // CXEndCallAction is async and may invalidate the call before our
+        // dismiss completes. The ProviderDelegate.CXEndCallAction handler
+        // also calls dismissActiveCallSurfaces — idempotent vs. our explicit
+        // dismiss below.
+        if let uuid = ExpoCallKitModule.sharedCallKitUUID(forCallId: callId) {
+            let controller = CXCallController(queue: .main)
+            let action = CXEndCallAction(call: uuid)
+            controller.request(CXTransaction(action: action)) { error in
+                if let error = error {
+                    print("[CallVC] handleHangup CXEndCallAction error: \(error.localizedDescription)")
+                }
+            }
+        } else {
+            print("[CallVC] handleHangup: no shared UUID for \(callId) — CallKit may not dismiss; relying on JS path")
         }
         dismiss(animated: true, completion: nil)
     }
@@ -1006,6 +1034,27 @@ extension CallViewController: RoomDelegate {
                 object: nil,
                 userInfo: ["callId": self.callId]
             )
+            // [#1184 dismiss fix, 2026-05-19] Also tell CallKit the call has
+            // ended. LK Room disconnect happens when the peer leaves the
+            // room, the SFU tears it down, or the local network drops — in
+            // none of those paths does the standard CXEndCallAction fire on
+            // its own, so without this the CallKit pill/lock-screen UI stays
+            // visible after the call ends.
+            //
+            // We use `reportCall(with:endedAt:reason:.remoteEnded)` (not
+            // CXEndCallAction) because the call ended remotely; this also
+            // marks the call as "Missed/Ended" rather than "Cancelled" in
+            // the iOS Recents tab, matching what WhatsApp / FaceTime show.
+            if let uuid = ExpoCallKitModule.sharedCallKitUUID(forCallId: self.callId) {
+                let provider = VoipPushAppDelegateSubscriber.earlyProvider
+                if let p = provider {
+                    let reason: CXCallEndedReason = (error != nil) ? .failed : .remoteEnded
+                    p.reportCall(with: uuid, endedAt: Date(), reason: reason)
+                    print("[CallVC] didDisconnectWithError: reportCall(.remoteEnded) uuid=\(uuid)")
+                } else {
+                    print("[CallVC] didDisconnectWithError: no earlyProvider — CallKit may stay visible")
+                }
+            }
             self.dismiss(animated: true, completion: nil)
         }
     }
