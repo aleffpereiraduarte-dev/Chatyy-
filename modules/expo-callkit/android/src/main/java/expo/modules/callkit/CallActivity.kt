@@ -390,6 +390,12 @@ class CallActivity : ComponentActivity() {
                   // VideoTrackPublishDefaults configured at bringUpRoom.
                   r.localParticipant.setCameraEnabled(true)
                   Log.d(TAG, "camera first-publish via setCameraEnabled")
+                  // [2026-05-19] Bug #989 fix — see attemptConnect for full
+                  // root cause. setCameraEnabled returns AFTER the track is
+                  // published, but RoomEvent.TrackPublished does not fire for
+                  // local tracks on every LK Android 2.x rev. Poll the
+                  // publication directly so the renderer binds reliably.
+                  bindLocalCameraIfReady(r)
                 }
               } catch (t: Throwable) {
                 Log.w(TAG, "toggleCam (mute path) failed: ${t.message} — falling back")
@@ -784,6 +790,20 @@ class CallActivity : ComponentActivity() {
       r.localParticipant.setMicrophoneEnabled(!state.isMuted)
       if (hasVideo) {
         r.localParticipant.setCameraEnabled(state.isCameraOn)
+        // [2026-05-19] Bug #989 fix: LK Android 2.x doesn't always emit
+        // RoomEvent.TrackPublished for the local participant — depending on
+        // the SDK rev, local publish surfaces as RoomEvent.LocalTrackPublished
+        // (a different event type) or only via the participant's track
+        // publication map. Without an explicit bind here, `localRenderer` stays
+        // unattached → state.hasLocalVideo never flips → LocalPreviewTile is
+        // gated out → user sees the peer's video but their own preview is
+        // blank. The peer still sees the local user (track publishes fine over
+        // the SFU) so the bug masquerades as a render-only issue.
+        // Mirrors the iOS pattern (CallViewController.swift line ~447 polls
+        // localParticipant after setCameraEnabled returns).
+        if (state.isCameraOn) {
+          bindLocalCameraIfReady(r)
+        }
       }
       reconnectAttempts = 0
       Log.d(TAG, "LK connect + publish OK (attempt=$attempt)")
@@ -850,37 +870,16 @@ class CallActivity : ComponentActivity() {
       // into a single TrackPublished event. Disambiguate by checking the
       // participant — local-only frames need different routing (we install our
       // own renderer + MediaPipe BackgroundProcessor) than remote frames.
+      // [2026-05-19] Bug #989: this branch is unreliable on some LK 2.x revs
+      // (event never fires for local participant). The authoritative bind now
+      // happens inside bindLocalCameraIfReady() called from attemptConnect +
+      // onToggleCam + flipCamera. Keep this branch as a "first one wins" path
+      // so on revs where the event DOES fire we still wire MediaPipe early.
       is RoomEvent.TrackPublished -> if (event.participant is LocalParticipant) {
         val track = event.publication.track
         if (track is LocalVideoTrack) {
-          Log.d(TAG, "LocalTrackPublished (video)")
-          state.hasLocalVideo = true
-          localRenderer?.let { lv -> track.addRenderer(lv) }
-          // [2026-05-17 MediaPipe] Hook the BackgroundProcessor into LK's
-          // VideoProcessor slot if the SDK exposes it on this rev. Reflective
-          // because LK's Swift / Android SDKs vary in how this is surfaced
-          // (`setVideoProcessor`, `addVideoProcessor`, or the per-Room
-          // VideoCaptureOptions.videoProcessor field). Failure is silent —
-          // the toggle pill stays in the UI even when the wiring slot
-          // isn't available on this LK version, so the user still sees
-          // their preference; we just no-op the effect.
-          try {
-            val proc = expo.modules.callkit.video.BackgroundProcessor.get(applicationContext)
-            if (proc.available && proc.mode != expo.modules.callkit.video.BackgroundProcessor.Mode.OFF) {
-              val cls = track.javaClass
-              val method = cls.methods.firstOrNull { it.name == "setVideoProcessor" || it.name == "addVideoProcessor" }
-              if (method != null) {
-                // The processor must conform to LK's VideoProcessor interface;
-                // we lazily build an adapter once and reuse it.
-                method.invoke(track, makeLkVideoProcessor(proc))
-                Log.d(TAG, "BackgroundProcessor attached via ${method.name}")
-              } else {
-                Log.d(TAG, "no setVideoProcessor slot on LocalVideoTrack — fallback to pass-through")
-              }
-            }
-          } catch (t: Throwable) {
-            Log.w(TAG, "BackgroundProcessor attach failed: ${t.message}")
-          }
+          Log.d(TAG, "LocalTrackPublished (video) via RoomEvent.TrackPublished")
+          bindLocalVideoTrack(track)
         }
       }
       is RoomEvent.ConnectionQualityChanged -> {
@@ -1010,6 +1009,70 @@ class CallActivity : ComponentActivity() {
     overridePendingTransition(R.anim.call_fade_in, R.anim.call_slide_down_exit)
   }
 
+  // ────────────── Local camera bind (Bug #989 fix, 2026-05-19)
+  //
+  // LiveKit Android 2.x doesn't reliably emit RoomEvent.TrackPublished for the
+  // LocalParticipant on every SDK rev. Without an explicit bind path, the
+  // localRenderer never gets `track.addRenderer(it)` invoked → the local
+  // preview tile stays empty even though the camera is publishing fine to the
+  // SFU (peer sees the frame). Peer-side render works because TrackSubscribed
+  // is a separate event path that DOES fire reliably for remote tracks.
+  //
+  // bindLocalCameraIfReady() is the authoritative poll. Call it after any
+  // operation that may have caused a new camera track to be published:
+  //   - attemptConnect (initial publish on connect)
+  //   - onToggleCam (first-time enable mid-call when previous setCameraEnabled
+  //     was false at connect time, e.g. audio→video upgrade)
+  //   - flipCamera fallback path (off+on cycle creates a new track)
+  //
+  // bindLocalVideoTrack() is idempotent — addRenderer on a track that already
+  // has the renderer attached is a no-op on LK's SurfaceViewRenderer impl, and
+  // setVideoProcessor replaces the previous processor. Calling it twice (event
+  // path + poll path) is harmless and gives us belt-and-suspenders coverage.
+
+  private fun bindLocalCameraIfReady(r: Room) {
+    try {
+      val pub = r.localParticipant.getTrackPublication(Track.Source.CAMERA)
+      val track = pub?.track as? LocalVideoTrack
+      if (track != null) {
+        Log.d(TAG, "bindLocalCameraIfReady: found camera publication, binding")
+        bindLocalVideoTrack(track)
+      } else {
+        Log.d(TAG, "bindLocalCameraIfReady: no camera publication yet — relying on TrackPublished event")
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "bindLocalCameraIfReady failed: ${t.message}")
+    }
+  }
+
+  private fun bindLocalVideoTrack(track: LocalVideoTrack) {
+    state.hasLocalVideo = true
+    localRenderer?.let { lv -> track.addRenderer(lv) }
+    // [2026-05-17 MediaPipe] Hook the BackgroundProcessor into LK's
+    // VideoProcessor slot if the SDK exposes it on this rev. Reflective
+    // because LK's Swift / Android SDKs vary in how this is surfaced
+    // (`setVideoProcessor`, `addVideoProcessor`, or the per-Room
+    // VideoCaptureOptions.videoProcessor field). Failure is silent —
+    // the toggle pill stays in the UI even when the wiring slot
+    // isn't available on this LK version, so the user still sees
+    // their preference; we just no-op the effect.
+    try {
+      val proc = expo.modules.callkit.video.BackgroundProcessor.get(applicationContext)
+      if (proc.available && proc.mode != expo.modules.callkit.video.BackgroundProcessor.Mode.OFF) {
+        val cls = track.javaClass
+        val method = cls.methods.firstOrNull { it.name == "setVideoProcessor" || it.name == "addVideoProcessor" }
+        if (method != null) {
+          method.invoke(track, makeLkVideoProcessor(proc))
+          Log.d(TAG, "BackgroundProcessor attached via ${method.name}")
+        } else {
+          Log.d(TAG, "no setVideoProcessor slot on LocalVideoTrack — fallback to pass-through")
+        }
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "BackgroundProcessor attach failed: ${t.message}")
+    }
+  }
+
   // ────────────── Camera flip
 
   private fun flipCamera() {
@@ -1035,6 +1098,10 @@ class CallActivity : ComponentActivity() {
           delay(150)
           r.localParticipant.setCameraEnabled(true)
           state.isFrontCamera = !state.isFrontCamera
+          // [2026-05-19] Bug #989: off/on cycle creates a NEW LocalVideoTrack;
+          // the previous renderer binding is on the (now released) old track.
+          // Re-bind to the freshly published one.
+          bindLocalCameraIfReady(r)
         } catch (_: Throwable) {}
       }
     }

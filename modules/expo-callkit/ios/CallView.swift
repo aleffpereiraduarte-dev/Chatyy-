@@ -73,6 +73,10 @@ struct CallView: View {
     let onToggleNoiseSuppression: (Bool) -> Void
     /// [MediaPipe, 2026-05-17] Cycle background-effect mode.
     let onCycleBackground: () -> Void
+    /// [#1189 features, 2026-05-19] Toggle CallKit-backed call hold.
+    /// The VC fires CXSetHeldCallAction so the system call bar + LK Room
+    /// stay in sync; the boolean is the desired held state (true = hold).
+    let onToggleHold: ((Bool) -> Void)?
 
     // MARK: - Local UI state
     //
@@ -778,12 +782,19 @@ struct CallView: View {
                         onSendReaction(session.handRaised ? "🖐️" : "")
                         withAnimation(.easeInOut(duration: 0.2)) { showMoreSheet = false }
                     }
-                    moreRow(icon: "record.circle", title: session.recording ? "Parar gravação" : "Gravar chamada") {
-                        session.recording.toggle()
-                        withAnimation(.easeInOut(duration: 0.2)) { showMoreSheet = false }
-                    }
+                    // [#1189 features, 2026-05-19] Hold now wires through to
+                    // CallKit (CXSetHeldCallAction) via the VC; the LK Room
+                    // mutes both directions and the system call bar reflects
+                    // the held state. Recording was previously a cosmetic
+                    // toggle (state only, never actually recorded) — removed
+                    // until the LK egress / AVAudioRecorder pipeline lands so
+                    // we don't mislead users into thinking the call is saved.
                     moreRow(icon: session.onHold ? "play.fill" : "pause.fill", title: session.onHold ? "Retomar" : "Colocar em espera") {
-                        session.onHold.toggle()
+                        let next = !session.onHold
+                        onToggleHold?(next)
+                        // Optimistic local flip; the VC's CXSetHeldCallAction
+                        // completion will overwrite if the system rejects.
+                        session.onHold = next
                         withAnimation(.easeInOut(duration: 0.2)) { showMoreSheet = false }
                     }
                 }

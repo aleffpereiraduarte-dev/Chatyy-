@@ -214,7 +214,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             onMinimize: { [weak self] in self?.handleMinimize() },
             onSendReaction: { [weak self] emoji in self?.sendReaction(emoji) },
             onToggleNoiseSuppression: { [weak self] desired in self?.applyNoiseSuppression(desired) },
-            onCycleBackground: { [weak self] in self?.cycleBackground() }
+            onCycleBackground: { [weak self] in self?.cycleBackground() },
+            onToggleHold: { [weak self] desired in self?.applyHold(desired) }
         )
 
         let host = UIHostingController(rootView: rootView)
@@ -599,6 +600,34 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 print("[CallVC] set(.screenShareVideo, enabled: \(desired)) failed: \(error)")
                 self.screenSharing = !desired
             }
+        }
+    }
+
+    /// [#1189 features, 2026-05-19] Call hold via CallKit. Tapping "Colocar em
+    /// espera" in the More sheet was previously a cosmetic toggle that never
+    /// touched the system call bar or LK Room — peer kept hearing audio.
+    /// Now: CXSetHeldCallAction routes through ProviderDelegate, which mutes
+    /// mic + pauses the LK Room, and the system call bar shows the "On hold"
+    /// glyph so the user can resume from the lock screen or the green pill.
+    private func applyHold(_ held: Bool) {
+        guard let uuid = ExpoCallKitModule.sharedCallKitUUID(forCallId: callId) else {
+            print("[CallVC] applyHold(\(held)): no shared UUID — falling back to mic toggle")
+            // Fallback: if CallKit isn't tracking this call (rare edge case
+            // via WS-fast-path before CallKit reported), at least mute the
+            // mic so the peer doesn't hear audio while "on hold".
+            applyMicEnabled(!held)
+            return
+        }
+        let controller = CXCallController(queue: .main)
+        let action = CXSetHeldCallAction(call: uuid, onHold: held)
+        controller.request(CXTransaction(action: action)) { [weak self] error in
+            if let error = error {
+                print("[CallVC] applyHold CXSetHeldCallAction error: \(error.localizedDescription)")
+                // Revert optimistic UI flip on failure.
+                DispatchQueue.main.async { self?.session.onHold = !held }
+                return
+            }
+            DispatchQueue.main.async { self?.session.onHold = held }
         }
     }
 

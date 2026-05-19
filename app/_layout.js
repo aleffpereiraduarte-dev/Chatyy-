@@ -1281,6 +1281,7 @@ export default function RootLayout() {
                   <Stack.Screen name="wallet" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="diamond-shop" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="wallet-cashout" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="creator-earnings" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="backup" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="chat-backup" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="u/[username]" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />

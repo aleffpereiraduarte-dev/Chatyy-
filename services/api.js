@@ -7173,6 +7173,13 @@ export async function walletCashoutRequest({
 export async function walletCashoutList() {
   return apiCall('wallet_cashout_list', {}, 'POST');
 }
+// Creator-focused earnings dashboard. Single round-trip pull for
+// /creator-earnings: pending_payout_cents, lifetime/month totals,
+// gift counts, top fans (last 30d), and a paginated timeline of
+// received gifts (newest first). `limit` controls timeline length.
+export async function creatorEarningsSummary({ limit = 50 } = {}) {
+  return apiCall('creator_earnings_summary', { limit }, 'POST');
+}
 // Paid gift send — debits diamond balance, credits 70% to creator as
 // pending_payout_cents (30% platform retain). Returns the new balance.
 export async function liveGiftSend(sessionId, giftSku) {

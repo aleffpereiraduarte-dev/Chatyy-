@@ -143,9 +143,9 @@ export default function WalletScreen() {
         </Text>
         {pendingPayout > 0 ? (
           <TouchableOpacity
-            onPress={() => router.push('/wallet-cashout')}
+            onPress={() => router.push('/creator-earnings')}
             accessibilityRole="button"
-            accessibilityLabel={t('wallet.cashoutOpen') || 'Sacar'}
+            accessibilityLabel={t('creatorEarnings.title') || 'Meus Ganhos'}
             style={styles.payoutPillRow}
           >
             <Text style={[styles.payoutPill, { color: '#10B981' }]}>
@@ -153,7 +153,7 @@ export default function WalletScreen() {
             </Text>
             <View style={styles.payoutCta}>
               <Text style={styles.payoutCtaText}>
-                {t('wallet.cashoutOpen') || 'Sacar'}
+                {t('creatorEarnings.cta') || 'Ver ganhos'}
               </Text>
             </View>
           </TouchableOpacity>
