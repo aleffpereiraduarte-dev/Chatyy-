@@ -92,12 +92,17 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.lifecycleScope
 import expo.modules.screenshare.LiveKitRoomHolder
 import io.livekit.android.LiveKit
+import io.livekit.android.RoomOptions
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.room.participant.LocalParticipant
+import io.livekit.android.room.participant.VideoTrackPublishDefaults
+import io.livekit.android.room.track.LocalVideoTrack
+import io.livekit.android.room.track.LocalVideoTrackOptions
+import io.livekit.android.room.track.VideoCaptureParameter
+import io.livekit.android.room.track.VideoPreset169
 import io.livekit.android.renderer.SurfaceViewRenderer
 import io.livekit.android.room.Room
-import io.livekit.android.room.track.LocalVideoTrack
 import io.livekit.android.room.track.Track
 import io.livekit.android.room.track.VideoTrack
 import kotlinx.coroutines.DelicateCoroutinesApi
@@ -277,6 +282,18 @@ class CallActivity : ComponentActivity() {
       proc.imageAsset = prefs.getString("bg_image", null)?.takeIf { it.isNotEmpty() }
     } catch (_: Throwable) {}
 
+    // [Wave B audio, 2026-05-18] Centralize AudioManager routing. Picks
+    // earpiece for audio / speaker for video; routes to BT or wired headset
+    // if connected; installs an AudioDeviceCallback that re-routes on
+    // mid-call BT connect/disconnect (API 23+).
+    try {
+      val router = expo.modules.callkit.audio.AudioRouter.get(applicationContext)
+      router.configureForCall(hasVideo)
+      state.isSpeakerOn = router.speakerOn
+    } catch (t: Throwable) {
+      Log.w(TAG, "AudioRouter.configureForCall failed: ${t.message}")
+    }
+
     // Fire call_invite via native WS path for outgoing — server dedupes
     // against the JS-side fire, so racing is safe.
     if (isOutgoing) {
@@ -311,8 +328,36 @@ class CallActivity : ComponentActivity() {
           onToggleCam = { desired ->
             state.isCameraOn = desired
             lifecycleScope.launch {
-              try { room?.localParticipant?.setCameraEnabled(desired) }
-              catch (t: Throwable) { Log.w(TAG, "setCameraEnabled: ${t.message}") }
+              // [Wave C, 2026-05-18] Toggle the LocalVideoTrack mute state
+              // instead of unpublishing — keeps the SFU path warm, preserves
+              // simulcast tiers, and lets the peer see a black frame
+              // (RTP layer publishes mute=true so the decoder freezes the
+              // last frame and the receiver UI swaps to avatar). Old path
+              // killed the publication; reconnecting cost 200-800ms freeze.
+              try {
+                val r = room ?: return@launch
+                val track = (r.localParticipant.getTrackPublication(Track.Source.CAMERA)?.track as? LocalVideoTrack)
+                if (track != null) {
+                  if (desired) {
+                    track.startCapture()
+                    track.enabled = true
+                  } else {
+                    track.enabled = false
+                    track.stopCapture()
+                  }
+                  Log.d(TAG, "camera ${if (desired) "unmute" else "mute"} (no republish)")
+                } else if (desired) {
+                  // First-time enable — perform the full publish path with
+                  // simulcast. setCameraEnabled honors the room-level
+                  // VideoTrackPublishDefaults configured at bringUpRoom.
+                  r.localParticipant.setCameraEnabled(true)
+                  Log.d(TAG, "camera first-publish via setCameraEnabled")
+                }
+              } catch (t: Throwable) {
+                Log.w(TAG, "toggleCam (mute path) failed: ${t.message} — falling back")
+                try { room?.localParticipant?.setCameraEnabled(desired) }
+                catch (t2: Throwable) { Log.w(TAG, "setCameraEnabled fallback: ${t2.message}") }
+              }
             }
           },
           onToggleSpeaker = { desired ->
@@ -431,6 +476,14 @@ class CallActivity : ComponentActivity() {
   override fun onDestroy() {
     try { unregisterReceiver(closeReceiver) } catch (_: Exception) {}
     stopRingback()
+    // [Wave B audio, 2026-05-18] Drop the BT route listener + reset
+    // speakerphone / MODE_NORMAL before LK disconnect so the next foreground
+    // app (or expo-audio session) starts with a clean AudioManager state.
+    try {
+      expo.modules.callkit.audio.AudioRouter.get(applicationContext).teardown()
+    } catch (t: Throwable) {
+      Log.w(TAG, "AudioRouter.teardown failed: ${t.message}")
+    }
     eventsJob?.cancel()
     connectJob?.cancel()
     val r = room
@@ -518,7 +571,57 @@ class CallActivity : ComponentActivity() {
   // ────────────── LiveKit room lifecycle
 
   private fun bringUpRoom(url: String, token: String) {
-    val r = LiveKit.create(applicationContext)
+    // [Wave C, 2026-05-18] RoomOptions wired for adaptive bitrate.
+    //   - adaptiveStream=true: SFU picks best simulcast tier per subscriber
+    //   - dynacast=true: pause publishing layers nobody subscribes to (uplink
+    //     savings in groups, no-op in 1:1)
+    //   - videoTrackPublishDefaults.simulcast=true: publish three encodings
+    //     (h720/h360/h180) so the SFU can downshift fast on RTT spikes
+    //   - videoTrackCaptureDefaults.captureParams=720p@30 so capture pipeline
+    //     produces enough data to fill the top tier; lower tiers come from
+    //     the WebRTC encoder's automatic downscale.
+    val roomOptions = try {
+      RoomOptions(
+        adaptiveStream = true,
+        dynacast = true,
+        videoTrackPublishDefaults = VideoTrackPublishDefaults(
+          simulcast = true,
+          videoEncoding = VideoPreset169.H720.encoding
+        ),
+        videoTrackCaptureDefaults = LocalVideoTrackOptions(
+          captureParams = VideoCaptureParameter(width = 1280, height = 720, maxFps = 30)
+        )
+      )
+    } catch (t: Throwable) {
+      // Some LK Android revs reorder constructor params or split the
+      // defaults into a separate type. Fall back to default options if so —
+      // the call still works, just without simulcast tiers.
+      Log.w(TAG, "RoomOptions ctor failed: ${t.message} — falling back to defaults")
+      RoomOptions()
+    }
+    // [Wave B audio, 2026-05-18] Pin LocalAudioTrackOptions on the RoomOptions
+    // reflectively. The LK Android 2.x SDK already defaults AEC/AGC/NS on,
+    // but a future SDK upgrade could silently flip a default — explicit pin
+    // protects against that. Reflective because the audioTrackCaptureDefaults
+    // field name has bounced between SDK revs.
+    try {
+      val cls = Class.forName("io.livekit.android.room.track.LocalAudioTrackOptions")
+      val audioOpts = cls.getDeclaredConstructor().newInstance()
+      val field = roomOptions.javaClass.declaredFields.firstOrNull {
+        it.name.contains("audio", ignoreCase = true) &&
+        it.name.contains("captureDefault", ignoreCase = true)
+      }
+      if (field != null) {
+        field.isAccessible = true
+        field.set(roomOptions, audioOpts)
+        Log.d(TAG, "RoomOptions.${field.name} injected (aec+agc+ns defaults pinned)")
+      } else {
+        Log.d(TAG, "no audio capture defaults field on RoomOptions — SDK defaults stay")
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "audio capture defaults reflective set failed: ${t.message}")
+    }
+    val r = LiveKit.create(applicationContext, options = roomOptions)
     room = r
     LiveKitRoomHolder.set(r)
 
@@ -763,25 +866,19 @@ class CallActivity : ComponentActivity() {
   }
 
   // ────────────── Audio routing
+  //
+  // [Wave B audio, 2026-05-18] Delegated to expo.modules.callkit.audio.AudioRouter
+  // so audio/video defaults, BT hot-plug detection, and the speaker UI button
+  // all share one code path. configureForCall() at onCreate-time installs an
+  // AudioDeviceCallback (API 23+) that re-routes on BT connect/disconnect
+  // without UI involvement. finishCall() tears it down.
 
   private fun applyAudioRoute(speakerOn: Boolean) {
-    try {
-      val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-      am.mode = AudioManager.MODE_IN_COMMUNICATION
-      am.isSpeakerphoneOn = speakerOn
-      if (state.audioOutputPreferBluetooth && !speakerOn) {
-        @Suppress("DEPRECATION")
-        am.startBluetoothSco()
-        @Suppress("DEPRECATION")
-        am.isBluetoothScoOn = true
-      } else {
-        @Suppress("DEPRECATION")
-        am.isBluetoothScoOn = false
-        @Suppress("DEPRECATION")
-        am.stopBluetoothSco()
-      }
-    } catch (t: Throwable) {
-      Log.w(TAG, "applyAudioRoute failed: ${t.message}")
+    val router = expo.modules.callkit.audio.AudioRouter.get(applicationContext)
+    if (state.audioOutputPreferBluetooth && !speakerOn) {
+      router.preferBluetooth()
+    } else {
+      router.setSpeaker(speakerOn)
     }
   }
 

@@ -1155,6 +1155,28 @@ class MailWebSocket {
     // happened while the app was already in the foreground (carrier flap).
     try { this._emit('foreground', { ts: Date.now(), source: 'reconnect' }); } catch {}
 
+    // [Wave D, 2026-05-18] Mid-call WS reconnect — WhatsApp parity. The
+    // LiveKit Room peer connection uses UDP independently of the WS, so
+    // audio keeps flowing while the WS is dead. When the WS comes back
+    // we emit `ws_resync` with a `inCall` flag so:
+    //   - The call screen can short-circuit any "connection lost"
+    //     banner it painted on the WS drop.
+    //   - IncomingCallListener can validate its callRef.current is
+    //     still rung (cancel-during-disconnect race).
+    // We rely on globalThis.__chatyy_inCall (set by /call screen) instead
+    // of importing the call store here to keep this module free of
+    // circular deps.
+    try {
+      const inCall = !!(typeof globalThis !== 'undefined' && globalThis.__chatyy_inCall);
+      if (inCall || this._reconnectCount > 0) {
+        this._emit('ws_resync', {
+          ts: Date.now(),
+          inCall,
+          reconnect_count: this._reconnectCount,
+        });
+      }
+    } catch {}
+
     // Drain the persistent outbox (chat_sends queued while offline) the
     // moment the WS authenticates — WhatsApp-style. Previously this only
     // replayed when the OS fired an `online` event, which never happens

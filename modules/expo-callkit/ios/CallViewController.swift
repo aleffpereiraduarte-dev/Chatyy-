@@ -174,6 +174,16 @@ final class CallViewController: UIViewController {
             )
         }
 
+        // [Wave B audio, 2026-05-18] Centralize AVAudioSession routing.
+        //   - Audio call -> earpiece default
+        //   - Video call -> speaker default
+        //   - BT/wired headset present at start -> route to it (skips default)
+        //   - Mid-call BT connect/disconnect -> auto re-route via route listener
+        // CallKit owns setActive(); AudioRouter only owns category + port
+        // override + the routeChange listener.
+        AudioRouter.shared.configureForCall(hasVideo: hasVideo)
+        self.session.speakerOn = AudioRouter.shared.speakerOn
+
         // Build the SwiftUI tree with the full closure set Stage #995 demands.
         let rootView = CallView(
             callId: callId,
@@ -227,8 +237,15 @@ final class CallViewController: UIViewController {
             // dimensions preset (h720_169) gives us 1280x720 high → 640x360
             // mid → 320x180 low under simulcast; SFU picks per subscriber.
             // RoomOptions API is stable across LK Swift 2.0–2.x.
+            // [Wave B audio, 2026-05-18] Default audio capture options carry
+            // WebRTC's native AEC + AGC + noise suppression toggles. LiveKit
+            // forwards these to the underlying RTCAudioTrack constraints, so
+            // the published mic track applies them on every Room.connect.
+            // RNNoise (above) layers on top via the customAudioProcessing
+            // delegate when the SPM module is present.
             let roomOptions = RoomOptions(
                 defaultCameraCaptureOptions: Self.defaultCameraCaptureOptions(),
+                defaultAudioCaptureOptions: Self.defaultAudioCaptureOptions(),
                 defaultVideoPublishOptions: Self.defaultVideoPublishOptions(),
                 adaptiveStream: true,
                 dynacast: true
@@ -239,8 +256,15 @@ final class CallViewController: UIViewController {
                 guard let self = self else { return }
                 do {
                     try await r.connect(url: url, token: token)
-                    try await r.localParticipant.setMicrophone(enabled: true)
-                    print("[CallVC] Mic published — callId=\(self.callId)")
+                    // [Wave B audio, 2026-05-18] Pin AudioCaptureOptions on the
+                    // first publish too — RoomOptions defaults usually carry
+                    // it, but pinning per-call defense-in-depth: WhatsApp-grade
+                    // means AEC + AGC + noise suppression on *every* connect.
+                    try await r.localParticipant.setMicrophone(
+                        enabled: true,
+                        captureOptions: Self.defaultAudioCaptureOptions()
+                    )
+                    print("[CallVC] Mic published (aec+agc+ns) — callId=\(self.callId)")
                     if self.hasVideo {
                         // [Wave C, 2026-05-18] Pass explicit captureOptions +
                         // publishOptions so the *first* publish carries our
@@ -293,6 +317,10 @@ final class CallViewController: UIViewController {
 
     private func handleHangup() {
         stopRingbackTone(reason: "handleHangup")
+        // [Wave B audio, 2026-05-18] Drop the route-change listener + clear
+        // the speakerphone override before LK disconnect so the next call
+        // (or expo-audio session) starts with a clean AVAudioSession state.
+        AudioRouter.shared.teardown()
         // Stop PiP if still active so the system pill is clean on dismissal.
         if #available(iOS 15.0, *), let pip = pipController, pip.isPictureInPictureActive {
             pip.stopPictureInPicture()
@@ -318,7 +346,13 @@ final class CallViewController: UIViewController {
         guard let r = self.room else { return }
         Task { [weak self] in
             do {
-                try await r.localParticipant.setMicrophone(enabled: enabled)
+                // [Wave B audio, 2026-05-18] Pass AudioCaptureOptions on every
+                // mic toggle so re-publish (some LK revs re-create the track
+                // on unmute) keeps AEC + AGC + noise suppression on.
+                try await r.localParticipant.setMicrophone(
+                    enabled: enabled,
+                    captureOptions: Self.defaultAudioCaptureOptions()
+                )
             } catch {
                 print("[CallVC] setMicrophone(\(enabled)) failed: \(error)")
                 await MainActor.run { self?.session.micEnabled = !enabled }
@@ -373,15 +407,17 @@ final class CallViewController: UIViewController {
         }
     }
 
-    /// Speaker route override. AVAudioSession owns this; we just toggle
-    /// between `.speaker` and `.none`. CallKit configured the category at
-    /// answer time so we don't touch it here.
+    /// [Wave B audio, 2026-05-18] Speaker toggle now delegates to AudioRouter
+    /// so route-change listener stays consistent with UI state. If a BT/wired
+    /// headset is connected, the router will keep it as the route — pressing
+    /// "speaker" still flips the loudspeaker on; pressing it again returns to
+    /// the headset rather than the earpiece (matches AudioRouter logic).
     private func applySpeaker(_ enabled: Bool) {
-        let session = AVAudioSession.sharedInstance()
-        do {
-            try session.overrideOutputAudioPort(enabled ? .speaker : .none)
-        } catch {
-            print("[CallVC] setSpeaker(\(enabled)) failed: \(error)")
+        let actual = AudioRouter.shared.setSpeaker(enabled)
+        // Reflect the actual state into the SwiftUI session so the UI shows
+        // the right toggle position even if the router clamped it.
+        DispatchQueue.main.async { [weak self] in
+            self?.session.speakerOn = actual
         }
     }
 
@@ -835,6 +871,29 @@ final class CallViewController: UIViewController {
         )
     }
 
+    /// [Wave B audio, 2026-05-18] AudioCaptureOptions tuned for WhatsApp-grade
+    /// voice. All three WebRTC DSP toggles are ON:
+    ///   - `echoCancellation`  → AEC3 strips the speaker feedback on
+    ///                            loudspeaker calls (mandatory for video calls
+    ///                            and any speaker-on toggle).
+    ///   - `autoGainControl`   → normalizes mic level so soft-spoken users
+    ///                            don't get drowned out and loud users don't
+    ///                            clip the encoder.
+    ///   - `noiseSuppression`  → WebRTC's built-in NS (separate from RNNoise).
+    ///                            Cheap baseline; RNNoise wraps on top as the
+    ///                            "ML-grade" upgrade when available.
+    ///   - `typingNoiseDetection` → suppresses keyboard click bursts.
+    ///   - `highpassFilter`    → low-cut removes 60Hz hum / mic handling rumble.
+    static func defaultAudioCaptureOptions() -> AudioCaptureOptions {
+        return AudioCaptureOptions(
+            echoCancellation: true,
+            autoGainControl: true,
+            noiseSuppression: true,
+            typingNoiseDetection: true,
+            highpassFilter: true
+        )
+    }
+
     // MARK: - Deinit
 
     deinit {
@@ -853,6 +912,10 @@ final class CallViewController: UIViewController {
         pipRenderer = nil
         stopRingbackTone(reason: "deinit")
         if let obs = ringbackResignObserver { NotificationCenter.default.removeObserver(obs) }
+        // [Wave B audio, 2026-05-18] Belt-and-braces — handleHangup tears down
+        // the router on user-initiated end, deinit covers room-disconnect /
+        // PiP dismiss paths.
+        AudioRouter.shared.teardown()
     }
 
     // MARK: - Presentation helper

@@ -746,6 +746,72 @@ export default function IncomingCallListener() {
         }
       }));
 
+      // [Wave D, 2026-05-18] Caller hit "Cancel" before we picked up.
+      // Backend chat_call_cancel fans out a `call_cancel` event to every
+      // active WS session of the callee (and a silent VoIP+FCM push to the
+      // offline ones). Treat it exactly like call_dismissed so the ringer
+      // stops and the modal goes away on every device the callee owns.
+      // Idempotent: if the server is on an older build that doesn't emit
+      // this event, the existing call_end handler still covers the hangup
+      // path via WS — this is purely additive for multi-device parity.
+      unsubs.push(mailWs.on('call_cancel', (data) => {
+        if (callRef.current?.call_id === data?.call_id) {
+          console.log('[IncomingCall] call_cancel (caller-aborted ring):', data.call_id);
+          if (data?.call_id) _pendingIceByCallId.delete(String(data.call_id));
+          callRef.current = null;
+          callStateRef.current = null;
+          stopRingtone();
+          if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+          setCall(null);
+          acceptedRef.current = false;
+          handlingRef.current = false;
+          // Dismiss native CallKit (iOS) / IncomingCallActivity (Android)
+          // — without this the OS keeps the lock-screen UI even after the
+          // JS state clears (build 503-505 race).
+          try {
+            const { endCall } = require('../services/callkeep');
+            endCall(data?.call_id || '');
+          } catch (_) {}
+        }
+      }));
+
+      // [Wave D, 2026-05-18] Server-issued missed-call (30s ring timeout).
+      // The Go WS state machine fires `call_missed` when a RINGING call
+      // never reached ACCEPTED within CallRingTimeout. The CALLER's
+      // sessions see this so the "Calling..." overlay teardown happens
+      // even if the callee never replied with WS call_end (e.g. offline
+      // the whole time). The CALLEE side just clears its rung state.
+      unsubs.push(mailWs.on('call_missed', (data) => {
+        if (callRef.current?.call_id === data?.call_id) {
+          console.log('[IncomingCall] call_missed from server:', data.call_id);
+          const c = callRef.current;
+          if (c && !acceptedRef.current) {
+            initAddCallToHistory();
+            addCallToHistory({
+              contactEmail: c.caller_email || '',
+              contactName: c.caller_name || c.caller_email?.split('@')[0] || '',
+              callId: c.call_id || c.room_id || '',
+              type: 'missed',
+              video: c.video !== false,
+              timestamp: new Date().toISOString(),
+              duration: 0,
+            }).catch(() => {});
+          }
+          if (data?.call_id) _pendingIceByCallId.delete(String(data.call_id));
+          callRef.current = null;
+          callStateRef.current = null;
+          stopRingtone();
+          if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+          setCall(null);
+          acceptedRef.current = false;
+          handlingRef.current = false;
+          try {
+            const { endCall } = require('../services/callkeep');
+            endCall(data?.call_id || '');
+          } catch (_) {}
+        }
+      }));
+
       // Safety timeout: auto-dismiss call after user accepts on another device (network might be slow)
       // If we receive call_accepted from ANOTHER device on our email, dismiss automatically
       unsubs.push(mailWs.on('call_accepted', (data) => {

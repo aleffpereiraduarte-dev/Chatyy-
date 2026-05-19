@@ -24,11 +24,16 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.lifecycle.lifecycleScope
 import io.livekit.android.LiveKit
+import io.livekit.android.RoomOptions
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.renderer.SurfaceViewRenderer
 import io.livekit.android.room.Room
 import io.livekit.android.room.participant.Participant
+import io.livekit.android.room.participant.VideoTrackPublishDefaults
+import io.livekit.android.room.track.LocalVideoTrackOptions
+import io.livekit.android.room.track.VideoCaptureParameter
+import io.livekit.android.room.track.VideoPreset169
 import io.livekit.android.room.track.VideoTrack
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
@@ -250,7 +255,26 @@ class GroupCallActivity : ComponentActivity() {
   }
 
   private fun bringUpRoom(url: String, token: String) {
-    val r = LiveKit.create(applicationContext)
+    // [Wave C, 2026-05-18] Group calls benefit even more from adaptive
+    // simulcast: each thumbnail tile subscribes to the low layer, the focus
+    // tile to high. Dynacast also pauses high layers nobody's looking at.
+    val roomOptions = try {
+      RoomOptions(
+        adaptiveStream = true,
+        dynacast = true,
+        videoTrackPublishDefaults = VideoTrackPublishDefaults(
+          simulcast = true,
+          videoEncoding = VideoPreset169.H720.encoding
+        ),
+        videoTrackCaptureDefaults = LocalVideoTrackOptions(
+          captureParams = VideoCaptureParameter(width = 1280, height = 720, maxFps = 30)
+        )
+      )
+    } catch (t: Throwable) {
+      Log.w(TAG, "RoomOptions ctor failed: ${t.message} — defaults")
+      RoomOptions()
+    }
+    val r = LiveKit.create(applicationContext, options = roomOptions)
     room = r
 
     // Register the local PiP renderer up front — remote tile renderers get
@@ -600,8 +624,24 @@ class GroupCallActivity : ComponentActivity() {
         camEnabled = !camEnabled
         videoBtn?.alpha = if (camEnabled) 1f else 0.5f
         lifecycleScope.launch {
-          try { room?.localParticipant?.setCameraEnabled(camEnabled) }
-          catch (t: Throwable) { Log.w(TAG, "setCameraEnabled failed: ${t.message}") }
+          // [Wave C, 2026-05-18] Toggle track enabled state (mute) instead
+          // of unpublish — keeps SFU path warm, peer sees a black frame
+          // (RTP mute) and resumes instantly on toggle back.
+          try {
+            val r = room ?: return@launch
+            val track = (r.localParticipant.getTrackPublication(io.livekit.android.room.track.Track.Source.CAMERA)?.track as? io.livekit.android.room.track.LocalVideoTrack)
+            if (track != null) {
+              if (camEnabled) { track.startCapture(); track.enabled = true }
+              else { track.enabled = false; track.stopCapture() }
+              Log.d(TAG, "group camera ${if (camEnabled) "unmute" else "mute"} (no republish)")
+            } else if (camEnabled) {
+              r.localParticipant.setCameraEnabled(true)
+            }
+          } catch (t: Throwable) {
+            Log.w(TAG, "toggleCam (mute path) failed: ${t.message} — fallback")
+            try { room?.localParticipant?.setCameraEnabled(camEnabled) }
+            catch (t2: Throwable) { Log.w(TAG, "setCameraEnabled fallback: ${t2.message}") }
+          }
         }
       }
       controls.addView(vb, LinearLayout.LayoutParams(dp(56), dp(56)).apply { marginEnd = gap })

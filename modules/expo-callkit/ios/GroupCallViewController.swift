@@ -102,7 +102,17 @@ final class GroupCallViewController: UIViewController {
             return
         }
         print("[GroupCallVC] connecting — room=\(roomName) url=\(lkUrl)")
-        let r = Room(delegate: self)
+        // [Wave C, 2026-05-18] Adaptive simulcast + dynacast for groups so
+        // each subscriber gets the right tier (low for thumbnails, high for
+        // focused tile). Dynacast lets the SFU pause publishing of layers
+        // nobody is consuming, saving uplink under N>2 calls.
+        let roomOptions = RoomOptions(
+            defaultCameraCaptureOptions: CallViewController.defaultCameraCaptureOptions(),
+            defaultVideoPublishOptions: CallViewController.defaultVideoPublishOptions(),
+            adaptiveStream: true,
+            dynacast: true
+        )
+        let r = Room(delegate: self, roomOptions: roomOptions)
         self.room = r
         Task { [weak self] in
             guard let self = self else { return }
@@ -111,12 +121,17 @@ final class GroupCallViewController: UIViewController {
                 try await r.localParticipant.setMicrophone(enabled: true)
                 print("[GroupCallVC] mic published — room=\(self.roomName)")
                 if self.hasVideo {
-                    if let pub = try? await r.localParticipant.setCamera(enabled: true),
-                       let track = pub.track as? LocalVideoTrack {
+                    let captureOpts = CallViewController.defaultCameraCaptureOptions(position: self.currentCameraPosition)
+                    let publishOpts = CallViewController.defaultVideoPublishOptions()
+                    if let pub = try? await r.localParticipant.setCamera(
+                        enabled: true,
+                        captureOptions: captureOpts,
+                        publishOptions: publishOpts
+                    ), let track = pub.track as? LocalVideoTrack {
                         await MainActor.run {
                             self.updateLocalParticipant(videoTrack: track)
                         }
-                        print("[GroupCallVC] camera published — room=\(self.roomName)")
+                        print("[GroupCallVC] camera published (simulcast=true preset=h720_169) — room=\(self.roomName)")
                     }
                 }
             } catch {
