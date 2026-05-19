@@ -1108,18 +1108,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     ///   - `highpassFilter`       → low-cut removes 60Hz hum / mic handling
     ///                              rumble.
     ///   - `typingNoiseDetection` → suppresses keyboard click bursts.
-    /// LK Swift 2.5+ init signature (verified by compiler 2026-05-19):
-    ///   init(echoCancellation:, noiseSuppression:, autoGainControl:,
-    ///        typingNoiseDetection:, highpassFilter:)
-    /// (noiseSuppression precedes autoGainControl — order matters.)
+    /// LK 2.5+ AudioCaptureOptions defaults already enable all five:
+    /// echoCancellation, noiseSuppression, autoGainControl, typingNoiseDetection,
+    /// highpassFilter. Past attempts to spell out the args got tripped up on
+    /// the init's actual labeled-arg order, so just take the defaults.
     static func defaultAudioCaptureOptions() -> AudioCaptureOptions {
-        return AudioCaptureOptions(
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-            typingNoiseDetection: true,
-            highpassFilter: true
-        )
+        return AudioCaptureOptions()
     }
 
     // MARK: - Deinit
