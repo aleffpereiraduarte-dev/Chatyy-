@@ -9,6 +9,30 @@
 import { Platform, AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+// MessagePack codec — lazy-required so a missing/broken module never breaks
+// startup. Gated by globalThis.__chatyy_msgpack_ws feature flag (off by
+// default); while off, every code path stays JSON-only. Phase 1 of the WS
+// transport upgrade (see docs/transport_upgrade_plan.md).
+let _msgpack = null;
+function _getMsgpack() {
+  if (_msgpack) return _msgpack;
+  try {
+    // eslint-disable-next-line global-require
+    _msgpack = require('@msgpack/msgpack');
+  } catch (e) {
+    _msgpack = { encode: null, decode: null, __unavailable: true };
+    if (typeof console !== 'undefined') {
+      console.warn('[WS] @msgpack/msgpack not available, msgpack disabled:', e?.message);
+    }
+  }
+  return _msgpack;
+}
+function _msgpackEnabled() {
+  try {
+    return globalThis.__chatyy_msgpack_ws === true && !_getMsgpack().__unavailable;
+  } catch { return false; }
+}
+
 // Resume token persistence key. Per-account scoping isn't needed: the value
 // is just a high-water id from a single server-side sequence (ws_event_log)
 // and is also gated by the WS auth (server only replays events for the
@@ -49,6 +73,10 @@ class MailWebSocket {
     this.email = null;
     this.connected = false;
     this.authenticated = false;
+    // MsgPack negotiation state (off until server acks upgrade_msgpack).
+    // Flipped true on receipt of `msgpack_upgraded`; reset to false on
+    // every new socket so a reconnect re-negotiates cleanly.
+    this.binaryUpgraded = false;
     this.listeners = new Map();
     this.reconnectAttempt = 0;
     this.reconnectTimer = null;
@@ -262,10 +290,17 @@ class MailWebSocket {
     // Clean up existing connection
     this._cleanup();
 
+    // Reset codec negotiation on every new socket — re-negotiated after auth.
+    this.binaryUpgraded = false;
+
     try {
       // Use dedicated WS domain (bypasses Cloudflare proxy which breaks WS)
       const wsUrl = 'wss://ws.chatyy.com.br/ws';
       this.ws = new WebSocket(wsUrl);
+      // We need ArrayBuffer (not Blob) so we can sync-decode in onmessage.
+      // Harmless when msgpack is disabled — we only ever get text frames in
+      // JSON-only mode anyway.
+      try { this.ws.binaryType = 'arraybuffer'; } catch {}
     } catch (err) {
       this._scheduleReconnect();
       return;
@@ -295,13 +330,32 @@ class MailWebSocket {
 
     this.ws.onmessage = (event) => {
       try {
-        const msg = JSON.parse(event.data);
+        let msg;
+        // Binary frame → server is speaking msgpack to this connection.
+        // Decode with @msgpack/msgpack; if module unavailable we have to
+        // drop the frame (should never happen with flag off, since we never
+        // send upgrade_msgpack and the server defaults to JSON text frames).
+        if (event.data instanceof ArrayBuffer) {
+          const mp = _getMsgpack();
+          if (mp.__unavailable || typeof mp.decode !== 'function') {
+            console.warn('[WS] Received binary frame but msgpack module unavailable; ignoring');
+            return;
+          }
+          msg = mp.decode(new Uint8Array(event.data));
+        } else {
+          msg = JSON.parse(event.data);
+        }
         // Track call_end_ack at the top level so the call screen's
         // BYE retry loop can short-circuit when the server confirms
         // it received our hangup. Without this we keep retrying for 3
         // seconds even when the first BYE went through fine.
         if (msg && msg.type === 'call_end_ack' && msg.call_id) {
           try { (typeof window !== 'undefined' ? window : globalThis).__lastCallEndAckId = msg.call_id; } catch {}
+        }
+        // Latch local upgrade flag on server ack so subsequent _send calls
+        // start emitting msgpack-encoded frames upstream too.
+        if (msg && msg.type === 'msgpack_upgraded' && msg.ok) {
+          this.binaryUpgraded = true;
         }
         this._handleMessage(msg);
       } catch (e) { console.warn('[WS] Message parse error:', e?.message); }
@@ -452,9 +506,26 @@ class MailWebSocket {
     this.lastPongTime = 0;
   }
 
+  // Encode payload with the codec negotiated for this socket. When the
+  // server has acked upgrade_msgpack we send binary msgpack; otherwise JSON.
+  // Falls back to JSON if msgpack encode throws for any reason.
+  _encodeOutbound(data) {
+    if (this.binaryUpgraded) {
+      try {
+        const mp = _getMsgpack();
+        if (!mp.__unavailable && typeof mp.encode === 'function') {
+          return mp.encode(data);
+        }
+      } catch (e) {
+        console.warn('[WS] msgpack encode failed, falling back to JSON:', e?.message);
+      }
+    }
+    return JSON.stringify(data);
+  }
+
   _send(data) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(data));
+      this.ws.send(this._encodeOutbound(data));
     } else if (data && (data.type === 'chat_message' || data.type === 'chat_message_relay')) {
       // Queue chat messages when WS is not open (max queue size)
       if (this._messageQueue.length < MAX_QUEUE_SIZE) {
@@ -677,6 +748,20 @@ class MailWebSocket {
       this._send({ type: 'ack', ack_id: msg.ack_id });
     }
 
+    // Resume-token high-water tracking. The server stamps every per-user
+    // event with a monotonic `event_id` (BIGSERIAL from ws_event_log).
+    // We keep the max we've ever observed so reconnects can ask the
+    // server "replay anything > N" without losing messages. Persisted
+    // every EVENT_ID_PERSIST_EVERY events to keep AsyncStorage churn low.
+    if (msg && typeof msg.event_id === 'number' && msg.event_id > this._lastEventId) {
+      this._lastEventId = msg.event_id;
+      this._eventIdSinceFlush = (this._eventIdSinceFlush || 0) + 1;
+      if (this._eventIdSinceFlush >= EVENT_ID_PERSIST_EVERY) {
+        this._eventIdSinceFlush = 0;
+        this._persistLastEventId();
+      }
+    }
+
     switch (msg.type) {
       case 'auth_success':
         this.authenticated = true;
@@ -689,6 +774,15 @@ class MailWebSocket {
         this.lastPongTime = Date.now();
         if (msg.server_ts) {
           this._serverTimeOffset = msg.server_ts - Date.now();
+        }
+        // Phase 1 transport upgrade: if the runtime flag is on and the
+        // msgpack module is available, ask the server to switch this socket
+        // to MessagePack. Server replies with {type:'msgpack_upgraded',ok:true}
+        // as a final JSON frame and then all outbound frames become binary.
+        // While the flag is off (default), this branch never fires and the
+        // socket stays JSON end-to-end — zero behavior change.
+        if (_msgpackEnabled() && !this.binaryUpgraded) {
+          try { this._send({ type: 'upgrade_msgpack' }); } catch {}
         }
         this._emit('connection', { status: 'authenticated', userId: this.userId, email: msg.email });
         this._onAuthenticated();
@@ -993,6 +1087,61 @@ class MailWebSocket {
         this._emit('user_setting_update', msg);
         break;
 
+      // Resume-token protocol: server signals end of a replay batch.
+      // count = events replayed; has_more = true if more events exist
+      // beyond the cap; last_event_id = highest id in this batch (useful
+      // for follow-up resume requests if has_more). Replayed messages
+      // were already dispatched into the normal handlers above with
+      // `resumed: true` and their event_id stamped, so listeners get
+      // them naturally — this is just the bookkeeping ack.
+      case 'resume_result':
+        this._resumeInFlight = false;
+        try {
+          if (typeof msg.last_event_id === 'number' && msg.last_event_id > this._lastEventId) {
+            this._lastEventId = msg.last_event_id;
+            this._persistLastEventId();
+          }
+        } catch {}
+        this._emit('resume_result', {
+          count: msg.count || 0,
+          has_more: !!msg.has_more,
+          last_event_id: msg.last_event_id || this._lastEventId,
+        });
+        // If the server says there's more beyond the cap, immediately
+        // ask for the next page. Bounded by the same MaxResumeReplay on
+        // the server, so worst case we walk forward in 200-event chunks
+        // until caught up. Cheap and won't loop forever: each iteration
+        // advances last_event_id strictly.
+        if (msg.has_more && !this.destroyed) {
+          try {
+            this._resumeInFlight = true;
+            this._send({ type: 'resume', last_event_id: this._lastEventId });
+          } catch { this._resumeInFlight = false; }
+        }
+        break;
+
+      // Server says "you're too far behind — drop your local state and
+      // do a full sync via HTTP." We emit `resume_full_sync` so chat
+      // screens can trigger their existing catch-up paths (chat list +
+      // recent-message fetch). _lastEventId is NOT reset to 0 — if the
+      // cause was a transient probe_failed we still want the next
+      // reconnect to attempt a normal resume.
+      case 'resume_full_sync':
+        this._resumeInFlight = false;
+        try {
+          this._emit('resume_full_sync', {
+            reason: msg.reason || 'unknown',
+            gap: msg.gap || 0,
+          });
+          // Also nudge any existing foreground listener — chat screens
+          // already wire `foreground` to trigger a chat_sync, so this is
+          // the cheapest way to plug the catch-up endpoint fallback
+          // without rewiring every screen. The chat_sync HTTP call is
+          // idempotent (last_seq filter) so a duplicate trigger is safe.
+          this._emit('foreground', { ts: Date.now(), source: 'resume_full_sync' });
+        } catch {}
+        break;
+
       default:
         // Prefetch media for chat_summary too (list-screen bump with
         // full payload when user is on the list, not in-thread). Without
@@ -1086,7 +1235,7 @@ class MailWebSocket {
     return new Promise((resolve) => {
       const attempt = () => {
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-          this.ws.send(JSON.stringify(data));
+          this.ws.send(this._encodeOutbound(data));
         } else {
           // Queue for when we reconnect
           if (this._messageQueue.length < MAX_QUEUE_SIZE) {
@@ -1208,6 +1357,21 @@ class MailWebSocket {
       this._send({ type: 'presence_subscribe', emails: [...this._watchedPresence] });
     }
 
+    // ─── Resume catch-up (WhatsApp pattern) ───
+    // Ask the server to replay any per-user events with id > our high
+    // water mark. This MUST run on every reconnect, even on a clean
+    // first-auth where _lastEventId is 0 — the server interprets 0 as
+    // "give me everything, capped at MaxResumeReplay" which still
+    // protects fresh installs (gap > cap → full_sync). We don't await
+    // anything; resume_result / resume_full_sync arrive asynchronously
+    // and are handled in _handleMessage.
+    if (!this._resumeInFlight) {
+      try {
+        this._resumeInFlight = true;
+        this._send({ type: 'resume', last_event_id: this._lastEventId || 0 });
+      } catch { this._resumeInFlight = false; }
+    }
+
     // Replay order matters: pending (already-sent-but-unacked) goes FIRST
     // so the server's idempotency layer can dedupe them before we flush new
     // offline-queued messages. Otherwise a reconnect right after a send
@@ -1217,7 +1381,7 @@ class MailWebSocket {
     for (const [msgId, entry] of this._pendingOutgoing) {
       pendingMsgIds.add(msgId);
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        try { this.ws.send(JSON.stringify(entry.data)); } catch {}
+        try { this.ws.send(this._encodeOutbound(entry.data)); } catch {}
         // Reset the retry timer — we just re-sent here, so the next retry
         // shouldn't fire 3s after the original send (which is now in the
         // past). Leaving the original timer caused a double-send: this
@@ -1316,6 +1480,36 @@ class MailWebSocket {
   _emit(event, data) {
     const cbs = this.listeners.get(event);
     if (cbs) cbs.forEach(cb => { try { cb(data); } catch {} });
+  }
+
+  // ─── Resume token persistence ───
+  // Load the high-water event_id from disk so a cold start can resume
+  // from wherever the previous session left off. Called once from the
+  // constructor — fire-and-forget. If storage is empty (fresh install)
+  // we leave _lastEventId at 0, which the server treats as "give me
+  // everything up to MaxResumeReplay" (and then full_sync if more).
+  async _loadLastEventId() {
+    try {
+      const raw = await AsyncStorage.getItem(WS_LAST_EVENT_ID_KEY);
+      if (!raw) return;
+      const n = parseInt(raw, 10);
+      if (Number.isFinite(n) && n > this._lastEventId) {
+        this._lastEventId = n;
+      }
+    } catch {}
+  }
+
+  // Save the current high-water. Throttled by the caller (every N events
+  // in _handleMessage, or on key transitions like resume_result). We
+  // don't await — AsyncStorage is fast enough and a failed write just
+  // means a tiny replay overlap on next launch, which the server
+  // dedupes via event_id ordering.
+  _persistLastEventId() {
+    try {
+      const v = String(this._lastEventId || 0);
+      AsyncStorage.setItem(WS_LAST_EVENT_ID_KEY, v).catch(() => {});
+      this._lastEventIdPersistedAt = Date.now();
+    } catch {}
   }
 
   /**

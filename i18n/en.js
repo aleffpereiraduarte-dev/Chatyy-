@@ -3928,6 +3928,7 @@ export default {
   'config.logout': 'Log out',
   'config.logoutTitle': 'Log out',
   'config.logoutConfirm': 'Are you sure you want to log out?',
+  'config.logoutConfirmStrong': 'Are you sure? You will need to log in again.',
   'config.everyone': 'Everyone',
   'config.contacts': 'My contacts',
   'config.nobody': 'Nobody',

@@ -3925,6 +3925,7 @@ export default {
   'config.logout': 'Cerrar sesión',
   'config.logoutTitle': 'Cerrar sesión',
   'config.logoutConfirm': '¿Estás seguro de que quieres cerrar sesión?',
+  'config.logoutConfirmStrong': '¿Estás seguro? Tendrás que iniciar sesión de nuevo.',
   'config.everyone': 'Todos',
   'config.contacts': 'Mis contactos',
   'config.nobody': 'Nadie',
