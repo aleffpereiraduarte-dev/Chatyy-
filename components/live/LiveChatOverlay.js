@@ -225,11 +225,12 @@ function LiveChatOverlay({
       accessibilityLabel="Chat ao vivo"
       accessibilityRole="button"
     >
-      {/* Native top-fade gradient — softens the column's upper edge so old
-          messages "exit" instead of clipping. Web already has a mask
-          (WebkitMaskImage in styles.overlay); this SVG overlays it for
-          parity on iOS/Android (no expo-linear-gradient dep needed). */}
-      {Platform.OS !== 'web' ? <TopFadeGradient /> : null}
+      {/* Round 69 #1166 (2026-05-19) — TopFadeGradient REMOVED. User: "tira
+          isso muito feio". The 56px #000@85% SVG gradient was painting an
+          opaque black band over the host's face whenever ANY system chip
+          arrived (e.g. "X entrou"). Web mask remains untouched; iOS/Android
+          now just clip without the fade. Cleaner look + no recurring "barra
+          preta" reports. */}
 
       {hasMore ? (
         <View style={styles.seeAllChip} pointerEvents="none">

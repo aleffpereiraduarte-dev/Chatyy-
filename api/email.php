@@ -7053,12 +7053,25 @@ try {
             }
 
             // Verified caller ID from user profile.
+            // Bug 2026-05-19 #1182 — gate had only `phone_verified` (the signup
+            // OTP check), missing users who verified their outbound caller-ID
+            // via the Twilio OutgoingCallerIds flow (`telnyx_caller_id_verified`
+            // flag, set by voip_verified_number_request/confirm). Without this
+            // the SIP INVITE went out with caller_id_number empty → Telnyx
+            // substituted the connection default (+19513931371) instead of the
+            // verified +19547077804 the user expected. Either flag now wins.
+            // `caller_id_verified_at` is the legacy fallback (older accounts
+            // verified before the boolean was introduced).
             $callerPhone = '';
             $eParts = explode('@', $userEmail);
             $profPath = "/var/mail/vhosts/" . ($eParts[1] ?? 'chatyy.com.br') . "/" . ($eParts[0] ?? '') . "/profile/data.json";
+            $cidVerified = false;
             if (file_exists($profPath)) {
                 $prof = @json_decode(file_get_contents($profPath), true);
-                if (!empty($prof['phone_verified']) && !empty($prof['verified_phone'])) {
+                $cidVerified = !empty($prof['telnyx_caller_id_verified'])
+                    || !empty($prof['caller_id_verified_at'])
+                    || !empty($prof['phone_verified']);
+                if ($cidVerified && !empty($prof['verified_phone'])) {
                     $callerPhone = preg_replace('/[^+0-9]/', '', $prof['verified_phone']);
                 }
             }
@@ -7083,6 +7096,7 @@ try {
                 'sip_user' => $sipUser,
                 'sip_password' => $sipPass,
                 'caller_id' => $callerPhone,
+                'caller_id_verified' => $cidVerified && !empty($callerPhone),
                 'turn' => $turnCreds,
             ]);
             break;

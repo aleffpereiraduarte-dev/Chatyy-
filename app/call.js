@@ -345,6 +345,24 @@ function CallScreenInner() {
   const [connectionFailed, setConnectionFailed] = useState(false);
   const [showSlowConnectOverlay, setShowSlowConnectOverlay] = useState(false);
 
+  // [2026-05-19 #1183 bad-internet PSTN fallback]
+  // When LiveKit can't connect (15s timeout or hard-reconnect ceiling) and the
+  // call is a 1-on-1 with a peer who has a verified_phone, surface a
+  // "Ligar via telefone?" button so the user can finish the conversation via
+  // Telnyx Verto SIP instead of being stranded. Loaded lazily on
+  // connectionFailed flip to avoid an extra request per call.
+  //   peerPhone           — E.164 phone fetched from profile_get; '' if no
+  //                          phone or peer hasn't verified one. UI hides the
+  //                          fallback button when empty.
+  //   pstnFallbackBusy    — disables the button + shows spinner while we
+  //                          fetch SIP creds + open the WebSocket.
+  //   pstnFallbackActive  — once Verto INVITE is sent we hide the LK retry UI
+  //                          since the PSTN call now owns the screen.
+  const [peerPhone, setPeerPhone] = useState('');
+  const [pstnFallbackBusy, setPstnFallbackBusy] = useState(false);
+  const [pstnFallbackActive, setPstnFallbackActive] = useState(false);
+  const peerPhoneLoadedRef = useRef(false);
+
   // [2026-05-18 video-quality-push]
   // videoStatsSnapshot is the most recent payload from videoCallTuning's
   // 3s adaptive loop ({ fps, sentFps, bitrateKbps, rttMs, lossPct, bucket,
@@ -1904,6 +1922,89 @@ function CallScreenInner() {
     if (router.canGoBack()) router.back();
     else router.replace('/chat');
   }, [callId, contactEmail, isCaller, router]);
+
+  // ───── PSTN fallback (#1183 bad-internet) ─────
+  // Lazily fetch the peer's verified phone when LK gives up. We don't preload
+  // on mount — most calls connect fine and this is a slow API path.
+  useEffect(() => {
+    if (!connectionFailed || isGroupCall || peerPhoneLoadedRef.current) return;
+    if (!_safePeerEmail || !_safePeerEmail.includes('@')) return;
+    peerPhoneLoadedRef.current = true;
+    (async () => {
+      try {
+        const api = require('../services/api');
+        const r = await api.profileGet?.(_safePeerEmail);
+        // profile_get returns identity.profile.verified_phone when peer verified
+        // via Twilio OutgoingCallerIds OR phone_verified at signup. We also
+        // accept identity.profile.phone as a soft fallback.
+        const prof = r?.data?.identity?.profile || r?.data || {};
+        const raw = prof.verified_phone || prof.phone || '';
+        const phone = (typeof raw === 'string' ? raw : '').replace(/[^+0-9]/g, '');
+        if (phone && /^\+[1-9]\d{6,14}$/.test(phone)) {
+          setPeerPhone(phone);
+        }
+      } catch (e) {
+        // Silent — fallback button just won't appear.
+      }
+    })();
+  }, [connectionFailed, _safePeerEmail, isGroupCall]);
+
+  // Tear down the LiveKit room + Verto-SIP dial out using the same Telnyx
+  // credentials the dialer uses. Mirrors ChatCallsTab's "internet" call path
+  // (voipSipCredentials → startSipCall) so we don't ship two SIP code paths.
+  // The PSTN call replaces the LK session — once it's connected the user is
+  // talking to peerPhone via Telnyx, not via LiveKit.
+  const handlePstnFallback = useCallback(async () => {
+    if (pstnFallbackBusy || !peerPhone) return;
+    setPstnFallbackBusy(true);
+    setErrorMsg(null);
+    try {
+      // Hard-close any lingering LK room so the audio session isn't double
+      // captured (LK + Verto both want the mic on iOS — last writer wins, so
+      // the half-dead LK side would steal it back mid-PSTN-call).
+      try { roomRef.current?.disconnect(); } catch {}
+      roomRef.current = null;
+
+      const api = require('../services/api');
+      const credRes = await api.voipSipCredentials?.();
+      if (!credRes?.success || !credRes?.data?.sip_user) {
+        setErrorMsg(credRes?.message || (t('call.connectionFailed') || 'Não foi possível conectar.'));
+        setPstnFallbackBusy(false);
+        return;
+      }
+      const { startSipCall, setTurnCredentials } = require('../services/sipCall');
+      if (credRes.data.turn) {
+        try { setTurnCredentials(credRes.data.turn); } catch {}
+      }
+      setPstnFallbackActive(true);
+      setConnectionFailed(false);
+      setReconnecting(false);
+      setErrorMsg(t('call.via.phone') || 'Ligando via telefone…');
+      await startSipCall(credRes.data, peerPhone, (state) => {
+        if (state === 'registered' || state === 'ringing') {
+          setErrorMsg(t('call.ringing') || 'Tocando...');
+        } else if (state === 'connected') {
+          // Mimic peer-joined state so the timer + UI light up.
+          setErrorMsg(null);
+          setPeerConnected(true);
+        } else if (state === 'ended') {
+          setPeerConnected(false);
+          setPstnFallbackActive(false);
+          setPstnFallbackBusy(false);
+          handleEndCallRef.current?.();
+        } else if (typeof state === 'string' && state.startsWith('error:')) {
+          setPstnFallbackActive(false);
+          setPstnFallbackBusy(false);
+          setErrorMsg(state.replace(/^error:/, ''));
+          setConnectionFailed(true);
+        }
+      });
+    } catch (e) {
+      setPstnFallbackBusy(false);
+      setPstnFallbackActive(false);
+      setErrorMsg(String(e?.message || e));
+    }
+  }, [pstnFallbackBusy, peerPhone, t]);
 
   // ───── Reconnect (called when LiveKit fails) ─────
   const handleReconnect = useCallback(async () => {
@@ -3508,6 +3609,27 @@ function CallScreenInner() {
                     <IconPhone size={18} color="#fff" />
                     <Text style={styles.reconnectBtnText}>{t('call.reconnect') || 'Reconectar'}</Text>
                   </TouchableOpacity>
+                  {/* #1183 — PSTN fallback button. Only when peer has a verified
+                       phone, this is a 1-on-1 (group calls can't bridge to
+                       phone), and we aren't already dialing. */}
+                  {peerPhone && !isGroupCall && !pstnFallbackActive && (
+                    <TouchableOpacity
+                      style={styles.reconnectBtn}
+                      onPress={handlePstnFallback}
+                      activeOpacity={0.7}
+                      disabled={pstnFallbackBusy}
+                      accessibilityLabel={t('call.via.phone') || 'Ligar via telefone'}
+                    >
+                      {pstnFallbackBusy ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <IconPhone size={18} color="#fff" />
+                      )}
+                      <Text style={styles.reconnectBtnText}>
+                        {t('call.via.phone') || 'Ligar via telefone'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
                   <TouchableOpacity style={styles.reconnectEndBtn} onPress={handleEndCall} activeOpacity={0.7}>
                     <IconPhoneOff size={18} color="#fff" />
                     <Text style={styles.reconnectEndBtnText}>{t('call.hangUp') || 'Desligar'}</Text>

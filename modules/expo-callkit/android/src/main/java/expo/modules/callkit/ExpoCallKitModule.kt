@@ -351,6 +351,19 @@ class ExpoCallKitModule : Module() {
         val stopIntent = Intent(context, CallRingingService::class.java)
         context.stopService(stopIntent)
       } catch (_: Exception) {}
+      // [#1179 cleanup, 2026-05-19] Also stop the in-progress FGS. If hangup
+      // runs from JS while CallActivity is destroyed (rare: user hung up
+      // from a different RN screen via callKeep.endCall after the call
+      // screen was already torn down, OR app was killed mid-call and JS
+      // is replaying cleanup on next launch), CallActivity.finishCall never
+      // ran so CallOngoingService is still alive — its persistent "Chamada
+      // em andamento" notification lingers and the FGS keeps the process
+      // pinned in the background. Stop it explicitly here so the same JS
+      // endCall path serves as a system-wide call-state purge.
+      try {
+        val stopOngoing = Intent(context, CallOngoingService::class.java)
+        context.stopService(stopOngoing)
+      } catch (_: Exception) {}
       // Multi-device cancel: dismiss the IncomingCallActivity overlay too.
       // Without this broadcast, when the user answers on phone A, phone B
       // keeps its full-screen IncomingCallActivity sitting on top until the

@@ -81,6 +81,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -585,6 +586,66 @@ class CallActivity : ComponentActivity() {
   }
 
   /**
+   * [#1176 polish, 2026-05-18] Late LK token arrival. The JS layer
+   * (services/voipNative.js) fires `ExpoCallKit.startOutgoingCall` IMMEDIATELY
+   * to surface the native UI in <100ms, then mints chat_livekit_token in
+   * the background and calls `startOutgoingCall` a second time with the
+   * populated lk_url / lk_token. Because CallActivity is launchMode=singleTop
+   * + FLAG_ACTIVITY_SINGLE_TOP, the second startActivity is delivered to
+   * this instance via onNewIntent instead of spawning a duplicate. We pick
+   * up the token and bringUpRoom — *if* we don't already have a Room.
+   *
+   * Also handles a late avatar URL the same way (if the JS side resolved
+   * the avatar after the first present) and the ACTION_CLOSE path that
+   * other agents already wire through closeReceiver — closeReceiver
+   * continues to own that flow; onNewIntent only handles the token /
+   * avatar refresh.
+   */
+  override fun onNewIntent(newIntent: Intent?) {
+    super.onNewIntent(newIntent)
+    if (newIntent == null) return
+    setIntent(newIntent)
+    val extras = newIntent.extras ?: return
+
+    val incomingCallId = extras.getString(EXTRA_CALL_ID) ?: ""
+    if (incomingCallId.isNotEmpty() && incomingCallId != callId) {
+      Log.w(TAG, "onNewIntent: ignoring re-launch for different callId=$incomingCallId (active=$callId)")
+      return
+    }
+
+    // Late LK token. Only acts if we don't already have a Room (i.e. the
+    // first present arrived without credentials and the activity has been
+    // sitting on "Sem token" / "Chamando…" without LK connection).
+    val newUrl = extras.getString(EXTRA_LK_URL)
+    val newToken = extras.getString(EXTRA_LK_TOKEN)
+    if (room == null && !newUrl.isNullOrEmpty() && !newToken.isNullOrEmpty()) {
+      Log.d(TAG, "onNewIntent: late LK token arrived — bringing up Room")
+      lkUrl = newUrl
+      lkToken = newToken
+      // If status was "Sem token" or anything stuck, reset to the outgoing
+      // copy so the user doesn't see an error mid-connect.
+      if (state.status == "Sem token" || state.needsLogin) {
+        state.status = if (isOutgoing) "Chamando…" else "Conectando…"
+        state.needsLogin = false
+      }
+      bringUpRoom(newUrl, newToken)
+    } else if (room != null) {
+      Log.d(TAG, "onNewIntent: Room already up — skipping bringUpRoom")
+    }
+
+    // Late avatar URL. Only fires when we didn't have one at onCreate.
+    val newAvatarUrl = extras.getString(EXTRA_CALLER_AVATAR) ?: ""
+    if (newAvatarUrl.isNotEmpty() && state.callerAvatarBitmap == null) {
+      Thread {
+        val bmp = CallNotificationService.fetchAvatarBitmap(newAvatarUrl)
+        if (bmp != null) {
+          runOnUiThread { state.callerAvatarBitmap = bmp }
+        }
+      }.start()
+    }
+  }
+
+  /**
    * Build a LiveKit VideoProcessor-compatible adapter that forwards every
    * incoming frame to the BackgroundProcessor. Reflective because LK's
    * VideoProcessor interface has shifted across minor SDK revs — we resolve
@@ -919,6 +980,12 @@ class CallActivity : ComponentActivity() {
     connectJob?.cancel()
     ExpoCallKitModule.emitCallEnded(callId)
     finish()
+    // [#1176 polish, 2026-05-18] Symmetric slide-down exit — matches the
+    // slide-up enter applied by ExpoCallKitModule.startOutgoingCall.
+    // overridePendingTransition must be called AFTER finish() to apply to
+    // the dismiss, not the (now-finished) onCreate.
+    @Suppress("DEPRECATION")
+    overridePendingTransition(R.anim.call_fade_in, R.anim.call_slide_down_exit)
   }
 
   // ────────────── Camera flip
@@ -1407,8 +1474,14 @@ private fun AvatarBlock(state: CallSessionStateAndroid, elapsedSeconds: Int) {
         SpeakerRingComposable(level = state.peerSpeakerLevel)
       }
 
-      // Avatar circle with breathing halo.
-      AvatarCircle(name = state.callerName.ifEmpty { state.callerEmail })
+      // Avatar circle with breathing halo. Renders the fetched bitmap when
+      // available (CallNotificationService.fetchAvatarBitmap result); falls
+      // back to the initial letter while the photo decodes or when no URL
+      // was supplied.
+      AvatarCircle(
+        name = state.callerName.ifEmpty { state.callerEmail },
+        bitmap = state.callerAvatarBitmap,
+      )
     }
 
     Spacer(Modifier.height(16.dp))
@@ -1529,7 +1602,7 @@ private fun SpeakerRingComposable(level: Float) {
 }
 
 @Composable
-private fun AvatarCircle(name: String) {
+private fun AvatarCircle(name: String, bitmap: android.graphics.Bitmap? = null) {
   val initial = name.trim().firstOrNull()?.uppercase() ?: "?"
   Box(
     modifier = Modifier
@@ -1538,12 +1611,29 @@ private fun AvatarCircle(name: String) {
       .background(ChipColor),
     contentAlignment = Alignment.Center,
   ) {
+    // Initial letter sits behind the photo so it's visible during the
+    // ~200-500ms bitmap decode window — and remains as the fallback when
+    // no URL was supplied.
     Text(
       text = initial,
       color = Color.White,
       fontSize = 72.sp,
       fontWeight = FontWeight.Normal,
     )
+    // [#1176 polish, 2026-05-18] Real photo via androidx.compose.foundation
+    // Image. ImageBitmap.asImageBitmap() wraps the existing Bitmap without
+    // copy. ContentScale.Crop center-crops so the circle clip is filled
+    // edge-to-edge with no letterboxing.
+    if (bitmap != null) {
+      androidx.compose.foundation.Image(
+        bitmap = bitmap.asImageBitmap(),
+        contentDescription = null,
+        modifier = Modifier
+          .size(180.dp)
+          .clip(CircleShape),
+        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+      )
+    }
   }
 }
 

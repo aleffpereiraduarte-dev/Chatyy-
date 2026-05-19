@@ -1212,6 +1212,7 @@ export default {
   'call.iceTimeout': 'Tempo de conexão esgotado',
   'call.connectionFailed': 'Não foi possível conectar. Tente novamente.',
   'call.reconnect': 'Reconectar',
+  'call.via.phone': 'Ligar via telefone',
   'call.tryAgain': 'Tentar novamente',
   'call.recording': 'Gravando...',
   'call.remoteRecording': 'A outra parte esta gravando',

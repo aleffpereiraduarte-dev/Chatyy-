@@ -73,6 +73,13 @@ final class CallSignalWs: NSObject {
     private var seenIncomingInvites: [String] = []
     private let kSeenInvitesMax = 32
 
+    // [#1179 cleanup, 2026-05-19] Map of native-surfaced callId → CallKit UUID.
+    // Populated when we report an inbound invite to CallKit; consumed when an
+    // inbound call_end frame arrives so we can dismiss the matching CallKit
+    // entry via reportCall(with:endedAt:reason:). Bounded — 16 entries (FIFO).
+    private var inviteUUIDsByCallId: [(callId: String, uuid: UUID)] = []
+    private let kInviteUUIDMax = 16
+
     // [P0 2026-05-18 #1132] When true, the WS stays connected even with an
     // empty outgoing queue, so inbound `call_invite` frames can be received
     // by the callee (who has nothing to send). Flipped on by `warmConnect()`.
@@ -289,10 +296,88 @@ final class CallSignalWs: NSObject {
             // CallKit rings even if JS is broken, and JS still gets the
             // event for its in-app modal.
             handleIncomingCallInviteLocked(obj)
+        case "call_end":
+            // [#1179 cleanup, 2026-05-19] Native CallKit fallback for REMOTE
+            // hangup. Mirror of the Android path in CallSignalWs.kt.
+            //
+            // Before: only the JS WS (services/websocket.js) handled inbound
+            // `call_end` frames. If JS was paused (CPU-throttled background,
+            // AppState lag) the CallKit UI stayed up — user kept seeing
+            // "Calling..." even though the peer had ended. Worse: when this
+            // raced with the foreground CallViewController, LK Room stayed
+            // connected, draining mic + data.
+            //
+            // Now: when a `call_end` frame lands here, we forward it via the
+            // CallKit provider (earlyProvider or shared module.provider) and
+            // also post `ExpoCallKitNativeCallEnded` so any active
+            // CallViewController dismisses (it observes the same notification
+            // via CallViewController.callEndedNotification). JS still has its
+            // own `mailWs.on('call_end')` subscription — this is belt-and-
+            // suspenders for the native UI cleanup.
+            handleIncomingCallEndLocked(obj)
         default:
             // We don't consume any other server frames here; the JS WS owns
             // the real call event surface.
             break
+        }
+    }
+
+    /// [#1179 cleanup, 2026-05-19] Called on `queue`. Native CallKit cleanup
+    /// for inbound `call_end`. Reports the end to CallKit (so the system UI
+    /// dismisses) and posts a notification that CallViewController observes
+    /// to dismiss the in-app call screen.
+    private func handleIncomingCallEndLocked(_ obj: [String: Any]) {
+        let callId = (obj["call_id"] as? String) ?? (obj["room_id"] as? String) ?? ""
+        let reason = (obj["reason"] as? String) ?? "remote_hangup"
+        guard !callId.isEmpty else {
+            NSLog("[CallSignalWs] call_end: missing call_id/room_id, skipping")
+            return
+        }
+        NSLog("[CallSignalWs] call_end \(callId) reason=\(reason) — dismissing native call UI")
+
+        // Drop the dedup entry so a follow-up invite with the same id (rare,
+        // but possible across server reconnects) is not silently filtered.
+        if let idx = seenIncomingInvites.firstIndex(of: callId) {
+            seenIncomingInvites.remove(at: idx)
+        }
+
+        // Pop the matching UUID we stashed when we reported this call to
+        // CallKit. If absent, the call was likely surfaced via the VoIP
+        // push path (different code path that also reports to CallKit but
+        // we don't have its UUID here). In that case the JS WS handler will
+        // still fire ExpoCallKit.endCall(callId), which performs the
+        // CXEndCallAction on the module's tracked UUID.
+        var stashedUUID: UUID? = nil
+        if let idx = inviteUUIDsByCallId.firstIndex(where: { $0.callId == callId }) {
+            stashedUUID = inviteUUIDsByCallId[idx].uuid
+            inviteUUIDsByCallId.remove(at: idx)
+        }
+
+        // Hop to main: CallKit and NotificationCenter posts must run on main.
+        DispatchQueue.main.async {
+            // 1. Post the native call-ended notification. ExpoCallKitModule
+            //    installs an observer that forwards this to JS as
+            //    `onCallEnded`; JS-side IncomingCallListener then invokes
+            //    ExpoCallKit.endCall(callId) which performs CXEndCallAction
+            //    on the active CallKit UUID, which in turn drives both the
+            //    CallKit system UI dismissal and (when present) the
+            //    CallViewController dismiss path via its own observer.
+            NotificationCenter.default.post(
+                name: Notification.Name("ExpoCallKitNativeCallEnded"),
+                object: nil,
+                userInfo: ["callId": callId, "reason": reason]
+            )
+
+            // 2. If CallKit is currently showing this call (incoming RING
+            //    that the user hasn't answered yet, or active call), report
+            //    the remote end so the system UI dismisses. We use the early
+            //    provider because it's installed before the module is loaded
+            //    in the cold-start path; the live module's provider takes
+            //    over once RN finishes loading and adopts pending calls.
+            if let uuid = stashedUUID,
+               let provider = VoipPushAppDelegateSubscriber.earlyProvider {
+                provider.reportCall(with: uuid, endedAt: Date(), reason: .remoteEnded)
+            }
         }
     }
 
@@ -344,6 +429,12 @@ final class CallSignalWs: NSObject {
 
         NSLog("[CallSignalWs] call_invite \(callId) from \(callerEmail) — reporting to CallKit")
         let uuid = UUID()
+        // [#1179 cleanup, 2026-05-19] Remember the UUID so a later inbound
+        // call_end frame can dismiss the matching CallKit entry. FIFO trim.
+        inviteUUIDsByCallId.append((callId: callId, uuid: uuid))
+        while inviteUUIDsByCallId.count > kInviteUUIDMax {
+            inviteUUIDsByCallId.removeFirst()
+        }
 
         // 1. Report to CallKit FIRST (Apple deadline is paranoid; mirror the
         //    PushKit ordering). Hop to main — CXProvider should be touched on
