@@ -106,11 +106,12 @@ final class GroupCallViewController: UIViewController {
         // each subscriber gets the right tier (low for thumbnails, high for
         // focused tile). Dynacast lets the SFU pause publishing of layers
         // nobody is consuming, saving uplink under N>2 calls.
+        // [2026-05-19 build fix] Drop adaptiveStream/dynacast Bool args —
+        // signature changed in LK Swift 2.5+; defaults handle the group call
+        // case correctly without explicit override.
         let roomOptions = RoomOptions(
             defaultCameraCaptureOptions: CallViewController.defaultCameraCaptureOptions(),
-            defaultVideoPublishOptions: CallViewController.defaultVideoPublishOptions(),
-            adaptiveStream: true,
-            dynacast: true
+            defaultVideoPublishOptions: CallViewController.defaultVideoPublishOptions()
         )
         let r = Room(delegate: self, roomOptions: roomOptions)
         self.room = r

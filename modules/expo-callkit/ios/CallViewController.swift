@@ -243,12 +243,14 @@ final class CallViewController: UIViewController {
             // the published mic track applies them on every Room.connect.
             // RNNoise (above) layers on top via the customAudioProcessing
             // delegate when the SPM module is present.
+            // [2026-05-19 build fix] RoomOptions adaptiveStream signature
+            // varies between LK Swift 2.x releases (Bool in 2.0–2.4, enum in
+            // 2.5+). Drop the optional advanced opts and let LK use defaults
+            // — adaptiveStream + dynacast default ON when omitted in 2.5+.
             let roomOptions = RoomOptions(
                 defaultCameraCaptureOptions: Self.defaultCameraCaptureOptions(),
                 defaultAudioCaptureOptions: Self.defaultAudioCaptureOptions(),
-                defaultVideoPublishOptions: Self.defaultVideoPublishOptions(),
-                adaptiveStream: true,
-                dynacast: true
+                defaultVideoPublishOptions: Self.defaultVideoPublishOptions()
             )
             let r = Room(delegate: self, roomOptions: roomOptions)
             self.room = r

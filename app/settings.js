@@ -6,7 +6,7 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import AvatarCircle from '../components/AvatarCircle';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -15,7 +15,7 @@ import {
   IconArrowLeft, IconSparkles, IconMessageSquare, IconPenTool, IconDraft,
   IconFilter, IconChevronRight, IconGlobe, IconTrash, IconBell, IconForward,
   IconShield, IconFileText, IconUser, IconUsers, IconPlus, IconShare, IconCheck,
-  IconMail, IconPhone, IconAlertTriangle, IconCopy, IconDatabase,
+  IconMail, IconPhone, IconAlertTriangle, IconCopy, IconDatabase, IconRefresh,
 } from '../components/Icons';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect, Circle as SvgCircle } from 'react-native-svg';
 import { useBiometric } from '../context/BiometricContext';
@@ -2777,9 +2777,25 @@ function SettingsScreenInner() {
             store the user cares about). */}
         {Platform.OS !== 'web' && sectionMatches(t('settings.storage.title'), t('settings.storage.photos'), t('settings.storage.videos'), t('settings.storage.audios'), t('settings.storage.documents'), 'storage', 'cache', 'armazenamento', 'cache') && (
         <View ref={registerSectionRef('storage')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
-          <View style={s.sectionTitleRow}>
-            <IconDatabase size={18} color={colors.primary} style={{ marginRight: 8 }} />
-            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.storage.title')}</Text>
+          {/* [2026-05-18] Manual refresh button — storage stats used to only
+              hydrate at mount, so toggling auto-DL or clearing a chat
+              elsewhere left the breakdown stale. User reported "armazenamento
+              nao ta sincronizado". Tap re-scans cache+saved dirs. */}
+          <View style={[s.sectionTitleRow, { justifyContent: 'space-between' }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+              <IconDatabase size={18} color={colors.primary} style={{ marginRight: 8 }} />
+              <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.storage.title')}</Text>
+            </View>
+            <TouchableOpacity
+              onPress={refreshStorageStats}
+              disabled={storageBusy}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              accessibilityRole="button"
+              accessibilityLabel={t('common.refresh') || 'Atualizar'}
+              style={{ padding: 6, opacity: storageBusy ? 0.4 : 1 }}
+            >
+              <IconRefresh size={18} color={colors.textSecondary} />
+            </TouchableOpacity>
           </View>
           {(() => {
             // Inline helper to format bytes WhatsApp-style: < 1KB shows
