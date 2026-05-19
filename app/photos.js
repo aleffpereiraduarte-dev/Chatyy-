@@ -1394,13 +1394,28 @@ export default function PhotosScreen() {
           text: t('common.delete'),
           style: 'destructive',
           onPress: async () => {
+            // Track success/failure so we can surface real feedback instead of
+            // silently swallowing API errors (used to leave the user wondering
+            // why some photos "stayed" after Excluir).
+            let ok = 0, fail = 0, skipped = 0;
             for (const id of ids) {
-              if (!id.startsWith('device_')) {
-                try { await api.fileDelete(id); } catch {}
+              if (id.startsWith('device_')) { skipped++; continue; }
+              try {
+                const r = await api.fileDelete(id);
+                if (r?.success === false) fail++; else ok++;
+              } catch {
+                fail++;
               }
             }
             clearSelection();
             loadCloudPhotos(1);
+            if (fail > 0) {
+              safeAlert(
+                t('photos.deletePartial') || 'Algumas falharam',
+                (t('photos.deletePartialDesc') || '{ok} excluídas, {fail} falharam.')
+                  .replace('{ok}', String(ok)).replace('{fail}', String(fail)),
+              );
+            }
           },
         },
       ]

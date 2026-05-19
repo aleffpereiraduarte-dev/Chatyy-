@@ -1656,7 +1656,8 @@ function SettingsScreenInner() {
 
         {/* Notif LED color — Android only. Picks the LED color used by
             the notification channel. The native module reads
-            `notif_led_color` on push delivery. Six brand-spectrum presets. */}
+            `notif_led_color` on push delivery. Branded swatches with
+            labels + a hero preview dot showing the live selection. */}
         {Platform.OS === 'android' && sectionMatches(
           t('settings.led.title') || 'Cor do LED',
           'led',
@@ -1666,24 +1667,76 @@ function SettingsScreenInner() {
           <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
             {t('settings.led.desc') || 'Cor do LED de notificação no Android.'}
           </Text>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
-            {['#7C3AED', '#EF4444', '#F59E0B', '#10B981', '#3B82F6', '#EC4899'].map(c => (
-              <TouchableOpacity
-                key={c}
-                onPress={() => { setNotifLedColor(c); setStorage('notif_led_color', c); }}
-                style={{
-                  width: 38, height: 38, borderRadius: 19,
-                  backgroundColor: c,
-                  borderWidth: 3,
-                  borderColor: notifLedColor === c ? colors.text : 'transparent',
-                  alignItems: 'center', justifyContent: 'center',
-                }}
-                accessibilityRole="button"
-                accessibilityLabel={`LED ${c}`}
-              >
-                {notifLedColor === c && <IconCheck size={16} color="#fff" />}
-              </TouchableOpacity>
-            ))}
+          {/* Hero preview — large SVG dot with a soft outer glow halo so
+              the user "sees" what the chosen color will look like as a
+              notification LED. Pure SVG (per project rule: no emoji). */}
+          <View style={{ alignItems: 'center', marginBottom: Spacing.md }}>
+            <Svg width={84} height={84}>
+              <Defs>
+                <SvgLinearGradient id="led_halo" x1="0" y1="0" x2="1" y2="1">
+                  <Stop offset="0" stopColor={notifLedColor} stopOpacity="0.45" />
+                  <Stop offset="1" stopColor={notifLedColor} stopOpacity="0" />
+                </SvgLinearGradient>
+              </Defs>
+              {/* Halo */}
+              <SvgCircle cx="42" cy="42" r="40" fill="url(#led_halo)" />
+              {/* Mid ring */}
+              <SvgCircle cx="42" cy="42" r="22" fill={notifLedColor} fillOpacity="0.35" />
+              {/* Core dot */}
+              <SvgCircle cx="42" cy="42" r="12" fill={notifLedColor} />
+              {/* Specular highlight */}
+              <SvgCircle cx="38" cy="38" r="4" fill="#FFFFFF" fillOpacity="0.55" />
+            </Svg>
+          </View>
+          {/* Swatch grid with labeled colors. Six brand-aligned options. */}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 14, justifyContent: 'flex-start' }}>
+            {[
+              { c: '#7C3AED', label: t('settings.led.c1') || 'Roxo' },
+              { c: '#3B82F6', label: t('settings.led.c2') || 'Azul' },
+              { c: '#10B981', label: t('settings.led.c3') || 'Verde' },
+              { c: '#EF4444', label: t('settings.led.c4') || 'Vermelho' },
+              { c: '#F59E0B', label: t('settings.led.c5') || 'Âmbar' },
+              { c: '#EC4899', label: t('settings.led.c6') || 'Rosa' },
+              { c: '#06B6D4', label: t('settings.led.c7') || 'Ciano' },
+              { c: '#FFFFFF', label: t('settings.led.c8') || 'Branco' },
+            ].map(({ c, label }) => {
+              const selected = notifLedColor === c;
+              return (
+                <TouchableOpacity
+                  key={c}
+                  onPress={() => { setNotifLedColor(c); setStorage('notif_led_color', c); }}
+                  activeOpacity={0.7}
+                  style={{ alignItems: 'center', width: 56 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`LED ${label}`}
+                >
+                  <View style={{
+                    width: 44, height: 44, borderRadius: 22,
+                    backgroundColor: c,
+                    borderWidth: selected ? 3 : (c === '#FFFFFF' ? 1 : 0),
+                    borderColor: selected ? colors.primary : (c === '#FFFFFF' ? colors.borderLight : 'transparent'),
+                    alignItems: 'center', justifyContent: 'center',
+                    shadowColor: c,
+                    shadowOffset: { width: 0, height: 0 },
+                    shadowOpacity: selected ? 0.55 : 0.25,
+                    shadowRadius: selected ? 8 : 4,
+                    elevation: selected ? 4 : 1,
+                  }}>
+                    {selected && <IconCheck size={18} color={c === '#FFFFFF' ? '#000' : '#fff'} />}
+                  </View>
+                  <Text
+                    numberOfLines={1}
+                    style={{
+                      fontSize: 11, color: selected ? colors.primary : colors.textSecondary,
+                      marginTop: 5, fontWeight: selected ? '700' : '500',
+                      textAlign: 'center', maxWidth: 56,
+                    }}
+                  >
+                    {label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
         </View>
         )}
