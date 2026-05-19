@@ -1,10 +1,12 @@
 package expo.modules.callkit
 
+import android.Manifest
 import android.app.PictureInPictureParams
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.media.AudioManager
 import android.media.ToneGenerator
@@ -15,6 +17,8 @@ import android.util.Rational
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
@@ -167,6 +171,13 @@ class CallActivity : ComponentActivity() {
 
   companion object {
     private const val TAG = "CallActivity"
+    /** [#1191 audio fix, 2026-05-19] Runtime RECORD_AUDIO permission request
+     *  code. Required even though the perm is declared in the manifest:
+     *  Android 6+ won't grant it without an explicit runtime request. Without
+     *  this, LiveKit's setMicrophoneEnabled(true) silently publishes an
+     *  empty audio track — call connects, both sides see "in call" UI, no
+     *  voice flows either way. */
+    private const val REQ_CODE_RECORD_AUDIO = 9101
     const val ACTION_CLOSE = "expo.modules.callkit.CLOSE_CALL_ACTIVITY"
     /** [DTMF, 2026-05-19] In-process broadcast from ExpoCallKitModule.playDTMF
      *  carrying `digit` extra. We publish the digit over the LK data channel
@@ -351,6 +362,17 @@ class CallActivity : ComponentActivity() {
     } catch (t: Throwable) {
       Log.w(TAG, "AudioRouter.configureForCall failed: ${t.message}")
     }
+
+    // [#1191 audio fix, 2026-05-19] Runtime RECORD_AUDIO check. The
+    // manifest declaration alone isn't enough on Android 6+ — LK's
+    // setMicrophoneEnabled(true) doesn't throw when the perm is denied, it
+    // just publishes a silent track and the call has "no voice". We seed
+    // state.micPermissionGranted here and (if denied) fire the system
+    // permission dialog. onRequestPermissionsResult re-publishes the mic
+    // track when the user taps Allow. Without this fix, a fresh user who
+    // never recorded a voice msg or used the status camera reaches the
+    // call screen with RECORD_AUDIO=denied → one-way silent call.
+    ensureMicPermission()
 
     // Fire call_invite via native WS path for outgoing — server dedupes
     // against the JS-side fire, so racing is safe.
@@ -840,6 +862,76 @@ class CallActivity : ComponentActivity() {
     }
   }
 
+  // ────────────── Mic permission (#1191, 2026-05-19)
+
+  /**
+   * Check RECORD_AUDIO at runtime. If granted → flip state, mic publishes
+   * normally. If not granted → fire the system permission dialog; the
+   * publish path will retry from onRequestPermissionsResult. Idempotent.
+   *
+   * Background: the perm is declared in the manifest but Android 6+ won't
+   * actually let us record without an explicit runtime grant. LK's
+   * setMicrophoneEnabled(true) does NOT throw on missing perm — it
+   * publishes silence and the call has no voice. A fresh install that
+   * never recorded a voice message or used the status camera arrives at
+   * this activity with RECORD_AUDIO=denied → one-way silent call.
+   */
+  private fun ensureMicPermission() {
+    val granted = ContextCompat.checkSelfPermission(
+      this, Manifest.permission.RECORD_AUDIO
+    ) == PackageManager.PERMISSION_GRANTED
+    state.micPermissionGranted = granted
+    if (!granted) {
+      Log.w(TAG, "RECORD_AUDIO not granted — requesting at runtime")
+      try {
+        ActivityCompat.requestPermissions(
+          this,
+          arrayOf(Manifest.permission.RECORD_AUDIO),
+          REQ_CODE_RECORD_AUDIO
+        )
+      } catch (t: Throwable) {
+        Log.e(TAG, "requestPermissions(RECORD_AUDIO) threw: ${t.message}", t)
+      }
+    } else {
+      Log.d(TAG, "RECORD_AUDIO already granted")
+    }
+  }
+
+  override fun onRequestPermissionsResult(
+    requestCode: Int,
+    permissions: Array<out String>,
+    grantResults: IntArray,
+  ) {
+    super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    if (requestCode != REQ_CODE_RECORD_AUDIO) return
+    val granted = grantResults.isNotEmpty() &&
+      grantResults[0] == PackageManager.PERMISSION_GRANTED
+    state.micPermissionGranted = granted
+    Log.d(TAG, "onRequestPermissionsResult RECORD_AUDIO: granted=$granted")
+    if (granted) {
+      // Mic was denied at connect time, so setMicrophoneEnabled(true) was
+      // skipped. Now that the user granted, publish the mic track. If LK
+      // hadn't connected yet (rare — perm dialog faster than LK handshake)
+      // the publish below is a no-op and attemptConnect will pick it up.
+      val r = room
+      if (r != null) {
+        lifecycleScope.launch {
+          try {
+            r.localParticipant.setMicrophoneEnabled(!state.isMuted)
+            Log.d(TAG, "mic published after late RECORD_AUDIO grant")
+          } catch (t: Throwable) {
+            Log.w(TAG, "late mic publish failed: ${t.message}")
+          }
+        }
+      }
+    } else {
+      // User tapped Deny. Surface a banner so they know the peer can't
+      // hear them — without this the bug would silently masquerade as a
+      // bad network / SFU issue.
+      state.status = "Permita o microfone para falar"
+    }
+  }
+
   // ────────────── LiveKit room lifecycle
 
   private fun bringUpRoom(url: String, token: String) {
@@ -917,7 +1009,16 @@ class CallActivity : ComponentActivity() {
     try {
       state.isReconnecting = attempt > 0
       r.connect(url, token)
-      r.localParticipant.setMicrophoneEnabled(!state.isMuted)
+      // [#1191 audio fix, 2026-05-19] Only publish mic if RECORD_AUDIO is
+      // actually granted. Calling setMicrophoneEnabled(true) without the
+      // perm silently publishes a muted/empty track — call looks connected
+      // but no voice flows. onRequestPermissionsResult re-publishes the
+      // mic if the user grants the perm after this point.
+      if (state.micPermissionGranted) {
+        r.localParticipant.setMicrophoneEnabled(!state.isMuted)
+      } else {
+        Log.w(TAG, "LK connected but RECORD_AUDIO denied — mic NOT published")
+      }
       if (hasVideo) {
         r.localParticipant.setCameraEnabled(state.isCameraOn)
         // [2026-05-19] Bug #989 fix: LK Android 2.x doesn't always emit
@@ -1410,6 +1511,12 @@ class CallSessionStateAndroid {
    *  a tap target that emits an event JS picks up to route to /login,
    *  instead of the raw "Sem token" string that confused users. */
   var needsLogin by mutableStateOf(false)
+  /** [#1191 audio fix, 2026-05-19] Mic permission state. False until we
+   *  confirm RECORD_AUDIO is granted at runtime. While false, the UI shows
+   *  a banner ("Permita o microfone para falar") and we DON'T publish the
+   *  mic track — LiveKit would happily publish silence and the call would
+   *  look connected with no voice. */
+  var micPermissionGranted by mutableStateOf(true)
   /** Live list of floating emoji bursts. Compose redraws when items are
    *  added or removed; the activity scope prunes each entry after 3s. */
   val floatingReactions: SnapshotStateList<FloatingReactionAndroid> = mutableStateListOf()

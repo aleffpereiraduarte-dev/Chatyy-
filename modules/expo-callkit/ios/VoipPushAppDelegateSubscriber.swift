@@ -363,19 +363,31 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
         // across scene activation states and presented VCs so a cold-start
         // VoIP push auto-accept actually surfaces CallViewController instead
         // of silently bailing on a nil keyWindow.
-        guard let root = robustPresentingViewController() else {
-            print("[VoipSubscriber] auto-accept: no presenting VC yet — deferring (JS path will handle)")
+        // [#1192 cold-start fix, 2026-05-19] On a true cold start the
+        // AppDelegate has called `factory.startReactNative(...)` but
+        // `window.rootViewController` is still nil until the RN bridge
+        // attaches it (~1-3s after didFinishLaunching). Without retry,
+        // `robustPresentingViewController()` returns nil, the print warns
+        // "deferring" but there is no actual handler — the native call
+        // screen never appears. Retry on the main run-loop until rootVC
+        // attaches, up to ~3s.
+        let presentBlock: (UIViewController) -> Void = { root in
+            CallViewController.present(
+                from: root,
+                callId: callId,
+                callerName: callerName,
+                callerEmail: callerEmail,
+                hasVideo: hasVideo,
+                lkUrl: lkUrl,
+                lkToken: lkToken
+            )
+        }
+        if let root = robustPresentingViewController() {
+            presentBlock(root)
             return
         }
-        CallViewController.present(
-            from: root,
-            callId: callId,
-            callerName: callerName,
-            callerEmail: callerEmail,
-            hasVideo: hasVideo,
-            lkUrl: lkUrl,
-            lkToken: lkToken
-        )
+        print("[VoipSubscriber] auto-accept: no presenting VC yet (cold-start) — retrying up to ~3s")
+        retryRobustPresent(reason: "autoAccept:\(callId)", block: presentBlock)
     }
 
     private func makeEphemeralProvider() -> CXProvider {
@@ -626,4 +638,42 @@ fileprivate func robustPresentingViewController() -> UIViewController? {
         return vc
     }
     return nil
+}
+
+// [#1192 cold-start native call fix, 2026-05-19] Mirror of
+// ExpoCallKitModule.retryPresent for the AppDelegate-tier stub path.
+// Lives here so the auto-accept presentation can poll for the RN
+// rootViewController to attach during a true cold-start.
+//
+// Cold-start path: VoIP push arrives → didFinishLaunchingWithOptions
+// installs the registry+provider and starts the RN factory, but
+// `window.rootViewController` is nil until the RN bridge boots
+// (~1-3s). If the user immediately taps Accept on the CallKit
+// ring sheet, CXAnswer fires while rootVC is still nil — the
+// original code printed "deferring" and returned, leaving the
+// user with no call UI at all (warm path works because rootVC
+// is already set).
+//
+// We retry up to ~3s on the main run-loop. Each tick re-resolves
+// via `robustPresentingViewController()`; the first non-nil result
+// fires the present block.
+fileprivate func retryRobustPresent(reason: String,
+                                     attempts: Int = 30,
+                                     interval: TimeInterval = 0.1,
+                                     block: @escaping (UIViewController) -> Void) {
+    func tick(_ remaining: Int) {
+        if let vc = robustPresentingViewController() {
+            print("[VoipSubscriber] retryRobustPresent(\(reason)): resolved on attempt \(attempts - remaining + 1)")
+            block(vc)
+            return
+        }
+        if remaining <= 0 {
+            print("[VoipSubscriber] retryRobustPresent(\(reason)): exhausted \(attempts) attempts, giving up")
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + interval) {
+            tick(remaining - 1)
+        }
+    }
+    tick(attempts)
 }

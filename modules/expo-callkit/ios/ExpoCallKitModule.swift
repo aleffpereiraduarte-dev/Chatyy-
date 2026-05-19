@@ -1571,26 +1571,39 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     // backgrounded scenes + CallKit ring-sheet contention; the old
     // keyWindow-first chain silently bailed when the app was cold-starting
     // from a VoIP push and the user had not yet returned to foreground.
-    guard let root = resolvePresentingViewController() else {
-      print("[ExpoCallKit] presentNativeCallVC: no presenting VC — skipping native present")
-      return
+    // [#1192 cold-start fix, 2026-05-19] If the immediate lookup misses
+    // (rootVC not yet attached during cold-start from VoIP push), retry
+    // up to ~3s waiting for RN bootstrap to attach the rootVC.
+    let presentBlock: (UIViewController) -> Void = { root in
+      // [2026-05-16 Stage 2] isOutgoing stays false for the CXAnswer path —
+      // we're presenting because the callee just answered, NOT because they
+      // initiated. The native call_answered fire happens up in the CXAnswer
+      // handler; we just need conversationId here so CallViewController's
+      // hangup path can fire call_end with the correct (call_id, conv_id).
+      // Re-check active state under retry — the call may have been ended by
+      // peer / network / hangup during the wait window.
+      guard ExpoCallKitModule.isCallStillActive(callId: callId) else {
+        print("[ExpoCallKit] presentNativeCallVC(retry): call \(callId) ended during wait — abort")
+        return
+      }
+      CallViewController.present(
+        from: root,
+        callId: callId,
+        callerName: callerName,
+        callerEmail: callerEmail,
+        hasVideo: hasVideo,
+        lkUrl: lkUrl,
+        lkToken: lkToken,
+        isOutgoing: false,
+        conversationId: conversationId
+      )
     }
-    // [2026-05-16 Stage 2] isOutgoing stays false for the CXAnswer path —
-    // we're presenting because the callee just answered, NOT because they
-    // initiated. The native call_answered fire happens up in the CXAnswer
-    // handler; we just need conversationId here so CallViewController's
-    // hangup path can fire call_end with the correct (call_id, conv_id).
-    CallViewController.present(
-      from: root,
-      callId: callId,
-      callerName: callerName,
-      callerEmail: callerEmail,
-      hasVideo: hasVideo,
-      lkUrl: lkUrl,
-      lkToken: lkToken,
-      isOutgoing: false,
-      conversationId: conversationId
-    )
+    if let root = resolvePresentingViewController() {
+      presentBlock(root)
+    } else {
+      print("[ExpoCallKit] presentNativeCallVC: no presenting VC yet (cold-start) — retrying")
+      retryPresent(reason: "presentNativeCallVC:\(callId)", block: presentBlock)
+    }
   }
 
   // [Stage #996 outgoing native flow, 2026-05-17] CXStartCallAction is the
@@ -1700,21 +1713,31 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
       return
     }
     // [#1172 fix, 2026-05-18] resolvePresentingViewController — see helper.
-    guard let root = resolvePresentingViewController() else {
-      print("[ExpoCallKit] presentOutgoingCallVC: no presenting VC — skipping native present")
-      return
+    // [#1192 cold-start fix, 2026-05-19] retry path for outgoing on cold-start.
+    let callId = params.callId
+    let presentBlock: (UIViewController) -> Void = { root in
+      guard ExpoCallKitModule.isCallStillActive(callId: callId) else {
+        print("[ExpoCallKit] presentOutgoingCallVC(retry): call \(callId) ended during wait — abort")
+        return
+      }
+      CallViewController.present(
+        from: root,
+        callId: params.callId,
+        callerName: params.calleeName,
+        callerEmail: params.calleeEmail,
+        hasVideo: params.isVideo,
+        lkUrl: lkUrl,
+        lkToken: lkToken,
+        isOutgoing: true,
+        conversationId: params.conversationId
+      )
     }
-    CallViewController.present(
-      from: root,
-      callId: params.callId,
-      callerName: params.calleeName,
-      callerEmail: params.calleeEmail,
-      hasVideo: params.isVideo,
-      lkUrl: lkUrl,
-      lkToken: lkToken,
-      isOutgoing: true,
-      conversationId: params.conversationId
-    )
+    if let root = resolvePresentingViewController() {
+      presentBlock(root)
+    } else {
+      print("[ExpoCallKit] presentOutgoingCallVC: no presenting VC yet (cold-start) — retrying")
+      retryPresent(reason: "presentOutgoingCallVC:\(callId)", block: presentBlock)
+    }
   }
 
   func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
@@ -2067,4 +2090,40 @@ fileprivate func resolvePresentingViewController() -> UIViewController? {
     return vc
   }
   return nil
+}
+
+// [#1192 cold-start native call fix, 2026-05-19] On a true cold start
+// (app fully killed) the VoIP push arrives, CallKit shows the system ring
+// sheet, user taps Accept, CXAnswerCallAction fires — but the AppDelegate
+// is still mid-`startReactNative()`: `UIWindow` was created with a frame
+// but `rootViewController` is nil until the RN bridge finishes its
+// bootstrap (typically 1-3s). `resolvePresentingViewController()` then
+// returns nil and the call-screen presentation is silently abandoned —
+// the user sees CallKit dismiss and lands on the home screen with no
+// native call UI. (Warm path works because rootVC is already set.)
+//
+// This helper retries the present up to ~3s in 100ms ticks, draining as
+// soon as a rootVC becomes available. Safe to call multiple times —
+// guards by `attempts` and the call-still-active check the present block
+// is expected to do.
+fileprivate func retryPresent(reason: String,
+                              attempts: Int = 30,
+                              interval: TimeInterval = 0.1,
+                              block: @escaping (UIViewController) -> Void) {
+  func tick(_ remaining: Int) {
+    if let vc = resolvePresentingViewController() {
+      print("[ExpoCallKit] retryPresent(\(reason)): resolved on attempt \(attempts - remaining + 1)")
+      block(vc)
+      return
+    }
+    if remaining <= 0 {
+      print("[ExpoCallKit] retryPresent(\(reason)): exhausted \(attempts) attempts, giving up")
+      return
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + interval) {
+      tick(remaining - 1)
+    }
+  }
+  // First attempt synchronous so warm path stays single-frame.
+  tick(attempts)
 }
