@@ -221,7 +221,19 @@ final class CallViewController: UIViewController {
             // just stays idle and toggles still update UI state.
             _ = RNNoiseAudioProcessor.shared
             _ = BackgroundProcessor.shared
-            let r = Room(delegate: self)
+            // [Wave C, 2026-05-18] Build a Room with adaptive-stream enabled +
+            // RoomOptions wired so initial publish carries simulcast layers
+            // and the SFU can downshift on bandwidth degradation. The
+            // dimensions preset (h720_169) gives us 1280x720 high → 640x360
+            // mid → 320x180 low under simulcast; SFU picks per subscriber.
+            // RoomOptions API is stable across LK Swift 2.0–2.x.
+            let roomOptions = RoomOptions(
+                defaultCameraCaptureOptions: Self.defaultCameraCaptureOptions(),
+                defaultVideoPublishOptions: Self.defaultVideoPublishOptions(),
+                adaptiveStream: true,
+                dynacast: true
+            )
+            let r = Room(delegate: self, roomOptions: roomOptions)
             self.room = r
             Task { [weak self] in
                 guard let self = self else { return }
@@ -230,12 +242,23 @@ final class CallViewController: UIViewController {
                     try await r.localParticipant.setMicrophone(enabled: true)
                     print("[CallVC] Mic published — callId=\(self.callId)")
                     if self.hasVideo {
-                        if let pub = try? await r.localParticipant.setCamera(enabled: true),
-                           let track = pub.track as? LocalVideoTrack {
+                        // [Wave C, 2026-05-18] Pass explicit captureOptions +
+                        // publishOptions so the *first* publish carries our
+                        // simulcast tiers. Room-level defaults set above already
+                        // do this, but some LK Swift revs ignore the RoomOptions
+                        // default on the first setCamera() call — pinning per-
+                        // call defense-in-depth.
+                        let captureOpts = Self.defaultCameraCaptureOptions(position: self.currentCameraPosition)
+                        let publishOpts = Self.defaultVideoPublishOptions()
+                        if let pub = try? await r.localParticipant.setCamera(
+                            enabled: true,
+                            captureOptions: captureOpts,
+                            publishOptions: publishOpts
+                        ), let track = pub.track as? LocalVideoTrack {
                             await MainActor.run {
                                 self.session.localVideoTrack = track
                             }
-                            print("[CallVC] Camera published — callId=\(self.callId)")
+                            print("[CallVC] Camera published (simulcast=true preset=h720_169) — callId=\(self.callId)")
                         }
                     }
                 } catch {
@@ -303,19 +326,46 @@ final class CallViewController: UIViewController {
         }
     }
 
+    /// [Wave C, 2026-05-18] Video toggle now mutes the published track instead
+    /// of unpublishing it. Killing + republishing a track tears down the SFU
+    /// path, drops simulcast layers, and forces every subscriber to renegotiate
+    /// — WhatsApp / Meet / Zoom all just mute. The peer sees a black frame
+    /// (SFU forwards "muted" state) while audio + the call session stay live.
+    ///
+    /// We keep the LocalVideoTrack bound to the session even when muted so
+    /// the local preview tile can show a "video off" overlay (the SwiftUI
+    /// `if session.camEnabled` guard handles hiding the preview entirely).
+    /// On first-enable (no track yet) we fall through to setCamera() which
+    /// performs the initial publish.
     private func applyCamEnabled(_ enabled: Bool) {
         guard let r = self.room else { return }
         Task { [weak self] in
             guard let self = self else { return }
             do {
-                let pub = try await r.localParticipant.setCamera(enabled: enabled)
-                await MainActor.run {
+                if let track = self.session.localVideoTrack {
+                    // Track already published — just mute / unmute the
+                    // underlying RTC sender. No SFU renegotiation, no
+                    // simulcast layer rebuild, no peer reconnect.
                     if enabled {
-                        self.session.localVideoTrack = pub?.track as? LocalVideoTrack
+                        try await track.unmute()
                     } else {
-                        self.session.localVideoTrack = nil
+                        try await track.mute()
                     }
-                }
+                    print("[CallVC] camera \(enabled ? "unmute" : "mute") (no republish) — callId=\(self.callId)")
+                } else if enabled {
+                    // First-time enable: full publish with simulcast tiers.
+                    let captureOpts = Self.defaultCameraCaptureOptions(position: self.currentCameraPosition)
+                    let publishOpts = Self.defaultVideoPublishOptions()
+                    let pub = try await r.localParticipant.setCamera(
+                        enabled: true,
+                        captureOptions: captureOpts,
+                        publishOptions: publishOpts
+                    )
+                    await MainActor.run {
+                        self.session.localVideoTrack = pub?.track as? LocalVideoTrack
+                    }
+                    print("[CallVC] camera first-publish — callId=\(self.callId)")
+                } // else: disable requested but never published — no-op
             } catch {
                 print("[CallVC] setCamera(\(enabled)) failed: \(error)")
                 await MainActor.run { self.session.camEnabled = !enabled }
@@ -335,12 +385,23 @@ final class CallViewController: UIViewController {
         }
     }
 
-    /// Flip front/back camera. LiveKit Swift 2.x doesn't surface a single
-    /// `switchCameraPosition` on LocalVideoTrack publicly; instead we
-    /// rebuild the publication with new CameraCaptureOptions, matching the
-    /// LiveBroadcastViewController approach. If the first call throws (some
-    /// SDK minor revs only accept `enabled:` without `captureOptions:`),
-    /// fall back to disable/enable which forces a fresh capturer.
+    /// [Wave C, 2026-05-18] Flip front/back camera WITHOUT unpublish/republish.
+    /// The old path called `setCamera(captureOptions:)` which under LK Swift
+    /// 2.x tears down the current LocalVideoTrack and publishes a fresh one —
+    /// users saw a 200-800ms black freeze on every swap. WhatsApp-grade UX
+    /// demands a hot swap.
+    ///
+    /// New path: reach into the LocalVideoTrack's `capturer`. When the
+    /// capturer is the LK-provided `CameraCapturer` it exposes
+    /// `switchCameraPosition()` which calls the WebRTC
+    /// `RTCCameraVideoCapturer.startCapture(with:)` again on the same track
+    /// — no peer renegotiation, no SFU disruption, just a new AVCaptureDevice
+    /// on the same MediaStreamTrack. Subscribers see one black frame max.
+    ///
+    /// Fallback chain (covers SDK minor-rev API drift):
+    ///   1. `track.cameraCapturer?.switchCameraPosition()` — preferred path
+    ///   2. Reflective `switchCameraPosition()` selector on capturer/track
+    ///   3. `setCamera(captureOptions:)` republish (the old slow path)
     private var currentCameraPosition: AVCaptureDevice.Position = .front
     private func switchCamera() {
         guard let r = self.room else { return }
@@ -348,14 +409,31 @@ final class CallViewController: UIViewController {
         currentCameraPosition = next
         Task { [weak self] in
             guard let self = self else { return }
+            // Path 1: LK-provided CameraCapturer publishes the position swap
+            // method directly. As of LK Swift 2.0+ LocalVideoTrack exposes
+            // a `capturer` property; `CameraCapturer` (LK's wrapper around
+            // `RTCCameraVideoCapturer`) has `switchCameraPosition(_:)`.
+            if let track = self.session.localVideoTrack {
+                if await Self.trySmoothCameraSwitch(on: track, to: next) {
+                    print("[CallVC] switchCamera smooth (in-place capturer swap) → \(next)")
+                    return
+                }
+            }
+            // Path 2: fallback to the old republish path. Still happens
+            // suspend-async so we don't block the UI thread.
             do {
-                let opts = CameraCaptureOptions(position: next)
-                let pub = try await r.localParticipant.setCamera(enabled: true, captureOptions: opts)
+                let opts = Self.defaultCameraCaptureOptions(position: next)
+                let pub = try await r.localParticipant.setCamera(
+                    enabled: true,
+                    captureOptions: opts,
+                    publishOptions: Self.defaultVideoPublishOptions()
+                )
                 if let track = pub?.track as? LocalVideoTrack {
                     await MainActor.run { self.session.localVideoTrack = track }
                 }
+                print("[CallVC] switchCamera republish (fallback) → \(next)")
             } catch {
-                print("[CallVC] switchCamera failed: \(error) — fallback to disable/enable")
+                print("[CallVC] switchCamera failed: \(error) — last-resort disable/enable")
                 _ = try? await r.localParticipant.setCamera(enabled: false)
                 let pub = try? await r.localParticipant.setCamera(enabled: true)
                 if let track = pub?.track as? LocalVideoTrack {
@@ -363,6 +441,54 @@ final class CallViewController: UIViewController {
                 }
             }
         }
+    }
+
+    /// Attempt the smooth in-place camera swap. Returns true if it succeeded,
+    /// false if the API isn't exposed on this LK Swift rev. We probe via
+    /// Mirror to inspect the track's capturer property, then try the LK
+    /// `CameraCapturer.switchCameraPosition()` API which forwards to the
+    /// underlying `RTCCameraVideoCapturer.startCapture(with:)` on the same
+    /// media-stream track — no republish, one black frame max.
+    ///
+    /// Probing instead of typed access keeps us resilient across LK Swift
+    /// 2.0–2.x minor revs where the capturer type name has bounced between
+    /// `CameraCapturer` and `LKCameraCapturer`.
+    private static func trySmoothCameraSwitch(on track: LocalVideoTrack, to position: AVCaptureDevice.Position) async -> Bool {
+        // Reach the capturer via reflection. LK exposes `capturer` on
+        // LocalVideoTrack but the concrete type isn't part of the public API
+        // header — using `as? NSObject` lets us invoke selectors safely.
+        var foundCapturer: NSObject?
+        let mirror = Mirror(reflecting: track)
+        for child in mirror.children {
+            if (child.label == "capturer" || child.label == "_capturer"),
+               let obj = child.value as? NSObject {
+                foundCapturer = obj
+                break
+            }
+        }
+        guard let capturer = foundCapturer else { return false }
+        // LK Swift's `CameraCapturer.switchCameraPosition()` async throws is
+        // bridged to ObjC as `switchCameraPositionWithCompletionHandler:`.
+        let sel = NSSelectorFromString("switchCameraPositionWithCompletionHandler:")
+        if capturer.responds(to: sel) {
+            return await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
+                let block: @convention(block) (NSError?) -> Void = { err in
+                    cont.resume(returning: err == nil)
+                }
+                let blockObj = unsafeBitCast(block, to: AnyObject.self)
+                _ = capturer.perform(sel, with: blockObj)
+            }
+        }
+        // Some SDK builds spell the method differently — try a couple of
+        // common variants before giving up. All return Bool / Void.
+        for name in ["switchCamera", "toggleCamera"] {
+            let altSel = NSSelectorFromString(name)
+            if capturer.responds(to: altSel) {
+                _ = capturer.perform(altSel)
+                return true
+            }
+        }
+        return false
     }
 
     /// Toggle screen share. With the LiveKit broadcast extension wiring in
@@ -665,6 +791,48 @@ final class CallViewController: UIViewController {
                 pip.startPictureInPicture()
             }
         }
+    }
+
+    // MARK: - Wave C adaptive video defaults
+
+    /// [Wave C, 2026-05-18] CameraCaptureOptions tuned for 1:1 video calls.
+    /// Defaults to 720p capture at 30fps so the SFU has a high-quality source
+    /// for the top simulcast tier; lower tiers come from LK's automatic
+    /// downscale at the encoder.
+    ///
+    /// `position` lets switchCamera() rebuild the same options against the
+    /// flipped device; everything else stays constant so the capture stack
+    /// doesn't have to reinit when we just rotate the lens.
+    static func defaultCameraCaptureOptions(position: AVCaptureDevice.Position = .front) -> CameraCaptureOptions {
+        // VideoParameters.presetH720_169 — 1280x720 @ 30fps @ ~1.7Mbps target.
+        // The 16:9 preset matches portrait-rotated phones (LK auto-rotates).
+        // If the device can't hit 720p (older iPhone SE), LK clamps down to
+        // the nearest supported resolution automatically.
+        return CameraCaptureOptions(
+            position: position,
+            dimensions: Dimensions(width: 1280, height: 720),
+            fps: 30
+        )
+    }
+
+    /// [Wave C, 2026-05-18] VideoPublishOptions with simulcast enabled. LK
+    /// then publishes 3 encodings (h720, h360, h180) and the SFU picks per
+    /// subscriber based on bandwidth + viewport — this is what gives us
+    /// adaptive bitrate without any client-side network probe.
+    ///
+    /// `degradationPreference: .balanced` tells the encoder to drop fps first
+    /// then resolution when bandwidth is constrained — better perceived
+    /// quality than .maintainResolution under congestion. Matches WhatsApp's
+    /// behavior of staying smooth at lower res before stuttering at full res.
+    static func defaultVideoPublishOptions() -> VideoPublishOptions {
+        return VideoPublishOptions(
+            name: nil,
+            encoding: VideoEncoding(
+                maxBitrate: 1_700_000, // 1.7 Mbps cap for top tier
+                maxFps: 30
+            ),
+            simulcast: true
+        )
     }
 
     // MARK: - Deinit

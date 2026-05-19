@@ -426,6 +426,10 @@ public class ExpoCallKitModule: Module {
       ud.set(token, forKey: "auth_token")
       ud.set(baseUrl, forKey: "api_base")
       ud.set(Date().timeIntervalSince1970, forKey: "auth_token_at")
+      // [P0 2026-05-18 #1132] Now that we have a fresh bearer in the App
+      // Group, open the native CallSignalWs eagerly so inbound `call_invite`
+      // frames can ring CallKit even if the JS WS path is broken/paused.
+      CallSignalWs.shared.warmConnect()
     }
 
     AsyncFunction("persistPendingLkToken") { (roomName: String, token: String, url: String) -> Void in
@@ -665,6 +669,14 @@ public class ExpoCallKitModule: Module {
 
     Function("fireCallEndNative") { (callId: String, conversationId: String, reason: String) -> Void in
       CallSignalWs.shared.fireCallEnd(callId: callId, conversationId: conversationId, reason: reason)
+    }
+
+    // [P0 2026-05-18 #1132] Eagerly open the native CallSignalWs so it can
+    // receive inbound `call_invite` frames and ring CallKit even if the JS
+    // WS path is broken / paused / lazy-loading. Idempotent; safe to call
+    // from any JS hook (login, foreground, even on every render).
+    Function("warmCallSignalWs") { () -> Void in
+      CallSignalWs.shared.warmConnect()
     }
   }
 

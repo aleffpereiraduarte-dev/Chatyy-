@@ -118,6 +118,12 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
   // on modules/expo-screen-share.
   startScreenshare(audioShare: boolean): Promise<boolean>;
   stopScreenshare(): Promise<boolean>;
+
+  // [P0 2026-05-18 #1132] Eagerly open the native CallSignalWs so it can
+  // receive inbound `call_invite` frames and ring CallKit (iOS) /
+  // CallRingingService (Android) even if the JS WS path is broken/paused.
+  // Idempotent.
+  warmCallSignalWs(): void;
 }
 
 export interface OpenNativeCallParams {
@@ -561,4 +567,17 @@ export async function stopScreenshare(): Promise<boolean> {
   const m = getModule();
   if (!m) return false;
   try { return !!(await m.stopScreenshare()); } catch { return false; }
+}
+
+// ─── Native CallSignalWs warm-connect (P0 2026-05-18 #1132) ──────────────────
+// Opens the native raw WebSocket eagerly so inbound `call_invite` frames
+// ring the OS-level CallKit (iOS) / CallRingingService (Android) screen
+// even if the JS WS path is broken / paused / lazy-loading. The JS WS
+// (services/websocket.js) keeps working in parallel — this is belt-and-
+// suspenders against the regression where the callee's app received the
+// server frame but never rendered the modal.
+export function warmCallSignalWs(): void {
+  const m = getModule();
+  if (!m) return;
+  try { m.warmCallSignalWs(); } catch {}
 }

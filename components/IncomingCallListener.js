@@ -406,6 +406,27 @@ export default function IncomingCallListener() {
   // listener lifecycle.
   useEffect(() => { ensureContactIndex().catch(() => {}); }, []);
 
+  // [P0 2026-05-18 #1132] Eagerly open the native CallSignalWs so the OS-
+  // level ring (CallKit on iOS, CallRingingService on Android) fires for
+  // inbound `call_invite` frames even if the JS WS handler chain is broken/
+  // paused/lazy. Belt-and-suspenders against the regression where the
+  // callee's app received the WS frame but never rendered the modal.
+  // Idempotent; safe to call on every mount + foreground transition.
+  useEffect(() => {
+    if (Platform.OS === 'web' || !user?.email) return;
+    const warm = () => {
+      try {
+        const ck = require('../modules/expo-callkit');
+        if (typeof ck.warmCallSignalWs === 'function') ck.warmCallSignalWs();
+      } catch {}
+    };
+    warm();
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') warm();
+    });
+    return () => { try { sub.remove(); } catch {} };
+  }, [user?.email]);
+
   useEffect(() => {
     _triggerIncomingCall = (data) => {
       if (data?.caller_email === user?.email) return;

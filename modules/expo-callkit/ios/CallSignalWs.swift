@@ -1,4 +1,5 @@
 import Foundation
+import CallKit
 
 /**
  * [2026-05-16 native call signaling] CallSignalWs (iOS)
@@ -65,6 +66,17 @@ final class CallSignalWs: NSObject {
     private var reconnectAttempts: Int = 0
     private var authTimeoutWorkItem: DispatchWorkItem?
     private var pingTimer: DispatchSourceTimer?
+
+    // [P0 2026-05-18 #1132] Track inbound call_invite IDs we've already
+    // surfaced to CallKit so a re-deliver (server retry, multi-device fan-out)
+    // doesn't ring twice. Bounded — 32 entries, FIFO eviction.
+    private var seenIncomingInvites: [String] = []
+    private let kSeenInvitesMax = 32
+
+    // [P0 2026-05-18 #1132] When true, the WS stays connected even with an
+    // empty outgoing queue, so inbound `call_invite` frames can be received
+    // by the callee (who has nothing to send). Flipped on by `warmConnect()`.
+    private var keepAlive: Bool = false
 
     private override init() { super.init() }
 
@@ -139,6 +151,20 @@ final class CallSignalWs: NSObject {
             }
             self.pendingMessages.append(s)
             self.tryFlushLocked()
+        }
+    }
+
+    /// [P0 2026-05-18 #1132] Open the WS now (if not already open) and keep it
+    /// open across reconnects so inbound `call_invite` frames can ring CallKit.
+    /// JS should call this after login + on app foreground. Idempotent.
+    func warmConnect() {
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            self.keepAlive = true
+            if self.authed { return }
+            if self.connecting { return }
+            self.reconnectAttempts = 0
+            self.connectLocked()
         }
     }
 
@@ -246,10 +272,129 @@ final class CallSignalWs: NSObject {
             drainLocked()
         case "error":
             NSLog("[CallSignalWs] WS error frame: \(t)")
+        case "call_invite":
+            // [P0 2026-05-18 #1132] Native CallKit fallback for INCOMING calls.
+            //
+            // Before: only the JS WS (services/websocket.js) handled inbound
+            // `call_invite` frames. If JS was paused, lazy-loaded, or
+            // short-circuited (stale callRef / handlingRef), the modal never
+            // showed and the user heard nothing — even though the server
+            // delivered the frame and our raw WS task received it.
+            //
+            // Now: when a `call_invite` frame lands here, we report it to
+            // CallKit directly via the early CXProvider (the same one VoIP
+            // pushes use), then post `ExpoCallKitPendingVoipCall` so
+            // ExpoCallKitModule.adoptPendingCall registers it in activeCalls
+            // + emits `onIncomingCall` to JS. This is belt-and-suspenders:
+            // CallKit rings even if JS is broken, and JS still gets the
+            // event for its in-app modal.
+            handleIncomingCallInviteLocked(obj)
         default:
             // We don't consume any other server frames here; the JS WS owns
             // the real call event surface.
             break
+        }
+    }
+
+    /// Called on `queue`. Reports an inbound `call_invite` WS frame to CallKit
+    /// and notifies ExpoCallKitModule so JS sees `onIncomingCall`.
+    private func handleIncomingCallInviteLocked(_ obj: [String: Any]) {
+        let callId = (obj["call_id"] as? String) ?? (obj["room_id"] as? String) ?? ""
+        guard !callId.isEmpty else {
+            NSLog("[CallSignalWs] call_invite: missing call_id/room_id, skipping")
+            return
+        }
+        // Dedup: if we've already surfaced this callId in the recent window,
+        // skip. Covers server retries, multi-device fan-out, and the VoIP
+        // push path racing the WS frame (VoIP push fires earliest on cold
+        // start, so by the time the WS frame lands the call is already up).
+        if seenIncomingInvites.contains(callId) {
+            NSLog("[CallSignalWs] call_invite \(callId): already surfaced, skipping")
+            return
+        }
+        seenIncomingInvites.append(callId)
+        while seenIncomingInvites.count > kSeenInvitesMax {
+            seenIncomingInvites.removeFirst()
+        }
+
+        let callerEmail = (obj["caller_email"] as? String) ?? ""
+        let callerName = (obj["caller_name"] as? String) ?? callerEmail
+        let conversationId: String = {
+            if let s = obj["conversation_id"] as? String { return s }
+            if let n = obj["conversation_id"] as? NSNumber { return n.stringValue }
+            return ""
+        }()
+        let hasVideo: Bool = {
+            if let b = obj["video"] as? Bool { return b }
+            if let b = obj["has_video"] as? Bool { return b }
+            if let n = obj["video"] as? NSNumber { return n.boolValue }
+            if let s = obj["video"] as? String { return s == "1" || s == "true" }
+            return false
+        }()
+
+        // Skip self-echo: server should never deliver our own invite back,
+        // but harden anyway.
+        if !callerEmail.isEmpty,
+           let ud = UserDefaults(suiteName: kAppGroupId),
+           let selfEmail = ud.string(forKey: "user_email")?.lowercased(),
+           callerEmail.lowercased() == selfEmail {
+            NSLog("[CallSignalWs] call_invite \(callId): self-echo, skipping")
+            return
+        }
+
+        NSLog("[CallSignalWs] call_invite \(callId) from \(callerEmail) — reporting to CallKit")
+        let uuid = UUID()
+
+        // 1. Report to CallKit FIRST (Apple deadline is paranoid; mirror the
+        //    PushKit ordering). Hop to main — CXProvider should be touched on
+        //    main thread.
+        DispatchQueue.main.async {
+            // earlyProvider is installed in VoipPushAppDelegateSubscriber's
+            // didFinishLaunching path, so it's available before any WS frame
+            // can arrive (WS auth requires a token persisted by JS *after*
+            // app launch). Skip silently if missing — JS WS path is still
+            // the primary fallback.
+            guard let provider = VoipPushAppDelegateSubscriber.earlyProvider else {
+                NSLog("[CallSignalWs] call_invite \(callId): earlyProvider not ready — JS path will handle")
+                return
+            }
+            let update = CXCallUpdate()
+            update.remoteHandle = CXHandle(type: .generic, value: callerName.isEmpty ? "Chatyy" : callerName)
+            update.localizedCallerName = callerName.isEmpty ? "Chatyy" : callerName
+            update.hasVideo = hasVideo
+            update.supportsGrouping = false
+            update.supportsUngrouping = false
+            update.supportsHolding = true
+            update.supportsDTMF = false
+            provider.reportNewIncomingCall(with: uuid, update: update) { error in
+                if let error = error {
+                    NSLog("[CallSignalWs] reportNewIncomingCall failed: \(error.localizedDescription)")
+                } else {
+                    NSLog("[CallSignalWs] reportNewIncomingCall succeeded for \(callId)")
+                }
+            }
+
+            // 2. Notify ExpoCallKitModule so it tracks the call + emits
+            //    `onIncomingCall` to JS (which populates callStateRef in the
+            //    IncomingCallListener). Mirrors the VoIP push path.
+            let payload: [String: Any] = [
+                "caller_email": callerEmail,
+                "caller_name": callerName,
+                "conversation_id": conversationId,
+                "video": hasVideo,
+                "call_id": callId,
+            ]
+            NotificationCenter.default.post(
+                name: Notification.Name("ExpoCallKitPendingVoipCall"),
+                object: nil,
+                userInfo: [
+                    "callId": callId,
+                    "uuid": uuid.uuidString,
+                    "callerName": callerName,
+                    "hasVideo": hasVideo,
+                    "payload": payload,
+                ]
+            )
         }
     }
 
@@ -287,10 +432,24 @@ final class CallSignalWs: NSObject {
 
     /// Called on `queue`.
     private func scheduleReconnectLocked() {
-        guard !pendingMessages.isEmpty else { return } // idle
+        // Idle: stop reconnecting unless we're in keep-alive mode (callee
+        // path — needs to receive inbound call_invite frames even with an
+        // empty outgoing queue).
+        guard !pendingMessages.isEmpty || keepAlive else { return }
         let attempt = reconnectAttempts
         reconnectAttempts += 1
         if attempt >= maxReconnect {
+            // In keep-alive mode we don't give up forever — try again every
+            // 30s. The JS WS is still the primary path; this is the native
+            // ring fallback for inbound call_invite.
+            if keepAlive {
+                NSLog("[CallSignalWs] keep-alive: \(maxReconnect) attempts spent — slow retry in 30s")
+                reconnectAttempts = 0
+                queue.asyncAfter(deadline: .now() + 30) { [weak self] in
+                    self?.connectLocked()
+                }
+                return
+            }
             NSLog("[CallSignalWs] reconnect: gave up after \(maxReconnect) attempts — JS WS is the fallback")
             return
         }

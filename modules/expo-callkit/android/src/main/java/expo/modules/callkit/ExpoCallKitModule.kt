@@ -460,6 +460,11 @@ class ExpoCallKitModule : Module() {
           .putString("api_base", baseUrl)
           .apply()
         Log.d(TAG, "persistAuthForNativeCall: stashed token len=${token.length} base=$baseUrl")
+        // [P0 2026-05-18 #1132] Now that we have a fresh bearer in prefs,
+        // open the native CallSignalWs eagerly so inbound `call_invite`
+        // frames can launch CallRingingService even if the JS WS path is
+        // broken/paused.
+        try { CallSignalWs.warmConnect(context.applicationContext) } catch (_: Throwable) {}
       } catch (t: Throwable) {
         Log.e(TAG, "persistAuthForNativeCall failed: ${t.message}")
       }
@@ -801,6 +806,14 @@ class ExpoCallKitModule : Module() {
 
     Function("fireCallEndNative") { callId: String, conversationId: String, reason: String ->
       CallSignalWs.fireCallEnd(context.applicationContext, callId, conversationId, reason)
+    }
+
+    // [P0 2026-05-18 #1132] Eagerly open the native CallSignalWs so it can
+    // receive inbound `call_invite` frames and launch CallRingingService
+    // even if the JS WS path is broken / paused / lazy-loading. Idempotent;
+    // safe to call from any JS hook (login, foreground, even on every render).
+    Function("warmCallSignalWs") {
+      try { CallSignalWs.warmConnect(context.applicationContext) } catch (_: Throwable) {}
     }
   }
 }

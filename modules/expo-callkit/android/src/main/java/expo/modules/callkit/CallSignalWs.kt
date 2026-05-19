@@ -1,6 +1,8 @@
 package expo.modules.callkit
 
 import android.content.Context
+import android.content.Intent
+import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -84,6 +86,18 @@ object CallSignalWs {
     private var authTimeoutJob: Job? = null
     private var appContext: Context? = null
 
+    // [P0 2026-05-18 #1132] Track inbound call_invite IDs we've already
+    // surfaced to the ringing service so a re-deliver (server retry, FCM ↔ WS
+    // race, multi-device fan-out) doesn't ring twice. Bounded — 32 entries.
+    private const val SEEN_INVITES_MAX = 32
+    private val seenIncomingInvites: MutableSet<String> =
+        java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
+
+    // [P0 2026-05-18 #1132] When true, the WS stays connected even with an
+    // empty outgoing queue, so inbound `call_invite` frames can be received
+    // by the callee (who has nothing to send). Flipped on by `warmConnect()`.
+    private val keepAlive = AtomicBoolean(false)
+
     // ─── Public API ────────────────────────────────────────────────────────
 
     fun fireCallInvite(
@@ -139,6 +153,23 @@ object CallSignalWs {
             put("ts", System.currentTimeMillis())
         }.toString()
         enqueueAndShip(context, payload)
+    }
+
+    /**
+     * [P0 2026-05-18 #1132] Open the WS now (if not already open) and keep
+     * it open across reconnects so inbound `call_invite` frames can launch
+     * `CallRingingService`. JS should call this after login + on app
+     * foreground. Idempotent.
+     */
+    fun warmConnect(context: Context) {
+        appContext = context.applicationContext
+        keepAlive.set(true)
+        scope.launch {
+            if (authenticated.get()) return@launch
+            if (connecting.get()) return@launch
+            reconnectAttempts.set(0)
+            connect()
+        }
     }
 
     /**
@@ -276,9 +307,116 @@ object CallSignalWs {
                 // hits land here too.
                 Log.w(TAG, "WS error frame: $text")
             }
+            "call_invite" -> {
+                // [P0 2026-05-18 #1132] Native ring-service fallback for
+                // INCOMING calls.
+                //
+                // Before: only the JS WS (services/websocket.js) handled
+                // inbound `call_invite`. If JS was paused/lazy/short-circuited
+                // (stale callRef / handlingRef / Suspense not yet committed),
+                // the modal never showed and the user heard nothing — even
+                // though the server delivered the frame and our raw WS
+                // received it (server log: "broadcastToEmail count=1").
+                //
+                // Now: native CallRingingService kicks off here directly,
+                // mirroring the FCM data-message path. The ringing UI ALWAYS
+                // shows. JS still has its own subscription (`mailWs.on
+                // 'call_invite'`) for the in-app modal; this is belt-and-
+                // suspenders so the callee always rings.
+                handleIncomingCallInvite(obj)
+            }
             // We don't consume any other server-pushed frames; the JS WS owns
             // the real call event surface (incoming_call, call_answered, …).
             else -> { /* no-op */ }
+        }
+    }
+
+    private fun handleIncomingCallInvite(obj: JSONObject) {
+        val ctx = appContext ?: run {
+            Log.w(TAG, "call_invite: no appContext (should not happen post-enqueue)")
+            return
+        }
+        val callId = obj.optString("call_id").ifEmpty { obj.optString("room_id") }
+        if (callId.isEmpty()) {
+            Log.w(TAG, "call_invite: missing call_id/room_id, skipping")
+            return
+        }
+        // Dedup vs server retries + FCM↔WS race + multi-device fan-out.
+        // CallRingingService is also idempotent on call_id, but bailing here
+        // avoids a redundant startForegroundService spin.
+        if (!seenIncomingInvites.add(callId)) {
+            Log.d(TAG, "call_invite $callId: already surfaced, skipping")
+            return
+        }
+        // FIFO trim — ConcurrentHashMap.newKeySet doesn't preserve insertion
+        // order, so we cap via best-effort eviction. The Set's contains() is
+        // O(1) regardless, so size doesn't hurt lookup speed.
+        if (seenIncomingInvites.size > SEEN_INVITES_MAX) {
+            try {
+                val it = seenIncomingInvites.iterator()
+                while (seenIncomingInvites.size > SEEN_INVITES_MAX && it.hasNext()) {
+                    it.next(); it.remove()
+                }
+            } catch (_: Throwable) { /* best-effort */ }
+        }
+
+        val callerEmail = obj.optString("caller_email")
+        val callerName = obj.optString("caller_name").ifEmpty { callerEmail }
+        val conversationId = obj.optString("conversation_id")
+        val hasVideo: Boolean = when {
+            obj.has("video") -> {
+                val v = obj.opt("video")
+                when (v) {
+                    is Boolean -> v
+                    is Number -> v.toInt() != 0
+                    is String -> v == "1" || v.equals("true", ignoreCase = true)
+                    else -> false
+                }
+            }
+            obj.has("has_video") -> obj.optBoolean("has_video", false)
+            else -> false
+        }
+
+        // Self-echo guard — should never happen server-side but harden.
+        if (callerEmail.isNotEmpty()) {
+            try {
+                val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                val selfEmail = prefs.getString("user_email", null)?.lowercase()
+                if (selfEmail != null && callerEmail.lowercase() == selfEmail) {
+                    Log.d(TAG, "call_invite $callId: self-echo, skipping")
+                    return
+                }
+            } catch (_: Throwable) { /* fall through */ }
+        }
+
+        Log.d(TAG, "call_invite $callId from $callerEmail — launching CallRingingService")
+        try {
+            val serviceIntent = Intent(ctx, CallRingingService::class.java).apply {
+                putExtra("call_id", callId)
+                putExtra("caller_name", callerName)
+                putExtra("has_video", hasVideo)
+                putExtra("caller_email", callerEmail)
+                putExtra("conversation_id", conversationId)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                ctx.startForegroundService(serviceIntent)
+            } else {
+                ctx.startService(serviceIntent)
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "call_invite $callId: startForegroundService failed — falling back to notification", e)
+            try {
+                CallNotificationService.showIncomingCallNotification(
+                    ctx,
+                    callId,
+                    callerName,
+                    hasVideo,
+                    callerEmail,
+                    conversationId
+                )
+            } catch (e2: Throwable) {
+                Log.e(TAG, "call_invite $callId: notification fallback also failed", e2)
+            }
         }
     }
 
@@ -311,9 +449,24 @@ object CallSignalWs {
     }
 
     private fun scheduleReconnect() {
-        if (queue.isEmpty()) return // nothing to ship — stay idle
+        // Idle: stop reconnecting unless we're in keep-alive mode (callee
+        // path — needs to receive inbound call_invite frames even with an
+        // empty outgoing queue).
+        if (queue.isEmpty() && !keepAlive.get()) return
         val attempt = reconnectAttempts.getAndIncrement()
         if (attempt >= MAX_RECONNECT) {
+            if (keepAlive.get()) {
+                // Keep-alive mode: never give up entirely — slow-retry every
+                // 30s. The JS WS is still the primary path; this is the
+                // native ring fallback for inbound call_invite.
+                Log.w(TAG, "keep-alive: $MAX_RECONNECT attempts spent — slow retry in 30s")
+                reconnectAttempts.set(0)
+                scope.launch {
+                    delay(30_000L)
+                    connect()
+                }
+                return
+            }
             Log.w(TAG, "reconnect: gave up after $MAX_RECONNECT attempts — JS WS is the fallback")
             return
         }
