@@ -2177,8 +2177,11 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   const [loading, setLoading] = useState(_initialConvs.length === 0);
   // WS down banner — surfaces an "offline" hint at the top of the list so
   // the user knows new messages aren't syncing live. Only shows after a
-  // 3.5s delay (set by the connection listener) so brief flaps don't flash.
+  // 12s delay (set by the connection listener) so brief flaps don't flash.
+  // On reconnect we fade-out over 500ms instead of an abrupt flip (matches
+  // WhatsApp's reconnect-pill dismiss animation).
   const [wsDownBanner, setWsDownBanner] = useState(false);
+  const wsDownBannerOpacity = useRef(new Animated.Value(1)).current;
   // Auto-sync badge — fires from onlineRecoveryOrchestrator when an outbox
   // flush + delta sync round is running after coming back online. WhatsApp
   // shows the same kind of subtle "Connecting..." → "Updating..." hint at
@@ -3018,23 +3021,59 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       // conversations + updated last-message previews land immediately.
       let wasConnected = true;
       let bannerTimer = null;
+      // AppState bg→fg grace (2026-05-18 #1143, "never-fall" UX): every
+      // time the app comes back to foreground we record the timestamp.
+      // The very first WS close that lands inside the 3s window after a
+      // resume is a sleep/wake blip (radio woke up slower than the JS
+      // socket), NOT a real disconnect — we extend the banner suppress to
+      // 15s so the auto-heal cycle completes silently. Without this, every
+      // unlock surfaced "Reconectando…" for a few seconds and the user
+      // thought the app was always reconnecting.
+      let lastForegroundTs = Date.now();
+      const appStateSub = AppState.addEventListener('change', (s) => {
+        if (s === 'active') lastForegroundTs = Date.now();
+      });
+      unsubs.push(() => { try { appStateSub.remove(); } catch {} });
       unsubs.push(mailWs.on('connection', (data) => {
         if (data?.status === 'authenticated') {
           if (!wasConnected) { try { loadConversations(false); } catch {} }
           wasConnected = true;
           if (bannerTimer) { clearTimeout(bannerTimer); bannerTimer = null; }
-          setWsDownBanner(false);
+          // Fade-out (500ms) instead of an abrupt flip when we reconnect.
+          // If the banner never painted, the fade is a no-op since opacity
+          // resets to 1 on the next show. Match WhatsApp's reconnect-pill
+          // dismiss animation so the recovery feels smooth.
+          if (wsDownBannerOpacity.__lastShown) {
+            Animated.timing(wsDownBannerOpacity, {
+              toValue: 0, duration: 500, useNativeDriver: true,
+            }).start(({ finished }) => {
+              if (finished) {
+                setWsDownBanner(false);
+                wsDownBannerOpacity.setValue(1);
+                wsDownBannerOpacity.__lastShown = false;
+              }
+            });
+          } else {
+            setWsDownBanner(false);
+          }
         } else if (data?.status === 'disconnected') {
           wasConnected = false;
           if (!bannerTimer) {
-            // Bumped 5s → 12s (2026-05-12): user reported banner "fica
-            // reconectando" — most reconnects on flaky cellular happen
-            // under 10s, so the 5s threshold flashed the banner constantly.
-            // 12s lets WS auto-heal cycles complete invisibly.
+            // Base suppress = 12s (most reconnects on flaky cellular heal
+            // under 10s). If we JUST returned from background (<3s ago),
+            // extend to 15s — sleep/wake blips need extra slack because
+            // the OS radio takes 1-2s to renegotiate before the WS can
+            // even attempt to handshake.
+            const sinceForeground = Date.now() - lastForegroundTs;
+            const suppressMs = sinceForeground < 3000 ? 15000 : 12000;
             bannerTimer = setTimeout(() => {
-              if (!wasConnected && !mailWs.isConnected) setWsDownBanner(true);
+              if (!wasConnected && !mailWs.isConnected) {
+                wsDownBannerOpacity.setValue(1);
+                wsDownBannerOpacity.__lastShown = true;
+                setWsDownBanner(true);
+              }
               bannerTimer = null;
-            }, 12000);
+            }, suppressMs);
           }
         }
       }));
@@ -4853,13 +4892,14 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           </Text>
         </View>
       )}
-      {/* WS down banner — only shown after 5s delay (set by the connection
-          listener) so any reconnect under 5s is completely invisible. Visual
+      {/* WS down banner — only shown after 12s delay (15s if we just
+          returned from background, to absorb sleep/wake blips). Visual
           tuned to WhatsApp pattern: subtle muted gray (not alarming yellow)
           since this is informational, not an error — most reconnects succeed
-          in seconds and the user shouldn't feel the app is broken. */}
+          in seconds and the user shouldn't feel the app is broken. Fades
+          out over 500ms on reconnect instead of flipping abruptly. */}
       {wsDownBanner && (
-        <View
+        <Animated.View
           accessibilityRole="alert"
           accessibilityLiveRegion="polite"
           accessibilityLabel={t?.('chat.reconnecting') || 'Reconectando…'}
@@ -4869,12 +4909,13 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+          opacity: wsDownBannerOpacity,
         }}>
           <ActivityIndicator size="small" color={isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.45)'} />
           <Text style={{ flex: 1, fontSize: 12, color: isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.55)', fontWeight: '500' }}>
             {t?.('chat.reconnecting') || 'Reconectando…'}
           </Text>
-        </View>
+        </Animated.View>
       )}
       {/* [silent-fail-w3] Cold-start fetch failed and nothing is cached →
           1-line banner with a tap-to-retry pill. Tinted red so users

@@ -4778,7 +4778,70 @@ class CallErrorBoundary extends React.Component {
   }
 }
 
+// [#1144 2026-05-19] Single-call-screen contract. The user reported "2 sistemas
+// de ligação — às vezes aparece aquele Java que nós tínhamos, às vezes parece
+// um mais novo". Root cause: both the RN /call.js screen AND the native
+// CallActivity (Android) / CallViewController (iOS) were being mounted in
+// parallel — depending on the entry point (router.push from chat-conversation,
+// IncomingCallListener cold-start, push notification handler, OngoingCallBar
+// reopen) one or the other would win the foreground. We standardize on the
+// NATIVE Compose/SwiftUI screen for mobile. /call.js stays for web. On mobile
+// native we dispatch openNativeCall and immediately router.back() so the JS
+// stack never renders the RN call UI behind the native activity.
+//
+// Why a redirect (not a Redirect/router-config rewrite): every existing
+// router.push('/call?...') caller (chat-conversation.js, ChatCallsTab,
+// OngoingCallBar, CallStatusBar, IncomingCallListener, pushNotifications.js,
+// app/one.js) keeps working without edits — preserves the deep-link surface.
+function MobileNativeBridge() {
+  const router = useRouter();
+  const params = useLocalSearchParams();
+  const dispatchedRef = useRef(false);
+  useEffect(() => {
+    if (dispatchedRef.current) return;
+    dispatchedRef.current = true;
+    const callId = String(params.callId || `call_${Date.now()}`);
+    const contactName = String(params.contactName || params.name || '');
+    const contactEmail = String(params.contactEmail || params.email || '');
+    const isVideo = params.isVideo === '1' || params.isVideo === 'true' || params.isVideo === 1 || params.isVideo === true;
+    const isCaller = params.isCaller === '1' || params.isCaller === 'true' || params.isCaller === 1 || params.isCaller === true;
+    const conversationId = String(params.conversationId || '');
+    (async () => {
+      try {
+        const callkit = require('../modules/expo-callkit');
+        if (isCaller && callkit?.startOutgoingCall) {
+          await callkit.startOutgoingCall({
+            callee_email: contactEmail,
+            callee_name: contactName || contactEmail,
+            is_video: !!isVideo,
+            conversation_id: conversationId,
+            call_id: callId,
+          });
+        } else if (callkit?.openNativeCall) {
+          await callkit.openNativeCall({
+            callId,
+            callerName: contactName || contactEmail,
+            callerEmail: contactEmail,
+            hasVideo: !!isVideo,
+          });
+        }
+      } catch (e) {
+        console.warn('[CallScreen #1144] native dispatch failed:', e?.message || e);
+      } finally {
+        // Pop the placeholder route so user is back in chat — native CallActivity
+        // / CallViewController is now the foreground.
+        setTimeout(() => { try { router.back(); } catch {} }, 50);
+      }
+    })();
+  }, []);
+  return null;
+}
+
 export default function CallScreen(props) {
+  // Web keeps the rich JS UI. Mobile native dispatches to the native screen.
+  if (Platform.OS !== 'web') {
+    return <MobileNativeBridge />;
+  }
   return (
     <CallErrorBoundary>
       <CallScreenInner {...props} />
