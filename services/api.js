@@ -6679,6 +6679,27 @@ export async function walletSend(toEmail, amount, message = '') {
 export async function walletHistory({ limit = 50, offset = 0 } = {}) {
   return apiCall('wallet_history', { limit, offset }, 'POST');
 }
+// Creator cashout — convert pending_payout_cents into a PIX request.
+// Minimum R$ 50 (5000 cents). amountCents is the requested net payout.
+// Backend creates a row in chat_wallet_payouts (status='pending') and a
+// back-office worker actually settles the PIX. Returns the new pending
+// balance + the payout id so the UI can append it to the history.
+export async function walletCashoutRequest({
+  amountCents, pixKey, pixKeyType = 'auto', fullName, cpf,
+} = {}) {
+  return apiCall('wallet_cashout_request', {
+    amount_cents: Number(amountCents) || 0,
+    pix_key: String(pixKey || '').trim(),
+    pix_key_type: String(pixKeyType || 'auto').toLowerCase(),
+    full_name: String(fullName || '').trim(),
+    cpf: String(cpf || '').replace(/[^0-9]/g, ''),
+  }, 'POST');
+}
+// List of past cashout requests for the signed-in user (newest first, max 50).
+// Used by /wallet-cashout history table — status renders as pending/paid/rejected.
+export async function walletCashoutList() {
+  return apiCall('wallet_cashout_list', {}, 'POST');
+}
 // Paid gift send — debits diamond balance, credits 70% to creator as
 // pending_payout_cents (30% platform retain). Returns the new balance.
 export async function liveGiftSend(sessionId, giftSku) {

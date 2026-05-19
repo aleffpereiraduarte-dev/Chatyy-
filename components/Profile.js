@@ -38,6 +38,8 @@ import ProfileSettingsSheet from './ProfileSettingsSheet';
 import FollowersSheet from './FollowersSheet';
 import EmptyStateCard from './EmptyStateCard';
 import SendDiamondSheet from './SendDiamondSheet';
+import HighlightEditSheet from './HighlightEditSheet';
+import HighlightShareSheet from './HighlightShareSheet';
 import {
   IconX, IconPhone, IconVideo, IconMail, IconMessageSquare, IconUserPlus,
   IconChevronRight, IconSettings, IconMoreHorizontal, IconShare, IconAlertTriangle, IconLock, IconEdit,
@@ -871,6 +873,14 @@ export default function Profile({
   // disappeared until the next mount (user report: "adicionei o destaque
   // e some, não deixa ver"). Independent state survives those overwrites.
   const [highlights, setHighlights] = useState([]);
+  // [2026-05-18 IG-Pro] Action sheet + edit/share modals for highlights.
+  // The action sheet opens on long-press of a highlight tile and routes
+  // into either the inline edit sheet (rename/cover/items) or the share
+  // sheet (public link / native share). State is held at this level so
+  // both sheets can be toggled without re-mounting the row.
+  const [highlightSheet, setHighlightSheet] = useState({ open: false, highlight: null });
+  const [highlightEdit, setHighlightEdit] = useState({ open: false, highlight: null });
+  const [highlightShare, setHighlightShare] = useState({ open: false, highlight: null });
   // [feat-11] Avatar tap action sheet + StatusCamera visibility. The avatar
   // is the single, most-tapped surface on the profile and was overloaded:
   //   - with stories → view stories
@@ -1743,21 +1753,13 @@ export default function Profile({
               Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Falhou');
             }
           };
-          const promptDelete = () => {
-            if (!isSelf) return;
-            Alert.alert(
-              t?.('profile.deleteHighlightTitle') || 'Apagar destaque?',
-              t?.('profile.deleteHighlightHint') || 'Os status originais não são afetados.',
-              [
-                { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
-                { text: t?.('common.delete') || 'Apagar', style: 'destructive', onPress: async () => {
-                  try {
-                    await api.statusHighlightDelete?.(h.id);
-                    setHighlights(prev => prev.filter(x => x.id !== h.id));
-                  } catch {}
-                }},
-              ]
-            );
+          // [2026-05-18 IG-Pro] Long-press → action sheet (Edit / Share /
+          // Delete). Replaces the previous "delete-only" prompt which gave
+          // users no way to rename, swap cover, or generate a public link.
+          // For viewers (non-owners) we still surface Share so they can
+          // forward the highlight via the public /h/<id> link.
+          const openActionSheet = () => {
+            setHighlightSheet({ open: true, highlight: { id: h.id, title: h.title, cover_url: h.cover_url, isSelf } });
           };
           return (
             <TouchableOpacity
@@ -1765,7 +1767,7 @@ export default function Profile({
               activeOpacity={0.85}
               style={{ alignItems: 'center', width: SIZE + 8 }}
               onPress={openHighlight}
-              onLongPress={promptDelete}
+              onLongPress={openActionSheet}
               delayLongPress={350}
               accessibilityLabel={(t?.('profile.openHighlight') || 'Abrir destaque') + ' ' + (h.title || '')}
             >
@@ -2811,6 +2813,125 @@ export default function Profile({
     />
   );
 
+  // [2026-05-18 IG-Pro] Action sheet for highlight long-press. For owners
+  // we show Edit + Share + Delete; for viewers only Share. Routing into
+  // HighlightEditSheet / HighlightShareSheet keeps Profile.js lean.
+  const highlightActionSheetNode = (
+    <Modal
+      visible={!!highlightSheet.open}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setHighlightSheet({ open: false, highlight: null })}
+    >
+      <Pressable
+        style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }}
+        onPress={() => setHighlightSheet({ open: false, highlight: null })}
+      >
+        <Pressable
+          onPress={e => e.stopPropagation?.()}
+          style={{
+            backgroundColor: colors?.background || (isDark ? '#1a1a1a' : '#fff'),
+            borderTopLeftRadius: 18, borderTopRightRadius: 18,
+            paddingBottom: Platform.OS === 'ios' ? 30 : 14, paddingTop: 8,
+          }}
+        >
+          <View style={{ alignItems: 'center', paddingBottom: 8 }}>
+            <View style={{ width: 44, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)' }} />
+          </View>
+          <Text style={{ textAlign: 'center', color: colors?.textSecondary, fontSize: 13, fontWeight: '600', paddingVertical: 8 }} numberOfLines={1}>
+            {highlightSheet.highlight?.title || ''}
+          </Text>
+          {highlightSheet.highlight?.isSelf ? (
+            <TouchableOpacity
+              onPress={() => {
+                const h = highlightSheet.highlight;
+                setHighlightSheet({ open: false, highlight: null });
+                setTimeout(() => setHighlightEdit({ open: true, highlight: h }), 50);
+              }}
+              style={menuItemStyle(colors)}
+            >
+              <IconEdit size={20} color={colors?.text} />
+              <Text style={{ color: colors?.text, fontSize: 16, fontWeight: '500' }}>
+                {t?.('profile.editHighlight') || 'Editar destaque'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+          <TouchableOpacity
+            onPress={() => {
+              const h = highlightSheet.highlight;
+              setHighlightSheet({ open: false, highlight: null });
+              setTimeout(() => setHighlightShare({ open: true, highlight: h }), 50);
+            }}
+            style={menuItemStyle(colors)}
+          >
+            <IconShare size={20} color={colors?.text} />
+            <Text style={{ color: colors?.text, fontSize: 16, fontWeight: '500' }}>
+              {t?.('profile.shareHighlight') || 'Compartilhar destaque'}
+            </Text>
+          </TouchableOpacity>
+          {highlightSheet.highlight?.isSelf ? (
+            <TouchableOpacity
+              onPress={() => {
+                const h = highlightSheet.highlight;
+                setHighlightSheet({ open: false, highlight: null });
+                Alert.alert(
+                  t?.('profile.deleteHighlightTitle') || 'Apagar destaque?',
+                  t?.('profile.deleteHighlightHint') || 'Os status originais não são afetados.',
+                  [
+                    { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+                    {
+                      text: t?.('common.delete') || 'Apagar',
+                      style: 'destructive',
+                      onPress: async () => {
+                        try { await api.statusHighlightDelete?.(h.id); } catch {}
+                        setHighlights(prev => prev.filter(x => x.id !== h.id));
+                      },
+                    },
+                  ]
+                );
+              }}
+              style={menuItemStyle(colors)}
+            >
+              <IconTrash size={20} color="#dc2626" />
+              <Text style={{ color: '#dc2626', fontSize: 16, fontWeight: '500' }}>
+                {t?.('common.delete') || 'Apagar'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+
+  const highlightEditNode = (
+    <HighlightEditSheet
+      visible={!!highlightEdit.open}
+      highlight={highlightEdit.highlight}
+      colors={colors}
+      isDark={isDark}
+      t={t}
+      onClose={() => setHighlightEdit({ open: false, highlight: null })}
+      onUpdated={(patch) => {
+        if (!patch?.id) return;
+        setHighlights(prev => prev.map(x => x.id === patch.id ? { ...x, ...patch } : x));
+      }}
+      onDeleted={(id) => {
+        setHighlights(prev => prev.filter(x => x.id !== id));
+      }}
+    />
+  );
+
+  const highlightShareNode = (
+    <HighlightShareSheet
+      visible={!!highlightShare.open}
+      highlight={highlightShare.highlight}
+      colors={colors}
+      isDark={isDark}
+      t={t}
+      onClose={() => setHighlightShare({ open: false, highlight: null })}
+    />
+  );
+
   const menuNode = !actions.is_self && identity ? (
     <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
       <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }} onPress={() => setMenuOpen(false)}>
@@ -3260,6 +3381,9 @@ export default function Profile({
         {viewerNode}
         {storyViewerNode}
         {highlightViewerNode}
+        {highlightActionSheetNode}
+        {highlightEditNode}
+        {highlightShareNode}
         {editNode}
         {avatarActionNode}
         {statusCameraNode}
@@ -3287,6 +3411,9 @@ export default function Profile({
       {viewerNode}
       {storyViewerNode}
       {highlightViewerNode}
+      {highlightActionSheetNode}
+      {highlightEditNode}
+      {highlightShareNode}
       {editNode}
       {avatarActionNode}
       {statusCameraNode}
