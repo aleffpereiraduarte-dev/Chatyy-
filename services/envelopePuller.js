@@ -29,6 +29,7 @@ let _wsEnvUnsub = null;
 let _wsConnUnsub = null;
 let _running = false;
 let _inFlight = false;
+let _pullSafetyTimer = null;
 
 function _isEnabled() {
   try {
@@ -200,6 +201,20 @@ export function startEnvelopePuller() {
       });
     }
   } catch {}
+
+  // [#1188 Agent F PATCH-4 2026-05-19] Safety-net pull interval — 30s while
+  // foreground. The WS push triggers (envelope_available + authenticated)
+  // are PREFERRED, but backend currently does NOT emit envelope_available
+  // (dead code on server side per Agent A/F audit), AND WS reconnect can
+  // silently re-attach without firing authenticated. Without this interval,
+  // recipient may wait minutes/forever to see a message even when both
+  // devices are foreground + connected. Telegram/WhatsApp both keep a
+  // background poll as belt-and-suspenders; matching that pattern.
+  _pullSafetyTimer = setInterval(() => {
+    if (AppState.currentState === 'active') {
+      pullOnce();
+    }
+  }, 30000);
 }
 
 /**
@@ -213,6 +228,7 @@ export function stopEnvelopePuller() {
   _appStateSub = null;
   if (_wsEnvUnsub) { try { _wsEnvUnsub(); } catch {} _wsEnvUnsub = null; }
   if (_wsConnUnsub) { try { _wsConnUnsub(); } catch {} _wsConnUnsub = null; }
+  if (_pullSafetyTimer) { clearInterval(_pullSafetyTimer); _pullSafetyTimer = null; }
 }
 
 /**
