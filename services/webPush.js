@@ -35,6 +35,11 @@ const VAPID_PUBLIC_KEY = 'BNpEc6JEF0FadT6pME0Mhf4XViw-JTDMmuUT_Ga6hEWujYNace8RVl
 
 let _registering = false;
 let _registered = false;
+// Cache the last successfully-registered web push token so logout can call
+// the backend `unregister_web_push_token` action without re-running
+// getToken(). getToken() is cheap but requires the SW to be ready and
+// permission still granted — neither holds during teardown.
+let _cachedWebToken = null;
 
 export async function registerForWebPush() {
   if (Platform.OS !== 'web') return null;
@@ -87,6 +92,7 @@ export async function registerForWebPush() {
     const r = await apiCall('register_web_push_token', { token }, 'POST');
     if (r?.success) {
       _registered = true;
+      _cachedWebToken = token;
       console.log('[webPush] registered, token len=', token.length);
     } else {
       console.warn('[webPush] backend rejected token:', r?.error);
@@ -97,5 +103,30 @@ export async function registerForWebPush() {
     return null;
   } finally {
     _registering = false;
+  }
+}
+
+/**
+ * Logout-side mirror — POST to backend `unregister_web_push_token` so the
+ * browser stops receiving pushes for the user that just logged out. Called
+ * from pushNotifications.removeTokenFromBackend() on the web platform.
+ *
+ * Best-effort: if the cached token is missing we still POST with empty
+ * string so the backend can short-circuit gracefully. The matching server
+ * action lives in /var/www/mail/api/email.php (`unregister_web_push_token`).
+ */
+export async function unregisterWebPushToken() {
+  if (Platform.OS !== 'web') return null;
+  const token = _cachedWebToken;
+  _cachedWebToken = null;
+  _registered = false;
+  if (!token) return null;
+  try {
+    const { apiCall } = require('./api');
+    const r = await apiCall('unregister_web_push_token', { token }, 'POST');
+    return r;
+  } catch (err) {
+    console.warn('[webPush] unregister failed:', err?.message || err);
+    return null;
   }
 }

@@ -988,6 +988,59 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
     }
   }
 
+  // ---- WhatsApp-parity explicit-revoke fast path ----
+  // The backend distinguishes "token explicitly revoked" (user tapped Sair on
+  // some device, password changed, admin kicked, linked-device kicked) from
+  // "session simply empty" (cold start, edge transient, PG hiccup) by
+  // returning `{ error: 'logged_out' }` or `{ error: 'revoked' }` on 401.
+  // When we see that, the bearer IS dead and the client MUST clear it +
+  // redirect to /login. For any other 401 (no explicit error code), we
+  // preserve the bearer and let the normal streak/grace logic decide —
+  // typical case is a transient backend bug, edge timeout, or sliding-token
+  // race, and WhatsApp never logs out for those.
+  if (result.status === 401) {
+    try {
+      const explicitErr = (result.data && (result.data.error || result.data.data?.error)) || '';
+      if ((explicitErr === 'logged_out' || explicitErr === 'revoked') &&
+          action !== 'login' && action !== 'check_auth' && action !== 'signup') {
+        try { recordLogoutAttempt('explicit_revoke', { source: 'api_401_logged_out', action, server_error: explicitErr }); } catch {}
+        _authFailureSignaled = true;
+        authToken = '';
+        try { if (Platform.OS === 'web' && typeof localStorage !== 'undefined') localStorage.removeItem('mail_token'); } catch {}
+        try { if (Platform.OS === 'web' && typeof sessionStorage !== 'undefined') sessionStorage.removeItem(TOKEN_FALLBACK_KEY); } catch {}
+        try { _writeAsyncStorage(TOKEN_FALLBACK_KEY, null); } catch {}
+        try {
+          const SecureStore = require('expo-secure-store');
+          SecureStore.deleteItemAsync('bio_token').catch(() => {});
+        } catch {}
+        try {
+          if (typeof globalThis !== 'undefined') {
+            globalThis.__chatyy_authFailure = Date.now();
+            globalThis.__chatyy_authFailureReason = 'explicit_revoke';
+            if (globalThis.dispatchEvent) globalThis.dispatchEvent(new Event('chatyy:authFailure'));
+          }
+        } catch {}
+        try {
+          if (Platform.OS === 'web' && typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+            setTimeout(() => {
+              if (!window.location.pathname.startsWith('/login')) {
+                window.location.href = '/login?reason=logged_out';
+              }
+            }, 500);
+          }
+        } catch {}
+        try {
+          if (Platform.OS !== 'web') {
+            const { router } = require('expo-router');
+            setTimeout(() => { try { router?.replace?.('/login'); } catch {} }, 500);
+          }
+        } catch {}
+        console.warn('[api] Server returned error:logged_out — bearer revoked, redirecting to /login');
+        return result.data;
+      }
+    } catch {}
+  }
+
   // Auto-relogin: if server returns 401 and we have in-memory credentials, try to re-authenticate
   // BUT don't block - if relogin takes too long, return the 401 result
   if (result.status === 401 && action !== 'login' && action !== 'check_auth' && action !== 'signup') {
@@ -1127,7 +1180,17 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
       // por endpoints fora do NOISY_ACTIONS_401 (cada user é diferente). Com
       // 100 strikes, só um token de fato revogado/expirado dispara logout —
       // qualquer ruído transient se dilui antes. WhatsApp parity sustentável.
-      let shouldSignal = tokenHasValue && !isNoisy && !_authFailureSignaled && _consecutive401 >= 100;
+      // [2026-05-19] WhatsApp parity: streak-based logout is now DISABLED.
+      // The only path that signals true logout is the explicit-revoke 401
+      // (server returns `error: logged_out`/`revoked` — handled in the
+      // fast-path block above this function). Any 401 without that explicit
+      // marker is treated as transient and the bearer is preserved. Setting
+      // `shouldSignal = false` here keeps all the downstream grace/in-call
+      // guards intact (in case we ever flip the threshold back) without
+      // changing their behaviour. User intent: "uma vez logado n sai mais
+      // so se a pessoa clicar em sair".
+      let shouldSignal = false;
+      void tokenHasValue; void isNoisy; // referenced for ESLint no-unused
 
       // WhatsApp-grade refusal: even after 100 strikes, if this token has
       // been confirmed alive (any 2xx) within the last 90 days, REFUSE to
@@ -1713,6 +1776,7 @@ export async function deleteEmail(uid, folder = 'INBOX') {
 
 export async function markRead(uid, folder = 'INBOX') {
   // Use keepalive fetch so the request completes even if the user closes the tab
+  let result;
   if (Platform.OS === 'web' && typeof navigator !== 'undefined') {
     try {
       const headers = { 'Content-Type': 'application/json' };
@@ -1725,13 +1789,18 @@ export async function markRead(uid, folder = 'INBOX') {
         credentials: 'include',
         keepalive: true,
       });
-      const data = await res.json();
-      return data;
+      result = await res.json();
     } catch {
-      return apiCall('mark_read', { uid, folder }, 'POST');
+      result = await apiCall('mark_read', { uid, folder }, 'POST');
     }
+  } else {
+    result = await apiCall('mark_read', { uid, folder }, 'POST');
   }
-  return apiCall('mark_read', { uid, folder }, 'POST');
+  // Refresh the app-icon badge so the unread count drops immediately on
+  // iOS/Android lockscreens — without this the badge lags until the next
+  // foreground sync.
+  try { require('./pushNotifications').refreshBadgeCount?.(); } catch {}
+  return result;
 }
 
 export async function markUnread(uid, folder = 'INBOX') {
@@ -3423,6 +3492,10 @@ export async function chatRead(conversationId, messageId) {
     await _localUpdateMessage(messageId, { read_at: new Date().toISOString() });
   }
   const rust = await _rustChatPost('mark_read', { conversation_id: conversationId, message_id: messageId });
+  // Bump the app-icon badge down right after the read POST lands. Without
+  // this, the badge keeps the stale unread count until the next foreground
+  // sync — visible on iOS/Android lockscreens.
+  try { require('./pushNotifications').refreshBadgeCount?.(); } catch {}
   if (rust) return rust;
   return apiCall('chat_mark_read', { conversation_id: conversationId, message_id: messageId }, 'POST');
 }
@@ -3483,7 +3556,11 @@ export async function chatReadAck(conversationId) {
   if (ld && typeof ld.queueOfflineAction === 'function' && conversationId) {
     try { await ld.queueOfflineAction('chat_read', { conversation_id: conversationId }); } catch {}
   }
-  return apiCall('chat_read', { conversation_id: conversationId }, 'POST');
+  const res = await apiCall('chat_read', { conversation_id: conversationId }, 'POST');
+  // Mirror the chat-list "read" intent into the app-icon badge so the
+  // counter drops immediately after the conversation is acked.
+  try { require('./pushNotifications').refreshBadgeCount?.(); } catch {}
+  return res;
 }
 
 export async function chatMarkUnread(conversationId) {
@@ -4541,6 +4618,19 @@ export async function chatGetSettings() {
 
 export async function chatUpdateSettings(data) {
   return apiCall('chat_update_settings', data, 'POST');
+}
+
+// chat_get_user_defaults — pulls the JSONB user defaults row including
+// auto_download_policy (4×3 matrix). Used by ChatProfileTab on mount to
+// hydrate mediaCache.setAutoDownloadPolicy.
+export async function chatGetUserDefaults() {
+  return apiCall('chat_get_user_defaults', {}, 'POST');
+}
+
+// chat_set_auto_download_policy — accepts either the full matrix in `policy`
+// or a single-cell patch via {bucket, column, value}.
+export async function chatSetAutoDownloadPolicy(payload) {
+  return apiCall('chat_set_auto_download_policy', payload, 'POST');
 }
 
 // Top N active conversations (last 30d, excluding manual pins). Used by

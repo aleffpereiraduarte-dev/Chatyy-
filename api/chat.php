@@ -395,7 +395,12 @@ function chatSendPushToMembers($db, $conversationId, $messageId, $senderEmail, $
             // Defensive ALTER: ringtone column may not exist on a cold
             // install — silently skip and fall through to defaults.
             @$pg->exec("ALTER TABLE chat_user_conv_settings ADD COLUMN IF NOT EXISTS ringtone TEXT NULL");
-            $ss = $pg->prepare("SELECT email, notify_messages, mute_until, mention_exception, preview, sound, vibration_pattern, ringtone FROM chat_user_conv_settings WHERE conversation_id = :cid");
+            // [led-color, 2026-05-19] Same defensive ALTER for the per-conv
+            // LED color column — added so older Postgres rows don't 500 the
+            // SELECT below when this push fanout runs against a cluster that
+            // hasn't yet executed chat_user_conv_settings_set with led_color.
+            @$pg->exec("ALTER TABLE chat_user_conv_settings ADD COLUMN IF NOT EXISTS led_color TEXT NULL");
+            $ss = $pg->prepare("SELECT email, notify_messages, mute_until, mention_exception, preview, sound, vibration_pattern, ringtone, led_color FROM chat_user_conv_settings WHERE conversation_id = :cid");
             $ss->execute([':cid' => $conversationId]);
             foreach ($ss->fetchAll(\PDO::FETCH_ASSOC) as $row) {
                 $convSettings[strtolower($row['email'])] = $row;
@@ -640,6 +645,13 @@ function chatSendPushToMembers($db, $conversationId, $messageId, $senderEmail, $
             // vibration patterns via UN). String JSON blob; client parses.
             if ($cs && !empty($cs['vibration_pattern'])) {
                 $rData['vibration_pattern'] = (string)$cs['vibration_pattern'];
+            }
+            // [led-color, 2026-05-19] Per-conv LED color (Android only — iOS
+            // has no equivalent). The Android side routes the notification
+            // through a dynamic channel id derived from this hex string so
+            // the channel's immutable lightColor can vary across conversations.
+            if ($cs && !empty($cs['led_color'])) {
+                $rData['led_color'] = (string)$cs['led_color'];
             }
             // Lockscreen visibility (Android NotificationCompat.VISIBILITY_*).
             // Mirrors to APNs `notificationContentVisibility` extra so the
@@ -2643,6 +2655,23 @@ function handleChatAction($action) {
                     $params[':mute_until'] = (string)$mu;
                 }
             }
+            // [led-color, 2026-05-19] Per-conversation LED color (Android
+            // hardware notification light, where supported). Validated as a
+            // #RRGGBB hex string; null clears it. The column is created on
+            // demand via the ALTER below before the first INSERT touches it.
+            if (array_key_exists('led_color', $input)) {
+                $lc = $input['led_color'];
+                $cleanLc = null;
+                if (is_string($lc) && preg_match('/^#[0-9a-fA-F]{6}$/', trim($lc))) {
+                    $cleanLc = strtolower(trim($lc));
+                }
+                try {
+                    @$db->exec("ALTER TABLE chat_user_conv_settings ADD COLUMN IF NOT EXISTS led_color TEXT NULL");
+                } catch (\Throwable $_) {}
+                $cols[] = 'led_color';
+                $vals[] = ':led_color';
+                $params[':led_color'] = $cleanLc; // null clears
+            }
             if (empty($cols)) jsonResponse(false, null, 'No settings provided', 400);
 
             $insertCols = array_merge(['email','conversation_id'], $cols);
@@ -2673,9 +2702,11 @@ function handleChatAction($action) {
                 'preview'           => true,
                 'mention_exception' => true,
                 'mute_until'        => null,
+                'led_color'         => null,
             ];
             try {
-                $st = $db->prepare("SELECT notify_messages, sound, vibration, vibration_pattern, preview, mention_exception, mute_until FROM chat_user_conv_settings WHERE LOWER(email) = LOWER(:e) AND conversation_id = :c");
+                @$db->exec("ALTER TABLE chat_user_conv_settings ADD COLUMN IF NOT EXISTS led_color TEXT NULL");
+                $st = $db->prepare("SELECT notify_messages, sound, vibration, vibration_pattern, preview, mention_exception, mute_until, led_color FROM chat_user_conv_settings WHERE LOWER(email) = LOWER(:e) AND conversation_id = :c");
                 $st->execute([':e' => $user['email'], ':c' => $cid]);
                 $row = $st->fetch(\PDO::FETCH_ASSOC);
                 if ($row) {
@@ -2694,6 +2725,7 @@ function handleChatAction($action) {
                         'preview'           => (bool)($row['preview'] ?? true),
                         'mention_exception' => (bool)($row['mention_exception'] ?? true),
                         'mute_until'        => $row['mute_until'] ?? null,
+                        'led_color'         => $row['led_color'] ?? null,
                     ];
                 }
             } catch (\Throwable $e) { error_log('[chat_user_conv_settings_get] ' . $e->getMessage()); }
@@ -3011,6 +3043,142 @@ function handleChatAction($action) {
                 jsonResponse(true, ['saved' => true]);
             } catch (\Throwable $e) {
                 error_log('[chat_user_notif_prefs_set] ' . $e->getMessage());
+                jsonResponse(false, null, 'Failed to save', 500);
+            }
+            break;
+        }
+
+        // ============================================================
+        // chat_get_user_defaults — generic getter for chat_user_defaults row
+        // including the WhatsApp auto-download policy matrix.
+        //
+        // Response shape:
+        //   {
+        //     default_disappearing_seconds: int,
+        //     mute_call_ringtone: bool,
+        //     auto_download_policy: {
+        //       photos:    {mobile,wifi,roaming},
+        //       audio:     {mobile,wifi,roaming},
+        //       videos:    {mobile,wifi,roaming},
+        //       documents: {mobile,wifi,roaming}
+        //     }
+        //   }
+        // The matrix uses the WhatsApp factory defaults when no row yet.
+        // ============================================================
+        case 'chat_get_user_defaults': {
+            $user = requireChatAuth();
+            $defaultPolicy = [
+                'photos'    => ['mobile' => 1, 'wifi' => 1, 'roaming' => 0],
+                'audio'     => ['mobile' => 1, 'wifi' => 1, 'roaming' => 0],
+                'videos'    => ['mobile' => 0, 'wifi' => 1, 'roaming' => 0],
+                'documents' => ['mobile' => 0, 'wifi' => 1, 'roaming' => 0],
+            ];
+            $out = [
+                'default_disappearing_seconds' => 0,
+                'mute_call_ringtone'           => false,
+                'auto_download_policy'         => $defaultPolicy,
+            ];
+            try {
+                @$db->exec("CREATE TABLE IF NOT EXISTS chat_user_defaults (email TEXT PRIMARY KEY, updated_at TIMESTAMP NOT NULL DEFAULT NOW())");
+                @$db->exec("ALTER TABLE chat_user_defaults ADD COLUMN IF NOT EXISTS default_disappearing INTEGER NOT NULL DEFAULT 0");
+                @$db->exec("ALTER TABLE chat_user_defaults ADD COLUMN IF NOT EXISTS mute_call_ringtone BOOLEAN DEFAULT FALSE");
+                @$db->exec("ALTER TABLE chat_user_defaults ADD COLUMN IF NOT EXISTS auto_download_policy JSONB");
+                $st = $db->prepare("SELECT default_disappearing, mute_call_ringtone, auto_download_policy FROM chat_user_defaults WHERE LOWER(email) = LOWER(:e)");
+                $st->execute([':e' => $user['email']]);
+                $row = $st->fetch(\PDO::FETCH_ASSOC);
+                if ($row) {
+                    $out['default_disappearing_seconds'] = (int)($row['default_disappearing'] ?? 0);
+                    $out['mute_call_ringtone']           = (bool)($row['mute_call_ringtone'] ?? false);
+                    if (!empty($row['auto_download_policy'])) {
+                        $parsed = is_array($row['auto_download_policy'])
+                            ? $row['auto_download_policy']
+                            : json_decode((string)$row['auto_download_policy'], true);
+                        if (is_array($parsed)) {
+                            // Merge to guarantee shape — partial saves still
+                            // return a complete matrix to the client.
+                            foreach (['photos','audio','videos','documents'] as $bucket) {
+                                if (isset($parsed[$bucket]) && is_array($parsed[$bucket])) {
+                                    foreach (['mobile','wifi','roaming'] as $col) {
+                                        if (isset($parsed[$bucket][$col])) {
+                                            $out['auto_download_policy'][$bucket][$col] = (int)!!$parsed[$bucket][$col];
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (\Throwable $e) {
+                error_log('[chat_get_user_defaults] ' . $e->getMessage());
+            }
+            jsonResponse(true, $out);
+            break;
+        }
+
+        // ============================================================
+        // chat_set_auto_download_policy — PUT-style update of the 4×3
+        // auto-download matrix. Accepts either a full matrix in `policy`
+        // or a single-cell patch via {bucket, column, value}.
+        // ============================================================
+        case 'chat_set_auto_download_policy': {
+            $user = requireChatAuth();
+            $allowedBuckets = ['photos','audio','videos','documents'];
+            $allowedColumns = ['mobile','wifi','roaming'];
+            $defaultPolicy = [
+                'photos'    => ['mobile' => 1, 'wifi' => 1, 'roaming' => 0],
+                'audio'     => ['mobile' => 1, 'wifi' => 1, 'roaming' => 0],
+                'videos'    => ['mobile' => 0, 'wifi' => 1, 'roaming' => 0],
+                'documents' => ['mobile' => 0, 'wifi' => 1, 'roaming' => 0],
+            ];
+            try {
+                @$db->exec("CREATE TABLE IF NOT EXISTS chat_user_defaults (email TEXT PRIMARY KEY, updated_at TIMESTAMP NOT NULL DEFAULT NOW())");
+                @$db->exec("ALTER TABLE chat_user_defaults ADD COLUMN IF NOT EXISTS auto_download_policy JSONB");
+                // Load current to merge patches.
+                $cur = $db->prepare("SELECT auto_download_policy FROM chat_user_defaults WHERE LOWER(email) = LOWER(:e)");
+                $cur->execute([':e' => $user['email']]);
+                $raw = $cur->fetchColumn();
+                $merged = $defaultPolicy;
+                if ($raw) {
+                    $existing = is_array($raw) ? $raw : json_decode((string)$raw, true);
+                    if (is_array($existing)) {
+                        foreach ($allowedBuckets as $b) {
+                            if (isset($existing[$b]) && is_array($existing[$b])) {
+                                foreach ($allowedColumns as $c) {
+                                    if (isset($existing[$b][$c])) {
+                                        $merged[$b][$c] = (int)!!$existing[$b][$c];
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Apply full-matrix update (preferred).
+                if (isset($input['policy']) && is_array($input['policy'])) {
+                    foreach ($allowedBuckets as $b) {
+                        if (isset($input['policy'][$b]) && is_array($input['policy'][$b])) {
+                            foreach ($allowedColumns as $c) {
+                                if (isset($input['policy'][$b][$c])) {
+                                    $merged[$b][$c] = (int)!!$input['policy'][$b][$c];
+                                }
+                            }
+                        }
+                    }
+                }
+                // Apply single-cell patch (optimistic toggle UX).
+                if (isset($input['bucket'], $input['column']) && array_key_exists('value', $input)) {
+                    $b = (string)$input['bucket'];
+                    $c = (string)$input['column'];
+                    if (in_array($b, $allowedBuckets, true) && in_array($c, $allowedColumns, true)) {
+                        $merged[$b][$c] = (int)!!$input['value'];
+                    }
+                }
+                $db->prepare("INSERT INTO chat_user_defaults (email, auto_download_policy, updated_at)
+                              VALUES (:e, :p::jsonb, NOW())
+                              ON CONFLICT (email) DO UPDATE SET auto_download_policy = EXCLUDED.auto_download_policy, updated_at = NOW()")
+                   ->execute([':e' => $user['email'], ':p' => json_encode($merged)]);
+                jsonResponse(true, ['auto_download_policy' => $merged]);
+            } catch (\Throwable $e) {
+                error_log('[chat_set_auto_download_policy] ' . $e->getMessage());
                 jsonResponse(false, null, 'Failed to save', 500);
             }
             break;
@@ -6490,6 +6658,33 @@ function handleChatAction($action) {
                     }
                 } catch (\Throwable $e) { error_log('[call_notify.block_check] ' . $e->getMessage()); }
 
+                // [mute-call-ringtone, 2026-05-19] Bulk-load each peer's
+                // mute_call_ringtone preference so the per-recipient payload
+                // can carry `mute_ringtone=1` and the Android FCM service
+                // routes the notification through the silent channel.
+                $mutePerRecipient = [];
+                try {
+                    @$db->exec("ALTER TABLE chat_user_defaults ADD COLUMN IF NOT EXISTS mute_call_ringtone BOOLEAN DEFAULT FALSE");
+                    if (!empty($peerRows)) {
+                        $placeholders = [];
+                        $params = [];
+                        $i = 0;
+                        foreach ($peerRows as $p) {
+                            $k = ':e' . $i++;
+                            $placeholders[] = "LOWER($k)";
+                            $params[$k] = strtolower($p['email']);
+                        }
+                        $inClause = implode(',', $placeholders);
+                        $mSt = $db->prepare("SELECT email, mute_call_ringtone FROM chat_user_defaults WHERE LOWER(email) IN ($inClause)");
+                        $mSt->execute($params);
+                        foreach ($mSt->fetchAll(\PDO::FETCH_ASSOC) as $row) {
+                            if (!empty($row['mute_call_ringtone'])) {
+                                $mutePerRecipient[strtolower($row['email'])] = true;
+                            }
+                        }
+                    }
+                } catch (\Throwable $e) { error_log('[call_notify.mute_lookup] ' . $e->getMessage()); }
+
                 foreach ($peerRows as $p) {
                     $pe = $p['email'];
                     if (strtolower($pe) === strtolower($user['email'])) continue;
@@ -6497,6 +6692,12 @@ function handleChatAction($action) {
                     if (!empty($callBlockedPeers[strtolower($pe)])) {
                         error_log('[call_notify.blocked] caller=' . $user['email'] . ' suppressed for blocker=' . $pe);
                         continue;
+                    }
+                    // Per-recipient payload — copy the shared $callData and
+                    // overlay the mute flag if this user opted in.
+                    $perRecipData = $callData;
+                    if (!empty($mutePerRecipient[strtolower($pe)])) {
+                        $perRecipData['mute_ringtone'] = '1';
                     }
                     // WhatsApp pattern: VoIP push wakes CallKit fullscreen
                     // (the only ringing UI iOS users should see). FCM is
@@ -6508,7 +6709,7 @@ function handleChatAction($action) {
                     $voipOk = false;
                     if (function_exists('sendVoipPushToUser')) {
                         try {
-                            $r = sendVoipPushToUser($pe, $callData);
+                            $r = sendVoipPushToUser($pe, $perRecipData);
                             $voipOk = !empty($r);
                         } catch (Throwable $e) {
                             error_log('[call_notify.voip] ' . $pe . ': ' . $e->getMessage());
@@ -6518,7 +6719,7 @@ function handleChatAction($action) {
                     // never trigger sendVoipPushToUser success (PushKit is
                     // iOS-only), so Android keeps getting the FCM ring.
                     if (!$voipOk) {
-                        try { fcmSendToUser($pe, $callTitle, $callBody, $callData); }
+                        try { fcmSendToUser($pe, $callTitle, $callBody, $perRecipData); }
                         catch (Throwable $e) { error_log('[call_notify.push] ' . $pe . ': ' . $e->getMessage()); }
                     }
                 }
@@ -7189,6 +7390,15 @@ function handleChatAction($action) {
         // `emails` (array of conversation members not yet in the call).
         case 'chat_call_invite': {
             $user = requireChatAuth();
+            // [rate-limit, 2026-05-19] Cap call_invite at 10 invites per
+            // caller per minute. A misbehaving client or compromised account
+            // shouldn't be able to spam the VoIP push fanout (each invite
+            // wakes every invitee's device with a high-priority push). The
+            // helper (chatRateLimit) uses a sliding window keyed by
+            // (email, action) and lives in this same file.
+            if (!chatRateLimit($user['email'], 'call_invite', 10, 60)) {
+                jsonResponse(false, ['retry_after' => 60], 'rate_limited', 429);
+            }
             $conversationId = (int)($input['conversation_id'] ?? 0);
             $callId = trim($input['call_id'] ?? '');
             $video = !empty($input['video']);
@@ -12692,6 +12902,16 @@ function handleChatAction($action) {
             if ($ccIn !== null) {
                 $cloudDefault = (is_bool($ccIn) ? $ccIn : (int)$ccIn === 1) ? 1 : 0;
             }
+            // [mute-call-ringtone, 2026-05-19] "Modo silencioso para
+            // ligações" toggle. Lives on chat_user_defaults so it's a global
+            // per-user preference (call notifications cross all
+            // conversations) — keeping it off the per-conversation table.
+            // null = client did not send the field; preserve existing value.
+            $mcrIn = array_key_exists('mute_call_ringtone', $input) ? $input['mute_call_ringtone'] : null;
+            $muteCallRingtone = null;
+            if ($mcrIn !== null) {
+                $muteCallRingtone = (is_bool($mcrIn) ? $mcrIn : (int)$mcrIn === 1) ? 1 : 0;
+            }
             try { $db->exec("ALTER TABLE chat_user_privacy ADD COLUMN IF NOT EXISTS group_add TEXT NOT NULL DEFAULT 'everyone'"); } catch (Throwable $_) {}
             try { $db->exec("ALTER TABLE chat_user_privacy ADD COLUMN IF NOT EXISTS phone_visibility TEXT DEFAULT 'contacts'"); } catch (Throwable $_) {}
             try { $db->exec("ALTER TABLE chat_user_privacy ADD COLUMN IF NOT EXISTS cloud_chats_default BOOLEAN DEFAULT TRUE"); } catch (Throwable $_) {}
@@ -12722,9 +12942,26 @@ function handleChatAction($action) {
                     $cloudOut = (bool)$cloudDefault;
                 } catch (\Throwable $e) { error_log('[chat_privacy_set/cloud_chats_default] ' . $e->getMessage()); }
             }
+            // [mute-call-ringtone, 2026-05-19] Persist on chat_user_defaults.
+            // ALTER on every call is safe — IF NOT EXISTS is a no-op once the
+            // column lands, and chat_user_defaults already follows the same
+            // defensive pattern in chat_user_mention_only_set / snooze.
+            $mcrOut = null;
+            if ($muteCallRingtone !== null) {
+                try {
+                    @$db->exec("CREATE TABLE IF NOT EXISTS chat_user_defaults (email TEXT PRIMARY KEY, updated_at TIMESTAMP NOT NULL DEFAULT NOW())");
+                    @$db->exec("ALTER TABLE chat_user_defaults ADD COLUMN IF NOT EXISTS mute_call_ringtone BOOLEAN DEFAULT FALSE");
+                    $db->prepare("INSERT INTO chat_user_defaults (email, mute_call_ringtone, updated_at)
+                                  VALUES (:e, :mcr, NOW())
+                                  ON CONFLICT (email) DO UPDATE SET mute_call_ringtone = EXCLUDED.mute_call_ringtone, updated_at = NOW()")
+                       ->execute([':e' => $user['email'], ':mcr' => $muteCallRingtone ? 'true' : 'false']);
+                    $mcrOut = (bool)$muteCallRingtone;
+                } catch (\Throwable $e) { error_log('[chat_privacy_set/mute_call_ringtone] ' . $e->getMessage()); }
+            }
             $resp = ['last_seen' => $lastSeen, 'profile_photo' => $photo, 'about' => $about, 'read_receipts' => (bool)$reads, 'group_add' => $groupAdd];
             if ($phoneVisOut !== null) $resp['phone_visibility'] = $phoneVisOut;
             if ($cloudOut !== null)    $resp['cloud_chats_default'] = $cloudOut;
+            if ($mcrOut !== null)      $resp['mute_call_ringtone'] = $mcrOut;
             jsonResponse(true, $resp);
             break;
         }
@@ -14044,11 +14281,19 @@ function handleChatAction($action) {
             } catch (Throwable $e) {}
             // Surface the user's global default disappearing timer alongside
             // the rest of privacy so a single GET hydrates the whole page.
+            // [mute-call-ringtone, 2026-05-19] Also pull mute_call_ringtone
+            // from the same row so the settings UI hydrates in one round-trip.
+            $data['mute_call_ringtone'] = false;
             try {
                 @$db->exec("CREATE TABLE IF NOT EXISTS chat_user_defaults (email TEXT PRIMARY KEY, default_disappearing INTEGER NOT NULL DEFAULT 0, updated_at TEXT)");
-                $dq = $db->prepare("SELECT default_disappearing FROM chat_user_defaults WHERE LOWER(email) = LOWER(:e)");
+                @$db->exec("ALTER TABLE chat_user_defaults ADD COLUMN IF NOT EXISTS mute_call_ringtone BOOLEAN DEFAULT FALSE");
+                $dq = $db->prepare("SELECT default_disappearing, mute_call_ringtone FROM chat_user_defaults WHERE LOWER(email) = LOWER(:e)");
                 $dq->execute([':e' => $user['email']]);
-                $data['default_disappearing_seconds'] = (int)($dq->fetchColumn() ?: 0);
+                $row = $dq->fetch(\PDO::FETCH_ASSOC);
+                if ($row) {
+                    $data['default_disappearing_seconds'] = (int)($row['default_disappearing'] ?? 0);
+                    $data['mute_call_ringtone'] = (bool)($row['mute_call_ringtone'] ?? false);
+                }
             } catch (Throwable $e) {}
             jsonResponse(true, $data);
             break;

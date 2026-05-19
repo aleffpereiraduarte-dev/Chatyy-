@@ -7,6 +7,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.res.Configuration
 import android.graphics.Color
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -92,6 +94,9 @@ class GroupCallActivity : ComponentActivity() {
     const val EXTRA_LK_TOKEN = "lk_token"
     const val EXTRA_PARTICIPANTS_JSON = "participants_json"
     const val EXTRA_HAS_VIDEO = "has_video"
+    /** [ringback, 2026-05-19] When true the caller hears TONE_SUP_RINGTONE
+     *  while waiting for any other invitee to join (mirror of CallActivity). */
+    const val EXTRA_IS_OUTGOING = "is_outgoing"
 
     /** Hard cap on participants per group call (WhatsApp 2025 parity).
      *  Bumped from 9 (2026-05-17) — see /tmp/gap_calls_whatsapp.md P1#14.
@@ -151,6 +156,12 @@ class GroupCallActivity : ComponentActivity() {
   private var eventsJob: Job? = null
   private var connectJob: Job? = null
 
+  /** [ringback, 2026-05-19] Outgoing ringback tone allocated when isOutgoing
+   *  and released as soon as the first remote participant joins (or finishCall
+   *  / onDestroy). Mirrors CallActivity.toneGen lifecycle. */
+  private var isOutgoing: Boolean = false
+  private var toneGen: ToneGenerator? = null
+
   // In-call foreground service handle.
   private var ongoingSvcIntent: Intent? = null
 
@@ -183,6 +194,7 @@ class GroupCallActivity : ComponentActivity() {
     lkUrl = extras.getString(EXTRA_LK_URL)
     lkToken = extras.getString(EXTRA_LK_TOKEN)
     hasVideo = extras.getBoolean(EXTRA_HAS_VIDEO, false)
+    isOutgoing = extras.getBoolean(EXTRA_IS_OUTGOING, false)
     parseInvitedParticipants(extras.getString(EXTRA_PARTICIPANTS_JSON))
 
     Log.d(
@@ -302,10 +314,15 @@ class GroupCallActivity : ComponentActivity() {
           }
           is RoomEvent.Disconnected -> {
             Log.d(TAG, "RoomEvent.Disconnected reason=${event.reason} err=${event.error}")
+            stopRingback()
             finishCall(reason = "room_disconnect")
           }
           is RoomEvent.ParticipantConnected -> {
             Log.d(TAG, "ParticipantConnected ${event.participant.identity}")
+            // [ringback, 2026-05-19] First peer in stops the caller's
+            // ringback. Same trigger CallActivity uses (1:1 only has one
+            // peer; in groups the *first* arrival is the meaningful one).
+            stopRingback()
             onParticipantPresent(event.participant)
           }
           is RoomEvent.ParticipantDisconnected -> {
@@ -348,6 +365,15 @@ class GroupCallActivity : ComponentActivity() {
       }
     }
 
+    // [ringback, 2026-05-19] Start the caller-side TONE_SUP_RINGTONE as soon
+    // as we kick the connect job — same pattern as CallActivity.bringUpRoom.
+    // 30s cap covers the typical group-call answer window; stopRingback is
+    // called from ParticipantConnected (first peer in), Disconnected, and
+    // finishCall.
+    if (isOutgoing) {
+      startRingback()
+    }
+
     connectJob = lifecycleScope.launch {
       try {
         r.connect(url, token)
@@ -362,6 +388,29 @@ class GroupCallActivity : ComponentActivity() {
         statusText.text = "Erro de conexão"
       }
     }
+  }
+
+  // ────────────── Ringback (outgoing only)
+
+  private fun startRingback() {
+    if (toneGen != null) return
+    try {
+      val tg = ToneGenerator(AudioManager.STREAM_VOICE_CALL, 60)
+      tg.startTone(ToneGenerator.TONE_SUP_RINGTONE, 30_000)
+      toneGen = tg
+      Log.d(TAG, "group ringback: started (TONE_SUP_RINGTONE, 30s cap)")
+    } catch (t: Throwable) {
+      Log.w(TAG, "group ringback init failed: ${t.message}")
+      toneGen = null
+    }
+  }
+
+  private fun stopRingback() {
+    val tg = toneGen ?: return
+    toneGen = null
+    try { tg.stopTone() } catch (_: Throwable) {}
+    try { tg.release() } catch (_: Throwable) {}
+    Log.d(TAG, "group ringback: stopped")
   }
 
   /** Called from RoomEvent.Connected (seed) and ParticipantConnected. Adds
@@ -698,6 +747,7 @@ class GroupCallActivity : ComponentActivity() {
   @OptIn(DelicateCoroutinesApi::class)
   override fun onDestroy() {
     try { unregisterReceiver(closeReceiver) } catch (_: Exception) {}
+    stopRingback()
     eventsJob?.cancel()
     connectJob?.cancel()
     val r = room
@@ -721,6 +771,7 @@ class GroupCallActivity : ComponentActivity() {
 
   private fun finishCall(reason: String) {
     Log.d(TAG, "finishCall reason=$reason room=$roomName")
+    stopRingback()
     ongoingSvcIntent?.let {
       try { stopService(it) } catch (t: Throwable) {
         Log.w(TAG, "stopService(CallOngoingService) failed: ${t.message}")

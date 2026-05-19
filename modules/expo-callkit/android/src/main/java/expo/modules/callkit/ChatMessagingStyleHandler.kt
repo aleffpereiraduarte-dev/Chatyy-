@@ -9,12 +9,14 @@ package expo.modules.callkit
 // 2026-05-17 — gap_notifications P0+P1 implementation.
 
 import android.app.Notification
+import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -33,6 +35,13 @@ object ChatMessagingStyleHandler {
     private const val TAG = "ChatMsgStyleHandler"
     private const val PREFS = "chatyy_chat_threads"
     private const val MAX_MESSAGES_PER_THREAD = 8
+    /** [led-color, 2026-05-19] SharedPreferences-backed registry of channel
+     *  ids we've already created. NotificationChannel.lightColor is immutable
+     *  post-creation, so per-conversation LED requires one channel per color.
+     *  We dedupe by channel-id (`chat_conv_led_#10b981`) so repeated pushes
+     *  to the same conv don't re-create. */
+    private const val LED_CHANNELS_PREFS = "chatyy_chat_led_channels"
+    private const val LED_CHANNELS_KEY = "created_channel_ids"
 
     // RemoteInput keys + intent actions — kept in lockstep with the JS side
     // (see services/pushNotifications.js, response listener).
@@ -95,7 +104,18 @@ object ChatMessagingStyleHandler {
             // Channel: chat (or chat_keyword if user matched a keyword and
             // wanted a distinct sound). Both are pre-created in JS via
             // expo-notifications setNotificationChannelAsync.
-            val channelId = if (isKeywordHit) "chat_keyword" else "chat"
+            //
+            // [led-color, 2026-05-19] When the push payload carries a
+            // `led_color` hex (#RRGGBB), route through a dynamic channel
+            // whose lightColor matches. NotificationChannel.lightColor is
+            // immutable post-creation, so we have to spawn one channel per
+            // distinct color. Keyword channel still wins (sound > LED).
+            val ledColor = data["led_color"]?.takeIf { isValidHex(it) }
+            val channelId = when {
+                isKeywordHit -> "chat_keyword"
+                ledColor != null -> ensureLedChannel(ctx, ledColor)
+                else -> "chat"
+            }
 
             // Build MessagingStyle from the thread cache.
             val mePerson = Person.Builder()
@@ -359,6 +379,73 @@ object ChatMessagingStyleHandler {
             Log.w(TAG, "downloadBitmap failed for $url: ${t.message}")
             null
         }
+    }
+
+    // ---- per-conversation LED channels --------------------------------------
+    //
+    // NotificationChannel.lightColor is **immutable** after the channel is
+    // created (only `name`, `description`, and `lightsEnabled` can mutate
+    // post-creation). Per-conversation LED therefore needs one channel per
+    // distinct color. We:
+    //   1. Build a deterministic id `chat_conv_led_#RRGGBB` so repeat pushes
+    //      land on the same channel without re-querying NotificationManager.
+    //   2. Persist the set of created ids in SharedPreferences so we don't
+    //      pay the NotificationManager round-trip + IPC on every push (the
+    //      OS dedupes silently when creating an existing channel, but
+    //      avoiding the call is still ~1ms per push and the registry doubles
+    //      as a record we can crawl later for cleanup if needed).
+    //   3. Fall back to "chat" if hex parsing fails — defensive.
+
+    private fun isValidHex(s: String): Boolean {
+        if (s.length != 7) return false
+        if (s[0] != '#') return false
+        for (i in 1..6) {
+            val c = s[i]
+            val ok = (c in '0'..'9') || (c in 'a'..'f') || (c in 'A'..'F')
+            if (!ok) return false
+        }
+        return true
+    }
+
+    private fun ensureLedChannel(ctx: Context, ledColorHex: String): String {
+        val normalized = ledColorHex.lowercase()
+        val channelId = "chat_conv_led_$normalized"
+
+        // Pre-O has no channel concept — just return the id; NotificationCompat
+        // ignores channels there. lightColor was on the Notification builder
+        // pre-O so the value still has effect via setLights().
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return channelId
+
+        val sp = ctx.getSharedPreferences(LED_CHANNELS_PREFS, Context.MODE_PRIVATE)
+        val created = sp.getStringSet(LED_CHANNELS_KEY, emptySet()) ?: emptySet()
+        if (channelId in created) return channelId
+
+        try {
+            val color = try { Color.parseColor(normalized) } catch (_: Throwable) { return "chat" }
+            val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val channel = NotificationChannel(
+                channelId,
+                "Chat ($normalized)",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Mensagens de chat com cor LED personalizada"
+                enableLights(true)
+                lightColor = color
+                enableVibration(true)
+                setShowBadge(true)
+            }
+            nm.createNotificationChannel(channel)
+            // Persist the new id. SharedPreferences requires a fresh set for
+            // mutation; we build a new HashSet from the existing one.
+            val next = HashSet(created)
+            next.add(channelId)
+            sp.edit().putStringSet(LED_CHANNELS_KEY, next).apply()
+            Log.d(TAG, "Created LED channel $channelId color=$normalized")
+        } catch (t: Throwable) {
+            Log.w(TAG, "ensureLedChannel($normalized) failed: ${t.message}")
+            return "chat"
+        }
+        return channelId
     }
 
     private fun pendingIntentFlags(mutable: Boolean): Int {

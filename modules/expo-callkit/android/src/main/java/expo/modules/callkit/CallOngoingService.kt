@@ -104,10 +104,34 @@ class CallOngoingService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        // [hangup-from-notif, 2026-05-19] "Encerrar" action button — fires
+        // ACTION_HANGUP on CallActionReceiver, which broadcasts ACTION_CLOSE
+        // to CallActivity, stops this very service, and emits onCallEnded to
+        // JS so the WS layer tears down the remote side too. Lets the user
+        // hangup without re-opening the full-screen call UI.
+        val hangupIntent = Intent(this, CallActionReceiver::class.java).apply {
+            action = CallActionReceiver.ACTION_HANGUP
+            putExtra("call_id", callId)
+        }
+        val hangupPI = PendingIntent.getBroadcast(
+            this,
+            callId.hashCode() + 1,
+            hangupIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         val smallIconRes = try {
             resources.getIdentifier("ic_notification", "drawable", packageName)
         } catch (_: Exception) { 0 }
         val iconRes = if (smallIconRes != 0) smallIconRes else applicationInfo.icon
+
+        // Try to resolve a call-end drawable. If the project doesn't ship one,
+        // fall back to a stock framework icon — the label "Encerrar" still
+        // makes the action unambiguous.
+        val hangupIconRes = try {
+            resources.getIdentifier("ic_call_end", "drawable", packageName)
+                .takeIf { it != 0 } ?: android.R.drawable.ic_menu_close_clear_cancel
+        } catch (_: Exception) { android.R.drawable.ic_menu_close_clear_cancel }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(iconRes)
@@ -121,6 +145,7 @@ class CallOngoingService : Service() {
             .setShowWhen(true)
             .setUsesChronometer(true)
             .setContentIntent(pi)
+            .addAction(hangupIconRes, "Encerrar", hangupPI)
             .build()
     }
 

@@ -378,6 +378,7 @@ export default function InboxScreen() {
         const apiSvc = await import('../services/api');
         await apiSvc.bulkMarkRead(unreadUids, currentFolder);
         refresh();
+        try { (await import('../services/pushNotifications')).refreshBadgeCount?.(); } catch {}
       } catch (e) { console.warn('markAllRead failed', e); }
     };
     // Round-6 gap-closer: when 50+ are visible the user almost certainly
@@ -389,6 +390,7 @@ export default function InboxScreen() {
         const apiSvc = await import('../services/api');
         await apiSvc.bulkMarkReadFolder(currentFolder);
         refresh();
+        try { (await import('../services/pushNotifications')).refreshBadgeCount?.(); } catch {}
       } catch (e) { console.warn('bulkMarkReadFolder failed', e); }
     };
     const title = t('contextMenu.markRead') || 'Marcar como lido';
@@ -807,8 +809,26 @@ export default function InboxScreen() {
   }, [isDesktop, router]);
 
   const handleLogout = async () => {
-    await logout();
-    router.replace('/login');
+    // WhatsApp parity: explicit confirm before nuking the session. Bearer
+    // is perpetual — only this button (or a server-side revoke) logs out.
+    const doIt = async () => {
+      await logout();
+      router.replace('/login');
+    };
+    const title = t?.('config.logoutTitle') || 'Sair';
+    const msg = t?.('config.logoutConfirmStrong')
+      || 'Tem certeza? Você terá que fazer login de novo.';
+    if (Platform.OS === 'web') {
+      try {
+        if (typeof window !== 'undefined' && !window.confirm(`${title}\n\n${msg}`)) return;
+      } catch {}
+      await doIt();
+      return;
+    }
+    Alert.alert(title, msg, [
+      { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+      { text: t?.('config.logout') || 'Sair', style: 'destructive', onPress: doIt },
+    ]);
   };
 
   const handleFolderPress = useCallback((name, label) => {
@@ -1963,7 +1983,7 @@ export default function InboxScreen() {
           onSnooze: handleSnoozeEmail,
           onSpam: handleReportSpam,
           onMute: handleMuteToggle,
-          onMarkRead: async (e) => { const { markRead } = await import('../services/api'); await markRead(e.uid, currentFolder); refresh(); },
+          onMarkRead: async (e) => { const { markRead } = await import('../services/api'); await markRead(e.uid, currentFolder); refresh(); try { (await import('../services/pushNotifications')).refreshBadgeCount?.(); } catch {} },
           onMarkUnread: async (e) => { const { markUnread } = await import('../services/api'); await markUnread(e.uid, currentFolder); refresh(); },
           onMoveTo: (e) => setMoveToTarget(e),
         }}

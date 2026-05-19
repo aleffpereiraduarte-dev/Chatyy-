@@ -100,7 +100,12 @@ export default function ReadScreen() {
       // Sempre seta email/thread baseado no resultado atual — antes deixava
       // estado anterior "vazar" ao falhar carga ou ao trocar de uid.
       setEmail(msgResult?.success ? msgResult.data : null);
-      if (msgResult?.success) markAsRead(uid, folder);
+      if (msgResult?.success) {
+        markAsRead(uid, folder);
+        // Refresh app-icon badge so the unread count drops immediately
+        // when the user opens a thread (lockscreen + home-screen badge).
+        import('../services/pushNotifications').then(m => m.refreshBadgeCount?.()).catch(() => {});
+      }
       setThread(threadResult?.success && threadResult.data?.length > 1 ? threadResult.data : null);
     }).finally(() => { if (!cancelled) setLoading(false); });
 

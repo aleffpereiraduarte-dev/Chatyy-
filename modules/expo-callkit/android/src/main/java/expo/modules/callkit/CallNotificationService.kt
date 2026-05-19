@@ -20,6 +20,12 @@ import java.net.URL
 object CallNotificationService {
 
   const val CHANNEL_ID = "incoming_calls"
+  /** [mute-call-ringtone, 2026-05-19] Parallel silent channel used when the
+   *  user enabled "Modo silencioso para ligações" in settings, signalled to
+   *  the device via the push payload `mute_ringtone=1`. NotificationChannel
+   *  sound + vibration are immutable post-creation, so a parallel channel is
+   *  the only way to honor the toggle without losing existing ringing UX. */
+  const val CHANNEL_ID_SILENT = "incoming_calls_silent"
   private const val NOTIFICATION_TAG = "call_notification"
   private const val TAG = "CallNotificationService"
 
@@ -77,14 +83,16 @@ object CallNotificationService {
     callerEmail: String,
     conversationId: String,
     hasVideo: Boolean,
-    avatarUrl: String
+    avatarUrl: String,
+    muteRingtone: Boolean = false
   ) {
     if (avatarUrl.isEmpty()) return
     Thread {
       val bmp = fetchAvatarBitmap(avatarUrl) ?: return@Thread
       try {
         val notif = buildIncomingCallNotification(
-          context, callId, callerName, callerEmail, conversationId, hasVideo, avatarUrl, bmp
+          context, callId, callerName, callerEmail, conversationId, hasVideo, avatarUrl, bmp,
+          muteRingtone = muteRingtone
         )
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(NOTIFICATION_TAG, callId.hashCode(), notif)
@@ -117,6 +125,19 @@ object CallNotificationService {
 
       val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
       notificationManager.createNotificationChannel(channel)
+
+      // [mute-call-ringtone, 2026-05-19] Silent twin of the incoming-calls
+      // channel. Same HIGH importance (so heads-up + FSI still fire on the
+      // lockscreen) but no sound + no vibration. Routed to when the push
+      // payload carries mute_ringtone=1.
+      val silentChannel = NotificationChannel(CHANNEL_ID_SILENT, "Chamadas (silencioso)", importance).apply {
+        this.description = "Chamadas recebidas em modo silencioso (sem som / vibração)"
+        lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+        setBypassDnd(true)
+        enableVibration(false)
+        setSound(null, null)
+      }
+      notificationManager.createNotificationChannel(silentChannel)
     }
   }
 
@@ -138,7 +159,10 @@ object CallNotificationService {
     conversationId: String,
     hasVideo: Boolean,
     callerAvatarUrl: String = "",
-    cachedAvatarBitmap: Bitmap? = null
+    cachedAvatarBitmap: Bitmap? = null,
+    // [mute-call-ringtone, 2026-05-19] When true, route the notification
+    // through the silent channel instead of the default ringing one.
+    muteRingtone: Boolean = false
   ): Notification {
     val notificationId = callId.hashCode()
 
@@ -204,7 +228,12 @@ object CallNotificationService {
     val largeIcon: Bitmap? = cachedAvatarBitmap
       ?: (if (callerAvatarUrl.isNotEmpty()) avatarCache.get(callerAvatarUrl) else null)
 
-    val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+    // [mute-call-ringtone, 2026-05-19] Pick the silent channel when the
+    // caller asked us to mute. Both channels live at IMPORTANCE_HIGH so
+    // heads-up + FSI still fire — only sound + vibration differ.
+    val activeChannel = if (muteRingtone) CHANNEL_ID_SILENT else CHANNEL_ID
+
+    val builder = NotificationCompat.Builder(context, activeChannel)
       .setSmallIcon(iconRes)
       .setContentTitle(callerName)
       .setContentText(callTypeText)
@@ -215,6 +244,13 @@ object CallNotificationService {
       .setAutoCancel(false)
       .addAction(0, "Recusar", declinePendingIntent)
       .addAction(0, "Atender", acceptPendingIntent)
+    if (muteRingtone) {
+      // Belt-and-suspenders for pre-O devices (no channel concept). On O+
+      // the channel config already silences everything; these calls are
+      // ignored when a channel is attached.
+      builder.setSilent(true)
+      builder.setDefaults(0)
+    }
 
     // [2026-05-15] Gate setFullScreenIntent behind canUseFullScreenIntent()
     // on Android 14+ (API 34). When the user has revoked the FSI permission
@@ -267,19 +303,23 @@ object CallNotificationService {
     hasVideo: Boolean,
     callerEmail: String = "",
     conversationId: String = "",
-    callerAvatarUrl: String = ""
+    callerAvatarUrl: String = "",
+    muteRingtone: Boolean = false
   ) {
     createNotificationChannel(context)
 
     val notification = buildIncomingCallNotification(
-      context, callId, callerName, callerEmail, conversationId, hasVideo, callerAvatarUrl
+      context, callId, callerName, callerEmail, conversationId, hasVideo, callerAvatarUrl,
+      cachedAvatarBitmap = null,
+      muteRingtone = muteRingtone
     )
     val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     notificationManager.notify(NOTIFICATION_TAG, callId.hashCode(), notification)
 
     // Async-update notification with the real avatar bitmap.
     refreshNotificationWithAvatar(
-      context, callId, callerName, callerEmail, conversationId, hasVideo, callerAvatarUrl
+      context, callId, callerName, callerEmail, conversationId, hasVideo, callerAvatarUrl,
+      muteRingtone = muteRingtone
     )
   }
 

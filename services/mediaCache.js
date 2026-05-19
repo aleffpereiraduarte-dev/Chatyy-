@@ -441,47 +441,170 @@ function _bucketForUrl(url) {
   return 'photos';
 }
 
-// Returns true if the URL should auto-download given the current network +
-// user prefs. Used by cacheMedia()'s gate. Callers can bypass via
-// { force: true } (explicit tap-to-download UI).
+// ── WhatsApp auto-download policy matrix (4 buckets × 3 network columns) ──
 //
-// Policy ladder (matches WhatsApp Storage & Data):
-//   1. pref === 'never'  → no.
-//   2. On Wi-Fi          → yes (every bucket).
-//   3. On cellular AND roaming-pref OFF → no (the user's "roaming nunca"
-//      switch from settings overrides bucket prefs).
-//   4. On cellular AND pref === 'mobile' → yes.
-//   5. On cellular AND pref === 'wifi'   → no.
-//   6. Network state unknown (NetInfo still probing) → be conservative:
-//      allow lightweight buckets (photos/audio), defer heavy (videos/docs).
-function _shouldAutoDownload(url) {
-  const bucket = _bucketForUrl(url);
-  const pref = _mediaDlPrefs[`media_auto_dl_${bucket}`] || _defaultMediaDlPrefs[`media_auto_dl_${bucket}`];
-  if (pref === 'never') return false;
+// Replaces the older per-bucket enum ('wifi'|'mobile'|'never') with a full
+// matrix the user toggles per cell. The legacy `_mediaDlPrefs` is still
+// honored as a fallback when the matrix is empty (first launch, or until
+// chat_get_user_defaults hydrates).
+//
+// Shape (server side stores this exact JSONB):
+//   { photos:    { mobile: 1|0, wifi: 1|0, roaming: 1|0 },
+//     audio:     { mobile: 1|0, wifi: 1|0, roaming: 1|0 },
+//     videos:    { mobile: 1|0, wifi: 1|0, roaming: 1|0 },
+//     documents: { mobile: 1|0, wifi: 1|0, roaming: 1|0 } }
+//
+// Defaults match WhatsApp factory:
+//   - roaming everywhere OFF (the column the user toggles when traveling)
+//   - mobile: photos + audio ON, videos + documents OFF
+//   - wifi: ALL ON
+const AUTO_DL_POLICY_KEY = 'chatyy:auto_download_policy';
+const _defaultPolicy = {
+  photos:    { mobile: 1, wifi: 1, roaming: 0 },
+  audio:     { mobile: 1, wifi: 1, roaming: 0 },
+  videos:    { mobile: 0, wifi: 1, roaming: 0 },
+  documents: { mobile: 0, wifi: 1, roaming: 0 },
+};
+let _autoDlPolicy = JSON.parse(JSON.stringify(_defaultPolicy));
+let _autoDlPolicyHydrated = false;
+// 60s cache so the gate can be queried at message-pump rate without parsing
+// the matrix from disk. Refreshed on every setAutoDownloadPolicy call.
+let _autoDlPolicyCacheStamp = 0;
 
-  let wifi = false;
-  let known = false;
-  try {
-    const { isWifi, getNetworkState } = require('./networkInfo');
-    if (typeof isWifi === 'function') {
-      wifi = isWifi() === true;
-      known = true;
+function _coerceCell(v) { return v === 1 || v === true || v === '1' || v === 'true' ? 1 : 0; }
+
+function _normalizePolicy(raw) {
+  const out = JSON.parse(JSON.stringify(_defaultPolicy));
+  if (!raw || typeof raw !== 'object') return out;
+  for (const bucket of ['photos', 'audio', 'videos', 'documents']) {
+    const cell = raw[bucket];
+    if (cell && typeof cell === 'object') {
+      for (const col of ['mobile', 'wifi', 'roaming']) {
+        if (col in cell) out[bucket][col] = _coerceCell(cell[col]);
+      }
     }
-    const st = typeof getNetworkState === 'function' ? getNetworkState() : null;
-    if (st && st.type === 'unknown') known = false;
+  }
+  return out;
+}
+
+function _hydrateAutoDlPolicy() {
+  if (_autoDlPolicyHydrated) return;
+  _autoDlPolicyHydrated = true;
+  if (Platform.OS === 'web') return;
+  try {
+    import('@react-native-async-storage/async-storage').then(m => {
+      m.default.getItem(AUTO_DL_POLICY_KEY).then(raw => {
+        if (!raw) return;
+        try {
+          const parsed = JSON.parse(raw);
+          _autoDlPolicy = _normalizePolicy(parsed);
+          _autoDlPolicyCacheStamp = Date.now();
+        } catch {}
+      }).catch(() => {});
+    }).catch(() => {});
+  } catch {}
+}
+_hydrateAutoDlPolicy();
+
+function _persistAutoDlPolicy() {
+  if (Platform.OS === 'web') return;
+  try {
+    import('@react-native-async-storage/async-storage').then(m => {
+      m.default.setItem(AUTO_DL_POLICY_KEY, JSON.stringify(_autoDlPolicy)).catch(() => {});
+    }).catch(() => {});
+  } catch {}
+}
+
+/**
+ * Replace the auto-download matrix. Called by ChatProfileTab after a
+ * successful chat_set_auto_download_policy round-trip and also on startup
+ * after chat_get_user_defaults returns. Accepts partial shapes — unspecified
+ * cells fall through to defaults.
+ */
+export function setAutoDownloadPolicy(policy) {
+  _autoDlPolicy = _normalizePolicy(policy);
+  _autoDlPolicyCacheStamp = Date.now();
+  _persistAutoDlPolicy();
+}
+
+export function getAutoDownloadPolicy() {
+  return JSON.parse(JSON.stringify(_autoDlPolicy));
+}
+
+// Map external media-type names → matrix bucket. Accepts both the external
+// 'photo' / 'video' / 'document' singulars (per task spec) and the internal
+// plurals used by _bucketForUrl.
+function _bucketForType(mediaType) {
+  switch (mediaType) {
+    case 'photo': case 'photos': case 'image': case 'gif': case 'sticker':
+      return 'photos';
+    case 'audio': case 'voice':
+      return 'audio';
+    case 'video': case 'videos':
+      return 'videos';
+    case 'document': case 'documents': case 'docs': case 'doc': case 'file':
+      return 'documents';
+    default:
+      return 'photos';
+  }
+}
+
+/**
+ * Central WhatsApp-parity auto-download gate. Returns true iff the current
+ * network column for `mediaType` is ON in the user's policy matrix.
+ *
+ *   mediaType: 'photo' | 'audio' | 'video' | 'document' (plurals also OK).
+ *
+ * Tap-to-open paths MUST NOT call this — they always proceed regardless.
+ * Background pre-fetch paths (cacheMedia auto-flow, audioCache voice
+ * prefetch) gate on this.
+ *
+ * 60s cache: the matrix lives in memory and is updated synchronously on
+ * setAutoDownloadPolicy, so reads are O(1). The 60s stamp is only used to
+ * decide when a refetch from chat_get_user_defaults would be worthwhile —
+ * the gate itself is always evaluated against the current in-memory copy.
+ */
+export function shouldAutoDownload(mediaType) {
+  const bucket = _bucketForType(mediaType);
+  let column = 'unknown';
+  try {
+    const ni = require('./networkInfo');
+    if (typeof ni.getNetworkType === 'function') column = ni.getNetworkType();
   } catch {}
 
-  if (wifi) return true; // Wi-Fi never burns cellular bytes.
+  // Disconnected — nothing to download.
+  if (column === 'none') return false;
 
-  // Cellular path — the user can globally veto via the roaming switch.
-  // Default pref is FALSE (= "I might be roaming, be conservative") which
-  // mirrors WhatsApp's "Roaming → nunca" requirement from the task.
-  if (known) {
-    if (!_mediaDlPrefs.media_auto_dl_roaming) return false;
-    return pref === 'mobile';
+  // Network unknown (NetInfo still probing) — be conservative: only allow
+  // the lightweight buckets that are ON for BOTH mobile and wifi columns.
+  // This is the same fail-safe the legacy gate used.
+  if (column === 'unknown') {
+    const cell = _autoDlPolicy[bucket] || _defaultPolicy[bucket];
+    return !!(cell.mobile && cell.wifi);
   }
-  // Network not probed yet — old fallback (photos/audio yes, videos/docs no).
-  return bucket === 'photos' || bucket === 'audio';
+
+  const cell = _autoDlPolicy[bucket] || _defaultPolicy[bucket];
+  return !!cell[column];
+}
+
+/** Test-only freshness hint — settings UI uses this to decide whether to
+ *  trigger a chat_get_user_defaults refetch. */
+export function autoDownloadPolicyAgeMs() {
+  return _autoDlPolicyCacheStamp ? (Date.now() - _autoDlPolicyCacheStamp) : Infinity;
+}
+
+// Returns true if the URL should auto-download given the current network +
+// user policy. Used by cacheMedia()'s gate. Callers can bypass via
+// { force: true } (explicit tap-to-download UI).
+//
+// Delegates to the new 4×3 matrix (shouldAutoDownload(type)). The matrix
+// supersedes the legacy `_mediaDlPrefs` ('wifi'|'mobile'|'never') buckets —
+// shouldAutoDownload normalizes both shapes internally.
+function _shouldAutoDownload(url) {
+  // Map docs bucket from URL to the matrix's 'document' singular.
+  const bucket = _bucketForUrl(url);
+  const matrixType = bucket === 'docs' ? 'document' : bucket;
+  return shouldAutoDownload(matrixType);
 }
 
 // Download and cache a URL, return local URI.

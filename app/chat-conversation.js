@@ -564,12 +564,15 @@ function ScrollDownFabAnim({ onPress, isDark, colors, newMsgCount, t }) {
 // change instead of a hard UI swap. `status` is the _readStatus enum value
 // (1 = sent, 1.5 = delivered, 2 = read). Keyed by status so the outgoing
 // set gets naturally unmounted by React.
-function AnimatedCheckStatus({ status, color }) {
+function AnimatedCheckStatus({ status, color, pending = false }) {
   // Status: 0 = sent (single check), 1.5 = delivered (double gray), 2 = read (double purple).
   // WhatsApp-style transitions:
   //   - 0 → 1.5: second check slides in from the right
   //   - 1.5 → 2: pulse + smooth color shift gray → purple
   // Both are useNativeDriver so they ride on the GPU and never block the JS thread.
+  // Pending: render clock icon BEFORE first ✓ (WhatsApp ⏱). Handled below
+  // after the hook calls so we don't violate Rules of Hooks across renders
+  // when callers toggle pending.
   const opacity = useRef(new Animated.Value(status > 0 ? 1 : 0)).current;
   const secondCheckSlide = useRef(new Animated.Value(status >= 1.5 ? 1 : 0)).current;
   const readPulse = useRef(new Animated.Value(status === 2 ? 1 : 0)).current;
@@ -593,6 +596,13 @@ function AnimatedCheckStatus({ status, color }) {
     prevStatus.current = status;
   }, [status]);
 
+  if (pending) {
+    return (
+      <View style={{ marginLeft: 3, flexShrink: 0, opacity: 0.65 }}>
+        <IconClock size={12} color={color} />
+      </View>
+    );
+  }
   if (status < 1.5) {
     // Single check (sent)
     return (
@@ -659,11 +669,17 @@ function AnimatedCheckStatus({ status, color }) {
 function MediaStatusFooter({ msg, isOwn, variant }) {
   if (!msg) return null;
   const isSticker = variant === 'sticker';
-  const showChecks = isOwn && !msg._pending && !msg._failed;
+  const isPending = isOwn && !msg._failed && (msg._pending || msg.pending_state === 'queued');
+  const showChecks = isOwn && !msg._pending && !msg._failed && msg.pending_state !== 'queued';
   const time = formatTime(msg.created_at);
-  if (!time && !showChecks) return null;
+  if (!time && !showChecks && !isPending) return null;
 
   const Checks = () => {
+    if (isPending) {
+      // WhatsApp ⏱ pending — show clock before the first ✓ ever appears.
+      const c = isSticker ? 'rgba(120,120,120,0.85)' : 'rgba(255,255,255,0.85)';
+      return <IconClock size={12} color={c} style={{ marginLeft: 1, flexShrink: 0 }} />;
+    }
     if (!showChecks) return null;
     if (msg._readStatus === 2) {
       return (
@@ -870,22 +886,34 @@ function TypingBubble({ name, colors, recording, t, active = true, entries = nul
   // Multi-typer avatar stack (WhatsApp-style overlap). When 2+ users are
   // typing, render a mini-row of overlapping circles to the LEFT of the
   // bubble. The label above turns into "X e Y estão digitando..." style
-  // (caller is responsible for the joined name string). Single-typer keeps
-  // the original layout (no avatars, just the name pill above the bubble).
+  // — built here from `entries[]` so the parent only has to pass raw data.
+  // Single-typer keeps the original layout (no avatars, just the name pill).
   const stackList = Array.isArray(entries) && entries.length >= 2
     ? entries.slice(0, 3) // cap at 3 visible avatars
     : null;
-  const labelSuffix = !stackList
-    ? ''
-    : (stackList.length === entries.length
-        ? ''
-        : ` +${entries.length - stackList.length}`);
+  // Build the localized "X is typing" / "X and Y are typing" / "X, Y and others
+  // are typing" sentence. Falls back to the raw `name` prop when entries is
+  // unavailable (legacy callers / AI typing bubble).
+  let composedLabel = name || '';
+  if (Array.isArray(entries) && entries.length > 0) {
+    const names = entries.map(e => e?.name).filter(Boolean);
+    if (names.length === 1) {
+      composedLabel = (t && t('chatConv.typingOne', { name: names[0] }))
+        || `${names[0]} ${t ? t('chat.typing') || 'está digitando' : 'está digitando'}`;
+    } else if (names.length === 2) {
+      composedLabel = (t && t('chatConv.typingTwo', { a: names[0], b: names[1] }))
+        || `${names[0]} ${t ? t('chatConv.typingAnd') || 'e' : 'e'} ${names[1]} ${t ? t('chat.typingMultiple') || 'estão digitando' : 'estão digitando'}`;
+    } else if (names.length >= 3) {
+      composedLabel = (t && t('chatConv.typingMany', { a: names[0], b: names[1] }))
+        || `${names[0]}, ${names[1]} ${t ? t('chatConv.typingAnd') || 'e' : 'e'} ${t ? t('chatConv.typingOthers') || 'outros' : 'outros'} ${t ? t('chat.typingMultiple') || 'estão digitando' : 'estão digitando'}`;
+    }
+  }
 
   return (
     <Animated.View style={{ alignSelf: 'flex-start', marginBottom: 10, marginLeft: 14, opacity: bubbleOpacity, transform: [{ scale: bubbleScale }, { translateY: bubbleY }] }}>
-      {name && (
+      {!!composedLabel && (
         <Text style={{ fontSize: 11.5, color: colors.textTertiary, marginBottom: 8, marginLeft: stackList ? 0 : 10, fontWeight: '700', letterSpacing: 0 }} numberOfLines={1}>
-          {name}{labelSuffix}
+          {composedLabel}
         </Text>
       )}
       <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 6 }}>
@@ -4959,6 +4987,10 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
   const voiceSessionRef = useRef(null);    // { sessionId, nextChunkIndex, mime, alive }
   const voiceUploadQueue = useRef([]);     // ordered chunk Blobs awaiting upload
   const voiceUploadInflight = useRef(false);
+  // Voice draft persistence — see comment above startTimer. The persist
+  // interval is cleared in stop/cancel/unmount.
+  const voiceDraftPersistRef = useRef(null);
+  const voiceDraftUriRef = useRef(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -4976,6 +5008,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
       if (pulseLoopRef.current) pulseLoopRef.current.stop();
       if (intervalRef.current) clearInterval(intervalRef.current);
       if (waveIntervalRef.current) clearInterval(waveIntervalRef.current);
+      if (voiceDraftPersistRef.current) { clearInterval(voiceDraftPersistRef.current); voiceDraftPersistRef.current = null; }
       if (Platform.OS === 'web') {
         try {
           const mr = mediaRecorderRef.current;
@@ -5049,6 +5082,23 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
         try { handleStop(); } catch {}
       }
     }, 1000);
+    // Persist a recording-in-progress draft every 500ms so that if the app
+    // crashes or the user backgrounds + force-quits mid-record, we can offer
+    // to restore the audio they had so far on the next open. The "uri" field
+    // is populated once a stop has produced a blob/file; during live recording
+    // we still save duration + waveform so the recovery prompt knows there
+    // was an in-flight session.
+    voiceDraftPersistRef.current = setInterval(async () => {
+      if (!mountedRef.current || !conversationId) return;
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const d = Math.floor((Date.now() - startTimeRef.current) / 1000);
+        await AsyncStorage.setItem(
+          'voice_draft:' + conversationId,
+          JSON.stringify({ uri: voiceDraftUriRef.current || null, duration: d, waveform: waveformLevels.slice(-60) })
+        );
+      } catch {}
+    }, 500);
   };
 
   const startRecording = async () => {
@@ -5221,6 +5271,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
     if (!recording) return;
     if (intervalRef.current) clearInterval(intervalRef.current);
     if (waveIntervalRef.current) clearInterval(waveIntervalRef.current);
+    if (voiceDraftPersistRef.current) { clearInterval(voiceDraftPersistRef.current); voiceDraftPersistRef.current = null; }
     if (pulseLoopRef.current) pulseLoopRef.current.stop();
     // Notify others that recording stopped
     try {
@@ -5236,8 +5287,18 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
         if (chunksRef.current.length === 0) { onCancel(); return; }
         const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
         const uri = URL.createObjectURL(blob);
+        voiceDraftUriRef.current = uri;
         // Snapshot the captured waveform for preview rendering
         const snapshot = waveformLevels.slice(-60);
+        // Final draft save with the real blob URI (in case the user kills the
+        // app before tapping Send — recovery prompt will offer to restore).
+        try {
+          const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+          await AsyncStorage.setItem(
+            'voice_draft:' + conversationId,
+            JSON.stringify({ uri, duration, waveform: snapshot, type: 'audio/webm' })
+          );
+        } catch {}
         // Drain any pending pre-upload chunks before handing preview off so
         // that handleConfirmSend can call finalize without waiting on tail
         // bytes. Bounded by a 4 s safety timeout — if the server is wedged
@@ -5296,6 +5357,14 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
         }
         try { const { setAudioModeAsync } = require('expo-audio'); await setAudioModeAsync({ allowsRecording: false }); } catch {}
         if (uri) {
+          voiceDraftUriRef.current = uri;
+          try {
+            const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+            await AsyncStorage.setItem(
+              'voice_draft:' + conversationId,
+              JSON.stringify({ uri, duration, waveform: nativeWaveform, type: 'audio/mp4' })
+            );
+          } catch {}
           setPreviewData({ uri, name: `audio_${Date.now()}.m4a`, type: 'audio/mp4', duration, waveform: nativeWaveform, viewOnce: voiceViewOnce });
         } else {
           onCancel();
@@ -5309,6 +5378,16 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
     setRecording(null);
   };
 
+  // Clear persisted voice draft — call on send AND discard so we never
+  // re-prompt for audio the user already resolved.
+  const clearVoiceDraft = async () => {
+    if (!conversationId) return;
+    try {
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      await AsyncStorage.removeItem('voice_draft:' + conversationId);
+    } catch {}
+  };
+
   // CONFIRM send from preview
   const handleConfirmSend = () => {
     if (!previewData) return;
@@ -5319,6 +5398,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
       }
     } catch {}
     if (previewIntervalRef.current) { clearInterval(previewIntervalRef.current); previewIntervalRef.current = null; }
+    clearVoiceDraft();
     onSend(previewData);
   };
 
@@ -5334,6 +5414,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
     setPreviewData(null);
     setPreviewPlaying(false);
     setPreviewProgress(0);
+    clearVoiceDraft();
     onCancel();
   };
 
@@ -7244,6 +7325,11 @@ export default function ChatConversationScreen() {
     setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
   }, []);
   const [wsConnected, setWsConnected] = useState(true);
+  // Network reachability — separate from WS state so the banner can
+  // distinguish "no network at all" (gray + cellular off) from "network
+  // ok but WS dropped" (amber + spinner, existing). Subscribed below
+  // via @react-native-community/netinfo (web falls back to navigator.onLine).
+  const [netReachable, setNetReachable] = useState(true);
   const wsDisconnectTimerRef = useRef(null);
   const hasEverConnectedRef = useRef(false); // Only show banner after first successful connection + disconnect
   const offlineQueueRef = useRef([]); // Queue of messages to send when back online
@@ -10638,6 +10724,88 @@ export default function ChatConversationScreen() {
     }, 3000);
     return () => clearInterval(iv);
   }, [wsConnected, conversationId, loadMessages]);
+
+  // NetInfo subscription — surfaces "no network at all" vs "WS dropped".
+  // On native we listen to @react-native-community/netinfo; on web the
+  // package is a stub, so fall back to navigator.onLine + window events.
+  useEffect(() => {
+    let unsub = null;
+    let webOn = null, webOff = null;
+    if (Platform.OS === 'web') {
+      const apply = () => setNetReachable(typeof navigator !== 'undefined' ? navigator.onLine !== false : true);
+      apply();
+      webOn = () => setNetReachable(true);
+      webOff = () => setNetReachable(false);
+      try { window.addEventListener('online', webOn); window.addEventListener('offline', webOff); } catch {}
+    } else {
+      try {
+        const NetInfo = require('@react-native-community/netinfo').default;
+        unsub = NetInfo.addEventListener(state => {
+          // `isInternetReachable` can be null right after boot — treat null as
+          // "unknown but probably ok" so we don't flash the banner on launch.
+          const reachable = state?.isInternetReachable;
+          setNetReachable(state?.isConnected !== false && reachable !== false);
+        });
+        NetInfo.fetch?.().then(state => {
+          if (!mountedRef.current) return;
+          const reachable = state?.isInternetReachable;
+          setNetReachable(state?.isConnected !== false && reachable !== false);
+        }).catch(() => {});
+      } catch {}
+    }
+    return () => {
+      try { unsub?.(); } catch {}
+      if (Platform.OS === 'web') {
+        try { window.removeEventListener('online', webOn); window.removeEventListener('offline', webOff); } catch {}
+      }
+    };
+  }, []);
+
+  // Voice draft recovery — on mount, if AudioRecorder persisted a draft
+  // last session (app crash / force-quit mid-record), surface a one-shot
+  // prompt offering Recuperar / Descartar. We don't auto-replay the audio
+  // (would feel intrusive); the user has to opt in.
+  useEffect(() => {
+    if (!conversationId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const raw = await AsyncStorage.getItem('voice_draft:' + conversationId);
+        if (!raw || cancelled) return;
+        let draft = null;
+        try { draft = JSON.parse(raw); } catch {}
+        if (!draft || !draft.uri || (draft.duration || 0) < 1) {
+          // No usable draft (no uri yet, or too short to be worth recovering).
+          await AsyncStorage.removeItem('voice_draft:' + conversationId);
+          return;
+        }
+        const ok = await confirm({
+          title: t('chatConv.voiceDraftTitle') || 'Áudio gravado',
+          message: t('chatConv.voiceDraftPrompt') || 'Você tem um áudio gravado mas não enviado — recuperar?',
+          confirmText: t('chatConv.voiceDraftRecover') || 'Recuperar',
+          cancelText: t('chatConv.voiceDraftDiscard') || 'Descartar',
+        }).catch(() => false);
+        if (cancelled) return;
+        if (ok) {
+          // Hand the draft straight to handleSendAudio — same path the live
+          // recorder uses on Confirm. Skips the preview screen since the user
+          // already opted in via the prompt.
+          try {
+            handleSendAudio({
+              uri: draft.uri,
+              name: `audio_${Date.now()}.${(draft.type || 'audio/webm').includes('mp4') ? 'm4a' : 'webm'}`,
+              type: draft.type || 'audio/webm',
+              duration: draft.duration,
+              waveform: draft.waveform || [],
+            });
+          } catch {}
+        }
+        await AsyncStorage.removeItem('voice_draft:' + conversationId);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [conversationId]);
 
   // Foreground-resume catchup. When the app (or tab on web) was in the
   // background long enough, the WS may have been suspended by the OS — on
@@ -18798,6 +18966,11 @@ export default function ChatConversationScreen() {
                   </View>
                 );
               })()}
+              {!!msg.edited_at && !isDeleted && (
+                <Text style={{ fontSize: 11, fontStyle: 'italic', color: isOwn ? ownMetaColor : colors.textTertiary, marginRight: 4, opacity: 0.85 }}>
+                  {t('chatConv.edited') || 'editada'}
+                </Text>
+              )}
               <Text numberOfLines={1} style={[styles.msgTime, { color: isOwn ? ownMetaColor : colors.textTertiary }]}>
                 {formatTime(msg.created_at)}
               </Text>
@@ -18867,10 +19040,13 @@ export default function ChatConversationScreen() {
                         setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _failed: true, _pending: false } : m));
                       }
                     }}
-                    style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 2, gap: 2 }}
+                    style={{ flexDirection: 'column', alignItems: 'center', marginLeft: 2, gap: 0 }}
                     accessibilityLabel={t('chat.retry') || 'Tentar novamente'}
                   >
                     <IconAlertTriangle size={12} color="#EF4444" />
+                    <Text style={{ fontSize: 11, color: colors.error || '#EF4444', marginTop: 2 }}>
+                      {t('chatConv.tapToRetry') || 'Tocar para tentar de novo'}
+                    </Text>
                   </TouchableOpacity>
                 );
                 if (msg._queued) return (
@@ -18901,7 +19077,10 @@ export default function ChatConversationScreen() {
                     <IconClock size={11} color={ownMetaColor} />
                   </TouchableOpacity>
                 );
-                if (msg._pending) return (
+                // WhatsApp ⏱ pending state — show clock BEFORE any checkmark.
+                // Covers both _pending (in-flight) and pending_state==='queued'
+                // (offline / awaiting send). Excludes _failed (handled above).
+                if ((msg._pending || msg.pending_state === 'queued') && !msg._failed) return (
                   <IconClock size={13} color={ownMetaColor} style={{ marginLeft: 3, opacity: 0.5 }} />
                 );
                 // WhatsApp-style message status ticks:
@@ -19884,16 +20063,27 @@ export default function ChatConversationScreen() {
           Visual: muted gray (not alarming orange) — matches WhatsApp's subtle
           informational treatment. The 5s grace timer means this only paints
           for genuine outages, not for transient network blips. */}
-      {!wsConnected && (
-        <View style={{ backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', paddingVertical: 6, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-          <ActivityIndicator size={12} color={isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.5)'} />
-          <Text style={{ color: isDark ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.6)', fontSize: 12, fontWeight: '500' }}>
+      {!netReachable ? (
+        // Hard offline — no IP route at all. Gray banner with WiFi-off icon
+        // (no spinner: we're not "trying", we literally cannot try). Distinct
+        // from the amber "Reconectando..." state so the user understands the
+        // root cause is local network, not our server.
+        <View style={{ backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)', paddingVertical: 6, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+          <IconWifiOff size={13} color={isDark ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.55)'} />
+          <Text style={{ color: isDark ? 'rgba(255,255,255,0.75)' : 'rgba(0,0,0,0.65)', fontSize: 12, fontWeight: '500' }}>
+            {t('chatConv.waitingNetwork') || 'Aguardando rede'}
+          </Text>
+        </View>
+      ) : !wsConnected ? (
+        <View style={{ backgroundColor: isDark ? 'rgba(245,158,11,0.10)' : 'rgba(245,158,11,0.10)', paddingVertical: 6, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+          <ActivityIndicator size={12} color="#f59e0b" />
+          <Text style={{ color: '#f59e0b', fontSize: 12, fontWeight: '500' }}>
             {hasEverConnectedRef.current
               ? (t('chat.reconnecting') || 'Reconectando...')
               : (t('chat.connecting') || 'Conectando...')}
           </Text>
         </View>
-      )}
+      ) : null}
 
       {/* Pinned messages list — WhatsApp parity: up to 3 stacked pins, each
           tappable to scroll-to-message, long-press to unpin. visiblePinned

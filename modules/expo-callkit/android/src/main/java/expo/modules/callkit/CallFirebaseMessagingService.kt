@@ -78,6 +78,12 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
             // call screen + heads-up render only a "?" initial; with it we
             // download the bitmap async on the activity side.
             val callerAvatar = data["caller_avatar"] ?: ""
+            // [mute-call-ringtone, 2026-05-19] Server sets this when the
+            // recipient enabled "Modo silencioso para ligações" in settings.
+            // Routes the notification through the silent twin channel
+            // (CHANNEL_ID_SILENT) so the FSI/heads-up still surfaces but
+            // without sound or vibration.
+            val muteRingtone = data["mute_ringtone"] == "1" || data["mute_ringtone"] == "true"
             // [2026-05-16 Stage 4] Cold-start auto-accept signal. Set by
             // backend (e.g. when a VoIP "answered on another device" push
             // is converted into a CallKit accept on this device, or when
@@ -171,7 +177,8 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
                     hasVideo,
                     callerEmail,
                     conversationId,
-                    callerAvatar
+                    callerAvatar,
+                    muteRingtone
                 )
             }
         } else {

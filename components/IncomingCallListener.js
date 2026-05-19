@@ -1052,20 +1052,19 @@ export default function IncomingCallListener() {
           if (mailWs.isConnected) {
             console.log('[IncomingCall] WS already connected, reusing existing socket');
             voipDiag('ws_reused_existing', callId);
+          } else if (wsToken) {
+            console.log('[IncomingCall] Forcing clean WS reconnect, hasToken=true');
+            // ensureHealthy() short-circuits if socket is already healthy on this
+            // token; otherwise it does the cleanup+destroyed=false+reconnectAttempt=0
+            // +connect dance atomically without fighting MailContext's WS effect
+            // or resetting backoff state. (Reconnect storm fix 2026-05-19.)
+            voipDiag('ws_connect_called', callId);
+            mailWs.ensureHealthy(wsToken);
           } else {
-            console.log('[IncomingCall] Forcing clean WS reconnect, hasToken=' + !!wsToken);
-            mailWs._cleanup(); // Kill existing (possibly dead) socket
-            mailWs.destroyed = false;
-            mailWs.reconnectAttempt = 0;
-            if (wsToken) {
-              voipDiag('ws_connect_called', callId);
-              mailWs.connect(wsToken);
-            } else {
-              voipDiag('no_token', callId);
-              console.warn('[IncomingCall] No auth token available after 3 retries — call cannot connect WS');
-              // Still navigate so the call screen can show "Sem conexao" instead
-              // of the user sitting on a blank CallKit accept-then-nothing.
-            }
+            voipDiag('no_token', callId);
+            console.warn('[IncomingCall] No auth token available after 3 retries — call cannot connect WS');
+            // Still navigate so the call screen can show "Sem conexao" instead
+            // of the user sitting on a blank CallKit accept-then-nothing.
           }
 
           // Wait for WS to connect + authenticate, then:
@@ -1343,10 +1342,16 @@ export default function IncomingCallListener() {
                 }
               }
               try {
-                if (typeof mailWs._cleanup === 'function') mailWs._cleanup();
-                mailWs.destroyed = false;
-                mailWs.reconnectAttempt = 0;
-                if (wsToken && typeof mailWs.connect === 'function') mailWs.connect(wsToken);
+                // Guard: skip the connect entirely if WS is already healthy on
+                // the right account. handleAndroidPendingCall fires on every
+                // AppState `active` transition (300ms after foreground), so an
+                // unconditional reconnect here was creating a storm whenever
+                // the user just opened the app without a real pending call.
+                const currentEmail = (typeof user !== 'undefined' && user && user.email) || mailWs.email;
+                const alreadyHealthy = mailWs.isConnected && mailWs.authenticated && currentEmail && mailWs.email === currentEmail;
+                if (!alreadyHealthy && wsToken && typeof mailWs.ensureHealthy === 'function') {
+                  mailWs.ensureHealthy(wsToken);
+                }
               } catch {}
               let acceptSent = false;
               let attempts = 0;
@@ -1483,15 +1488,14 @@ export default function IncomingCallListener() {
       const firstOk = sendAccept();
       if (!firstOk) {
         console.warn('[IncomingCall] WS not connected on accept, will retry');
-        // Try to force a reconnect so the retry has a live socket
+        // Try to force a reconnect so the retry has a live socket.
+        // ensureHealthy() handles the cleanup + destroyed reset + connect
+        // atomically and short-circuits when the socket is already healthy
+        // on this token (reconnect storm fix 2026-05-19).
         try {
-          if (!mailWs.isConnected && typeof mailWs.connect === 'function') {
-            const token = mailWs.token;
-            if (token) {
-              mailWs.destroyed = false;
-              mailWs.reconnectAttempt = 0;
-              mailWs.connect(token);
-            }
+          const token = mailWs.token;
+          if (token && typeof mailWs.ensureHealthy === 'function') {
+            mailWs.ensureHealthy(token);
           }
         } catch {}
       }

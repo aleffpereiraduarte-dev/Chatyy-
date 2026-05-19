@@ -14,6 +14,11 @@ class CallActionReceiver : BroadcastReceiver() {
     private const val TAG = "CallActionReceiver"
     const val ACTION_ACCEPT_CALL = "ACTION_ACCEPT_CALL"
     const val ACTION_DECLINE_CALL = "ACTION_DECLINE_CALL"
+    /** [hangup-from-notif, 2026-05-19] Fired by the "Encerrar" action in the
+     *  persistent in-call notification built by CallOngoingService. Different
+     *  from DECLINE (which targets the *incoming* ring notification before
+     *  accept); HANGUP targets an *active* call after both peers connected. */
+    const val ACTION_HANGUP = "ACTION_HANGUP_CALL"
   }
 
   override fun onReceive(context: Context, intent: Intent) {
@@ -81,6 +86,30 @@ class CallActionReceiver : BroadcastReceiver() {
         // is fine — server dedupes by call_id. Empty conversation_id is
         // tolerated for dialer-style calls.
         CallSignalWs.fireCallAnswered(context.applicationContext, callId, conversationId)
+      }
+
+      ACTION_HANGUP -> {
+        // [hangup-from-notif, 2026-05-19] User tapped "Encerrar" on the
+        // persistent in-progress notification. Sequence mirrors the JS
+        // endCall path in ExpoCallKitModule.endCall:
+        //   1. Tell CallActivity (if alive) to finish via the broadcast it
+        //      already listens to (ACTION_CLOSE wired to closeReceiver →
+        //      finishCall("close_broadcast")).
+        //   2. Stop the in-progress FGS so the notification disappears.
+        //   3. Emit onCallEnded to JS so the WS layer fires call_end and
+        //      the remote peer's UI tears down.
+        // We do not need to touch the ringing services here — by definition
+        // an ACTIVE call has already accepted the ring, so those are gone.
+        Log.d(TAG, "ACTION_HANGUP callId=$callId — closing active call")
+        try {
+          val closeIntent = Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY")
+          context.sendBroadcast(closeIntent)
+        } catch (_: Exception) {}
+        try {
+          val stopOngoing = Intent(context, CallOngoingService::class.java)
+          context.stopService(stopOngoing)
+        } catch (_: Exception) {}
+        ExpoCallKitModule.emitCallEnded(callId)
       }
 
       ACTION_DECLINE_CALL -> {

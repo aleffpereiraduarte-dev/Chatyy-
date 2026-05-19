@@ -481,6 +481,16 @@ function SettingsScreenInner() {
     read_receipts: true,
     story_privacy: 'everyone',
     group_add: 'everyone',
+    // [#gap_notifications 2026-05-19] Suppress push notifications for
+    // chat_reaction events (emoji-only reactions). Stored server-side on
+    // chat_user_defaults via chat_privacy_set. Default OFF.
+    hide_reactions_in_notifs: false,
+    // [mute-call-ringtone, 2026-05-19] "Modo silencioso para ligações" —
+    // when ON the JS ringtone (services/ringtone.js) and Android channel
+    // sound stay silent. The UI modal still surfaces so the user can pick
+    // up; this only kills the audible/haptic ring. Stored server-side on
+    // chat_user_defaults so it follows the account across devices.
+    mute_call_ringtone: false,
   });
   const [privacyPickerOpen, setPrivacyPickerOpen] = useState(null); // 'last_seen' | 'profile_photo' | 'story_privacy' | 'group_add' | null
   useEffect(() => {
@@ -497,7 +507,26 @@ function SettingsScreenInner() {
             // "Grupos". Defaults reflect the chat_privacy_set valid set.
             story_privacy: r.data.story_privacy || 'everyone',
             group_add:     r.data.group_add     || 'everyone',
+            hide_reactions_in_notifs:
+              r.data.hide_reactions_in_notifs !== undefined ? !!r.data.hide_reactions_in_notifs : false,
+            mute_call_ringtone:
+              r.data.mute_call_ringtone !== undefined ? !!r.data.mute_call_ringtone : false,
           }));
+          // [mute-call-ringtone, 2026-05-19] Mirror to local storage so
+          // services/ringtone.js can read it synchronously on the next
+          // inbound ring (it ships before the next chat_privacy_get
+          // round-trip lands).
+          try {
+            if (Platform.OS === 'web') {
+              if (typeof localStorage !== 'undefined') {
+                localStorage.setItem('mute_call_ringtone', r.data.mute_call_ringtone ? 'true' : 'false');
+              }
+            } else {
+              import('@react-native-async-storage/async-storage').then(m => {
+                m.default.setItem('mute_call_ringtone', r.data.mute_call_ringtone ? 'true' : 'false').catch(() => {});
+              }).catch(() => {});
+            }
+          } catch {}
         }
       } catch {}
     })();
@@ -508,6 +537,22 @@ function SettingsScreenInner() {
       // Only ship the keys that changed — chat_privacy_set merges unspecified
       // columns to their existing values so partial PATCHes are safe.
       api.chatPrivacySet?.(patch).catch(() => {});
+      // [mute-call-ringtone, 2026-05-19] Mirror the toggle to local
+      // storage immediately so services/ringtone.js (which doesn't have an
+      // observer on the network response) sees the new value before the
+      // next inbound ring.
+      if (Object.prototype.hasOwnProperty.call(patch, 'mute_call_ringtone')) {
+        try {
+          const v = patch.mute_call_ringtone ? 'true' : 'false';
+          if (Platform.OS === 'web') {
+            if (typeof localStorage !== 'undefined') localStorage.setItem('mute_call_ringtone', v);
+          } else {
+            import('@react-native-async-storage/async-storage').then(m => {
+              m.default.setItem('mute_call_ringtone', v).catch(() => {});
+            }).catch(() => {});
+          }
+        } catch {}
+      }
       return next;
     });
   }, []);
@@ -2596,6 +2641,47 @@ function SettingsScreenInner() {
             </View>
             <IconChevronRight size={20} color={colors.textTertiary} />
           </TouchableOpacity>
+
+          {/* Hide reactions in notifications — boolean Switch. When ON the
+              server skips push for chat_reaction events (the in-app badge
+              still increments). Closes #gap_notifications 2026-05-19. */}
+          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.privacyHideReactions')}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {t('settings.privacyHideReactionsDesc')}
+              </Text>
+            </View>
+            <Switch
+              value={!!chatPrivacy.hide_reactions_in_notifs}
+              onValueChange={(v) => saveChatPrivacy({ hide_reactions_in_notifs: !!v })}
+              trackColor={{ false: colors.divider, true: colors.primaryLight }}
+              thumbColor={chatPrivacy.hide_reactions_in_notifs ? colors.primary : '#fff'}
+            />
+          </View>
+
+          {/* [mute-call-ringtone, 2026-05-19] Modo silencioso para ligações
+              — silences the call ringtone + vibration on incoming calls
+              (the UI modal still appears so the user can choose to answer).
+              Persists server-side on chat_user_defaults via chat_privacy_set
+              and mirrors to local storage so services/ringtone.js picks up
+              the change without a round-trip. */}
+          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>
+                Modo silencioso para ligações
+              </Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                Silencia o toque e a vibração de chamadas recebidas. A tela continua aparecendo.
+              </Text>
+            </View>
+            <Switch
+              value={!!chatPrivacy.mute_call_ringtone}
+              onValueChange={(v) => saveChatPrivacy({ mute_call_ringtone: !!v })}
+              trackColor={{ false: colors.divider, true: colors.primaryLight }}
+              thumbColor={chatPrivacy.mute_call_ringtone ? colors.primary : '#fff'}
+            />
+          </View>
         </View>
         )}
 

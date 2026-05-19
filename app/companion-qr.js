@@ -148,14 +148,24 @@ export default function CompanionQRScreen() {
           setStatus('approved');
           // Stage 2: this surface just got linked. Publish its X25519 pubkey
           // so the phone (and any other linked device) can target it in
-          // future envelopes. Fire-and-forget — the pair is already valid
-          // even if this network call fails; phone will re-fetch the
-          // registry on next foreground.
+          // future envelopes. Now AWAITED (was fire-and-forget): the auto-
+          // bootstrap effect below races to fetch chat history immediately
+          // after `approved`, and on first-pair the registry must contain
+          // this device before the bootstrap pull starts — otherwise the
+          // phone fans out envelopes to N-1 devices and the new surface
+          // misses the first batch entirely. Bearer is already in place by
+          // the time chatQrLoginStatus returned 'approved'.
           try {
             const deviceId = await getDeviceId();
             const pubkey = await getDevicePublicKey();
-            const kind = Platform.OS === 'web' ? 'web' : Platform.OS;
-            api.chatDeviceKeyPublish(deviceId, pubkey, kind).catch(() => {});
+            // Backend accepts 'web'|'mobile'|'desktop'|'ios'|'android'.
+            // Map Platform.OS → semantic kind so the linked-devices UI can
+            // show the right icon.
+            let kind;
+            if (Platform.OS === 'web') kind = 'web';
+            else if (Platform.OS === 'ios' || Platform.OS === 'android') kind = 'mobile';
+            else kind = 'desktop';
+            await api.chatDeviceKeyPublish(deviceId, pubkey, kind);
           } catch (e) { /* ignore — non-fatal */ }
         } else if (s === 'expired') {
           // Token died (>5min or already consumed) — mint a new one.

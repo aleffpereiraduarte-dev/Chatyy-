@@ -176,6 +176,11 @@ export function MailProvider({ children }) {
   const refreshRef = useRef(null);
   const folderRef = useRef(currentFolder);
   const authRef = useRef(null);
+  // Tracks the email we *intended* to connect WS for. Survives the brief
+  // window between socket open and server `authenticated` reply when
+  // mailWs.email is still null — preventing the WS effect from racing
+  // itself on a re-render. (Reconnect storm fix 2026-05-19.)
+  const lastConnectedEmailRef = useRef(null);
   const offlineQueueRef = useRef(false);
 
   // Track recently-read UIDs to prevent seen state from reverting (IMAP flag lag)
@@ -828,17 +833,27 @@ export function MailProvider({ children }) {
   // re-render/Strict Mode double-run. The old cleanup was destroying the
   // socket mid-session, causing the reconnect spiral we saw in the WS log
   // (Connected → Close 1000 → Connected → Close 1000, 20+ cycles a minute).
+  //
+  // Reconnect-storm fix 2026-05-19: the previous guard `!mailWs.connected ||
+  // mailWs.email !== user.email` was racy — between the WS firing `auth` and
+  // the server replying with `authenticated` (which sets mailWs.email), this
+  // effect could re-trigger on a re-render (token sliding-refresh changes
+  // authRef but user.email is the same identity), see `!mailWs.email`, and
+  // call reset()+connect() again, killing the in-flight handshake. We now
+  // track the *intended* connected email in a ref so re-renders don't see
+  // the transient null state during the handshake window.
   useEffect(() => {
     if (!mailWs) return;
     const token = api.getAuthToken?.();
     if (token && user?.email) {
       authRef.current = token;
-      // Only (re)connect if the WS isn't already alive for this user.
-      if (!mailWs.connected || mailWs.email !== user.email) {
+      if (lastConnectedEmailRef.current !== user.email) {
+        lastConnectedEmailRef.current = user.email;
         mailWs.reset();
         mailWs.connect(token);
       }
     } else if (!user?.email) {
+      lastConnectedEmailRef.current = null;
       mailWs.disconnect();
     }
     // No cleanup — the socket should outlive provider re-renders.

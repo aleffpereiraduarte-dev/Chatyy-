@@ -933,6 +933,16 @@ export async function removeTokenFromBackend(pushToken) {
   // logged into will re-register on next foreground via sendTokenToBackend,
   // so the only window of missed pushes is until they next open the app.
   try { await apiCall('unregister_all_my_push_tokens', {}, 'POST'); } catch {}
+  // 3. Web platform path — FCM Web SDK lives in services/webPush.js and
+  // talks to a different backend table (web_tokens.json). Without this
+  // call, logging out on a browser leaves the SW receiving pushes until
+  // the FCM token rotates (potentially weeks). Mirrors the native paths.
+  if (Platform.OS === 'web') {
+    try {
+      const { unregisterWebPushToken } = require('./webPush');
+      if (typeof unregisterWebPushToken === 'function') await unregisterWebPushToken();
+    } catch {}
+  }
   _cachedPushToken = null;
 }
 

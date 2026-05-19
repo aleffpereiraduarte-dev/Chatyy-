@@ -7,6 +7,17 @@
  *       deduplication, latency tracking
  */
 import { Platform, AppState } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// Resume token persistence key. Per-account scoping isn't needed: the value
+// is just a high-water id from a single server-side sequence (ws_event_log)
+// and is also gated by the WS auth (server only replays events for the
+// authed email). On account switch the next auth_success starts emitting
+// new event_ids from wherever that user's tail is — drift, not corruption.
+const WS_LAST_EVENT_ID_KEY = '@chatyy:ws:last_event_id';
+// Persist every N events (10 — matches spec). Cheap: AsyncStorage writes
+// are async and we don't await them.
+const EVENT_ID_PERSIST_EVERY = 10;
 
 // Direct WS connection (bypasses Cloudflare — no 100s idle timeout)
 const WS_URL = null; // Dynamic — resolved at connect time from best edge server
@@ -68,6 +79,18 @@ class MailWebSocket {
     // ACK tracking for outgoing messages
     this._pendingOutgoing = new Map(); // msg_id → { data, retries, timer, resolve }
     this._msgIdCounter = 0;
+
+    // ─── Resume Token Tracking (WhatsApp catch-up) ───
+    // Server stamps each per-user event with a monotonic `event_id`. We
+    // track the highest one we've successfully delivered to listeners,
+    // persist it every N events, and replay from there on reconnect.
+    // Persisted via AsyncStorage under WS_LAST_EVENT_ID_KEY.
+    this._lastEventId = 0;
+    this._lastEventIdPersistedAt = 0;
+    this._eventIdSinceFlush = 0;
+    this._resumeInFlight = false;
+    this._loadLastEventId(); // Fire-and-forget — populates this._lastEventId
+
 
     // Pause/resume on visibility change (web only)
     this._visibilityHandler = null;
@@ -487,10 +510,38 @@ class MailWebSocket {
 
   // Force a fresh health check + reconnect when the caller knows they're
   // about to need a working socket (e.g. user just tapped "call" or
-  // "answer"). Sends a ping with a 1.5s pong watchdog; if no pong, forces
-  // a clean cleanup + reconnect. Returns a promise that resolves to
-  // `true` if the socket is healthy after the check, `false` otherwise.
-  async ensureHealthy(timeoutMs = 1500) {
+  // "answer").
+  //
+  // Two call patterns (overloaded by arg type to avoid breaking older callers):
+  //   • ensureHealthy(token: string)  → token-aware sync path. Returns
+  //       `true` if a reconnect was kicked off, `false` if the socket was
+  //       already connected+authenticated on the given token. Use this
+  //       instead of the manual triplet `_cleanup(); destroyed=false;
+  //       reconnectAttempt=0; connect(token)` — it short-circuits when the
+  //       socket is already healthy and avoids fighting MailContext's WS
+  //       effect or resetting backoff state needlessly.
+  //   • ensureHealthy(timeoutMs?: number)  → async ping-watchdog path.
+  //       Sends a ping with a pong watchdog; if no pong, forces a clean
+  //       cleanup + reconnect. Returns a promise resolving to `true` if
+  //       the socket is healthy after the check, `false` otherwise.
+  ensureHealthy(arg) {
+    // Token path — caller passed a JWT string.
+    if (typeof arg === 'string') {
+      const token = arg;
+      if (this.isConnected && this.authenticated && this.token === token) return false;
+      if (!this.destroyed) {
+        try { this._cleanup(); } catch {}
+      }
+      this.destroyed = false;
+      if (this.token !== token) this.token = token;
+      this.connect(token);
+      return true;
+    }
+    // Original async health-check path (timeoutMs, defaults to 1500).
+    return this._ensureHealthyPing(typeof arg === 'number' ? arg : 1500);
+  }
+
+  async _ensureHealthyPing(timeoutMs = 1500) {
     if (this.destroyed) return false;
     // Socket fully dead — force reconnect.
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.authenticated) {

@@ -8,6 +8,38 @@ let callingSound = null;
 let nativePlayer = null;
 let ringtoneGeneration = 0; // Track generation to cancel async creation
 
+// [mute-call-ringtone, 2026-05-19] Cached value of the "Modo silencioso
+// para ligações" toggle. Hydrated lazily from AsyncStorage on first
+// startRingtone — synchronous reads aren't available cross-platform, and
+// startRingtone is called from the hot path (incoming call observer) so we
+// can't afford a 30-50ms IO blocked on UI thread. The cache returns the
+// previous run's value within ~1ms, and we kick a fresh re-hydrate in the
+// background each call so the next ring reflects any setting changes the
+// user made since.
+//
+// AsyncStorage key matches the one the settings screen writes
+// (`mute_call_ringtone`). false = ring normally (default).
+let muteCallRingtoneCached = false;
+let muteCallRingtoneHydrated = false;
+function hydrateMuteCallRingtone() {
+  if (Platform.OS === 'web') {
+    try {
+      const v = (typeof localStorage !== 'undefined') ? localStorage.getItem('mute_call_ringtone') : null;
+      muteCallRingtoneCached = v === 'true';
+      muteCallRingtoneHydrated = true;
+    } catch {}
+    return;
+  }
+  // Native — fire and forget AsyncStorage read; first call uses the cached
+  // (possibly stale) value. Each subsequent call refreshes the cache.
+  import('@react-native-async-storage/async-storage').then(m => {
+    m.default.getItem('mute_call_ringtone').then(v => {
+      muteCallRingtoneCached = v === 'true';
+      muteCallRingtoneHydrated = true;
+    }).catch(() => {});
+  }).catch(() => {});
+}
+
 function getAudioContext() {
   if (Platform.OS !== 'web') return null;
   if (!audioContext && typeof AudioContext !== 'undefined') {
@@ -142,6 +174,17 @@ function arrayBufferToBase64(buffer) {
 export function startRingtone() {
   stopRingtone();
   const generation = ++ringtoneGeneration;
+
+  // [mute-call-ringtone, 2026-05-19] Honor the user's silent-mode-for-calls
+  // toggle. We refresh from AsyncStorage (or localStorage on web) every call
+  // so settings changes take effect on the next inbound ring without needing
+  // a restart. First call uses the cached value (false default).
+  hydrateMuteCallRingtone();
+  if (muteCallRingtoneCached) {
+    // Skip sound + vibration entirely. The UI (IncomingCallListener) still
+    // surfaces the modal — only the audible/haptic feedback is muted.
+    return;
+  }
 
   if (Platform.OS === 'web') {
     const ctx = getAudioContext();

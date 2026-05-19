@@ -172,6 +172,14 @@ function _bootSyncEngines() {
   } catch (e) {
     console.warn('[Auth] deltaSync init failed:', e?.message);
   }
+  // [#1188 Agent H 2026-05-19] Flip the envelope-mode kill-switch on. The
+  // entire E2E foreground-pull stack in services/envelopePuller.js is gated
+  // behind globalThis.__chatyy_envelope_mode === true, and nothing else in
+  // app/ or services/ ever sets it — meaning startEnvelopePuller() was a
+  // no-op for everyone since the module landed. Enable it here as soon as
+  // auth boots so every login path (cold-start, email, phone, biometric,
+  // QR-pair) participates in envelope delivery.
+  try { globalThis.__chatyy_envelope_mode = true; } catch {}
   try {
     const { startEnvelopePuller } = require('../services/envelopePuller');
     startEnvelopePuller();
@@ -778,13 +786,16 @@ export function AuthProvider({ children }) {
       if (!_prevEmail || _prevEmail !== _newEmail) {
         await clearAccountScopedMmkv();
       }
-      // Account swap: gate any sync getter for the next 500ms AND drop
-      // user to null so chat screens unmount before the new email lands.
-      // Otherwise the in-flight render reads SmartCache (sync) and paints
-      // the previous user's conversations for a frame or two.
+      // Account swap: gate any sync getter for the next 500ms. We used to
+      // also drop user to null here so chat screens unmounted before the new
+      // email landed, but the dual-fire `setUser(null); ...await...;
+      // setUser(r.data)` was kicking MailContext's WS effect twice and
+      // feeding the reconnect storm (root cause 3, 2026-05-19). The cache
+      // scope lock + setCacheUser(null) below keep the sync getters from
+      // serving stale data; the brief paint flash is acceptable in exchange
+      // for stable WS lifecycle.
       if (_isSwitch) {
         _lockCacheScopeSync(500);
-        setUser(null);
         setCacheUser(null);
       }
       await clearAllCache();
@@ -888,10 +899,11 @@ export function AuthProvider({ children }) {
     if (!_prevEmail || _prevEmail !== _newEmail) {
       await clearAccountScopedMmkv();
     }
-    // Same paint-race fence as login() — see lockCacheScope.
+    // Same paint-race fence as login() — see lockCacheScope. setUser(null)
+    // removed (root cause 3 of reconnect storm fix 2026-05-19): the dual
+    // fire was kicking MailContext's WS effect twice.
     if (_isSwitch) {
       _lockCacheScopeSync(500);
-      setUser(null);
       setCacheUser(null);
     }
     await clearAllCache();
@@ -1032,6 +1044,20 @@ export function AuthProvider({ children }) {
   }, [loadAccounts, registerPushAfterAuth]);
 
   const doLogout = useCallback(async (reason = 'explicit') => {
+    // ---- WhatsApp parity: "uma vez logado, não sai mais" ----
+    // doLogout() is the ONLY path that calls setUser(null) + clears bearer.
+    // It must be triggered EXCLUSIVELY by:
+    //   (a) User tapping "Sair" in settings / ChatProfileTab (reason='explicit')
+    //   (b) Server explicitly returning `error: logged_out`/`revoked` 401
+    //       (reason='explicit_revoke') — sibling device revoke, password
+    //       change, admin kick, or current-device logout endpoint.
+    //   (c) Account deletion success (reason='explicit')
+    //   (d) `remove_account` from multi-account picker (reason='remove_account')
+    // It must NEVER be triggered by:
+    //   - Transient network errors / offline state
+    //   - Streak of 401s without explicit revoke marker
+    //   - WS auth_error flapping (already gated in handleAuthFailure)
+    //   - App backgrounded / inactivity / token "age"
     // Audit trail — every logout path records its reason so support can
     // post-mortem "why did Carol get kicked out?". WhatsApp-grade: an
     // unexplained logout is a bug we want to see.
@@ -1195,14 +1221,16 @@ export function AuthProvider({ children }) {
             // ── Paint-race fence ────────────────────────────────────────
             // 1. Lock cache scope BEFORE any await so sync getters that
             //    might fire during the awaits below already short-circuit.
-            // 2. Drop the user to null so any chat screen unmounts before
-            //    the new identity lands — eliminates the "previous user's
-            //    conversations flash" the user reported.
-            // 3. Clear caches (awaited).
-            // 4. Setting the new user repaints from the now-empty cache,
+            // 2. Clear caches (awaited).
+            // 3. Setting the new user repaints from the now-empty cache,
             //    which fills via the fresh fetch shortly after.
+            // (Previously also did `setUser(null)` between to force chat
+            //  screens to unmount, but that dual-fired MailContext's WS
+            //  effect — root cause 3 of reconnect storm fix 2026-05-19.
+            //  The cache-scope lock + cleared SmartCache below keep stale
+            //  data from painting; minor flash is acceptable for stable
+            //  WS lifecycle.)
             _lockCacheScopeSync(500);
-            setUser(null);
             setCacheUser(null);
             try { await clearAllCache(); } catch {}
             try { await clearChatCache(); } catch {}
@@ -1262,6 +1290,24 @@ export function AuthProvider({ children }) {
     const handleAuthFailure = async () => {
       if (Date.now() - _handled < 1500) return; // debounce duplicate fires
       _handled = Date.now();
+      // [2026-05-19] WhatsApp parity — explicit-revoke FAST PATH.
+      // If api.js signalled because the server explicitly returned
+      // `error: logged_out`/`revoked` (user tapped Sair on another device,
+      // password changed, admin kicked), we trust it and logout immediately,
+      // bypassing the grace/in-call/HTTP-confirm guards below. Those guards
+      // exist to protect against TRANSIENT 401s — but an explicit revoke is
+      // by definition not transient. Without this fast-path, a logout from a
+      // companion device wouldn't propagate (grace window would refuse).
+      try {
+        if (typeof globalThis !== 'undefined' && globalThis.__chatyy_authFailureReason === 'explicit_revoke') {
+          globalThis.__chatyy_authFailureReason = null;
+          try { api.recordLogoutAttempt?.('explicit_revoke', { source: 'authcontext_signal' }); } catch {}
+          try { api.resetAuthFailureSignal?.(); } catch {}
+          console.warn('[auth] Explicit revoke from server — logging out');
+          doLogout('explicit_revoke');
+          return;
+        }
+      } catch {}
       // [#1165 2026-05-18] In-call protection: if a call is happening (or
       // recently ended) the WS auth_error storm is a known transient — the
       // native CallSignalWs and the JS WS hold the same bearer and the

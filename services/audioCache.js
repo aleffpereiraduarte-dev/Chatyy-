@@ -427,15 +427,36 @@ function voiceFileName(remoteUrl, messageId) {
  * file URI on success or the remote URL on failure. Idempotent: re-runs
  * cheap once cached.
  *
- * Bypasses the cellular gate (audio is small + critical UX). Mirrors the
- * mediaCache.saveMediaPermanent destination so a single download serves
- * both the chat list preview AND the bubble's audio player.
+ * Honors the WhatsApp auto-download matrix via mediaCache.shouldAutoDownload
+ * ('audio' bucket). The user can still opt into cellular voice prefetch by
+ * flipping the Audio → Mobile cell ON (default in factory settings). On
+ * Wi-Fi the matrix factory ON for audio means voice messages prefetch
+ * silently as before. `opts.force` (e.g. user taps the play button) bypasses
+ * the gate the same way mediaCache.cacheMedia does.
+ *
+ * Mirrors the mediaCache.saveMediaPermanent destination so a single download
+ * serves both the chat list preview AND the bubble's audio player.
  */
-export async function cacheVoiceMessage(remoteUrl, messageId, wavePeaks) {
+export async function cacheVoiceMessage(remoteUrl, messageId, wavePeaks, opts = {}) {
   if (!remoteUrl) return remoteUrl;
   // Persist waveform first so the UI can paint bars before bytes arrive.
   if (Array.isArray(wavePeaks) && wavePeaks.length > 0) {
     setVoiceWaveform(remoteUrl, wavePeaks, messageId);
+  }
+  // Auto-download gate. Web has no cellular concept → always allowed.
+  // `opts.force` is set when the user tapped Play in the bubble — explicit
+  // intent always proceeds regardless of policy.
+  if (!opts.force && Platform.OS !== 'web') {
+    try {
+      const mc = require('./mediaCache');
+      if (mc && typeof mc.shouldAutoDownload === 'function') {
+        if (!mc.shouldAutoDownload('audio')) {
+          // Surface the remote URL so the player can still stream on demand;
+          // we just don't burn bytes pre-fetching it to disk.
+          return remoteUrl;
+        }
+      }
+    } catch {}
   }
   if (Platform.OS === 'web') {
     // Web reuses the same Cache API; we just record the URL for offline

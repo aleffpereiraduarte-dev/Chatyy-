@@ -313,6 +313,15 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   const [storageStats, setStorageStats] = useState(null);
   const [storageLoading, setStorageLoading] = useState(false);
 
+  // WhatsApp 4×3 auto-download policy matrix. Hydrated from server
+  // (chat_get_user_defaults) on mount; defaults match WhatsApp factory.
+  const [autoDlPolicy, setAutoDlPolicy] = useState(() => ({
+    photos:    { mobile: 1, wifi: 1, roaming: 0 },
+    audio:     { mobile: 1, wifi: 1, roaming: 0 },
+    videos:    { mobile: 0, wifi: 1, roaming: 0 },
+    documents: { mobile: 0, wifi: 1, roaming: 0 },
+  }));
+
   // Backup state
   const [backupRunning, setBackupRunning] = useState(false);
   const [backupElapsed, setBackupElapsed] = useState(0);
@@ -561,6 +570,53 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
     return saveSettingsChainRef.current;
   };
 
+  // Hydrate the auto-download matrix from chat_user_defaults on first mount
+  // so the storage subscreen renders the user's actual cells instead of the
+  // factory defaults. Also pushes the policy into mediaCache so the gate is
+  // live before the user ever opens the subscreen.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await api.chatGetUserDefaults();
+        if (!alive || !r?.success || !r.data) return;
+        const p = r.data.auto_download_policy;
+        if (p && typeof p === 'object') {
+          setAutoDlPolicy(prev => ({ ...prev, ...p }));
+          try {
+            const mc = require('../services/mediaCache');
+            if (mc && typeof mc.setAutoDownloadPolicy === 'function') {
+              mc.setAutoDownloadPolicy(p);
+            }
+          } catch {}
+        }
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // Optimistic single-cell toggle. Updates local UI immediately, mirrors
+  // into mediaCache (so the next cacheMedia auto-flow respects it without a
+  // round-trip), then sends the patch to the server. Server merges with the
+  // stored matrix and echoes it back as canonical.
+  const togglePolicyCell = useCallback((bucket, column) => {
+    setAutoDlPolicy(prev => {
+      const cur = prev[bucket] || { mobile: 0, wifi: 0, roaming: 0 };
+      const nextVal = cur[column] ? 0 : 1;
+      const next = { ...prev, [bucket]: { ...cur, [column]: nextVal } };
+      try {
+        const mc = require('../services/mediaCache');
+        if (mc && typeof mc.setAutoDownloadPolicy === 'function') {
+          mc.setAutoDownloadPolicy(next);
+        }
+      } catch {}
+      // Fire-and-forget — server merges and returns canonical matrix.
+      api.chatSetAutoDownloadPolicy({ bucket, column, value: nextVal })
+        .catch(() => {});
+      return next;
+    });
+  }, []);
+
   const handleSave = async (field) => {
     if (saving) return;
     setSaving(true);
@@ -706,9 +762,12 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   };
 
   const handleLogout = () => {
+    // WhatsApp parity: bearer is perpetual on the backend — only this
+    // explicit Sair confirm (or a server-side revoke) actually nukes the
+    // session. The strong message warns the user they'll need to re-auth.
     safeAlert(
       t?.('config.logoutTitle') || 'Sair',
-      t?.('config.logoutConfirm') || 'Tem certeza que deseja sair?',
+      t?.('config.logoutConfirmStrong') || 'Tem certeza? Você terá que fazer login de novo.',
       [
         { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
         { text: t?.('config.logout') || 'Sair', style: 'destructive', onPress: () => { logout(); router.replace('/login'); } },
@@ -1571,12 +1630,18 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
 
   // ─── Storage sub-screen ───
   if (subScreen === 'storage') {
-    // Media auto-download settings (WhatsApp-style)
+    // Media auto-download matrix (WhatsApp Settings → Data and Storage). Keys
+    // map 1:1 to the `auto_download_policy` JSONB row in chat_user_defaults.
     const autoDownloadItems = [
-      { key: 'photos', label: t?.('config.autoDownloadPhotos') || 'Fotos', Icon: IconCamera },
-      { key: 'audio', label: t?.('config.autoDownloadAudio') || 'Áudio', Icon: IconMusic },
-      { key: 'videos', label: t?.('config.autoDownloadVideos') || 'Vídeos', Icon: IconFilm },
-      { key: 'documents', label: t?.('config.autoDownloadDocs') || 'Documentos', Icon: IconFileText },
+      { key: 'photos',    label: t?.('settings.autoDownload.photos')    || t?.('config.autoDownloadPhotos') || 'Fotos',      Icon: IconCamera   },
+      { key: 'audio',     label: t?.('settings.autoDownload.audio')     || t?.('config.autoDownloadAudio')  || 'Áudios',     Icon: IconMusic    },
+      { key: 'videos',    label: t?.('settings.autoDownload.videos')    || t?.('config.autoDownloadVideos') || 'Vídeos',     Icon: IconFilm     },
+      { key: 'documents', label: t?.('settings.autoDownload.documents') || t?.('config.autoDownloadDocs')   || 'Documentos', Icon: IconFileText },
+    ];
+    const autoDownloadCols = [
+      { key: 'mobile',  label: t?.('settings.autoDownload.colMobile')  || 'Mobile' },
+      { key: 'wifi',    label: t?.('settings.autoDownload.colWifi')    || 'Wi-Fi'  },
+      { key: 'roaming', label: t?.('settings.autoDownload.colRoaming') || 'Roaming' },
     ];
 
     // Fetch REAL storage stats by walking cache directories
@@ -1670,28 +1735,63 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
       <View style={[styles.container, { backgroundColor: screenBg }]}>
         <SubHeader title={t?.('config.storage') || 'Armazenamento e dados'} />
         <ScrollView contentContainerStyle={{ paddingBottom: 100 }}>
-          {/* Auto-download settings (WhatsApp-style) */}
+          {/* Auto-download policy matrix (WhatsApp Settings → Data and Storage).
+              4 media buckets × 3 network columns (Mobile / Wi-Fi / Roaming).
+              Each cell toggles independently; persisted to chat_user_defaults
+              .auto_download_policy via chat_set_auto_download_policy. */}
           <SectionCard style={{ marginTop: 16 }}>
-            <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 8 }]}>
-              {t?.('config.autoDownload') || 'Download automático de mídia'}
+            <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 4 }]}>
+              {t?.('settings.autoDownload.title') || t?.('config.autoDownload') || 'Download automático'}
             </Text>
             <Text style={{ fontSize: 12, color: isDark ? '#6b7280' : '#9ca3af', marginBottom: 12, paddingHorizontal: 4 }}>
-              {t?.('config.autoDownloadDesc') || 'Escolha quais tipos de mídia baixar automaticamente'}
+              {t?.('settings.autoDownload.subtitle') || t?.('config.autoDownloadDesc') || 'Escolha quando o app baixa mídias automaticamente'}
             </Text>
-            {autoDownloadItems.map(item => (
-              <View key={item.key} style={[styles.switchRowModern, { paddingVertical: 10 }]}>
-                <View style={{ width: 20, marginRight: 12, alignItems: 'center' }}>
-                  <item.Icon size={20} color={isDark ? '#9ca3af' : '#6b7280'} />
+            {/* Column header row */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }}>
+              <View style={{ width: 20, marginRight: 12 }} />
+              <Text style={{ flex: 1, fontSize: 12, fontWeight: '600', color: isDark ? '#9ca3af' : '#6b7280' }}>
+                {t?.('settings.autoDownload.colMedia') || 'Mídia'}
+              </Text>
+              {autoDownloadCols.map(col => (
+                <Text key={col.key} style={{ width: 64, textAlign: 'center', fontSize: 12, fontWeight: '600', color: isDark ? '#9ca3af' : '#6b7280' }}>
+                  {col.label}
+                </Text>
+              ))}
+            </View>
+            {autoDownloadItems.map(item => {
+              const row = autoDlPolicy[item.key] || { mobile: 0, wifi: 0, roaming: 0 };
+              return (
+                <View key={item.key} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10 }}>
+                  <View style={{ width: 20, marginRight: 12, alignItems: 'center' }}>
+                    <item.Icon size={20} color={isDark ? '#9ca3af' : '#6b7280'} />
+                  </View>
+                  <Text style={[styles.switchLabel, { color: colors.text, flex: 1 }]}>{item.label}</Text>
+                  {autoDownloadCols.map(col => {
+                    const on = !!row[col.key];
+                    return (
+                      <TouchableOpacity
+                        key={col.key}
+                        accessibilityRole="switch"
+                        accessibilityState={{ checked: on }}
+                        accessibilityLabel={`${item.label} ${col.label}`}
+                        onPress={() => togglePolicyCell(item.key, col.key)}
+                        activeOpacity={0.7}
+                        style={{ width: 64, alignItems: 'center', justifyContent: 'center', paddingVertical: 4 }}>
+                        <View style={{
+                          width: 22, height: 22, borderRadius: 6,
+                          borderWidth: 2,
+                          borderColor: on ? ACCENT : (isDark ? '#4b5563' : '#d1d5db'),
+                          backgroundColor: on ? ACCENT : 'transparent',
+                          alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          {on ? <IconCheck size={14} color="#fff" /> : null}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
-                <Text style={[styles.switchLabel, { color: colors.text, flex: 1 }]}>{item.label}</Text>
-                <Switch
-                  value={settings[`auto_download_${item.key}`] !== false}
-                  onValueChange={(v) => saveSettings({ [`auto_download_${item.key}`]: v })}
-                  trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(124,58,237,0.4)' }}
-                  thumbColor={settings[`auto_download_${item.key}`] !== false ? ACCENT : isDark ? '#555' : '#ccc'}
-                />
-              </View>
-            ))}
+              );
+            })}
           </SectionCard>
 
           <SectionCard style={{ marginTop: 16 }}>
