@@ -21,8 +21,16 @@
 import { AppState, Platform } from 'react-native';
 import { chatEnvelopesPull, chatEnvelopeAck } from './api';
 import { decryptEnvelope, decryptSenderKeysEnvelope } from './envelope';
-import { getDeviceId } from './e2ee';
-import { getIdentityKeyPair } from './e2e';
+// [#1188 Agent F PATCH-5 2026-05-19] CRITICAL bug: previously imported
+// getDeviceId from './e2ee' which returns a `dev_<base36>` legacy id.
+// However the sender side (api.js chatSend → buildEnvelopes / buildSenderKeysEnvelope)
+// uses recipient device_ids from `chat_device_keys` which were published
+// using getDeviceId from './e2e' (UUIDv4 form). The two schemes never
+// collided in storage but the puller was polling with the WRONG id, so
+// chat_envelopes_pull always returned 0 envelopes → text never reached
+// the recipient even though encryption + WS push + storage all worked.
+// Now both sides resolve device_id from the same source-of-truth './e2e'.
+import { getDeviceId, getIdentityKeyPair } from './e2e';
 
 let _appStateSub = null;
 let _wsEnvUnsub = null;

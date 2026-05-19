@@ -161,3 +161,13 @@ export async function getSyncState() { return null; }
 export async function saveSyncState() {}
 export async function getEmails() { return null; }
 export async function saveEmails() {}
+// [2026-05-19] Web stub for fullDeltaSync — deltaSync.js calls this on
+// every WS event + cold start; missing export was causing
+// "c.fullDeltaSync is not a function" loop in browser console + breaking
+// real-time sync entirely on web. On web we don't have SQLite, so this
+// is a no-op that returns a benign result so deltaSync doesn't surface
+// as an error.
+export async function fullDeltaSync() { return { sync_seq: 0, surfaces: [] }; }
+export async function getLastSyncSeq() { return 0; }
+export async function setLastSyncSeq() {}
+export async function applyDeltaSync() {}
