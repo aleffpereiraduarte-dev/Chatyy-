@@ -30,7 +30,7 @@ import { decryptEnvelope, decryptSenderKeysEnvelope } from './envelope';
 // chat_envelopes_pull always returned 0 envelopes → text never reached
 // the recipient even though encryption + WS push + storage all worked.
 // Now both sides resolve device_id from the same source-of-truth './e2e'.
-import { getDeviceId, getIdentityKeyPair, getDevicePublicKey } from './e2e';
+import { getDeviceId, getIdentityKeyPair, getDevicePublicKey, getDeviceKeyPair } from './e2e';
 
 let _appStateSub = null;
 let _wsEnvUnsub = null;
@@ -108,10 +108,32 @@ async function pullOnce() {
         console.warn('[envelopePuller] localDb unavailable', e?.message);
       }
 
-      const identity = await getIdentityKeyPair();
-      const mySecret = identity?.secretKey;
+      // [#1188 PATCH-7 2026-05-19] CRITICAL bug: we were using the
+      // IDENTITY secret key to decrypt envelopes, but envelopes are
+      // encrypted to the per-DEVICE pubkey (the one we publish via
+      // chat_device_key_publish, which is the device keypair from
+      // getDevicePublicKey, NOT the identity pubkey). The two keypairs
+      // are deliberately separate (e2e.js#L249-336) so logout can wipe
+      // the device key without losing X3DH replayability. Using the
+      // wrong privkey → nacl.box.open returns null every time → silent
+      // black hole even though the server has the right pubkey. Fix:
+      // load the device keypair's secret. Fall back to identity for
+      // back-compat with extremely old envelopes during rollout (won't
+      // ever match, but at least we keep the previous behavior).
+      let mySecret = null;
+      try {
+        const devicePair = await getDeviceKeyPair();
+        if (devicePair?.secretKey) mySecret = devicePair.secretKey;
+      } catch {}
       if (!mySecret) {
-        console.warn('[envelopePuller] no identity secret key — skipping batch');
+        const identity = await getIdentityKeyPair();
+        mySecret = identity?.secretKey;
+        if (mySecret) {
+          console.warn('[envelopePuller] device keypair unavailable — falling back to identity secret (may not decrypt)');
+        }
+      }
+      if (!mySecret) {
+        console.warn('[envelopePuller] no secret key — skipping batch');
         break;
       }
 
