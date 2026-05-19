@@ -19,7 +19,7 @@
  */
 
 import { AppState, Platform } from 'react-native';
-import { chatEnvelopesPull, chatEnvelopeAck } from './api';
+import { chatEnvelopesPull, chatEnvelopeAck, chatDeviceKeyPublish } from './api';
 import { decryptEnvelope, decryptSenderKeysEnvelope } from './envelope';
 // [#1188 Agent F PATCH-5 2026-05-19] CRITICAL bug: previously imported
 // getDeviceId from './e2ee' which returns a `dev_<base36>` legacy id.
@@ -30,7 +30,7 @@ import { decryptEnvelope, decryptSenderKeysEnvelope } from './envelope';
 // chat_envelopes_pull always returned 0 envelopes → text never reached
 // the recipient even though encryption + WS push + storage all worked.
 // Now both sides resolve device_id from the same source-of-truth './e2e'.
-import { getDeviceId, getIdentityKeyPair } from './e2e';
+import { getDeviceId, getIdentityKeyPair, getDevicePublicKey } from './e2e';
 
 let _appStateSub = null;
 let _wsEnvUnsub = null;
@@ -38,6 +38,39 @@ let _wsConnUnsub = null;
 let _running = false;
 let _inFlight = false;
 let _pullSafetyTimer = null;
+
+// [#1188 PATCH-6 2026-05-19] Auto-republish device pubkey when decrypt
+// repeatedly fails. Root cause: when app reinstall / store wipe / cache
+// reset rotates the LOCAL device keypair but the OLD pubkey is still
+// what `chat_device_keys` has → senders fetch the stale pubkey →
+// envelopes are nacl.box-sealed for a privkey that no longer exists →
+// `nacl.box.open` returns null forever. Symptoms: messages arrive,
+// get ack'd (we ack to avoid re-delivery loops), and silently vanish.
+// Fix: count consecutive decrypt-fails per pull batch; once we cross
+// the threshold within a short window, fire-and-forget republish the
+// CURRENT local pubkey (idempotent UPSERT server-side). Subsequent
+// sends will use the fresh pubkey → decrypt succeeds → counter resets.
+// Dedupe with a 60s cooldown so we don't hammer the endpoint when an
+// honest replay (e.g. peer SPK swap) is also failing.
+let _decryptFailsInSession = 0;
+let _lastRepublishAt = 0;
+const REPUBLISH_AFTER_FAILS = 3;
+const REPUBLISH_COOLDOWN_MS = 60 * 1000;
+
+async function _maybeRepublishDeviceKey() {
+  const now = Date.now();
+  if (now - _lastRepublishAt < REPUBLISH_COOLDOWN_MS) return;
+  _lastRepublishAt = now;
+  try {
+    const [did, pub] = await Promise.all([getDeviceId(), getDevicePublicKey()]);
+    if (!did || !pub) return;
+    const kind = Platform.OS === 'web' ? 'web' : Platform.OS;
+    console.warn('[envelopePuller] decrypt fails crossed threshold — republishing device pubkey', did, kind);
+    await chatDeviceKeyPublish(did, pub, kind);
+  } catch (e) {
+    console.warn('[envelopePuller] republish failed', e?.message);
+  }
+}
 
 function _isEnabled() {
   try {
@@ -123,8 +156,25 @@ async function pullOnce() {
           // device anyway. Log for debugging.
           console.warn('[envelopePuller] decrypt failed for envelope', env.id, e?.message);
           okIds.push(env.id);
+          // [#1188 PATCH-6 2026-05-19] Trip republish after N fails in
+          // a single batch. Most likely cause is stale server-side
+          // pubkey for this device_id (local keypair was rotated by a
+          // reinstall / SecureStore wipe). Re-uploading the current
+          // local pubkey fixes the NEXT send automatically. Existing
+          // ciphertexts in the queue stay un-decryptable (no privkey
+          // recovery), but they're ack'd above so they don't pile up.
+          _decryptFailsInSession++;
+          if (_decryptFailsInSession >= REPUBLISH_AFTER_FAILS) {
+            _decryptFailsInSession = 0;
+            // Fire-and-forget — don't block the rest of the batch.
+            _maybeRepublishDeviceKey();
+          }
           continue;
         }
+        // [#1188 PATCH-6] At least one decrypt succeeded this batch —
+        // reset the consecutive-fail counter so we don't republish on
+        // an occasional honest-bad-envelope.
+        _decryptFailsInSession = 0;
         if (saveMessage) {
           try {
             await saveMessage({
