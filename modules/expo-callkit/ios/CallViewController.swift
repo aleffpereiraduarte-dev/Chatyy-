@@ -99,7 +99,14 @@ final class CallSessionState: ObservableObject {
 
 // MARK: - VC
 
-final class CallViewController: UIViewController {
+// [Wave B/C forward-fix 2026-05-19] `@unchecked Sendable` — LK Swift 2.5+
+// declares `public protocol RoomDelegate: AnyObject, Sendable` (verified
+// against client-sdk-swift main + 2.5.0 tag). UIViewController isn't
+// auto-Sendable under Swift 6 strict concurrency, so without this conformance
+// the `Room(delegate: self, ...)` call fails to compile. We control all
+// cross-actor access manually via Tasks + MainActor.run + the room/session
+// state mutations are already serialized through the main thread.
+final class CallViewController: UIViewController, @unchecked Sendable {
 
     static let callEndedNotification = Notification.Name("ExpoCallKitNativeCallEnded")
 
@@ -173,6 +180,17 @@ final class CallViewController: UIViewController {
                 hasVideo: hasVideo
             )
         }
+
+        // [Wave B audio, 2026-05-18 / restored 2026-05-19] Centralize
+        // AVAudioSession routing.
+        //   - Audio call -> earpiece default
+        //   - Video call -> speaker default
+        //   - BT/wired headset present at start -> route to it (skips default)
+        //   - Mid-call BT connect/disconnect -> auto re-route via route listener
+        // CallKit owns setActive(); AudioRouter only owns category + port
+        // override + the routeChange listener.
+        AudioRouter.shared.configureForCall(hasVideo: hasVideo)
+        self.session.speakerOn = AudioRouter.shared.speakerOn
 
         // Build the SwiftUI tree with the full closure set Stage #995 demands.
         let rootView = CallView(
