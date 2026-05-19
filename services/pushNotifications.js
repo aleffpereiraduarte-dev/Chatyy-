@@ -1457,6 +1457,22 @@ export function triggerBackgroundSync(data = {}) {
     }
   } catch {}
 
+  // [Round 1188 Agent F PATCH-5 2026-05-19] Force an envelope flush so the
+  // recipient pulls the new ciphertext that triggered this wake. Without
+  // this, the silent push arrives but envelopePuller's only trigger paths
+  // (WS envelope_available / AppState=active / 30s safety) may all be
+  // unavailable in the background — leaving the user waiting until the
+  // next foreground transition. WhatsApp/Telegram parity: silent push =>
+  // pull => decrypt => save => visible badge.
+  try {
+    if (syncType !== 'email') {
+      const { flushEnvelopesNow } = require('./envelopePuller');
+      if (typeof flushEnvelopesNow === 'function') {
+        flushEnvelopesNow().catch(() => {});
+      }
+    }
+  } catch {}
+
   // Refresh badge count in the background after sync
   refreshBadgeCount().catch(() => {});
 }

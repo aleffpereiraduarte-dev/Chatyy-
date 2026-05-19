@@ -711,9 +711,16 @@ export default function IncomingCallListener() {
       }));
 
       // Dismiss incoming call on other sessions (user accepted on another device/tab)
+      // [multi-device dismiss, 2026-05-19] WS-GO handleCallAnswered +
+      // handleCallAccepted both fan this event out with
+      // reason='answered_elsewhere' to every OTHER session of the answerer.
+      // Without the endCall() below, the OS-level incoming UI (CallKit on
+      // iOS, IncomingCallActivity full-screen on Android) keeps showing
+      // even though the JS-side modal/ringtone is cleared — user reported
+      // "se eu atender em um dispositivo, o outro continua tocando".
       unsubs.push(mailWs.on('call_dismissed', (data) => {
         if (callRef.current?.call_id === data?.call_id) {
-          console.log('[IncomingCall] call_dismissed received:', data.call_id);
+          console.log('[IncomingCall] call_dismissed received:', data.call_id, 'reason=' + (data?.reason || 'n/a'));
           if (data?.call_id) _pendingIceByCallId.delete(String(data.call_id));
           callRef.current = null;
           callStateRef.current = null;
@@ -724,6 +731,23 @@ export default function IncomingCallListener() {
           setCall(null);
           acceptedRef.current = false; // Reset for next call
           handlingRef.current = false;
+          // Force-dismiss the native incoming UI. endCall fires
+          // CXEndCallAction on iOS (ProviderDelegate also calls
+          // reportCall(...endedReason:.answeredElsewhere) internally via
+          // CXEndCallAction's CXCallEndedReason resolution) and broadcasts
+          // expo.modules.callkit.CLOSE_CALL_ACTIVITY on Android which
+          // IncomingCallActivity.kt listens for via its IntentFilter →
+          // finish().
+          if (data?.reason === 'answered_elsewhere' && data?.call_id) {
+            // Mark so the resulting onEnd echo doesn't send WS call_end
+            // back to the caller (would tear down the call that the SIBLING
+            // device just answered).
+            callEndSentRef.current[String(data.call_id)] = Date.now();
+          }
+          try {
+            const { endCall } = require('../services/callkeep');
+            endCall(data?.call_id || '');
+          } catch (_) {}
         }
       }));
 

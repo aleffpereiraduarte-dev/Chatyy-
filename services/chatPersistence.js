@@ -209,6 +209,38 @@ export function startChatPersistence() {
     _unsubs.push(mailWs.on('chat_delete', _onDelete));
     _unsubs.push(mailWs.on('message_deleted', _onDelete));
     _unsubs.push(mailWs.on('chat_read', _onRead));
+
+    // [#1188 Agent A 2026-05-19] ENVELOPE-MODE LIST WAKE
+    // ──────────────────────────────────────────────────────────────────
+    // When the recipient is in envelope (E2E) mode, the backend emits
+    // `envelope_available` on their per-user channel and the
+    // envelopePuller writes the decrypted row to localDb. But ChatList
+    // (chat.js) hydrates from chatCache/SmartCache, which is only
+    // refreshed by _onIncomingChatMessage. Without this bridge the
+    // chat-list "last_message" + unread badge stay stale until the next
+    // cold-open or focus-refresh — exact symptom user reported.
+    // Action: pull then trigger a global tick so chatListSync / inbox /
+    // chat list can re-read from local store. Idempotent.
+    const onEnvelopeAvailableGlobal = () => {
+      try {
+        const { flushEnvelopesNow } = require('./envelopePuller');
+        const p = typeof flushEnvelopesNow === 'function' ? flushEnvelopesNow() : null;
+        const tick = () => {
+          try {
+            if (typeof globalThis !== 'undefined' && typeof globalThis.dispatchEvent === 'function') {
+              const Ev = (typeof Event === 'function') ? new Event('chatyy:syncTick') : null;
+              if (Ev) globalThis.dispatchEvent(Ev);
+            }
+          } catch {}
+        };
+        if (p && typeof p.then === 'function') {
+          p.then(tick).catch(tick);
+        } else {
+          tick();
+        }
+      } catch {}
+    };
+    _unsubs.push(mailWs.on('envelope_available', onEnvelopeAvailableGlobal));
   });
 
   // ─── MQTT subscriptions (alternate transport — same events) ─────────────

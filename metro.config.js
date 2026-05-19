@@ -2,6 +2,13 @@ const { getDefaultConfig } = require('expo/metro-config');
 
 const config = getDefaultConfig(__dirname);
 
+// expo-sqlite/web/worker.ts imports `./wa-sqlite/wa-sqlite.wasm` directly;
+// Metro doesn't bundle .wasm by default. Treating it as an asset makes Metro
+// emit the file and return its URL — wa-sqlite then fetches+instantiates it.
+if (!config.resolver.assetExts.includes('wasm')) {
+  config.resolver.assetExts = [...config.resolver.assetExts, 'wasm'];
+}
+
 // Alias react-native-webrtc → @livekit/react-native-webrtc (LiveKit fork,
 // drop-in API + bundled patches needed by LiveKit RN SDK). Replaces the
 // previous @stream-io fork — both ship the same native module surface but

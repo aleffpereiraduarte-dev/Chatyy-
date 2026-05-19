@@ -9688,6 +9688,37 @@ export default function ChatConversationScreen() {
       const unsubMsgSummary = mailWs.on('chat_summary', onIncomingMessage);
       wsUnsubs.push(unsubMsg, unsubMsgSummary);
 
+      // [#1188 Agent A 2026-05-19] ENVELOPE-MODE UI WAKE
+      // ────────────────────────────────────────────────────────────────
+      // Bug reported as: "envia e some, só funciona após cold open."
+      // ROOT CAUSE: in envelope (E2E) mode the recipient backend emits
+      // `envelope_available` on the per-user WS channel — NOT a
+      // `chat_message`. The envelopePuller catches that event, pulls +
+      // decrypts + writes to localDb, but THIS screen only ever
+      // subscribed to `chat_message` / `chat_summary`. So the bubble
+      // never appeared until loadMessages() ran again (focus, reconnect,
+      // cold open). Match: user's exact complaint.
+      // Fix: subscribe to envelope_available too. If it's for OUR convo,
+      // flush the puller and reload from localDb. Idempotent — pullOnce
+      // self-debounces with _inFlight; loadMessages drops stale seqs.
+      const onEnvelopeAvailable = (payload) => {
+        if (!mountedRef.current) return;
+        const cid = payload?.conversation_id ?? payload?.data?.conversation_id;
+        if (cid != null && String(cid) !== String(conversationId)) return;
+        try {
+          const { flushEnvelopesNow } = require('../services/envelopePuller');
+          const p = typeof flushEnvelopesNow === 'function' ? flushEnvelopesNow() : null;
+          if (p && typeof p.then === 'function') {
+            p.then(() => { try { loadMessages(false); } catch {} }).catch(() => {});
+          } else {
+            try { loadMessages(false); } catch {}
+          }
+        } catch {
+          try { loadMessages(false); } catch {}
+        }
+      };
+      wsUnsubs.push(mailWs.on('envelope_available', onEnvelopeAvailable));
+
       // Bug 2026-05-12: edit/delete/reaction/poll_vote were only applied
       // via the TCP signal-server path. Devices that hit the Node WS hub
       // instead (web + the sender's other devices) never saw their own
