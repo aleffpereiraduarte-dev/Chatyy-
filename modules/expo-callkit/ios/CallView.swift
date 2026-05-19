@@ -91,6 +91,14 @@ struct CallView: View {
     @State private var speakerPulse: CGFloat = 1.0
     @State private var elapsedSeconds: Int = 0
     @State private var timer: Timer? = nil
+    /// [#1176 polish, 2026-05-18] Avatar URL side-channelled from
+    /// ExpoCallKitModule.startOutgoingCall via the App Group UserDefaults
+    /// key `callAvatar:<callId>`. CallViewController constructs CallView
+    /// with fixed positional args so we can't extend the init without
+    /// modifying the VC (which is forbidden by the in-flight worktree).
+    /// `.onAppear` reads the URL and AsyncImage renders the photo on top
+    /// of the initial-letter placeholder.
+    @State private var avatarUrl: String = ""
 
     // Palette matches the JS /call.js + Android CallActivity. Pulled from the
     // WhatsApp dark-call screen — same hex values across iOS/Android so the
@@ -192,11 +200,25 @@ struct CallView: View {
             startPulseAnimation()
             startSpeakerPulseAnimation()
             scheduleControlsHide()
+            // [#1176 polish, 2026-05-18] Pull the avatar URL stashed by
+            // ExpoCallKitModule.startOutgoingCall (App Group UserDefaults
+            // key `callAvatar:<callId>`). For the answer (incoming) path the
+            // key isn't populated today — initial-letter stays the fallback.
+            if let ud = UserDefaults(suiteName: "group.com.onemundo.mail"),
+               let url = ud.string(forKey: "callAvatar:\(callId)"),
+               !url.isEmpty {
+                avatarUrl = url
+            }
         }
         .onDisappear {
             timer?.invalidate()
             timer = nil
             controlsHideTask?.cancel()
+            // [#1176 polish, 2026-05-18] Clear the App Group avatar key for
+            // this callId so consecutive calls don't leak URLs into a
+            // dangling cache. The next outgoing call writes a fresh entry.
+            UserDefaults(suiteName: "group.com.onemundo.mail")?
+                .removeObject(forKey: "callAvatar:\(callId)")
         }
         // Re-run the auto-hide cycle whenever connection state flips — once
         // the call connects we want a hide-after-5s, but during ringing the
@@ -333,11 +355,35 @@ struct CallView: View {
                     .shadow(color: .black.opacity(0.5), radius: 14, x: 0, y: 8)
 
                 // Initial letter. SF rounded weight matches WhatsApp's avatar
-                // font feel; we don't have remote avatar URLs natively yet so
-                // an initial circle is the safe fallback.
+                // font feel; rendered behind the AsyncImage so the user sees
+                // it instantly while the photo decodes — and stays as the
+                // fallback if the URL load fails or there's no URL at all.
                 Text(initialFor(callerName))
                     .font(.system(size: 52, weight: .regular, design: .rounded))
                     .foregroundColor(.white)
+
+                // [#1176 polish, 2026-05-18] Real avatar photo when JS supplied
+                // a URL (api.getAvatarUrlForEmail). AsyncImage handles the
+                // HTTP fetch on a background queue and crossfades in once the
+                // bitmap is decoded. `clipShape(Circle())` mirrors the
+                // chipColor circle behind it so there's no square-photo glitch
+                // during the brief load window. EmptyView keeps the placeholder
+                // letter visible — we don't want to blank the avatar circle.
+                if !avatarUrl.isEmpty, let url = URL(string: avatarUrl) {
+                    AsyncImage(url: url, transaction: Transaction(animation: .easeIn(duration: 0.2))) { phase in
+                        switch phase {
+                        case .success(let image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 132, height: 132)
+                                .clipShape(Circle())
+                        default:
+                            EmptyView()
+                        }
+                    }
+                    .frame(width: 132, height: 132)
+                }
             }
             .frame(width: 168, height: 168)
 

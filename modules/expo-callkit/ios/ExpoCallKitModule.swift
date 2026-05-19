@@ -74,6 +74,10 @@ public class ExpoCallKitModule: Module {
     let callId: String
     let calleeEmail: String
     let calleeName: String
+    /// [#1176 polish, 2026-05-18] Avatar URL forwarded from JS so the SwiftUI
+    /// CallView can paint the real photo (AsyncImage) instead of just an
+    /// initial letter while LiveKit Room is still connecting.
+    let calleeAvatar: String?
     let callerName: String
     let isVideo: Bool
     let roomName: String
@@ -509,6 +513,7 @@ public class ExpoCallKitModule: Module {
                       userInfo: [NSLocalizedDescriptionKey: "callee_email required"])
       }
       let calleeName = (params["callee_name"] as? String) ?? calleeEmail
+      let calleeAvatar = (params["callee_avatar"] as? String) ?? ""
       let callerName = (params["caller_name"] as? String) ?? ""
       let isVideo = (params["is_video"] as? Bool) ?? false
       let roomName = (params["room_name"] as? String) ?? ""
@@ -534,6 +539,7 @@ public class ExpoCallKitModule: Module {
           callId: callId,
           calleeEmail: calleeEmail,
           calleeName: calleeName,
+          calleeAvatar: calleeAvatar.isEmpty ? nil : calleeAvatar,
           callerName: callerName,
           isVideo: isVideo,
           roomName: roomName.isEmpty ? callId : roomName,
@@ -541,6 +547,15 @@ public class ExpoCallKitModule: Module {
           lkUrl: lkUrl,
           lkToken: lkToken
         )
+      }
+
+      // [#1176 polish, 2026-05-18] Side-channel the avatar URL into the App
+      // Group UserDefaults so CallView.swift (which is constructed by
+      // CallViewController with fixed positional args we can't extend
+      // without touching the VC) can pull it on .onAppear. Keyed by callId
+      // so concurrent calls don't collide; cleared by the receive path.
+      if !calleeAvatar.isEmpty, let ud = UserDefaults(suiteName: kAppGroupId) {
+        ud.set(calleeAvatar, forKey: "callAvatar:\(callId)")
       }
 
       guard let cc = self.callController else {

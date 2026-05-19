@@ -668,9 +668,13 @@ class IncomingCallActivity : AppCompatActivity() {
     }
 
     // Cache miss → fetch on a background thread, then launch.
+    // [#1175 2026-05-18] Pass our own Intent extras so LkTokenFetcher can
+    // resolve auth via fallback B (intent) if SharedPreferences (source A)
+    // is empty.
+    val ourExtras = intent?.extras
     Thread {
       val identity = email.takeIf { it.isNotBlank() } ?: "android-$id"
-      val tk = LkTokenFetcher.fetch(applicationContext, id, identity)
+      val tk = LkTokenFetcher.fetch(applicationContext, id, identity, ourExtras)
       mainHandler.post {
         if (tk == null) {
           Log.w("IncomingCallActivity", "[stage4] token fetch FAILED — launching CallActivity without token (user will see error)")

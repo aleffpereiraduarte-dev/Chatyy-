@@ -2960,7 +2960,12 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
         // loses the spinner, and the queued retry is removed. The recipient's
         // envelopePuller delivers + acks independently; the sender's
         // delivered/read marker still arrives via chat_message_receipts.
-        const syntheticId = 'env_' + stableCMI;
+        // Synthetic id uses the CMI as-is (no prefix) so that when a paired
+        // device pulls the same envelope via envelopePuller and runs
+        // saveMessage({ id: env.client_message_id, client_temp_id: env.client_message_id }),
+        // the two rows collapse cleanly on client_temp_id rather than
+        // duplicating with a separate "env_" prefix.
+        const syntheticId = stableCMI;
         result = {
           success: true,
           envelope_mode: true,

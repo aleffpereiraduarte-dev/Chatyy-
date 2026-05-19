@@ -1147,6 +1147,22 @@ private fun CallScreen(
       ReconnectBannerComposable(onRetry = onRetryConnect)
     }
 
+    // [#1175 2026-05-18] "Needs login" banner — shown when LkTokenFetcher
+    // ran out of fallback sources. Tap → finish the activity so the user
+    // lands back on the launcher / app shell where /login can be reached.
+    // Visual matches the reconnect banner (yellow chip, top-center) so the
+    // user perceives it as a transient error, not a permanent crash.
+    AnimatedVisibility(
+      visible = state.needsLogin,
+      enter = slideInVertically { -it } + fadeIn(),
+      exit = slideOutVertically { -it } + fadeOut(),
+      modifier = Modifier
+        .align(Alignment.TopCenter)
+        .padding(top = 56.dp, start = 16.dp, end = 16.dp),
+    ) {
+      NeedsLoginBanner(onTap = onHangup, message = state.status)
+    }
+
     // 3. Main column: top bar + avatar + spacer + bottom controls.
     Column(modifier = Modifier.fillMaxSize()) {
       Spacer(Modifier.height(44.dp))
@@ -1825,6 +1841,42 @@ private fun ReconnectBannerComposable(onRetry: () -> Unit) {
     Spacer(Modifier.width(10.dp))
     Text(
       text = "Tente reconectar",
+      color = Color.Black,
+      fontSize = 14.sp,
+      fontWeight = FontWeight.Medium,
+    )
+  }
+}
+
+/**
+ * [#1175 2026-05-18] Humanized "needs login" banner. Surfaces when
+ * LkTokenFetcher walked through all 4 fallback sources and couldn't find
+ * a bearer. Tapping ends the call gracefully so the user lands on the
+ * launcher / RN app shell, where /login is reachable. The message string
+ * is owned by the caller (state.status) so we can show the right copy
+ * depending on whether SecureStore had a hint (session expired) or not
+ * (user logged out).
+ */
+@Composable
+private fun NeedsLoginBanner(onTap: () -> Unit, message: String) {
+  Row(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(14.dp))
+      .background(ReconnectBanner.copy(alpha = 0.92f))
+      .padding(horizontal = 14.dp, vertical = 10.dp)
+      .clickable { onTap() },
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Icon(
+      imageVector = Icons.Filled.CallEnd,
+      contentDescription = "Encerrar",
+      tint = Color.Black,
+      modifier = Modifier.size(18.dp),
+    )
+    Spacer(Modifier.width(10.dp))
+    Text(
+      text = message.ifBlank { "Faca login novamente para receber chamadas" },
       color = Color.Black,
       fontSize = 14.sp,
       fontWeight = FontWeight.Medium,

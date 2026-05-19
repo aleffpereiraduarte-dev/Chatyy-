@@ -412,6 +412,11 @@ export interface StartOutgoingCallParams {
   /** Display name shown on the native call screen while ringing. Defaults
    *  to the email when omitted. */
   calleeName?: string;
+  /** [#1176 polish, 2026-05-18] Avatar URL shown on the native call screen
+   *  while the LiveKit room is still negotiating. Without this the screen
+   *  falls back to the initial letter. Typically populated via
+   *  `api.getAvatarUrlForEmail(calleeEmail)` from the JS caller. */
+  calleeAvatar?: string;
   /** Display name of the local user. Forwarded into call_invite so the
    *  callee's incoming-call UI can show "Maria está chamando…". */
   callerName?: string;
@@ -456,6 +461,7 @@ export async function startOutgoingCall(params: StartOutgoingCallParams): Promis
   return await m.startOutgoingCall({
     callee_email: params.calleeEmail,
     callee_name: params.calleeName,
+    callee_avatar: params.calleeAvatar,
     caller_name: params.callerName,
     is_video: !!params.isVideo,
     room_name: params.roomName,

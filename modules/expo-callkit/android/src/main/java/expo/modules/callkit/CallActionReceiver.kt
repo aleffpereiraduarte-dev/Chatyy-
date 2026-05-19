@@ -202,6 +202,10 @@ class CallActionReceiver : BroadcastReceiver() {
         putExtra(CallActivity.EXTRA_CONVERSATION_ID, conversationId)
         if (!url.isNullOrEmpty()) putExtra(CallActivity.EXTRA_LK_URL, url)
         if (!token.isNullOrEmpty()) putExtra(CallActivity.EXTRA_LK_TOKEN, token)
+        // [#1175 2026-05-18] Carry auth in intent so CallActivity onCreate
+        // has an independent copy even if SharedPreferences is wiped
+        // between this broadcast and the activity onCreate.
+        ExpoCallKitModule.enrichIntentWithAuth(context, this)
       }
       context.startActivity(intent)
     } catch (t: Throwable) {
