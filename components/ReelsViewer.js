@@ -743,8 +743,19 @@ const TipSheetWrapper = memo(function TipSheetWrapper({ visible, onClose, postId
         onClose?.();
       } else if (res?.data?.code === 'insufficient_diamonds') {
         setBalance(Number(res.data.diamond_balance) || 0);
+        try { require('react-native').Alert.alert(t?.('common.error') || 'Erro', t?.('feed.tipInsufficient') || 'Diamantes insuficientes'); } catch {}
+      } else {
+        // Surface the actual error so the user knows the tap didn't silently
+        // succeed. Previously this branch was empty + a silent catch — server
+        // 401 / 500 / "Post not found" all looked like "nothing happens" to
+        // the user. Bug report 2026-05-19: "clico em mandar diamante e nada
+        // acontece".
+        const msg = res?.message || res?.error || (t?.('common.error') || 'Erro ao enviar diamante');
+        try { require('react-native').Alert.alert(t?.('common.error') || 'Erro', String(msg)); } catch {}
       }
-    } catch {} finally {
+    } catch (e) {
+      try { require('react-native').Alert.alert(t?.('common.error') || 'Erro', t?.('common.networkError') || 'Falha de conexão'); } catch {}
+    } finally {
       setSending(false);
     }
   }, [balance, onClose, onTipSent, postId, sending, t]);
