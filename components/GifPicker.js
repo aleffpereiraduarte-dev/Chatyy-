@@ -119,7 +119,15 @@ export default function GifPickerPanel({ onSelect, onClose, colors, t }) {
       // Race + unmount guards — descarta resposta velha ou após unmount.
       if (!aliveRef.current || myId !== reqIdRef.current) return;
       if (r.success) {
-        const results = r.data?.gifs || [];
+        // [2026-05-19] Filter out GIFs > 8MB upfront so user never sees them.
+        // handleSendGif already blocks oversized sends — this just prevents
+        // confusion of "I tapped but it didn't send".
+        const MAX_GIF_BYTES = 8 * 1024 * 1024;
+        const all = r.data?.gifs || [];
+        const results = all.filter(g => {
+          const bytes = Number(g?.size || g?.bytes || g?.media_size || 0);
+          return bytes === 0 || bytes <= MAX_GIF_BYTES;
+        });
         setGifs(results);
         gifCache.set(cacheKey, results);
         // Limit cache size
