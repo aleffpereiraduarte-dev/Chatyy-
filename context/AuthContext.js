@@ -179,6 +179,29 @@ function _bootSyncEngines() {
     // envelopePuller is feature-gated by globalThis.__chatyy_envelope_mode —
     // and the module itself can be absent on web. Either way, swallow.
   }
+
+  // [#1188 Agent H 2026-05-19] Publish this device's pubkey on EVERY auth.
+  // Was previously called ONLY in QR-pair login (login.js:808 +
+  // companion-qr.js:158) — meaning email login, phone signup, biometric
+  // login, cold-start hydrate ALL skipped key publish. Result: any user
+  // who never paired via QR has `chat_device_keys` empty → senders'
+  // `chatEnvelopeSend` returns inserted:0 with success:true → optimistic
+  // bubble flips ✓ but recipient gets NOTHING (silent black hole).
+  // Idempotent server-side (UPSERT on email+device_id). Fire-and-forget.
+  try {
+    const { Platform } = require('react-native');
+    const e2eMod = require('../services/e2e');
+    Promise.all([e2eMod.getDeviceId?.(), e2eMod.getDevicePublicKey?.()])
+      .then(([did, pub]) => {
+        if (did && pub && typeof api.chatDeviceKeyPublish === 'function') {
+          const kind = Platform.OS === 'web' ? 'web' : Platform.OS;
+          api.chatDeviceKeyPublish(did, pub, kind).catch(() => {});
+        }
+      })
+      .catch(() => {});
+  } catch (e) {
+    // e2e helpers may be absent on extremely old binaries; swallow.
+  }
 }
 
 function _teardownSyncEngines() {

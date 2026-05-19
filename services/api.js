@@ -3000,6 +3000,20 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
         await _localMarkFailed(localTempId, envResp?.message || 'envelope_send_failed');
         return envResp;
       }
+
+      // [#1188 Agent B+H 2026-05-19] Plaintext fallback when envelope mode
+      // sent to recipients with ZERO published device keys. envResp returns
+      // {success:true, inserted:0} when no peer has chat_device_keys row.
+      // Without this fallback, sender's bubble shows ✓ but recipient gets
+      // NOTHING (silent black hole). Privacy degradation < message loss.
+      // After Patch A (publish key on every auth) lands, this fallback
+      // becomes rare-fire — but it covers the legacy users still missing
+      // keys in the chat_device_keys table.
+      const _insertedCount = Number(result?.inserted ?? result?.data?.inserted ?? 0);
+      if (result?.success && _insertedCount === 0) {
+        console.warn('[chatSend] envelope mode inserted=0 (no peer device keys) — falling back to plaintext');
+        result = null; // force the plaintext branch below to fire
+      }
     } catch (e) {
       // Network / crypto error in envelope mode — mark failed, surface.
       // No fallback to plaintext: in envelope mode the sender chose
