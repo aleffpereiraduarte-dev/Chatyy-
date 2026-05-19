@@ -1590,19 +1590,32 @@ export async function checkAuth() {
   return apiCall('check_auth');
 }
 
+// [2026-05-19] Once Rust returns 401 for the current bearer, mark it dead
+// for the rest of the session. Same bearer keeps working on PHP, but Rust's
+// IDLE-IMAP auth silently failed (observed on Chrome desktop). Without this
+// flag we'd keep hitting Rust on every getInbox/getFolders/getMessage call,
+// spamming the browser network panel + console with "Failed to load
+// resource: 401" lines that the user explicitly complained about.
+let _rustDead = false;
+function _markRustDead() { _rustDead = true; }
+// Public reset hook — called by login() when the bearer changes so a fresh
+// token gets a fair shot at Rust again.
+export function _resetRustHealth() { _rustDead = false; }
+
 export async function getInbox(folder = 'INBOX', page = 1, perPage = 20, search = '', category = '', label = '', filter = '') {
   // Rust-first for everything except label/category (Rust 501 → PHP fallback).
   // Search operators (from/to/subject/is:/before/after/larger/smaller) are now
   // handled natively; label KEYWORD maps and category bucketing stay on PHP.
   const needsPHP = !!label || (!!category && category !== 'all');
   if (!needsPHP) {
-    if (authToken) {
+    if (authToken && !_rustDead) {
       try {
         const qs = new URLSearchParams({ folder, page: String(page), per_page: String(perPage) });
         if (search) qs.set('search', search);
         if (filter) qs.set('filter', filter);
         const url = `${BASE_URL}/api/rust/email/inbox?${qs.toString()}`;
         const r = await fetch(url, { headers: getAuthHeaders() });
+        if (r.status === 401) _markRustDead();
         if (r.ok) {
           const j = await r.json();
           // Rust returns success:true with empty list when its IDLE IMAP
@@ -1632,10 +1645,11 @@ export async function getInbox(folder = 'INBOX', page = 1, perPage = 20, search 
 export async function getMessage(uid, folder = 'INBOX') {
   // Rust email-api first, PHP fallback. Rust returns the exact same shape the app expects
   // plus extras (html/text/attachments) — we wrap into the legacy response shape.
-  if (!authToken) return apiCall('message', { uid, folder });
+  if (!authToken || _rustDead) return apiCall('message', { uid, folder });
   try {
     const url = `${BASE_URL}/api/rust/email/message/${encodeURIComponent(uid)}?folder=${encodeURIComponent(folder)}&mark_seen=true`;
     const r = await fetch(url, { headers: getAuthHeaders() });
+    if (r.status === 401) _markRustDead();
     if (r.ok) {
       const j = await r.json();
       if (j && j.success && j.data) {
@@ -1674,9 +1688,11 @@ export async function getFolders() {
   // Skip the Rust call entirely when we have no bearer token: the service
   // has no PHP session fallback and would just return 401, spamming logs
   // and the browser's network tab on cold boots without auth.
-  if (authToken) {
+  // Also skip when Rust already 401'd this session (see _rustDead comment).
+  if (authToken && !_rustDead) {
     try {
       const r = await fetch(`${BASE_URL}/api/rust/email/folders`, { headers: getAuthHeaders() });
+      if (r.status === 401) _markRustDead();
       if (r.ok) {
         const j = await r.json();
         // Only trust Rust if it actually returned folders. An empty array is a
@@ -3690,6 +3706,11 @@ export async function chatSmartReply(conversationId, lastMessage = '') {
 // (conversation_id, last_msg_id) so the chip bar can re-render without
 // re-charging the OpenAI bill on typing/presence WS noise.
 export async function chatAiSuggestReplies(conversationId) {
+  // [2026-05-19] Guard: backend 400s when called without an active bearer
+  // (no auth context, can't load conversation). Skip silently — the smart-
+  // replies UI is purely cosmetic, no point spamming the network panel on
+  // logged-out/cold-boot windows.
+  if (!authToken || !conversationId) return { success: false };
   return apiCall('chat_ai_suggest_replies', { conversation_id: conversationId }, 'POST');
 }
 
@@ -8827,6 +8848,9 @@ export async function emailSearchSave(query, name = '') {
   return apiCall('email_search_save', { query, name }, 'POST');
 }
 export async function emailSearchList() {
+  // [2026-05-19] Skip when no bearer — endpoint requires auth + 400s otherwise,
+  // and inbox.js calls it on every cold start before login finishes hydrating.
+  if (!authToken) return { success: false, data: { searches: [] } };
   return apiCall('email_search_list');
 }
 export async function emailSearchDelete(id) {

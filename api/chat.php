@@ -15272,22 +15272,42 @@ function handleChatAction($action) {
                 foreach ($envRows as $row) {
                     $mid = 0;
                     if ($msgLookup) {
+                        // SAVEPOINT so a silently-swallowed lookup failure
+                        // doesn't poison the parent tx with 25P02
+                        // (current transaction is aborted) — every subsequent
+                        // statement (including the final DELETE) would
+                        // otherwise 500, leaving the puller in an infinite
+                        // pull/ack loop and blocking ALL envelope delivery
+                        // (sender appears to send but message never arrives;
+                        // only cold-open clears it).
+                        try { $db->exec("SAVEPOINT sp_msglookup"); } catch (\Throwable $_) {}
                         try {
                             $msgLookup->execute([
                                 ':cid' => (int)$row['conversation_id'],
                                 ':cmi' => $row['client_message_id'],
                             ]);
                             $mid = (int)($msgLookup->fetchColumn() ?: 0);
-                        } catch (\Throwable $_) {}
+                            try { $db->exec("RELEASE SAVEPOINT sp_msglookup"); } catch (\Throwable $_) {}
+                        } catch (\Throwable $_) {
+                            try { $db->exec("ROLLBACK TO SAVEPOINT sp_msglookup"); } catch (\Throwable $_) {}
+                        }
                     }
                     if ($recIns) {
+                        // Same SAVEPOINT guard for the receipt insert. A
+                        // legacy unique constraint on (message_id, email)
+                        // without device_id (since dropped) was tripping
+                        // here for every paired-device ack, aborting the tx.
+                        try { $db->exec("SAVEPOINT sp_recins"); } catch (\Throwable $_) {}
                         try {
                             $recIns->execute([
                                 ':mid' => $mid,
                                 ':e'   => $user['email'],
                                 ':d'   => $deviceId,
                             ]);
-                        } catch (\Throwable $_) { /* schema drift, swallow */ }
+                            try { $db->exec("RELEASE SAVEPOINT sp_recins"); } catch (\Throwable $_) {}
+                        } catch (\Throwable $_) {
+                            try { $db->exec("ROLLBACK TO SAVEPOINT sp_recins"); } catch (\Throwable $_) {}
+                        }
                     }
                 }
 

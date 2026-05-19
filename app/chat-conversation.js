@@ -9547,18 +9547,28 @@ export default function ChatConversationScreen() {
                 const preservedReplyTo = (existing?.reply_to && !msg.reply_to)
                   ? existing.reply_to
                   : msg.reply_to;
+                // [#1188 fix 2026-05-19] Preserve sender_email — sealed mode
+                // or envelope mode may deliver a row with sender_email=''/null
+                // which would flip an OUTGOING bubble to INCOMING side
+                // (`isOwn = sender_email === currentEmail`). 2-3s after send
+                // the user sees their bubble jump to the left + ticks disappear.
+                const preservedSenderEmail = msg.sender_email || existing?.sender_email || '';
                 const next = [...prev];
-                next[existingIdx] = { ...msg, _pending: false, reply_to: preservedReplyTo };
+                next[existingIdx] = { ...msg, _pending: false, reply_to: preservedReplyTo, sender_email: preservedSenderEmail };
                 return next;
               }
             }
             // Fallback: casa optimistic pending/failed por conteúdo (sem
             // client_message_id disponível). Mesmo critério de antes.
+            // [#1188 fix] Match by _client_id even when msg.sender_email is
+            // empty/null (sealed mode or scrubbed broadcast). Without this,
+            // the optimistic tmp_ row stays orphaned and a new bubble with
+            // wrong sender_email appears (left side flip).
             const clientMsgId = incomingCid;
             const tempIdx = prev.findIndex(m => {
               if (!(typeof m.id === 'string' && m.id.startsWith('tmp_') && (m._pending || m._failed))) return false;
-              if (m.sender_email !== msg.sender_email) return false;
-              if (clientMsgId) return m._client_id === clientMsgId;
+              if (clientMsgId && m._client_id === clientMsgId) return true;
+              if (msg.sender_email && m.sender_email !== msg.sender_email) return false;
               return m.content === msg.content ||
                 (m.type === msg.type && m.type !== 'text' && m.file_name === msg.file_name);
             });
@@ -9568,7 +9578,11 @@ export default function ChatConversationScreen() {
               const preservedReplyTo = (optimistic?.reply_to && !msg.reply_to)
                 ? optimistic.reply_to
                 : msg.reply_to;
-              next[tempIdx] = { ...msg, _pending: false, reply_to: preservedReplyTo };
+              // [#1188 fix] Preserve sender_email so the bubble doesn't flip
+              // from outgoing → incoming when WS delivers a scrubbed/empty
+              // sender_email.
+              const preservedSenderEmail = msg.sender_email || optimistic?.sender_email || currentEmail || '';
+              next[tempIdx] = { ...msg, _pending: false, reply_to: preservedReplyTo, sender_email: preservedSenderEmail };
               return next;
             }
             // Out-of-order arrival guard: if msg.id is numeric AND smaller
@@ -10367,21 +10381,29 @@ export default function ChatConversationScreen() {
               const preservedReplyTo = (existing?.reply_to && !msg.reply_to)
                 ? existing.reply_to
                 : msg.reply_to;
+              // [#1188 fix] Preserve sender_email — TCP delivery with
+              // empty/null sender_email would flip outgoing bubbles.
+              const preservedSenderEmail = msg.sender_email || existing?.sender_email || '';
               const next = [...prev];
-              next[existingIdx] = { ...msg, _pending: false, reply_to: preservedReplyTo };
+              next[existingIdx] = { ...msg, _pending: false, reply_to: preservedReplyTo, sender_email: preservedSenderEmail };
               return next;
             }
           }
           // Fallback: optimistic temp pending/failed match by content.
+          // [#1188 fix] Loosen the tempIdx match: if msg.sender_email is
+          // empty/null (scrubbed broadcast), don't bail — match on _client_id
+          // anyway and preserve the optimistic row's sender_email.
           const tempIdx = prev.findIndex(m => {
             if (!(typeof m.id === 'string' && m.id.startsWith('tmp_') && (m._pending || m._failed))) return false;
-            if (m.sender_email !== msg.sender_email) return false;
             if (tcpCid && m._client_id === tcpCid) return true;
+            if (msg.sender_email && m.sender_email !== msg.sender_email) return false;
             return m.content === msg.content;
           });
           if (tempIdx !== -1) {
             const next = [...prev];
-            next[tempIdx] = { ...msg, _pending: false };
+            const optimistic = prev[tempIdx];
+            const preservedSenderEmail = msg.sender_email || optimistic?.sender_email || currentEmail || '';
+            next[tempIdx] = { ...msg, _pending: false, sender_email: preservedSenderEmail };
             return next;
           }
           // Save to native cache and reload — await before reload so the
@@ -11179,20 +11201,57 @@ export default function ChatConversationScreen() {
 
     // TELEGRAM-STYLE FAST DELIVERY: fire the WS relay BEFORE awaiting the
     // HTTP chat_send. Peer sees the bubble in ~30ms instead of ~300ms.
+    //
+    // [#1191 2026-05-19 ws-race-not-ready-yet] User report: "sends text →
+    // doesn't dispatch → reopen app dispatches". Root cause: on a fresh
+    // chat-open the WS is still handshaking (~50-500ms post-mount). If the
+    // user types + hits Send during that window, the old `if (wsOk)` gate
+    // skipped the relay entirely, so the peer never saw the optimistic
+    // broadcast. The HTTP chat_send still ran and the row was inserted
+    // server-side, but in envelope mode there is NO server-side WS push to
+    // the peer — the peer pulls via envelopePuller, which only runs when
+    // their own `envelope_available` WS event fires. With our WS dead our
+    // relay never triggered that event either → peer waits until the next
+    // foreground/poll cycle (15s+) to see it. Sender experience: "envia
+    // mas só chega quando reabro o app" (because reopen reconnects WS and
+    // flushes the queued relay).
+    //
+    // Fix in two parts:
+    //   1. Kick `ensureHealthy()` fire-and-forget BEFORE the relay. If the
+    //      socket is already healthy this is a near-zero-cost short-circuit
+    //      (sync `return false`); if it's dead, this forces an immediate
+    //      reconnect so the queued relay flushes within ~200ms instead of
+    //      waiting on the next NetInfo/foreground event.
+    //   2. ALWAYS call `relayChatMessage` regardless of `wsOk`. The WS
+    //      class already handles the "socket not OPEN" case internally —
+    //      `_sendWithRetry → attempt()` pushes the frame onto
+    //      `_messageQueue` (which survives `_cleanup`) and `_onAuthenticated`
+    //      flushes it on reconnect. Gating the call on `wsOk` was throwing
+    //      away the durable-relay guarantee that the WS class explicitly
+    //      provides.
     try {
       const mailWs = require('../services/websocket').default;
       const wsOk = !!(mailWs.isConnected && mailWs.authenticated);
+      // Kick a reconnect IF the socket is dead. Non-blocking — we don't
+      // want to delay the relay enqueue on the handshake. The relay below
+      // will land in `_messageQueue` and flush the moment `auth_success`
+      // arrives (typically <300ms on warm DNS).
+      if (!wsOk) {
+        try { mailWs.ensureHealthy?.(); } catch {}
+      }
       const memberList = getMemberEmails();
       _reportChatDebug('ws-relay-attempt', {
         wsOk, members: memberList?.length || 0, convId: conversationId, tempId,
       });
-      if (wsOk) {
-        mailWs.relayChatMessage(conversationId, {
-          ...optimisticMsg,
-          _optimistic: true,
-          _pending: false,
-        }, tempId, memberList);
-      }
+      // ALWAYS attempt the relay. When wsOk=true the frame goes out
+      // immediately; when wsOk=false the WS class queues it and flushes
+      // post-reconnect. Either way the peer eventually sees it without
+      // waiting on their own poll cycle.
+      mailWs.relayChatMessage(conversationId, {
+        ...optimisticMsg,
+        _optimistic: true,
+        _pending: false,
+      }, tempId, memberList);
     } catch (e) {
       _reportChatDebug('ws-relay-err', { error: String(e?.message || e) });
     }
@@ -11608,11 +11667,14 @@ export default function ChatConversationScreen() {
     setMessages(prev => [...prev, optimisticMsg]);
 
     // TELEGRAM-STYLE: peer sees GIF in ~30ms (no wait for HTTP)
+    // [#1191 2026-05-19] Same fix as text path — kick ensureHealthy() and
+    // always relay; WS class queues + flushes on reconnect.
     try {
       const mailWs = require('../services/websocket').default;
-      if (mailWs.isConnected && mailWs.authenticated) {
-        mailWs.relayChatMessage(conversationId, { ...optimisticMsg, _optimistic: true, _pending: false }, tempId, getMemberEmails());
+      if (!(mailWs.isConnected && mailWs.authenticated)) {
+        try { mailWs.ensureHealthy?.(); } catch {}
       }
+      mailWs.relayChatMessage(conversationId, { ...optimisticMsg, _optimistic: true, _pending: false }, tempId, getMemberEmails());
     } catch {}
 
     // ⭐ Save pending GIF BEFORE network attempt
@@ -11668,11 +11730,14 @@ export default function ChatConversationScreen() {
     };
     setMessages(prev => [...prev, optimisticMsg]);
     // TELEGRAM-STYLE: instant peer delivery
+    // [#1191 2026-05-19] Same fix as text path — kick ensureHealthy() and
+    // always relay; WS class queues + flushes on reconnect.
     try {
       const mailWs = require('../services/websocket').default;
-      if (mailWs.isConnected && mailWs.authenticated) {
-        mailWs.relayChatMessage(conversationId, { ...optimisticMsg, _optimistic: true, _pending: false }, tempId, getMemberEmails());
+      if (!(mailWs.isConnected && mailWs.authenticated)) {
+        try { mailWs.ensureHealthy?.(); } catch {}
       }
+      mailWs.relayChatMessage(conversationId, { ...optimisticMsg, _optimistic: true, _pending: false }, tempId, getMemberEmails());
     } catch {}
 
     // ⭐ Save pending sticker BEFORE network attempt
@@ -12368,7 +12433,10 @@ export default function ChatConversationScreen() {
           setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
           return;
         }
-        setMessages(prev => prev.map(m => String(m.id) === String(tempId) ? { ...msg, _pending: false, _batch_id: batchId || m._batch_id || null } : m));
+        // [#1188 fix] Preserve sender_email — server response for media
+        // uploads can return null sender_email in envelope/sealed mode and
+        // would flip the bubble from outgoing to incoming on the swap.
+        setMessages(prev => prev.map(m => String(m.id) === String(tempId) ? { ...msg, _pending: false, _batch_id: batchId || m._batch_id || null, sender_email: msg.sender_email || m.sender_email || currentEmail } : m));
         setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
         requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
         // Persist to local cache so the sender's other sessions (and this
@@ -12556,7 +12624,9 @@ export default function ChatConversationScreen() {
       // below handles the "no response at all" case gracefully too.
       if (r?.success && r.data) {
         const msg = r.data.message || r.data;
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...msg, _pending: false } : m));
+        // [#1188 fix] Preserve sender_email on the audio swap so the bubble
+        // doesn't flip to incoming when server returns an envelope-mode synth.
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...msg, _pending: false, sender_email: msg.sender_email || m.sender_email || currentEmail } : m));
         // Relay via WS for instant delivery
         try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, msg, tempId, getMemberEmails()); } catch {}
         // Task #886 — adopt the just-recorded local audio as the cached copy
@@ -12720,7 +12790,8 @@ export default function ChatConversationScreen() {
       );
       if (r?.success && r.data) {
         const msg = r.data.message || r.data;
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...msg, _pending: false } : m));
+        // [#1188 fix] Preserve sender_email on the video-note swap.
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...msg, _pending: false, sender_email: msg.sender_email || m.sender_email || currentEmail } : m));
         try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, msg, tempId, getMemberEmails()); } catch {}
       } else {
         // Mark optimistic bubble as failed; user can long-press → retry.
