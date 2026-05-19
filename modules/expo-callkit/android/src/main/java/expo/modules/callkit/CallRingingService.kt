@@ -195,8 +195,33 @@ class CallRingingService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        // [#1179 cleanup, 2026-05-19] Explicit stopForeground(REMOVE) so the
+        // ringing heads-up notification disappears the instant the service is
+        // stopped. Without this, on some OEMs a stale "Chamada de X" pill
+        // could persist for 2-3s after accept/decline, occasionally racing
+        // the system back into showing the full-screen intent again — i.e.
+        // the rare "ringing screen reappears after I answered" report.
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "stopForeground(REMOVE) failed: ${t.message}")
+        }
+        // Also cancel by id in case the system delayed FGS tear-down.
         val cid = callId
         if (cid != null) {
+            try {
+                val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
+                nm.cancel(cid.hashCode())
+                // CallNotificationService posts with a tag — cancel that too.
+                nm.cancel("call_notification", cid.hashCode())
+            } catch (t: Throwable) {
+                Log.w(TAG, "cancel(callNotif) failed: ${t.message}")
+            }
             ringingCallIds.remove(cid)
             // Only clear the "primary" pointer if we were it — otherwise
             // another concurrent ring is still the active primary.

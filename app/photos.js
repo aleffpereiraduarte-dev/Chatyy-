@@ -2689,6 +2689,15 @@ export default function PhotosScreen() {
         }
       }
 
+      // [#1187 2026-05-19] iOS modal-over-modal race — UIKit silently drops
+      // the 2nd Modal (PHPicker) if a previous modal (FAB sheet, dialog) is
+      // still in its dismiss animation. User report: "clico em + nao aparece
+      // nada". Wait one frame on iOS before launching the picker so any
+      // prior dismiss completes.
+      if (Platform.OS === 'ios') {
+        await new Promise(resolve => setTimeout(resolve, 350));
+      }
+
       const pick = mode === 'camera'
         ? await ImagePicker.launchCameraAsync({
             mediaTypes: ImagePicker.MediaTypeOptions.All,

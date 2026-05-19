@@ -423,14 +423,24 @@ async function placeCall() {
     const hostCount = (sdp?.match(/typ host/g) || []).length;
     if (__DEV__) console.log('[Verto] Sending INVITE, SDP length:', sdp?.length, 'candidates: host=' + hostCount, 'srflx=' + srflxCount, 'relay=' + relayCount);
 
-    // Telnyx only honors caller_id_number when the number is on its Verified
-    // Numbers list for this account. Passing an unverified number makes
-    // Telnyx silently substitute the connection default — which used to be
-    // the hardcoded US +19513931371 here, so callees saw a random US number.
-    // Now: if the backend didn't provide a verified caller_id (creds.caller_id
-    // empty), we omit the field entirely so Telnyx uses the connection's own
-    // default consistently. UI surfaces "Caller ID not verified" so the user
-    // knows to go through the /voip_verified_number_request flow.
+    // Telnyx honors caller_id_number when:
+    //  (a) the number is on its Verified Numbers list for this account
+    //      (api.telnyx.com/v2/verified_numbers), AND
+    //  (b) the credential_connection has outbound.ani_override_type=`normal`
+    //      (NOT `always` — `always` forcibly replaces the ANI with
+    //      outbound.ani_override regardless of the INVITE).
+    // The connection backing Verto WebRTC ("Chatyy WebRTC",
+    // id=2923650402559722635) had ani_override_type=always + ani_override
+    // hardcoded to +19513931371, so every callee saw that random US number
+    // even when the user had verified their own. Connection switched to
+    // ani_override_type=normal on 2026-05-19; with that, Telnyx will use
+    // the caller_id_number we send here when verified, and fall back to a
+    // connection-owned default when not.
+    //
+    // Backend (`voip_sip_credentials`) returns creds.caller_id only when the
+    // user's number is verified (phone_verified OR telnyx_caller_id_verified
+    // + verified_phone). If empty we omit the field so Telnyx picks a
+    // consistent default rather than rejecting the call.
     const dialogParams = {
       audio: true, video: false, useStereo: false,
       destination_number: _dest,
@@ -439,6 +449,7 @@ async function placeCall() {
       remote_caller_id_name: '', remote_caller_id_number: _dest,
     };
     if (_callerId) dialogParams.caller_id_number = _callerId;
+    if (__DEV__) console.log('[Verto] INVITE caller_id_number:', _callerId || '(omitted — not verified)');
     wsSend('telnyx_rtc.invite', { sdp, dialogParams });
   } catch (e) {
     if (__DEV__) console.warn('[Verto] placeCall error:', e.message);

@@ -767,6 +767,13 @@ public class ExpoCallKitModule: Module {
     ) { [weak self] note in
       guard let callId = note.userInfo?["callId"] as? String, !callId.isEmpty else { return }
       self?.safeSendEvent("onCallEnded", ["callId": callId])
+      // [#1179 cleanup, 2026-05-19] When the peer hangs up via WS, CallSignalWs
+      // posts this notification (handleIncomingCallEndLocked). The CallKit
+      // system UI dismisses via reportCall(with:endedAt:reason:) but our
+      // presented CallViewController is a UIKit modal — CallKit doesn't tear
+      // it down. Dismiss it explicitly here. Idempotent vs. the local-hangup
+      // CXEndCallAction path which also dismisses.
+      ProviderDelegate.dismissActiveCallSurfaces(reason: "remote_call_end")
     }
   }
 
@@ -930,12 +937,36 @@ public class ExpoCallKitModule: Module {
 
   func endCallAction(callId: String) {
     let uuid = stateQueue.sync { activeCalls[callId] }
-    guard let uuid = uuid, let callController = callController else { return }
+    guard let uuid = uuid, let callController = callController else {
+      // [#1179 cleanup, 2026-05-19] No tracked CallKit UUID for this callId,
+      // but JS still wants the native UI gone. Two real-world cases:
+      //   * Outgoing call where the CXStartCallAction params never landed
+      //     (stale CallSignalWs invite) — VC is presented from a non-CallKit
+      //     path. Without a UUID we can't fire CXEndCallAction, so we lose
+      //     the only place that previously cleaned the modal up.
+      //   * Hot-reload during dev: activeCalls is empty after a JS refresh
+      //     but the SwiftUI modal persists across the bridge restart.
+      // Dispatch a direct surface-dismiss so the modal at least comes down,
+      // and tear down AudioRouter so the next call starts clean.
+      print("[ExpoCallKit] endCallAction(\(callId)): no tracked UUID — direct dismiss path")
+      DispatchQueue.main.async {
+        ProviderDelegate.dismissActiveCallSurfaces(reason: "endCallAction_no_uuid")
+        AudioRouter.shared.teardown()
+      }
+      return
+    }
     let action = CXEndCallAction(call: uuid)
     let transaction = CXTransaction(action: action)
     callController.request(transaction) { error in
       if let error = error {
         print("[ExpoCallKit] End call error: \(error.localizedDescription)")
+        // [#1179 cleanup, 2026-05-19] Belt-and-suspenders: if the CallKit
+        // transaction fails (already-ended UUID, provider in inconsistent
+        // state) we still need to dismiss the modal. Without this the user
+        // sees the SwiftUI screen stuck on top with no way out.
+        DispatchQueue.main.async {
+          ProviderDelegate.dismissActiveCallSurfaces(reason: "cx_transaction_error")
+        }
       }
     }
     stateQueue.sync {
@@ -1370,6 +1401,24 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
 
   func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
     module?.callEnded(uuid: action.callUUID)
+    // [#1179 cleanup, 2026-05-19] Dismiss the presented native call UI.
+    // CXEndCallAction can be triggered three ways:
+    //   1. User taps the SwiftUI red hangup → CallViewController.handleHangup
+    //      which already calls `dismiss(animated:)` directly. The dispatch
+    //      below is a no-op in that path (the VC is already in dismissal).
+    //   2. JS calls `ExpoCallKit.endCall(callId)` (hybrid path — user taps
+    //      the JS /call red button) → endCallAction → CXEndCallAction → here.
+    //      Before this fix, the SwiftUI call screen (CallViewController as a
+    //      .fullScreen modal) was NEVER dismissed because handleHangup never
+    //      ran. User saw "/call" pop off the stack, but the native modal
+    //      stayed on top — exactly the "nativo fica aberto" complaint.
+    //   3. CallKit system UI red button on the lock screen / Recents.
+    //      Same issue as (2) — JS handles onCallEnded but native modal stays.
+    // Find the topmost presented VC and, if it's our call surface, dismiss.
+    // Idempotent: dismiss-while-already-dismissing is a UIKit no-op.
+    DispatchQueue.main.async {
+      ProviderDelegate.dismissActiveCallSurfaces(reason: "cx_end_call_action")
+    }
     // [bug 2026-05-15 #12] Do NOT manually setActive(false) here.
     // CallKit fires didDeactivate automatically after action.fulfill();
     // calling setActive ourselves races with WebRTC engine teardown and
@@ -1377,6 +1426,46 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     // brief audio glitch when ending a call back-to-back. Let CallKit
     // own the deactivation lifecycle.
     action.fulfill()
+  }
+
+  /// [#1179 cleanup, 2026-05-19] Walk the presented-VC stack and dismiss any
+  /// of our call surfaces (CallViewController / GroupCallViewController /
+  /// LiveBroadcastViewController / LiveViewerViewController). Called from
+  /// CXEndCallAction and from the WS-driven `ExpoCallKitNativeCallEnded`
+  /// observer so both "I hung up" and "peer hung up" paths converge on a
+  /// single dismissal helper.
+  ///
+  /// We introspect by class-name string instead of importing each class so
+  /// this stays a private extension to ProviderDelegate without forcing
+  /// CallViewController.swift / GroupCallViewController.swift edits (Wave B/C
+  /// is in restored state — see commit 2026-05-19).
+  static func dismissActiveCallSurfaces(reason: String) {
+    guard let root = resolvePresentingViewController() else {
+      print("[ProviderDelegate] dismissActiveCallSurfaces(\(reason)): no presenting VC")
+      return
+    }
+    // Walk down to the topmost presented VC and back up, dismissing each
+    // call-surface VC we find. Most cases only have one of our VCs
+    // presented at a time, but we walk the whole stack to be safe (e.g.
+    // CallViewController.handleAddMember could push a child VC).
+    var stack: [UIViewController] = []
+    var cur: UIViewController? = root
+    while let v = cur {
+      stack.append(v)
+      cur = v.presentedViewController
+    }
+    // Dismiss from the top so each parent's presented chain remains valid.
+    for vc in stack.reversed() {
+      let name = String(describing: type(of: vc))
+      if name == "CallViewController"
+        || name == "GroupCallViewController"
+        || name == "LiveBroadcastViewController"
+        || name == "LiveViewerViewController"
+      {
+        print("[ProviderDelegate] dismissActiveCallSurfaces(\(reason)): dismissing \(name)")
+        vc.dismiss(animated: true, completion: nil)
+      }
+    }
   }
 
   func provider(_ provider: CXProvider, perform action: CXSetHeldCallAction) {

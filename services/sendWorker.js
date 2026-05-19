@@ -41,10 +41,14 @@ const _inflight = new Set(); // conversation_id
 // Global mutex so two simultaneous pokes don't race.
 let _drainPromise = null;
 
-// WS ack timeout (ms). After this we fall back to HTTP. WhatsApp typically
-// gets ack in <50ms over WS on a healthy link; 3s is generous enough that a
-// brief radio stall still hits the WS path before falling through.
-const WS_ACK_TIMEOUT_MS = 3000;
+// WS ack timeout (ms). After this we fall back to HTTP.
+// [#1186/Agent C 2026-05-19] DROPPED 3000 → 250ms. The backend Go WS hub
+// has NO `case "chat_send":` handler — every frame is silently dropped
+// and the worker burned the full 3s waiting for an ack that never came,
+// THEN fell back to HTTP. User perception: "demora tempão pra enviar".
+// 250ms is well under the human-perceptible latency floor, so on the rare
+// path where a WS handler IS added later, healthy ack still lands in time.
+const WS_ACK_TIMEOUT_MS = 250;
 
 // Periodic safety drain. 60s matches outboxDrainer.js so the two paths
 // don't fight each other.

@@ -149,6 +149,32 @@ class CallOngoingService : Service() {
     }
 
     override fun onDestroy() {
+        // [#1179 cleanup, 2026-05-19] Explicit stopForeground(REMOVE) so the
+        // "Chamada em andamento" notification disappears immediately when
+        // CallActivity.finishCall stops this service. Without REMOVE, on some
+        // OEMs (Xiaomi MIUI 14, OnePlus Oxygen 13, Vivo OriginOS) the
+        // notification lingered for 2-5s after the user tapped hangup, which
+        // contributed to the "native ainda aberto pós-desligar" complaint —
+        // user sees the in-call notification persist as a system pill even
+        // though the activity is already gone.
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "stopForeground(REMOVE) failed: ${t.message}")
+        }
+        // Belt-and-suspenders: cancel the notification by id directly in case
+        // the system delayed the foreground tear-down.
+        try {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.cancel(NOTIFICATION_ID)
+        } catch (t: Throwable) {
+            Log.w(TAG, "cancel(NOTIFICATION_ID) failed: ${t.message}")
+        }
         Log.d(TAG, "Ongoing service destroyed")
         super.onDestroy()
     }

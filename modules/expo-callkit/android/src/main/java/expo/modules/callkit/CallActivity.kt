@@ -976,6 +976,28 @@ class CallActivity : ComponentActivity() {
       }
     }
     ongoingSvcIntent = null
+    // [#1179 cleanup, 2026-05-19] Cancel any lingering call notifications.
+    // Three sources can post notifications during a call lifecycle:
+    //   * CallNotificationService.showIncomingCallNotification (incoming ring
+    //     — usually cleared on accept, but a stuck path may leave it).
+    //   * CallRingingService FGS notification (cleared by stopService above,
+    //     plus explicit cancel(STOP_FOREGROUND_REMOVE) in onDestroy).
+    //   * CallOngoingService FGS notification (cleared by stopService above).
+    // Belt-and-suspenders cancel by tag so the user never sees a stale
+    // call-related notification persist after hangup.
+    try {
+      CallNotificationService.cancelNotification(this, callId)
+    } catch (t: Throwable) {
+      Log.w(TAG, "cancelNotification failed: ${t.message}")
+    }
+    // Also stop the ringing service explicitly — covers the edge case where
+    // the user hung up before fully accepting (CallActivity could be alive
+    // because of a race in the accept hand-off but the ringing FGS is also
+    // still alive).
+    try {
+      val stopRinging = Intent(this, CallRingingService::class.java)
+      stopService(stopRinging)
+    } catch (_: Throwable) {}
     eventsJob?.cancel()
     connectJob?.cancel()
     ExpoCallKitModule.emitCallEnded(callId)
