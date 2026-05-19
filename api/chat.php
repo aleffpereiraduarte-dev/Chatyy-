@@ -18594,53 +18594,98 @@ function handleChatAction($action) {
             // Lives gravadas que esse user pode acessar:
             //   1) Lives das quais ele é host (com recording_ready=TRUE)
             //   2) Replays que ele explicitamente salvou (chat_live_replays_saved)
-            // Retorna ordenado por mais recente.
+            //
+            // 2026-05-18: also supports `user_email` filter — when present
+            // AND different from the auth user, return ONLY that user's
+            // hosted lives (public surface). Profile.js → Lives tab uses
+            // this to render someone else's saved-live grid (IG/TikTok
+            // parity). Saved-by-me replays stay private to the auth user.
             $user = requireChatAuth();
             $limit  = max(1, min(200, (int)($input['limit']  ?? $_GET['limit']  ?? 50)));
             $offset = max(0, (int)($input['offset'] ?? $_GET['offset'] ?? 0));
+            $targetEmail = trim((string)($input['user_email'] ?? $_GET['user_email'] ?? ''));
+            $viewingOther = ($targetEmail !== '' && strcasecmp($targetEmail, $user['email']) !== 0);
 
             try {
-                // UNION: hosted lives + saved replays. saved_at fallback
-                // for hosted = ended_at. saved_by_me / is_host flags help
-                // frontend show right buttons (delete vs unsave).
-                $stmt = $db->prepare("
-                    SELECT s.id, s.host_email, s.host_name, s.title, s.thumbnail_url,
-                           s.started_at, s.ended_at, s.recording_url, s.recording_mp4,
-                           s.recording_duration, s.recording_thumbnail, s.saved_count,
-                           TRUE AS is_host,
-                           FALSE AS saved_by_me,
-                           s.ended_at AS sort_key
-                      FROM chat_live_sessions s
-                     WHERE LOWER(s.host_email) = LOWER(:me)
-                       AND s.recording_ready = TRUE
-                       AND s.recording_url IS NOT NULL
-                       AND s.recording_url <> ''
-                       AND (s.replay_expires_at IS NULL OR s.replay_expires_at > NOW())
-                    UNION ALL
-                    SELECT s.id, s.host_email, s.host_name, s.title, s.thumbnail_url,
-                           s.started_at, s.ended_at, s.recording_url, s.recording_mp4,
-                           s.recording_duration, s.recording_thumbnail, s.saved_count,
-                           FALSE AS is_host,
-                           TRUE AS saved_by_me,
-                           to_char(r.saved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS') AS sort_key
-                      FROM chat_live_replays_saved r
-                      JOIN chat_live_sessions s ON s.id = r.session_id
-                     WHERE LOWER(r.user_email) = LOWER(:me2)
-                       AND s.recording_ready = TRUE
-                       AND s.recording_url IS NOT NULL
-                       AND s.recording_url <> ''
-                       AND (s.replay_expires_at IS NULL OR s.replay_expires_at > NOW())
-                       AND LOWER(s.host_email) <> LOWER(:me3)
-                     ORDER BY sort_key DESC
-                     LIMIT :lim OFFSET :off
-                ");
-                $stmt->bindValue(':me', $user['email']);
-                $stmt->bindValue(':me2', $user['email']);
-                $stmt->bindValue(':me3', $user['email']);
-                $stmt->bindValue(':lim', $limit, \PDO::PARAM_INT);
-                $stmt->bindValue(':off', $offset, \PDO::PARAM_INT);
-                $stmt->execute();
-                $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+                if ($viewingOther) {
+                    // Public-profile mode — only that user's hosted lives.
+                    // viewer_count is the live-time peak (used as "X people
+                    // watched" badge on the grid). saved_by_me is computed
+                    // for the auth user so they can see which they already
+                    // bookmarked.
+                    $stmt = $db->prepare("
+                        SELECT s.id, s.host_email, s.host_name, s.title, s.thumbnail_url,
+                               s.started_at, s.ended_at, s.recording_url, s.recording_mp4,
+                               s.recording_duration, s.recording_thumbnail, s.saved_count,
+                               s.viewer_count,
+                               FALSE AS is_host,
+                               EXISTS(
+                                 SELECT 1 FROM chat_live_replays_saved rr
+                                  WHERE rr.session_id = s.id
+                                    AND LOWER(rr.user_email) = LOWER(:me)
+                               ) AS saved_by_me,
+                               s.ended_at AS sort_key
+                          FROM chat_live_sessions s
+                         WHERE LOWER(s.host_email) = LOWER(:target)
+                           AND s.recording_ready = TRUE
+                           AND s.recording_url IS NOT NULL
+                           AND s.recording_url <> ''
+                           AND (s.replay_expires_at IS NULL OR s.replay_expires_at > NOW())
+                         ORDER BY sort_key DESC
+                         LIMIT :lim OFFSET :off
+                    ");
+                    $stmt->bindValue(':me', $user['email']);
+                    $stmt->bindValue(':target', $targetEmail);
+                    $stmt->bindValue(':lim', $limit, \PDO::PARAM_INT);
+                    $stmt->bindValue(':off', $offset, \PDO::PARAM_INT);
+                    $stmt->execute();
+                    $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+                } else {
+                    // Self mode — UNION: hosted lives + saved replays.
+                    // saved_at fallback for hosted = ended_at. saved_by_me /
+                    // is_host flags help frontend show right buttons
+                    // (delete vs unsave).
+                    $stmt = $db->prepare("
+                        SELECT s.id, s.host_email, s.host_name, s.title, s.thumbnail_url,
+                               s.started_at, s.ended_at, s.recording_url, s.recording_mp4,
+                               s.recording_duration, s.recording_thumbnail, s.saved_count,
+                               s.viewer_count,
+                               TRUE AS is_host,
+                               FALSE AS saved_by_me,
+                               s.ended_at AS sort_key
+                          FROM chat_live_sessions s
+                         WHERE LOWER(s.host_email) = LOWER(:me)
+                           AND s.recording_ready = TRUE
+                           AND s.recording_url IS NOT NULL
+                           AND s.recording_url <> ''
+                           AND (s.replay_expires_at IS NULL OR s.replay_expires_at > NOW())
+                        UNION ALL
+                        SELECT s.id, s.host_email, s.host_name, s.title, s.thumbnail_url,
+                               s.started_at, s.ended_at, s.recording_url, s.recording_mp4,
+                               s.recording_duration, s.recording_thumbnail, s.saved_count,
+                               s.viewer_count,
+                               FALSE AS is_host,
+                               TRUE AS saved_by_me,
+                               to_char(r.saved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS') AS sort_key
+                          FROM chat_live_replays_saved r
+                          JOIN chat_live_sessions s ON s.id = r.session_id
+                         WHERE LOWER(r.user_email) = LOWER(:me2)
+                           AND s.recording_ready = TRUE
+                           AND s.recording_url IS NOT NULL
+                           AND s.recording_url <> ''
+                           AND (s.replay_expires_at IS NULL OR s.replay_expires_at > NOW())
+                           AND LOWER(s.host_email) <> LOWER(:me3)
+                         ORDER BY sort_key DESC
+                         LIMIT :lim OFFSET :off
+                    ");
+                    $stmt->bindValue(':me', $user['email']);
+                    $stmt->bindValue(':me2', $user['email']);
+                    $stmt->bindValue(':me3', $user['email']);
+                    $stmt->bindValue(':lim', $limit, \PDO::PARAM_INT);
+                    $stmt->bindValue(':off', $offset, \PDO::PARAM_INT);
+                    $stmt->execute();
+                    $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+                }
             } catch (\Throwable $e) {
                 error_log('[live_recordings_list] ' . $e->getMessage());
                 $rows = [];
@@ -18661,6 +18706,11 @@ function handleChatAction($action) {
                     'recording_mp4'  => $rrow['recording_mp4'],
                     'duration'       => (int)($rrow['recording_duration'] ?? 0),
                     'saved_count'    => (int)($rrow['saved_count'] ?? 0),
+                    // viewer_count is the peak concurrent live viewer count
+                    // (set during live by /live_join). Frontend treats this
+                    // as the replay's "view count" badge.
+                    'view_count'     => (int)($rrow['viewer_count'] ?? 0),
+                    'viewer_count'   => (int)($rrow['viewer_count'] ?? 0),
                     'is_host'        => !empty($rrow['is_host']),
                     'saved_by_me'    => !empty($rrow['saved_by_me']),
                 ];
@@ -18760,7 +18810,7 @@ function handleChatAction($action) {
                 SELECT id, host_email, host_name, title, thumbnail_url,
                        started_at, ended_at, recording_url, recording_mp4,
                        recording_duration, recording_thumbnail, recording_ready,
-                       saved_count
+                       saved_count, viewer_count
                   FROM chat_live_sessions
                  WHERE id = :id
             ");
@@ -18793,6 +18843,11 @@ function handleChatAction($action) {
                 'duration'      => (int)($row['recording_duration'] ?? 0),
                 'recording_ready' => !empty($row['recording_ready']),
                 'saved_count'   => (int)($row['saved_count'] ?? 0),
+                // viewer_count = peak live audience. Surfaces in the replay
+                // header as "X watched" so viewers can see how big the live
+                // got. Mirrors IG/TikTok replay metadata.
+                'view_count'    => (int)($row['viewer_count'] ?? 0),
+                'viewer_count'  => (int)($row['viewer_count'] ?? 0),
                 'is_host'       => $isHost,
                 'saved_by_me'   => $savedByMe,
             ]);

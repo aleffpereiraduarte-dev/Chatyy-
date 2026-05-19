@@ -2009,16 +2009,43 @@ function _avatarDailyBust() {
   return `${y}${m}${day}`;
 }
 
+// IMPORTANT: chain `?v=<storedV>&d=<dailyBust>` ALWAYS.
+//
+// Earlier this used `_avatarV(email) || _avatarDailyBust()` — a fallback.
+// That broke for FRIENDS during the 2026-05-18 ACL outage:
+//
+//   1. Pre-outage, a friend's WS `avatar_updated` event stored e.g.
+//      `_avatarCacheBust[friend@x]` = 1747200000000 → URL `?v=1747200000000`.
+//   2. Outage hit. expo-image fetched that URL, got 403, cached the FAILURE
+//      keyed by the URL. (No HTTP error invalidation in expo-image's disk cache.)
+//   3. Outage ended. `_avatarV(friend)` still returns 1747200000000 (sticky in
+//      AsyncStorage `avatar_v_map`). Daily-bust never applies because the
+//      fallback short-circuits on the truthy stored value. URL identical → same
+//      poisoned cache entry → friend's photo never appears.
+//
+// The user's OWN avatar worked because uploading a new photo calls
+// `bustAvatarCache(ownEmail, freshTimestamp)` which produces a new URL post-outage.
+// Friends have no upload event to trigger a fresh timestamp.
+//
+// Fix: ALWAYS append today's `&d=YYYYMMDD` as a second param so the URL
+// rotates daily regardless of stored version state. New URL = new cache key =
+// fresh fetch. Cost is exactly 1 cache miss per friend per UTC day. Backend
+// already serves long max-age=86400 so the next 23h59m are still cached on
+// disk by expo-image.
 export function getAvatarUrl(email) {
   const e = email || savedCredentials?.email || '';
-  const v = _avatarV(e) || _avatarDailyBust();
-  return `${API_URL}?action=get_avatar&email=${encodeURIComponent(e)}&v=${v}`;
+  const v = _avatarV(e);
+  const d = _avatarDailyBust();
+  const vPart = v ? `&v=${v}` : '';
+  return `${API_URL}?action=get_avatar&email=${encodeURIComponent(e)}${vPart}&d=${d}`;
 }
 
 export function getAvatarUrlForEmail(email) {
   if (!email) return null;
-  const v = _avatarV(email) || _avatarDailyBust();
-  return `${API_URL}?action=get_avatar&email=${encodeURIComponent(email)}&v=${v}`;
+  const v = _avatarV(email);
+  const d = _avatarDailyBust();
+  const vPart = v ? `&v=${v}` : '';
+  return `${API_URL}?action=get_avatar&email=${encodeURIComponent(email)}${vPart}&d=${d}`;
 }
 
 /**

@@ -4758,6 +4758,7 @@ export default {
   'liveReplay.deleteConfirm': 'Eliminará permanentemente la grabación. Todos los viewers perderán acceso.',
   'liveReplay.deleteConfirmBtn': 'Eliminar',
   'liveReplay.unsave': 'Quitar',
+  'liveReplay.watched': 'vieron',
   'liveReplay.unsaveTitle': '¿Quitar de guardados?',
   'liveReplay.unsaveConfirm': 'El replay saldrá de tu pestaña "Lives guardadas".',
   'liveReplay.emptyTitle': 'Ninguna live guardada',

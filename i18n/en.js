@@ -4761,6 +4761,7 @@ export default {
   'liveReplay.deleteConfirm': 'This will permanently delete the recording. All viewers will lose access.',
   'liveReplay.deleteConfirmBtn': 'Delete',
   'liveReplay.unsave': 'Remove',
+  'liveReplay.watched': 'watched',
   'liveReplay.unsaveTitle': 'Remove from saved?',
   'liveReplay.unsaveConfirm': 'The replay will leave your "Saved lives" tab.',
   'liveReplay.emptyTitle': 'No saved lives',

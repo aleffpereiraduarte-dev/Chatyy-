@@ -1050,6 +1050,10 @@ const PinchZoomBox = memo(function PinchZoomBox({ children }) {
 // ── 2× Speed Toast (long-press boost) ──
 const BoostToast = memo(function BoostToast({ visible }) {
   const opacity = useRef(new Animated.Value(0)).current;
+  // Safe-area top so the toast floats below the system clock on Android
+  // edge-to-edge instead of being clipped by the status bar (used to use
+  // static top:70 which sat under the notch on devices reporting >40dp).
+  const bInsets = useSafeAreaInsets();
   useEffect(() => {
     Animated.timing(opacity, {
       toValue: visible ? 1 : 0,
@@ -1058,7 +1062,7 @@ const BoostToast = memo(function BoostToast({ visible }) {
     }).start();
   }, [visible]);
   return (
-    <Animated.View pointerEvents="none" style={[styles.boostToast, { opacity }]}>
+    <Animated.View pointerEvents="none" style={[styles.boostToast, { top: Math.max(bInsets.top, Platform.OS === 'android' ? 12 : 44) + 64, opacity }]}>
       <View style={styles.boostToastBg}>
         <Text style={styles.boostToastText}>2×</Text>
       </View>
@@ -1699,7 +1703,11 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
       )}
 
       {/* ── TOP BAR (right side only - tabs are rendered by parent) ── */}
-      <View style={styles.topBar}>
+      {/* Android safe-area: status bar can be 24-36dp; the static
+          paddingTop:16 from styles.topBar was cropping into the system
+          clock/battery. Override with the runtime inset (with a tiny
+          floor for devices that report 0). */}
+      <View style={[styles.topBar, { paddingTop: Math.max(insets.top, Platform.OS === 'android' ? 12 : 44) + 8 }]}>
         {/* Top-left LIVE banner — only renders when the reel author is
             broadcasting. Red bg + white dot + "AO VIVO" text. Tapping
             routes to the live viewer through onOpenProfile (parent wires
@@ -2176,6 +2184,11 @@ function EmptyReels({ colors, isDark, t }) {
 
 // ── Main ReelsViewer ──
 export default function ReelsViewer({ colors, isDark, t, user, router, feedMode: feedModeProp, showLiveRing, onAvatarTap, onPullRefresh, soundId: soundIdProp, soundLabel: soundLabelProp }) {
+  // Safe-area insets — the Following/For You tabs are absolutely positioned
+  // with a static `top: 16` on Android, which on edge-to-edge windows was
+  // tucking under the status-bar clock. Use runtime insets so the tab row
+  // always clears the system UI.
+  const outerInsets = useSafeAreaInsets();
   // Parent can drive the tab via prop (ChatReelsTab does). Default to whatever
   // the parent says or "forYou" so the in-viewer tab bar still works standalone.
   const initialTab = feedModeProp === 'following' ? 'following' : 'forYou';
@@ -2415,7 +2428,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   return (
     <View style={styles.reelsRoot} onLayout={onLayout}>
       {/* Following / For You tabs overlaying the top */}
-      <View style={styles.reelTabBar} pointerEvents="box-none">
+      <View style={[styles.reelTabBar, { top: Math.max(outerInsets.top, Platform.OS === 'android' ? 12 : 44) + 8 }]} pointerEvents="box-none">
         <TouchableOpacity
           onPress={() => handleTabChange('following')}
           activeOpacity={0.7}

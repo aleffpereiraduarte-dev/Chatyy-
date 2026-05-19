@@ -488,7 +488,11 @@ function EmptyGridIllustration({ isDark, size = 120 }) {
 // own profile opens the delete confirm (wired in renderTabContent).
 function LiveGridItem({ rec, size, onPress, onLongPress }) {
   const thumb = rec?.thumbnail_url ? resolveMedia(rec.thumbnail_url) : '';
-  const views = Number(rec?.view_count || rec?.views || 0);
+  // Prefer viewer_count (peak live audience) over view_count when both are
+  // present — the backend started returning both as of 2026-05-18 and we
+  // want to settle on viewer_count as the canonical "X people watched"
+  // metric for replays. Falls back across legacy keys for older clients.
+  const views = Number(rec?.viewer_count || rec?.view_count || rec?.views || 0);
   const viewLabel = views >= 1000
     ? `${(views / 1000).toFixed(views >= 10000 ? 0 : 1)}K`
     : (views > 0 ? String(views) : '');
@@ -498,6 +502,24 @@ function LiveGridItem({ rec, size, onPress, onLongPress }) {
       ? `${Math.floor(dur / 3600)}:${String(Math.floor((dur % 3600) / 60)).padStart(2, '0')}:${String(Math.floor(dur % 60)).padStart(2, '0')}`
       : `${Math.floor(dur / 60)}:${String(Math.floor(dur % 60)).padStart(2, '0')}`)
     : '';
+  // Short date badge for the top-left corner — e.g. "18/05" or "12 may".
+  // Helps the user scan their live history at a glance (TikTok parity).
+  // We parse the raw started_at/ended_at string; if it's an ISO without TZ
+  // we treat it as UTC (backend stamps it that way).
+  let dateLabel = '';
+  try {
+    const raw = rec?.ended_at || rec?.started_at;
+    if (raw) {
+      const iso = String(raw).indexOf('T') >= 0 && String(raw).indexOf('Z') < 0
+        ? `${raw}Z` : raw;
+      const d = new Date(iso);
+      if (!isNaN(d.getTime())) {
+        const day = String(d.getDate()).padStart(2, '0');
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        dateLabel = `${day}/${month}`;
+      }
+    }
+  } catch {}
   return (
     <TouchableOpacity onPress={onPress} onLongPress={onLongPress} activeOpacity={0.85}
       style={{ width: size, height: size, padding: 0.5 }}
@@ -511,6 +533,43 @@ function LiveGridItem({ rec, size, onPress, onLongPress }) {
                   ? <_ExpoImage source={{ uri: thumb }} style={{ width: '100%', height: '100%', borderRadius: 3 }} contentFit="cover" cachePolicy="memory-disk" transition={120} />
                   : <Image source={{ uri: thumb }} style={{ width: '100%', height: '100%', borderRadius: 3 }} resizeMode="cover" />))
           : <View style={{ width: '100%', height: '100%', backgroundColor: '#1a1a1a', borderRadius: 3 }} />}
+        {/* Soft bottom gradient so view count + duration chip stay readable
+            on top of bright thumbnails. Web uses CSS linear-gradient (no
+            third-party deps); native falls back to a translucent overlay. */}
+        {WEB ? (
+          // eslint-disable-next-line react/forbid-dom-props
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute', left: 0, right: 0, bottom: 0, height: '38%',
+              backgroundImage: 'linear-gradient(to bottom, rgba(0,0,0,0), rgba(0,0,0,0.55))',
+            }}
+          />
+        ) : (
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute', left: 0, right: 0, bottom: 0, height: '38%',
+              backgroundColor: 'rgba(0,0,0,0.28)',
+            }}
+          />
+        )}
+        {/* Top-left: red LIVE chip + date — IG/TikTok signature so users
+            instantly read the tile as "this was a live broadcast". */}
+        <View style={{
+          position: 'absolute', top: 6, left: 6,
+          flexDirection: 'row', alignItems: 'center',
+          paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4,
+          backgroundColor: 'rgba(0,0,0,0.55)',
+        }}>
+          <View style={{
+            width: 6, height: 6, borderRadius: 3,
+            backgroundColor: '#ef4444', marginRight: 4,
+          }} />
+          <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.5 }}>
+            LIVE{dateLabel ? ` · ${dateLabel}` : ''}
+          </Text>
+        </View>
         {/* Top-right play badge — same visual weight as the Reels grid so
             the two tabs feel consistent. */}
         <View style={{

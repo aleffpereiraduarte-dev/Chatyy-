@@ -111,12 +111,22 @@ function normalizeAvatarUrl(url) {
   if (!url || typeof url !== 'string') return url;
   // Only target our own avatar endpoint — leave R2/CDN/data: URLs alone.
   if (url.indexOf('get_avatar') === -1) return url;
-  // Strip any existing v= (could be stale from backend or a prior session).
-  let cleaned = url.replace(/([?&])v=[^&]*(&|$)/g, (_, pre, post) => post ? pre : '');
-  // Trailing ? or & left over after the strip — tidy them.
-  cleaned = cleaned.replace(/[?&]$/, '');
-  const sep = cleaned.indexOf('?') === -1 ? '?' : '&';
-  return `${cleaned}${sep}v=${_todayBust()}`;
+  // ⚠️ Do NOT strip an existing `v=`. That carries the WS-pushed
+  // `avatar_version` which the backend uses for ETag/304 negotiation, and
+  // stripping it caused friend photos to revert to whatever version was
+  // cached during the 2026-05-18 ACL outage (the URL became identical to
+  // the poisoned-cache entry once daily-bust matched the stored v=).
+  //
+  // Strategy: keep any existing `v=` untouched, but ALWAYS overlay a fresh
+  // `&d=YYYYMMDD` so the URL rotates daily even if `v=` is sticky. New
+  // `&d=` → new cache key → fresh fetch → friend's photo appears again.
+  const bust = _todayBust();
+  // Replace existing &d= if present (idempotent), otherwise append.
+  if (/[?&]d=\d{8}(?:&|$)/.test(url)) {
+    return url.replace(/([?&])d=\d{8}/, `$1d=${bust}`);
+  }
+  const sep = url.indexOf('?') === -1 ? '?' : '&';
+  return `${url}${sep}d=${bust}`;
 }
 
 // Bug 2026-05-12 v2: initials flipped after restart (JA→AU, ML→OF, N→NO).

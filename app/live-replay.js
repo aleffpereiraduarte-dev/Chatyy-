@@ -218,6 +218,31 @@ export default function LiveReplayScreen() {
               <AvatarCircle name={rec.host_name} email={rec.host_email} size={16} />
               <Text style={styles.headSub} numberOfLines={1}>
                 {rec.host_name || rec.host_email}
+                {(() => {
+                  // Stitch on "· 1.2K watched · 18/05" so viewers get the
+                  // same context the grid tile shows. Mirrors the TikTok
+                  // replay header and keeps the row to one line.
+                  const v = Number(rec?.viewer_count || rec?.view_count || 0);
+                  const vLabel = v >= 1000
+                    ? `${(v / 1000).toFixed(v >= 10000 ? 0 : 1)}K`
+                    : (v > 0 ? String(v) : '');
+                  let dLabel = '';
+                  try {
+                    const raw = rec?.ended_at || rec?.started_at;
+                    if (raw) {
+                      const iso = String(raw).indexOf('T') >= 0 && String(raw).indexOf('Z') < 0
+                        ? `${raw}Z` : raw;
+                      const d = new Date(iso);
+                      if (!isNaN(d.getTime())) {
+                        dLabel = `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+                      }
+                    }
+                  } catch {}
+                  const parts = [];
+                  if (vLabel) parts.push(`${vLabel} ${t('liveReplay.watched') || 'assistiram'}`);
+                  if (dLabel) parts.push(dLabel);
+                  return parts.length ? ` · ${parts.join(' · ')}` : '';
+                })()}
               </Text>
             </View>
           </View>

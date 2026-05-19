@@ -4833,6 +4833,7 @@ export default {
   'liveReplay.deleteConfirm': 'Vai apagar permanentemente. Todos os viewers perdem acesso.',
   'liveReplay.deleteConfirmBtn': 'Excluir',
   'liveReplay.unsave': 'Remover',
+  'liveReplay.watched': 'assistiram',
   'liveReplay.unsaveTitle': 'Remover dos salvos?',
   'liveReplay.unsaveConfirm': 'O replay vai sair da sua aba "Lives salvas".',
   'liveReplay.emptyTitle': 'Nenhuma live salva',

@@ -1267,7 +1267,10 @@ export default function StoryViewer({
   // user still wants positional context — "I'm on segment 3 of 5, paused").
   const renderProgressBars = () => (
     <Animated.View style={{
-      position: 'absolute', top: Platform.OS === 'ios' ? 50 : 20, left: 0, right: 0,
+      // Android edge-to-edge: static top:20 sat under the system clock on
+      // devices with >24dp status bars. Use insets.top + 8 with a small floor
+      // so the progress segments always clear the status bar.
+      position: 'absolute', top: Math.max(insets?.top || 0, Platform.OS === 'android' ? 12 : 44) + 6, left: 0, right: 0,
       flexDirection: 'row', gap: 6, paddingHorizontal: 10, zIndex: 5,
       opacity: pausedAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0.4] }),
     }}>
@@ -1369,7 +1372,9 @@ export default function StoryViewer({
           pointerEvents="none"
           style={{
             position: 'absolute',
-            top: Platform.OS === 'ios' ? 46 : 16, right: 12,
+            // Sit just under the progress bar row — both use the same safe-area
+            // floor so the pause pill never clips the status bar on Android.
+            top: Math.max(insets?.top || 0, Platform.OS === 'android' ? 12 : 44) + 2, right: 12,
             zIndex: 6,
             opacity: pausedAnim,
             transform: [{ scale: pausedAnim.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }) }],
@@ -1392,7 +1397,9 @@ export default function StoryViewer({
             disappear). The pill stretches just enough to wrap the metadata —
             action buttons (delete/add/close) sit outside on the right. */}
         <Animated.View style={{
-          position: 'absolute', top: Platform.OS === 'ios' ? 64 : 34, left: 0, right: 0,
+          // Avatar + name pill — render 24dp below the progress segments so
+          // the metadata never overlaps the status bar on Android.
+          position: 'absolute', top: Math.max(insets?.top || 0, Platform.OS === 'android' ? 12 : 44) + 20, left: 0, right: 0,
           flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, zIndex: 5, gap: 8,
           opacity: uiOpacity,
         }}>
@@ -1548,7 +1555,9 @@ export default function StoryViewer({
             the player mute and persists for the rest of the session. */}
         {isVideo && !videoError && (
           <Animated.View style={{
-            position: 'absolute', top: Platform.OS === 'ios' ? 110 : 80, right: 14,
+            // Mute toggle — float below the header pill which itself sits
+            // 20dp below the inset. Add ~46dp to clear it.
+            position: 'absolute', top: Math.max(insets?.top || 0, Platform.OS === 'android' ? 12 : 44) + 66, right: 14,
             zIndex: 5, opacity: uiOpacity,
           }}>
             <TouchableOpacity
@@ -1999,7 +2008,9 @@ export default function StoryViewer({
           <Animated.View
             pointerEvents="none"
             style={{
-              position: 'absolute', top: Platform.OS === 'ios' ? 110 : 92,
+              // Float below the header pill (inset + ~46dp) so the toast
+              // appears under it instead of overlapping the status bar.
+              position: 'absolute', top: Math.max(insets?.top || 0, Platform.OS === 'android' ? 12 : 44) + 66,
               left: 0, right: 0, alignItems: 'center', zIndex: 30,
               opacity: reactToastAnim,
               transform: [{
@@ -2036,7 +2047,9 @@ export default function StoryViewer({
           <Animated.View
             pointerEvents="none"
             style={{
-              position: 'absolute', top: Platform.OS === 'ios' ? 110 : 92,
+              // Match the react-toast offset (inset-aware) so the two toasts
+              // share the same y-anchor when they stack.
+              position: 'absolute', top: Math.max(insets?.top || 0, Platform.OS === 'android' ? 12 : 44) + 66,
               left: 0, right: 0, alignItems: 'center', zIndex: 31,
               opacity: savedToastAnim,
               transform: [{

@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import CachedImage from './CachedImage';
 import { IconRefresh } from './Icons';
 // AR face-filter pipeline (MediaPipe FaceLandmarker — Apache 2.0).
