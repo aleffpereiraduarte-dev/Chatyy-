@@ -725,9 +725,8 @@ class CallActivity : ComponentActivity() {
    * continues to own that flow; onNewIntent only handles the token /
    * avatar refresh.
    */
-  override fun onNewIntent(newIntent: Intent?) {
+  override fun onNewIntent(newIntent: Intent) {
     super.onNewIntent(newIntent)
-    if (newIntent == null) return
     setIntent(newIntent)
     val extras = newIntent.extras ?: return
 
