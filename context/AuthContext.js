@@ -442,6 +442,24 @@ export function AuthProvider({ children }) {
             setReporterIdentity({ email: r.data.email, bearer: tok });
             reportStep('hydrate_checkAuth_ok', `email=${r.data.email}`);
           } catch {}
+          // [#1175 2026-05-18] Persist bearer into native SharedPreferences
+          // on cold-start hydrate. checkAuth succeeded → user has a valid
+          // bearer in memory + storage; ensure LkTokenFetcher can find it
+          // in the "expo_callkit_prefs" SharedPreferences for the next
+          // incoming call.
+          try {
+            if (Platform.OS !== 'web') {
+              const tok = (r.data?.token || api.getAuthToken?.() || '').toString();
+              const baseUrl = (api.getBaseUrl?.() || 'https://chatyy.com.br').toString();
+              if (tok) {
+                const mod = require('../modules/expo-callkit');
+                const persist = mod?.persistAuthForNativeCall;
+                if (typeof persist === 'function') {
+                  persist(tok, baseUrl).catch(() => {});
+                }
+              }
+            }
+          } catch {}
           // Cache user data for offline access (WhatsApp-style)
           if (Platform.OS !== 'web') {
             AsyncStorage.setItem('chatyy_offline_user', JSON.stringify(r.data)).catch(() => {});
@@ -781,6 +799,30 @@ export function AuthProvider({ children }) {
           if (tok) Intents.setShareExtensionAuth(tok, userEmail, baseUrl);
         }
       } catch {}
+      // [#1175 2026-05-18] AWAIT persistAuthForNativeCall (no fire-and-
+      // forget) so the next call_invite — which can arrive within seconds
+      // of login (push from peer who saw us come online) — has a populated
+      // SharedPreferences entry for LkTokenFetcher to mint a LiveKit
+      // token. Previously this was called fire-and-forget via
+      // setAuthTokenDirect, which made the SharedPreferences write race
+      // against the first incoming call. Bounded to 600ms so an outage of
+      // the bridge never stalls login.
+      try {
+        if (Platform.OS !== 'web') {
+          const tok = (r.data?.token || api.getAuthToken?.() || '').toString();
+          const baseUrl = (api.getBaseUrl?.() || 'https://chatyy.com.br').toString();
+          if (tok) {
+            const mod = require('../modules/expo-callkit');
+            const persist = mod?.persistAuthForNativeCall;
+            if (typeof persist === 'function') {
+              await Promise.race([
+                Promise.resolve(persist(tok, baseUrl)).catch(() => {}),
+                new Promise((r) => setTimeout(r, 600)),
+              ]);
+            }
+          }
+        }
+      } catch {}
       // Initial sync — download everything to SQLite (WhatsApp-style).
       // Boots deltaSync (1min interval + AppState refresh) and the foreground
       // envelopePuller (30s pull when active, gated on
@@ -836,6 +878,23 @@ export function AuthProvider({ children }) {
     loadAccounts();
     registerPushAfterAuth();
     _bootSyncEngines();
+    // [#1175 2026-05-18] AWAIT persistAuthForNativeCall — see login() above.
+    try {
+      if (Platform.OS !== 'web') {
+        const tok = (data?.token || api.getAuthToken?.() || '').toString();
+        const baseUrl = (api.getBaseUrl?.() || 'https://chatyy.com.br').toString();
+        if (tok) {
+          const mod = require('../modules/expo-callkit');
+          const persist = mod?.persistAuthForNativeCall;
+          if (typeof persist === 'function') {
+            await Promise.race([
+              Promise.resolve(persist(tok, baseUrl)).catch(() => {}),
+              new Promise((r) => setTimeout(r, 600)),
+            ]);
+          }
+        }
+      }
+    } catch {}
     _maybeOfferCloudRestore().catch(() => {});
     _maybeOfferWhatsNew().catch(() => {});
   }, [loadAccounts, registerPushAfterAuth]);
@@ -905,6 +964,23 @@ export function AuthProvider({ children }) {
     loadAccounts();
     registerPushAfterAuth();
     _bootSyncEngines();
+    // [#1175 2026-05-18] AWAIT persistAuthForNativeCall — see login() above.
+    try {
+      if (Platform.OS !== 'web') {
+        const tok = (authToken || api.getAuthToken?.() || '').toString();
+        const baseUrl = (api.getBaseUrl?.() || 'https://chatyy.com.br').toString();
+        if (tok) {
+          const mod = require('../modules/expo-callkit');
+          const persist = mod?.persistAuthForNativeCall;
+          if (typeof persist === 'function') {
+            await Promise.race([
+              Promise.resolve(persist(tok, baseUrl)).catch(() => {}),
+              new Promise((r) => setTimeout(r, 600)),
+            ]);
+          }
+        }
+      }
+    } catch {}
     // First-launch cloud-restore — same prompt path as login(). Only fires
     // when chatyy_restored_once is unset, so QR/Face-ID re-logins of the
     // same user on the same device won't re-trigger it.

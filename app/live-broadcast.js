@@ -3604,13 +3604,19 @@ export default function LiveBroadcastScreen() {
       {/* Bottom: scrolling chat overlay (bottom→up, fades at top), composer
           row with invite pill + text input + heart + share + flip. */}
       <View style={styles.bottomArea} pointerEvents="box-none">
-        <View style={styles.chatScrollWrap} pointerEvents="box-none">
+        {/* Round 69 (2026-05-19) — Don't reserve the 200-tall chat strip
+            (and don't render the TopFadeGradient #000 @85% SVG inside it)
+            when chat is empty. The empty area + the gradient was painting
+            an opaque black band ~50% of screen height across the host's
+            face when broadcasting solo. THIS was the recurring "barra
+            preta" bug — not the camera surface, not cohost grid. */}
+        <View style={[styles.chatScrollWrap, chatMessages.length === 0 && { height: 0 }]} pointerEvents="box-none">
           {/* TikTok-grade comments overlay (round 921). Same component the
               viewer uses, with host-side long-press → pin/remove and the
               colored-chip tier system (host=purple, gift=gold, guest=cyan).
               Older lines fade via gradient mask + per-row stack-alpha; new
               lines spring up from below. */}
-          {hideChat ? null : (
+          {hideChat || chatMessages.length === 0 ? null : (
             <LiveChatOverlay
               messages={chatMessages}
               onPressMessage={(m) => {
