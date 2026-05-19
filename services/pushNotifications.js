@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { Platform, AppState } from 'react-native';
 import Constants from 'expo-constants';
 import { router } from 'expo-router';
 
@@ -170,6 +170,51 @@ async function loadModules() {
             shouldShowAlert: false,
             shouldPlaySound: false,
             shouldSetBadge: false,
+          };
+        }
+
+        // [2026-05-19] WhatsApp-parity foreground gate.
+        // When app is in foreground (AppState === 'active'), NEVER let the
+        // OS render a tray/heads-up notification for content-type pushes
+        // (chat_message, chat_mention, chat_keyword, new_email, social).
+        // The in-app NotificationToast handles the visible UX; the OS
+        // banner on top of it was duplicating ("banner duplo" — user
+        // report 2026-05-19). On Android the FCM payload still includes
+        // a root `notification` block (backend behavior unchanged so
+        // background/killed flows still surface), but in foreground the
+        // expo-notifications JS handler is the final authority and
+        // `shouldShowAlert: false` suppresses NotificationManager from
+        // re-presenting the heads-up. Signaling pushes (incoming_call,
+        // login_challenge, silent_sync) were already short-circuited
+        // earlier and don't reach this gate.
+        const _foregroundContentTypes = new Set([
+          'chat_message',
+          'chat_mention',
+          'chat_keyword',
+          'new_email',
+          'email',
+          'like',
+          'comment',
+          'follow',
+          'mention',
+          'live',
+          'reaction',
+          'status_reply',
+        ]);
+        if (AppState.currentState === 'active' && _foregroundContentTypes.has(data?.type)) {
+          if (_onForegroundNotification && data) {
+            try {
+              _onForegroundNotification({
+                title: notification.request?.content?.title,
+                body: notification.request?.content?.body,
+                data,
+              });
+            } catch {}
+          }
+          return {
+            shouldShowAlert: false,
+            shouldPlaySound: false,
+            shouldSetBadge: true,
           };
         }
 
