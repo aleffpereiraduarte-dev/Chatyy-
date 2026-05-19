@@ -77,11 +77,20 @@ if git diff --cached --quiet; then
   fi
 fi
 
-# 4. For ios/both, touch the trigger so the build workflow fires
+# 4. For ios/both, touch the trigger so the build workflow fires.
+#    `both` also bumps mobile-build.txt — Android workflow watches that file
+#    exclusively. Without this, `ship.sh both` was only triggering iOS and the
+#    Android side silently stayed on the previous commit (bug discovered
+#    2026-05-19: 4 ship.sh both runs but Android stuck on the 1st).
 if [[ "$MODE" == "ios" || "$MODE" == "both" ]]; then
   mkdir -p .github/triggers
-  date -u +"%Y-%m-%dT%H:%M:%SZ" > .github/triggers/ios-build.txt
+  TS="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  echo "$TS" > .github/triggers/ios-build.txt
   git add .github/triggers/ios-build.txt
+  if [[ "$MODE" == "both" ]]; then
+    echo "$TS" > .github/triggers/mobile-build.txt
+    git add .github/triggers/mobile-build.txt
+  fi
 fi
 
 # 5. Commit (skip empty commits — git will refuse anyway)
