@@ -1074,14 +1074,39 @@ export async function saveConversationMedia(messages) {
     if ((m.type === 'gif' || m.type === 'sticker') && typeof m.content === 'string' && m.content.startsWith('http')) return m.content;
     return null;
   };
-  const mediaMessages = messages.filter(m => types.includes(m.type) && pickUrl(m));
+  // [#1221 2026-05-20] WhatsApp-parity sweep — skip messages that already
+  // have a local_path (file already on disk). Without this filter, every
+  // chat reopen would re-issue saveMediaPermanent for hundreds of msgs,
+  // burning CPU + battery on no-op filesystem stats.
+  const mediaMessages = messages.filter(m => {
+    if (!types.includes(m.type)) return false;
+    if (!pickUrl(m)) return false;
+    // Skip if SQLite already says we have it. The bubble's getCachedUri will
+    // still re-validate file existence at render time, so this is safe.
+    if (m.local_path && typeof m.local_path === 'string' && m.local_path.startsWith('file://')) return false;
+    return true;
+  });
   const BATCH_SIZE = 20;
   for (let i = 0; i < mediaMessages.length; i += BATCH_SIZE) {
     const batch = mediaMessages.slice(i, i + BATCH_SIZE);
     await Promise.allSettled(batch.map(msg => {
       const raw = pickUrl(msg);
       const url = raw?.startsWith('http') ? raw : `https://chatyy.com.br${raw}`;
-      return saveMediaPermanent(url).catch(() => {});
+      // [#1221 2026-05-20] Write-back local_path so the bubble can read from
+      // disk on cold-open. Same hook image/video already had on the WS path;
+      // it was missing on the conversation-load sweep, leaving files on disk
+      // but msg.local_path NULL — bubble showed "mídia não foi baixada".
+      return saveMediaPermanent(url).then((local) => {
+        try {
+          if (typeof local === 'string' && local.startsWith('file://')
+              && msg.id != null && (msg.conversation_id != null || msg.conversationId != null)) {
+            const nativeDb = require('./db');
+            const convId = msg.conversation_id || msg.conversationId;
+            nativeDb.dbUpdateMessageFields?.(convId, msg.id, { local_path: local });
+          }
+        } catch {}
+        return local;
+      }).catch(() => {});
     }));
   }
 }
