@@ -6361,6 +6361,7 @@ export default {
   'media.fileUnavailableHint': 'Couldn’t load. Try again in a few seconds.',
   'media.offlineCacheMiss': 'No internet — this media hasn’t been downloaded yet.',
   'media.offlineTitle': 'No internet',
+  'media.codecError': 'Couldn’t play this audio (unsupported format).',
 
   'status.saveToHighlight': 'Save to highlights',
   'status.highlights': 'Highlights',

@@ -54,7 +54,17 @@ export async function initDatabase() {
     // (2026-05-19) drops the FK from the table definition AND keeps the
     // PRAGMA off so old DBs from previous installs don't re-enable it.
     await _db.execAsync('PRAGMA journal_mode = WAL;');
-    await _db.execAsync('PRAGMA cache_size = -8000;'); // 8MB cache
+    // [#1218 2026-05-20] WhatsApp-grade PRAGMA bundle. WAL alone runs every
+    // commit through fsync — bulk dbSaveMessages (200 rows) was paying 200
+    // syncs (~8s). NORMAL is safe with WAL (no torn-write risk) and matches
+    // WhatsApp's msgstore.db config. busy_timeout removes SQLITE_BUSY throws
+    // when WS+REST hydrate in parallel. mmap_size 256MB lets reads skip
+    // syscalls for hot pages. temp_store MEMORY keeps sort/group OOM-free.
+    await _db.execAsync('PRAGMA synchronous = NORMAL;');
+    await _db.execAsync('PRAGMA busy_timeout = 5000;');
+    await _db.execAsync('PRAGMA temp_store = MEMORY;');
+    try { await _db.execAsync('PRAGMA mmap_size = 268435456;'); } catch {}
+    await _db.execAsync('PRAGMA cache_size = -20000;'); // 20MB cache (up from 8MB)
 
     // Create all tables
     await _db.execAsync(`
@@ -447,17 +457,26 @@ export async function dbSaveMessages(conversationId, messages) {
   // here. We persist the SUPERSET of fields so optimistic-send rows from the
   // outbox path (client_temp_id, local_seq, pending_state) survive a restart
   // alongside server-confirmed rows (sync_seq, read_at, deleted_at).
+  // [#1218 2026-05-20 WhatsApp-parity] Include local_path + media_* columns
+  // in INSERT. Earlier dbSaveMessages omitted them, so even when mediaCache
+  // wrote a file://… into the DB via dbUpdateMessageFields, a subsequent
+  // INSERT OR REPLACE (from fullHistorySync paging in the same row) wiped
+  // local_path back to NULL. Result: user taps audio offline, msg.local_path
+  // is NULL, bubble shows "mídia ainda não foi baixada" — even though the
+  // file is on disk. Persisting all media columns closes the gap.
   const stmt = await _db.prepareAsync(
     `INSERT OR REPLACE INTO messages
        (id, conversation_id, sender_email, sender_name, content, type,
         file_url, file_name, file_size, reply_to_id, message_id,
         read_at, edited_at, deleted, deleted_at, reactions, read_by,
-        created_at, sync_seq, local_seq, client_temp_id, pending_state, raw_json)
+        created_at, sync_seq, local_seq, client_temp_id, pending_state,
+        local_path, media_width, media_height, media_duration, raw_json)
      VALUES
        ($id, $convId, $sender, $senderName, $content, $type,
         $fileUrl, $fileName, $fileSize, $replyTo, $messageId,
         $readAt, $edited, $deleted, $deletedAt, $reactions, $readBy,
-        $created, $syncSeq, $localSeq, $clientTempId, $pendingState, $raw)`
+        $created, $syncSeq, $localSeq, $clientTempId, $pendingState,
+        $localPath, $mediaW, $mediaH, $mediaDur, $raw)`
   );
   // [#1206 2026-05-19] Surface row-level executeAsync failures via crash
   // beacon. Outer caller still gets the throw (existing semantics) — this
@@ -490,6 +509,17 @@ export async function dbSaveMessages(conversationId, messages) {
           $localSeq: m.local_seq != null ? m.local_seq : 0,
           $clientTempId: m.client_temp_id || m.client_message_id || null,
           $pendingState: m.pending_state || 'sent',
+          // [#1218 2026-05-20] Preserve media path/dim across re-syncs.
+          // m.local_path comes from a prior cacheMedia write-back; m._localUri
+          // is the optimistic UI hint set on send. Prefer the persisted one
+          // but fall back to optimistic so the bubble keeps showing the local
+          // file while the row is in flight. media_width/height/duration
+          // also persisted so a re-sync (INSERT OR REPLACE) doesn't blank the
+          // aspect-ratio render data.
+          $localPath: m.local_path || m._localUri || null,
+          $mediaW: m.media_width || (m.media && m.media.width) || null,
+          $mediaH: m.media_height || (m.media && m.media.height) || null,
+          $mediaDur: m.media_duration || (m.media && m.media.duration) || null,
           $raw: JSON.stringify(m),
         });
       } catch (rowErr) {

@@ -2910,7 +2910,27 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
         }
         const subscription = player.addListener('playbackStatusUpdate', (status) => {
           if (!isMountedRef.current) return;
-          if (status.error) { console.warn('[AudioPlayer] playback error:', status.error); setPlaying(false); return; }
+          if (status.error) {
+            console.warn('[AudioPlayer] playback error:', status.error);
+            setPlaying(false);
+            // [#1218 2026-05-20] Surface the error to the user instead of
+            // silently leaving a frozen button. If the URI was local (file://)
+            // the file IS on disk — the issue is codec (Android <10 + .opus
+            // is the classic offender). If the URI was remote, fall through
+            // to the offline gate which already has the right "sem internet"
+            // copy. Either way the user knows WHY playback didn't start.
+            try {
+              const wasLocal = typeof playUri === 'string' && (playUri.startsWith('file://') || playUri.startsWith('content://'));
+              if (wasLocal) {
+                const codecMsg = t?.('media.codecError') || t?.('chatConv.audioLoadFailed') || 'Não foi possível tocar este áudio (formato não suportado).';
+                if (Platform.OS === 'web') { try { window.alert?.(codecMsg); } catch {} }
+                else { try { Alert.alert(t?.('common.error') || 'Erro', codecMsg); } catch {} }
+              } else {
+                _surfaceOfflineMiss();
+              }
+            } catch {}
+            return;
+          }
           if (status.playing && status.duration > 0) {
             setProgress(status.currentTime / status.duration);
             setCurrentTime(status.currentTime);

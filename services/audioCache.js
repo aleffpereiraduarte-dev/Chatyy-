@@ -443,10 +443,14 @@ export async function cacheVoiceMessage(remoteUrl, messageId, wavePeaks, opts = 
   if (Array.isArray(wavePeaks) && wavePeaks.length > 0) {
     setVoiceWaveform(remoteUrl, wavePeaks, messageId);
   }
-  // Auto-download gate. Web has no cellular concept → always allowed.
-  // `opts.force` is set when the user tapped Play in the bubble — explicit
-  // intent always proceeds regardless of policy.
-  if (!opts.force && Platform.OS !== 'web') {
+  // [#1218 2026-05-20] WhatsApp-parity voice-note pre-fetch.
+  // WhatsApp ALWAYS pre-fetches voice notes (they're tiny, typically <200KB)
+  // regardless of the auto-download matrix — this is what makes "in the
+  // subway, mom sent voice" work. We override the gate for voice notes too,
+  // unless `opts.respectGate` is explicitly set (e.g. roaming with audio
+  // toggled off). Anything else falls back to the matrix.
+  const isVoice = opts.isVoice !== false; // assume voice unless caller says otherwise
+  if (!opts.force && !isVoice && Platform.OS !== 'web') {
     try {
       const mc = require('./mediaCache');
       if (mc && typeof mc.shouldAutoDownload === 'function') {
@@ -455,6 +459,15 @@ export async function cacheVoiceMessage(remoteUrl, messageId, wavePeaks, opts = 
           // we just don't burn bytes pre-fetching it to disk.
           return remoteUrl;
         }
+      }
+    } catch {}
+  }
+  // Voice-note network sanity: only skip if absolutely no network at all.
+  if (!opts.force && isVoice && Platform.OS !== 'web') {
+    try {
+      const ni = require('./networkInfo');
+      if (typeof ni.getNetworkType === 'function' && ni.getNetworkType() === 'none') {
+        return remoteUrl;
       }
     } catch {}
   }
@@ -492,6 +505,18 @@ export async function cacheVoiceMessage(remoteUrl, messageId, wavePeaks, opts = 
     if (mc && typeof mc.saveMediaPermanent === 'function') {
       const result = await mc.saveMediaPermanent(remoteUrl);
       if (typeof result === 'string' && result.startsWith('file://')) {
+        // [#1218 2026-05-20 BUG#1 fix] Write-back the local file:// path into
+        // SQLite so the bubble can show it offline. Without this, audioCache
+        // wrote to disk but msg.local_path stayed NULL — cold-open shows
+        // "mídia ainda não foi baixada" even though the file exists on disk.
+        // Tolerate opts.conversationId being missing (some callers don't pass
+        // it); dbUpdateMessageFields no-ops on null conv.
+        try {
+          if (messageId != null && opts.conversationId != null) {
+            const nativeDb = require('./db');
+            nativeDb.dbUpdateMessageFields?.(opts.conversationId, messageId, { local_path: result });
+          }
+        } catch {}
         return result;
       }
     }
@@ -500,7 +525,16 @@ export async function cacheVoiceMessage(remoteUrl, messageId, wavePeaks, opts = 
   try {
     const dl = fs.createDownloadResumable(remoteUrl, localPath, {});
     const r = await dl.downloadAsync();
-    if (r && r.status === 200) return localPath;
+    if (r && r.status === 200) {
+      // [#1218 2026-05-20 BUG#1 fix] Same write-back for the fallback path.
+      try {
+        if (messageId != null && opts.conversationId != null) {
+          const nativeDb = require('./db');
+          nativeDb.dbUpdateMessageFields?.(opts.conversationId, messageId, { local_path: localPath });
+        }
+      } catch {}
+      return localPath;
+    }
     try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
   } catch {}
   return remoteUrl;

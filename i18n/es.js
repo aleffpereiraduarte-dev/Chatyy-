@@ -6362,6 +6362,7 @@ export default {
   'media.fileUnavailableHint': 'No se pudo cargar. Intenta de nuevo en unos segundos.',
   'media.offlineCacheMiss': 'Sin internet — este medio aún no se ha descargado.',
   'media.offlineTitle': 'Sin internet',
+  'media.codecError': 'No se puede reproducir este audio (formato no compatible).',
 
   'status.saveToHighlight': 'Guardar en destacados',
   'status.highlights': 'Destacados',

@@ -6428,6 +6428,11 @@ export default {
   // body). Replaces the misleading "Mídia removida do cache" header that fired
   // for every Image onError including transient network failures.
   'media.offlineTitle': 'Sem internet',
+  // Codec-level failure (file IS on disk but the player can't decode — usually
+  // Android <10 + .opus, or a 0-byte download). Distinct from offlineCacheMiss
+  // because here re-downloading won't fix it; we just tell the user the
+  // format is unsupported so they don't think Chatyy is offline.
+  'media.codecError': 'Não foi possível tocar este áudio (formato não suportado).',
 
   // Highlights (Stories permanentes salvos no perfil)
   'status.saveToHighlight': 'Salvar em destaques',
