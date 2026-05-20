@@ -73,7 +73,7 @@ let _bgTaskRegistered = false;
 function getFS() {
   if (Platform.OS === 'web') return null;
   if (!FileSystem) {
-    try { FileSystem = require('expo-file-system'); } catch { return null; }
+    try { FileSystem = require('expo-file-system/legacy'); } catch { try { FileSystem = require('expo-file-system'); } catch { return null; } }
   }
   return FileSystem;
 }

@@ -22,7 +22,7 @@ import {
 import AvatarCircle from '../components/AvatarCircle';
 import BroadcastModal from '../components/BroadcastModal';
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 
 // QR code icon (inline SVG component)

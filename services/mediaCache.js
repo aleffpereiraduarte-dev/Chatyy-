@@ -93,7 +93,10 @@ _hydrateIndexWhenReady();
 function getFS() {
   if (Platform.OS === 'web') return null;
   if (!FileSystem) {
-    try { FileSystem = require('expo-file-system'); } catch { return null; }
+    // SDK 55: legacy export retains downloadAsync. The new File/Directory
+    // API at the default export drops it, so calls become no-ops and
+    // local_path never persists → offline media stays broken (2026-05-20).
+    try { FileSystem = require('expo-file-system/legacy'); } catch { try { FileSystem = require('expo-file-system'); } catch { return null; } }
   }
   return FileSystem;
 }
