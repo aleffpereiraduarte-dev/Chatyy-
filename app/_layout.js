@@ -905,6 +905,46 @@ function AppInit({ onNotification, setOtaToast }) {
     (async () => {
       try {
         const ws = (await import('../services/websocket')).default;
+        // 2026-05-20 — cashout status flip (back-office approved/rejected
+        // payouts). Quick alert toast so creators get instant feedback
+        // even with the app foregrounded. Cold-app delivery is covered
+        // by the FCM push the backend already fires alongside this WS.
+        try {
+          ws.on('cashout_status', (data) => {
+            try {
+              const status = String(data?.status || '');
+              const amountBrl = ((Number(data?.amount_cents) || 0) / 100).toFixed(2).replace('.', ',');
+              const TITLES = {
+                en: { paid: 'Cashout paid', rejected: 'Cashout rejected' },
+                es: { paid: 'Retiro pagado', rejected: 'Retiro rechazado' },
+                pt: { paid: 'Saque pago', rejected: 'Saque recusado' },
+              };
+              const BODIES = {
+                en: { paid: `R$ ${amountBrl} sent to your PIX.`, rejected: data?.admin_note || 'Try again with another key.' },
+                es: { paid: `R$ ${amountBrl} enviados a tu PIX.`, rejected: data?.admin_note || 'Inténtalo con otra clave.' },
+                pt: { paid: `R$ ${amountBrl} enviados pra sua chave PIX.`, rejected: data?.admin_note || 'Tente novamente com outra chave.' },
+              };
+              let lang = 'pt';
+              try {
+                if (typeof navigator !== 'undefined' && navigator?.language) {
+                  lang = String(navigator.language).slice(0, 2);
+                }
+              } catch {}
+              const t = TITLES[lang] || TITLES.pt;
+              const b = BODIES[lang] || BODIES.pt;
+              if (status === 'paid' || status === 'rejected') {
+                const { Platform, Alert } = require('react-native');
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                  if (window.Notification && window.Notification.permission === 'granted') {
+                    try { new window.Notification(t[status], { body: b[status] }); } catch {}
+                  }
+                } else {
+                  Alert.alert(t[status], b[status]);
+                }
+              }
+            } catch {}
+          });
+        } catch {}
         wsDiamondUnsub = ws.on('diamond_received', (data) => {
           try {
             const fromName = data?.from_name || (data?.from_email || '').split('@')[0] || 'Alguém';
@@ -921,7 +961,27 @@ function AppInit({ onNotification, setOtaToast }) {
             // already; this is the foreground/real-time path.
             try {
               const { Platform, Alert } = require('react-native');
-              const title = `${fromName} te enviou ${amount} ◆`;
+              // 2026-05-20: i18n template via translations module; PT-BR default
+              // since the _layout-level WS handler runs before LanguageProvider
+              // has resolved (would need a Context.Consumer hop). Tradeoff:
+              // English/Spanish users get the PT title for ~50ms cold-start
+              // — better than hardcoded with no fallback.
+              let title = `${fromName} te enviou ${amount} ◆`;
+              try {
+                let detected = 'pt';
+                try {
+                  if (typeof navigator !== 'undefined' && navigator?.language) {
+                    detected = String(navigator.language).slice(0, 2);
+                  }
+                } catch {}
+                const TEMPLATES = {
+                  en: '{name} sent you {n} ◆',
+                  es: '{name} te envió {n} ◆',
+                  pt: '{name} te enviou {n} ◆',
+                };
+                const tpl = TEMPLATES[detected] || TEMPLATES.pt;
+                title = tpl.replace('{name}', fromName).replace('{n}', amount);
+              } catch {}
               if (Platform.OS === 'web' && typeof window !== 'undefined') {
                 if (window.Notification && window.Notification.permission === 'granted') {
                   try { new window.Notification(title, { body: msg.trim() || undefined }); } catch {}

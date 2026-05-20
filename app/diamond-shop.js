@@ -8,10 +8,10 @@
 //   • LivePaidGiftSheet "Comprar mais" link
 //   • AppDrawer "Loja de Diamantes" tile
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator,
-  Platform, StatusBar, Alert, Linking,
+  Platform, StatusBar, Alert, Linking, Animated, Easing,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -19,7 +19,8 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import { getBaseUrl } from '../services/api';
-import { IconArrowLeft } from '../components/Icons';
+import { IconArrowLeft, IconDiamond } from '../components/Icons';
+import { formatInt } from '../utils/dateFormat';
 import {
   DIAMOND_PACKS, getDiamondLocalizedPrice, initIAP, purchaseDiamonds,
 } from '../services/iap';
@@ -33,7 +34,29 @@ export default function DiamondShopScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+
+  // Featured pack pulse — gentle radial glow scaling 1.0→1.04 every 1.6s.
+  // Native driver only animates `transform`; we use opacity loop on the
+  // ribbon since it's child of an Animated.View.
+  const pulseAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1, duration: 800,
+          easing: Easing.inOut(Easing.quad), useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 0, duration: 800,
+          easing: Easing.inOut(Easing.quad), useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulseAnim]);
+  const pulseScale = pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.035] });
 
   const [balance, setBalance] = useState(0);
   const [loadingBal, setLoadingBal] = useState(true);
@@ -138,7 +161,9 @@ export default function DiamondShopScreen() {
           backgroundColor: isDark ? 'rgba(168,85,247,0.18)' : 'rgba(168,85,247,0.10)',
           borderColor: isDark ? 'rgba(168,85,247,0.40)' : 'rgba(168,85,247,0.25)',
         }]}>
-          <View style={styles.diamondBig}><Text style={styles.diamondGlyph}>◆</Text></View>
+          <View style={styles.diamondBig}>
+            <IconDiamond size={44} color="#fff" />
+          </View>
           <Text style={[styles.heroSubtitle, { color: colors.textSecondary }]}>
             {t('diamondShop.heroSubtitle') || 'Compre diamantes para enviar a amigos, presentear criadores e desbloquear conteúdo.'}
           </Text>
@@ -149,7 +174,10 @@ export default function DiamondShopScreen() {
             {loadingBal ? (
               <ActivityIndicator size="small" color="#A855F7" />
             ) : (
-              <Text style={styles.balPillVal}>{balance.toLocaleString('pt-BR')} ◆</Text>
+              <View style={styles.balPillValRow}>
+                <IconDiamond size={14} color="#A855F7" />
+                <Text style={styles.balPillVal}>{formatInt(balance, language)}</Text>
+              </View>
             )}
           </View>
         </View>
@@ -163,14 +191,16 @@ export default function DiamondShopScreen() {
           const bonusBadge = p.bonusPct > 0
             ? (t('wallet.topupBonus') || 'Bônus +{p}%').replace('{p}', p.bonusPct)
             : null;
+          const PackWrapper = featured ? Animated.createAnimatedComponent(TouchableOpacity) : TouchableOpacity;
           return (
-            <TouchableOpacity
+            <PackWrapper
               key={p.sku}
               onPress={() => onBuy(p)}
               disabled={!!pendingSku}
               activeOpacity={0.85}
               style={[
                 styles.packCard,
+                featured ? { transform: [{ scale: pulseScale }] } : null,
                 {
                   borderColor: featured
                     ? '#A855F7'
@@ -192,16 +222,16 @@ export default function DiamondShopScreen() {
               {featured ? (
                 <View style={styles.featuredRibbon}>
                   <Text style={styles.featuredRibbonText}>
-                    {(t('diamondShop.bestValue') || 'MELHOR CUSTO').toUpperCase()}
+                    {(t('diamondShop.featuredPulse') || t('diamondShop.bestValue') || 'MELHOR OFERTA').toUpperCase()}
                   </Text>
                 </View>
               ) : null}
 
               <View style={styles.packLeftCol}>
                 <View style={styles.packAmountRow}>
-                  <Text style={styles.packDiamondGlyph}>◆</Text>
+                  <IconDiamond size={22} color="#A855F7" />
                   <Text style={[styles.packDiamonds, { color: colors.text }]}>
-                    {p.diamonds.toLocaleString('pt-BR')}
+                    {formatInt(p.diamonds, language)}
                   </Text>
                 </View>
                 {bonusBadge ? (
@@ -222,7 +252,7 @@ export default function DiamondShopScreen() {
                   </View>
                 )}
               </View>
-            </TouchableOpacity>
+            </PackWrapper>
           );
         })}
 
@@ -286,6 +316,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(168,85,247,0.18)',
   },
   balPillLabel: { fontSize: 12, color: '#A855F7', fontWeight: '700' },
+  balPillValRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   balPillVal: { fontSize: 14, color: '#A855F7', fontWeight: '900' },
 
   packCard: {

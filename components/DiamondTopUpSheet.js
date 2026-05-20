@@ -22,7 +22,8 @@ import {
 } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { IconX } from './Icons';
+import { IconX, IconDiamond } from './Icons';
+import { formatInt } from '../utils/dateFormat';
 import { Linking } from 'react-native';
 import * as api from '../services/api';
 import { getBaseUrl } from '../services/api';
@@ -38,7 +39,7 @@ function formatBrl(value) {
 
 export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange }) {
   const { colors, isDark } = useTheme();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
 
   const [balance, setBalance] = useState(0);
   const [loadingBal, setLoadingBal] = useState(false);
@@ -160,7 +161,10 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
             {loadingBal ? (
               <ActivityIndicator size="small" color="#A855F7" />
             ) : (
-              <Text style={[styles.balanceVal, { color: colors.text }]}>{balance} ◆</Text>
+              <View style={styles.balValRow}>
+                <IconDiamond size={14} color="#A855F7" />
+                <Text style={[styles.balanceVal, { color: colors.text }]}>{formatInt(balance, language)}</Text>
+              </View>
             )}
           </View>
 
@@ -182,8 +186,9 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
                   accessibilityLabel={`${p.diamonds} ${t('wallet.diamondsLabel') || 'diamantes'} ${priceLabel}`}
                 >
                   <View style={styles.packLeft}>
+                    <IconDiamond size={18} color="#A855F7" />
                     <Text style={[styles.packDiamonds, { color: colors.text }]}>
-                      {p.diamonds.toLocaleString('pt-BR')} ◆
+                      {formatInt(p.diamonds, language)}
                     </Text>
                     {bonusBadge ? (
                       <View style={styles.bonusBadge}>
@@ -235,6 +240,7 @@ const styles = StyleSheet.create({
   closeBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   balanceRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },
   balanceLabel: { fontSize: 13 },
+  balValRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   balanceVal: { fontSize: 16, fontWeight: '800' },
   packRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

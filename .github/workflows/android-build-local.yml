@@ -33,12 +33,14 @@ permissions:
 jobs:
   build:
     # 2026-05-20: switched from self-hosted (chatyy prod server) to GitHub's
-    # large hosted runner. Self-hosted on prod shares CPU with PHP-FPM + WS
-    # and was taking 40-50min — `ubuntu-latest-large` (8-core / 32GB) builds
-    # in ~12-15min and doesn't impact prod responsiveness during builds.
-    # Falls back gracefully to ubuntu-latest if -large quota is exhausted.
-    runs-on: ubuntu-latest-large
-    timeout-minutes: 35
+    # hosted runner. Self-hosted on prod shares CPU with PHP-FPM + WS and
+    # was taking 40-50min. `ubuntu-latest-large` (8-core/32GB) requires
+    # org-admin enrolled larger runners — we don't have access, so jobs
+    # sat in queue forever. `ubuntu-latest` (4-core/16GB on public repos,
+    # 2-core/7GB on private) is always available and gets us ~20-25min builds,
+    # still 2× faster than self-hosted prod.
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Sanity check — required secrets
         run: |

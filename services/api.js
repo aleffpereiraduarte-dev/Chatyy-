@@ -7221,6 +7221,17 @@ export async function walletCashoutRequest({
 export async function walletCashoutList() {
   return apiCall('wallet_cashout_list', {}, 'POST');
 }
+// Single cashout detail — used by the detail modal in /wallet-cashout to
+// show full PIX key + admin_note (when status='rejected'). 2026-05-20.
+export async function walletCashoutDetail(payoutId) {
+  return apiCall('wallet_cashout_detail', { payout_id: payoutId }, 'POST');
+}
+// Daily login bonus — credits diamonds once per UTC day. Idempotent on
+// the backend, so cheap to fire on every cold-start. Returns
+// { granted: bool, amount, streak_days, diamond_balance }. 2026-05-20.
+export async function walletDailyBonus() {
+  return apiCall('wallet_daily_bonus', {}, 'POST');
+}
 // Creator-focused earnings dashboard. Single round-trip pull for
 // /creator-earnings: pending_payout_cents, lifetime/month totals,
 // gift counts, top fans (last 30d), and a paginated timeline of

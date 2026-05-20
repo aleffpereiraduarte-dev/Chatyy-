@@ -30,6 +30,7 @@ import {
   IconArrowLeft, IconGiftBox, IconHeart, IconChevronRight, IconStar,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
+import { formatInt } from '../utils/dateFormat';
 
 const MIN_CASHOUT_CENTS = 5000;
 const BRAND_GREEN = '#10B981';
@@ -41,8 +42,8 @@ function fmtBrl(cents) {
   return v.toFixed(2).replace('.', ',');
 }
 
-function fmtCount(n) {
-  return Number(n || 0).toLocaleString('pt-BR');
+function fmtCount(n, lang) {
+  return formatInt(n, lang);
 }
 
 function shortHandle(email) {
@@ -72,7 +73,7 @@ function StatCard({ label, value, sub, accent, colors, isDark }) {
   );
 }
 
-function TopFanRow({ fan, rank, colors, isDark, t }) {
+function TopFanRow({ fan, rank, colors, isDark, t, lang }) {
   const handle = shortHandle(fan.email);
   return (
     <View style={[styles.fanRow, {
@@ -89,20 +90,20 @@ function TopFanRow({ fan, rank, colors, isDark, t }) {
           {handle}
         </Text>
         <Text style={[styles.fanSub, { color: colors.textSecondary }]} numberOfLines={1}>
-          {fmtCount(fan.gift_count)} {t('creatorEarnings.gifts') || 'presentes'}
+          {fmtCount(fan.gift_count, lang)} {t('creatorEarnings.gifts') || 'presentes'}
         </Text>
       </View>
       <View style={styles.fanAmount}>
         <IconGiftBox size={14} color={BRAND_PURPLE} />
         <Text style={[styles.fanAmountText, { color: BRAND_PURPLE }]}>
-          {fmtCount(fan.total_amount)}
+          {fmtCount(fan.total_amount, lang)}
         </Text>
       </View>
     </View>
   );
 }
 
-function TimelineRow({ item, colors, isDark, t }) {
+function TimelineRow({ item, colors, isDark, t, lang }) {
   const handle = shortHandle(item.counterparty);
   const refKind = String(item.ref_kind || '');
   const sourceLabel = (() => {
@@ -132,7 +133,7 @@ function TimelineRow({ item, colors, isDark, t }) {
       <View style={styles.tlAmount}>
         <IconGiftBox size={14} color={BRAND_PURPLE} />
         <Text style={[styles.tlAmountText, { color: BRAND_PURPLE }]}>
-          +{fmtCount(item.amount)}
+          +{fmtCount(item.amount, lang)}
         </Text>
       </View>
     </View>
@@ -143,7 +144,7 @@ export default function CreatorEarningsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -271,9 +272,9 @@ export default function CreatorEarningsScreen() {
             <StatCard
               colors={colors} isDark={isDark}
               label={t('creatorEarnings.stat.giftsMonth') || 'Presentes 30d'}
-              value={fmtCount(data.gifts_count_30d)}
+              value={fmtCount(data.gifts_count_30d, language)}
               accent={BRAND_PURPLE}
-              sub={(t('creatorEarnings.stat.giftsLifetime') || '{n} no total').replace('{n}', fmtCount(data.gifts_count_lifetime))}
+              sub={(t('creatorEarnings.stat.giftsLifetime') || '{n} no total').replace('{n}', fmtCount(data.gifts_count_lifetime, language))}
             />
             <StatCard
               colors={colors} isDark={isDark}
@@ -316,6 +317,7 @@ export default function CreatorEarningsScreen() {
                 colors={colors}
                 isDark={isDark}
                 t={t}
+                lang={language}
               />
             ))
           )}
@@ -339,6 +341,7 @@ export default function CreatorEarningsScreen() {
                 colors={colors}
                 isDark={isDark}
                 t={t}
+                lang={language}
               />
             ))
           )}

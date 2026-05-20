@@ -50,6 +50,28 @@ export function formatRelative(input, t) {
   return d.toLocaleDateString();
 }
 
+// Map app language → BCP-47 tag for Intl.NumberFormat. Defaults to pt-BR.
+// 2026-05-20 — wallet/diamond screens were hardcoding 'pt-BR' which produced
+// "1.500 ◆" even for english users where "1,500" is canonical. This helper
+// keeps every Intl call honoring the language picker.
+export function numberLocale(lang) {
+  const l = String(lang || '').toLowerCase().slice(0, 2);
+  if (l === 'en') return 'en-US';
+  if (l === 'es') return 'es-ES';
+  return 'pt-BR';
+}
+
+// formatInt(1234, 'en') → "1,234"  /  formatInt(1234, 'pt') → "1.234"
+export function formatInt(n, lang) {
+  const v = Number(n);
+  if (!isFinite(v)) return '0';
+  try {
+    return v.toLocaleString(numberLocale(lang));
+  } catch {
+    return String(Math.round(v));
+  }
+}
+
 // "13:42" — only the time part, locale-aware.
 export function formatTime(input) {
   const d = _toDate(input);

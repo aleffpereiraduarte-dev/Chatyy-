@@ -12,20 +12,21 @@
 // All data comes from wallet_history (server returns balance + items in one
 // shot so the header paints without a second round-trip).
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator,
-  RefreshControl, Platform, StatusBar,
+  RefreshControl, Platform, StatusBar, Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
-import { IconArrowLeft } from '../components/Icons';
+import { IconArrowLeft, IconDiamond } from '../components/Icons';
 import DiamondTopUpSheet from '../components/DiamondTopUpSheet';
+import { formatInt } from '../utils/dateFormat';
 
-function LedgerRow({ item, colors, isDark, t }) {
+function LedgerRow({ item, colors, isDark, t, lang }) {
   const isCredit = item.direction === 'credit';
   const sign = isCredit ? '+' : '-';
   const color = isCredit ? '#10B981' : '#EF4444';
@@ -57,7 +58,7 @@ function LedgerRow({ item, colors, isDark, t }) {
         <Text style={[styles.rowWhen, { color: colors.textTertiary }]}>{when}</Text>
       </View>
       <Text style={[styles.rowAmount, { color }]}>
-        {sign}{Number(item.amount).toLocaleString('pt-BR')} ◆
+        {sign}{formatInt(item.amount, lang)} ◆
       </Text>
     </View>
   );
@@ -67,7 +68,7 @@ export default function WalletScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
 
   const [items, setItems] = useState([]);
   const [balance, setBalance] = useState(0);
@@ -99,6 +100,34 @@ export default function WalletScreen() {
   }, [items.length]);
 
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Daily login bonus — backend is idempotent (one grant per UTC day),
+  // so cheap to call on every mount. If granted, show a quick toast
+  // and bump the local balance so the user sees the new total without
+  // a second roundtrip. Silent on already_today / network errors.
+  const bonusFiredRef = useRef(false);
+  useEffect(() => {
+    if (bonusFiredRef.current) return;
+    bonusFiredRef.current = true;
+    (async () => {
+      try {
+        const r = await api.walletDailyBonus?.();
+        if (r?.success && r?.data?.granted) {
+          const amt = Number(r.data.amount) || 0;
+          const streak = Number(r.data.streak_days) || 1;
+          const newBal = Number(r.data.diamond_balance);
+          if (!isNaN(newBal)) setBalance(newBal);
+          const title = t('wallet.dailyBonusTitle') || 'Bem-vindo de volta!';
+          const body = (t('wallet.dailyBonusBody') || '+{n} ◆ por entrar hoje.').replace('{n}', amt);
+          const streakLine = streak > 1
+            ? '\n' + (t('wallet.streakDays') || 'Sequência de {n} dias').replace('{n}', streak)
+            : '';
+          Alert.alert(title, body + streakLine);
+          load();
+        }
+      } catch {}
+    })();
+  }, [t, load]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -138,9 +167,12 @@ export default function WalletScreen() {
         <Text style={[styles.balLabel, { color: colors.textSecondary }]}>
           {t('wallet.currentBalance') || 'Saldo atual'}
         </Text>
-        <Text style={[styles.balVal, { color: colors.text }]}>
-          {balance.toLocaleString('pt-BR')} <Text style={styles.balDiamond}>◆</Text>
-        </Text>
+        <View style={styles.balRow}>
+          <IconDiamond size={28} color="#A855F7" style={{ marginRight: 8 }} />
+          <Text style={[styles.balVal, { color: colors.text }]}>
+            {formatInt(balance, language)}
+          </Text>
+        </View>
         {pendingPayout > 0 ? (
           <TouchableOpacity
             onPress={() => router.push('/creator-earnings')}
@@ -201,7 +233,7 @@ export default function WalletScreen() {
         <FlatList
           data={items}
           keyExtractor={(item) => String(item.id)}
-          renderItem={({ item }) => <LedgerRow item={item} colors={colors} isDark={isDark} t={t} />}
+          renderItem={({ item }) => <LedgerRow item={item} colors={colors} isDark={isDark} t={t} lang={language} />}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#A855F7" />}
           onEndReached={onEndReached}
           onEndReachedThreshold={0.4}
@@ -238,7 +270,8 @@ const styles = StyleSheet.create({
     padding: 18, marginBottom: 16,
   },
   balLabel: { fontSize: 13 },
-  balVal: { fontSize: 36, fontWeight: '900', marginTop: 4 },
+  balRow: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
+  balVal: { fontSize: 36, fontWeight: '900' },
   balDiamond: { fontSize: 28, color: '#A855F7' },
   payoutPill: { fontSize: 12, fontWeight: '700' },
   payoutPillRow: {

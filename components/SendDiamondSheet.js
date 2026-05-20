@@ -30,7 +30,8 @@ import {
 } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { IconX } from './Icons';
+import { IconX, IconDiamond } from './Icons';
+import { formatInt } from '../utils/dateFormat';
 import AvatarCircle from './AvatarCircle';
 import * as api from '../services/api';
 import DiamondTopUpSheet from './DiamondTopUpSheet';
@@ -46,7 +47,7 @@ export default function SendDiamondSheet({
   onSent,             // ({ transferId, amount }) => void — fired after success
 }) {
   const { colors, isDark } = useTheme();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
 
   const [balance, setBalance] = useState(0);
   const [loadingBal, setLoadingBal] = useState(false);
@@ -236,7 +237,7 @@ export default function SendDiamondSheet({
                 <ActivityIndicator size="small" color="#A855F7" />
               ) : (
                 <Text style={[styles.balanceVal, { color: insufficient ? '#EF4444' : colors.text }]}>
-                  {balance.toLocaleString('pt-BR')} ◆
+                  {formatInt(balance, language)} ◆
                 </Text>
               )}
               <TouchableOpacity
@@ -268,7 +269,7 @@ export default function SendDiamondSheet({
                     accessibilityRole="button"
                   >
                     <Text style={[styles.amountChipText, { color: active ? '#fff' : colors.text }]}>
-                      {n.toLocaleString('pt-BR')} ◆
+                      {formatInt(n, language)} ◆
                     </Text>
                   </TouchableOpacity>
                 );
@@ -340,8 +341,8 @@ export default function SendDiamondSheet({
               ) : (
                 <Text style={styles.sendBtnText}>
                   {insufficient
-                    ? `${t('walletSend.topUpCta') || 'Comprar diamantes'}  ·  +${(amount - balance).toLocaleString('pt-BR')} ◆`
-                    : ((t('walletSend.cta') || 'Enviar {n} ◆').replace('{n}', amount.toLocaleString('pt-BR')))}
+                    ? `${t('walletSend.topUpCta') || 'Comprar diamantes'}  ·  +${formatInt(amount - balance, language)} ◆`
+                    : ((t('walletSend.cta') || 'Enviar {n} ◆').replace('{n}', formatInt(amount, language)))}
                 </Text>
               )}
             </TouchableOpacity>
