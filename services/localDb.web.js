@@ -144,6 +144,107 @@ export async function webClearAll() {
   try { indexedDB.deleteDatabase(IDB_NAME); _idb = null; } catch {}
 }
 
+// ── Diagnostic: IDB row counts + browser quota estimate ──
+// Mirror of localDb.js getCacheSize — see that file for rationale.
+// Surfacing the number lets settings/debug show how much persisted data
+// the web user has cached, so they can see they're not "always re-syncing"
+// after the WhatsApp-pattern stale-while-revalidate switch.
+export async function getCacheSize() {
+  const out = { conversations: 0, messages: 0, emails: 0, sizeBytes: 0, quotaBytes: 0, web: true };
+  try {
+    const d = await getIDB();
+    if (!d) return out;
+    out.conversations = await new Promise((r) => {
+      try {
+        const req = d.transaction('conversations', 'readonly').objectStore('conversations').count();
+        req.onsuccess = () => r(req.result || 0);
+        req.onerror = () => r(0);
+      } catch { r(0); }
+    });
+    out.messages = await new Promise((r) => {
+      try {
+        const req = d.transaction('messages', 'readonly').objectStore('messages').count();
+        req.onsuccess = () => r(req.result || 0);
+        req.onerror = () => r(0);
+      } catch { r(0); }
+    });
+    out.emails = await new Promise((r) => {
+      try {
+        const req = d.transaction('emails', 'readonly').objectStore('emails').count();
+        req.onsuccess = () => r(req.result || 0);
+        req.onerror = () => r(0);
+      } catch { r(0); }
+    });
+  } catch {}
+  try {
+    if (typeof navigator !== 'undefined' && navigator.storage?.estimate) {
+      const est = await navigator.storage.estimate();
+      out.sizeBytes = est?.usage || 0;
+      out.quotaBytes = est?.quota || 0;
+    }
+  } catch {}
+  return out;
+}
+
+function _isPinnedConv(c) {
+  if (!c) return false;
+  return Boolean(c.is_pinned || c.pinned || c.pinned_at);
+}
+
+// LRU evict oldest non-pinned conversations until size <= targetBytes.
+// Triggered manually (e.g. from settings) or before a large bulk write.
+// 100 MB cap is safely below the smallest browser quota we hit in the
+// wild (Safari private mode ~200 MB), so we evict before the browser
+// surprises us with its own eviction. See localDb.js for full rationale.
+export async function evictOldestConversations(maxBytes = 100 * 1024 * 1024, targetBytes = 80 * 1024 * 1024) {
+  try {
+    const sz = await getCacheSize();
+    if (!sz.sizeBytes || sz.sizeBytes <= maxBytes) return 0;
+    const d = await getIDB();
+    if (!d) return 0;
+    const convs = await new Promise((r) => {
+      try {
+        const req = d.transaction('conversations', 'readonly').objectStore('conversations').getAll();
+        req.onsuccess = () => r(req.result || []);
+        req.onerror = () => r([]);
+      } catch { r([]); }
+    });
+    convs.sort((a, b) => {
+      const ta = Date.parse(a.last_message_at || a.updated_at || 0) || 0;
+      const tb = Date.parse(b.last_message_at || b.updated_at || 0) || 0;
+      return ta - tb;
+    });
+    let evicted = 0;
+    for (const c of convs) {
+      if (_isPinnedConv(c)) continue;
+      try {
+        const tx = d.transaction(['conversations', 'messages'], 'readwrite');
+        tx.objectStore('conversations').delete(c.id);
+        const msgStore = tx.objectStore('messages');
+        const cursorReq = msgStore.index('cid').openCursor(IDBKeyRange.only(c.id));
+        await new Promise((r) => {
+          cursorReq.onsuccess = (e) => {
+            const cur = e.target.result;
+            if (cur) { try { cur.delete(); } catch {} cur.continue(); }
+            else r();
+          };
+          cursorReq.onerror = () => r();
+        });
+      } catch {}
+      evicted++;
+      if (evicted % 10 === 0) {
+        try {
+          const newSz = await getCacheSize();
+          if (newSz.sizeBytes && newSz.sizeBytes <= targetBytes) break;
+        } catch {}
+      }
+    }
+    return evicted;
+  } catch {
+    return 0;
+  }
+}
+
 // ── SQLite API surface — stubbed on web since chatCache.js guards with Platform.OS === 'web'
 // before calling any of these. They exist only so the module contract matches native. ──
 export async function initLocalDb() {}

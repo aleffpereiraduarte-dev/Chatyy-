@@ -196,6 +196,136 @@ export async function webClearAll() {
   try { indexedDB.deleteDatabase(IDB_NAME); _idb = null; } catch {}
 }
 
+// ── Diagnostic: surface IDB cache footprint for settings/debug UI ──
+// Roughly estimates the size of the chat-cache portion of IndexedDB so
+// the user (or QA) can see "how persistent" the local copy is. WhatsApp
+// Web shows nothing — but Chrome's storage quota is per-origin, so a
+// runaway thread can hit 50MB-1GB and silently push the browser into
+// LRU eviction. Surfacing the number lets us call evictOldestConversations()
+// proactively before the browser does it for us.
+//
+// Native: returns nulls. The SQLite path has its own bookkeeping via
+// PRAGMA page_count * page_size in db.js. We only count IDB so the
+// number reflects the *web-specific* persistence problem.
+export async function getCacheSize() {
+  if (Platform.OS !== 'web') {
+    return { conversations: 0, messages: 0, emails: 0, sizeBytes: 0, quotaBytes: 0, web: false };
+  }
+  const out = { conversations: 0, messages: 0, emails: 0, sizeBytes: 0, quotaBytes: 0, web: true };
+  try {
+    const d = await getIDB();
+    if (!d) return out;
+    // Count rows per store. `count()` is O(1) on IDB so this is cheap.
+    out.conversations = await new Promise((r) => {
+      try {
+        const req = d.transaction('conversations', 'readonly').objectStore('conversations').count();
+        req.onsuccess = () => r(req.result || 0);
+        req.onerror = () => r(0);
+      } catch { r(0); }
+    });
+    out.messages = await new Promise((r) => {
+      try {
+        const req = d.transaction('messages', 'readonly').objectStore('messages').count();
+        req.onsuccess = () => r(req.result || 0);
+        req.onerror = () => r(0);
+      } catch { r(0); }
+    });
+    out.emails = await new Promise((r) => {
+      try {
+        const req = d.transaction('emails', 'readonly').objectStore('emails').count();
+        req.onsuccess = () => r(req.result || 0);
+        req.onerror = () => r(0);
+      } catch { r(0); }
+    });
+  } catch {}
+  // Browser storage estimate covers all origin storage (IDB + Cache API +
+  // localStorage). Not exactly "chat cache size" but close enough for a
+  // settings indicator; the alternative (serialize every row) would be
+  // O(N) and slow.
+  try {
+    if (typeof navigator !== 'undefined' && navigator.storage?.estimate) {
+      const est = await navigator.storage.estimate();
+      out.sizeBytes = est?.usage || 0;
+      out.quotaBytes = est?.quota || 0;
+    }
+  } catch {}
+  return out;
+}
+
+// Pinned conversations should never be evicted (Whatsapp-style: a chat
+// the user pinned is "important", and evicting it means a blank thread
+// on next open). We treat `is_pinned`, `pinned`, or `pinned_at` as
+// pin signals — backend has used all three at various points.
+function _isPinnedConv(c) {
+  if (!c) return false;
+  return Boolean(c.is_pinned || c.pinned || c.pinned_at);
+}
+
+// LRU eviction: drop oldest non-pinned conversations (and their messages)
+// when total origin storage exceeds `maxBytes`. Default 100 MB. Returns
+// the number of conversations evicted.
+//
+// The estimate is coarse — `navigator.storage.estimate()` reports the
+// whole origin, not just IDB — but the chat cache is by far the
+// dominant consumer in practice (avatars + media are on the CDN, not in
+// IDB). The 100 MB cap is comfortably under the smallest browser quota
+// we've seen in the wild (~200 MB on Safari private mode) so we evict
+// well before the browser does its own surprise eviction.
+export async function evictOldestConversations(maxBytes = 100 * 1024 * 1024, targetBytes = 80 * 1024 * 1024) {
+  if (Platform.OS !== 'web') return 0;
+  try {
+    const sz = await getCacheSize();
+    if (!sz.sizeBytes || sz.sizeBytes <= maxBytes) return 0;
+    const d = await getIDB();
+    if (!d) return 0;
+    // Pull every conversation, sort oldest-activity first, drop until
+    // we're under `targetBytes` or we run out of non-pinned rows.
+    const convs = await new Promise((r) => {
+      try {
+        const req = d.transaction('conversations', 'readonly').objectStore('conversations').getAll();
+        req.onsuccess = () => r(req.result || []);
+        req.onerror = () => r([]);
+      } catch { r([]); }
+    });
+    convs.sort((a, b) => {
+      const ta = Date.parse(a.last_message_at || a.updated_at || 0) || 0;
+      const tb = Date.parse(b.last_message_at || b.updated_at || 0) || 0;
+      return ta - tb; // oldest first
+    });
+    let evicted = 0;
+    for (const c of convs) {
+      if (_isPinnedConv(c)) continue;
+      // Delete conversation row + all messages indexed by `cid`.
+      try {
+        const tx = d.transaction(['conversations', 'messages'], 'readwrite');
+        tx.objectStore('conversations').delete(c.id);
+        const msgStore = tx.objectStore('messages');
+        const cursorReq = msgStore.index('cid').openCursor(IDBKeyRange.only(c.id));
+        await new Promise((r) => {
+          cursorReq.onsuccess = (e) => {
+            const cur = e.target.result;
+            if (cur) { try { cur.delete(); } catch {} cur.continue(); }
+            else r();
+          };
+          cursorReq.onerror = () => r();
+        });
+      } catch {}
+      evicted++;
+      // Re-check size every 10 conversations — bailing early avoids
+      // gratuitous deletion if a few large threads were the culprit.
+      if (evicted % 10 === 0) {
+        try {
+          const newSz = await getCacheSize();
+          if (newSz.sizeBytes && newSz.sizeBytes <= targetBytes) break;
+        } catch {}
+      }
+    }
+    return evicted;
+  } catch {
+    return 0;
+  }
+}
+
 // ═══════════════════════════════════════════
 // SQLite Layer (Native) — original code below
 // ═══════════════════════════════════════════

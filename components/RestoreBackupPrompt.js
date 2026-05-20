@@ -288,9 +288,15 @@ export default function RestoreBackupPrompt({ visible, onClose, backups: backups
             </View>
             <Text style={styles.title}>Restaurar suas conversas</Text>
             <Text style={styles.subtitle}>
-              {Platform.OS === 'ios'
-                ? 'Encontramos backups na sua iCloud. Restaure para trazer suas mensagens de volta.'
-                : 'Encontramos backups no seu Google Drive. Restaure para trazer suas mensagens de volta.'}
+              {(() => {
+                // Tailor the copy to the actual source — server-hosted
+                // backups should NOT advertise iCloud/Drive when the user
+                // has only the Wave-7 backend blob.
+                const hasServer = Array.isArray(backups) && backups.some((b) => b.source === 'server');
+                if (hasServer) return 'Encontramos backups na nuvem da Chatyy. Restaure para trazer suas mensagens de volta.';
+                if (Platform.OS === 'ios') return 'Encontramos backups na sua iCloud. Restaure para trazer suas mensagens de volta.';
+                return 'Encontramos backups no seu Google Drive. Restaure para trazer suas mensagens de volta.';
+              })()}
             </Text>
           </View>
 

@@ -251,6 +251,17 @@ export async function cacheSingleMessage(conversationId, msg) {
 
 // Get cached messages for a conversation (INSTANT from SQLite on native,
 // IndexedDB on web, falling back to MMKV/localStorage).
+//
+// Stale-while-revalidate contract (WhatsApp Web parity):
+//   • This function NEVER gates on TTL. Cache rows are returned as-is
+//     even if they're days old. The caller (chat-conversation screen)
+//     is responsible for kicking off a background refresh via
+//     chatMessages() — fresh rows then arrive via the normal merge path.
+//   • The previous TTL-on-read behaviour caused web users to see an
+//     empty thread on reload whenever the 5 min window had passed,
+//     even though the underlying IndexedDB rows were still there. That
+//     defeated the whole point of having a persistent local cache.
+//   • Native paths already had no TTL; this aligns the web behaviour.
 export async function getCachedMessages(conversationId, limit = 50) {
   // Account-switch window: refuse to surface any cached payload while the
   // scope is locked — otherwise the previous user's messages flash on the
@@ -330,6 +341,22 @@ export async function cacheConversations(conversations) {
       try {
         if (typeof localStorage !== 'undefined') {
           localStorage.setItem(_scopedConvsKey(), JSON.stringify(conversations.slice(0, 100)));
+        }
+      } catch {}
+      // Opportunistic LRU eviction after the largest write path. We just
+      // wrote the canonical conversation list; if the origin storage is
+      // already over 100 MB it means previous sessions accreted enough
+      // chats to risk the browser's own surprise eviction. Fire-and-
+      // forget — no need to block the caller. Throttled to once per
+      // 30 min so we don't burn cycles on every list refresh.
+      try {
+        const now = Date.now();
+        if (!globalThis.__chatyy_last_lru_evict || (now - globalThis.__chatyy_last_lru_evict) > 30 * 60 * 1000) {
+          globalThis.__chatyy_last_lru_evict = now;
+          const { evictOldestConversations } = require('./localDb');
+          if (typeof evictOldestConversations === 'function') {
+            evictOldestConversations().catch(() => {});
+          }
         }
       } catch {}
     }
