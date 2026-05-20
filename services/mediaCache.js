@@ -263,7 +263,7 @@ const _inflightDownloads = new Map(); // key → Promise<localPath | url>
 // isAudio) to redispatch into the right path on reconnect.
 const _deferredMedia = new Map(); // key → { url, messageId, conversationId, isAudio }
 
-function _enqueueDeferred(url, opts = {}) {
+export function _enqueueDeferred(url, opts = {}) {
   if (!url || Platform.OS === 'web') return;
   try {
     const key = urlToKey(url);
@@ -1181,6 +1181,13 @@ export async function evictIfNeeded(opts) {
       let freed = 0;
       const need = total - limitBytes;
       const skipped = [];
+      // [#1222 2026-05-20 Wave 5] Track evicted filenames so we can also
+      // NULL the messages.local_path column for rows that pointed to those
+      // files. Without this, the bubble reads local_path = "file://..." but
+      // the file is gone — falls through to "Mídia removida do cache" even
+      // when no internet. Bulk update at the end is one round trip per
+      // batch (cheap; up to ~50 entries per evict).
+      const evictedNames = [];
       for (const e of entries) {
         if (freed >= need) break;
         if (_isFileProtected(e.name)) { skipped.push(e); continue; }
@@ -1188,6 +1195,7 @@ export async function evictIfNeeded(opts) {
           await fs.deleteAsync(e.path, { idempotent: true });
           syncIndex.delete(e.name);
           _urlConvOwner.delete(e.name);
+          evictedNames.push(e.name);
           freed += e.size;
         } catch {}
       }
@@ -1199,9 +1207,22 @@ export async function evictIfNeeded(opts) {
             await fs.deleteAsync(e.path, { idempotent: true });
             syncIndex.delete(e.name);
             _urlConvOwner.delete(e.name);
+            evictedNames.push(e.name);
             freed += e.size;
           } catch {}
         }
+      }
+      // [#1222 2026-05-20 Wave 5] NULL local_path in DB for evicted files
+      // so the bubble's stale `local_path` doesn't lie about the file's
+      // presence. Fire-and-forget — failure is non-fatal (next render
+      // falls back to file existence check in resolvePlayUri).
+      if (evictedNames.length > 0) {
+        try {
+          const nativeDb = require('./db');
+          if (typeof nativeDb.dbClearLocalPathByFilenames === 'function') {
+            nativeDb.dbClearLocalPathByFilenames(evictedNames).catch(() => {});
+          }
+        } catch {}
       }
       _schedulePersistIndex();
     } finally {

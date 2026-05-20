@@ -467,6 +467,22 @@ export async function cacheVoiceMessage(remoteUrl, messageId, wavePeaks, opts = 
     try {
       const ni = require('./networkInfo');
       if (typeof ni.getNetworkType === 'function' && ni.getNetworkType() === 'none') {
+        // [#1222 2026-05-20 Wave 5 Gap#8] Enqueue in mediaCache's deferred
+        // sweep so the voice note retries when network comes back. Without
+        // this, a voice note that arrives during a subway dip stays
+        // un-prefetched forever — user opens chat later and sees the
+        // "mídia não foi baixada" toast even though file is now reachable.
+        // Mirrors mediaCache.cacheMedia's _enqueueDeferred path.
+        try {
+          const mc = require('./mediaCache');
+          if (mc && typeof mc._enqueueDeferred === 'function') {
+            mc._enqueueDeferred(remoteUrl, {
+              messageId,
+              conversationId: opts.conversationId ?? null,
+              isAudio: true,
+            });
+          }
+        } catch {}
         return remoteUrl;
       }
     } catch {}

@@ -550,8 +550,18 @@ class MailWebSocket {
   _send(data) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(this._encodeOutbound(data));
-    } else if (data && (data.type === 'chat_message' || data.type === 'chat_message_relay')) {
-      // Queue chat messages when WS is not open (max queue size)
+    } else if (data && (
+      data.type === 'chat_message' ||
+      data.type === 'chat_message_relay' ||
+      // [#1222 2026-05-20 Wave 5] Queue read receipts + reactions when WS is
+      // down. Previously these were silently dropped — peer never saw blue
+      // ticks / emoji until next manual poll. Now they replay on reconnect
+      // alongside chat_message frames, matching WhatsApp's read receipt
+      // durability (WhatsApp queues read in their persistent outbox).
+      data.type === 'message_read' ||
+      data.type === 'reaction'
+    )) {
+      // Queue chat messages + read receipts + reactions when WS is not open.
       if (this._messageQueue.length < MAX_QUEUE_SIZE) {
         this._messageQueue.push(data);
       }

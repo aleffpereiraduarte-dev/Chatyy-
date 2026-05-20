@@ -702,6 +702,32 @@ export async function dbUpdateMessageFields(conversationId, messageId, fields) {
   }
 }
 
+// [#1222 2026-05-20 Wave 5] NULL out local_path for any message whose
+// local file was evicted by the mediaCache LRU sweep. Called as a bulk
+// update from mediaCache.evictIfNeeded() so the bubble's `local_path` no
+// longer lies about file presence after an eviction. Matches via the
+// URL key (suffix of the file:// path) — the LRU operates on those keys.
+// Fire-and-forget; failure is logged but doesn't surface.
+export async function dbClearLocalPathByFilenames(filenames) {
+  if (isWeb || !_db || !Array.isArray(filenames) || filenames.length === 0) return;
+  try {
+    // Use a single transaction so 50 evicted entries → 1 fsync (with WAL+NORMAL).
+    await _db.withExclusiveTransactionAsync(async (txn) => {
+      const stmt = await txn.prepareAsync(
+        `UPDATE messages SET local_path = NULL WHERE local_path LIKE '%/' || $name`
+      );
+      try {
+        for (const name of filenames) {
+          if (!name || typeof name !== 'string') continue;
+          await stmt.executeAsync({ $name: name });
+        }
+      } finally { await stmt.finalizeAsync(); }
+    });
+  } catch (e) {
+    if (__DEV__) console.warn('[db] dbClearLocalPathByFilenames failed:', e?.message || e);
+  }
+}
+
 // ══════════════════════════════════════
 // CONTACTS
 // ══════════════════════════════════════
