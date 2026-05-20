@@ -5106,27 +5106,18 @@ function MobileNativeBridge() {
     const isForeground = AppState.currentState === 'active';
 
     if (isForeground && isCaller) {
-      // Foreground OUTGOING — render JS UI + fire-and-forget native CallKit hook.
-      (async () => {
-        try {
-          const callkit = require('../modules/expo-callkit');
-          if (callkit?.startOutgoingCall) {
-            // Native module is the source of truth for the foreground check —
-            // it'll register CallKit / persist state but skip presenting.
-            callkit.startOutgoingCall({
-              callee_email: contactEmail,
-              callee_name: contactName || contactEmail,
-              is_video: !!isVideo,
-              conversation_id: conversationId,
-              call_id: callId,
-            }).catch((e) => {
-              console.warn('[CallScreen #1208] foreground startOutgoingCall hook failed (non-fatal):', e?.message || e);
-            });
-          }
-        } catch (e) {
-          console.warn('[CallScreen #1208] foreground startOutgoingCall require failed:', e?.message || e);
-        }
-      })();
+      // [#1209 2026-05-19] Foreground OUTGOING: chat-conversation /
+      // ChatCallsTab / one.js now push /call directly when foreground (they
+      // also fire callNotify themselves). We just render the rich JS UI.
+      // We deliberately DO NOT call native startOutgoingCall here anymore —
+      // doing so was the root cause of "duas telas JS aparecendo": the
+      // native module presented the CallView/CallActivity (older builds
+      // without the suppress gate), or queued a CallKit transaction whose
+      // delegate path would still attempt to present a VC, both racing
+      // with the JS CallScreenInner that we mount below. The chat-side
+      // callsite owns the lifecycle now; if we need CallKit Recents
+      // registration in the future, do it once from inside CallScreenInner
+      // (where we already have the LK Room) and not here.
       setRenderJsUI(true);
       return;
     }

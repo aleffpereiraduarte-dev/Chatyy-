@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animated, Alert, ActivityIndicator, Vibration, Dimensions, Modal, FlatList, TextInput, Switch } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animated, Alert, ActivityIndicator, Vibration, Dimensions, Modal, FlatList, TextInput, Switch, AppState } from 'react-native';
 import Svg, { Path, Polyline, Circle as SvgCircle, Line, Rect } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
 import BrandFab from './BrandFab';
 import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus, IconTrash, IconSmartphone, IconCheck, IconCalendar } from './Icons';
 import ScheduleCallModal from './ScheduleCallModal';
-import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, voipCall, voipToken, voipSipCredentials, voipMinutesRemaining, voipUpdateDuration, searchContacts, voipVerifiedNumberRequest, voipVerifiedNumberConfirm, getProfile } from '../services/api';
+import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, voipCall, voipToken, voipSipCredentials, voipMinutesRemaining, voipUpdateDuration, searchContacts, voipVerifiedNumberRequest, voipVerifiedNumberConfirm, getProfile, callNotify as apiCallNotify } from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import { useCall } from '../context/CallContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -3153,10 +3153,24 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     const name = item.contactName || item.contact_name || '';
     if (!email) return;
     const isVideo = item.video ? '1' : '0';
-    // [Stage #996] Mobile → native startOutgoingCall (CXStartCallAction on
-    // iOS, CallActivity with EXTRA_IS_OUTGOING on Android). Web stays on
-    // the JS /call screen.
+    // [#1209 2026-05-19] Foreground = JS owns the call surface. Skip
+    // voipNative to avoid the dual-UI race (native CallView/CallActivity +
+    // JS CallScreenInner). Push /call directly; MobileNativeBridge inside
+    // /call.js fires the CallKit hook and renders the rich JS UI.
     if (Platform.OS === 'ios' || Platform.OS === 'android') {
+      const isForeground = AppState.currentState === 'active';
+      if (isForeground) {
+        const callId = `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const conversationId = item.conversation_id || item.conversationId || '';
+        try {
+          apiCallNotify(conversationId, callId, !!item.video).catch((e) => {
+            console.warn('[handleHistoryCallBack] callNotify failed:', e?.message || e);
+          });
+        } catch {}
+        router.push(`/call?callId=${callId}&contactName=${encodeURIComponent(name)}&contactEmail=${encodeURIComponent(email)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=1`);
+        return;
+      }
+      // Background path: keep legacy voipNative.
       (async () => {
         try {
           const voipNative = require('../services/voipNative');
