@@ -15,9 +15,10 @@
  * truth — there's no "phone offline" state distinct from "we're offline".
  */
 import React, { useEffect, useState } from 'react';
-import { Platform, View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { Platform, View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { IconX, IconWifiOff } from './Icons';
 import { useLanguage } from '../context/LanguageContext';
+import * as api from '../services/api';
 
 const POLL_MS = 1000;
 
@@ -27,7 +28,48 @@ export default function PhoneOfflineBanner() {
   // returns null for native.
   const [visible, setVisible] = useState(false);
   const [dismissed, setDismissed] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(null);
   const { t } = useLanguage();
+
+  // [STAGE-D 2026-05-20] "Sincronizar agora" handler.
+  // 1) POST chat_wake_my_phone → backend sends silent FCM/APNs to user's
+  //    paired devices, waking the phone briefly so the WS relay finds it.
+  // 2) Clear the phone_offline flag locally + reload window so the next
+  //    chatConversations() call tries the relay fresh.
+  const handleSync = React.useCallback(async () => {
+    if (syncing) return;
+    setSyncing(true);
+    setSyncStatus(null);
+    try {
+      const r = await api.apiCall('chat_wake_my_phone', {});
+      const sent = Number(r?.data?.sent || 0);
+      if (sent > 0) {
+        setSyncStatus(t?.('sync.phoneWakeSent') || 'Acordando celular…');
+        // Give the phone ~3s to wake + respond on WS, then clear flag and
+        // let the next data fetch try relay again. UI is reactive to
+        // __chatyy_phone_offline via the 1s poll above.
+        setTimeout(() => {
+          try { globalThis.__chatyy_phone_offline = false; } catch {}
+          setSyncStatus(null);
+          setSyncing(false);
+        }, 3000);
+      } else {
+        const reason = r?.data?.reason || '';
+        if (reason === 'throttled') {
+          setSyncStatus(t?.('sync.throttled') || 'Aguarde uns segundos pra tentar de novo');
+        } else if (reason === 'no_tokens') {
+          setSyncStatus(t?.('sync.noPairedPhone') || 'Nenhum celular pareado');
+        } else {
+          setSyncStatus(t?.('sync.couldNotWake') || 'Não foi possível acordar o celular');
+        }
+        setTimeout(() => { setSyncStatus(null); setSyncing(false); }, 3000);
+      }
+    } catch (e) {
+      setSyncStatus(t?.('sync.couldNotWake') || 'Não foi possível acordar o celular');
+      setTimeout(() => { setSyncStatus(null); setSyncing(false); }, 3000);
+    }
+  }, [syncing, t]);
 
   useEffect(() => {
     if (Platform.OS !== 'web') return;
@@ -81,8 +123,20 @@ export default function PhoneOfflineBanner() {
     <View style={s.bar} accessibilityLiveRegion="polite" accessibilityRole="alert">
       {IconWifiOff ? <IconWifiOff size={16} color="#7c5e00" /> : null}
       <Text style={s.text} numberOfLines={2}>
-        {t?.('offline.phoneOffline') || 'Celular offline — mostrando dados em cache. Conecte o celular pra ver as conversas mais recentes.'}
+        {syncStatus || (t?.('offline.phoneOffline') || 'Celular offline — mostrando dados em cache. Conecte o celular pra ver as conversas mais recentes.')}
       </Text>
+      <TouchableOpacity
+        onPress={handleSync}
+        disabled={syncing}
+        style={[s.syncBtn, syncing && { opacity: 0.6 }]}
+        accessibilityLabel={t?.('sync.syncNow') || 'Sincronizar agora'}
+        accessibilityRole="button"
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      >
+        {syncing
+          ? <ActivityIndicator size="small" color="#5a4500" />
+          : <Text style={s.syncBtnText}>{t?.('sync.syncNow') || 'Sincronizar agora'}</Text>}
+      </TouchableOpacity>
       <TouchableOpacity
         onPress={() => setDismissed(true)}
         style={s.closeBtn}
@@ -114,6 +168,20 @@ const s = StyleSheet.create({
     fontSize: 13,
     color: '#5a4500',
     fontWeight: '500',
+  },
+  syncBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    backgroundColor: '#ffd966',
+    borderWidth: 1,
+    borderColor: '#d4b237',
+    marginRight: 4,
+  },
+  syncBtnText: {
+    color: '#5a4500',
+    fontSize: 12,
+    fontWeight: '600',
   },
   closeBtn: {
     paddingHorizontal: 4,
