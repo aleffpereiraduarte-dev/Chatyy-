@@ -42,6 +42,169 @@ function setStorage(key, val) {
   }
 }
 
+// History download / missing-media UI used inside the Storage section of
+// SettingsScreenInner. Hooks pull theme + i18n; SQLite counters come from
+// services/db.getSyncStats() refreshed on mount + every 4s while a download
+// is running. Manual triggers route to services/fullHistorySync.
+function HistoryDownloadRow() {
+  const { colors } = useTheme();
+  const { t } = useLanguage();
+  const [stats, setStats] = useState(null);
+  const [busyHistory, setBusyHistory] = useState(false);
+  const [busyMedia, setBusyMedia] = useState(false);
+  const [mediaProgress, setMediaProgress] = useState(null); // {loaded,total,percent}
+  const [historyProgress, setHistoryProgress] = useState(null);
+  const aliveRef = useRef(true);
+  useEffect(() => () => { aliveRef.current = false; }, []);
+
+  const refreshStats = useCallback(async () => {
+    if (Platform.OS === 'web') return;
+    try {
+      const dbMod = require('../services/db');
+      const r = await dbMod.getSyncStats?.();
+      if (aliveRef.current) setStats(r || null);
+    } catch {}
+  }, []);
+  useEffect(() => { refreshStats(); }, [refreshStats]);
+
+  // Poll stats every 4s while a download is running so the counters reflect
+  // progress in near-real-time.
+  useEffect(() => {
+    if (!busyHistory && !busyMedia) return undefined;
+    const id = setInterval(refreshStats, 4000);
+    return () => clearInterval(id);
+  }, [busyHistory, busyMedia, refreshStats]);
+
+  // Subscribe to bootstrap progress for live convs counter.
+  useEffect(() => {
+    if (Platform.OS === 'web' || !busyHistory) return undefined;
+    let ws = null;
+    try { ws = require('../services/websocket').default; } catch {}
+    const handler = (payload) => {
+      setHistoryProgress({
+        convDone: payload.convDone || 0,
+        convTotal: payload.convTotal || 0,
+        phase: payload.phase,
+      });
+      if (payload.phase === 'done') {
+        setBusyHistory(false);
+        refreshStats();
+      }
+    };
+    try { ws?.on?.('chat_bootstrap_progress', handler); } catch {}
+    return () => { try { ws?.off?.('chat_bootstrap_progress', handler); } catch {} };
+  }, [busyHistory, refreshStats]);
+
+  const onDownloadAll = useCallback(async () => {
+    if (busyHistory) return;
+    setBusyHistory(true);
+    setHistoryProgress(null);
+    try {
+      const api = require('../services/api');
+      const { forceFullHistoryDownload } = require('../services/fullHistorySync');
+      const email = api.getActiveAccountEmail?.() || '';
+      await forceFullHistoryDownload(api.apiCall, email, { includeAllMedia: true });
+    } catch {}
+    setBusyHistory(false);
+    refreshStats();
+  }, [busyHistory, refreshStats]);
+
+  const onDownloadMissing = useCallback(async () => {
+    if (busyMedia) return;
+    setBusyMedia(true);
+    setMediaProgress({ loaded: 0, total: 0, percent: 0 });
+    try {
+      const { downloadMissingMediaOnly } = require('../services/fullHistorySync');
+      await downloadMissingMediaOnly({
+        onProgress: (p) => {
+          if (aliveRef.current) setMediaProgress(p);
+        },
+      });
+    } catch {}
+    setBusyMedia(false);
+    refreshStats();
+  }, [busyMedia, refreshStats]);
+
+  if (Platform.OS === 'web') return null;
+
+  const msgsTotal = Number(stats?.msgsTotal || 0);
+  const mediaPending = Number(stats?.mediaPending || 0);
+
+  return (
+    <View style={{ marginTop: Spacing.sm }}>
+      <View style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: StyleSheet.hairlineWidth, paddingVertical: Spacing.sm }]}>
+        <View style={s.settingInfo}>
+          <Text style={[s.settingLabel, { color: colors.text }]}>
+            {t('settings.storage.msgsOnDevice') || 'Mensagens no celular'}
+          </Text>
+        </View>
+        <Text style={[s.settingLabel, { color: colors.textSecondary, fontVariant: ['tabular-nums'] }]}>
+          {msgsTotal.toLocaleString()}
+        </Text>
+      </View>
+      <View style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0, paddingVertical: Spacing.sm }]}>
+        <View style={s.settingInfo}>
+          <Text style={[s.settingLabel, { color: colors.text }]}>
+            {t('settings.storage.mediaMissing') || 'Mídias faltantes'}
+          </Text>
+        </View>
+        <Text style={[s.settingLabel, {
+          color: mediaPending > 0 ? colors.warning || '#f59e0b' : colors.textSecondary,
+          fontVariant: ['tabular-nums'],
+        }]}>
+          {mediaPending.toLocaleString()}
+        </Text>
+      </View>
+
+      <TouchableOpacity
+        onPress={onDownloadAll}
+        disabled={busyHistory}
+        style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0, marginTop: Spacing.sm, opacity: busyHistory ? 0.5 : 1 }]}
+        accessibilityRole="button"
+        accessibilityLabel={t('settings.storage.downloadAll')}
+      >
+        <View style={s.settingInfo}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            {busyHistory
+              ? <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: Spacing.sm }} />
+              : <IconRefresh size={18} color={colors.primary} style={{ marginRight: Spacing.sm }} />}
+            <Text style={[s.settingLabel, { color: colors.primary, fontWeight: '600' }]}>
+              {busyHistory
+                ? (historyProgress && historyProgress.convTotal
+                    ? `${t('settings.storage.downloadingMsgs') || 'Baixando histórico…'} ${historyProgress.convDone}/${historyProgress.convTotal}`
+                    : (t('settings.storage.downloadingMsgs') || 'Baixando histórico…'))
+                : (t('settings.storage.downloadAll') || 'Baixar histórico completo')}
+            </Text>
+          </View>
+        </View>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        onPress={onDownloadMissing}
+        disabled={busyMedia || mediaPending === 0}
+        style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0, paddingTop: 0, opacity: (busyMedia || mediaPending === 0) ? 0.5 : 1 }]}
+        accessibilityRole="button"
+        accessibilityLabel={t('settings.storage.downloadMedia')}
+      >
+        <View style={s.settingInfo}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            {busyMedia
+              ? <ActivityIndicator size="small" color={colors.textSecondary} style={{ marginRight: Spacing.sm }} />
+              : <IconRefresh size={18} color={colors.textSecondary} style={{ marginRight: Spacing.sm }} />}
+            <Text style={[s.settingLabel, { color: colors.textSecondary }]}>
+              {busyMedia
+                ? (mediaProgress && mediaProgress.total
+                    ? `${t('settings.storage.downloadingMedia') || 'Baixando mídias…'} ${mediaProgress.loaded}/${mediaProgress.total} (${mediaProgress.percent || 0}%)`
+                    : (t('settings.storage.downloadingMedia') || 'Baixando mídias…'))
+                : (t('settings.storage.downloadMedia') || 'Baixar mídias faltantes')}
+            </Text>
+          </View>
+        </View>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 function SettingsScreenInner() {
   const { colors, isDark, toggle, density, setDensity } = useTheme();
   const { t, language, changeLanguage } = useLanguage();
@@ -3009,6 +3172,14 @@ function SettingsScreenInner() {
                   </View>
                   <Text style={[s.settingLabel, { color: colors.textSecondary }]}>{fmtBytes(stats.totalBytes)}</Text>
                 </View>
+
+                {/* SQLite + media completeness block (#1240, 2026-05-20).
+                    Shows the user "Mensagens no celular: 12,345" and
+                    "Mídias faltantes: 78" with two CTAs to (a) re-trigger the
+                    full-history bootstrap or (b) just re-pull missing media.
+                    Counters come from services/db.getSyncStats() (SQLite
+                    truth, not just on-disk file pool). */}
+                <HistoryDownloadRow />
                 {/* Destructive action — confirm dialog before nuking. Reuses the
                     Empty-Trash / Delete-Account pattern: web uses window.confirm
                     (no native Alert), native uses the useConfirm() modal with

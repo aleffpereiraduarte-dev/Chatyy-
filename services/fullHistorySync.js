@@ -79,6 +79,16 @@ let _startedAt = 0;
 let _resumeWaiters = [];          // promises waiting for unpause
 let _silent = false;              // true once the bar has been shown once
                                   // (set per-process, seeded from sync_state)
+let _forceAllMedia = false;       // when true, media prefetch bypasses the
+                                  // per-bucket auto-DL gate (user explicitly
+                                  // pressed "Baixar tudo agora")
+let _lastProgress = {             // mirror of the last progress payload —
+  phase: 'idle',                  // exposed via getBootstrapProgress() so
+  convDone: 0,                    // late mounters (Settings → Storage)
+  convTotal: 0,                   // can render the current state without
+  msgsLoaded: 0,                  // waiting for the next emit.
+  mediaLoaded: 0,
+};
 
 // ─── Public ────────────────────────────────────────────────────────────────
 
@@ -88,14 +98,24 @@ let _silent = false;              // true once the bar has been shown once
  *   - web (no SQLite)
  *   - already running in this process
  *   - bootstrap key `chat_full_bootstrap:<email>` says 'done'
+ *
+ * `opts.force` (boolean) bypasses the gate so the user can re-trigger from
+ * Settings → Storage → "Baixar histórico completo". Also flips the
+ * media-policy override so EVERY media gets pulled to disk regardless of
+ * cellular gate, photos-on-wifi-only etc. — WhatsApp-grade restore.
  */
-export async function bootstrapFullHistoryOnce(apiCall, email) {
+export async function bootstrapFullHistoryOnce(apiCall, email, opts = {}) {
   if (Platform.OS === 'web') return { skipped: 'web' };
   if (!apiCall || !email) return { skipped: 'no_api_or_email' };
   if (_running) return { skipped: 'already_running' };
 
   const emailLc = email.toLowerCase();
   const gateKey = `chat_full_bootstrap:${emailLc}`;
+  const force = !!opts.force;
+  // Persist a "force-include media on cellular" flag for the duration of the
+  // loop so prefetchIncomingMessageMedia bypasses the per-bucket auto-DL
+  // gate. Cleared when the loop finishes (or aborts).
+  _forceAllMedia = force || !!opts.includeAllMedia;
   // Separate sentinel that flips the FIRST time we surface the bar on this
   // device. It survives even when the loop is interrupted (background, kill,
   // 30min timeout) so subsequent cold starts can finish the work silently.
@@ -104,8 +124,17 @@ export async function bootstrapFullHistoryOnce(apiCall, email) {
   // (logout / wipe history).
   const barShownKey = `chat_full_bar_shown:${emailLc}`;
   try {
-    const v = await localDb.getSyncState(gateKey);
-    if (v === 'done') return { skipped: 'already_done' };
+    if (!force) {
+      const v = await localDb.getSyncState(gateKey);
+      if (v === 'done') return { skipped: 'already_done' };
+    } else {
+      // Force path — wipe per-conv watermarks so we re-walk everything that
+      // hasn't synced yet AND every conv whose `chat_full_synced` was set
+      // when only newest-N were actually pulled. The per-page loop is still
+      // idempotent on cacheMessages (PG-side dedup), so re-pulling pages is
+      // cheap on re-runs.
+      try { await localDb.setSyncState(gateKey, 'started'); } catch {}
+    }
   } catch {}
 
   // Seed _silent for this run. If the bar was ever shown before on this
@@ -150,6 +179,7 @@ export async function bootstrapFullHistoryOnce(apiCall, email) {
     return { error: e?.message };
   } finally {
     _running = false;
+    _forceAllMedia = false;
     _teardownLifecycleHooks();
   }
 }
@@ -239,8 +269,13 @@ async function _runBootstrap(apiCall, opts = {}) {
     const convId = Number(conv?.id);
     if (!convId) { convDone++; continue; }
 
+    // Force mode (Settings "Baixar histórico completo" or first-launch prompt
+    // "Baixar agora") deliberately re-walks already-synced convs because the
+    // whole point is to fill missing media that earlier auto-DL skipped on
+    // cellular. Without this branch the loop would skip every conv on the
+    // 2nd run and the user's "Baixar tudo agora" tap would feel like a no-op.
     const alreadyDone = await localDb.getSyncState(`chat_full_synced:${convId}`);
-    if (alreadyDone === '1') { convDone++; emit('conv', { convDone, convTotal, currentConvId: convId, currentConvName: conv?.name }); continue; }
+    if (alreadyDone === '1' && !_forceAllMedia) { convDone++; emit('conv', { convDone, convTotal, currentConvId: convId, currentConvName: conv?.name }); continue; }
 
     emit('conv', {
       convDone, convTotal,
@@ -339,13 +374,35 @@ async function _drainConv(apiCall, convId) {
     // radio. Fire-and-forget — we don't await; the bootstrap loop moves
     // on while the downloads happen in the background pool.
     try {
-      const { prefetchIncomingMessageMedia } = require('./mediaCache');
+      const mc = require('./mediaCache');
+      const { prefetchIncomingMessageMedia, cacheMedia } = mc;
       for (const m of msgs) {
         if (!m) continue;
         const enriched = (m.conversation_id == null && convId != null)
           ? { ...m, conversation_id: convId }
           : m;
         try { prefetchIncomingMessageMedia?.(enriched); } catch {}
+        // Force path (#1238 follow-up): user pressed "Baixar tudo agora", so
+        // bypass the per-bucket auto-DL gate and ALSO push the file_url
+        // directly through cacheMedia({ force: true }). This catches buckets
+        // (video/document) that prefetchIncomingMessageMedia would otherwise
+        // skip on cellular under default policy. Idempotent — cacheMedia's
+        // inflight dedup ignores duplicates within the same conv page.
+        if (_forceAllMedia && cacheMedia) {
+          const url = m.file_url
+            || (m.type === 'gif' || m.type === 'sticker' ? m.content : null);
+          if (url && typeof url === 'string' && /^https?:\/\//.test(url)) {
+            try {
+              cacheMedia(url, {
+                force: true,
+                messageId: m.id,
+                conversationId: convId,
+                messageType: m.type,
+              }).catch(() => {});
+              _lastProgress.mediaLoaded += 1;
+            } catch {}
+          }
+        }
       }
     } catch {}
     // Voice-specific side hook (waveform peaks + audio-saved/ permanent cache
@@ -477,6 +534,13 @@ function _sleep(ms) {
 }
 
 function emit(phase, payload) {
+  // Mirror EVERY progress event into a module-level cache so screens that
+  // mount after the loop started (Settings → Storage opens while a bootstrap
+  // is mid-flight) can paint the current state synchronously via
+  // getBootstrapProgress() instead of waiting for the next event.
+  try {
+    _lastProgress = { ..._lastProgress, phase, ...(payload || {}) };
+  } catch {}
   // #1200: once the user has seen the histórico bar once on this device, all
   // subsequent runs are silent. The bootstrap still chips away at remaining
   // conversations on each launch — we just don't surface it. This matches
@@ -485,4 +549,131 @@ function emit(phase, payload) {
   try {
     mailWs?._emit?.('chat_bootstrap_progress', { phase, ...payload });
   } catch {}
+}
+
+// ─── Public introspection / manual triggers ───────────────────────────────
+
+/**
+ * Returns the current bootstrap state without starting one.
+ *   { gate: 'done'|'started'|'pending'|null, running, lastProgress }
+ * Cheap — single sync_state lookup. Used by Settings → Storage to render
+ * "Histórico completo no celular" / "Faltam X mensagens" labels.
+ */
+export async function getBootstrapStatus(email) {
+  if (Platform.OS === 'web' || !email) {
+    return { gate: null, running: _running, lastProgress: _lastProgress };
+  }
+  let gate = null;
+  try {
+    gate = await localDb.getSyncState(`chat_full_bootstrap:${email.toLowerCase()}`);
+  } catch {}
+  return { gate: gate || null, running: _running, lastProgress: _lastProgress };
+}
+
+/**
+ * Snapshot of the most-recent progress payload (sync). Used by Settings to
+ * paint the progress card without subscribing to the WS bus.
+ */
+export function getBootstrapProgress() {
+  return { ..._lastProgress, running: _running };
+}
+
+/**
+ * Heuristic — would a fresh bootstrap actually do work? Compares local SQLite
+ * counts against a cheap server-side `chat_inventory` call. Returns true if
+ * server has more conv-or-msg than the device. Used by login.js to decide
+ * whether to surface the "Baixar histórico" modal on a fresh install.
+ */
+export async function isBootstrapNeeded(apiCall, email) {
+  if (Platform.OS === 'web' || !apiCall || !email) return false;
+  try {
+    const status = await getBootstrapStatus(email);
+    // Never run? definitely needed.
+    if (!status.gate) return true;
+    // Done already and device has data — skip.
+    if (status.gate === 'done') {
+      try {
+        const dbMod = require('./db');
+        const stats = await dbMod.getSyncStats?.();
+        if (stats && stats.msgsTotal > 0) return false;
+      } catch {}
+    }
+    // Pending / started or empty DB — ask backend.
+    const r = await apiCall('chat_inventory', {});
+    const convs = r?.data?.conversations || r?.conversations || [];
+    let serverMsgs = 0;
+    for (const c of convs) serverMsgs += Number(c?.count || 0);
+    let localMsgs = 0;
+    try {
+      const dbMod = require('./db');
+      const stats = await dbMod.getSyncStats?.();
+      localMsgs = Number(stats?.msgsTotal || 0);
+    } catch {}
+    // Gap threshold: 50+ msg delta means the user is clearly missing
+    // history. <50 is noise (a few WS msgs in flight, etc.) — don't pester.
+    return Math.max(0, serverMsgs - localMsgs) >= 50;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Convenience wrapper for manual UI triggers (Settings, restore prompt).
+ * Always runs with force=true so the gate is bypassed AND media policy is
+ * overridden (every photo/video/audio/doc gets pulled).
+ */
+export function forceFullHistoryDownload(apiCall, email, opts = {}) {
+  return bootstrapFullHistoryOnce(apiCall, email, { ...opts, force: true });
+}
+
+/**
+ * "Baixar só mídias faltantes" — secondary action in Settings → Storage.
+ * Walks the local SQLite messages table looking for rows with file_url but
+ * no local_path, and re-queues them through cacheMedia({ force: true }).
+ * Doesn't touch the message bootstrap (that's already done).
+ */
+export async function downloadMissingMediaOnly({ onProgress } = {}) {
+  if (Platform.OS === 'web') return { skipped: 'web', loaded: 0, total: 0 };
+  try {
+    const dbMod = require('./db');
+    const mc = require('./mediaCache');
+    const rows = (await dbMod.getMissingMediaMessages?.(2000)) || [];
+    const total = rows.length;
+    if (total === 0) {
+      try { onProgress?.({ loaded: 0, total: 0, percent: 100 }); } catch {}
+      return { loaded: 0, total: 0 };
+    }
+    let loaded = 0;
+    // 3-wide pool so we don't saturate the radio. cacheMedia has its own
+    // inflight dedup so re-running this is safe.
+    const CONCURRENCY = 3;
+    let cursor = 0;
+    async function worker() {
+      while (cursor < rows.length) {
+        const i = cursor++;
+        const m = rows[i];
+        const url = m.file_url
+          || ((m.type === 'gif' || m.type === 'sticker') ? m.content : null);
+        if (!url || !/^https?:\/\//.test(url)) {
+          loaded++;
+          try { onProgress?.({ loaded, total, percent: Math.floor((loaded / total) * 100) }); } catch {}
+          continue;
+        }
+        try {
+          await mc.cacheMedia(url, {
+            force: true,
+            messageId: m.id,
+            conversationId: m.conversation_id,
+            messageType: m.type,
+          });
+        } catch {}
+        loaded++;
+        try { onProgress?.({ loaded, total, percent: Math.floor((loaded / total) * 100) }); } catch {}
+      }
+    }
+    await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+    return { loaded, total };
+  } catch (e) {
+    return { error: e?.message };
+  }
 }

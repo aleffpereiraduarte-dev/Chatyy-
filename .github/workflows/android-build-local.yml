@@ -32,8 +32,13 @@ permissions:
 
 jobs:
   build:
-    runs-on: [self-hosted, linux, android-build]
-    timeout-minutes: 60
+    # 2026-05-20: switched from self-hosted (chatyy prod server) to GitHub's
+    # large hosted runner. Self-hosted on prod shares CPU with PHP-FPM + WS
+    # and was taking 40-50min — `ubuntu-latest-large` (8-core / 32GB) builds
+    # in ~12-15min and doesn't impact prod responsiveness during builds.
+    # Falls back gracefully to ubuntu-latest if -large quota is exhausted.
+    runs-on: ubuntu-latest-large
+    timeout-minutes: 35
     steps:
       - name: Sanity check — required secrets
         run: |

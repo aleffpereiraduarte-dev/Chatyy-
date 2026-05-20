@@ -20,6 +20,7 @@ import {
 import { HelpModal, PrivacyModal, TermsModal } from '../components/LoginModals';
 import SignupIntro from '../components/SignupIntro';
 import RestoreBackupPrompt from '../components/RestoreBackupPrompt';
+import RestoreHistoryPrompt from '../components/RestoreHistoryPrompt';
 import { LANGUAGES } from '../i18n';
 import * as api from '../services/api';
 import { getDeviceId as getE2eDeviceId, getDevicePublicKey as getE2eDevicePublicKey } from '../services/e2e';
@@ -113,7 +114,35 @@ export default function LoginScreen() {
     const target = postLoginTarget || defaultTarget(isKids);
     pendingNavRef.current = { target };
 
-    const doNav = () => {
+    // Maybe offer the full-history download prompt BEFORE navigating away. Two
+    // gates: (a) user not dismissed the offer this install via
+    // @chatyy_skip_history (separate from @chatyy_skip_restore so the CYB2
+    // backup prompt and the full-history prompt have independent never-show
+    // toggles), (b) services/fullHistorySync.isBootstrapNeeded() returns true
+    // (i.e. local SQLite is materially short of what the server has).
+    const maybeShowHistoryPromptThenNav = async (emailLc) => {
+      if (Platform.OS === 'web') { return false; }
+      try {
+        const skip = await AsyncStorage.getItem('@chatyy_skip_history');
+        if (skip === '1') return false;
+        const api = require('../services/api');
+        const { isBootstrapNeeded } = require('../services/fullHistorySync');
+        const needs = await isBootstrapNeeded(api.apiCall, emailLc);
+        if (!needs) return false;
+        setHistoryPromptEmail(emailLc);
+        setShowHistoryPrompt(true);
+        return true;
+      } catch { return false; }
+    };
+
+    const doNav = async () => {
+      // Try the history prompt first — if it pops, we DON'T nav yet (the
+      // prompt's onClose will resume nav). If it doesn't pop, proceed.
+      const emailLc = (accountEmail || '').toLowerCase().trim();
+      if (emailLc) {
+        const shown = await maybeShowHistoryPromptThenNav(emailLc);
+        if (shown) return;
+      }
       setTimeout(() => {
         if (mountedRef.current) router.replace(target);
       }, 100);
@@ -543,6 +572,13 @@ export default function LoginScreen() {
   // Web is opt-out (the native module is iOS/Android only).
   const [showRestorePrompt, setShowRestorePrompt] = useState(false);
   const [restoreBackups, setRestoreBackups] = useState([]);
+  // Full-history download prompt (#1240 2026-05-20) — fires AFTER the backup
+  // prompt path. Different from RestoreBackupPrompt: that one decrypts a
+  // .CYB2 blob from iCloud/Drive. This one walks chat_messages page by page
+  // and pulls EVERY old text + media into the local SQLite store, so the
+  // user can re-open the app offline tomorrow and see all 5-year-old photos.
+  const [showHistoryPrompt, setShowHistoryPrompt] = useState(false);
+  const [historyPromptEmail, setHistoryPromptEmail] = useState('');
   const pendingNavRef = useRef(null); // { target: '/inbox' | '/chat' } to run after the prompt closes
   // Focus ring animations (native — web uses CSS box-shadow transition).
   // Each input row gets its own ring opacity 0→1 in 140ms when focused.
@@ -2728,6 +2764,30 @@ export default function LoginScreen() {
         backups={restoreBackups}
         onClose={handleRestorePromptClose}
         onRestored={() => { /* no-op — onClose still fires after the user taps "Pronto" and that handles navigation */ }}
+      />
+
+      {/* Full-history download prompt (#1240, 2026-05-20). Fires only when
+          no cloud/server CYB2 backup was found AND services/fullHistorySync
+          says the local DB is materially shorter than what the server has.
+          Tap "Baixar agora" runs forceFullHistoryDownload() with the
+          includeAllMedia override; "Mais tarde" persists @chatyy_skip_history
+          so we don't pester again. */}
+      <RestoreHistoryPrompt
+        visible={showHistoryPrompt}
+        email={historyPromptEmail}
+        onClose={() => {
+          setShowHistoryPrompt(false);
+          // Persist skip so a future cold-start doesn't pop the modal again.
+          // (User can still re-trigger from Settings → Storage.)
+          try { AsyncStorage.setItem('@chatyy_skip_history', '1').catch(() => {}); } catch {}
+          const pending = pendingNavRef.current;
+          pendingNavRef.current = null;
+          if (pending?.target) {
+            setTimeout(() => {
+              if (mountedRef.current) router.replace(pending.target);
+            }, 100);
+          }
+        }}
       />
 
       {/* Success overlay — pops a big check after auth, holds for ~440ms,
