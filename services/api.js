@@ -2678,16 +2678,17 @@ export async function chatConversations(search = '', includeArchived = false) {
                 }
               }
             } catch {}
-            // Wake failed or threw — show the banner so the user can retry.
-            try { globalThis.__chatyy_phone_offline = true; } catch {}
-            try {
-              const { webGetConversations } = require('./localDb');
-              const cached = await webGetConversations();
-              if (cached && cached.length > 0) {
-                return { success: true, data: { conversations: cached }, _stale: true, _autoWakeTried: attemptedWake };
-              }
-            } catch {}
-            // Cache miss too — fall through to REST so the screen isn't blank.
+            // [#1220 2026-05-20] WhatsApp parity fix — DON'T short-circuit to
+            // IndexedDB cache when relay fails. PG is the canonical source on
+            // Chatyy (server-authoritative, unlike WhatsApp's phone-first
+            // model). REST below reads PG directly and returns fresh data,
+            // so falling through avoids showing the misleading "celular
+            // offline" banner while the user can in fact see all conversations
+            // live. The banner is suppressed here — only the navigator.onLine
+            // OfflineNotice should fire when the BROWSER itself is offline.
+            try { globalThis.__chatyy_phone_offline = false; } catch {}
+            // Intentional fall-through: relay was a perf optimization, not
+            // a hard requirement. REST/Rust block below handles the request.
           }
           // Unknown relay error — silently degrade to REST.
         }
@@ -2764,21 +2765,12 @@ export async function chatMessages(conversationId, limit = 20, beforeId = null, 
         } catch (e) {
           const code = e?.code || '';
           if (code === 'phone_offline' || code === 'relay_timeout' || code === 'no_paired_device' || code === 'request_timeout') {
-            try { globalThis.__chatyy_phone_offline = true; } catch {}
-            try {
-              const { webGetMessages } = require('./localDb');
-              const cached = await webGetMessages(conversationId);
-              if (cached && cached.length > 0) {
-                // Apply limit/before_id locally so the consumer's pagination
-                // logic doesn't break. webGetMessages returns ascending; the
-                // REST shape mirrors that.
-                let rows = cached;
-                if (beforeId) rows = rows.filter(m => Number(m.id) < Number(beforeId));
-                if (limit && rows.length > limit) rows = rows.slice(-limit);
-                return { success: true, data: { messages: rows, conversation_id: conversationId }, _stale: true };
-              }
-            } catch {}
-            // Cache miss — fall through to PHP path.
+            // [#1220 2026-05-20] Don't surface banner — PHP/Rust path below
+            // reads PG directly and returns fresh data. The relay was a perf
+            // optimization, not a hard dep. Falling through avoids the
+            // misleading "celular offline" banner.
+            try { globalThis.__chatyy_phone_offline = false; } catch {}
+            // Intentional fall-through to PHP/Rust path.
           }
           // Other errors — silently fall through.
         }
@@ -3996,8 +3988,8 @@ export async function chatStarredMessages() {
         } catch (e) {
           const code = e?.code || '';
           if (code === 'phone_offline' || code === 'relay_timeout' || code === 'no_paired_device' || code === 'request_timeout') {
-            try { globalThis.__chatyy_phone_offline = true; } catch {}
-            // No IDB cache for starred yet — fall through to REST.
+            // [#1220 2026-05-20] No banner — REST below serves fresh PG data.
+            try { globalThis.__chatyy_phone_offline = false; } catch {}
           }
         }
       }
@@ -5631,9 +5623,8 @@ export async function chatSearchMessages(conversationId, query) {
         } catch (e) {
           const code = e?.code || '';
           if (code === 'phone_offline' || code === 'relay_timeout' || code === 'no_paired_device' || code === 'request_timeout') {
-            try { globalThis.__chatyy_phone_offline = true; } catch {}
-            // Search has no IDB equivalent — fall back to REST so user
-            // still gets a (possibly slower) result instead of empty.
+            // [#1220 2026-05-20] No banner — REST below serves fresh results.
+            try { globalThis.__chatyy_phone_offline = false; } catch {}
           }
         }
       }
