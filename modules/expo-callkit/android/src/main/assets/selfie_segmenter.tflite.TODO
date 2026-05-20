@@ -1,0 +1,26 @@
+TODO: REPLACE THIS PLACEHOLDER WITH THE REAL MEDIAPIPE MODEL
+
+This directory should contain the file `selfie_segmenter.tflite` (~250 KB, float16)
+which is loaded by `expo.modules.callkit.video.BackgroundProcessor` at runtime to
+perform real per-pixel person segmentation for the video-call background blur /
+virtual-background feature (Wave 17 gap F3).
+
+DOWNLOAD URL (Google AI Hub — public, Apache 2):
+  https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite
+
+INSTALL STEP (one-time per clone, must be done manually — cannot be automated
+via package.json or gradle because we don't want to fetch a 250 KB binary on
+every npm install):
+
+  curl -L -o modules/expo-callkit/android/src/main/assets/selfie_segmenter.tflite \
+    https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite
+
+  # Then DELETE this .TODO file:
+  rm modules/expo-callkit/android/src/main/assets/selfie_segmenter.tflite.TODO
+
+After this, rebuild the Android app (scripts/ship.sh android "msg"). Without
+this asset, BackgroundProcessor.ensureSegmenter() logs the failure and falls
+back to a full-frame blur — UI still works but person is not kept sharp.
+
+The same model is also needed on iOS — see TODO at top of
+modules/expo-callkit/ios/BackgroundProcessor.swift for the Xcode steps.

@@ -86,40 +86,53 @@ class BackgroundProcessor(private val context: Context) {
   private var cachedWallpaper: Bitmap? = null
   private var cachedWallpaperKey: String? = null
 
-  /** MediaPipe SelfieSegmenter handle, loaded via reflection. Null when unavailable. */
-  @Volatile private var segmenter: Any? = null
-  @Volatile var available: Boolean = false
+  /** MediaPipe SelfieSegmenter handle. Lazy so missing asset doesn't crash init. */
+  @Volatile private var segmenter: ImageSegmenter? = null
+  @Volatile private var segmenterInitTried: Boolean = false
+  @Volatile var available: Boolean = true
     private set
 
   init {
-    available = tryLoadSegmenter()
-    if (!available) {
-      Log.w(TAG, "MediaPipe SelfieSegmenter unavailable — background effects will be skipped")
-    } else {
-      Log.i(TAG, "MediaPipe SelfieSegmenter loaded")
-    }
+    // We do NOT eagerly instantiate the segmenter — the AAR is statically linked
+    // (see build.gradle: `implementation 'com.google.mediapipe:tasks-vision:0.10.14'`)
+    // so the class is always on the classpath. We build the actual ImageSegmenter
+    // instance lazily on the first frame inside the LK video thread, which is what
+    // MediaPipe's thread-affinity rules expect.
+    Log.i(TAG, "MediaPipe BackgroundProcessor ready (segmenter will lazy-init on first frame)")
   }
 
   /**
-   * Try to load the MediaPipe Tasks Vision SelfieSegmenter via reflection so a missing
-   * dependency doesn't crash the app at startup.
+   * Lazy ImageSegmenter init. Called on the first processFrame call so the segmenter
+   * runs on the LK video thread. Returns null if the .tflite asset is missing or the
+   * options builder rejects something — in either case we fall back to the full-frame
+   * blur path below.
    *
-   * Real path on the device:
-   *   com.google.mediapipe.tasks.vision.imagesegmenter.ImageSegmenter
-   *     .createFromOptions(context, options)
-   * with options pointing at the selfie_segmenter.tflite asset packaged under
-   * src/main/assets/mediapipe/.
+   * Idempotent: `segmenterInitTried` ensures we only try once per process lifetime,
+   * so a missing asset doesn't spam logs every frame at 30 fps.
    */
-  private fun tryLoadSegmenter(): Boolean {
+  @Synchronized
+  private fun ensureSegmenter(): ImageSegmenter? {
+    val cur = segmenter
+    if (cur != null) return cur
+    if (segmenterInitTried) return null
+    segmenterInitTried = true
     return try {
-      val cls = Class.forName("com.google.mediapipe.tasks.vision.imagesegmenter.ImageSegmenter")
-      // We don't actually instantiate here — the segmenter has thread-affinity rules and is
-      // built on the first frame inside the LK video thread. Loading the class proves the
-      // dep is on the classpath.
-      cls.name.isNotEmpty()
+      val base = BaseOptions.builder()
+        .setModelAssetPath("selfie_segmenter.tflite")
+        .build()
+      val opts = ImageSegmenter.ImageSegmenterOptions.builder()
+        .setBaseOptions(base)
+        .setOutputCategoryMask(true)
+        .setOutputConfidenceMasks(false)
+        .setRunningMode(RunningMode.VIDEO)
+        .build()
+      val seg = ImageSegmenter.createFromOptions(context, opts)
+      segmenter = seg
+      Log.i(TAG, "MediaPipe SelfieSegmenter instantiated")
+      seg
     } catch (t: Throwable) {
-      Log.w(TAG, "MediaPipe class load failed: ${t.message}")
-      false
+      Log.w(TAG, "MediaPipe segmenter init failed (selfie_segmenter.tflite missing from assets?): ${t.message}")
+      null
     }
   }
 
@@ -131,54 +144,79 @@ class BackgroundProcessor(private val context: Context) {
    * and return the input directly so the LK pipeline keeps flowing without us doing work.
    */
   fun processFrame(input: Bitmap): Bitmap {
-    if (mode == Mode.OFF || !available) return input
+    if (mode == Mode.OFF) return input
 
     frameCounter++
     if (thermalThrottled && (frameCounter and 1L) == 0L) {
       return input
     }
 
-    val mask = runSegmentation(input) ?: return input
+    // Real path: run MediaPipe SelfieSegmenter. If it returns a mask we composite
+    // foreground (person) over a blurred background. If not (asset missing, or
+    // segment call threw) we fall back to a full-frame blur — degraded but the
+    // UI toggle still does *something*.
+    val mask = runSegmentation(input)
+    if (mask != null) {
+      return when (mode) {
+        Mode.OFF -> input
+        Mode.BLUR_LOW -> compositeBlur(input, mask, radius = 8f)
+        Mode.BLUR_MEDIUM -> compositeBlur(input, mask, radius = 16f)
+        Mode.BLUR_HIGH -> compositeBlur(input, mask, radius = 28f)
+        Mode.IMAGE -> compositeImage(input, mask)
+      }
+    }
 
+    // Fallback: full-frame blur (no person sharpness). Triggers when the
+    // .tflite asset is missing OR segment() threw on this frame.
     return when (mode) {
       Mode.OFF -> input
-      Mode.BLUR_LOW -> compositeBlur(input, mask, radius = 8f)
-      Mode.BLUR_MEDIUM -> compositeBlur(input, mask, radius = 16f)
-      Mode.BLUR_HIGH -> compositeBlur(input, mask, radius = 28f)
-      Mode.IMAGE -> compositeImage(input, mask)
+      Mode.BLUR_LOW -> fastBoxBlur(input, 8)
+      Mode.BLUR_MEDIUM -> fastBoxBlur(input, 16)
+      Mode.BLUR_HIGH -> fastBoxBlur(input, 28)
+      Mode.IMAGE -> {
+        // No mask → can't isolate the person. Just paint the wallpaper full-frame
+        // so the user sees the chosen background (better than a half-broken effect).
+        val w = input.width; val h = input.height
+        val wp = loadWallpaper(imageAsset ?: BUILTIN_WALLPAPERS[0], w, h)
+        wp ?: fastBoxBlur(input, 28)
+      }
     }
   }
 
   /**
-   * Run the MediaPipe segmenter on the input. Returns a single-channel bitmap where
-   * non-zero pixels are foreground. Reflection so a missing dep degrades cleanly.
+   * Run the MediaPipe segmenter on the input. Returns a single-channel ALPHA_8 bitmap
+   * where pixel value > 0 means foreground (person). Returns null when the segmenter
+   * is unavailable (missing .tflite asset) or the segment call throws.
    */
   private fun runSegmentation(input: Bitmap): Bitmap? {
+    val seg = ensureSegmenter() ?: return null
     return try {
-      // Cheap fallback: the actual MediaPipe call requires an ImageSegmenter instance + a
-      // MPImage wrapper. We do the dispatch here when the dep is present — see the
-      // documented call sequence in the kdoc above. The reference impl follows:
-      //
-      //   val segmenter = ImageSegmenter.createFromOptions(context, options)
-      //   val mpImage = BitmapImageBuilder(input).build()
-      //   val result = segmenter.segment(mpImage)
-      //   val maskTensor = result.categoryMask().get()
-      //   // … convert MPImage → Bitmap mask …
-      //
-      // Until we have a real device to validate the exact MPImage→Bitmap path we return a
-      // soft centre-disc mask so the rest of the pipeline (blur compositor) can be wired
-      // up and visually verified.
-      val w = input.width
-      val h = input.height
-      val mask = Bitmap.createBitmap(w, h, Bitmap.Config.ALPHA_8)
-      val canvas = Canvas(mask)
-      val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(255, 255, 255, 255) }
-      // Approximate foreground oval (head + shoulders) at frame center. Real segmenter
-      // produces per-pixel mask; this is a stand-in until MediaPipe runtime is verified.
-      canvas.drawOval(w * 0.20f, h * 0.18f, w * 0.80f, h * 1.0f, paint)
-      mask
+      val mpImage = BitmapImageBuilder(input).build()
+      // VIDEO mode requires a monotonically-increasing timestamp (ms).
+      val timestampMs = frameCounter * 33L // ~30 fps → 33 ms/frame
+      val result = seg.segmentForVideo(mpImage, timestampMs) ?: return null
+      val catMaskOpt = result.categoryMask()
+      if (!catMaskOpt.isPresent) return null
+      val mpMask = catMaskOpt.get()
+      val w = mpMask.width
+      val h = mpMask.height
+      // MPImage with IMAGE_FORMAT_ALPHA backs onto a single-channel ByteBuffer.
+      // selfie_segmenter category mask: 0 = background, 255 = foreground.
+      val byteBuffer: ByteBuffer = com.google.mediapipe.framework.image.ByteBufferExtractor
+        .extract(mpMask)
+      val maskBytes = ByteArray(w * h)
+      byteBuffer.rewind()
+      byteBuffer.get(maskBytes)
+      val out = Bitmap.createBitmap(w, h, Bitmap.Config.ALPHA_8)
+      val copy = ByteBuffer.allocateDirect(maskBytes.size)
+      copy.put(maskBytes)
+      copy.rewind()
+      out.copyPixelsFromBuffer(copy)
+      // Scale mask to input dimensions if segmenter downsampled.
+      if (w == input.width && h == input.height) out
+      else Bitmap.createScaledBitmap(out, input.width, input.height, true)
     } catch (t: Throwable) {
-      Log.w(TAG, "segmentation failed: ${t.message}")
+      Log.w(TAG, "segmentation frame failed: ${t.message}")
       null
     }
   }

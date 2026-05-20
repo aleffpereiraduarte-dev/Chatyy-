@@ -112,13 +112,21 @@ dependencies {
   // Android's built-in `android.media.audiofx.NoiseSuppressor` AudioEffect
   // anyway — switching to that is the right long-term move (see TaskCreate).
 
-  // [2026-05-17 MediaPipe background blur / virtual background] Google
-  // MediaPipe Tasks Vision (Apache 2). Provides SelfieSegmentation that we
-  // wrap in expo.modules.callkit.video.BackgroundProcessor. The .tflite
-  // model itself lives under src/main/assets/mediapipe/ (see the manual
-  // setup notes in MEMORY) and is fetched at first use via
-  // ImageSegmenter.createFromOptions(...). Reflection-loaded too so a build
-  // without the asset still ships, just with the toggles disabled.
+  // [2026-05-17 MediaPipe background blur / virtual background, hardened
+  // 2026-05-20 gap F3] Google MediaPipe Tasks Vision (Apache 2). Provides
+  // SelfieSegmentation that we wrap in expo.modules.callkit.video.BackgroundProcessor.
+  //
+  // As of gap F3 (2026-05-20) BackgroundProcessor uses DIRECT imports
+  // (com.google.mediapipe.tasks.vision.imagesegmenter.ImageSegmenter et al)
+  // instead of reflection — the AAR is always on the classpath because of
+  // this `implementation` line, so reflection just added failure modes.
+  //
+  // The .tflite model itself ships separately at
+  //   src/main/assets/selfie_segmenter.tflite
+  // and must be downloaded manually (see selfie_segmenter.tflite.TODO in
+  // that directory). Without the model, ImageSegmenter.createFromOptions()
+  // throws at first frame and BackgroundProcessor falls back to a full-frame
+  // blur — UI still works in degraded mode.
   implementation 'com.google.mediapipe:tasks-vision:0.10.14'
 
   // [2026-05-17 Stage #994] Jetpack Compose stack for CallActivity /
