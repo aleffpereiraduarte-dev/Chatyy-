@@ -3635,6 +3635,7 @@ export default {
   'chatConv.replyPrivatelyFailed': 'Couldn’t open the conversation.',
   'chatConv.skipBack15': 'Skip back 15 seconds',
   'chatConv.skipForward15': 'Skip forward 15 seconds',
+  'chatConv.audioLoadFailed': 'Could not play this audio. Try again.',
   'chatConv.selectQuote': 'Select the snippet to quote',
   'chatConv.selectQuoteHint': 'Long-press to select a portion. You can also paste it below.',
   'chatConv.quoteText': 'Quoted snippet (max 240 chars)',
@@ -6352,6 +6353,7 @@ export default {
   'media.fileUnavailable': 'File unavailable',
   'media.fileUnavailableHint': 'Couldn’t load. Try again in a few seconds.',
   'media.offlineCacheMiss': 'No internet — this media hasn’t been downloaded yet.',
+  'media.offlineTitle': 'No internet',
 
   'status.saveToHighlight': 'Save to highlights',
   'status.highlights': 'Highlights',

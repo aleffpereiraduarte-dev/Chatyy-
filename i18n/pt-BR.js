@@ -3684,6 +3684,7 @@ export default {
   'chatConv.replyPrivatelyFailed': 'Não foi possível abrir a conversa.',
   'chatConv.skipBack15': 'Voltar 15 segundos',
   'chatConv.skipForward15': 'Avançar 15 segundos',
+  'chatConv.audioLoadFailed': 'Não foi possível tocar este áudio. Tente de novo.',
   'chatConv.selectQuote': 'Selecione o trecho a citar',
   'chatConv.selectQuoteHint': 'Toque e segure pra selecionar o trecho. Você pode também copiar e colar abaixo.',
   'chatConv.quoteText': 'Trecho a citar (máx 240 chars)',
@@ -6416,6 +6417,10 @@ export default {
   // viewed it while online). Distinct from cacheEvicted (was cached, then
   // dropped by LRU) — this one means "not yet cached, no way to fetch now".
   'media.offlineCacheMiss': 'Sem internet — esta mídia ainda não foi baixada.',
+  // Header for the offline-but-not-cached state (paired with offlineCacheMiss
+  // body). Replaces the misleading "Mídia removida do cache" header that fired
+  // for every Image onError including transient network failures.
+  'media.offlineTitle': 'Sem internet',
 
   // Highlights (Stories permanentes salvos no perfil)
   'status.saveToHighlight': 'Salvar em destaques',

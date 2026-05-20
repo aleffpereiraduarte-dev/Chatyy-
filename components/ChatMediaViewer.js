@@ -306,20 +306,39 @@ function ImageViewer({ url, messageId, fileSize, createdAt, t }) {
       {loading && !imageError && <ActivityIndicator size="large" color="#fff" style={s.loader} />}
       {imageError && (
         <View style={[s.loader, { alignItems: 'center', justifyContent: 'center', padding: 24 }]}>
-          {/* Mídia removida do cache — copy pivots based on whether we have a
-              messageId (server can try a redownload) or not (we can only
-              suggest a manual retry). After a redownload failure we either
-              say "deleted" (410) or "unavailable" (any other status). */}
-          <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginBottom: 8 }}>
-            {redownloadFailed?.deleted
-              ? (t?.('media.messageDeleted') || 'Mensagem apagada')
-              : (t?.('media.cacheEvicted') || 'Mídia removida do cache')}
-          </Text>
-          <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, textAlign: 'center', marginBottom: 4 }} numberOfLines={3}>
-            {redownloadFailed?.deleted
-              ? (t?.('media.messageDeletedHint') || 'O remetente apagou essa mensagem.')
-              : (imageError || '')}
-          </Text>
+          {/* Header copy pivots on the failure type:
+              - redownloadFailed.deleted (410)        → "Mensagem apagada"
+              - imageError === offline cache-miss     → "Sem internet" (NOT
+                "removida do cache" — the photo was never downloaded on this
+                device; calling it "removed" misleads the user into thinking
+                we deleted their photo).
+              - everything else (transient / 404)     → "Mídia indisponível"
+                (also more accurate than "removida do cache" — the message
+                file may be gone from the server, not from our cache). */}
+          {(() => {
+            const offlineCopy = t?.('media.offlineCacheMiss') || 'Sem internet — esta mídia ainda não foi baixada.';
+            const isOffline = imageError === offlineCopy;
+            let header;
+            if (redownloadFailed?.deleted) {
+              header = t?.('media.messageDeleted') || 'Mensagem apagada';
+            } else if (isOffline) {
+              header = t?.('media.offlineTitle') || 'Sem internet';
+            } else {
+              header = t?.('media.fileUnavailable') || 'Mídia indisponível';
+            }
+            return (
+              <>
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginBottom: 8 }}>
+                  {header}
+                </Text>
+                <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, textAlign: 'center', marginBottom: 4 }} numberOfLines={3}>
+                  {redownloadFailed?.deleted
+                    ? (t?.('media.messageDeletedHint') || 'O remetente apagou essa mensagem.')
+                    : (imageError || '')}
+                </Text>
+              </>
+            );
+          })()}
           {/* "Last downloaded X ago" — only shown when we know the createdAt */}
           {!!createdAt && (
             <Text style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginBottom: 16 }}>
@@ -1283,7 +1302,23 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
     if (!it?.fileUrl) return;
     // Skip if already a local URI (outbox / just-saved).
     if (it.fileUrl.startsWith('file://') || it.fileUrl.startsWith('content://')) return;
-    const absolute = it.fileUrl.startsWith('http') ? it.fileUrl : `https://chatyy.com.br${it.fileUrl}`;
+    // CRITICAL (2026-05-19 #2): use api.getMediaUrl so the cache-write key
+    // matches the cache-read key in getFullUrl(). Previously hardcoded
+    // `https://chatyy.com.br${url}` which hashed under a DIFFERENT key
+    // (different hostname) than the Image source above (which is
+    // media.chatyy.com.br via getMediaUrl). Result: this useEffect was
+    // downloading a SECOND copy of every photo under a key that nobody else
+    // ever looks up, while the cache lookup in getFullUrl kept missing → user
+    // saw "Mídia removida do cache" even though we technically had the file
+    // on disk under the wrong key.
+    let absolute;
+    try {
+      const _api = require('../services/api');
+      absolute = _api?.getMediaUrl ? _api.getMediaUrl(it.fileUrl)
+        : (it.fileUrl.startsWith('http') ? it.fileUrl : `https://chatyy.com.br${it.fileUrl}`);
+    } catch {
+      absolute = it.fileUrl.startsWith('http') ? it.fileUrl : `https://chatyy.com.br${it.fileUrl}`;
+    }
     try {
       const { getLocalUriIfCached, cacheMedia } = require('../services/mediaCache');
       if (getLocalUriIfCached(absolute)) return; // already cached

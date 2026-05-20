@@ -3635,6 +3635,7 @@ export default {
   'chatConv.replyPrivatelyFailed': 'No se pudo abrir la conversación.',
   'chatConv.skipBack15': 'Retroceder 15 segundos',
   'chatConv.skipForward15': 'Avanzar 15 segundos',
+  'chatConv.audioLoadFailed': 'No se pudo reproducir este audio. Intenta de nuevo.',
   'chatConv.selectQuote': 'Selecciona el fragmento a citar',
   'chatConv.selectQuoteHint': 'Mantén presionado para seleccionar un fragmento. También puedes pegarlo abajo.',
   'chatConv.quoteText': 'Fragmento (máx 240 caracteres)',
@@ -6353,6 +6354,7 @@ export default {
   'media.fileUnavailable': 'Archivo no disponible',
   'media.fileUnavailableHint': 'No se pudo cargar. Intenta de nuevo en unos segundos.',
   'media.offlineCacheMiss': 'Sin internet — este medio aún no se ha descargado.',
+  'media.offlineTitle': 'Sin internet',
 
   'status.saveToHighlight': 'Guardar en destacados',
   'status.highlights': 'Destacados',

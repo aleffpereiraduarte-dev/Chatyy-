@@ -2635,23 +2635,33 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
     let cancelled = false;
 
     if (url) {
-      // Start caching in background
+      // Start caching in background. CRITICAL: we ONLY commit cachedUriRef
+      // when getCachedAudioUri returns a real local URI (file://). When the
+      // device is offline + the file hasn't been pre-fetched yet,
+      // getCachedAudioUri falls back to the remote https URL — caching that
+      // into cachedUriRef would make every subsequent tap reuse the dead
+      // remote URL, and the user would see silent failure offline. By only
+      // storing file:// URIs here, an offline tap re-enters resolvePlayUri,
+      // which surfaces the proper offline error instead of opening a
+      // doomed network stream. WhatsApp-grade: cached audio plays even
+      // with no network, uncached audio fails LOUDLY (not silently).
       getCachedAudioUri(url, messageId, (p) => {
         if (!cancelled) setCacheProgress(p);
       }).then(localUri => {
-        if (!cancelled && localUri) {
-          cachedUriRef.current = localUri;
-          // On web: preload the cached/blob URL into an Audio element
-          if (Platform.OS === 'web') {
-            try {
-              const audio = new window.Audio();
-              audio.preload = 'auto';
-              audio.src = localUri;
-              audio.onended = () => { setPlaying(false); setProgress(0); setCurrentTime(0); if (intervalRef.current) clearInterval(intervalRef.current); try { require('../services/voicePlaybackBus').emitAudioFinished(messageId); } catch {} };
-              audio.onerror = () => { soundRef.current = null; };
-              soundRef.current = audio;
-            } catch {}
-          }
+        if (cancelled || !localUri) return;
+        const isLocal = typeof localUri === 'string' && (localUri.startsWith('file://') || localUri.startsWith('blob:') || localUri.startsWith('content://'));
+        if (!isLocal) return; // remote fallback — don't pin it
+        cachedUriRef.current = localUri;
+        // On web: preload the cached/blob URL into an Audio element
+        if (Platform.OS === 'web') {
+          try {
+            const audio = new window.Audio();
+            audio.preload = 'auto';
+            audio.src = localUri;
+            audio.onended = () => { setPlaying(false); setProgress(0); setCurrentTime(0); if (intervalRef.current) clearInterval(intervalRef.current); try { require('../services/voicePlaybackBus').emitAudioFinished(messageId); } catch {} };
+            audio.onerror = () => { soundRef.current = null; };
+            soundRef.current = audio;
+          } catch {}
         }
       }).catch(() => {});
     }
@@ -2690,7 +2700,9 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
 
   // Resolve the best URI to play (cached local or original remote)
   const resolvePlayUri = useCallback(async () => {
-    // If we already have a cached URI from the pre-cache, use it
+    // If we already have a cached LOCAL URI from the pre-cache, use it.
+    // We never pin a remote URL into cachedUriRef (see mount useEffect),
+    // so anything here is guaranteed to be file://, blob:, or content://.
     if (cachedUriRef.current) return cachedUriRef.current;
 
     // Otherwise try to cache now (with progress indicator)
@@ -2699,8 +2711,13 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
     setCaching(true);
     try {
       const localUri = await getCachedAudioUri(url, messageId, (p) => { if (isMountedRef.current) setCacheProgress(p); });
-      cachedUriRef.current = localUri || url;
-      return cachedUriRef.current;
+      // Only persist into cachedUriRef when it's a real local URI. Remote
+      // fallbacks (no cache + offline, or a transient FS hiccup) MUST NOT
+      // poison the ref — otherwise every subsequent tap reuses the dead
+      // remote URL and the user sees silent failure forever.
+      const isLocal = typeof localUri === 'string' && (localUri.startsWith('file://') || localUri.startsWith('blob:') || localUri.startsWith('content://'));
+      if (isLocal) cachedUriRef.current = localUri;
+      return localUri || url;
     } catch {
       return url;
     } finally {
@@ -2708,6 +2725,29 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
       cachingRef.current = false;
     }
   }, [url, messageId]);
+
+  // Detect "offline + uncached" surface error. Shared by web + native
+  // play paths so the user always knows WHY the bubble didn't play instead
+  // of staring at a frozen play button. WhatsApp-parity: cached audio plays
+  // offline, uncached audio shows a tiny toast. Idempotent — fires once
+  // per tap (gated on playLockRef inside togglePlay).
+  const _surfaceOfflineMiss = useCallback(() => {
+    try {
+      let online = true;
+      try {
+        const oc = require('../services/offlineCache');
+        if (typeof oc.isOnline === 'function') online = !!oc.isOnline();
+      } catch {}
+      const msg = online
+        ? (t?.('chatConv.audioLoadFailed') || t?.('common.genericError') || 'Não foi possível tocar este áudio.')
+        : (t?.('media.offlineCacheMiss') || 'Sem internet — esta mídia ainda não foi baixada.');
+      if (Platform.OS === 'web') {
+        try { window.alert?.(msg); } catch {}
+      } else {
+        try { Alert.alert(t?.('common.error') || 'Erro', msg); } catch {}
+      }
+    } catch {}
+  }, [t]);
 
   const togglePlay = async () => {
     if (playLockRef.current) return; // ignore re-entrant taps
@@ -2725,6 +2765,14 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
           const playUri = await resolvePlayUri();
           if (!isMountedRef.current) return;
           if (!playUri) { console.warn('Audio URL is empty'); return; }
+          // Offline gate: web Audio() with an https URI requires fetch. If
+          // we never got a blob: URL from the Cache API and the network is
+          // down, skip the doomed play() and tell the user. WhatsApp-grade.
+          const isLocalWeb = typeof playUri === 'string' && (playUri.startsWith('blob:') || playUri.startsWith('data:') || playUri.startsWith('file://'));
+          if (!isLocalWeb && typeof navigator !== 'undefined' && navigator.onLine === false) {
+            _surfaceOfflineMiss();
+            return;
+          }
           const audio = new window.Audio(playUri);
           audio.preload = 'auto';
           audio.onended = () => { if (!isMountedRef.current) return; setPlaying(false); setProgress(0); setCurrentTime(0); if (intervalRef.current) clearInterval(intervalRef.current); try { require('../services/voicePlaybackBus').emitAudioFinished(messageId); } catch {} };
@@ -2780,6 +2828,50 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
         const playUri = await resolvePlayUri();
         if (!isMountedRef.current) return;
         if (!playUri) { console.warn('[AudioPlayer] Audio URL empty — url=', url); return; }
+        // Offline-grade gate: if resolvePlayUri returned a remote https URL
+        // (cache miss), confirm the device is online before calling
+        // createAudioPlayer. expo-audio streams over HTTP and silently
+        // fails when there's no network — user sees a frozen play button.
+        // WhatsApp parity: cached audio plays offline; uncached audio
+        // shows "no internet, media not yet downloaded" toast.
+        const isLocalNative = typeof playUri === 'string' && (playUri.startsWith('file://') || playUri.startsWith('content://'));
+        if (!isLocalNative) {
+          let online = true;
+          try {
+            const oc = require('../services/offlineCache');
+            if (typeof oc.isOnline === 'function') online = !!oc.isOnline();
+          } catch {}
+          if (!online) {
+            _surfaceOfflineMiss();
+            return;
+          }
+        } else {
+          // Defensive: stale syncIndex / wiped disk. If the file we're
+          // about to hand to expo-audio doesn't exist, fall back to remote
+          // (which then re-enters the offline check above) instead of
+          // letting the player choke on a missing file.
+          try {
+            const fs = require('expo-file-system');
+            const info = await fs.getInfoAsync(playUri);
+            if (!info?.exists || (info.size != null && info.size <= 0)) {
+              // Clear the poisoned cache ref so the next tap re-resolves.
+              cachedUriRef.current = null;
+              let online = true;
+              try {
+                const oc = require('../services/offlineCache');
+                if (typeof oc.isOnline === 'function') online = !!oc.isOnline();
+              } catch {}
+              if (!online) { _surfaceOfflineMiss(); return; }
+              // Trigger a background re-download; user can tap again.
+              try {
+                const { prefetchAudioMessage } = require('../services/mediaCache');
+                prefetchAudioMessage?.(url);
+              } catch {}
+              _surfaceOfflineMiss();
+              return;
+            }
+          } catch {}
+        }
         // iOS silent-switch safety: enable playback even if the ringer is off.
         // `allowsRecording: false` prevents the session from fighting with the
         // recorder used for sending voice messages. `shouldPlayInBackground`
@@ -2879,6 +2971,37 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
       playLockRef.current = false;
     }
   };
+
+  // Net-recover hook: if this bubble's audio isn't cached (the mount
+  // pre-cache left cachedUriRef null because the device was offline),
+  // listen for the network coming back and silently fire the download.
+  // By the time the user taps Play, the file is already on disk and
+  // playback is instant — matches WhatsApp's "you came back online,
+  // your messages are ready" behavior. Fire-and-forget; idempotent
+  // (prefetchAudioMessage dedupes by URL).
+  useEffect(() => {
+    if (Platform.OS === 'web' || !url) return;
+    if (cachedUriRef.current) return; // already cached, nothing to do
+    let unsub = null;
+    try {
+      const ni = require('../services/networkInfo');
+      if (typeof ni.onNetworkChange === 'function') {
+        unsub = ni.onNetworkChange((state) => {
+          if (!state?.isConnected) return;
+          if (cachedUriRef.current) return;
+          try {
+            const { prefetchAudioMessage } = require('../services/mediaCache');
+            prefetchAudioMessage?.(url).then((localUri) => {
+              if (typeof localUri === 'string' && localUri.startsWith('file://')) {
+                cachedUriRef.current = localUri;
+              }
+            }).catch(() => {});
+          } catch {}
+        });
+      }
+    } catch {}
+    return () => { try { unsub?.(); } catch {} };
+  }, [url]);
 
   // Auto-advance: when the chat-conversation orchestrator emits
   // requestPlay(this.messageId) after a sibling voice ended, kick our own
