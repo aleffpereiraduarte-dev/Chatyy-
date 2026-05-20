@@ -171,9 +171,13 @@ export async function cacheMessages(conversationId, messages) {
     if (!isDbReady()) try { await Promise.race([waitForDb(), new Promise(r => setTimeout(r, 1500))]); } catch {}
     if (isDbReady()) {
       try { await dbSaveMessages(conversationId, filtered); }
-      catch (e) { console.warn('[chatCache] dbSaveMessages error:', e?.message); }
+      catch (e) {
+        console.error('[chatCache] dbSaveMessages error:', e?.message);
+        try { require('./crashReporter').reportCrash?.({ type: 'sqlite_error', context: 'dbSaveMessages', message: e?.message, stack: e?.stack }); } catch {}
+      }
     } else {
       console.warn('[chatCache] DB not ready after 1.5s, using MMKV fallback only');
+      try { require('./crashReporter').reportCrash?.({ type: 'persistence_error', context: 'db_not_ready_cacheMessages', message: `conv=${conversationId} n=${filtered.length}` }); } catch {}
     }
   }
 
@@ -207,10 +211,12 @@ export async function cacheSingleMessage(conversationId, msg) {
       try {
         await dbSaveMessages(conversationId, [msg]);
       } catch (e) {
-        console.warn('[cacheSingleMessage] dbSaveMessages FAILED for msg', msg.id, ':', e?.message || e);
+        console.error('[cacheSingleMessage] dbSaveMessages FAILED for msg', msg.id, ':', e?.message || e);
+        try { require('./crashReporter').reportCrash?.({ type: 'sqlite_error', context: 'cacheSingleMessage', message: `id=${msg?.id} ${e?.message}`, stack: e?.stack }); } catch {}
       }
     } else {
       console.warn('[cacheSingleMessage] DB not ready — only MMKV will have msg', msg.id);
+      try { require('./crashReporter').reportCrash?.({ type: 'persistence_error', context: 'db_not_ready_cacheSingleMessage', message: `id=${msg?.id} conv=${conversationId}` }); } catch {}
     }
   }
 
@@ -226,7 +232,8 @@ export async function cacheSingleMessage(conversationId, msg) {
     }
     _writeMessages(key, existing);
   } catch (e) {
-    console.warn('[cacheSingleMessage] MMKV write FAILED for msg', msg.id, ':', e?.message || e);
+    console.error('[cacheSingleMessage] MMKV write FAILED for msg', msg.id, ':', e?.message || e);
+    try { require('./crashReporter').reportCrash?.({ type: 'persistence_error', context: 'cacheSingleMessage_mmkv', message: `id=${msg?.id} ${e?.message}`, stack: e?.stack }); } catch {}
   }
 
   // Web: also append to IndexedDB so the per-message write path matches
@@ -258,7 +265,9 @@ export async function getCachedMessages(conversationId, limit = 50) {
       try {
         const msgs = await dbGetMessages(conversationId, limit);
         if (msgs.length > 0) return msgs;
-      } catch {}
+      } catch (e) {
+        try { require('./crashReporter').reportCrash?.({ type: 'sqlite_error', context: 'dbGetMessages', message: `conv=${conversationId} ${e?.message}`, stack: e?.stack }); } catch {}
+      }
     }
   }
 

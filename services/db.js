@@ -44,9 +44,16 @@ export async function initDatabase() {
   try {
     _db = await SQLite.openDatabaseAsync('chatyy.db');
 
-    // Enable WAL mode for better concurrent read/write performance
+    // Enable WAL mode for better concurrent read/write performance.
+    //
+    // foreign_keys stays OFF on purpose. Earlier builds had a FK on
+    // messages.conversation_id → conversations(id) but chat-list and
+    // messages arrive on the WS in parallel: a message can land before
+    // the chat row is materialized (envelope pull races chat_sync), and
+    // the FK was silently rejecting those rows. Schema unification
+    // (2026-05-19) drops the FK from the table definition AND keeps the
+    // PRAGMA off so old DBs from previous installs don't re-enable it.
     await _db.execAsync('PRAGMA journal_mode = WAL;');
-    await _db.execAsync('PRAGMA foreign_keys = ON;');
     await _db.execAsync('PRAGMA cache_size = -8000;'); // 8MB cache
 
     // Create all tables
@@ -72,6 +79,15 @@ export async function initDatabase() {
       );
 
       -- Messages
+      -- Unified schema (2026-05-19): db.js is the SINGLE owner of this table.
+      -- localDb.js used to CREATE TABLE IF NOT EXISTS with a partially
+      -- overlapping column set, so whichever module won the init race
+      -- dictated which columns existed and the loser's INSERTs failed
+      -- silently. The columns below are the SUPERSET of both — db.js's
+      -- original (sender_name, file_name, file_size, deleted, reactions,
+      -- read_by, raw_json) PLUS localDb.js's (message_id, read_at,
+      -- deleted_at, sync_seq, local_seq, client_temp_id, pending_state).
+      -- NO FOREIGN KEY — see init() comment about WS race conditions.
       CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY,
         conversation_id INTEGER NOT NULL,
@@ -83,16 +99,24 @@ export async function initDatabase() {
         file_name TEXT,
         file_size INTEGER,
         reply_to_id INTEGER,
+        message_id TEXT,
+        read_at TEXT,
         edited_at TEXT,
         deleted INTEGER DEFAULT 0,
+        deleted_at TEXT,
         reactions TEXT,
         read_by TEXT,
         created_at TEXT,
-        raw_json TEXT,
-        FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+        sync_seq INTEGER DEFAULT 0,
+        local_seq INTEGER DEFAULT 0,
+        client_temp_id TEXT,
+        pending_state TEXT,
+        raw_json TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_messages_conv_id ON messages(conversation_id, id);
+      CREATE INDEX IF NOT EXISTS idx_messages_local_seq ON messages(conversation_id, local_seq);
+      CREATE INDEX IF NOT EXISTS idx_messages_client_temp ON messages(client_temp_id);
 
       -- Contacts
       CREATE TABLE IF NOT EXISTS contacts (
@@ -216,12 +240,143 @@ export async function initDatabase() {
       console.warn('[DB] FTS5 setup skipped:', err?.message);
     }
 
+    // ── Additive schema migrations (idempotent ALTERs) ──
+    //
+    // Pre-existing installs may have a `messages` table created by an older
+    // db.js OR by the now-retired localDb.js CREATE TABLE block. Either way
+    // we backfill any missing columns so the unified schema is the same
+    // shape on every device. ALTER TABLE ADD COLUMN throws "duplicate
+    // column name" when the column is already there — we swallow that one
+    // case and log anything else.
+    const ADDITIVE_COLUMNS = [
+      // localDb.js originals
+      "ALTER TABLE messages ADD COLUMN message_id TEXT",
+      "ALTER TABLE messages ADD COLUMN read_at TEXT",
+      "ALTER TABLE messages ADD COLUMN deleted_at TEXT",
+      "ALTER TABLE messages ADD COLUMN sync_seq INTEGER DEFAULT 0",
+      "ALTER TABLE messages ADD COLUMN local_seq INTEGER DEFAULT 0",
+      "ALTER TABLE messages ADD COLUMN client_temp_id TEXT",
+      "ALTER TABLE messages ADD COLUMN pending_state TEXT",
+      // db.js originals (in case an older localDb-created table is the
+      // one that won the race on this device)
+      "ALTER TABLE messages ADD COLUMN sender_name TEXT",
+      "ALTER TABLE messages ADD COLUMN file_name TEXT",
+      "ALTER TABLE messages ADD COLUMN file_size INTEGER",
+      "ALTER TABLE messages ADD COLUMN deleted INTEGER DEFAULT 0",
+      "ALTER TABLE messages ADD COLUMN reactions TEXT",
+      "ALTER TABLE messages ADD COLUMN read_by TEXT",
+      "ALTER TABLE messages ADD COLUMN raw_json TEXT",
+    ];
+    for (const sql of ADDITIVE_COLUMNS) {
+      try { await _db.execAsync(sql); }
+      catch (e) {
+        const msg = String(e?.message || '');
+        if (!/duplicate column/i.test(msg)) {
+          console.warn('[DB] migration ALTER failed:', sql, msg);
+        }
+      }
+    }
+    try {
+      await _db.execAsync(`
+        CREATE INDEX IF NOT EXISTS idx_messages_local_seq ON messages(conversation_id, local_seq);
+        CREATE INDEX IF NOT EXISTS idx_messages_client_temp ON messages(client_temp_id);
+      `);
+    } catch {}
+
+    // ── Self-check: blow up loud if schema is still missing required cols ──
+    // This is the diagnostic that would have caught the localDb/db.js race
+    // immediately instead of letting it bleed messages for days.
+    try {
+      const cols = await _db.getAllAsync("PRAGMA table_info(messages)");
+      const colNames = cols.map(c => c.name);
+      const required = [
+        'id', 'conversation_id', 'sender_email', 'content', 'type',
+        'raw_json', 'created_at', 'message_id', 'client_temp_id', 'pending_state'
+      ];
+      const missing = required.filter(c => !colNames.includes(c));
+      if (missing.length > 0) {
+        console.error('[db] CRITICAL schema mismatch — missing columns:', missing);
+        // Beacon: if a crashReporter is wired, surface this server-side so
+        // we don't rely on user-side console.error reaching us.
+        try {
+          const cr = require('./crashReporter');
+          if (cr && typeof cr.reportError === 'function') {
+            cr.reportError(new Error('db schema mismatch: missing ' + missing.join(',')), {
+              scope: 'db.init',
+              tableInfoCols: colNames,
+            });
+          }
+        } catch {}
+      }
+    } catch (e) {
+      console.warn('[db] schema self-check failed:', e?.message);
+    }
+
     _ready = true;
     _readyResolve();
+    // Fire-and-forget telemetry self-check (2026-05-19). Probes a real
+    // write+read on the messages table and POSTs the result to
+    // sqlite_self_check so we can confirm on real devices that the
+    // unified schema (#1206) actually persists writes. See server log at
+    // /var/www/mail/data/sqlite-diag/YYYY-MM-DD.log.
+    _runSelfCheck();
   } catch (err) {
     console.warn('[DB] Init failed:', err.message);
     _ready = true;
     _readyResolve();
+  }
+}
+
+async function _runSelfCheck() {
+  if (Platform.OS === 'web') return;
+  try {
+    const cols = await _db.getAllAsync("PRAGMA table_info(messages)");
+    const colNames = cols.map(c => c.name);
+    const required = ['id','conversation_id','sender_email','content','type','raw_json','created_at','message_id','client_temp_id','pending_state'];
+    const missing = required.filter(c => !colNames.includes(c));
+
+    // Probe write
+    let probeWriteOk = false;
+    let probeReadOk = false;
+    try {
+      await _db.runAsync(
+        "INSERT OR REPLACE INTO messages (id, conversation_id, sender_email, content, type, raw_json, created_at) VALUES (-1, 0, 'probe', 'self_check', 'text', ?, ?)",
+        [JSON.stringify({ id: -1, probe: true }), new Date().toISOString()]
+      );
+      probeWriteOk = true;
+      const row = await _db.getFirstAsync("SELECT raw_json FROM messages WHERE id = -1");
+      probeReadOk = !!row?.raw_json;
+      await _db.runAsync("DELETE FROM messages WHERE id = -1");
+    } catch (e) {
+      console.error('[db.selfCheck] probe failed:', e.message);
+    }
+
+    const msgCount = (await _db.getFirstAsync("SELECT COUNT(*) AS c FROM messages"))?.c || 0;
+
+    const payload = {
+      platform: Platform.OS,
+      build: require('../app.json')?.expo?.ios?.buildNumber || '?',
+      db_open: true,
+      columns: colNames,
+      missing,
+      probe_write_ok: probeWriteOk,
+      probe_read_ok: probeReadOk,
+      msg_count: msgCount,
+    };
+
+    // Best-effort report to backend
+    try {
+      const api = require('./api');
+      await api.apiCall('sqlite_self_check', payload, 'POST');
+    } catch {}
+
+    if (missing.length > 0 || !probeWriteOk || !probeReadOk) {
+      console.error('[db.selfCheck] FAILED:', JSON.stringify(payload));
+    } else {
+      console.log('[db.selfCheck] OK — columns:', colNames.length, '— msgs:', msgCount);
+    }
+  } catch (e) {
+    console.error('[db.selfCheck] error:', e?.message);
   }
 }
 
@@ -274,31 +429,59 @@ export async function dbGetConversations(includeArchived = false) {
 
 export async function dbSaveMessages(conversationId, messages) {
   if (isWeb || !_db || !messages?.length) return;
+  // Unified writer (2026-05-19): localDb.saveMessage / saveMessages delegate
+  // here. We persist the SUPERSET of fields so optimistic-send rows from the
+  // outbox path (client_temp_id, local_seq, pending_state) survive a restart
+  // alongside server-confirmed rows (sync_seq, read_at, deleted_at).
   const stmt = await _db.prepareAsync(
-    `INSERT OR REPLACE INTO messages (id, conversation_id, sender_email, sender_name, content, type, file_url, file_name, file_size, reply_to_id, edited_at, deleted, reactions, read_by, created_at, raw_json)
-     VALUES ($id, $convId, $sender, $senderName, $content, $type, $fileUrl, $fileName, $fileSize, $replyTo, $edited, $deleted, $reactions, $readBy, $created, $raw)`
+    `INSERT OR REPLACE INTO messages
+       (id, conversation_id, sender_email, sender_name, content, type,
+        file_url, file_name, file_size, reply_to_id, message_id,
+        read_at, edited_at, deleted, deleted_at, reactions, read_by,
+        created_at, sync_seq, local_seq, client_temp_id, pending_state, raw_json)
+     VALUES
+       ($id, $convId, $sender, $senderName, $content, $type,
+        $fileUrl, $fileName, $fileSize, $replyTo, $messageId,
+        $readAt, $edited, $deleted, $deletedAt, $reactions, $readBy,
+        $created, $syncSeq, $localSeq, $clientTempId, $pendingState, $raw)`
   );
+  // [#1206 2026-05-19] Surface row-level executeAsync failures via crash
+  // beacon. Outer caller still gets the throw (existing semantics) — this
+  // only adds a beacon hop so the bad row's id + error message reach us
+  // instead of being lost in a swallowing catch block upstream.
   try {
     for (const m of messages) {
       if (!m.id || String(m.id).startsWith('tmp_')) continue;
-      await stmt.executeAsync({
-        $id: m.id,
-        $convId: conversationId,
-        $sender: m.sender_email || '',
-        $senderName: m.sender_name || '',
-        $content: m.content || '',
-        $type: m.type || 'text',
-        $fileUrl: m.file_url || '',
-        $fileName: m.file_name || '',
-        $fileSize: m.file_size || 0,
-        $replyTo: m.reply_to_id || null,
-        $edited: m.edited_at || null,
-        $deleted: m.deleted ? 1 : 0,
-        $reactions: m.reactions ? JSON.stringify(m.reactions) : null,
-        $readBy: m.read_by ? JSON.stringify(m.read_by) : null,
-        $created: m.created_at || '',
-        $raw: JSON.stringify(m),
-      });
+      try {
+        await stmt.executeAsync({
+          $id: m.id,
+          $convId: conversationId || m.conversation_id,
+          $sender: m.sender_email || m.sender || '',
+          $senderName: m.sender_name || '',
+          $content: m.content || '',
+          $type: m.type || 'text',
+          $fileUrl: m.file_url || '',
+          $fileName: m.file_name || '',
+          $fileSize: m.file_size || 0,
+          $replyTo: m.reply_to_id || null,
+          $messageId: m.message_id || null,
+          $readAt: m.read_at || null,
+          $edited: m.edited_at || null,
+          $deleted: m.deleted ? 1 : 0,
+          $deletedAt: m.deleted_at || null,
+          $reactions: m.reactions ? JSON.stringify(m.reactions) : null,
+          $readBy: m.read_by ? JSON.stringify(m.read_by) : null,
+          $created: m.created_at || '',
+          $syncSeq: m.sync_seq || 0,
+          $localSeq: m.local_seq != null ? m.local_seq : 0,
+          $clientTempId: m.client_temp_id || m.client_message_id || null,
+          $pendingState: m.pending_state || 'sent',
+          $raw: JSON.stringify(m),
+        });
+      } catch (rowErr) {
+        try { require('./crashReporter').reportCrash?.({ type: 'sqlite_error', context: 'dbSaveMessages_row', message: `id=${m?.id} ${rowErr?.message}`, stack: rowErr?.stack }); } catch {}
+        throw rowErr;
+      }
     }
   } finally { await stmt.finalizeAsync(); }
 }
@@ -313,7 +496,17 @@ export async function dbGetMessages(conversationId, limit = 50, beforeId = null)
   }
   query += ' ORDER BY id DESC LIMIT ?';
   params.push(limit);
-  const rows = await _db.getAllAsync(query, params);
+  // [#1206 2026-05-19] Wrap the read so a sudden getAllAsync failure (DB
+  // locked / corrupted page / migration race) lands a beacon instead of
+  // letting the screen render an empty thread silently. Re-throw so the
+  // caller's existing fallback logic (MMKV) still kicks in.
+  let rows;
+  try {
+    rows = await _db.getAllAsync(query, params);
+  } catch (e) {
+    try { require('./crashReporter').reportCrash?.({ type: 'sqlite_error', context: 'dbGetMessages', message: `conv=${conversationId} ${e?.message}`, stack: e?.stack }); } catch {}
+    throw e;
+  }
   let corrupt = 0;
   const parsed = rows.map(r => {
     try { return JSON.parse(r.raw_json); }

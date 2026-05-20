@@ -25,6 +25,17 @@ function _safe(fn) {
   try { return fn(); } catch { return null; }
 }
 
+// [#1206 2026-05-19] Variant of _safe for the inner persist path where a
+// thrown error means we just dropped a message on the floor. Sends a beacon
+// instead of silently returning null. Keep _safe for the outer ws/mqtt wire-
+// up (where a missing module is expected on web/CI and shouldn't spam diag).
+function _safePersist(ctx, fn) {
+  try { return fn(); } catch (e) {
+    try { require('./crashReporter').reportCrash?.({ type: 'persistence_error', context: `chatPersistence_${ctx}`, message: e?.message, stack: e?.stack }); } catch {}
+    return null;
+  }
+}
+
 // Normalize the shape from chat_message / chat_summary / MQTT-msg variants.
 // Server uses 3 shapes:
 //   1. { type:'chat_message', data: { message: {...row}, conversation_id } }
@@ -193,6 +204,25 @@ function _onRead(data) {
 export function startChatPersistence() {
   if (_started) return;
   _started = true;
+
+  // Hydrate the WhatsApp auto-download matrix from server on app boot so the
+  // mediaCache gate is live BEFORE the user opens the profile/settings UI.
+  // Without this hook the policy only loaded when ChatProfileTab mounted —
+  // meaning a user who never opens settings was running on AsyncStorage-only
+  // fallback (factory defaults). Hydrating here also catches policy edits
+  // done from a sibling device since the last session. Fire-and-forget.
+  _safe(() => {
+    const api = require('./api');
+    const mc = require('./mediaCache');
+    if (typeof api.chatGetUserDefaults !== 'function') return;
+    if (typeof mc.setAutoDownloadPolicy !== 'function') return;
+    api.chatGetUserDefaults().then(r => {
+      const p = r?.data?.auto_download_policy;
+      if (p && typeof p === 'object') {
+        try { mc.setAutoDownloadPolicy(p); } catch {}
+      }
+    }).catch(() => {});
+  });
 
   // ─── WebSocket subscriptions ────────────────────────────────────────────
   _safe(() => {

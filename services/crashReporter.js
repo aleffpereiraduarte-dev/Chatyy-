@@ -95,6 +95,31 @@ export async function reportStep(step, info) {
   _post(step, info);
 }
 
+// [#1206 2026-05-19] Defensive beacon for SQLite/persistence write+read
+// failures that used to be swallowed by silent catch (e) {}. Surfaces the
+// error class + a short context tag through the same `push_diag` channel
+// so we can spot data-loss patterns without instrumenting per call site.
+//
+// Shape: { type, context, message } — type defaults to 'persistence_error'
+// so a top-level grep on the diag log can isolate them. Stack is sliced
+// to 480 chars by _post (matches its info budget).
+//
+// ALWAYS safe to call — never throws even if the reporter is mid-boot.
+export function reportCrash(payload) {
+  try {
+    const p = payload || {};
+    const type = String(p.type || 'persistence_error').slice(0, 40);
+    const ctx = String(p.context || 'unknown').slice(0, 40);
+    const msg = String(p.message || '').slice(0, 200);
+    // Step is alphanumeric+_ only via _post sanitization, so encode the
+    // type+ctx as the step and the message as info.
+    const step = `${type}_${ctx}`;
+    let info = msg;
+    if (p.stack) info += ` | ${String(p.stack).slice(0, 250)}`;
+    _post(step, info);
+  } catch {}
+}
+
 export function setReporterIdentity({ email, bearer } = {}) {
   if (bearer) _bearer = String(bearer);
   if (email) _post('identity', `email=${email}`);

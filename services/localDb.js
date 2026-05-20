@@ -256,46 +256,17 @@ async function _ensureDb() {
 // ---------------------------------------------------------------------------
 
 async function _createTables() {
+  // Schema unification (2026-05-19): db.js is the SINGLE owner of
+  // `conversations` + `messages`. Removing the CREATE TABLE blocks here
+  // closes a race where whichever module's init won determined the
+  // column shape — the loser's INSERTs then failed silently and ~50%
+  // of messages went missing on the device. db.js's init runs on import
+  // (see end of db.js), so by the time anything in this file calls
+  // saveMessage/saveMessages those tables already exist with the
+  // unified superset schema. We keep this file's `offline_queue` and
+  // `sync_state` creations because those are localDb-exclusive.
   await db.execAsync(`
     PRAGMA journal_mode = WAL;
-
-    CREATE TABLE IF NOT EXISTS conversations (
-      id INTEGER PRIMARY KEY,
-      name TEXT,
-      type TEXT,
-      last_message_content TEXT,
-      last_message_at TEXT,
-      unread_count INTEGER DEFAULT 0,
-      avatar_url TEXT,
-      members TEXT,
-      updated_at TEXT,
-      archived INTEGER DEFAULT 0,
-      sync_seq INTEGER DEFAULT 0
-    );
-
-    -- Note: id stays INTEGER PRIMARY KEY for backward compat. Optimistic
-    -- temp-id rows (id like "tmp_…") would collide on rowid=0 if stored
-    -- here, so the SQLite messages table only holds server-confirmed rows.
-    -- The pending optimistic intent lives in the offline_queue table (see
-    -- saveLocalMessage / queueOfflineAction). server WS new_message event
-    -- → saveMessage() with the durable id + client_temp_id dedup.
-    CREATE TABLE IF NOT EXISTS messages (
-      id INTEGER PRIMARY KEY,
-      conversation_id INTEGER,
-      sender_email TEXT,
-      content TEXT,
-      type TEXT DEFAULT 'text',
-      file_url TEXT,
-      reply_to_id INTEGER,
-      message_id TEXT,
-      read_at TEXT,
-      edited_at TEXT,
-      deleted_at TEXT,
-      created_at TEXT,
-      sync_seq INTEGER DEFAULT 0
-    );
-    CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id);
-    CREATE INDEX IF NOT EXISTS idx_msg_created ON messages(created_at);
 
     CREATE TABLE IF NOT EXISTS contacts (
       id INTEGER PRIMARY KEY,
@@ -339,7 +310,13 @@ async function _createTables() {
       sync_seq INTEGER DEFAULT 0
     );
 
-    CREATE TABLE IF NOT EXISTS sync_state (
+    -- localDb's key-value sync table. Renamed from `sync_state` (which
+    -- db.js also owns with a different schema (table_name, last_sync,
+    -- last_id, version)) to avoid the same CREATE-IF-NOT-EXISTS race that
+    -- bled messages. Both modules can now coexist without stepping on
+    -- each other. All localDb.* sync_state helpers below target this
+    -- table; db.js's dbGetSyncState/dbSetSyncState target the other one.
+    CREATE TABLE IF NOT EXISTS sync_state_kv (
       key TEXT PRIMARY KEY,
       value TEXT
     );
@@ -447,39 +424,11 @@ async function _createTables() {
     );
   `);
 
-  // Run additive schema migrations. We use PRAGMA user_version as a monotonic
-  // counter; each step ALTERs in new columns. Never DROP — older builds must
-  // still be able to read rows written by newer ones without data loss.
+  // Run additive schema migrations for THIS module's tables (sync_state,
+  // offline_queue, etc.). The `messages` table is now owned by db.js — its
+  // migrations + FTS5 + indices are wired there. Don't recreate triggers
+  // here or they'll collide with db.js's `messages_fts_*` triggers.
   await _runMigrations();
-
-  // FTS5 index on messages.content for offline search. Kept in sync via
-  // triggers so saveMessage/updateMessage don't need extra calls. If FTS5
-  // isn't compiled into the device's SQLite build, the CREATE silently
-  // fails and searchMessagesFTS() falls back to a LIKE scan.
-  try {
-    await db.execAsync(`
-      CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-        content,
-        sender_email UNINDEXED,
-        conversation_id UNINDEXED,
-        content_rowid = id
-      );
-      CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
-        INSERT INTO messages_fts(rowid, content, sender_email, conversation_id)
-        VALUES (new.id, new.content, new.sender_email, new.conversation_id);
-      END;
-      CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
-        DELETE FROM messages_fts WHERE rowid = old.id;
-        INSERT INTO messages_fts(rowid, content, sender_email, conversation_id)
-        VALUES (new.id, new.content, new.sender_email, new.conversation_id);
-      END;
-      CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
-        DELETE FROM messages_fts WHERE rowid = old.id;
-      END;
-    `);
-  } catch (e) {
-    console.warn('[localDb] FTS5 unavailable:', e?.message);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -508,10 +457,12 @@ async function _runMigrations() {
   if (from >= CURRENT_DB_VERSION) return;
 
   // --- v0 → v1 ---
+  // 2026-05-19: db.js now owns the `messages` table and its column shape,
+  // so these ALTERs are best-effort no-ops on a healthy install (db.js's
+  // CREATE TABLE already includes the columns). We keep them here for the
+  // narrow case where an older build's `messages` table somehow predates
+  // db.js's unified shape — the ADD COLUMN backfills the rest.
   if (from < 1) {
-    // Each ALTER may already exist on dev DBs that opened a previous build of
-    // this file before user_version was wired up. Catch + swallow the
-    // "duplicate column name" error so the migration is idempotent.
     const alters = [
       "ALTER TABLE messages ADD COLUMN local_seq INTEGER DEFAULT 0",
       "ALTER TABLE messages ADD COLUMN client_temp_id TEXT",
@@ -521,17 +472,11 @@ async function _runMigrations() {
       try { await db.execAsync(sql); }
       catch (e) {
         const msg = String(e?.message || '');
-        if (!/duplicate column/i.test(msg)) {
+        if (!/duplicate column/i.test(msg) && !/no such table/i.test(msg)) {
           console.warn('[localDb] migration v1 ALTER failed:', msg);
         }
       }
     }
-    try {
-      await db.execAsync(`
-        CREATE INDEX IF NOT EXISTS idx_msg_local_seq ON messages(conversation_id, local_seq);
-        CREATE INDEX IF NOT EXISTS idx_msg_client_temp ON messages(client_temp_id);
-      `);
-    } catch {}
   }
 
   try { await db.execAsync(`PRAGMA user_version = ${CURRENT_DB_VERSION}`); } catch {}
@@ -571,8 +516,17 @@ export async function getConversations() {
   if (Platform.OS === 'web') return null; // caller falls back to cache
   try {
     await _ensureDb();
+    // Delegate to db.js — it owns the conversations table. dbGetConversations
+    // parses raw_json so callers get the full object instead of just the
+    // column subset this module used to project.
+    const dbMod = require('./db');
+    if (dbMod && typeof dbMod.dbGetConversations === 'function') {
+      return await dbMod.dbGetConversations(true);
+    }
+    // Last-resort fallback: raw SELECT (covers misconfigured envs where
+    // db.js isn't loaded — shouldn't happen on device).
     return await db.getAllAsync(
-      'SELECT * FROM conversations ORDER BY last_message_at DESC'
+      'SELECT * FROM conversations ORDER BY last_message_time DESC'
     );
   } catch (e) {
     console.warn('[localDb] getConversations:', e?.message);
@@ -584,26 +538,14 @@ export async function saveConversations(conversations) {
   if (Platform.OS === 'web' || !conversations?.length) return;
   try {
     await _ensureDb();
-    await db.withTransactionAsync(async () => {
-      for (const c of conversations) {
-        await db.runAsync(
-          `INSERT OR REPLACE INTO conversations
-            (id, name, type, last_message_content, last_message_at, unread_count, avatar_url, members, updated_at, archived, sync_seq)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          c.id,
-          c.name || null,
-          c.type || 'direct',
-          c.last_message_content || c.last_message || null,
-          c.last_message_at || c.updated_at || null,
-          c.unread_count || 0,
-          c.avatar_url || null,
-          c.members ? (typeof c.members === 'string' ? c.members : JSON.stringify(c.members)) : null,
-          c.updated_at || null,
-          c.archived ? 1 : 0,
-          c.sync_seq || 0
-        );
-      }
-    });
+    // Delegate to db.js (single owner of the conversations table). db.js's
+    // schema uses last_message_time / last_message instead of this module's
+    // historical last_message_at / last_message_content — dbSaveConversations
+    // already normalizes via raw_json so the original payload is preserved.
+    const dbMod = require('./db');
+    if (dbMod && typeof dbMod.dbSaveConversations === 'function') {
+      await dbMod.dbSaveConversations(conversations);
+    }
   } catch (e) {
     console.warn('[localDb] saveConversations:', e?.message);
   }
@@ -671,6 +613,13 @@ export async function getMessages(conversationId, limit = 50, beforeId = null) {
   if (Platform.OS === 'web') return null;
   try {
     await _ensureDb();
+    // Delegate to db.js — single owner of messages table. dbGetMessages
+    // already parses raw_json and orders chronologically.
+    const dbMod = require('./db');
+    if (dbMod && typeof dbMod.dbGetMessages === 'function') {
+      return await dbMod.dbGetMessages(conversationId, limit, beforeId);
+    }
+    // Fallback — shouldn't be hit on device.
     if (beforeId) {
       return await db.getAllAsync(
         `SELECT * FROM messages
@@ -685,7 +634,6 @@ export async function getMessages(conversationId, limit = 50, beforeId = null) {
        ORDER BY created_at DESC LIMIT ?`,
       conversationId, limit
     );
-    // Return in chronological order (oldest first)
     return rows.reverse();
   } catch (e) {
     console.warn('[localDb] getMessages:', e?.message);
@@ -697,31 +645,15 @@ export async function saveMessages(conversationId, messages) {
   if (Platform.OS === 'web' || !messages?.length) return;
   try {
     await _ensureDb();
-    await db.withTransactionAsync(async () => {
-      for (const m of messages) {
-        if (!m.id || String(m.id).startsWith('tmp_')) continue;
-        await db.runAsync(
-          `INSERT OR REPLACE INTO messages
-            (id, conversation_id, sender_email, content, type, file_url, reply_to_id, message_id, read_at, edited_at, deleted_at, created_at, sync_seq)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          m.id,
-          conversationId || m.conversation_id,
-          m.sender_email || m.sender || null,
-          m.content || null,
-          m.type || 'text',
-          m.file_url || null,
-          m.reply_to_id || null,
-          m.message_id || null,
-          m.read_at || null,
-          m.edited_at || null,
-          m.deleted_at || null,
-          m.created_at || null,
-          m.sync_seq || 0
-        );
-      }
-    });
+    // Delegate to db.js — single owner of messages table. dbSaveMessages
+    // persists the full superset (raw_json + columns) atomically.
+    const dbMod = require('./db');
+    if (dbMod && typeof dbMod.dbSaveMessages === 'function') {
+      await dbMod.dbSaveMessages(conversationId, messages);
+    }
   } catch (e) {
-    console.warn('[localDb] saveMessages:', e?.message);
+    console.error('[localDb] saveMessages:', e?.message);
+    try { require('./crashReporter').reportCrash?.({ type: 'persistence_error', context: 'localDb_saveMessages', message: `conv=${conversationId} n=${messages?.length} ${e?.message}`, stack: e?.stack }); } catch {}
   }
 }
 
@@ -729,12 +661,11 @@ export async function saveMessage(msg) {
   if (Platform.OS === 'web' || !msg?.id || String(msg.id).startsWith('tmp_')) return;
   try {
     await _ensureDb();
-    // Dedup: if this server row carries a client_temp_id and an optimistic
-    // row with that temp id is already in SQLite, swap the temp row's primary
-    // key over to the server id BEFORE the INSERT OR REPLACE — otherwise the
-    // optimistic row sticks around as a ghost row (different id) and the
-    // thread shows the message twice. local_seq carries over so ordering is
-    // stable across the swap.
+    // Dedup step (still local to this module since it's a write-side concern):
+    // if this server row carries a client_temp_id and an optimistic row with
+    // that temp id is already in SQLite (from a previous build / cache), we
+    // delete it BEFORE the upsert so the thread doesn't show duplicates.
+    // local_seq carries over so ordering is stable across the swap.
     const ctid = msg.client_temp_id || msg.client_message_id || null;
     let localSeq = msg.local_seq != null ? msg.local_seq : null;
     if (ctid) {
@@ -751,29 +682,25 @@ export async function saveMessage(msg) {
         }
       } catch {}
     }
-    await db.runAsync(
-      `INSERT OR REPLACE INTO messages
-        (id, conversation_id, sender_email, content, type, file_url, reply_to_id, message_id, read_at, edited_at, deleted_at, created_at, sync_seq, local_seq, client_temp_id, pending_state)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      msg.id,
-      msg.conversation_id,
-      msg.sender_email || msg.sender || null,
-      msg.content || null,
-      msg.type || 'text',
-      msg.file_url || null,
-      msg.reply_to_id || null,
-      msg.message_id || null,
-      msg.read_at || null,
-      msg.edited_at || null,
-      msg.deleted_at || null,
-      msg.created_at || null,
-      msg.sync_seq || 0,
-      localSeq != null ? localSeq : 0,
-      ctid,
-      'sent'
-    );
+    // Delegate the actual upsert to db.js — same table, same connection
+    // (shared `chatyy.db` file), but db.js's `dbSaveMessages` writes the
+    // FULL superset of columns (including raw_json which dbGetMessages
+    // depends on). Writing through dbSaveMessages keeps optimistic-send
+    // rows discoverable by every reader path in the app.
+    const dbMod = require('./db');
+    if (dbMod && typeof dbMod.dbSaveMessages === 'function') {
+      const enriched = {
+        ...msg,
+        sync_seq: msg.sync_seq || 0,
+        local_seq: localSeq != null ? localSeq : 0,
+        client_temp_id: ctid,
+        pending_state: 'sent',
+      };
+      await dbMod.dbSaveMessages(msg.conversation_id, [enriched]);
+    }
   } catch (e) {
-    console.warn('[localDb] saveMessage:', e?.message);
+    console.error('[localDb] saveMessage:', e?.message);
+    try { require('./crashReporter').reportCrash?.({ type: 'persistence_error', context: 'localDb_saveMessage', message: `id=${msg?.id} ctid=${msg?.client_temp_id || msg?.client_message_id} ${e?.message}`, stack: e?.stack }); } catch {}
   }
 }
 
@@ -829,7 +756,8 @@ export async function saveLocalMessage(msg, pendingState = 'pending') {
       queue_id: res?.lastInsertRowId || null,
     };
   } catch (e) {
-    console.warn('[localDb] saveLocalMessage:', e?.message);
+    console.error('[localDb] saveLocalMessage:', e?.message);
+    try { require('./crashReporter').reportCrash?.({ type: 'persistence_error', context: 'localDb_saveLocalMessage', message: `id=${msg?.id} ${e?.message}`, stack: e?.stack }); } catch {}
     return null;
   }
 }
@@ -1057,7 +985,7 @@ export async function getLastSyncSeq() {
   try {
     await _ensureDb();
     const row = await db.getFirstAsync(
-      "SELECT value FROM sync_state WHERE key = 'last_sync_seq'"
+      "SELECT value FROM sync_state_kv WHERE key = 'last_sync_seq'"
     );
     return row ? parseInt(row.value, 10) || 0 : 0;
   } catch {
@@ -1070,7 +998,7 @@ export async function setLastSyncSeq(seq) {
   try {
     await _ensureDb();
     await db.runAsync(
-      "INSERT OR REPLACE INTO sync_state (key, value) VALUES ('last_sync_seq', ?)",
+      "INSERT OR REPLACE INTO sync_state_kv (key, value) VALUES ('last_sync_seq', ?)",
       String(seq)
     );
   } catch (e) {
@@ -1083,7 +1011,7 @@ export async function getSyncState(key) {
   try {
     await _ensureDb();
     const row = await db.getFirstAsync(
-      'SELECT value FROM sync_state WHERE key = ?', key
+      'SELECT value FROM sync_state_kv WHERE key = ?', key
     );
     return row ? row.value : null;
   } catch {
@@ -1096,7 +1024,7 @@ export async function setSyncState(key, value) {
   try {
     await _ensureDb();
     await db.runAsync(
-      'INSERT OR REPLACE INTO sync_state (key, value) VALUES (?, ?)',
+      'INSERT OR REPLACE INTO sync_state_kv (key, value) VALUES (?, ?)',
       key, String(value)
     );
   } catch (e) {
@@ -1200,7 +1128,7 @@ export async function clearLocalDb() {
       DELETE FROM contacts;
       DELETE FROM emails;
       DELETE FROM feed_posts;
-      DELETE FROM sync_state;
+      DELETE FROM sync_state_kv;
       DELETE FROM calendar_events;
       DELETE FROM drive_files;
       DELETE FROM documents;

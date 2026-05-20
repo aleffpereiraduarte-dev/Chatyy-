@@ -276,6 +276,39 @@ async function _drainConv(apiCall, convId) {
       console.warn(`[fullHistorySync] cacheMessages conv ${convId}:`, e?.message);
     }
 
+    // WhatsApp-parity: bootstrap also pulls media to disk so offline opens
+    // work after a fresh restore. Without this hook the user has all the
+    // *text* in SQLite but every image/audio/voice still 404s offline (the
+    // viewer + media bubbles fall back to the remote URL, which fails with
+    // no network). Routes through prefetchIncomingMessageMedia so the
+    // per-bucket WhatsApp policy (photos/audio on wifi, videos/docs off on
+    // cellular by default) is honored — heavy types still need a tap on
+    // cellular, lighter ones land automatically. Voice goes through
+    // prefetchAudioMessage internally which bypasses the cellular gate
+    // (tiny + always wanted). Idempotent + throttled to 3 concurrent
+    // downloads inside cacheMedia, so a 200-msg page can't saturate the
+    // radio. Fire-and-forget — we don't await; the bootstrap loop moves
+    // on while the downloads happen in the background pool.
+    try {
+      const { prefetchIncomingMessageMedia } = require('./mediaCache');
+      for (const m of msgs) {
+        if (!m) continue;
+        const enriched = (m.conversation_id == null && convId != null)
+          ? { ...m, conversation_id: convId }
+          : m;
+        try { prefetchIncomingMessageMedia?.(enriched); } catch {}
+      }
+    } catch {}
+    // Voice-specific side hook (waveform peaks + audio-saved/ permanent cache
+    // + played-ack tracking). prefetchAudioMessage inside
+    // prefetchIncomingMessageMedia covers the audio bytes; this additionally
+    // persists server-side wave_peaks so the bubble paints the real envelope
+    // on next mount even before audio decode lands.
+    try {
+      const { prefetchVoiceMessages } = require('./voicePrefetch');
+      prefetchVoiceMessages?.(msgs);
+    } catch {}
+
     // Advance the watermark to the smallest id we just received.
     let minId = beforeId || Number.MAX_SAFE_INTEGER;
     for (const m of msgs) {

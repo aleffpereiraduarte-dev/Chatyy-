@@ -39,6 +39,33 @@ let _running = false;
 let _inFlight = false;
 let _pullSafetyTimer = null;
 
+// [#1206 2026-05-19] CRITICAL — `messages.id` in SQLite is INTEGER PRIMARY KEY
+// (rowid alias). Passing the envelope's `client_message_id` string (e.g.
+// "cmi_abc123") directly into saveMessage()'s `id` field causes SQLite to
+// coerce it to rowid 0 — so EVERY envelope-mode message overwrote the same
+// row. (Symptom: receiver saw only the latest envelope and lost all prior.)
+//
+// Fix: derive a deterministic NEGATIVE integer from the client_message_id
+// hash. We use the negative half of int32 space so envelope placeholder rows
+// can never collide with server-confirmed rows (which always have positive
+// PG-issued ids). The `client_temp_id` column carries the real string so the
+// server-confirm path (saveMessage's swap-by-ctid) can later delete this
+// placeholder and insert the real positive-id row in its place.
+//
+// djb2 variant — fast, stable across runs, no deps. Negative-space mapping
+// via -Math.abs() guarantees the value fits in SQLite's signed INTEGER and
+// never collides with PG ids (which are positive auto-increment).
+function _hashClientId(cmi) {
+  if (!cmi) return 0;
+  const s = String(cmi);
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) | 0;
+  // Force negative + non-zero so collisions with server ids (positive) and
+  // sentinel 0 (which means "no id") are impossible. Math.min(-1) handles
+  // the (extremely unlikely) all-zero hash.
+  return Math.min(-1, -Math.abs(h));
+}
+
 // [#1188 PATCH-6 2026-05-19] Auto-republish device pubkey when decrypt
 // repeatedly fails. Root cause: when app reinstall / store wipe / cache
 // reset rotates the LOCAL device keypair but the OLD pubkey is still
@@ -199,13 +226,17 @@ async function pullOnce() {
         _decryptFailsInSession = 0;
         if (saveMessage) {
           try {
+            // [#1206 2026-05-19] CRITICAL FIX — id must be INTEGER, not the
+            // raw `cmi_…` string. SQLite coerces non-numeric strings to
+            // rowid 0, so every envelope was overwriting the same row.
+            // Use a deterministic negative-int32 hash of client_message_id
+            // as the placeholder primary key (negative space = no collision
+            // with server's positive PG ids). client_temp_id keeps the
+            // real string so the server-confirm swap path in saveMessage()
+            // can later delete this placeholder and insert the real row.
+            const placeholderId = _hashClientId(env.client_message_id);
             await saveMessage({
-              // Use the client_message_id as the dedup key — there is no
-              // server message_id in envelope mode (chat_messages row
-              // doesn't exist). saveMessage()'s client_temp_id swap path
-              // collapses any optimistic row the receiver may have made
-              // for the same cmi.
-              id: env.client_message_id,
+              id: placeholderId,
               client_message_id: env.client_message_id,
               client_temp_id: env.client_message_id,
               conversation_id: env.conversation_id,
@@ -217,6 +248,7 @@ async function pullOnce() {
             });
           } catch (e) {
             console.warn('[envelopePuller] saveMessage failed', e?.message);
+            try { require('./crashReporter').reportCrash?.({ type: 'persistence_error', context: 'envelopePuller_saveMessage', message: `cmi=${env?.client_message_id} ${e?.message}`, stack: e?.stack }); } catch {}
             // Skip ack — we'll retry on next pull.
             continue;
           }
