@@ -18,11 +18,39 @@
 // backend to broadcast a push to the callee (callNotify), then hands off to
 // the native flow.
 
-import { Platform } from 'react-native';
+import { Platform, AppState } from 'react-native';
 import * as ExpoCallKit from '../modules/expo-callkit';
 import * as api from './api';
 
 const TAG = '[voipNative]';
+
+/**
+ * [2026-05-20 restore foreground gate — WhatsApp/Telegram parity]
+ * Decide if the OUTGOING call should render the rich JS UI (/call.js with
+ * invite-friend, audio↔video upgrade, screenshare, grid, emoji, raise hand)
+ * vs the bare-bones native CallActivity / CallViewController.
+ *
+ * Rule: app foreground → JS (user already inside the app, expects rich UI).
+ *       app background/killed → native (rare for outgoing, but covers
+ *       Siri shortcut / share-extension dialing / cold-start).
+ *
+ * Incoming flow is UNAFFECTED — it always goes native via VoipPushAppDelegate-
+ * Subscriber (iOS) / CallFirebaseMessagingService (Android) so the OS-level
+ * CallKit / lock-screen FullScreenIntent can ring even when killed.
+ *
+ * History:
+ *   #1208 introduced this gate. #1217 reverted to full-native because the
+ *   native↔JS handoff had dual-mount bugs. Now the native side has the
+ *   suppressVCPresent flag (iOS) and isAppForeground guard (Android) so we
+ *   can safely route outgoing-while-foreground to JS again.
+ */
+function isAppForeground() {
+  try {
+    return AppState?.currentState === 'active';
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Generate a server-side call_id. Format mirrors the legacy inline
@@ -90,6 +118,30 @@ export async function startOutgoingCall({
       }
     }
     return { callId: cid, native: false };
+  }
+
+  // [2026-05-20 foreground gate — WhatsApp/Telegram parity]
+  // When the user is already INSIDE the app (foreground) and taps "Ligar",
+  // show the rich JS /call.js screen instead of the native CallActivity /
+  // CallViewController. The native call UI exists primarily so OS-level
+  // CallKit (iOS) / lock-screen FullScreenIntent (Android) can ring even
+  // when the app is killed — which only matters for the INCOMING/RECEIVE
+  // path. For outgoing-while-foreground, the JS UI gives users the full
+  // feature set (invite friend, audio→video upgrade, screenshare, grid,
+  // raise hand, recording) and avoids the jarring "another app took over
+  // my screen" feeling.
+  //
+  // The caller wires `onWebFallback` to do `router.push('/call?...&isCaller=1')`.
+  // We reuse that same hook here so every existing callsite (chat-conversation,
+  // ChatCallsTab, one.js) automatically gets the new behavior with zero edits.
+  if (isAppForeground() && typeof onWebFallback === 'function') {
+    try {
+      onWebFallback(cid);
+      return { callId: cid, native: false };
+    } catch (e) {
+      console.warn(TAG, 'foreground onWebFallback threw, falling through to native:', e);
+      // fall through to native — better something than nothing
+    }
   }
 
   // Pre-resolve the callee avatar URL so the native screen can paint a real

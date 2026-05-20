@@ -1659,6 +1659,8 @@ export default {
   'apps.plans': 'Planes',
   'apps.recent': 'Recientes',
   'apps.goLive': 'En vivo',
+  'apps.wallet': 'Cartera',
+  'apps.diamonds': 'Diamantes',
   'apps.searchPlaceholder': 'Buscar apps',
   'apps.noResults': 'Ninguna app encontrada',
   'sidebar.drive': 'Drive',

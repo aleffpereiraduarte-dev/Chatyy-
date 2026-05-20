@@ -3272,20 +3272,34 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     const name = item.contactName || item.contact_name || '';
     if (!email) return;
     const isVideo = item.video ? '1' : '0';
-    // [#1217 2026-05-19] FULL NATIVE — redial always goes through voipNative
-    // → native CallView/CallActivity. No JS /call.js path on mobile.
+    // [2026-05-20 restore foreground gate] voipNative now short-circuits to
+    // the JS /call.js screen when the app is foreground (the common case
+    // for redial — user tapped a row inside the app). When backgrounded
+    // (Siri shortcut etc), it falls through to native CallView/CallActivity.
+    // `onWebFallback` is invoked in both the web path and the foreground
+    // gate; the caller stays untouched and just supplies the router.push
+    // it wants to run.
     if (Platform.OS === 'ios' || Platform.OS === 'android') {
       (async () => {
         try {
           const voipNative = require('../services/voipNative');
+          const conversationId = item.conversation_id || item.conversationId || '';
           const { callId, native } = await voipNative.startOutgoingCall({
             calleeEmail: email,
             calleeName: name,
             isVideo: !!item.video,
-            conversationId: item.conversation_id || item.conversationId || '',
+            conversationId,
+            onWebFallback: (cid) => {
+              router.push(`/call?callId=${cid}&contactName=${encodeURIComponent(name)}&contactEmail=${encodeURIComponent(email)}&isVideo=${isVideo}&conversationId=${conversationId}&isCaller=1`);
+            },
           });
           if (!native) {
-            router.push(`/call?callId=${callId}&contactName=${encodeURIComponent(name)}&contactEmail=${encodeURIComponent(email)}&isVideo=${isVideo}&isCaller=1`);
+            // Either web or foreground gate handled it via onWebFallback —
+            // no extra navigation needed. The router.push already ran inside
+            // the callback. Defensive: if `native === false` and the callback
+            // somehow didn't run (e.g. it threw silently), nothing surfaced
+            // — but this is the rare degenerate case, the explicit
+            // onWebFallback flow above covers the happy paths.
           }
         } catch (e) {
           console.warn('[handleHistoryCallBack] startOutgoingCall failed:', e);

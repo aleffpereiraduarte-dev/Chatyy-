@@ -942,6 +942,63 @@ function RotatingText({ isDark }) {
 
 // Clean simple logo for empty state (not used currently but kept for reference)
 
+// [#1239 2026-05-20] Header brand orb — sits next to the "One" title and pulses
+// while the assistant is thinking. Same Chatyy purple as the rest of the AI
+// surface, native driver so it doesn't tank perf on the JS thread.
+function PulsingHeaderLogo({ active, isDark }) {
+  const scale = useRef(new Animated.Value(1)).current;
+  const opacity = useRef(new Animated.Value(0.85)).current;
+  const loopRef = useRef(null);
+
+  useEffect(() => {
+    if (active) {
+      const seq = Animated.loop(
+        Animated.sequence([
+          Animated.parallel([
+            Animated.timing(scale, { toValue: 1.18, duration: 750, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+            Animated.timing(opacity, { toValue: 1, duration: 750, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+          ]),
+          Animated.parallel([
+            Animated.timing(scale, { toValue: 1, duration: 750, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+            Animated.timing(opacity, { toValue: 0.55, duration: 750, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+          ]),
+        ])
+      );
+      loopRef.current = seq;
+      seq.start();
+    } else {
+      try { loopRef.current?.stop?.(); } catch {}
+      Animated.parallel([
+        Animated.timing(scale, { toValue: 1, duration: 200, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+      ]).start();
+    }
+    return () => { try { loopRef.current?.stop?.(); } catch {} };
+  }, [active]);
+
+  return (
+    <Animated.View
+      style={{
+        width: 22,
+        height: 22,
+        borderRadius: 11,
+        backgroundColor: ACCENT,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginRight: 8,
+        opacity,
+        transform: [{ scale }],
+        shadowColor: ACCENT,
+        shadowOpacity: active ? 0.55 : 0,
+        shadowRadius: active ? 10 : 0,
+        shadowOffset: { width: 0, height: 0 },
+      }}
+    >
+      <IconSparkles size={12} color="#fff" />
+    </Animated.View>
+  );
+}
+
 function getSuggestions(t) {
   const tod = getTimeOfDay();
   if (tod === 'morning') return [
@@ -2224,8 +2281,10 @@ export default function OneScreen() {
           const callId = `one_${Date.now()}`;
           const contactEmail = params.contact_email;
           const contactName = contactEmail.split('@')[0];
-          // [#1217 2026-05-19] FULL NATIVE — /one start_call goes through
-          // voipNative on mobile, web falls back to /call.js.
+          // [2026-05-20 restore foreground gate] voipNative routes to JS
+          // /call.js when foreground, native CallActivity/CallViewController
+          // when backgrounded. onWebFallback covers both the web path and
+          // the foreground gate.
           if (Platform.OS === 'ios' || Platform.OS === 'android') {
             (async () => {
               try {
@@ -2235,9 +2294,12 @@ export default function OneScreen() {
                   calleeName: contactName,
                   isVideo: !!params.video,
                   callId,
+                  onWebFallback: (cid) => {
+                    router.push(`/call?contactEmail=${encodeURIComponent(contactEmail)}&contactName=${encodeURIComponent(contactName)}&isVideo=${video}&isCaller=1&callId=${cid}`);
+                  },
                 });
                 if (!native) {
-                  router.push(`/call?contactEmail=${encodeURIComponent(contactEmail)}&contactName=${encodeURIComponent(contactName)}&isVideo=${video}&isCaller=1&callId=${callId}`);
+                  // onWebFallback already handled the navigation. No-op here.
                 }
               } catch (e) {
                 console.warn('[one start_call] startOutgoingCall failed:', e);
@@ -3356,7 +3418,10 @@ export default function OneScreen() {
         </TouchableOpacity>
 
         <View style={st.headerCleanCenter}>
-          <Text style={[st.headerCleanTitle, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}>One</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <PulsingHeaderLogo active={loading || messages.some(m => m._streaming)} isDark={isDark} />
+            <Text style={[st.headerCleanTitle, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}>One</Text>
+          </View>
         </View>
 
         <View style={{ flexDirection: 'row' }}>

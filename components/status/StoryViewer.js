@@ -888,20 +888,42 @@ export default function StoryViewer({
       } catch {}
       try { onMarkViewed?.(cur.id); } catch {}
     }
-    // Pre-cache the NEXT story while this one is playing — eliminates the
+    // Pre-cache the NEXT N stories while this one is playing — eliminates the
     // micro-buffering that used to flash between stories. Cheap: cacheMedia
     // dedupes by URL, so re-visits hit the disk cache. Web skipped (browser
     // already handles HTTP caching for <video>/<img>).
+    // Aggressive radius: i+1 and i+2 (image + poster). The user reported
+    // "as vezes os status demora carregar a foto em si"; pre-warming two
+    // ahead means the full payload is already on disk before they tap.
     if (Platform.OS !== 'web' && _cacheMedia) {
-      const next = stories?.[idx + 1];
-      const nextRaw = next?.media_url
-        || ((next?.type === 'image' || next?.type === 'video') && /^(\/|https?:\/\/)/.test(String(next?.content || ''))
-            ? next.content : '');
-      const nextUrl = _resolveUrl(nextRaw);
-      if (nextUrl) { _cacheMedia(nextUrl).catch(() => {}); }
-      // Also pre-cache the next item's poster for instant first-frame render.
-      const nextThumb = _resolveUrl(next?.thumbnail_url);
-      if (nextThumb) { _cacheMedia(nextThumb).catch(() => {}); }
+      for (let _ofs = 1; _ofs <= 2; _ofs++) {
+        const _peek = stories?.[idx + _ofs];
+        if (!_peek) break;
+        const _peekRaw = _peek.media_url
+          || ((_peek.type === 'image' || _peek.type === 'video') && /^(\/|https?:\/\/)/.test(String(_peek.content || ''))
+              ? _peek.content : '');
+        const _peekUrl = _resolveUrl(_peekRaw);
+        // force:true on i+1 so the immediate next paint hits the disk cache
+        // even on cellular; i+2 stays opportunistic (cellular gate respected).
+        if (_peekUrl) { _cacheMedia(_peekUrl, _ofs === 1 ? { force: true } : undefined).catch(() => {}); }
+        const _peekThumb = _resolveUrl(_peek.thumbnail_url);
+        if (_peekThumb) { _cacheMedia(_peekThumb, { force: true }).catch(() => {}); }
+      }
+    } else if (Platform.OS === 'web') {
+      // Web: use Image.prefetch (RN web shim → preload link) for image-type
+      // peeks so the browser HTTP cache is warm before the user advances.
+      try {
+        for (let _ofs = 1; _ofs <= 2; _ofs++) {
+          const _peek = stories?.[idx + _ofs];
+          if (!_peek || _peek.type !== 'image') continue;
+          const _peekRaw = _peek.media_url
+            || (/^(\/|https?:\/\/)/.test(String(_peek.content || '')) ? _peek.content : '');
+          const _peekUrl = _resolveUrl(_peekRaw);
+          if (_peekUrl) Image.prefetch?.(_peekUrl);
+          const _peekThumb = _resolveUrl(_peek.thumbnail_url);
+          if (_peekThumb) Image.prefetch?.(_peekThumb);
+        }
+      } catch {}
     }
     if (cur.type === 'video') return;
     if (paused) return;
@@ -1246,6 +1268,7 @@ export default function StoryViewer({
               style={{ width: '100%', height: '100%' }}
               contentFit="contain"
               cachePolicy="memory-disk"
+              priority="high"
               transition={120}
               onLoad={() => {
                 Animated.timing(imageFade, { toValue: 1, duration: 350, useNativeDriver: true }).start();

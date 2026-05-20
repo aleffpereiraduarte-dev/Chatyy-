@@ -1659,6 +1659,8 @@ export default {
   'apps.plans': 'Plans',
   'apps.recent': 'Recent',
   'apps.goLive': 'Go Live',
+  'apps.wallet': 'Wallet',
+  'apps.diamonds': 'Diamonds',
   'apps.searchPlaceholder': 'Search apps',
   'apps.noResults': 'No apps found',
   'sidebar.drive': 'Drive',

@@ -5261,15 +5261,44 @@ function MobileNativeBridge() {
 }
 
 export default function CallScreen(props) {
-  // Web keeps the rich JS UI. Mobile native dispatches to the native screen
-  // UNLESS the call is outgoing + app is foreground (see MobileNativeBridge
-  // #1208 gate) — then JS owns the call.
-  if (Platform.OS !== 'web') {
-    return <MobileNativeBridge />;
+  // ALWAYS call hooks at the top — Rules of Hooks requires unconditional
+  // invocation. We read params here once and branch below.
+  const params = useLocalSearchParams();
+  const isOutgoing = params?.isCaller === '1' || params?.isCaller === 'true'
+    || params?.isCaller === 1 || params?.isCaller === true;
+
+  // Web always renders the rich JS UI — no native call module on web.
+  if (Platform.OS === 'web') {
+    return (
+      <CallErrorBoundary>
+        <CallScreenInner {...props} />
+      </CallErrorBoundary>
+    );
   }
-  return (
-    <CallErrorBoundary>
-      <CallScreenInner {...props} />
-    </CallErrorBoundary>
-  );
+
+  // [2026-05-20 restore foreground gate — WhatsApp/Telegram parity]
+  // Mobile: decide between JS rich UI and the native dispatcher per the
+  // call direction. Default is native (the post-#1217 baseline) so the
+  // common cold-start / push-incoming path keeps working unchanged. The
+  // ONE exception is an outgoing call (isCaller=1) — that route is only
+  // reached via voipNative's foreground gate (it skips the native module
+  // and router.push('/call?...isCaller=1')), so by the time we get here
+  // the user is INSIDE the app and expects the rich JS UI with invite-
+  // friend, audio↔video upgrade, screenshare, group grid, raise hand, etc.
+  //
+  // For incoming calls (isCaller=0, dispatched from IncomingCallListener
+  // / pushNotifications / VoipPushAppDelegateSubscriber / Android
+  // CallFirebaseMessagingService), we keep the native dispatch path so
+  // CallKit (iOS) and Telecom + FullScreenIntent (Android) remain in
+  // charge of the lock-screen / background ring/answer surface.
+  if (isOutgoing) {
+    return (
+      <CallErrorBoundary>
+        <CallScreenInner {...props} />
+      </CallErrorBoundary>
+    );
+  }
+
+  // Incoming / cold-start fallback — dispatch to native and pop.
+  return <MobileNativeBridge />;
 }

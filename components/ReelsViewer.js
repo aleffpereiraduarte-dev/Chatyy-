@@ -3,6 +3,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet, FlatList, Dimensions,
   Animated, Platform, Share, TextInput, Modal, KeyboardAvoidingView,
   ActivityIndicator, Pressable, ScrollView, Image, Easing, PanResponder,
+  AppState,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import AvatarCircle from './AvatarCircle';
@@ -2344,6 +2345,18 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   // o áudio continuava tocando em background; só `isActive` (per FlatList row)
   // era checado e ele sempre é true pro item visível.
   const isScreenFocused = useIsFocused();
+  // [#1238 2026-05-20] AppState gate — useIsFocused mantém true quando app vai
+  // pra background (lock screen, home button), porque a route ainda é a ativa.
+  // Sem isso o reel continuava tocando áudio com o app minimizado. Combinamos
+  // os dois flags num único `playGate` que vai pro ReelItem.
+  const [appActive, setAppActive] = useState(AppState.currentState === 'active');
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      setAppActive(next === 'active');
+    });
+    return () => { try { sub.remove(); } catch {} };
+  }, []);
+  const playGate = isScreenFocused && appActive;
   // Safe-area insets — the Following/For You tabs are absolutely positioned
   // with a static `top: 16` on Android, which on edge-to-edge windows was
   // tucking under the status-bar clock. Use runtime insets so the tab row
@@ -2563,10 +2576,10 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         showLiveRing={!!showLiveRing}
         overlayOpen={overlayOpen}
         preload={isPreloadItem}
-        screenFocused={isScreenFocused}
+        screenFocused={playGate}
       />
     );
-  }, [currentIndex, colors, isDark, t, user, router, containerHeight, handleOpenComments, handleOpenLikers, handleOpenProfile, handleUseSound, handleDuet, handleStitch, handleHidePost, showLiveRing, overlayOpen, isScreenFocused]);
+  }, [currentIndex, colors, isDark, t, user, router, containerHeight, handleOpenComments, handleOpenLikers, handleOpenProfile, handleUseSound, handleDuet, handleStitch, handleHidePost, showLiveRing, overlayOpen, playGate]);
 
   const keyExtractor = useCallback((item) => String(item.id), []);
 

@@ -10,6 +10,7 @@ import {
   IconFilm, IconFolder, IconCloud, IconFileText, IconStickyNote, IconUsers,
   IconImage, IconVideo, IconSparkles, IconUser, IconSettings, IconStar,
   IconBell, IconShield, IconGlobe, IconGrid, IconCamera, IconMapPin,
+  IconCreditCard, IconDiamond,
 } from '../components/Icons';
 import Svg, { Circle as SvgCircle, Path, Rect, Line, Defs, LinearGradient, Stop } from 'react-native-svg';
 import ChatListTab from '../components/ChatListTab';
@@ -1345,6 +1346,11 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
       title: t('apps.account') || 'Conta',
       items: [
         { key: 'profile',       label: t('sidebar.profile') || 'Perfil',         ic: I(IconUser, '#64748b'),     action: () => { onClose(); if (userEmail) try { router.push(`/u/${encodeURIComponent(userEmail)}`); } catch (e) { console.warn('[chat] router.push failed:', e); } } },
+        // [#1240 2026-05-20] Wallet exposto no Apps drawer — antes só era
+        // alcançável via diamond-shop / gift sheets. Brand purple porque é a
+        // entry pra economia (top-up + cashout).
+        { key: 'wallet',        label: t('apps.wallet') || 'Carteira',           ic: I(IconCreditCard, '#7C3AED'), route: '/wallet' },
+        { key: 'diamonds',      label: t('apps.diamonds') || 'Diamantes',        ic: I(IconDiamond, '#60a5fa'),  route: '/diamond-shop' },
         { key: 'settings',      label: t('sidebar.settings') || 'Configurações', ic: I(IconSettings, '#475569'), action: () => { onClose(); try { router.push('/settings'); } catch (e) { console.warn('[chat] router.push failed:', e); } } },
         { key: 'notifications', label: t('sidebar.notifications') || 'Alertas',  ic: I(IconBell, '#f97316'),     route: '/notifications' },
         { key: 'backup',        label: t('sidebar.backup') || 'Backup',          ic: I(IconShield, '#0ea5e9'),   route: '/backup' },

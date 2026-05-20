@@ -1623,6 +1623,30 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
             <View key={`st-${s.email}`} style={{ alignItems: 'center', width: 68 }}>
               <TouchableOpacity
                 onPress={() => isLive ? openLiveViewer(s.email, liveInfo.id) : openStatus(s.email)}
+                onPressIn={() => {
+                  // WhatsApp/IG pattern: warm the first item the moment the
+                  // finger touches the ring. By the time onPress fires + the
+                  // viewer mounts, the full payload is already on disk so
+                  // there's no spinner / black-frame flash.
+                  if (Platform.OS === 'web' || isLive) return;
+                  try {
+                    const { cacheMedia } = require('../services/mediaCache');
+                    const first = (s.items || [])[0];
+                    if (!first) return;
+                    const raw = first.media_url
+                      || ((first.type === 'image' || first.type === 'video') && /^(\/|https?:\/\/)/.test(String(first.content || ''))
+                          ? first.content : '');
+                    if (raw) {
+                      const url = raw.startsWith('http') ? raw : `${api.BASE_URL}${raw}`;
+                      cacheMedia(url, { force: true }).catch(() => {});
+                    }
+                    if (first.thumbnail_url) {
+                      const _thumb = first.thumbnail_url;
+                      const turl = _thumb.startsWith('http') ? _thumb : `${api.BASE_URL}${_thumb}`;
+                      cacheMedia(turl, { force: true }).catch(() => {});
+                    }
+                  } catch {}
+                }}
                 onLongPress={() => {
                   // WhatsApp-style action sheet: Reply (DM) + Mute. The badge
                   // (↩) already covers reply on a single tap; long-press here

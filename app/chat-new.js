@@ -1304,6 +1304,23 @@ export default function ChatNewScreen() {
             {/* Tiny Chatyy badge — purple check circle SVG, signals registered user.
                 Less noisy than a pill, more affirmative than nothing. */}
             <IconChatyyOnChat size={13} color="#7C3AED" />
+            {/* "NOVO" badge — WhatsApp-style pill for contacts that just joined
+                Chatyy (last 7d via _justJoined flag, populated by friend_suggestions
+                backend + contact_joined WS event). Brand purple so it stands out
+                without screaming. */}
+            {item._justJoined && (
+              <View style={{
+                backgroundColor: '#7C3AED',
+                paddingHorizontal: 6,
+                paddingVertical: 2,
+                borderRadius: 8,
+                marginLeft: 2,
+              }}>
+                <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800', letterSpacing: 0.5 }}>
+                  {t('chat.newOnChatyy') || 'NOVO'}
+                </Text>
+              </View>
+            )}
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <HighlightText

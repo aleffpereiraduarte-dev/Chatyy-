@@ -2749,9 +2749,22 @@ export default function PhotosScreen() {
     const imageUri = (photo.isDevice && photo.thumbUri) ? photo.thumbUri
       : (photo.isDevice ? photo.uri : getThumbnailUrl(photo));
 
+    // WhatsApp/Google Photos pattern: warm the full-res URL the moment the
+    // finger touches the cell. By the time onPress fires + the viewer modal
+    // mounts (~120-200ms of spring animation), the full image has either
+    // started decoding or is already on disk → no perceived load delay.
+    const _prefetchFull = useCallback(() => {
+      if (Platform.OS === 'web' || photo.isDevice) return;
+      try {
+        const url = photo.cdn_url || api.fileDownloadUrl(photo.id);
+        if (url) ExpoImage.prefetch?.(url, 'memory-disk');
+      } catch {}
+    }, [photo.id, photo.isDevice, photo.cdn_url]);
+
     return (
       <Pressable
         onPress={onPress}
+        onPressIn={_prefetchFull}
         onLongPress={onLongPress}
         style={[
           s.gridItem,
@@ -3084,6 +3097,15 @@ export default function PhotosScreen() {
           stickySectionHeadersEnabled={true}
           onScroll={handleScroll}
           scrollEventThrottle={16}
+          // Performance: the main Photos grid was rendering every row in the
+          // dataset on mount with no windowing — first paint after open took
+          // 2-4s on 5000+ photo backups. These props mirror the Albums grid
+          // (which already has perf props) and let Metro window-render rows.
+          removeClippedSubviews={Platform.OS !== 'web'}
+          windowSize={7}
+          maxToRenderPerBatch={6}
+          initialNumToRender={4}
+          updateCellsBatchingPeriod={50}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
           }
@@ -4258,6 +4280,19 @@ export default function PhotosScreen() {
                       source={{ uri: viewerResolvedUri || getFullUrl(viewerPhoto) }}
                       style={{ flex: 1, width: '100%', height: '100%' }}
                       contentFit="contain"
+                      cachePolicy="memory-disk"
+                      priority="high"
+                      transition={120}
+                      // Paint the 200×200 thumbnail behind the full-res image
+                      // so the modal doesn't show a black gap during decode.
+                      // expo-image handles the crossfade once the high-res
+                      // bytes arrive; on disk-cache hit the placeholder is
+                      // invisible (full paints immediately).
+                      placeholder={(() => {
+                        const t = getThumbnailUrl(viewerPhoto);
+                        return t ? { uri: t } : undefined;
+                      })()}
+                      placeholderContentFit="contain"
                     />
                   </Animated.View>
                 </Pressable>

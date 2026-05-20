@@ -1011,8 +1011,22 @@ function AppInit({ onNotification, setOtaToast }) {
     // keeps the home screen usable for everyone else.
 
     // Sync phone contacts in background (so server knows which contacts we have, for new user notifications)
+    //
+    // WhatsApp-grade contact discovery: we run sync IMMEDIATELY on every cold start
+    // (cache short-circuits in <100ms when fresh, so this is essentially free), AND
+    // re-sync every 12h to pick up contacts that joined Chatyy since the last
+    // upload. The 12h cadence matches WhatsApp's documented sync interval and
+    // surfaces new joiners in chat-new under the "NOVO" badge.
+    //
+    // Re-sync also fires on AppState → 'active' transitions when >12h elapsed,
+    // so users coming back to the app after a weekend get fresh joiner badges
+    // without having to open chat-new.
     if (Platform.OS !== 'web') {
-      setTimeout(async () => {
+      const RESYNC_INTERVAL_MS = 12 * 60 * 60 * 1000; // 12h
+      const LAST_SYNC_KEY = '@chatyy_contacts_last_full_sync';
+      let _syncing = false;
+      const maybeRunSync = async (force = false) => {
+        if (_syncing) return;
         try {
           let hasPermission = false;
           if (Platform.OS === 'ios') {
@@ -1020,7 +1034,6 @@ function AppInit({ onNotification, setOtaToast }) {
               const NativeContacts = require('../modules/expo-native-contacts').default;
               hasPermission = NativeContacts.hasContactsPermission();
             } catch {
-              // Native module not available, fall back to expo-contacts
               const Contacts = await import('expo-contacts');
               const { status } = await Contacts.getPermissionAsync();
               hasPermission = status === 'granted';
@@ -1030,12 +1043,46 @@ function AppInit({ onNotification, setOtaToast }) {
             const { status } = await Contacts.getPermissionAsync();
             hasPermission = status === 'granted';
           }
-          if (hasPermission) {
-            const { syncContacts } = await import('../services/contactSync');
-            await syncContacts();
+          if (!hasPermission) return;
+          // 12h gate — read AsyncStorage timestamp; skip if recent unless `force`.
+          let shouldRun = !!force;
+          if (!shouldRun) {
+            try {
+              const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+              const last = parseInt((await AsyncStorage.getItem(LAST_SYNC_KEY)) || '0', 10);
+              shouldRun = !last || (Date.now() - last) >= RESYNC_INTERVAL_MS;
+            } catch { shouldRun = true; }
           }
+          if (!shouldRun) return;
+          _syncing = true;
+          const { syncContacts } = await import('../services/contactSync');
+          // `forceRefresh=true` bypasses the 1h in-memory cache so the server
+          // sees a fresh hash batch — that's what wakes up "X entrou no Chatyy"
+          // push notifications on the contact's side (chat_phone_registry hit).
+          await syncContacts(true);
+          try {
+            const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+            await AsyncStorage.setItem(LAST_SYNC_KEY, String(Date.now()));
+          } catch {}
         } catch {}
-      }, 5000); // Delay 5s to not block app startup
+        finally { _syncing = false; }
+      };
+      // Initial sync — 1.5s after mount so we don't fight cold-start work.
+      setTimeout(() => { maybeRunSync(false).catch(() => {}); }, 1500);
+      // AppState foreground re-check — react-native AppState 'change' fires
+      // every time the user comes back; we gate by the 12h timestamp so this
+      // is cheap on rapid switches.
+      try {
+        const { AppState } = require('react-native');
+        const sub = AppState.addEventListener('change', (s) => {
+          if (s === 'active') maybeRunSync(false).catch(() => {});
+        });
+        // Stash on the ref so cleanup below can remove it.
+        cleanupRef.current = (() => {
+          const prev = cleanupRef.current;
+          return () => { try { sub?.remove?.(); } catch {} if (prev) prev(); };
+        })();
+      } catch {}
     }
 
     // Initialize auto photo backup (global, not tied to Photos screen)

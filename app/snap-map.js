@@ -461,6 +461,29 @@ window.gm_authFailure = function() {
 </body></html>`;
 }
 
+// Great-circle distance between two lat/lng pairs (Haversine). Returns
+// meters. Used by the Apple-style friends list to show "1.2km" / "240m"
+// next to each share row. We only render it when both me + the friend
+// have coords, since otherwise the value is meaningless.
+function haversineMeters(aLat, aLng, bLat, bLng) {
+  if (![aLat, aLng, bLat, bLng].every(Number.isFinite)) return null;
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const s1 = Math.sin(dLat / 2);
+  const s2 = Math.sin(dLng / 2);
+  const a = s1 * s1 + Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * s2 * s2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+}
+function formatDistance(m) {
+  if (m === null || !Number.isFinite(m)) return '';
+  if (m < 100) return `${Math.round(m)} m`;
+  if (m < 1000) return `${Math.round(m / 10) * 10} m`;
+  if (m < 10000) return `${(m / 1000).toFixed(1)} km`;
+  return `${Math.round(m / 1000)} km`;
+}
+
 function ago(updatedAt) {
   if (!updatedAt) return '';
   let ts = 0;
@@ -508,14 +531,45 @@ export default function SnapMapScreen() {
 
   const [shares, setShares] = useState([]);   // friends sharing with me
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [myLocation, setMyLocation] = useState(null);
   const [selected, setSelected] = useState(null); // bottom sheet pin
   const [pendingReqs, setPendingReqs] = useState([]); // incoming requests
   const [grantsOpen, setGrantsOpen] = useState(false);
   const [grantsData, setGrantsData] = useState(null);
+  // Apple Find-My-style friends list panel — when expanded the list of
+  // people sharing covers ~55% of the map (collapsed = ~110px peek with
+  // avatars + count). Two-position toggle keeps gesture surface tiny and
+  // avoids fighting with the WebView's native pan/zoom touches.
+  const [listExpanded, setListExpanded] = useState(false);
 
   const sharesRef = useRef([]);
   sharesRef.current = shares;
+
+  // Manual refresh for the friends panel — pulls shares + grants in
+  // parallel without touching the GPS / map. Used by pull-to-refresh in
+  // the Apple-style list AND by the small refresh chip in the empty
+  // state. Surfacing the network state so the spinner shows briefly
+  // even when the request resolves instantly (avoids the user wondering
+  // if the tap registered).
+  const refreshShares = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const r = await api.friendsMapShares?.();
+      if (r?.success && r.data) {
+        setShares(Array.isArray(r.data.shares) ? r.data.shares : []);
+      }
+    } catch {}
+    try {
+      const g = await api.friendLocationGrants?.();
+      if (g?.success && g.data) {
+        setPendingReqs(g.data.pending_incoming || []);
+      }
+    } catch {}
+    // Guarantee the spinner is visible for at least ~400ms; instant
+    // resolutions feel unresponsive otherwise.
+    setTimeout(() => setRefreshing(false), 400);
+  }, []);
 
   // ── Initial load: my GPS + friends + pending requests ─────────────
   useEffect(() => {
@@ -899,7 +953,190 @@ export default function SnapMapScreen() {
               <Text style={{ color: 'rgba(255,255,255,0.82)', fontSize: 13, textAlign: 'center', marginTop: 6, lineHeight: 18 }}>
                 {t?.('snapmap.emptyHint') || 'Peça pra um amigo no chat compartilhar a localização ao vivo, ou ative o seu para eles te verem aqui.'}
               </Text>
+              <View style={{ flexDirection: 'row', gap: 8, marginTop: 14, alignSelf: 'center' }}>
+                <TouchableOpacity
+                  onPress={refreshShares}
+                  style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.16)' }}
+                  accessibilityLabel={t?.('common.refresh') || 'Atualizar'}
+                >
+                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+                    {refreshing ? '…' : (t?.('common.refresh') || 'Atualizar')}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => router.push('/chat-new')}
+                  style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, backgroundColor: '#7C3AED' }}
+                  accessibilityLabel={t?.('snapmap.inviteFriend') || 'Convidar amigo'}
+                >
+                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+                    {t?.('snapmap.inviteFriend') || 'Convidar amigo'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </View>
+          </View>
+        )}
+
+        {/* Apple Find-My-style friends list panel —
+            Bottom-pinned sheet that lists every friend currently sharing
+            with avatar + name + "há Xmin" + distance. Two states:
+              - peek (default): ~110px showing horizontal avatar strip + count
+              - expanded: ~55% of screen, vertical list, scrollable
+            Tap a row → pan map to that friend + open the action sheet
+            (same handler as tapping their pin). Pull-to-refresh in the
+            expanded list triggers a full reload of shares + grants.
+            Hidden entirely when shares.length === 0 — the empty-state
+            cloud above stays in charge of the "no one is sharing" UI. */}
+        {shares.length > 0 && (
+          <View
+            pointerEvents="box-none"
+            style={{
+              position: 'absolute', left: 0, right: 0, bottom: 0,
+              maxHeight: listExpanded ? SH * 0.6 : 130,
+              backgroundColor: isDark ? '#0d0d0d' : '#fff',
+              borderTopLeftRadius: 22, borderTopRightRadius: 22,
+              borderTopWidth: StyleSheet.hairlineWidth,
+              borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)',
+              shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 12, shadowOffset: { width: 0, height: -3 },
+              elevation: 12,
+            }}
+          >
+            {/* Drag handle + tap-to-toggle header — handle has a 36×4 pill
+                like Apple's sheets, and the whole header is a Pressable so
+                tap anywhere in the row toggles expand. Title shows
+                "N amigos ao vivo" so users know what they're seeing
+                without expanding. */}
+            <Pressable
+              onPress={() => setListExpanded((v) => !v)}
+              accessibilityRole="button"
+              accessibilityLabel={listExpanded ? (t?.('snapmap.collapseList') || 'Recolher lista') : (t?.('snapmap.expandList') || 'Expandir lista')}
+              style={{ paddingTop: 8, paddingBottom: 6, alignItems: 'center' }}
+            >
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.30)' : 'rgba(0,0,0,0.18)' }} />
+              <View style={{ flexDirection: 'row', alignItems: 'center', width: '100%', paddingHorizontal: 16, marginTop: 6 }}>
+                <Text style={{ flex: 1, color: colors.text, fontSize: 15, fontWeight: '700' }}>
+                  {shares.length === 1
+                    ? (t?.('snapmap.oneFriendLive') || '1 amigo ao vivo')
+                    : (t?.('snapmap.friendsLive') || '{n} amigos ao vivo').replace('{n}', shares.length)}
+                </Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
+                  {listExpanded ? (t?.('snapmap.tapToCollapse') || 'Recolher') : (t?.('snapmap.tapToExpand') || 'Ver todos')}
+                </Text>
+              </View>
+            </Pressable>
+
+            {/* Peek view (collapsed): horizontal avatar strip. Tap to pan
+                + open action sheet, just like tapping the pin on the map. */}
+            {!listExpanded && (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ paddingHorizontal: 14, paddingTop: 4, paddingBottom: 14, gap: 14 }}
+              >
+                {shares.map((s) => {
+                  const dist = myLocation && Number.isFinite(s.latitude) && Number.isFinite(s.longitude)
+                    ? haversineMeters(myLocation.lat, myLocation.lng, Number(s.latitude), Number(s.longitude))
+                    : null;
+                  return (
+                    <TouchableOpacity
+                      key={'peek-' + s.email}
+                      onPress={() => {
+                        if (Number.isFinite(s.latitude) && Number.isFinite(s.longitude)) {
+                          pushToMap({ type: 'pan', lat: Number(s.latitude), lng: Number(s.longitude) });
+                        }
+                        setSelected(s);
+                      }}
+                      style={{ alignItems: 'center', width: 72 }}
+                      accessibilityLabel={`${s.name || s.email}, ${ago(s.updated_at)}`}
+                    >
+                      <View style={{ borderWidth: 2, borderColor: s.is_unlimited ? '#7C3AED' : '#22c55e', borderRadius: 30, padding: 2 }}>
+                        <AvatarCircle name={s.name || s.email} email={s.email} size={50} />
+                      </View>
+                      <Text numberOfLines={1} style={{ color: colors.text, fontSize: 11, fontWeight: '600', marginTop: 4, maxWidth: 70, textAlign: 'center' }}>
+                        {(s.name || s.email?.split('@')[0] || '').split(' ')[0]}
+                      </Text>
+                      <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 10, maxWidth: 70, textAlign: 'center' }}>
+                        {dist !== null ? formatDistance(dist) : ago(s.updated_at)}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
+
+            {/* Expanded list view — vertical FlatList-style rows with
+                avatar/name/distance/last-update. Pull-down to refresh
+                via the inline chip (RN's RefreshControl needs a
+                ScrollView/FlatList in vertical mode which fights the
+                bottom-sheet height clamp on web). */}
+            {listExpanded && (
+              <ScrollView
+                style={{ maxHeight: SH * 0.55 }}
+                contentContainerStyle={{ paddingBottom: 24 }}
+              >
+                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 16, paddingVertical: 4 }}>
+                  <TouchableOpacity
+                    onPress={refreshShares}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }}
+                    accessibilityLabel={t?.('common.refresh') || 'Atualizar'}
+                  >
+                    {refreshing ? <ActivityIndicator size="small" color={colors.primary} /> : null}
+                    <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '700' }}>
+                      {t?.('common.refresh') || 'Atualizar'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                {shares.map((s) => {
+                  const dist = myLocation && Number.isFinite(s.latitude) && Number.isFinite(s.longitude)
+                    ? haversineMeters(myLocation.lat, myLocation.lng, Number(s.latitude), Number(s.longitude))
+                    : null;
+                  return (
+                    <TouchableOpacity
+                      key={'row-' + s.email}
+                      onPress={() => {
+                        if (Number.isFinite(s.latitude) && Number.isFinite(s.longitude)) {
+                          pushToMap({ type: 'pan', lat: Number(s.latitude), lng: Number(s.longitude) });
+                        }
+                        setSelected(s);
+                        setListExpanded(false);
+                      }}
+                      style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, gap: 12 }}
+                      accessibilityRole="button"
+                    >
+                      <View style={{ borderWidth: 2, borderColor: s.is_unlimited ? '#7C3AED' : '#22c55e', borderRadius: 28, padding: 2 }}>
+                        <AvatarCircle name={s.name || s.email} email={s.email} size={46} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text numberOfLines={1} style={{ color: colors.text, fontSize: 15, fontWeight: '700' }}>
+                          {s.name || s.email}
+                        </Text>
+                        <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
+                          {ago(s.updated_at)}
+                          {s.is_unlimited ? ` · ∞ ${t?.('snapmap.alwaysOn') || 'sempre ativo'}` : ''}
+                        </Text>
+                      </View>
+                      {dist !== null && (
+                        <View style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }}>
+                          <Text style={{ color: colors.text, fontSize: 12, fontWeight: '700' }}>
+                            {formatDistance(dist)}
+                          </Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+                {/* Spacer + manage privacy CTA so the user can reach the
+                    grants modal even with the panel expanded. */}
+                <TouchableOpacity
+                  onPress={() => { setListExpanded(false); openGrants(); }}
+                  style={{ marginTop: 6, marginHorizontal: 16, paddingVertical: 12, borderRadius: 14, alignItems: 'center', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+                >
+                  <Text style={{ color: colors.primary, fontSize: 13, fontWeight: '700' }}>
+                    {t?.('snapmap.managePrivacy') || 'Gerenciar privacidade'}
+                  </Text>
+                </TouchableOpacity>
+              </ScrollView>
+            )}
           </View>
         )}
       </View>

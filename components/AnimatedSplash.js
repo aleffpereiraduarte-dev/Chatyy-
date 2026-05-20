@@ -1,29 +1,49 @@
 import { useEffect, useRef, useCallback } from 'react';
-import { View, Animated, StyleSheet } from 'react-native';
+import { View, Animated, Image, StyleSheet, Easing } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 
-// Minimal splash — pure white, no logo, no text, no glow.
-// Just a fast fade-out hand-off to the real UI.
-// User asked: tirar glow roxo + logo Chatyy + tagline + ícone do envelope.
+// [#1239 2026-05-20] Restore Chatyy logo on the JS splash so the cold-start
+// hand-off doesn't show a blank white square. The native splash image lives
+// in app.json (splash-blank.png — kept blank to avoid a flash-of-native-logo)
+// so we paint the logo here in JS, with a gentle scale+fade entrance and the
+// existing 200ms fade-out hand-off to the real UI.
 
 export default function AnimatedSplash({ onFinish }) {
   const fadeOut = useRef(new Animated.Value(1)).current;
+  const logoOpacity = useRef(new Animated.Value(0)).current;
+  const logoScale = useRef(new Animated.Value(0.86)).current;
 
   const onLayoutReady = useCallback(() => {
     SplashScreen.hideAsync().catch(() => {});
   }, []);
 
   useEffect(() => {
-    // Hold ~500ms (just enough for app to mount) then fade out 200ms
+    // Logo entrance: scale + fade up over 280ms with a soft ease-out.
+    Animated.parallel([
+      Animated.timing(logoOpacity, {
+        toValue: 1,
+        duration: 280,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.spring(logoScale, {
+        toValue: 1,
+        tension: 70,
+        friction: 9,
+        useNativeDriver: true,
+      }),
+    ]).start();
+
+    // Hold ~650ms (gives the logo a beat to settle) then fade out 220ms.
     const timer = setTimeout(() => {
       Animated.timing(fadeOut, {
         toValue: 0,
-        duration: 200,
+        duration: 220,
         useNativeDriver: true,
       }).start(() => {
         onFinish?.();
       });
-    }, 500);
+    }, 650);
 
     return () => clearTimeout(timer);
   }, []);
@@ -32,7 +52,20 @@ export default function AnimatedSplash({ onFinish }) {
     <Animated.View
       style={[s.container, { opacity: fadeOut }]}
       onLayout={onLayoutReady}
-    />
+    >
+      <Animated.View
+        style={{
+          opacity: logoOpacity,
+          transform: [{ scale: logoScale }],
+        }}
+      >
+        <Image
+          source={require('../assets/icon.png')}
+          style={s.logo}
+          resizeMode="contain"
+        />
+      </Animated.View>
+    </Animated.View>
   );
 }
 
@@ -41,5 +74,12 @@ const s = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     backgroundColor: '#FFFFFF',
     zIndex: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logo: {
+    width: 132,
+    height: 132,
+    borderRadius: 28,
   },
 });
