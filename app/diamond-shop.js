@@ -11,13 +11,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator,
-  Platform, StatusBar, Alert,
+  Platform, StatusBar, Alert, Linking,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
+import { getBaseUrl } from '../services/api';
 import { IconArrowLeft } from '../components/Icons';
 import {
   DIAMOND_PACKS, getDiamondLocalizedPrice, initIAP, purchaseDiamonds,
@@ -64,9 +65,21 @@ export default function DiamondShopScreen() {
   const onBuy = useCallback(async (pack) => {
     if (pendingSku) return;
     if (Platform.OS !== 'ios') {
+      // Android Play Billing isn't wired yet (Task #1120/#1147). Offer to
+      // open the web checkout in the browser so the user can actually buy
+      // diamonds today instead of hitting a dead-end "coming soon" alert.
+      const base = (typeof getBaseUrl === 'function' && getBaseUrl()) || 'https://chatyy.com.br';
+      const webUrl = `${base}/#/diamond-shop?sku=${encodeURIComponent(pack.sku)}`;
       Alert.alert(
         t('wallet.topup') || 'Comprar diamantes',
-        t('wallet.androidComingSoon') || 'Compra in-app no Android em breve. Por enquanto, use o iOS ou a web.',
+        t('wallet.androidWebBuyBody') || 'A compra direta no Android chega em breve. Quer abrir a loja no navegador para comprar agora?',
+        [
+          { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+          {
+            text: t('wallet.openWebStore') || 'Abrir loja web',
+            onPress: () => { try { Linking.openURL(webUrl); } catch {} },
+          },
+        ],
       );
       return;
     }

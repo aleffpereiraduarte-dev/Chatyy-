@@ -23,7 +23,9 @@ import {
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconX } from './Icons';
+import { Linking } from 'react-native';
 import * as api from '../services/api';
+import { getBaseUrl } from '../services/api';
 import {
   DIAMOND_PACKS, getDiamondLocalizedPrice, initIAP, isDiamondSkuAvailable,
   purchaseDiamonds,
@@ -89,9 +91,24 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
   const onBuy = useCallback(async (pack) => {
     if (pendingSku) return;
     if (Platform.OS !== 'ios') {
+      // Android Play Billing isn't wired yet (Task #1120/#1147). Offer to
+      // open the web checkout in the browser so the user can actually buy
+      // diamonds today instead of hitting a dead-end "coming soon" alert.
+      // The web flow lives at /diamond-shop on chatyy.com.br and uses the
+      // same backend `wallet_topup_verify` so the balance lands in the
+      // same wallet.
+      const base = (typeof getBaseUrl === 'function' && getBaseUrl()) || 'https://chatyy.com.br';
+      const webUrl = `${base}/#/diamond-shop?sku=${encodeURIComponent(pack.sku)}`;
       Alert.alert(
         t('wallet.topup') || 'Comprar diamantes',
-        t('wallet.androidComingSoon') || 'Compra in-app no Android em breve. Por enquanto, use o iOS ou a web.',
+        t('wallet.androidWebBuyBody') || 'A compra direta no Android chega em breve. Quer abrir a loja no navegador para comprar agora?',
+        [
+          { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+          {
+            text: t('wallet.openWebStore') || 'Abrir loja web',
+            onPress: () => { try { Linking.openURL(webUrl); } catch {} },
+          },
+        ],
       );
       return;
     }

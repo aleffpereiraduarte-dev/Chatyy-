@@ -4668,6 +4668,8 @@ export default {
   'wallet.topupConnecting': 'Connecting to the App Store…',
   'wallet.topupTos': 'Diamonds are non-refundable and cannot be converted into cash.',
   'wallet.androidComingSoon': 'In-app purchase on Android is coming soon. Use iOS or the web for now.',
+  'wallet.androidWebBuyBody': 'Direct in-app purchase on Android is coming soon. Open the web store in your browser to buy now?',
+  'wallet.openWebStore': 'Open web store',
   'wallet.currentBalance': 'Current balance',
   'wallet.myDiamonds': 'My diamonds',
   'wallet.topupCta': 'Tap to buy diamonds',

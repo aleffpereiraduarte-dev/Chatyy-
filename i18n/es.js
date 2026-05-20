@@ -4665,6 +4665,8 @@ export default {
   'wallet.topupConnecting': 'Conectando con la App Store…',
   'wallet.topupTos': 'Los diamantes no son reembolsables ni convertibles en dinero.',
   'wallet.androidComingSoon': 'La compra in-app en Android llegará pronto. Por ahora usa iOS o la web.',
+  'wallet.androidWebBuyBody': 'La compra directa en Android llegará pronto. ¿Quieres abrir la tienda web en el navegador para comprar ahora?',
+  'wallet.openWebStore': 'Abrir tienda web',
   'wallet.currentBalance': 'Saldo actual',
   'wallet.myDiamonds': 'Mis diamantes',
   'wallet.topupCta': 'Toca para comprar diamantes',
