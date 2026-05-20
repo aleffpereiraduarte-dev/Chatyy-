@@ -14,6 +14,15 @@ import {
 const ONBOARDING_KEY = '@chatyy_onboarding_done';
 const BRAND = '#7C3AED';
 
+// React Native invariant: a regular FlatList cannot use `onScroll` with
+// `useNativeDriver: true`. The list MUST be wrapped via
+// Animated.createAnimatedComponent so the native side can hook the scroll
+// event. Without this, iOS Release builds throw at first render of
+// the onboarding modal — which (for users that haven't dismissed onboarding)
+// surfaces as a crash on the Inbox screen since Onboarding renders inside it.
+// Fix #1204 (2026-05-19): Apps→Email crash, root-cause via crash_report log.
+const AnimatedFlatList = Animated.createAnimatedComponent(FlatList);
+
 const SLIDES = [
   {
     key: 'chat',
@@ -294,7 +303,7 @@ export default function Onboarding({ onDone }) {
         </TouchableOpacity>
       )}
 
-      <FlatList
+      <AnimatedFlatList
         ref={flatListRef}
         data={SLIDES}
         renderItem={renderSlide}

@@ -461,7 +461,34 @@ export default function LiveBroadcastScreen() {
       // which matches Instagram Live behavior.
       facingRef.current = preFacing;
       setMirrorOn(preFacing === 'user');
-      const stream = await getUserMediaFn({ video: { facingMode: preFacing }, audio: true });
+      // [#1205 live muting fix, 2026-05-19] Wipe any leaked voice-call
+      // audio mode/session left by a previous call before opening the mic.
+      // Without this, Android stuck in MODE_IN_COMMUNICATION / iOS pinned
+      // to `.voiceChat` routes the mic through voice-call AEC which assumes
+      // a far-end reference exists. Live broadcast is one-way, so AEC
+      // adaptive gain converges to near-silence within ~5s → "ficando muda".
+      // Best-effort: no-op if the module isn't loaded (web), or if the call
+      // returns false (which just means audio state was already clean).
+      if (Platform.OS !== 'web') {
+        try {
+          const callkit = require('../modules/expo-callkit');
+          if (typeof callkit.prepareAudioForLive === 'function') {
+            callkit.prepareAudioForLive();
+          }
+        } catch (e) {
+          console.warn('[Live] prepareAudioForLive failed:', e?.message || e);
+        }
+      }
+      // Explicit audio constraints so we don't inherit voice-call DSP. AEC
+      // is OFF (live is one-way send — there's no far-end to cancel). NS
+      // stays ON (kills room noise without harming voice). AGC stays ON
+      // (matches IG/TikTok live). Web honors these as MediaTrackConstraints.
+      const audioConstraints = {
+        echoCancellation: false,
+        noiseSuppression: true,
+        autoGainControl: true,
+      };
+      const stream = await getUserMediaFn({ video: { facingMode: preFacing }, audio: audioConstraints });
       localStreamRef.current = stream;
       if (Platform.OS === 'web') {
         if (localVideoRef.current) localVideoRef.current.srcObject = stream;

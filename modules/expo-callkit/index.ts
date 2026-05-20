@@ -139,6 +139,14 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
   getNoiseSuppression(): boolean;
   isNoiseSuppressionAvailable(): boolean;
 
+  // [#1205 live muting fix, 2026-05-19] Reset audio session before live
+  // broadcast getUserMedia. Wipes a leaked MODE_IN_COMMUNICATION (Android)
+  // or `.voiceChat` AVAudioSession (iOS) that a prior call left behind —
+  // those modes route the mic through voice-call AEC which over-suppresses
+  // the one-way send pattern a live broadcast uses, manifesting as the
+  // host's audio progressively going silent within ~5s of going live.
+  prepareAudioForLive(): boolean;
+
   // [2026-05-17 Background blur / virtual background] Per-user background
   // effect. `mode` is one of: 'off', 'blur_low', 'blur_medium', 'blur_high',
   // 'image'. `imageAsset` is required when mode === 'image' (one of the
@@ -569,6 +577,17 @@ export function onLkEvent<K extends LkEventName>(
 // by the native side (SharedPreferences on Android, App Group UserDefaults on
 // iOS). JS wrappers swallow failures so a missing native module degrades to
 // "always on, no-op" rather than crashing the call screen.
+
+// [#1205 live muting fix, 2026-05-19] Reset audio mode/session BEFORE
+// live-broadcast.js calls getUserMedia. Wipes a leaked voice-call audio
+// state from a prior call so the live host's mic doesn't get gated to
+// near-silence by AEC after ~5s. No-op on platforms where the native
+// module isn't loaded (web, etc).
+export function prepareAudioForLive(): boolean {
+  const m = getNative();
+  if (!m) return false;
+  try { return !!m.prepareAudioForLive(); } catch { return false; }
+}
 
 export function setNoiseSuppression(enabled: boolean): boolean {
   const m = getModule();

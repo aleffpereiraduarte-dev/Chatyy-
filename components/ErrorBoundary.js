@@ -26,7 +26,7 @@ function getColors() {
 }
 
 export default class ErrorBoundary extends React.Component {
-  state = { hasError: false, error: null };
+  state = { hasError: false, error: null, showDetails: false };
 
   static getDerivedStateFromError(error) {
     return { hasError: true, error };
@@ -39,8 +39,12 @@ export default class ErrorBoundary extends React.Component {
     try { Sentry.captureException(error); } catch {}
     // Send crash report to server (multiple attempts with different URLs so
     // at least one lands even if a regional API host is down).
+    // Defensive: capture even if message/stack/componentStack are all empty —
+    // a blank crash report is still a signal that the boundary tripped, and
+    // letting empty-payload entries land in the log helped us correlate user
+    // reports with timing during the #1204 Apps→Email iOS crash hunt.
     const payload = {
-      message: error?.message || 'Erro desconhecido',
+      message: error?.message || (error ? String(error).substring(0, 200) : 'Erro desconhecido (sem mensagem)'),
       stack: (error?.stack || '').substring(0, 3000),
       component: (errorInfo?.componentStack || '').substring(0, 2000),
       fatal: true,
@@ -95,10 +99,32 @@ export default class ErrorBoundary extends React.Component {
           )}
           <TouchableOpacity
             style={[s.button, { backgroundColor: c.btnBg }]}
-            onPress={() => this.setState({ hasError: false, error: null, componentStack: '' })}
+            onPress={() => this.setState({ hasError: false, error: null, componentStack: '', showDetails: false })}
           >
             <Text style={[s.buttonText, { color: c.btnText }]}>Tentar novamente</Text>
           </TouchableOpacity>
+          {/* Production "Detalhes" toggle — tapping reveals the raw error
+              message + first stack line in a small selectable monospace
+              block. Apple 2.1/2.3 is fine with this since it's gated behind
+              an explicit user tap framed as diagnostics, and the message is
+              truncated to 120 chars. Lets users screenshot/send to support
+              when a beacon to crash_report.php fails to land (offline). */}
+          {!__DEV__ && this.state.error?.message && (
+            <TouchableOpacity
+              onPress={() => this.setState(prev => ({ showDetails: !prev.showDetails }))}
+              style={{ marginTop: 12 }}
+            >
+              <Text style={{ color: c.sub, fontSize: 11, textDecorationLine: 'underline' }}>
+                {this.state.showDetails ? 'Ocultar detalhes' : 'Detalhes técnicos'}
+              </Text>
+            </TouchableOpacity>
+          )}
+          {!__DEV__ && this.state.showDetails && this.state.error?.message && (
+            <Text selectable style={{ color: c.sub, fontSize: 10, marginTop: 8, textAlign: 'left', paddingHorizontal: 20, fontFamily: 'monospace' }}>
+              {String(this.state.error.message).substring(0, 120)}
+              {this.state.error.stack ? '\n' + String(this.state.error.stack).split('\n').slice(0, 2).join('\n').substring(0, 200) : ''}
+            </Text>
+          )}
         </View>
       );
     }

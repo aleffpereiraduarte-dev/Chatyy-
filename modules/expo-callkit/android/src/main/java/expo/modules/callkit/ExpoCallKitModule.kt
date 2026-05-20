@@ -586,6 +586,47 @@ class ExpoCallKitModule : Module() {
       NativeCallRoom.setCameraEnabled(enabled)
     }
 
+    // [#1205 live muting fix, 2026-05-19] Reset AudioManager mode before
+    // live-broadcast.js calls getUserMedia. Symptom: "a live tá ficando muda"
+    // — the host's mic becomes progressively quieter and eventually silent
+    // mid-broadcast. Root cause is a leaked `MODE_IN_COMMUNICATION` from a
+    // prior CallActivity / IncomingCallActivity.onAccept path that never
+    // ran AudioRouter.teardown() (call ended via process kill, system swipe,
+    // CXEndCall race, etc). With the device still in IN_COMMUNICATION mode,
+    // Android's voice-call AEC chain assumes a far-end reference stream
+    // exists; with no far-end (live broadcast is one-way send), the AEC
+    // adaptive gate over-suppresses the local mic to "near silence".
+    //
+    // We do NOT touch focus here — the live broadcast doesn't claim
+    // STREAM_VOICE_CALL focus, so the next foreground app inherits clean
+    // STREAM_MUSIC state. We only flip the mode back so AEC stops treating
+    // this as a phone call.
+    Function("prepareAudioForLive") {
+      try {
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+        // Force MODE_NORMAL so the WebRTC AudioRecord opens with media
+        // capture defaults (no voice-call AEC over-gating). Idempotent;
+        // safe to call even if mode is already NORMAL.
+        if (am.mode != android.media.AudioManager.MODE_NORMAL) {
+          Log.d(TAG, "prepareAudioForLive: AudioManager.mode was ${am.mode} → resetting to MODE_NORMAL")
+          am.mode = android.media.AudioManager.MODE_NORMAL
+        }
+        // Also drop any leaked speakerphone / BT SCO state from a previous
+        // CallActivity that didn't tear down cleanly.
+        try { am.isSpeakerphoneOn = false } catch (_: Throwable) {}
+        try {
+          @Suppress("DEPRECATION")
+          am.isBluetoothScoOn = false
+          @Suppress("DEPRECATION")
+          am.stopBluetoothSco()
+        } catch (_: Throwable) {}
+        true
+      } catch (t: Throwable) {
+        Log.w(TAG, "prepareAudioForLive failed: ${t.message}")
+        false
+      }
+    }
+
     // [host-mute, 2026-05-17] Host-issued mute of a remote participant.
     //
     // See ios/ExpoCallKitModule.swift for the full protocol — the LK Room is

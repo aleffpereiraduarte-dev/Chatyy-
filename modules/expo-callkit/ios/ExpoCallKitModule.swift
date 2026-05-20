@@ -386,6 +386,36 @@ public class ExpoCallKitModule: Module {
       NativeCallRoom.shared.setCameraEnabled(enabled)
     }
 
+    // [#1205 live muting fix, 2026-05-19] Pre-broadcast AVAudioSession reset.
+    // Symptom: live broadcast "ficando muda" — host's mic captures the first
+    // few seconds then progressively silences. Root cause is a leaked
+    // `.voiceChat` mode left by a prior CallViewController / GroupCall that
+    // didn't run AudioRouter.teardown (CXEndCall race, app force-quit, etc).
+    // With the session still pinned to `.playAndRecord + .voiceChat`, the
+    // OS expects bi-directional audio (caller-style). Live broadcast is
+    // one-way send, so AVAudioEngine's voice processing chain (built-in AEC
+    // + duck) over-suppresses the local mic to near-silence within ~5s.
+    //
+    // We re-configure to `.playAndRecord + .videoRecording` (or `.default`)
+    // which mirrors what Instagram/TikTok live use — no voice processing,
+    // full mic gain, A2DP allowed for the host's headphones. We do NOT
+    // setActive(true) here — getUserMedia on the JS side will activate it.
+    Function("prepareAudioForLive") { () -> Bool in
+      let session = AVAudioSession.sharedInstance()
+      do {
+        try session.setCategory(
+          .playAndRecord,
+          mode: .videoRecording,
+          options: [.allowBluetoothA2DP, .defaultToSpeaker, .mixWithOthers]
+        )
+        NSLog("[ExpoCallKit] prepareAudioForLive: AVAudioSession reset to .playAndRecord/.videoRecording")
+        return true
+      } catch {
+        NSLog("[ExpoCallKit] prepareAudioForLive failed: \(error)")
+        return false
+      }
+    }
+
     // [host-mute, 2026-05-17] Host-issued mute of a remote participant.
     //
     // Architecture note: NativeCallRoom is still a stub on iOS (see
