@@ -718,6 +718,24 @@ function AppInit({ onNotification, setOtaToast }) {
     };
     // Delay pre-fetch to not compete with initial inbox load
     setTimeout(doPreload, 3000);
+
+    // Stage D (#1200, 2026-05-20): GLOBAL trigger for the WhatsApp-grade
+    // full-history bootstrap. Previously chat.js was the ONLY entry point —
+    // mobile users land on /chat by default so that mostly worked, but
+    // desktop users who open /inbox/status/etc as the first screen never
+    // kicked off the SQLite-first bootstrap until they manually opened the
+    // chat tab. Same idempotency rules: the function short-circuits on the
+    // SQLite gate if it's already 'done', and on the singleton flag if a
+    // run is already in flight. The 2500ms delay lets first paint settle.
+    if (Platform.OS !== 'web') {
+      setTimeout(() => {
+        try {
+          const { bootstrapFullHistoryOnce } = require('../services/fullHistorySync');
+          const apiMod = require('../services/api');
+          bootstrapFullHistoryOnce(apiMod.apiCall, auth.user.email).catch(() => {});
+        } catch {}
+      }, 2500);
+    }
   }, [auth?.user?.email]);
 
   // Track screen navigation changes

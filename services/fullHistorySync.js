@@ -122,21 +122,24 @@ export async function bootstrapFullHistoryOnce(apiCall, email) {
   _abort = false;
   _startedAt = Date.now();
   _setupLifecycleHooks();
-  // Mark the bar as "shown" the very first time we enter the loop, BEFORE
-  // the first emit. Even if the user backgrounds the app one second later
-  // and the loop never finishes, next launch will be silent. This is the
-  // key change for #1200 — gate flipped to 'done' was the only previous
-  // exit path, which the loop rarely reached because of background pauses
-  // or 30min timeouts on slow networks.
-  if (!seenBarBefore) {
-    try { await localDb.setSyncState(barShownKey, '1'); } catch {}
-  }
+  // NOTE (#1200 follow-up, 2026-05-20): we used to flip `chat_full_bar_shown`
+  // here, BEFORE any work happened. That meant users with thousands of
+  // pending messages NEVER saw the progress bar — the silent flag was
+  // already set before the first emit was sent. Now we defer the sentinel
+  // until AFTER the first conversation successfully drains (see
+  // _runBootstrap). The user sees real progress on first run; once any
+  // chunk of work lands, subsequent cold starts go silent as designed.
   emit('start', { convDone: 0, convTotal: 0 });
 
   try {
     await localDb.setSyncState(gateKey, 'started');
-    const result = await _runBootstrap(apiCall);
-    if (!_abort && !result.timedOut) {
+    const result = await _runBootstrap(apiCall, { barShownKey, seenBarBefore });
+    // Only flip gate to 'done' if the loop finished cleanly with NO per-conv
+    // failures. If any conv errored (network blip, 403, etc.) the gate stays
+    // 'pending'/'started' so the next mount / AppState resume retries the
+    // failed convs. Idempotent — convs that already flipped
+    // `chat_full_synced:<id>` are skipped on the retry pass.
+    if (!_abort && !result.timedOut && (result.failedConvs?.length || 0) === 0) {
       await localDb.setSyncState(gateKey, 'done');
     }
     emit('done', { convDone: result.convDone, convTotal: result.convTotal });
@@ -151,12 +154,35 @@ export async function bootstrapFullHistoryOnce(apiCall, email) {
   }
 }
 
-/** Force-resume if anything is waiting. Called on AppState → active. */
-export function nudgeFullHistorySync() {
-  if (!_running) return;
+/**
+ * Force-resume if anything is waiting. Called on AppState → active.
+ *
+ * Two roles:
+ *  1. If a bootstrap loop is currently running but parked in
+ *     `_waitWhilePaused()` (background, battery), unpause it.
+ *  2. If NO loop is running and a (apiCall, email) was passed, fire a fresh
+ *     `bootstrapFullHistoryOnce` so resuming the app from background actually
+ *     retries any failed/pending conversations. Without this any 403/network
+ *     blip during the first session leaves the gate 'pending' but nothing
+ *     ever re-kicks it.
+ *
+ * Both args optional. Calling `nudgeFullHistorySync()` with no args keeps the
+ * legacy unpause-only behavior for existing callsites.
+ */
+export function nudgeFullHistorySync(apiCall, email) {
+  // Always wake any internal waiters first.
   _pausedReason = null;
   const waiters = _resumeWaiters.splice(0);
   for (const w of waiters) { try { w(); } catch {} }
+  if (_running) return;
+  // No loop running and caller provided creds → re-arm bootstrap. The gate
+  // check inside `bootstrapFullHistoryOnce` returns `skipped: 'already_done'`
+  // if everything completed previously, so this is cheap.
+  if (apiCall && email) {
+    try {
+      bootstrapFullHistoryOnce(apiCall, email).catch(() => {});
+    } catch {}
+  }
 }
 
 /** Abort the in-flight loop (logout / cache clear). */
@@ -179,17 +205,35 @@ export async function isConvFullySynced(convId) {
 
 // ─── Core loop ─────────────────────────────────────────────────────────────
 
-async function _runBootstrap(apiCall) {
+async function _runBootstrap(apiCall, opts = {}) {
+  const { barShownKey, seenBarBefore } = opts;
   // 1. Pull the full conversation list (server caps at 500/page; we paginate).
   const convs = await _fetchAllConversations(apiCall);
   const convTotal = convs.length;
   emit('start', { convDone: 0, convTotal });
 
   let convDone = 0;
+  // Track per-conv failures (network blip, 403, drain throw). If non-empty,
+  // the caller keeps the bootstrap gate 'pending' so the next mount /
+  // AppState resume retries automatically. Without this the gate flipped
+  // to 'done' on first iteration that didn't time-out — sealing the user
+  // permanently in a half-synced state.
+  const failedConvs = [];
+  // Defer the "user has seen the progress bar" sentinel until we've actually
+  // emitted progress. Previously it was set BEFORE the first emit so users
+  // with thousands of pending messages saw zero UI feedback — bar was set
+  // silently on launch #1 and every cold start after was emitted-silent.
+  let barShownPersisted = !!seenBarBefore;
+  const persistBarShown = async () => {
+    if (barShownPersisted || !barShownKey) return;
+    barShownPersisted = true;
+    try { await localDb.setSyncState(barShownKey, '1'); } catch {}
+  };
+
   for (const conv of convs) {
     if (_abort) break;
     if (Date.now() - _startedAt > MAX_RUNTIME_MS) {
-      return { convDone, convTotal, timedOut: true };
+      return { convDone, convTotal, timedOut: true, failedConvs };
     }
 
     const convId = Number(conv?.id);
@@ -207,10 +251,15 @@ async function _runBootstrap(apiCall) {
     try {
       await _drainConv(apiCall, convId);
       await localDb.setSyncState(`chat_full_synced:${convId}`, '1');
+      // First successful drain → seal the bar-shown sentinel. Subsequent
+      // cold starts will be silent even if the loop never reaches 'done'
+      // for the remaining convs.
+      await persistBarShown();
     } catch (e) {
       // Per-conv error doesn't abort the whole bootstrap. The next launch
       // re-tries from the same oldest watermark — idempotent.
       console.warn(`[fullHistorySync] conv ${convId} drain failed:`, e?.message);
+      failedConvs.push({ convId, error: e?.message });
     }
 
     convDone++;
@@ -218,7 +267,7 @@ async function _runBootstrap(apiCall) {
     await _waitWhilePaused();
   }
 
-  return { convDone, convTotal, timedOut: false };
+  return { convDone, convTotal, timedOut: false, failedConvs };
 }
 
 // Walk one conversation's history pagewise from its current oldest watermark

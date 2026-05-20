@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo, Suspense } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Animated, Dimensions, TextInput, Modal, Pressable, KeyboardAvoidingView } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Animated, Dimensions, TextInput, Modal, Pressable, KeyboardAvoidingView, AppState } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
@@ -569,6 +569,36 @@ function ChatHub() {
         }
       }).catch(() => {});
     } catch {}
+  }, [user?.email, user?.token]);
+
+  // AppState-driven retry for the full-history bootstrap (#1200 Stage D,
+  // 2026-05-20). The mount-once trigger above only fires when the chat
+  // screen first mounts. If the bootstrap was interrupted (background, OS
+  // kill, network blip, per-conv 403), the gate sits at 'pending'/'started'
+  // and never gets a second chance from this screen alone. Re-fire whenever
+  // the app resumes from background and the gate isn't 'done'. Cheap:
+  // `nudgeFullHistorySync` short-circuits when a loop is already running,
+  // and `bootstrapFullHistoryOnce` short-circuits on the SQLite gate read.
+  useEffect(() => {
+    const email = user?.email;
+    if (!email || !user?.token) return;
+    if (Platform.OS === 'web') return;
+    let sub = null;
+    try {
+      const api = require('../services/api');
+      const { nudgeFullHistorySync } = require('../services/fullHistorySync');
+      const localDb = require('../services/localDb');
+      const handle = async (state) => {
+        if (state !== 'active') return;
+        try {
+          const v = await localDb.getSyncState?.(`chat_full_bootstrap:${email.toLowerCase()}`);
+          if (v === 'done') return;
+          nudgeFullHistorySync(api.apiCall, email);
+        } catch {}
+      };
+      sub = AppState.addEventListener('change', handle);
+    } catch {}
+    return () => { try { sub?.remove?.(); } catch {} };
   }, [user?.email, user?.token]);
 
   const handleBack = useCallback(() => {
