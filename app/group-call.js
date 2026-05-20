@@ -62,11 +62,21 @@ const ROLE = CallParticipantList.ROLE;
 
 // Pick grid columns based on participant count. Matches FaceTime / Meet:
 // up to 4 → 2x2, 5–9 → 3x3, 10+ → scrollable 3-wide.
+// [gap E4 2026-05-20] Beyond 4 participants we switch to 'focus' mode:
+// big active-speaker tile + horizontal filmstrip below. Returning the
+// special string from this function lets the renderer branch on it.
 function pickGridCols(count) {
   if (count <= 4) return 2;
-  if (count <= 9) return 3;
-  return 3; // scrollable beyond 9
+  // >4: return 'focus' sentinel so the grid renders a 1-up + filmstrip
+  // (Meet/Zoom "speaker view" — keeps every face on screen without
+  // shrinking the active speaker into a tiny tile).
+  return 'focus';
 }
+
+// Debounce window for active-speaker switches in focus mode. Without
+// this, fast back-and-forth talkers flicker the big tile every 200ms.
+// 1500ms matches WhatsApp's perceived stickiness.
+const ACTIVE_SPEAKER_DEBOUNCE_MS = 1500;
 
 const SCREEN_W = Dimensions.get('window').width;
 

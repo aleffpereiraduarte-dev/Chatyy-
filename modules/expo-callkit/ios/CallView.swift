@@ -1304,3 +1304,148 @@ struct AVRoutePickerRow: UIViewRepresentable {
         }
     }
 }
+
+// MARK: - OngoingCallBar overlay (audio-only minimize path)
+//
+// [Wave WhatsApp parity, 2026-05-20 gap G4 iOS] When the user minimises a
+// 1:1 audio call (no PiP — PiP only mounts for video), we drop a floating
+// WhatsApp-green bar on top of the key window with the caller name + live
+// timer + tap-to-restore. Mounted via a separate UIWindow at level
+// `statusBar + 1` so it sits above every JS/SwiftUI surface, including
+// modals presented by the chat list. Removed when handleHangup runs or the
+// user taps it.
+//
+// We intentionally do NOT route this through the JS `OngoingCallBar.js`
+// component because the audio-only minimize path leaves the JS render
+// thread waiting on the SwiftUI host VC dismiss — the JS bar wouldn't
+// repaint until the dismiss settled, and the user perceives a 200-500ms
+// gap where nothing is visible.
+
+struct OngoingCallBarOverlay: View {
+    let callerName: String
+    let hasVideo: Bool
+    let startedAt: Date
+    let onTap: () -> Void
+
+    @State private var elapsed: Int = 0
+    @State private var timer: Timer? = nil
+
+    /// WhatsApp green for the audio-only bar; matches OngoingCallBar.js
+    private let barColor = Color(red: 0x12/255.0, green: 0xB7/255.0, blue: 0x6A/255.0)
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 12) {
+                // Pulsing dot — visual cue the call is live.
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: 8, height: 8)
+                    .opacity(elapsed % 2 == 0 ? 1.0 : 0.5)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(callerName)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    Text(Self.formatElapsed(elapsed))
+                        .font(.system(size: 12))
+                        .foregroundColor(.white.opacity(0.85))
+                        .monospacedDigit()
+                }
+
+                Spacer(minLength: 8)
+
+                Text("Toque para voltar")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.white)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            .background(barColor)
+        }
+        .buttonStyle(.plain)
+        .onAppear {
+            elapsed = max(0, Int(Date().timeIntervalSince(startedAt)))
+            timer?.invalidate()
+            timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+                elapsed = max(0, Int(Date().timeIntervalSince(startedAt)))
+            }
+        }
+        .onDisappear {
+            timer?.invalidate()
+            timer = nil
+        }
+    }
+
+    private static func formatElapsed(_ s: Int) -> String {
+        let m = s / 60
+        let r = s % 60
+        return String(format: "%02d:%02d", m, r)
+    }
+}
+
+/// Holds a dedicated UIWindow that hosts `OngoingCallBarOverlay` above all
+/// other content (including modals). Install/uninstall is idempotent so the
+/// minimize button is safe to spam-tap.
+@objc final class OngoingCallBarOverlayController: NSObject {
+    @objc static let shared = OngoingCallBarOverlayController()
+
+    private var window: UIWindow?
+    private var hosting: UIViewController?
+
+    func install(callerName: String,
+                 hasVideo: Bool,
+                 startedAt: Date,
+                 onTapRestore: @escaping () -> Void) {
+        if window != nil {
+            // Already installed — replace the view so a new call replaces
+            // the previous bar's caller name + timer.
+            uninstall()
+        }
+        // Pick the active scene so this works in multitasking (iPad).
+        guard let scene = UIApplication.shared.connectedScenes
+                .compactMap({ $0 as? UIWindowScene })
+                .first(where: { $0.activationState == .foregroundActive })
+                ?? UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first
+        else { return }
+
+        let win = UIWindow(windowScene: scene)
+        win.windowLevel = UIWindow.Level.statusBar + 1
+        win.backgroundColor = .clear
+        win.isHidden = false
+
+        let view = OngoingCallBarOverlay(
+            callerName: callerName,
+            hasVideo: hasVideo,
+            startedAt: startedAt,
+            onTap: { [weak self] in
+                self?.uninstall()
+                onTapRestore()
+            }
+        )
+        let host = UIHostingController(rootView: view)
+        host.view.backgroundColor = .clear
+        // Place the bar just below the status bar / Dynamic Island.
+        let safeTop = scene.statusBarManager?.statusBarFrame.height ?? 44
+        host.view.frame = CGRect(x: 0, y: safeTop, width: win.bounds.width, height: 48)
+        host.view.autoresizingMask = [.flexibleWidth]
+        let container = UIViewController()
+        container.view.backgroundColor = .clear
+        container.view.addSubview(host.view)
+        container.addChild(host)
+        host.didMove(toParent: container)
+        win.rootViewController = container
+        self.window = win
+        self.hosting = container
+        print("[OngoingCallBar] installed for caller=\(callerName) hasVideo=\(hasVideo)")
+    }
+
+    func uninstall() {
+        guard let win = window else { return }
+        win.isHidden = true
+        window = nil
+        hosting = nil
+        print("[OngoingCallBar] uninstalled")
+    }
+}

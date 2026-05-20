@@ -148,6 +148,30 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // bridge) can react. Cleared in deinit.
     private var dtmfObserver: NSObjectProtocol?
 
+    // [Wave WhatsApp parity, 2026-05-20 gap B3 iOS] Listen for the system
+    // mute action (CXSetMutedCallAction in ProviderDelegate posts this) so
+    // toggling mute from the lock-screen / system call bar takes the same
+    // fast-path applyMicEnabled uses (track.mute / unmute, no republish).
+    private var systemMuteObserver: NSObjectProtocol?
+
+    // [Wave WhatsApp parity, 2026-05-20 gap B5 iOS] Listen for AVAudioSession
+    // interruptions (Siri, alarm, PSTN call) and recover the mic after the
+    // interruption ends. Without this, post-Siri the user's mic stays
+    // muted-by-iOS even though our LK track says it's enabled.
+    private var avInterruptionObserver: NSObjectProtocol?
+
+    // Stash for the mic-enabled state we owned right before an AVAudioSession
+    // interruption. Read back when the interruption ends so the user comes
+    // out in the same state they went in.
+    private var preInterruptionMicEnabled: Bool = true
+
+    // [Wave WhatsApp parity, 2026-05-20 gap B3 iOS] Cached LocalAudioTrack
+    // reference. Set the first time setMicrophone publishes the track so
+    // subsequent toggles can call track.mute() / track.unmute() directly
+    // instead of going back through setMicrophone (which re-publishes and
+    // re-creates the AVAudioSession-bound RTC sender).
+    private var localAudioTrackRef: LocalAudioTrack?
+
     init(callId: String,
          callerName: String,
          callerEmail: String,
@@ -205,6 +229,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
         // [DTMF, 2026-05-19] Install the digit-publish bridge.
         installDTMFObserver()
+
+        // [Wave WhatsApp parity, 2026-05-20 gap B3 iOS] System call-bar mute.
+        installSystemMuteObserver()
+
+        // [Wave WhatsApp parity, 2026-05-20 gap B5 iOS] AVAudioSession recovery.
+        installAVInterruptionObserver()
 
         // Build the SwiftUI tree with the full closure set Stage #995 demands.
         let rootView = CallView(
@@ -338,6 +368,19 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // covers paths where Room.connect throws — `clear()` runs in
             // didDisconnect / catch so JS doesn't get a stale snapshot.
             NativeCallRoom.shared.publish(room: r, callId: callId, roomName: callId)
+
+            // [Wave WhatsApp parity, 2026-05-20 gap C5+F3 iOS] Bind the
+            // BackgroundProcessor (MediaPipe blur / wallpaper) to this Room so
+            // captured camera frames flow through processPixelBuffer before
+            // LK encodes them. No-op when BackgroundProcessor.mode == .off,
+            // so binding always is safe (zero cost when user hasn't enabled
+            // background effects). Must bind BEFORE setCamera() below so the
+            // very first published frame already carries the processor.
+            BackgroundProcessorLKAdapter.shared.bind(to: r)
+            // [Wave WhatsApp parity, 2026-05-20 gap B1] Mirror for the audio
+            // path — RNNoise ML noise suppression. Skips silently when the
+            // SPM module isn't linked (dlsym fallback returned unavailable).
+            RNNoiseLKAdapter.shared.bind(to: r)
             Task { [weak self] in
                 guard let self = self else { return }
                 do {
@@ -450,6 +493,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         if #available(iOS 15.0, *), let pip = pipController, pip.isPictureInPictureActive {
             pip.stopPictureInPicture()
         }
+        // [Wave WhatsApp parity, 2026-05-20 gap G4 iOS] Tear down the
+        // OngoingCallBar overlay if it was mounted (audio minimize path).
+        OngoingCallBarOverlayController.shared.uninstall()
         CallSignalWs.shared.fireCallEnd(
             callId: callId,
             conversationId: conversationId,
@@ -550,19 +596,61 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
     private func applyMicEnabled(_ enabled: Bool) {
         guard let r = self.room else { return }
+        // [Wave WhatsApp parity, 2026-05-20 gap B3 iOS] Mute/unmute the
+        // existing RTC audio sender instead of re-publishing. Re-publishing
+        // tears down the SFU path + races the CallKit-owned audio session.
+        // Mirrors the camera fast-path in applyCamEnabled (lines 598-601):
+        // the peer gets the standard WebRTC "muted" signal while audio
+        // routing stays intact. First-time enable (no track yet) falls
+        // through to setMicrophone() with capture options for AEC + AGC + NS.
         Task { [weak self] in
+            guard let self = self else { return }
             do {
-                // [Wave B audio, 2026-05-18 / restored 2026-05-19] Pass
-                // AudioCaptureOptions on every mic toggle so re-publish (some
-                // LK revs re-create the track on unmute) keeps AEC + AGC +
-                // noise suppression on.
-                try await r.localParticipant.setMicrophone(
-                    enabled: enabled,
-                    captureOptions: Self.defaultAudioCaptureOptions()
-                )
+                // Find the already-published local mic track. We try the
+                // session-cached reference first (set on first publish below)
+                // and fall back to LK's localParticipant audio publications
+                // accessor. If neither yields a track yet, take the legacy
+                // setMicrophone path to perform the first publish — that path
+                // also carries AudioCaptureOptions (AEC+AGC+NS+highpass+typing)
+                // so the first published frame has the WebRTC DSP toggles.
+                if let track = self.localAudioTrackRef {
+                    if enabled {
+                        try await track.unmute()
+                    } else {
+                        try await track.mute()
+                    }
+                    print("[CallVC] mic \(enabled ? "unmute" : "mute") (cached, no republish) — callId=\(self.callId)")
+                } else {
+                    try await r.localParticipant.setMicrophone(
+                        enabled: enabled,
+                        captureOptions: Self.defaultAudioCaptureOptions()
+                    )
+                    // Cache the freshly published track. Resolve via Mirror so
+                    // a minor-rev LK Swift API rename (audioTracks property
+                    // ↔ method ↔ trackPublications filter) doesn't break the
+                    // build. Look for any child labelled `audioTracks` whose
+                    // value is iterable; pull the first LocalAudioTrack we can
+                    // find on its `.track` property.
+                    let mirror = Mirror(reflecting: r.localParticipant)
+                    var found: LocalAudioTrack? = nil
+                    for child in mirror.children where child.label == "audioTracks" {
+                        if let arr = child.value as? [Any] {
+                            for pub in arr {
+                                let pubMirror = Mirror(reflecting: pub)
+                                for c2 in pubMirror.children where c2.label == "track" {
+                                    if let t = c2.value as? LocalAudioTrack { found = t; break }
+                                }
+                                if found != nil { break }
+                            }
+                        }
+                        if found != nil { break }
+                    }
+                    await MainActor.run { self.localAudioTrackRef = found }
+                    print("[CallVC] mic first-publish enabled=\(enabled) cached=\(track != nil) — callId=\(self.callId)")
+                }
             } catch {
-                print("[CallVC] setMicrophone(\(enabled)) failed: \(error)")
-                await MainActor.run { self?.session.micEnabled = !enabled }
+                print("[CallVC] applyMicEnabled(\(enabled)) failed: \(error)")
+                await MainActor.run { self.session.micEnabled = !enabled }
             }
         }
         // __chatyy_native_call_sync 2026-05-19 — module observer forwards
@@ -895,21 +983,62 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         )
     }
 
-    /// Minimize → Picture in Picture. We don't dismiss the VC; PiP keeps the
-    /// remote feed visible in the system PiP window while the user navigates
-    /// the rest of the app. If PiP isn't possible (audio call, unsupported
-    /// device) we just dismiss to background.
+    /// Minimize → Picture in Picture for video; floating OngoingCallBar for
+    /// audio. WhatsApp parity: an audio call should leave a tap-to-restore
+    /// chip on the top of the screen, not just vanish. Without the chip the
+    /// user often forgets the call is live and walks out of the app.
+    ///
+    /// [Wave WhatsApp parity, 2026-05-20 gap G4 iOS] Audio path now mounts
+    /// `OngoingCallBarOverlay` (declared in CallView.swift) on the key window
+    /// at z-order +100 so it sits above every JS surface. Tap → re-present
+    /// CallViewController. Dismissed when handleHangup() runs.
     private func handleMinimize() {
         if #available(iOS 15.0, *),
            let pip = pipController,
            pip.isPictureInPicturePossible,
            !pip.isPictureInPictureActive {
             pip.startPictureInPicture()
-        } else {
-            // No PiP wired — best effort: dismiss to chat list. The Room stays
-            // owned by us until the user hangs up, so audio continues via the
-            // system CallKit indicator.
-            dismiss(animated: true, completion: nil)
+            return
+        }
+        // No PiP (audio-only or unsupported device): install floating bar +
+        // dismiss self. The bar is owned by OngoingCallBarOverlayController
+        // which holds a weak ref to us so tap-to-restore can re-present.
+        // startedAt: best-effort = now. The bar reads CallSessionState
+        // directly for the canonical elapsed timer, but we hand a fallback
+        // so the bar appears immediately even before the first session tick.
+        OngoingCallBarOverlayController.shared.install(
+            callerName: callerName,
+            hasVideo: hasVideo,
+            startedAt: Date(),
+            onTapRestore: { [weak self] in
+                self?.restoreFromMinimize()
+            }
+        )
+        dismiss(animated: true, completion: nil)
+    }
+
+    /// [Wave WhatsApp parity, 2026-05-20 gap G4 iOS] Re-present this VC when
+    /// the user taps the floating OngoingCallBar. We rely on
+    /// ProviderDelegate's presenter resolver to handle the case where the JS
+    /// shell pushed new VCs while we were minimised.
+    fileprivate func restoreFromMinimize() {
+        OngoingCallBarOverlayController.shared.uninstall()
+        // Re-present over the current key VC. Walk the chain to find the
+        // top-most so we don't get stuck behind a JS modal.
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            guard let scene = UIApplication.shared.connectedScenes
+                    .compactMap({ $0 as? UIWindowScene })
+                    .first(where: { $0.activationState == .foregroundActive }),
+                  let root = scene.windows.first(where: { $0.isKeyWindow })?.rootViewController else {
+                return
+            }
+            var top: UIViewController = root
+            while let next = top.presentedViewController { top = next }
+            if top !== self {
+                self.modalPresentationStyle = .fullScreen
+                top.present(self, animated: true, completion: nil)
+            }
         }
     }
 
@@ -979,6 +1108,100 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             guard let digit = note.userInfo?["digit"] as? String,
                   !digit.isEmpty else { return }
             self?.publishDTMF(digit: digit)
+        }
+    }
+
+    /// [Wave WhatsApp parity, 2026-05-20 gap B3 iOS] React to the system
+    /// CallKit mute button. ProviderDelegate.provider(_:perform:CXSetMutedCallAction)
+    /// posts `ExpoCallKitSystemMuteChanged` with the desired muted state;
+    /// we flip `session.micEnabled` (UI in sync) AND call applyMicEnabled
+    /// which takes the track.mute()/unmute() fast-path. Filter by callId so
+    /// a stale notification from a previous call doesn't bleed in.
+    private func installSystemMuteObserver() {
+        guard systemMuteObserver == nil else { return }
+        systemMuteObserver = NotificationCenter.default.addObserver(
+            forName: Notification.Name("ExpoCallKitSystemMuteChanged"),
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self = self else { return }
+            guard let muted = note.userInfo?["muted"] as? Bool else { return }
+            if let nid = note.userInfo?["callId"] as? String,
+               !nid.isEmpty, nid != self.callId {
+                // Notification arrived for a different active call surface;
+                // ignore — the other VC will pick it up.
+                return
+            }
+            let nextEnabled = !muted
+            if self.session.micEnabled == nextEnabled { return }
+            self.session.micEnabled = nextEnabled
+            self.applyMicEnabled(nextEnabled)
+        }
+    }
+
+    /// [Wave WhatsApp parity, 2026-05-20 gap B5 iOS] AVAudioSession recovery.
+    /// Siri / alarm / GSM call grabs the audio session out from under us;
+    /// when it ends iOS asks the app to re-activate. Without this handler
+    /// the user gets stuck in a half-state where the LK track says mic-on
+    /// but the AVAudioSession has no live input route → "they don't hear me".
+    /// We re-activate the session and re-apply the mic state we owned
+    /// pre-interruption.
+    private func installAVInterruptionObserver() {
+        guard avInterruptionObserver == nil else { return }
+        avInterruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self = self else { return }
+            guard let info = note.userInfo,
+                  let raw = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let kind = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+            switch kind {
+            case .began:
+                print("[CallVC] AVAudioSession interruption began — pausing mic state")
+                // Stash desired state so .ended can restore. Use the SwiftUI
+                // session as source of truth (mutated by user toggles + the
+                // system mute observer).
+                self.preInterruptionMicEnabled = self.session.micEnabled
+            case .ended:
+                var shouldResume = true
+                if let optsRaw = info[AVAudioSessionInterruptionOptionKey] as? UInt {
+                    let opts = AVAudioSession.InterruptionOptions(rawValue: optsRaw)
+                    shouldResume = opts.contains(.shouldResume)
+                }
+                print("[CallVC] AVAudioSession interruption ended — shouldResume=\(shouldResume)")
+                guard shouldResume else { return }
+                do {
+                    try AVAudioSession.sharedInstance().setActive(true, options: [])
+                } catch {
+                    print("[CallVC] post-interruption setActive failed: \(error)")
+                }
+                // Re-apply the mic state we owned before the interruption.
+                // Bypass the cached fast-path here on purpose: after Siri /
+                // GSM, the AVAudioSession-bound RTC sender can be in a
+                // half-state where track.mute()/unmute() flips bits but the
+                // underlying audio unit is still attached to the previous
+                // (Siri-owned) session. Going back through setMicrophone
+                // forces LK to re-attach to the now-active session.
+                let desired = self.preInterruptionMicEnabled
+                Task { [weak self] in
+                    guard let self = self, let r = self.room else { return }
+                    do {
+                        try await r.localParticipant.setMicrophone(
+                            enabled: desired,
+                            captureOptions: Self.defaultAudioCaptureOptions()
+                        )
+                        // Clear cached track ref so next mute uses the new one.
+                        await MainActor.run { self.localAudioTrackRef = nil }
+                        print("[CallVC] post-interruption setMicrophone(\(desired)) ok — callId=\(self.callId)")
+                    } catch {
+                        print("[CallVC] post-interruption setMicrophone failed: \(error)")
+                    }
+                }
+            @unknown default:
+                break
+            }
         }
     }
 
@@ -1230,14 +1453,27 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// then resolution when bandwidth is constrained — better perceived
     /// quality than .maintainResolution under congestion. Matches WhatsApp's
     /// behavior of staying smooth at lower res before stuttering at full res.
+    ///
+    /// [Wave WhatsApp parity, 2026-05-20 gap C1+C4]
+    ///   - `preferredCodec: .vp9` + `backupCodec: .vp8` — VP9 cuts ~30% bitrate
+    ///     vs VP8 at the same perceptual quality. SFU negotiates VP9 with peers
+    ///     that support it; falls back to VP8 for everyone else.
+    ///   - `encoding.maxBitrate` bumped 1.7M → 2.0M so the VP9 top simulcast
+    ///     tier can carry the extra fidelity headroom (would otherwise cap out
+    ///     at the same VP8 bitrate and the quality bump would be invisible).
+    ///   - `degradationPreference: .balanced` (was implicit) — drop fps before
+    ///     resolution under congestion.
     static func defaultVideoPublishOptions() -> VideoPublishOptions {
         return VideoPublishOptions(
             name: nil,
             encoding: VideoEncoding(
-                maxBitrate: 1_700_000, // 1.7 Mbps cap for top tier
+                maxBitrate: 2_000_000, // 2.0 Mbps cap for VP9 top tier
                 maxFps: 30
             ),
-            simulcast: true
+            simulcast: true,
+            preferredCodec: .vp9,
+            backupCodec: .vp8,
+            degradationPreference: .balanced
         )
     }
 
@@ -1278,6 +1514,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         }
         if let obs = pipResignObserver { NotificationCenter.default.removeObserver(obs) }
         if let obs = dtmfObserver { NotificationCenter.default.removeObserver(obs); dtmfObserver = nil }
+        if let obs = systemMuteObserver { NotificationCenter.default.removeObserver(obs); systemMuteObserver = nil }
+        if let obs = avInterruptionObserver { NotificationCenter.default.removeObserver(obs); avInterruptionObserver = nil }
         if #available(iOS 15.0, *), let pip = pipController, pip.isPictureInPictureActive {
             pip.stopPictureInPicture()
         }

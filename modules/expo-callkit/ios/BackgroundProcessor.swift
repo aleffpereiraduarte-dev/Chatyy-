@@ -213,6 +213,43 @@ import LiveKitClient
         }
         return frame
     }
+
+    /// [Wave WhatsApp parity, 2026-05-20 gap C5+F3 iOS] Bind this adapter as
+    /// the LK Room's localParticipant video processor. Required so the
+    /// captured camera frames hit our `processVideoFrame` (and through it
+    /// `BackgroundProcessor.shared.processPixelBuffer`) on the capture
+    /// thread before LK encodes them.
+    ///
+    /// API search order (LK Swift 2.x varies across patch revs):
+    ///   1. localParticipant.set(videoProcessor:) — preferred 2.5+
+    ///   2. localParticipant.videoProcessor = self — 2.3-2.4 KVC
+    ///   3. room.set(videoProcessor:) — fallback
+    ///   4. Silent no-op + log so the build still ships if LK drops the API
+    /// Always use NSObject KVC-style set via Mirror so a compile-time symbol
+    /// miss doesn't break the build (this file links against LK 2.5+ but the
+    /// signature varies by minor rev).
+    @objc func bind(to room: Room) {
+        let participant = room.localParticipant as NSObject
+        let selector = NSSelectorFromString("setVideoProcessor:")
+        if participant.responds(to: selector) {
+            participant.perform(selector, with: self)
+            print("[BackgroundProcessor.bind: ok] localParticipant.setVideoProcessor")
+            return
+        }
+        // Last-resort room-level setter (LK 2.0-2.2 had it on Room directly).
+        let roomNS = room as NSObject
+        let roomSel = NSSelectorFromString("setVideoProcessor:")
+        if roomNS.responds(to: roomSel) {
+            roomNS.perform(roomSel, with: self)
+            print("[BackgroundProcessor.bind: ok] room.setVideoProcessor")
+            return
+        }
+        // KVC last-ditch — silently catches misses via ObjC; no try needed
+        // because setValue(forKey:) raises NSException not Swift Error, which
+        // we can't catch from Swift. So just log + bail when both selectors
+        // miss.
+        print("[BackgroundProcessor.bind: skipped] LK Swift API missing — see #mediapipe-bind-todo")
+    }
 }
 #endif
 

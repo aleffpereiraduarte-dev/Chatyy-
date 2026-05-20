@@ -310,7 +310,27 @@ public enum NativeCallRoomEvent {
         }
         Task {
             do {
-                _ = try await r.localParticipant.setCamera(enabled: enabled)
+                if enabled {
+                    // [Wave WhatsApp parity, 2026-05-20 gap C1+C4] Mirror the
+                    // CallViewController publish path: VP9 preferred / VP8 backup,
+                    // simulcast on, balanced degradation. Without these options
+                    // the JS-triggered camera enable would publish a default VP8
+                    // track and the SFU would never negotiate VP9 with peers.
+                    let publishOpts = VideoPublishOptions(
+                        name: nil,
+                        encoding: VideoEncoding(maxBitrate: 2_000_000, maxFps: 30),
+                        simulcast: true,
+                        preferredCodec: .vp9,
+                        backupCodec: .vp8,
+                        degradationPreference: .balanced
+                    )
+                    _ = try await r.localParticipant.setCamera(
+                        enabled: true,
+                        publishOptions: publishOpts
+                    )
+                } else {
+                    _ = try await r.localParticipant.setCamera(enabled: false)
+                }
             } catch {
                 print("[NativeCallRoom] setCameraEnabled(\(enabled)) failed: \(error)")
             }

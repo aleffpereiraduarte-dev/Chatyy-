@@ -7628,6 +7628,8 @@ export default {
   'settings.led.c8': 'Blanco',
   'settings.roaming.title': 'Permitir en itinerancia',
   'settings.roaming.desc': 'Permite descargar medios durante itinerancia. Desactívalo para ahorrar datos internacionales.',
+  'settings.lowDataCalls.title': 'Usar menos datos en llamadas',
+  'settings.lowDataCalls.desc': 'Limita el vídeo a 360p / 15 fps. Útil en redes lentas o móviles. Se activa automáticamente en itinerancia.',
   'settings.wallpaperDefault.title': 'Fondo de pantalla por defecto',
   'settings.wallpaperDefault.desc': 'Se aplica a chats nuevos. Cada chat puede tener el suyo.',
   'settings.wallpaperDefault.custom': '+ Subir imagen personalizada',

@@ -343,3 +343,81 @@ export function makeLevelChangeFilter() {
     }
   };
 }
+
+// ────────────────────────────────────────────────────────────────────
+// 6. Sustained "very poor" detector → ICE restart trigger (gap D1).
+// ────────────────────────────────────────────────────────────────────
+/**
+ * Returns a filter that watches the classification stream and fires
+ * `onSustainedPoor` once after THREE consecutive samples at level 0
+ * (lost / very_poor). At a 5s polling cadence, that's a 15s sustained
+ * window — long enough to filter out a single jitter spike, short
+ * enough that we trigger an ICE restart before the user actually
+ * hangs up out of frustration.
+ *
+ * The fire is one-shot per "very-poor episode": once we recover (any
+ * sample with level >= 1) the internal counter resets, and a future
+ * descent can re-fire. Without that reset we'd only ever do ONE restart
+ * per call; with it we restart on every sustained dip.
+ *
+ * The caller (app/call.js) wires this into the same pollNetworkStats
+ * loop that already drives makeLevelChangeFilter — pass classification
+ * to BOTH filters per sample.
+ */
+export function makeSustainedPoorFilter(threshold = 3) {
+  let badStreak = 0;
+  let firedThisEpisode = false;
+  return function filter(classification, onSustainedPoor) {
+    const lvl = classification?.level;
+    if (typeof lvl !== 'number') return;
+    // Recovery: drop the streak and re-arm so the NEXT dip can fire.
+    if (lvl > 0) {
+      badStreak = 0;
+      firedThisEpisode = false;
+      return;
+    }
+    badStreak++;
+    if (badStreak >= threshold && !firedThisEpisode) {
+      firedThisEpisode = true;
+      try { onSustainedPoor?.(classification); } catch {}
+    }
+  };
+}
+
+/**
+ * Best-effort ICE restart on a LiveKit room. Walks the engine API
+ * surface for restartIce/restartConnection/fullReconnect — LiveKit
+ * 2.x exposes different names across versions and across web vs RN
+ * builds. Returns true if any path was actually invoked.
+ *
+ * Pure helper so app/call.js and any future surface (e.g. group-call
+ * via a postMessage bridge) can call it without duplicating the
+ * version-walk.
+ */
+export async function triggerIceRestart(room) {
+  if (!room) return false;
+  try {
+    const eng = room.engine;
+    if (!eng) return false;
+    // 1. Preferred — engine.restartIce (LK 2.x web).
+    if (typeof eng.restartIce === 'function') {
+      try { await eng.restartIce(); return true; } catch {}
+    }
+    // 2. Some versions expose restartConnection() / fullReconnect().
+    if (typeof eng.restartConnection === 'function') {
+      try { await eng.restartConnection(); return true; } catch {}
+    }
+    if (typeof eng.fullReconnect === 'function') {
+      try { await eng.fullReconnect(); return true; } catch {}
+    }
+    // 3. Last resort: poke the publisher PC directly (RN doesn't always
+    // expose the engine helpers).
+    const pc = _getPublisherPC(room);
+    if (pc && typeof pc.restartIce === 'function') {
+      try { pc.restartIce(); return true; } catch {}
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}

@@ -147,6 +147,12 @@ function SettingsScreenInner() {
   const [bubbleShape, setBubbleShape] = useState('rounded'); // 'rounded' | 'square' | 'classic'
   const [notifLedColor, setNotifLedColor] = useState('#7C3AED');
   const [mediaRoaming, setMediaRoaming] = useState(false);
+  // [gap C3 2026-05-20] WhatsApp parity — "Usar menos dados em chamadas".
+  // Caps video at 200kbps / 15fps / 360p with 2-layer simulcast (180p+360p).
+  // app/call.js reads `chatyy_low_data_calls` before setCameraEnabled. Even
+  // when this is OFF the auto-roaming detector force-enables low-data when
+  // NetInfo flags an expensive cellular link.
+  const [lowDataCalls, setLowDataCalls] = useState(false);
   // Default = Chatyy purple (was WhatsApp green '#075E54'). Stored as a
   // hex so chat-conversation.js renders it correctly — gradient swatches
   // below are previews; the dominant hex is what we actually persist.
@@ -257,11 +263,13 @@ function SettingsScreenInner() {
       if (typeof kv.notif_led_color === 'string' && /^#[0-9a-fA-F]{6}$/.test(kv.notif_led_color)) setNotifLedColor(kv.notif_led_color);
       if (kv.media_auto_dl_roaming === 'true') setMediaRoaming(true);
       if (typeof kv.wallpaper_default === 'string' && kv.wallpaper_default.length > 0) setWallpaperDefault(kv.wallpaper_default);
+      if (kv.chatyy_low_data_calls === 'true' || kv.chatyy_low_data_calls === '1') setLowDataCalls(true);
     };
     const KEYS = [
       'theme_mode', 'enter_sends', 'autocorrect_enabled', 'voice_speed_default',
       'beta_features', 'language_auto', 'data_saver', 'bubble_shape',
       'notif_led_color', 'media_auto_dl_roaming', 'wallpaper_default',
+      'chatyy_low_data_calls',
     ];
     if (Platform.OS === 'web') {
       const kv = {};
@@ -2863,6 +2871,43 @@ function SettingsScreenInner() {
               }}
               trackColor={{ false: colors.divider, true: colors.primaryLight }}
               thumbColor={mediaRoaming ? colors.primary : '#fff'}
+            />
+          </View>
+
+          {/* [gap C3 2026-05-20] Low-data mode em chamadas — when ON, caps
+              video at 200kbps/15fps/360p so the call burns ~25% the bytes
+              of the default ladder. Auto-applies on roaming/expensive
+              cellular even when OFF (gate lives in app/call.js right
+              before setCameraEnabled). */}
+          <View
+            style={[
+              s.settingRow,
+              {
+                borderBottomColor: colors.borderLight,
+                borderBottomWidth: 0,
+                marginTop: Spacing.sm,
+                paddingTop: Spacing.md,
+                borderTopWidth: StyleSheet.hairlineWidth,
+                borderTopColor: colors.borderLight,
+              },
+            ]}
+          >
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>
+                {t('settings.lowDataCalls.title') || 'Usar menos dados em chamadas'}
+              </Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {t('settings.lowDataCalls.desc') || 'Limita o vídeo a 360p / 15 fps. Útil em redes lentas ou móveis. Ativa automaticamente em roaming.'}
+              </Text>
+            </View>
+            <Switch
+              value={lowDataCalls}
+              onValueChange={(v) => {
+                setLowDataCalls(v);
+                setStorage('chatyy_low_data_calls', String(v));
+              }}
+              trackColor={{ false: colors.divider, true: colors.primaryLight }}
+              thumbColor={lowDataCalls ? colors.primary : '#fff'}
             />
           </View>
         </View>

@@ -165,7 +165,7 @@ export default function WalletScreen() {
             style={[styles.ctaBtn, { backgroundColor: '#A855F7' }]}
             accessibilityRole="button"
           >
-            <Text style={styles.ctaBtnText}>{t('wallet.topup') || 'Comprar diamantes'}</Text>
+            <Text style={styles.ctaBtnText}>{t('wallet.topup') || 'Comprar'}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => router.push('/chat')}
@@ -173,7 +173,17 @@ export default function WalletScreen() {
             accessibilityRole="button"
           >
             <Text style={[styles.ctaBtnText, { color: '#A855F7' }]}>
-              {t('walletSend.openChat') || 'Enviar para alguém'}
+              {t('wallet.sendAction') || 'Enviar'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => router.push('/wallet-cashout')}
+            style={[styles.ctaBtn, { backgroundColor: 'transparent', borderWidth: StyleSheet.hairlineWidth, borderColor: '#10B981' }]}
+            accessibilityRole="button"
+            accessibilityLabel={t('wallet.cashoutAction') || 'Sacar via PIX'}
+          >
+            <Text style={[styles.ctaBtnText, { color: '#10B981' }]}>
+              {t('wallet.cashoutAction') || 'Sacar'}
             </Text>
           </TouchableOpacity>
         </View>

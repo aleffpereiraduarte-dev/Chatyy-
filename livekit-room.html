@@ -753,6 +753,34 @@
         case 'video_off': toggleCam(false); break;
         case 'video_on':  toggleCam(true); break;
         case 'leave':     leave(); break;
+        case 'set_remote_volume': {
+          // [gap E3 2026-05-20] Per-participant remote mute / volume.
+          // RN long-press menu posts { type: 'set_remote_volume', email, volume }
+          // (volume in [0..1]; 0 = silence pra mim only — does NOT mute the
+          // participant globally). LiveKit applies via RemoteParticipant.setVolume
+          // which scales the WebAudio gain on the inbound audio track.
+          try {
+            const targetEmail = String(msg.email || '').toLowerCase();
+            const vol = typeof msg.volume === 'number' ? Math.max(0, Math.min(1, msg.volume)) : 1;
+            let found = null;
+            room.remoteParticipants.forEach((p) => {
+              if (((p.identity || '').toLowerCase()) === targetEmail) found = p;
+            });
+            if (found && typeof found.setVolume === 'function') {
+              found.setVolume(vol);
+            } else if (found) {
+              // Fallback on older livekit-client versions: walk audio tracks
+              // and tweak the <audio> element's volume directly.
+              found.audioTracks?.forEach?.((pub) => {
+                try {
+                  const el = pub?.track?.attachedElements?.[0] || pub?.track?._audioEl;
+                  if (el && 'volume' in el) el.volume = vol;
+                } catch (_) {}
+              });
+            }
+          } catch (e) { console.warn('set_remote_volume', e); }
+          break;
+        }
       }
     }
     // RN WebView injects via `window.postMessage` (Android) ou

@@ -236,6 +236,7 @@
         }
       ],
       "./plugins/with-custom-share-extension",
+      "./plugins/with-broadcast-extension",
       [
         "expo-calendar",
         {

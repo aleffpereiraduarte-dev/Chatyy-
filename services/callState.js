@@ -26,9 +26,82 @@ export function onNetworkChange(fn) {
   return () => _networkChangeListeners.delete(fn);
 }
 export function notifyNetworkChange(status, isExpensive) {
+  // Keep the legacy (status, isExpensive) shape so callkeep.js doesn't
+  // need to change. Internally we also synthesize a transition type so
+  // typed subscribers (subscribeNetworkChange) can react to wifi↔cellular
+  // handovers without having to keep their own history.
+  const info = _computeTransitionInfo(status, !!isExpensive);
+  _lastNetworkStatus = status;
+  _lastIsExpensive = !!isExpensive;
   for (const fn of [..._networkChangeListeners]) {
-    try { fn(status, isExpensive); } catch {}
+    try { fn(status, !!isExpensive, info); } catch {}
   }
+  for (const fn of [..._typedNetworkChangeListeners]) {
+    try { fn(info); } catch {}
+  }
+}
+
+// Typed subscribers receive a richer object: { type, status, isExpensive,
+// prevStatus, prevIsExpensive }. `type` is one of:
+//   - 'wifi-to-cellular' : was on Wi-Fi/ethernet, moved to cellular
+//   - 'cellular-to-wifi' : was on cellular, moved to Wi-Fi/ethernet
+//   - 'lost'             : went offline / unreachable
+//   - 'restored'         : came back online from offline
+//   - 'metered-flip'     : same transport, isExpensive flipped
+//   - 'noop'             : status/expensive unchanged — emitted on first
+//                          subscribe so consumers can synchronously read
+//                          the current state.
+// We deliberately keep the legacy bus so existing consumers (chat header
+// reconnect badge etc) don't have to migrate.
+const _typedNetworkChangeListeners = new Set();
+let _lastNetworkStatus = null;
+let _lastIsExpensive = false;
+
+function _normalizeStatus(s) {
+  // ExpoCallKit emits 'wifi' / 'cellular' / 'offline' / 'unknown'; iOS path
+  // names differ slightly. Map everything to 4 canonical values so the
+  // transition logic doesn't have to deal with 'cellular' vs 'mobile' vs
+  // 'wwan' vs 'cell'.
+  if (!s) return 'unknown';
+  const x = String(s).toLowerCase();
+  if (x === 'wifi' || x === 'ethernet' || x === 'wired') return 'wifi';
+  if (x === 'cellular' || x === 'mobile' || x === 'wwan' || x === 'cell') return 'cellular';
+  if (x === 'offline' || x === 'none' || x === 'lost' || x === 'unreachable') return 'offline';
+  return 'unknown';
+}
+
+function _computeTransitionInfo(status, isExpensive) {
+  const prevStatus = _normalizeStatus(_lastNetworkStatus);
+  const curStatus = _normalizeStatus(status);
+  let type = 'noop';
+  if (prevStatus === 'wifi' && curStatus === 'cellular') type = 'wifi-to-cellular';
+  else if (prevStatus === 'cellular' && curStatus === 'wifi') type = 'cellular-to-wifi';
+  else if (curStatus === 'offline' && prevStatus !== 'offline') type = 'lost';
+  else if (prevStatus === 'offline' && curStatus !== 'offline') type = 'restored';
+  else if (prevStatus === curStatus && _lastIsExpensive !== isExpensive) type = 'metered-flip';
+  return {
+    type,
+    status: curStatus,
+    isExpensive: !!isExpensive,
+    prevStatus,
+    prevIsExpensive: _lastIsExpensive,
+    raw: status,
+  };
+}
+
+/**
+ * Typed subscription: callback receives one argument `info` shaped like
+ *   { type, status, isExpensive, prevStatus, prevIsExpensive, raw }
+ * The unsubscribe fn it returns matches the rest of the call-state bus.
+ * Designed for in-call ICE restart on Wi-Fi↔cellular handover (gap D3) —
+ * callkeep.js already pipes the native NWPathMonitor / ConnectivityManager
+ * events into notifyNetworkChange, so subscribers fire as soon as the OS
+ * sees the change.
+ */
+export function subscribeNetworkChange(fn) {
+  if (typeof fn !== 'function') return () => {};
+  _typedNetworkChangeListeners.add(fn);
+  return () => _typedNetworkChangeListeners.delete(fn);
 }
 
 let _globalCall = null;

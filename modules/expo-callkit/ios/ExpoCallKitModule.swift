@@ -335,8 +335,18 @@ public class ExpoCallKitModule: Module {
       try await self.reportIncomingCall(callId: callId, callerName: callerName, hasVideo: hasVideo)
     }
 
-    Function("endCall") { (callId: String) -> Void in
-      self.endCallAction(callId: callId)
+    // [Wave WhatsApp parity, 2026-05-20 gap H5] Optional `reason` arg lets JS
+    // tell CallKit *why* the call ended so Recents.app + the system banner
+    // pick the right wording ("Cancelada", "Atendida em outro dispositivo",
+    // "Sem resposta"). Old call sites still work — reason defaults to nil
+    // which routes through the legacy CXEndCallAction path with .failed.
+    // Mapping (string → CXCallEndedReason) lives in `mapEndedReason`.
+    Function("endCall") { (callId: String, reason: String?) -> Void in
+      if let r = reason, !r.isEmpty {
+        self.endCallActionWithReason(callId: callId, reasonRaw: r)
+      } else {
+        self.endCallAction(callId: callId)
+      }
     }
 
     // iOS parity for the Android cold-start warm path. CallKit already
@@ -1024,7 +1034,18 @@ public class ExpoCallKitModule: Module {
     config.maximumCallsPerCallGroup = 1
     config.includesCallsInRecents = true
     config.ringtoneSound = "ringtone.wav"
-    config.supportedHandleTypes = [.generic, .emailAddress]
+    // [Wave WhatsApp parity, 2026-05-20 gap A2+H5] Accept phoneNumber handles
+    // (the VoIP push path now upgrades to .phoneNumber when caller_phone is in
+    // the payload). Without this, CallKit rejects the reportNewIncomingCall
+    // call silently and the user sees nothing on the lock screen.
+    config.supportedHandleTypes = [.generic, .emailAddress, .phoneNumber]
+    // [Wave WhatsApp parity, 2026-05-20 gap A2] Same logo template the early
+    // provider uses — mirror so the in-app CallKit chrome matches what the
+    // user saw on the lock-screen ring window.
+    if let img = UIImage(named: "callkit_icon"),
+       let data = img.pngData() {
+      config.iconTemplateImageData = data
+    }
 
     provider = CXProvider(configuration: config)
     providerDelegate = ProviderDelegate(module: self)
@@ -1434,6 +1455,45 @@ public class ExpoCallKitModule: Module {
   func endCall(callUUID: UUID, reason: CXCallEndedReason) {
     provider?.reportCall(with: callUUID, endedAt: nil, reason: reason)
     callEnded(uuid: callUUID)
+  }
+
+  /// [Wave WhatsApp parity, 2026-05-20 gap H5] JS-facing end-call entry that
+  /// goes through CXProvider.reportCall (NOT CXEndCallAction) so the system
+  /// records the typed ended-reason in Recents.app. The CXEndCallAction path
+  /// is for *user-initiated* hangups; reportCall is for everything else
+  /// (declined elsewhere, no-answer, peer hung up first, etc.).
+  func endCallActionWithReason(callId: String, reasonRaw: String) {
+    let mapped = Self.mapEndedReason(reasonRaw)
+    let uuid = stateQueue.sync { activeCalls[callId] }
+    if let uuid = uuid {
+      provider?.reportCall(with: uuid, endedAt: Date(), reason: mapped)
+      stateQueue.sync {
+        activeCalls.removeValue(forKey: callId)
+        callPayloads.removeValue(forKey: callId)
+      }
+      ExpoCallKitModule._shared_setUUID(nil, forCallId: callId)
+      print("[ExpoCallKit] endCallActionWithReason \(callId) reason=\(reasonRaw)")
+      safeSendEvent("onCallEnded", ["callId": callId, "reason": reasonRaw])
+    } else {
+      // Unknown callId — still dismiss the UI as the legacy path would
+      print("[ExpoCallKit] endCallActionWithReason: no UUID for \(callId) — direct dismiss")
+      DispatchQueue.main.async {
+        ProviderDelegate.dismissActiveCallSurfaces(reason: "endCall_reason_no_uuid")
+        AudioRouter.shared.teardown()
+      }
+    }
+  }
+
+  /// Maps a JS-side reason string to CXCallEndedReason. Unknown values fall
+  /// back to .failed so legacy callers don't crash if they typo.
+  static func mapEndedReason(_ raw: String) -> CXCallEndedReason {
+    switch raw {
+    case "unanswered":         return .unanswered
+    case "declinedElsewhere":  return .declinedElsewhere
+    case "answeredElsewhere":  return .answeredElsewhere
+    case "remoteEnded":        return .remoteEnded
+    default:                   return .failed
+    }
   }
 
   /// Called when CallKit completely resets (system restart, etc).
@@ -1898,6 +1958,40 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
         vc.dismiss(animated: true, completion: nil)
       }
     }
+  }
+
+  /// [Wave WhatsApp parity, 2026-05-20 gap B3 iOS] CXSetMutedCallAction —
+  /// fires when the user taps the system call-bar mute button. We forward
+  /// to the same NotificationCenter channel applyMicEnabled posts on, so
+  /// CallViewController picks it up and goes through the fast-path
+  /// (track.mute() / unmute()) without re-publishing the RTC sender.
+  /// JS analytics still see onLkLocalAudioChanged via the observer in
+  /// installNativeCallEndedObserver. Without this handler, CXSetMutedCallAction
+  /// raced the in-call SwiftUI mute button — both fired setMicrophone on
+  /// the LK Room and the AVAudioSession ended up out of sync.
+  func provider(_ provider: CXProvider, perform action: CXSetMutedCallAction) {
+    let muted = action.isMuted
+    let actionUuid = action.callUUID
+    let callIdForEvent = module?.callIdForUUID(actionUuid) ?? actionUuid.uuidString
+    print("[ExpoCallKit] CXSetMutedCallAction \(muted ? "mute" : "unmute") callId=\(callIdForEvent)")
+    // Post the same notification the SwiftUI toggle uses. CallViewController
+    // owns the LK Room and applies the track.mute()/unmute() fast-path; it
+    // also re-broadcasts ExpoCallKitLkLocalAudioChanged after the LK call
+    // settles, which the module observer turns into onLkLocalAudioChanged.
+    NotificationCenter.default.post(
+      name: Notification.Name("ExpoCallKitLkLocalAudioChanged"),
+      object: nil,
+      userInfo: ["enabled": !muted]
+    )
+    // CallViewController also listens to a parallel notification so the
+    // session.micEnabled @Published flag updates without round-tripping
+    // through JS first. Send both to be safe (idempotent).
+    NotificationCenter.default.post(
+      name: Notification.Name("ExpoCallKitSystemMuteChanged"),
+      object: nil,
+      userInfo: ["muted": muted, "callId": callIdForEvent]
+    )
+    action.fulfill()
   }
 
   func provider(_ provider: CXProvider, perform action: CXSetHeldCallAction) {

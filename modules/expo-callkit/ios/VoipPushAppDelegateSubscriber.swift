@@ -39,6 +39,17 @@ private let kPendingCallKey = "pendingVoipCall"
 private var kPendingAnswerPayloads: [UUID: [String: Any]] = [:]
 private let kPendingAnswerPayloadsLock = NSLock()
 
+// [Wave WhatsApp parity, 2026-05-20 gap A1 iOS] Ring-window missed-call
+// timers. When a VoIP push arrives we schedule a 30s timer; if the user
+// hasn't answered or the peer hasn't cancelled by then, we call
+// reportCall(with:endedAt:reason:.unanswered) so iOS records the missed
+// call in Recents.app AND keeps the persistent banner on the lock screen
+// (this is what WhatsApp does — without it the call disappears silently and
+// the user has no recovery path from the lock screen).
+private var kRingTimers: [UUID: DispatchSourceTimer] = [:]
+private let kRingTimersLock = NSLock()
+private let kRingTimeoutSeconds: Int = 30
+
 public class VoipPushAppDelegateSubscriber: ExpoAppDelegateSubscriber {
 
     // PushKit registry and stub CallKit provider live for the lifetime of the
@@ -96,7 +107,18 @@ public class VoipPushAppDelegateSubscriber: ExpoAppDelegateSubscriber {
         config.maximumCallsPerCallGroup = 1
         config.includesCallsInRecents = true
         config.ringtoneSound = "ringtone.wav"
-        config.supportedHandleTypes = [.generic, .emailAddress]
+        // [Wave WhatsApp parity, 2026-05-20 gap A2+H5] Accept .phoneNumber too
+        // so CallKit doesn't reject pushes whose handle was upgraded to phone.
+        config.supportedHandleTypes = [.generic, .emailAddress, .phoneNumber]
+        // [Wave WhatsApp parity, 2026-05-20 gap A2] Logo template — iOS masks
+        // the alpha channel and tints with the system call color so it works
+        // on both light/dark CallKit chrome. 40×40 is Apple's recommended size
+        // for the lock-screen + Recents.app row; larger images get downscaled
+        // and look fuzzy. PNG must live in the main bundle as "callkit_icon".
+        if let img = UIImage(named: "callkit_icon"),
+           let data = img.pngData() {
+            config.iconTemplateImageData = data
+        }
         let p = CXProvider(configuration: config)
         p.setDelegate(shared, queue: .main)
         earlyProvider = p
@@ -183,6 +205,12 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
         let callId = (dict["call_id"] as? String) ?? UUID().uuidString
         let callerName = (dict["caller_name"] as? String) ?? (dict["caller_email"] as? String) ?? "Unknown"
         let hasVideo = (dict["video"] as? String) == "1" || (dict["call_type"] as? String) == "video"
+        // [Wave WhatsApp parity, 2026-05-20 gap A2+H5] Phone-number handle gives
+        // iOS enough info to render the call on the lock-screen + Recents.app
+        // exactly like a PSTN call (with carrier-style number formatting). If
+        // the push carries `caller_phone` (E.164), use that; otherwise fall
+        // back to the display name on a `.generic` handle below.
+        let callerPhone = (dict["caller_phone"] as? String) ?? ""
 
         // [native call screen day-3 finale, 2026-05-16] OPT-IN cold-start
         // auto-accept. If the server marks the push with `auto_accept=1`
@@ -204,7 +232,16 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
         // over the deadline. iOS then kills the app and stops VoIP delivery.
         let uuid = UUID()
         let update = CXCallUpdate()
-        update.remoteHandle = CXHandle(type: .generic, value: callerName)
+        // [Wave WhatsApp parity, 2026-05-20 gap A2+H5] Prefer .phoneNumber when
+        // we have the caller's E.164 — iOS routes through the same handle
+        // formatter PSTN uses, so Recents.app entry + lock-screen text matches
+        // the user's contact card (auto-resolved against the address book).
+        // No phone? Stay on .generic with the display name (no regression).
+        if !callerPhone.isEmpty {
+            update.remoteHandle = CXHandle(type: .phoneNumber, value: callerPhone)
+        } else {
+            update.remoteHandle = CXHandle(type: .generic, value: callerName)
+        }
         update.localizedCallerName = callerName
         update.hasVideo = hasVideo
         update.supportsGrouping = false
@@ -245,6 +282,12 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
                 print("[VoipSubscriber] reportNewIncomingCall failed: \(error.localizedDescription)")
             } else {
                 print("[VoipSubscriber] reportNewIncomingCall succeeded")
+                // [Wave WhatsApp parity, 2026-05-20 gap A1 iOS] Arm the ring
+                // timeout AFTER reportNewIncomingCall succeeds — only then is
+                // the UUID known to CallKit. CXAnswer / CXEnd will cancel it
+                // (see provider:perform handlers below) so the timer only
+                // fires on a genuine no-answer.
+                VoipPushAppDelegateSubscriber.scheduleRingTimeout(uuid: uuid, callId: callId, provider: provider)
             }
             self?.persistPendingCall(
                 callId: callId,
@@ -453,6 +496,54 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
         return p
     }
 
+    /// [Wave WhatsApp parity, 2026-05-20 gap A1 iOS] Schedule a one-shot
+    /// missed-call timer. If `kRingTimeoutSeconds` elapses without the user
+    /// answering AND without the peer sending a cancel, we fire
+    /// `reportCall(with:endedAt:reason:.unanswered)` so iOS:
+    ///   1. Tears down the ring UI cleanly (otherwise it stays stuck for
+    ///      Apple's hidden timeout, then logs as `.failed`).
+    ///   2. Logs a "Missed call" entry in Recents.app + leaves the persistent
+    ///      lock-screen banner the user can tap to call back. This is the
+    ///      WhatsApp pattern — without it the call vanishes and the recipient
+    ///      has no way to recover the contact from the lock screen.
+    /// Timer is a DispatchSourceTimer on a global queue so it survives the
+    /// rare case where the main run-loop is starved during cold start.
+    fileprivate static func scheduleRingTimeout(uuid: UUID, callId: String, provider: CXProvider) {
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(deadline: .now() + .seconds(kRingTimeoutSeconds))
+        timer.setEventHandler {
+            // Re-check the timer still belongs to this uuid — defensive
+            // against the rare race where cancelRingTimeout fired but the
+            // timer already started its event handler.
+            kRingTimersLock.lock()
+            let stillArmed = (kRingTimers[uuid] != nil)
+            kRingTimers.removeValue(forKey: uuid)
+            kRingTimersLock.unlock()
+            guard stillArmed else { return }
+            print("[VoipSubscriber] ring timeout reached for \(callId) — reporting .unanswered")
+            // reportCall on the same provider that did reportNewIncomingCall.
+            // CallKit auto-dismisses the ring UI and logs the missed call.
+            provider.reportCall(with: uuid, endedAt: Date(), reason: .unanswered)
+            // Drop the stashed payload too so the answer path won't reactivate
+            // the LK pre-connect on a dead UUID.
+            kPendingAnswerPayloadsLock.lock()
+            kPendingAnswerPayloads.removeValue(forKey: uuid)
+            kPendingAnswerPayloadsLock.unlock()
+        }
+        kRingTimersLock.lock()
+        kRingTimers[uuid] = timer
+        kRingTimersLock.unlock()
+        timer.resume()
+    }
+
+    /// Cancel a previously-scheduled missed-call timer. Idempotent.
+    fileprivate static func cancelRingTimeout(uuid: UUID) {
+        kRingTimersLock.lock()
+        let t = kRingTimers.removeValue(forKey: uuid)
+        kRingTimersLock.unlock()
+        t?.cancel()
+    }
+
     private func persistPendingCall(callId: String,
                                     uuid: UUID,
                                     callerName: String,
@@ -518,6 +609,10 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
         }
         print("[VoipSubscriber] stub CXAnswerCallAction — marking pending accept + native LK pre-connect")
         let uuid = action.callUUID
+        // [Wave WhatsApp parity, 2026-05-20 gap A1 iOS] User answered — kill
+        // the missed-call timer so we don't fire .unanswered against a UUID
+        // that's actively connecting.
+        VoipPushAppDelegateSubscriber.cancelRingTimeout(uuid: uuid)
 
         // 1. Persist accept intent so ExpoCallKitModule replays once RN is up.
         if let ud = UserDefaults(suiteName: kAppGroupId) {
@@ -634,6 +729,10 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
 
     public func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
         print("[VoipSubscriber] stub CXEndCallAction — marking pending end")
+        // [Wave WhatsApp parity, 2026-05-20 gap A1 iOS] User declined or peer
+        // hung up first — cancel the ring timer so we don't fire .unanswered
+        // on top of an already-ended call.
+        VoipPushAppDelegateSubscriber.cancelRingTimeout(uuid: action.callUUID)
         if let ud = UserDefaults(suiteName: kAppGroupId) {
             ud.set(action.callUUID.uuidString, forKey: "pendingEndUUID")
         }

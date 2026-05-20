@@ -7,6 +7,11 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import AvatarCircle from './AvatarCircle';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+// [#1231 2026-05-20] useIsFocused para pausar reel quando user troca de aba
+// (Conversas/Apps/etc.). Bug: vídeo continuava tocando áudio no background
+// porque ReelsViewer fica montado dentro do /chat screen — só isActive (per
+// FlatList row) era checado.
+import { useIsFocused } from '@react-navigation/native';
 import {
   IconHeart, IconHeartOutline, IconMessageCircle, IconShare,
   IconBookmark, IconBookmarkFilled, IconMusic, IconPlay, IconPause,
@@ -1202,7 +1207,7 @@ const BoostToast = memo(function BoostToast({ visible }) {
 });
 
 // ── Single Reel Item ──
-const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, user, containerHeight, onOpenComments, onOpenLikers, onOpenProfile, onUseSound, onDuet, onStitch, onHidePost, showLiveRing, overlayOpen, router, preload }) {
+const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, user, containerHeight, onOpenComments, onOpenLikers, onOpenProfile, onUseSound, onDuet, onStitch, onHidePost, showLiveRing, overlayOpen, router, preload, screenFocused = true }) {
   // Safe-area insets so the bottom info block (username/caption/music row)
   // doesn't sit on top of the iOS home indicator or Android gesture pill.
   const insets = useSafeAreaInsets();
@@ -1216,7 +1221,9 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
   // user isn't trying to read with audio blasting underneath. Without this,
   // the Modal stack doesn't pause the underlying video — the reel keeps
   // playing unmuted and you have to manually pause before reading replies.
-  const effectivePaused = paused || !!overlayOpen || shareSheetOpen;
+  // [#1231 2026-05-20] Pausa também quando a tela perde foco (user trocou
+  // de aba/route). Sem isso o vídeo continuava tocando áudio em background.
+  const effectivePaused = paused || !!overlayOpen || shareSheetOpen || !screenFocused;
   // TikTok-style speed selector: persists to AsyncStorage so the user's
   // chosen default rides between reels. While long-pressing the video we
   // temporarily boost to 2× and snap back on release (rateBoost flag).
@@ -2332,6 +2339,11 @@ function EmptyReels({ colors, isDark, t }) {
 
 // ── Main ReelsViewer ──
 export default function ReelsViewer({ colors, isDark, t, user, router, feedMode: feedModeProp, showLiveRing, onAvatarTap, onPullRefresh, soundId: soundIdProp, soundLabel: soundLabelProp }) {
+  // [#1231 2026-05-20] Screen focus gate — pausa qualquer reel quando a tela
+  // sai de foco (user navegou pra /chat-conversation ou outra aba). Sem isso
+  // o áudio continuava tocando em background; só `isActive` (per FlatList row)
+  // era checado e ele sempre é true pro item visível.
+  const isScreenFocused = useIsFocused();
   // Safe-area insets — the Following/For You tabs are absolutely positioned
   // with a static `top: 16` on Android, which on edge-to-edge windows was
   // tucking under the status-bar clock. Use runtime insets so the tab row
@@ -2551,9 +2563,10 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         showLiveRing={!!showLiveRing}
         overlayOpen={overlayOpen}
         preload={isPreloadItem}
+        screenFocused={isScreenFocused}
       />
     );
-  }, [currentIndex, colors, isDark, t, user, router, containerHeight, handleOpenComments, handleOpenLikers, handleOpenProfile, handleUseSound, handleDuet, handleStitch, handleHidePost, showLiveRing, overlayOpen]);
+  }, [currentIndex, colors, isDark, t, user, router, containerHeight, handleOpenComments, handleOpenLikers, handleOpenProfile, handleUseSound, handleDuet, handleStitch, handleHidePost, showLiveRing, overlayOpen, isScreenFocused]);
 
   const keyExtractor = useCallback((item) => String(item.id), []);
 

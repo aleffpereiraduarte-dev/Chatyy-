@@ -55,6 +55,7 @@ import { WebView } from 'react-native-webview';
 import ChatMediaViewer from '../components/ChatMediaViewer';
 import ChatMedia from '../components/ChatMedia';
 import AvatarCircle from '../components/AvatarCircle';
+import OngoingCallChip from '../components/OngoingCallChip';
 import { registerAudioPlayer, stopAllAudio } from '../services/audioManager';
 import { getCachedAudioUri } from '../services/audioCache';
 import Profile from '../components/Profile';
@@ -20454,6 +20455,17 @@ export default function ChatConversationScreen() {
 
       {/* WhatsApp-style sync/connecting bar */}
       <SyncBar />
+
+      {/* [gap E2 2026-05-20] "Entrar na chamada" header chip. Renders only
+          when chat_call_state_active says a group call is live in this
+          conversation AND the current user isn't a participant yet. The
+          component owns its own polling + visibility gate so we can drop
+          it here without extra plumbing. */}
+      {conversationId ? (
+        <View style={{ paddingHorizontal: 12, paddingTop: 6 }}>
+          <OngoingCallChip conversationId={conversationId} />
+        </View>
+      ) : null}
 
       {/* E2E banner moved below — single yellow WhatsApp-style banner only */}
 

@@ -81,7 +81,10 @@ sed -i "s|</head>|${HEAD_INJECT}</head>|" "$INDEX"
 # - sed `&` in replacement expands to the matched pattern (so `&&` in JS
 #   comes out as two copies of the <div id="root">, corrupting the HTML)
 # awk substitution avoids both traps.
-BODY_INJECT='<script>try{var t=localStorage.getItem("mail_token");if(t&&(t.startsWith("eyJ")||t.length>128)){localStorage.removeItem("mail_token");console.warn("Cleared corrupted auth token")}}catch(e){}if("serviceWorker" in navigator){window.addEventListener("load",function(){navigator.serviceWorker.register("/sw.js").catch(function(){})})}</script>'
+# [#1231 2026-05-20] Removed the corrupt-token heuristic — it was nuking
+# valid tokens (web kept silently logging out users with "Cleared corrupted
+# auth token"). Old auth-v1 migration scaffolding that outlived its purpose.
+BODY_INJECT='<script>if("serviceWorker" in navigator){window.addEventListener("load",function(){navigator.serviceWorker.register("/sw.js").catch(function(){})})}</script>'
 # awk gsub() treats `&` in the replacement as the matched text — same trap as
 # sed. BODY_INJECT contains `if(t&&(...))` so gsub would expand those `&&` into
 # copies of `<div id="root"></div>`, corrupting the HTML. Use match()+substr()

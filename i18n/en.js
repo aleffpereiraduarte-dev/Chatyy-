@@ -7627,6 +7627,8 @@ export default {
   'settings.led.c8': 'White',
   'settings.roaming.title': 'Allow on roaming',
   'settings.roaming.desc': 'Allow media downloads while roaming. Turn off to save on international data.',
+  'settings.lowDataCalls.title': 'Use less data in calls',
+  'settings.lowDataCalls.desc': 'Caps video at 360p / 15 fps. Useful on slow or mobile networks. Auto-enables on roaming.',
   'settings.wallpaperDefault.title': 'Default wallpaper',
   'settings.wallpaperDefault.desc': 'Applied to new chats. Each chat can have its own.',
   'settings.wallpaperDefault.custom': '+ Upload custom image',

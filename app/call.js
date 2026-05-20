@@ -127,7 +127,10 @@ import {
   classifyQuality,
   applyAdaptiveBitrate,
   makeLevelChangeFilter,
+  makeSustainedPoorFilter,
+  triggerIceRestart,
 } from '../services/livekitTuning';
+import * as callStateBus from '../services/callState';
 import {
   IconMic, IconMicOff, IconVideo, IconVideoOff, IconPhoneOff,
   IconVolume2, IconVolume, IconArrowLeft, IconChevronDown, IconCameraFlip, IconScreenShare,
@@ -416,6 +419,16 @@ function CallScreenInner() {
   const [showAudioStats, setShowAudioStats] = useState(false);
   const statsUnsubRef = useRef(null);
   const levelFilterRef = useRef(null);
+  // [gap D1 2026-05-20] Triggers ICE restart after 3 consecutive very_poor
+  // samples (15s @ 5s cadence). Resets on any sample with level >= 1 so a
+  // future dip can re-fire. Kept separate from levelFilterRef so the bitrate
+  // ladder still adjusts independently.
+  const sustainedPoorFilterRef = useRef(null);
+  const iceRestartLastAtRef = useRef(0);
+  // [gap D3 2026-05-20] Unsub for the network-change handover subscription.
+  // Wifi↔cellular transition triggers a forced ICE restart so the room walks
+  // off the dying transport before LK's own ConnectivityChanged path catches up.
+  const networkChangeUnsubRef = useRef(null);
   // Mirror audioStats into a ref so the ConnectionQualityChanged handler
   // (registered once at room setup) can check "do we already have a
   // stats-derived signal?" without stale-closure issues.
@@ -1312,6 +1325,21 @@ function CallScreenInner() {
         try { clearTimeout(reconnectGraceTimerRef.current); } catch {}
         reconnectGraceTimerRef.current = null;
       }
+      // [gap D4 2026-05-20] After a reconnect, the SFU may not push a
+      // fresh keyframe until the next GOP (4-8s on a 30fps publisher).
+      // Until then remote video stays frozen on the last received frame.
+      // Pinging requestKeyFrame on every remote video publication makes
+      // the I-frame land in <300ms in practice. The optional chain is
+      // load-bearing — older livekit-client versions don't expose it.
+      try {
+        r.remoteParticipants?.forEach?.((p) => {
+          try {
+            p.videoTracks?.forEach?.((t) => {
+              try { t.publication?.requestKeyFrame?.(); } catch {}
+            });
+          } catch {}
+        });
+      } catch {}
     });
 
     r.on(RoomEvent.Disconnected, (reason) => {
@@ -1515,6 +1543,7 @@ function CallScreenInner() {
     //      makeLevelChangeFilter so a 145ms↔155ms flicker doesn't thrash)
     if (statsUnsubRef.current) { try { statsUnsubRef.current(); } catch {} }
     levelFilterRef.current = makeLevelChangeFilter();
+    sustainedPoorFilterRef.current = makeSustainedPoorFilter(3);
     statsUnsubRef.current = pollNetworkStats(r, (sample) => {
       try {
         if (endedRef.current) return;
@@ -1527,8 +1556,47 @@ function CallScreenInner() {
         levelFilterRef.current?.(cls, (cc) => {
           applyAdaptiveBitrate(r, cc).catch(() => {});
         });
+        // [gap D1] Sustained very_poor (3 samples / 15s) → ICE restart. We
+        // rate-limit to one restart per 30s so a stuck-bad network doesn't
+        // hammer the SFU. Hook callback exposed for analytics + post-call
+        // QoS rating ("we restarted ICE N times").
+        sustainedPoorFilterRef.current?.(cls, async () => {
+          const now = Date.now();
+          if (now - (iceRestartLastAtRef.current || 0) < 30000) return;
+          iceRestartLastAtRef.current = now;
+          try { _diag('sustained_poor_ice_restart', { rtt: sample.rtt, loss: sample.loss }); } catch {}
+          try { reconnectCountRef.current = (reconnectCountRef.current || 0) + 1; } catch {}
+          // onSustainedPoorQuality hook — analytics + UI can subscribe.
+          try {
+            const cb = globalThis.__chatyy_onSustainedPoorQuality;
+            if (typeof cb === 'function') cb({ sample, cls });
+          } catch {}
+          await triggerIceRestart(roomRef.current).catch(() => {});
+        });
       } catch {}
     }, 5000);
+
+    // [gap D3 2026-05-20] Subscribe to network handover events so the call
+    // forces an ICE restart immediately when iOS NWPathMonitor /
+    // Android ConnectivityManager.NetworkCallback report wifi↔cellular
+    // transitions. Without this we wait on LK's own re-ICE-on-PC-failure
+    // path which can take 8-20s on slow handovers. Rate-limit shares the
+    // 30s window with the sustained-poor trigger so we never restart twice
+    // in the same second.
+    if (networkChangeUnsubRef.current) {
+      try { networkChangeUnsubRef.current(); } catch {}
+      networkChangeUnsubRef.current = null;
+    }
+    networkChangeUnsubRef.current = callStateBus.subscribeNetworkChange((info) => {
+      if (endedRef.current) return;
+      if (!info || (info.type !== 'wifi-to-cellular' && info.type !== 'cellular-to-wifi')) return;
+      const now = Date.now();
+      if (now - (iceRestartLastAtRef.current || 0) < 30000) return;
+      iceRestartLastAtRef.current = now;
+      try { _diag('network_handover_ice_restart', { type: info.type }); } catch {}
+      try { reconnectCountRef.current = (reconnectCountRef.current || 0) + 1; } catch {}
+      triggerIceRestart(roomRef.current).catch(() => {});
+    });
 
     // [2026-05-18 video-quality-push] Adaptive video bitrate.
     // Independent from the audio-level loop above because video has its own
@@ -1618,8 +1686,50 @@ function CallScreenInner() {
         videoEnabledRef.current = false;
         try { setErrorMsg(t('call.cameraDeniedBody') || 'Câmera não permitida — só áudio'); } catch {}
       } else {
+        // [gap C3 2026-05-20] Low-data mode. Two gates:
+        //   1. User opted in via Settings → Dados e armazenamento (toggle
+        //      writes `chatyy_low_data_calls` AsyncStorage key).
+        //   2. Auto-detect: NetInfo says cellular AND OS flagged the link
+        //      as expensive (carrier roaming, hotspot tether). We force
+        //      low-data even if the toggle is off — user reported "queima
+        //      Mb em roaming" without consenting.
+        // Cap maxBitrate=200 kbps, 15 fps, 360p target, 2-layer simulcast
+        // (180p + 360p — drop the 720p layer the SFU won't pick anyway).
+        let lowData = false;
         try {
-          await r.localParticipant.setCameraEnabled(true);
+          const flag = await AsyncStorage.getItem('chatyy_low_data_calls');
+          if (flag === 'true' || flag === '1') lowData = true;
+        } catch {}
+        if (!lowData && Platform.OS !== 'web') {
+          try {
+            const NetInfo = require('@react-native-community/netinfo').default;
+            const s = await NetInfo.fetch();
+            if (s?.type === 'cellular' && s?.details?.isConnectionExpensive) {
+              lowData = true;
+            }
+          } catch {}
+        }
+        const camPubOpts = lowData
+          ? {
+              videoEncoding: { maxBitrate: 200000, maxFramerate: 15 },
+              videoSimulcastLayers: [
+                { width: 320, height: 180, encoding: { maxBitrate: 90000, maxFramerate: 15 } },
+                { width: 640, height: 360, encoding: { maxBitrate: 200000, maxFramerate: 15 } },
+              ],
+              simulcast: true,
+            }
+          : undefined;
+        try {
+          // LK's setCameraEnabled accepts publish opts as 3rd arg (cap opts)
+          // on livekit-client 2.x. On older versions the arg is ignored — the
+          // adaptive loop above will still pull the bitrate down to the
+          // matching bucket on the first poll.
+          if (camPubOpts) {
+            try { _diag('low_data_mode_on', { auto: !(await AsyncStorage.getItem('chatyy_low_data_calls')) }); } catch {}
+            await r.localParticipant.setCameraEnabled(true, undefined, camPubOpts);
+          } else {
+            await r.localParticipant.setCameraEnabled(true);
+          }
           const camPub = r.localParticipant.getTrackPublication(Track.Source.Camera);
           if (camPub?.videoTrack) setLocalVideoTrack(camPub.videoTrack);
         } catch (e) {
@@ -1872,6 +1982,13 @@ function CallScreenInner() {
       statsUnsubRef.current = null;
     }
     levelFilterRef.current = null;
+    sustainedPoorFilterRef.current = null;
+    // [gap D3 2026-05-20] Tear down network handover subscriber so the
+    // stale closure doesn't try to call triggerIceRestart on a disposed Room.
+    if (networkChangeUnsubRef.current) {
+      try { networkChangeUnsubRef.current(); } catch {}
+      networkChangeUnsubRef.current = null;
+    }
     // [2026-05-18 video-quality-push] Same teardown for the video adaptive
     // loop. videoTuningStopRef holds the `stop()` returned by
     // startVideoAdaptiveLoop — calling it clears the 3s setInterval +

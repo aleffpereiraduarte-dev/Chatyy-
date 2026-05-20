@@ -7714,6 +7714,8 @@ export default {
   'settings.led.c8': 'Branco',
   'settings.roaming.title': 'Permitir em roaming',
   'settings.roaming.desc': 'Permite baixar mídia quando estiver em roaming. Desligue pra economizar dados internacionais.',
+  'settings.lowDataCalls.title': 'Usar menos dados em chamadas',
+  'settings.lowDataCalls.desc': 'Limita o vídeo a 360p / 15 fps. Útil em redes lentas ou móveis. Ativa automaticamente em roaming.',
   'settings.wallpaperDefault.title': 'Papel de parede padrão',
   'settings.wallpaperDefault.desc': 'Aplica em conversas novas. Cada chat pode ter o seu próprio.',
   'settings.wallpaperDefault.custom': '+ Enviar imagem própria',

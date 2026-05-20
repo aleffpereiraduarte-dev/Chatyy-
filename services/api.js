@@ -8573,6 +8573,18 @@ export async function chatLivekitToken(conversationId, room = '') {
   return apiCall('chat_livekit_token', { conversation_id: conversationId, room }, 'POST');
 }
 
+// [gap E2 2026-05-20] "Join ongoing call" banner.
+// Polls the chat_call_state table for an active (started, not ended,
+// not locked) call attached to this conversation. Used by the chat
+// header chip in chat-conversation.js to surface a tap-to-join CTA
+// when a group call is already in progress and the current user is
+// NOT a participant yet. Backend response shape:
+//   { active: bool, locked: bool, call_id, room, participants: [emails],
+//     started_at, host_email }
+export async function chatCallStateActive(conversationId) {
+  return apiCall('chat_call_state_active', { conversation_id: conversationId }, 'POST');
+}
+
 // ─── Group call host controls (2026-05-18) ───
 // Mute ALL non-host participants in a group call. Backend enforces host role
 // via conversation admin check, then fans `call_mute_request` WS events to

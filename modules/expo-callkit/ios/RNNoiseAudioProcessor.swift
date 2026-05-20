@@ -185,6 +185,34 @@ import LiveKitClient
 @objc final class RNNoiseLKAdapter: NSObject {
     static let shared = RNNoiseLKAdapter()
 
+    /// [Wave WhatsApp parity, 2026-05-20 gap B1] Bind this adapter as the LK
+    /// Room's audio processor so the captured mic samples flow through
+    /// `processInt16` before LK encodes them. Idempotent — re-binding the
+    /// same Room is a no-op. Skips silently if RNNoise symbols never
+    /// resolved (dlsym fallback returned unavailable) so we don't waste a
+    /// per-frame copy on a passthrough.
+    @objc func bind(to room: Room) {
+        guard RNNoiseAudioProcessor.shared.available else {
+            print("[RNNoise.bind: skipped] RNNoise unavailable — see #rnnoise-spm-todo")
+            return
+        }
+        let roomNS = room as NSObject
+        // LK 2.5+ exposes `Room.set(audioProcessor:)` per the comment in
+        // RNNoiseAudioProcessor.swift. Older revs used `audioCustomProcessingDelegate`.
+        // Try both via Obj-C runtime so the build doesn't depend on the
+        // exact LK Swift minor rev.
+        let selectors = ["setAudioProcessor:", "setAudioCustomProcessingDelegate:"]
+        for name in selectors {
+            let sel = NSSelectorFromString(name)
+            if roomNS.responds(to: sel) {
+                roomNS.perform(sel, with: self)
+                print("[RNNoise.bind: ok] Room.\(name)")
+                return
+            }
+        }
+        print("[RNNoise.bind: skipped] LK Swift audio-processor API missing — see #rnnoise-spm-todo")
+    }
+
     /// LiveKit calls this on its audio thread. We forward into the
     /// shared processor and respect the global toggle.
     ///
