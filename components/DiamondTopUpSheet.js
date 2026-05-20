@@ -45,14 +45,16 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
   const [pendingSku, setPendingSku] = useState(null);
   const [iapReady, setIapReady] = useState(false);
 
-  // Lazy IAP init: fires on first open, not on app boot, so the StoreKit
-  // observer doesn't grab cycles before the user has any intent.
+  // Lazy IAP init: fires on first open, not on app boot, so the
+  // StoreKit/Play Billing observer doesn't grab cycles before the user
+  // has any intent. 2026-05-19 — Android Play Billing wired via the
+  // same expo-iap surface as iOS (#1203). Web still bails.
   useEffect(() => {
     if (!visible) return;
-    if (Platform.OS === 'ios') {
+    if (Platform.OS === 'ios' || Platform.OS === 'android') {
       initIAP().then(ok => setIapReady(!!ok)).catch(() => setIapReady(false));
     } else {
-      setIapReady(false); // Android IAP wiring deferred to follow-up build
+      setIapReady(false);
     }
   }, [visible]);
 
@@ -75,14 +77,14 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
     return () => { alive = false; };
   }, [visible, onBalanceChange]);
 
-  // Filter packs to what StoreKit actually returned. On iOS, if a SKU was
-  // never registered in App Store Connect (or is still propagating after a
-  // create), `requestPurchase` throws "SKU not found" — we'd rather hide the
-  // tile than render a button that always errors. `iapReady` triggers the
-  // re-eval once fetchProducts resolves. Android keeps every pack visible
-  // (the row's onBuy already shows the "coming soon" alert).
+  // Filter packs to what the billing client actually returned. If a SKU
+  // was never registered in App Store Connect / Play Console (or is still
+  // propagating after a create), `requestPurchase` throws "SKU not found"
+  // — we'd rather hide the tile than render a button that always errors.
+  // `iapReady` triggers the re-eval once fetchProducts resolves. Web
+  // keeps every pack visible (clicking deep-links to web checkout).
   const packs = useMemo(() => {
-    if (Platform.OS !== 'ios') return DIAMOND_PACKS;
+    if (Platform.OS === 'web') return DIAMOND_PACKS;
     if (!iapReady) return DIAMOND_PACKS; // show grid while loading; rows just disabled
     const filtered = DIAMOND_PACKS.filter(p => isDiamondSkuAvailable(p.sku));
     return filtered.length ? filtered : DIAMOND_PACKS;
@@ -90,26 +92,12 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
 
   const onBuy = useCallback(async (pack) => {
     if (pendingSku) return;
-    if (Platform.OS !== 'ios') {
-      // Android Play Billing isn't wired yet (Task #1120/#1147). Offer to
-      // open the web checkout in the browser so the user can actually buy
-      // diamonds today instead of hitting a dead-end "coming soon" alert.
-      // The web flow lives at /diamond-shop on chatyy.com.br and uses the
-      // same backend `wallet_topup_verify` so the balance lands in the
-      // same wallet.
+    if (Platform.OS === 'web') {
+      // Web has no billing client; deep-link to web checkout. Same backend
+      // wallet_topup_verify lands the balance.
       const base = (typeof getBaseUrl === 'function' && getBaseUrl()) || 'https://chatyy.com.br';
       const webUrl = `${base}/#/diamond-shop?sku=${encodeURIComponent(pack.sku)}`;
-      Alert.alert(
-        t('wallet.topup') || 'Comprar diamantes',
-        t('wallet.androidWebBuyBody') || 'A compra direta no Android chega em breve. Quer abrir a loja no navegador para comprar agora?',
-        [
-          { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
-          {
-            text: t('wallet.openWebStore') || 'Abrir loja web',
-            onPress: () => { try { Linking.openURL(webUrl); } catch {} },
-          },
-        ],
-      );
+      try { Linking.openURL(webUrl); } catch {}
       return;
     }
     setPendingSku(pack.sku);

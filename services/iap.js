@@ -1,16 +1,19 @@
 /**
- * Chatyy IAP — real StoreKit via expo-iap (OpenIAP).
+ * Chatyy IAP — real StoreKit + Google Play Billing via expo-iap (OpenIAP).
  *
  * Uses the Expo Module arch (not NitroModules) so it autolinks cleanly
- * on our Mac 207 build flow. No extra peer deps.
+ * on our Mac 207 build flow. No extra peer deps. expo-iap 4.x ships
+ * GooglePlayBillingClient v6+ on Android — same JS surface as StoreKit
+ * (initConnection / fetchProducts / requestPurchase / finishTransaction).
  *
  * Flow:
- *   1. initConnection() on iOS startup
- *   2. fetchProducts({ skus, type:'subs' }) loads prices/metadata
- *   3. User taps upgrade → requestPurchase({ request: { ios: { sku } }})
- *   4. purchaseUpdatedListener fires with receipt → POST to
- *      /api/email.php?action=iap_verify_receipt → backend flips plan
- *   5. finishTransaction(purchase) acknowledges (required by Apple)
+ *   1. initConnection() on iOS+Android startup
+ *   2. fetchProducts({ skus, type:'subs'|'inapp' }) loads prices/metadata
+ *   3. User taps upgrade → requestPurchase({ request: { ios|android } })
+ *   4. purchaseUpdatedListener fires with receipt/purchaseToken → POST to
+ *      backend (wallet_topup_verify or iap_verify_receipt) for verification
+ *   5. finishTransaction(purchase) acknowledges (required by both stores —
+ *      Google auto-refunds within 3 days if not acknowledged)
  *
  * Products:
  *   com.onemundo.mail.one_monthly   (R$14.99/mo, 30-day free trial)
@@ -95,7 +98,11 @@ let _lastDiagnostic = null; // last reason fetchProducts/init failed, for UI
 let _pendingTopupCallback = null; // resolved by listener after wallet credit
 
 export async function initIAP() {
-  if (Platform.OS !== 'ios') { _available = false; return false; }
+  // 2026-05-19 — Android-side wired up. expo-iap 4.x exposes the same
+  // initConnection/fetchProducts/requestPurchase JS surface for both
+  // StoreKit and Google Play Billing, so we no longer early-return on
+  // Android. Web still bails (no native module).
+  if (Platform.OS === 'web') { _available = false; return false; }
   // Cache the init promise so parallel callers (mount + button tap + focus
   // effect) share the same initConnection rather than each opening its
   // own StoreKit observer — duplicate observers crashed build 365.
@@ -120,23 +127,31 @@ async function _doInitIAP() {
     // during review) often returns 0 products on the first call right after
     // initConnection, then succeeds 1-3s later. Without retry, our reviewers
     // were seeing "Assinaturas indisponíveis" and rejecting builds.
-    let attempt = 0;
-    const maxAttempts = 3;
-    while (attempt < maxAttempts) {
-      attempt += 1;
-      try {
-        const products = await mod.fetchProducts({ skus: PRODUCT_IDS, type: 'subs' });
-        _products = Array.isArray(products) ? products : [];
-        if (_products.length > 0) { _lastDiagnostic = null; break; }
-        _lastDiagnostic = 'no_products_returned';
-      } catch (fetchErr) {
-        if (__DEV__) console.warn(`[IAP] fetchProducts attempt ${attempt} failed:`, fetchErr?.message);
-        _products = [];
-        _lastDiagnostic = 'fetch_failed:' + (fetchErr?.message || 'unknown');
+    // Subscriptions are iOS-only today (Play Console doesn't have them
+    // registered). On Android we skip subs entirely and only fetch the
+    // consumable diamond catalog below — fetching unknown SKUs throws and
+    // would corrupt _lastDiagnostic.
+    if (Platform.OS === 'ios') {
+      let attempt = 0;
+      const maxAttempts = 3;
+      while (attempt < maxAttempts) {
+        attempt += 1;
+        try {
+          const products = await mod.fetchProducts({ skus: PRODUCT_IDS, type: 'subs' });
+          _products = Array.isArray(products) ? products : [];
+          if (_products.length > 0) { _lastDiagnostic = null; break; }
+          _lastDiagnostic = 'no_products_returned';
+        } catch (fetchErr) {
+          if (__DEV__) console.warn(`[IAP] fetchProducts attempt ${attempt} failed:`, fetchErr?.message);
+          _products = [];
+          _lastDiagnostic = 'fetch_failed:' + (fetchErr?.message || 'unknown');
+        }
+        if (attempt < maxAttempts) {
+          await new Promise(r => setTimeout(r, 800 * attempt)); // 800ms, 1.6s
+        }
       }
-      if (attempt < maxAttempts) {
-        await new Promise(r => setTimeout(r, 800 * attempt)); // 800ms, 1.6s
-      }
+    } else {
+      _products = [];
     }
 
     // Diamond top-ups are consumables (type:'inapp'), not subscriptions —
@@ -208,10 +223,26 @@ async function _finalizePurchase(purchase) {
   const isDiamond = typeof purchase?.productId === 'string'
     && purchase.productId.indexOf('chatyy_diamond_') === 0;
   try {
-    // expo-iap purchase shape: { id, productId, transactionId,
-    //   transactionReceipt, purchaseToken, originalTransactionIdentifierIOS, ... }
+    // expo-iap purchase shape varies by store:
+    //   iOS:     { id, productId, transactionId, transactionReceipt,
+    //              originalTransactionIdentifierIOS, ... }
+    //   Android: { id, productId, purchaseToken, transactionId(==orderId),
+    //              packageNameAndroid, purchaseStateAndroid,
+    //              isAcknowledgedAndroid, dataAndroid, signatureAndroid }
+    // Google Play's idempotent identifier is purchaseToken (one per
+    // purchase, opaque). orderId is the user-visible "GPA.xxx" id.
+    const isAndroid = Platform.OS === 'android';
     const receipt = purchase.transactionReceipt || purchase.purchaseToken || '';
-    const txId = purchase.transactionId || purchase.id || '';
+    const purchaseToken = purchase.purchaseToken || '';
+    const orderId = isAndroid
+      ? (purchase.transactionId || purchase.orderId || '')
+      : '';
+    // Idempotency key: on Android use purchaseToken (guaranteed unique
+    // per purchase; orderId is null for promos/free products). On iOS we
+    // continue using transactionId (StoreKit invariant).
+    const txId = isAndroid
+      ? (purchaseToken || purchase.transactionId || purchase.id || '')
+      : (purchase.transactionId || purchase.id || '');
     if (txId && purchase.productId) {
       const action = isDiamond ? 'wallet_topup_verify' : 'iap_verify_receipt';
       const r = await apiCall(action, {
@@ -220,6 +251,12 @@ async function _finalizePurchase(purchase) {
         product_id: purchase.productId,      // iap_verify_receipt reads this
         receipt,
         transaction_id: txId,
+        // Android-specific — backend uses these to call
+        // androidpublisher.purchases.products.get for verification +
+        // .acknowledge to consume. Ignored on iOS.
+        purchase_token: purchaseToken,
+        order_id: orderId,
+        package_name: isAndroid ? (purchase.packageNameAndroid || 'com.onemundo.mail') : '',
       }, 'POST');
       verified = !!r?.success;
       resultData = r?.data || null;
@@ -277,11 +314,14 @@ export async function purchaseDiamonds(productId) {
     if (!_available) return { success: false, message: 'iap_unavailable' };
   }
   // [#1188-followup, 2026-05-19] Guard against "SKU not found" — happens
-  // when the StoreKit catalog doesn't have this product registered (the
-  // chatyy_diamond_* IDs were never created in App Store Connect for some
-  // builds). Without this check, requestPurchase throws raw "SKU not found"
-  // and the user sees the iOS modal-over-modal error stack. With it, we
-  // surface a friendly message and route to web checkout when available.
+  // when the catalog doesn't have this product registered (the
+  // chatyy_diamond_* IDs were never created in App Store Connect / Play
+  // Console for some builds). Without this check, requestPurchase throws
+  // raw "SKU not found" and the user sees the modal-over-modal error
+  // stack. With it, we surface a friendly message and route to web
+  // checkout when available. Note: Google Play returns products via the
+  // SAME fetchProducts({type:'inapp'}) call as StoreKit, so the same
+  // _diamondProducts cache covers both stores.
   const hasInCatalog = _diamondProducts.some(
     p => (p?.id || p?.productId) === productId
   );
@@ -331,11 +371,13 @@ export function getDiamondLocalizedPrice(productId) {
   const p = _diamondProducts.find(x => x.id === productId || x.productId === productId);
   return p?.localizedPrice || p?.displayPrice || '';
 }
-/** True iff this SKU was returned by StoreKit fetchProducts. UI uses this
- *  to grey out / hide diamond packs that aren't registered in App Store
- *  Connect, instead of showing a raw "SKU not found" purchase error. */
+/** True iff this SKU was returned by fetchProducts (StoreKit on iOS,
+ *  Google Play Billing on Android). UI uses this to grey out / hide
+ *  diamond packs that aren't registered in ASC / Play Console, instead
+ *  of showing a raw "SKU not found" purchase error. Web has no IAP, so
+ *  we always allow it through (UI deep-links to /plans web checkout). */
 export function isDiamondSkuAvailable(productId) {
-  if (Platform.OS !== 'ios') return true; // Android/web don't hit StoreKit
+  if (Platform.OS === 'web') return true; // web never hits a billing client
   if (!_diamondProducts.length) return false;
   return _diamondProducts.some(p => (p?.id || p?.productId) === productId);
 }
@@ -365,10 +407,17 @@ export async function purchaseSubscription(productId) {
   }
 }
 
-/** Restore on iOS via StoreKit; Android/web via our server-side lookup. */
+/** Restore on iOS+Android via the billing client; web via server lookup.
+ *
+ *  ANDROID RECOVERY: On cold-start we also call this to flush any
+ *  unacknowledged purchases — Google Play auto-refunds the user if a
+ *  purchase isn't acknowledged within 3 days, so we MUST replay any
+ *  purchase the user closed the app on (network drop after Play sheet
+ *  closed but before our listener fired). _finalizePurchase is
+ *  idempotent via transaction_id, so re-running it is safe. */
 export async function restorePurchases() {
   const mod = _getIAP();
-  if (Platform.OS === 'ios' && mod && _available) {
+  if ((Platform.OS === 'ios' || Platform.OS === 'android') && mod && _available) {
     try {
       const purchases = await mod.getAvailablePurchases();
       let restored = 0;
@@ -382,6 +431,33 @@ export async function restorePurchases() {
   }
   try { return await apiRestore('web'); } catch (e) {
     return { success: false, message: e?.message || 'Erro ao restaurar' };
+  }
+}
+
+/** Android-only utility: list purchases that the Play library knows
+ *  about but haven't been acknowledged/consumed yet. Should be called on
+ *  app start to recover from a crash mid-flow. _finalizePurchase handles
+ *  both verify (backend) + finishTransaction (acknowledge), so a single
+ *  pass through this list is enough.
+ *
+ *  No-op on iOS (StoreKit replays unfinished tx via its own queue when
+ *  initConnection runs).
+ */
+export async function flushPendingPurchases() {
+  if (Platform.OS !== 'android') return { success: true, count: 0 };
+  const mod = _getIAP();
+  if (!mod || !_available) return { success: false, message: 'iap_unavailable' };
+  try {
+    const purchases = await mod.getAvailablePurchases();
+    let count = 0;
+    for (const p of purchases || []) {
+      // Skip already-acknowledged (Google's billing v6 sets this)
+      if (p?.isAcknowledgedAndroid) continue;
+      try { await _finalizePurchase(p); count++; } catch {}
+    }
+    return { success: true, count };
+  } catch (e) {
+    return { success: false, message: e?.message || 'flush_failed' };
   }
 }
 

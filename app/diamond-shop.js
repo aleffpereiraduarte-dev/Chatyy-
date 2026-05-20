@@ -41,7 +41,9 @@ export default function DiamondShopScreen() {
   const [iapReady, setIapReady] = useState(false);
 
   useEffect(() => {
-    if (Platform.OS === 'ios') {
+    // 2026-05-19 (#1203) — Android Play Billing wired via same expo-iap
+    // surface; init both stores. Web has no billing client.
+    if (Platform.OS === 'ios' || Platform.OS === 'android') {
       initIAP().then(ok => setIapReady(!!ok)).catch(() => setIapReady(false));
     }
   }, []);
@@ -64,23 +66,12 @@ export default function DiamondShopScreen() {
 
   const onBuy = useCallback(async (pack) => {
     if (pendingSku) return;
-    if (Platform.OS !== 'ios') {
-      // Android Play Billing isn't wired yet (Task #1120/#1147). Offer to
-      // open the web checkout in the browser so the user can actually buy
-      // diamonds today instead of hitting a dead-end "coming soon" alert.
+    if (Platform.OS === 'web') {
+      // Web has no billing client; deep-link to /diamond-shop on the
+      // public site (same backend wallet_topup_verify credits the wallet).
       const base = (typeof getBaseUrl === 'function' && getBaseUrl()) || 'https://chatyy.com.br';
       const webUrl = `${base}/#/diamond-shop?sku=${encodeURIComponent(pack.sku)}`;
-      Alert.alert(
-        t('wallet.topup') || 'Comprar diamantes',
-        t('wallet.androidWebBuyBody') || 'A compra direta no Android chega em breve. Quer abrir a loja no navegador para comprar agora?',
-        [
-          { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
-          {
-            text: t('wallet.openWebStore') || 'Abrir loja web',
-            onPress: () => { try { Linking.openURL(webUrl); } catch {} },
-          },
-        ],
-      );
+      try { Linking.openURL(webUrl); } catch {}
       return;
     }
     setPendingSku(pack.sku);
