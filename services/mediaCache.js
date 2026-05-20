@@ -251,6 +251,76 @@ export async function getCachedUri(url) {
 // the image appears uncached on next open.
 const _inflightDownloads = new Map(); // key → Promise<localPath | url>
 
+// [#1218 2026-05-20] WhatsApp-parity reconnect sweep.
+// When the network is 'none' or 'unknown', cacheMedia's auto-download gate
+// returns the remote URL (= unsaved). WhatsApp records these and flushes
+// them when the radio comes back. Without this, a voice note that arrived
+// during a subway dip stays unviewable until the user manually taps Play —
+// which surfaces the dreaded "sem internet, mídia não baixada" toast.
+//
+// Map key is the urlToKey() bucket so the dedup matches cacheMedia's own
+// inflight set. Value carries enough context (messageId, conversationId,
+// isAudio) to redispatch into the right path on reconnect.
+const _deferredMedia = new Map(); // key → { url, messageId, conversationId, isAudio }
+
+function _enqueueDeferred(url, opts = {}) {
+  if (!url || Platform.OS === 'web') return;
+  try {
+    const key = urlToKey(url);
+    if (_deferredMedia.has(key)) return;
+    _deferredMedia.set(key, {
+      url,
+      messageId: opts.messageId ?? null,
+      conversationId: opts.conversationId ?? null,
+      isAudio: !!opts.isAudio,
+    });
+  } catch {}
+}
+
+function _drainDeferred() {
+  if (!_deferredMedia.size) return;
+  const items = Array.from(_deferredMedia.values());
+  _deferredMedia.clear();
+  for (const item of items) {
+    try {
+      if (item.isAudio) {
+        // Voice notes — bypass gate (always download, see audioCache).
+        prefetchAudioMessage(item.url, {
+          messageId: item.messageId,
+          conversationId: item.conversationId,
+        });
+      } else {
+        const _opts = {};
+        if (item.messageId != null) _opts.messageId = item.messageId;
+        if (item.conversationId != null) _opts.conversationId = item.conversationId;
+        // Don't force — respect the user's auto-download policy. The user
+        // already saw the bubble; if they wanted it on cellular they'd have
+        // toggled the bucket. We just retry when their original network gate
+        // would have passed (e.g. they're back on wifi).
+        cacheMedia(item.url, _opts).catch(() => {});
+      }
+    } catch {}
+  }
+}
+
+// Subscribe once to network change. Re-fire the deferred queue any time we
+// transition from disconnected → connected (or unknown → wifi/cellular).
+if (Platform.OS !== 'web' && !globalThis.__mediaCache_reconnect_sub) {
+  try {
+    const ni = require('./networkInfo');
+    if (typeof ni.onNetworkChange === 'function') {
+      let prevState = ni.getNetworkState?.() || { type: 'unknown', isConnected: true };
+      globalThis.__mediaCache_reconnect_sub = ni.onNetworkChange((state) => {
+        const wasOffline = prevState.type === 'none' || prevState.type === 'unknown' || !prevState.isConnected;
+        const nowOnline = state.isConnected && (state.type === 'wifi' || state.type === 'cellular' || state.type === 'ethernet');
+        if (wasOffline && nowOnline) _drainDeferred();
+        prevState = state;
+      });
+    }
+  } catch {}
+}
+
+
 // Concurrency throttle — cap simultaneous network downloads so a burst of
 // WS-driven prefetches (e.g. 30 messages syncing after reconnect) doesn't
 // saturate the radio + heap. WhatsApp parity: small parallel pool, queue
@@ -622,6 +692,17 @@ export async function cacheMedia(url, opts = {}) {
   // always proceeds regardless of pref. Web bypasses the gate (no cellular).
   if (!opts.force && Platform.OS !== 'web') {
     if (!_shouldAutoDownload(url)) {
+      // [#1218 2026-05-20] If the gate failed because we're offline/unknown,
+      // queue the URL for the reconnect sweep — WhatsApp pattern. Doesn't
+      // affect URLs blocked by the cellular policy itself (those will retry
+      // when bucket flips, not on network change).
+      try {
+        const ni = require('./networkInfo');
+        const t = ni.getNetworkType?.();
+        if (t === 'none' || t === 'unknown') {
+          _enqueueDeferred(url, { messageId: opts.messageId, conversationId: opts.conversationId });
+        }
+      } catch {}
       return url; // Return remote URL — bubble shows "tap to download" UI.
     }
   }
@@ -903,7 +984,10 @@ export function prefetchIncomingMessageMedia(message) {
       // bypass the cellular gate so voice notes always land. Matches the
       // ChatListTab #886 behavior. Goes through saveMediaPermanent which
       // shares the same destination dir as cacheMedia.
-      prefetchAudioMessage(url);
+      // [#1218 2026-05-20 BUG#6 fix] Pass messageId/conversationId so the
+      // resolved file:// path lands in messages.local_path via dbUpdate —
+      // image+video already do this, audio was the one type that wasn't.
+      prefetchAudioMessage(url, { messageId: message.id, conversationId: convId });
       if (convId != null) tagUrlConversation(url, convId);
     } else {
       // Image / video / file / gif / sticker — honor the per-bucket cellular
@@ -931,14 +1015,27 @@ export function prefetchIncomingMessageMedia(message) {
 // Returns a Promise resolving to the local path on success or the remote URL
 // on failure. Callers should treat as fire-and-forget; the AudioPlayer will
 // pick up the cached file on its next mount via getCachedAudioUri.
-export function prefetchAudioMessage(remoteUrl) {
+export function prefetchAudioMessage(remoteUrl, opts = {}) {
   if (!remoteUrl || Platform.OS === 'web') return Promise.resolve(remoteUrl);
   try { console.log('[audio_offline] prefetch', String(remoteUrl).slice(0, 80)); } catch {}
   // saveMediaPermanent writes to documentDirectory (the "saved" dir) — same
   // location getCachedAudioUri checks via the mediaCache consolidation hook,
   // so a single download serves both the bubble's player AND the chat list
   // preview. No cellular gate inside saveMediaPermanent → safe for audio.
-  return saveMediaPermanent(remoteUrl).catch(() => remoteUrl);
+  return saveMediaPermanent(remoteUrl).then((local) => {
+    // [#1218 2026-05-20 BUG#6 fix] Write the file:// path back into
+    // messages.local_path so a cold-open of the bubble doesn't re-resolve
+    // from the syncIndex (which can be stale after an account swap or
+    // app reinstall). Image+video already had this hook; audio now matches.
+    try {
+      if (typeof local === 'string' && local.startsWith('file://')
+          && opts && opts.messageId != null && opts.conversationId != null) {
+        const nativeDb = require('./db');
+        nativeDb.dbUpdateMessageFields?.(opts.conversationId, opts.messageId, { local_path: local });
+      }
+    } catch {}
+    return local;
+  }).catch(() => remoteUrl);
 }
 
 // Get permanent saved URI

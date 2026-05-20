@@ -526,6 +526,18 @@ export async function cacheVoiceMessage(remoteUrl, messageId, wavePeaks, opts = 
     const dl = fs.createDownloadResumable(remoteUrl, localPath, {});
     const r = await dl.downloadAsync();
     if (r && r.status === 200) {
+      // [#1218 2026-05-20 Wave 2] Integrity guard. A mid-flight disconnect
+      // can leave a 0-byte file on disk; without this check, getInfoAsync
+      // later sees `exists=true` and returns localPath, but the player
+      // then silently emits status.error and the bubble shows "sem
+      // internet". Verify size before declaring success.
+      try {
+        const info = await fs.getInfoAsync(localPath);
+        if (!info?.exists || (info.size != null && info.size <= 0)) {
+          try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
+          return remoteUrl;
+        }
+      } catch {}
       // [#1218 2026-05-20 BUG#1 fix] Same write-back for the fallback path.
       try {
         if (messageId != null && opts.conversationId != null) {
