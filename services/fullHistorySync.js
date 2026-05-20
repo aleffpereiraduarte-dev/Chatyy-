@@ -18,6 +18,14 @@
 //   sync_state key                          | value
 //   ────────────────────────────────────────┼──────────────────────────────
 //   chat_full_bootstrap:<email>             | 'started' | 'done' | iso
+//   chat_full_bar_shown:<email>             | '1' once the user saw the bar
+//                                           |  (any cold start). Prevents the
+//                                           |  "Sincronizando histórico" pill
+//                                           |  from reappearing every launch
+//                                           |  when the loop got interrupted
+//                                           |  (background, kill, timeout).
+//                                           |  Bootstrap still runs silently
+//                                           |  to fill missing convs.
 //   chat_full_synced:<convId>               | '1' when conv reached its tail
 //   chat_full_oldest:<convId>               | smallest msg id we've stored
 //
@@ -69,6 +77,8 @@ let _abort = false;               // set on logout / clear to stop loop
 let _pausedReason = null;         // 'background' | 'battery' | null
 let _startedAt = 0;
 let _resumeWaiters = [];          // promises waiting for unpause
+let _silent = false;              // true once the bar has been shown once
+                                  // (set per-process, seeded from sync_state)
 
 // ─── Public ────────────────────────────────────────────────────────────────
 
@@ -84,16 +94,43 @@ export async function bootstrapFullHistoryOnce(apiCall, email) {
   if (!apiCall || !email) return { skipped: 'no_api_or_email' };
   if (_running) return { skipped: 'already_running' };
 
-  const gateKey = `chat_full_bootstrap:${email.toLowerCase()}`;
+  const emailLc = email.toLowerCase();
+  const gateKey = `chat_full_bootstrap:${emailLc}`;
+  // Separate sentinel that flips the FIRST time we surface the bar on this
+  // device. It survives even when the loop is interrupted (background, kill,
+  // 30min timeout) so subsequent cold starts can finish the work silently.
+  // The user only ever sees "Sincronizando histórico" pill ONCE — exactly
+  // like WhatsApp's first-time restore. Cleared only by clearLocalDb()
+  // (logout / wipe history).
+  const barShownKey = `chat_full_bar_shown:${emailLc}`;
   try {
     const v = await localDb.getSyncState(gateKey);
     if (v === 'done') return { skipped: 'already_done' };
   } catch {}
 
+  // Seed _silent for this run. If the bar was ever shown before on this
+  // device for this account, every progress event in this process is
+  // suppressed — bootstrap continues invisibly in the background.
+  let seenBarBefore = false;
+  try {
+    const v = await localDb.getSyncState(barShownKey);
+    seenBarBefore = v === '1';
+  } catch {}
+  _silent = seenBarBefore;
+
   _running = true;
   _abort = false;
   _startedAt = Date.now();
   _setupLifecycleHooks();
+  // Mark the bar as "shown" the very first time we enter the loop, BEFORE
+  // the first emit. Even if the user backgrounds the app one second later
+  // and the loop never finishes, next launch will be silent. This is the
+  // key change for #1200 — gate flipped to 'done' was the only previous
+  // exit path, which the loop rarely reached because of background pauses
+  // or 30min timeouts on slow networks.
+  if (!seenBarBefore) {
+    try { await localDb.setSyncState(barShownKey, '1'); } catch {}
+  }
   emit('start', { convDone: 0, convTotal: 0 });
 
   try {
@@ -358,6 +395,11 @@ function _sleep(ms) {
 }
 
 function emit(phase, payload) {
+  // #1200: once the user has seen the histórico bar once on this device, all
+  // subsequent runs are silent. The bootstrap still chips away at remaining
+  // conversations on each launch — we just don't surface it. This matches
+  // WhatsApp's behavior: the first-time restore pill never reappears.
+  if (_silent) return;
   try {
     mailWs?._emit?.('chat_bootstrap_progress', { phase, ...payload });
   } catch {}
