@@ -26,7 +26,7 @@ import useIsMounted from '../hooks/useIsMounted';
 import { formatTime } from '../services/dateFormat';
 import * as DocumentPicker from 'expo-document-picker';
 let FileSystem = null;
-try { FileSystem = require('expo-file-system'); } catch (e) {}
+try { FileSystem = require('expo-file-system/legacy'); } catch { try { FileSystem = require('expo-file-system'); } catch (e) {} }
 import * as Sharing from 'expo-sharing';
 import {
   IconCalendar, IconPlus, IconClock, IconArrowLeft, IconArrowRight,

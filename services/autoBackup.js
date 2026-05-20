@@ -158,7 +158,7 @@ TaskManager.defineTask(TASK_NAME, async () => {
     if (Platform.OS === 'ios') {
       try {
         const ML = require('expo-media-library');
-        const FS = require('expo-file-system');
+        let FS; try { FS = require('expo-file-system/legacy'); } catch { FS = require('expo-file-system'); }
         const { status } = await ML.getPermissionsAsync();
         if (status === 'granted') {
           const backedUpIds = await getBackedUpMap();

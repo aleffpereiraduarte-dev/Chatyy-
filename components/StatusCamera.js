@@ -312,7 +312,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
     // when the OS reclaims space — we don't need it after publish.
     let outUri = null;
     try {
-      const FS = require('expo-file-system');
+      let FS; try { FS = require('expo-file-system/legacy'); } catch { FS = require('expo-file-system'); }
       const cacheDir = FS.cacheDirectory || FS.documentDirectory || '';
       outUri = `${cacheDir}status_stitch_${Date.now()}.mp4`;
       const inputs = segments.map(s => `-i "${s.uri.replace(/^file:\/\//, '')}"`).join(' ');
@@ -373,7 +373,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
     const ReturnCode = FFK.ReturnCode || FFK.default?.ReturnCode;
     if (!FFmpegKit || !ReturnCode) return uri;
     try {
-      const FS = require('expo-file-system');
+      let FS; try { FS = require('expo-file-system/legacy'); } catch { FS = require('expo-file-system'); }
       const cacheDir = FS.cacheDirectory || FS.documentDirectory || '';
       const out = `${cacheDir}status_speed_${factor}x_${Date.now()}.mp4`;
       // Compose atempo chain: each link capped 0.5..2.0. For 0.5x we use one
@@ -417,7 +417,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
     const ReturnCode = FFK.ReturnCode || FFK.default?.ReturnCode;
     if (!FFmpegKit || !ReturnCode) return videoUri;
     try {
-      const FS = require('expo-file-system');
+      let FS; try { FS = require('expo-file-system/legacy'); } catch { FS = require('expo-file-system'); }
       const cacheDir = FS.cacheDirectory || FS.documentDirectory || '';
       const out = `${cacheDir}status_voiceover_${Date.now()}.mp4`;
       const filter = keepOriginal

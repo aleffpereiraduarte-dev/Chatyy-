@@ -13,7 +13,7 @@ let WebView = null;
 try { WebView = require('react-native-webview').default; } catch {}
 
 let FileSystemModule = null;
-try { FileSystemModule = require('expo-file-system'); } catch {}
+try { FileSystemModule = require('expo-file-system/legacy'); } catch { try { FileSystemModule = require('expo-file-system'); } catch {} }
 
 let SharingModule = null;
 try { SharingModule = require('expo-sharing'); } catch {}

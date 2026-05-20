@@ -1679,7 +1679,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
         } else {
           // Native: walk expo-file-system cache dirs
           try {
-            const FS = require('expo-file-system');
+            let FS; try { FS = require('expo-file-system/legacy'); } catch { FS = require('expo-file-system'); }
             const walk = async (dir, depth = 0) => {
               if (depth > 6) return;
               try {

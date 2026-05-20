@@ -2853,7 +2853,7 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
           // (which then re-enters the offline check above) instead of
           // letting the player choke on a missing file.
           try {
-            const fs = require('expo-file-system');
+            let fs; try { fs = require('expo-file-system/legacy'); } catch { fs = require('expo-file-system'); }
             const info = await fs.getInfoAsync(playUri);
             if (!info?.exists || (info.size != null && info.size <= 0)) {
               // Clear the poisoned cache ref so the next tap re-resolves.
@@ -23434,7 +23434,7 @@ export default function ChatConversationScreen() {
                         URL.revokeObjectURL(url);
                       } else {
                         // Native: share via system share sheet, then clean up temp file
-                        const FileSystem = require('expo-file-system');
+                        let FileSystem; try { FileSystem = require('expo-file-system/legacy'); } catch { FileSystem = require('expo-file-system'); }
                         const filePath = `${FileSystem.cacheDirectory}${r.data.filename}`;
                         try {
                           await FileSystem.writeAsStringAsync(filePath, r.data.content, { encoding: FileSystem.EncodingType.UTF8 });

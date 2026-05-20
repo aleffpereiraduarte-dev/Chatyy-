@@ -2846,7 +2846,7 @@ export default function OneScreen() {
         // switch on, permission silently denied, or microphone blocked).
         let fileSize = 0;
         try {
-          const FS = require('expo-file-system');
+          let FS; try { FS = require('expo-file-system/legacy'); } catch { FS = require('expo-file-system'); }
           const info = await FS.getInfoAsync(uri, { size: true });
           fileSize = info?.size || 0;
         } catch {}

@@ -113,7 +113,7 @@ export default function LiveReplayScreen() {
       return;
     }
     try {
-      const FS = require('expo-file-system');
+      let FS; try { FS = require('expo-file-system/legacy'); } catch { FS = require('expo-file-system'); }
       const ML = require('expo-media-library');
       const target = `${FS.cacheDirectory}live-${sessionId}.mp4`;
       const dl = FS.createDownloadResumable(rec.recording_mp4, target);

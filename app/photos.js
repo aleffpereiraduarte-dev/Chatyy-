@@ -1915,7 +1915,7 @@ export default function PhotosScreen() {
         const { status } = await ML.requestPermissionsAsync();
         if (status !== 'granted') return;
         const url = api.fileDownloadUrl(photo.id);
-        const FileSystem = require('expo-file-system');
+        let FileSystem; try { FileSystem = require('expo-file-system/legacy'); } catch { FileSystem = require('expo-file-system'); }
         const download = await FileSystem.downloadAsync(url, FileSystem.cacheDirectory + photo.name);
         if (download.uri) {
           await ML.saveToLibraryAsync(download.uri);
@@ -2006,7 +2006,7 @@ export default function PhotosScreen() {
     if (Platform.OS !== 'web') {
       try {
         ML = require('expo-media-library');
-        FileSystem = require('expo-file-system');
+        try { FileSystem = require('expo-file-system/legacy'); } catch { FileSystem = require('expo-file-system'); }
         const { status } = await ML.requestPermissionsAsync();
         if (status !== 'granted') {
           safeAlert('', t('photos.permissionRequired'));

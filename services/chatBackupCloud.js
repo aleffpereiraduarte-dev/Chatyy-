@@ -29,7 +29,7 @@ import {
   encodeUTF8,
   decodeUTF8,
 } from 'tweetnacl-util';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as SecureStore from 'expo-secure-store';
 import * as api from './api';
 

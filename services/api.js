@@ -6203,7 +6203,7 @@ export async function aiTranscribeAudio(audioUri, { timeoutMs = 45000 } = {}) {
   let uri = audioUri;
   if (Platform.OS === 'android' && typeof uri === 'string' && uri.startsWith('content://')) {
     try {
-      const FileSystem = require('expo-file-system');
+      let FileSystem; try { FileSystem = require('expo-file-system/legacy'); } catch { FileSystem = require('expo-file-system'); }
       const dest = FileSystem.cacheDirectory + `whisper-${Date.now()}.m4a`;
       await FileSystem.copyAsync({ from: uri, to: dest });
       uri = dest;

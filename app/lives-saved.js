@@ -123,7 +123,7 @@ export default function LivesSavedScreen() {
       return;
     }
     try {
-      const FS = require('expo-file-system');
+      let FS; try { FS = require('expo-file-system/legacy'); } catch { FS = require('expo-file-system'); }
       const ML = require('expo-media-library');
       const target = `${FS.cacheDirectory}live-${rec.session_id}.mp4`;
       const dl = FS.createDownloadResumable(rec.recording_mp4, target);

@@ -627,7 +627,7 @@ export default function ComposeScreen() {
             // Native: download the .eml to FileSystem cache so RN's
             // FormData multipart picker can attach it via file:// URI.
             try {
-              const FS = await import('expo-file-system');
+              let FS; try { FS = await import('expo-file-system/legacy'); } catch { FS = await import('expo-file-system'); }
               const dest = (FS.cacheDirectory || FS.documentDirectory || '') + name;
               const dl = await FS.downloadAsync(url, dest);
               const info = await FS.getInfoAsync(dl.uri);

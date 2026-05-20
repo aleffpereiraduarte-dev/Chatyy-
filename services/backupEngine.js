@@ -220,7 +220,7 @@ async function computeContentHash(uri, fileSize) {
 
     try {
       const Crypto = require('expo-crypto');
-      const FS = require('expo-file-system');
+      let FS; try { FS = require('expo-file-system/legacy'); } catch { FS = require('expo-file-system'); }
 
       if (fileSize && fileSize <= FULL_HASH_LIMIT) {
         const all = await FS.readAsStringAsync(uri, { encoding: FS.EncodingType.Base64 });
@@ -587,7 +587,7 @@ export class BackupEngine {
     if (assets.length === 0) return { toUpload: [], skipped: [] };
 
     const ML = require('expo-media-library');
-    const FS = require('expo-file-system');
+    let FS; try { FS = require('expo-file-system/legacy'); } catch { FS = require('expo-file-system'); }
 
     // Phase 1: Build entries FAST (no getAssetInfoAsync — too slow for 30K+ photos)
     // Use asset.uri directly, resolve localUri only when uploading
@@ -1107,7 +1107,7 @@ export class BackupEngine {
     if (Platform.OS !== 'web' && typeof uploadUri === 'string' &&
         (uploadUri.startsWith('ph://') || uploadUri.startsWith('assets-library://'))) {
       try {
-        const FS = require('expo-file-system');
+        let FS; try { FS = require('expo-file-system/legacy'); } catch { FS = require('expo-file-system'); }
         const dest = FS.cacheDirectory + 'bk_' + item.id.replace(/[^a-zA-Z0-9]/g, '_') + '_' + Date.now() + '.' + (ext || 'jpg');
         await FS.copyAsync({ from: uploadUri, to: dest });
         uploadUri = dest;
@@ -1129,7 +1129,7 @@ export class BackupEngine {
     let fileSize = item.size;
     if (Platform.OS !== 'web') {
       try {
-        const FS = require('expo-file-system');
+        let FS; try { FS = require('expo-file-system/legacy'); } catch { FS = require('expo-file-system'); }
         const info = await FS.getInfoAsync(uploadUri);
         fileSize = info?.size || fileSize;
       } catch {}
@@ -1673,7 +1673,7 @@ export class BackupEngine {
         let uploadOk = false;
         if (Platform.OS !== 'web') {
           try {
-            const FS = require('expo-file-system');
+            let FS; try { FS = require('expo-file-system/legacy'); } catch { FS = require('expo-file-system'); }
             const uploadResult = await FS.uploadAsync(result.data.upload_url, uri, {
               httpMethod: 'PUT',
               uploadType: FS.FileSystemUploadType.BINARY_CONTENT,
