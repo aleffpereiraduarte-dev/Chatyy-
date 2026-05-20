@@ -1479,7 +1479,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             ),
             simulcast: true,
             preferredCodec: .vp9,
-            backupCodec: .vp8,
+            // [Wave 19 fix] LK iOS 2.0.x VideoPublishOptions has no backupCodec
+            // param yet. SFU falls back to negotiated codec list automatically.
             degradationPreference: .balanced
         )
     }

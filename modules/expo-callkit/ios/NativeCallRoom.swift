@@ -321,7 +321,7 @@ public enum NativeCallRoomEvent {
                         encoding: VideoEncoding(maxBitrate: 2_000_000, maxFps: 30),
                         simulcast: true,
                         preferredCodec: .vp9,
-                        backupCodec: .vp8,
+                        // [Wave 19 fix] LK iOS 2.0.x has no backupCodec param.
                         degradationPreference: .balanced
                     )
                     _ = try await r.localParticipant.setCamera(
