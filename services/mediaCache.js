@@ -117,12 +117,41 @@ function getSavedDir() {
 // GIF, sticker (tgs/webp), and generic files (pdf/doc/zip/txt). Unknown
 // extensions fall back to `bin` so they still get cached — we just can't
 // use the extension to hint content-type.
+//
+// [#1239 2026-05-20] Host normalization. api.getMediaUrl rewrites
+// `chatyy.com.br/data/chat-files/x.jpg` → `media.chatyy.com.br/data/chat-files/x.jpg`,
+// so the SAME physical R2 object can show up under either hostname depending
+// on where it was first observed (WS payload vs hydrate vs prefetch). Hashing
+// the full URL meant the prefetch saved under host A while the render lookup
+// hit host B → eternal cache miss + every paint re-downloads. Strip known CDN
+// aliases before hashing so both URLs collide on the same key.
+function _normalizeForKey(url) {
+  try {
+    const u = new URL(String(url));
+    const host = u.hostname.toLowerCase();
+    if (
+      host === 'media.chatyy.com.br' ||
+      host === 'chatyy.com.br' ||
+      host === 'www.chatyy.com.br' ||
+      host === 'mail.onemundo.com.br'
+    ) {
+      // Path-only key — host stripped, query/fragment dropped by the caller.
+      return u.pathname;
+    }
+    return String(url);
+  } catch {
+    return String(url);
+  }
+}
 function urlToKey(url) {
-  // Strip query/fragment before hashing so signed-URL token rotation
-  // (e.g. `?X-Amz-…&Expires=…`) doesn't bust the cache. Same R2/CDN object
-  // with a fresh signature must hit the same local file. Anything that's
-  // ACTUALLY a different resource will have a different path component.
-  const base = String(url).split('?')[0].split('#')[0];
+  // Normalize host BEFORE stripping query/fragment so cross-host aliases
+  // (CDN vs origin) hash to the same key. See _normalizeForKey for why.
+  const normalized = _normalizeForKey(url);
+  // Strip query/fragment so signed-URL token rotation (e.g. `?X-Amz-…&Expires=…`)
+  // doesn't bust the cache. Same R2/CDN object with a fresh signature must hit
+  // the same local file. Anything that's ACTUALLY a different resource will
+  // have a different path component.
+  const base = normalized.split('?')[0].split('#')[0];
   let hash = 0;
   for (let i = 0; i < base.length; i++) {
     hash = ((hash << 5) - hash) + base.charCodeAt(i);

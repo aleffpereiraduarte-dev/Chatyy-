@@ -1637,7 +1637,14 @@ export default function Profile({
                 const pick = await ImagePicker.launchImageLibraryAsync({
                   mediaTypes: ImagePicker.MediaTypeOptions.Images,
                   allowsMultipleSelection: true,
-                  selectionLimit: 10,
+                  // Instagram caps highlights at ~100 items. Backend already
+                  // accepts up to 100 ids per highlight (see
+                  // status_highlight_create slice(0,100)); bumped picker cap
+                  // from 10 → 50 so curators can build large destaques in a
+                  // single round-trip without the "Adicionar +" loop. 50 (not
+                  // 100) keeps memory/upload pressure reasonable on mid-tier
+                  // Android — users can chain a second pick for the rest.
+                  selectionLimit: 50,
                   quality: 0.85,
                 });
                 if (pick.canceled) return;
@@ -1690,7 +1697,11 @@ export default function Profile({
                       type: a.mimeType || 'image/jpeg',
                     };
                     const up = await api.statusUpload(fileLike);
-                    const url = up?.data?.url || up?.data?.cdn_url || up?.url || '';
+                    // Prefer the CDN URL so the destaque cover paints from
+                    // Cloudflare edge instead of US origin. status_upload now
+                    // returns both `cdn_url` (absolute media.chatyy.com.br)
+                    // and `url` (legacy relative /data/status/*).
+                    const url = up?.data?.cdn_url || up?.data?.url || up?.url || '';
                     if (!url) {
                       lastErr = up?.message || up?.data?.message || 'upload_no_url';
                       continue;
@@ -1772,6 +1783,36 @@ export default function Profile({
         )}
         {highlights.map(h => {
           const cover = h.cover_url ? resolveMedia(h.cover_url) : null;
+          // Instagram gradient ring (purple → fuchsia → orange) so destaques
+          // stand out from regular avatars. Painted via SVG when available;
+          // gracefully falls back to a solid purple ring in degraded envs so
+          // we never lose the visual identity. Same palette family as the
+          // profile header halo for brand consistency.
+          const ringRadius = (RING / 2) - 1.5;
+          const renderHighlightRing = () => {
+            if (_Svg && _SvgDefs && _SvgLinearGradient && _SvgStop && _SvgCircle) {
+              return (
+                <_Svg width={RING} height={RING} style={{ position: 'absolute', top: 0, left: 0 }}>
+                  <_SvgDefs>
+                    <_SvgLinearGradient id={`hlRing_${h.id}`} x1="0" y1="0" x2="1" y2="1">
+                      <_SvgStop offset="0" stopColor="#7C3AED" />
+                      <_SvgStop offset="0.5" stopColor="#EC4899" />
+                      <_SvgStop offset="1" stopColor="#F97316" />
+                    </_SvgLinearGradient>
+                  </_SvgDefs>
+                  <_SvgCircle
+                    cx={RING / 2}
+                    cy={RING / 2}
+                    r={ringRadius}
+                    stroke={`url(#hlRing_${h.id})`}
+                    strokeWidth={2}
+                    fill="none"
+                  />
+                </_Svg>
+              );
+            }
+            return null;
+          };
           // [feat-10] Tap → resolve items via status_highlight_items + open
           // the existing StoryViewer. Long-press (self) → delete with
           // confirmation. Mirrors Instagram's interaction grammar.
@@ -1832,10 +1873,16 @@ export default function Profile({
             >
               <View style={{
                 width: RING, height: RING, borderRadius: RING / 2,
-                borderWidth: 1.5, borderColor: borderTone,
                 alignItems: 'center', justifyContent: 'center',
-                backgroundColor: tone, padding: 2,
+                padding: 2,
+                // Solid fallback ring sits under the SVG. When the SVG paints
+                // it covers this border; if SVG isn't available the user still
+                // sees a purple ring (no silent visual regression).
+                borderWidth: _Svg ? 0 : 2,
+                borderColor: '#7C3AED',
+                backgroundColor: tone,
               }}>
+                {renderHighlightRing()}
                 {cover ? (
                   WEB
                     ? <img src={cover} alt="" style={{ width: SIZE - 4, height: SIZE - 4, borderRadius: (SIZE - 4) / 2, objectFit: 'cover' }} />

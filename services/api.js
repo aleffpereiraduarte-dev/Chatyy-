@@ -157,7 +157,15 @@ export function getMediaUrl(fileUrl) {
       const u = new URL(fileUrl);
       if (u.hostname === 'chatyy.com.br' || u.hostname === 'www.chatyy.com.br' || u.hostname === 'mail.onemundo.com.br') {
         const p = u.pathname;
-        if (p.startsWith('/data/feed-files/') || p.startsWith('/data/chat-files/') || p.startsWith('/data/drive-files/')) {
+        // /data/status/ added so status fotos/videos + reels/feed bytes
+        // route through the Cloudflare edge globally (was hitting US origin
+        // ~2-4s pre-fix). Mirrors the relative-path branch below.
+        if (p.startsWith('/data/feed-files/')
+            || p.startsWith('/data/chat-files/')
+            || p.startsWith('/data/drive-files/')
+            || p.startsWith('/data/status/')
+            || p.startsWith('/data/reels/')
+            || p.startsWith('/data/highlights/')) {
           return CDN_URL + p + (u.search || '');
         }
       }
@@ -165,7 +173,12 @@ export function getMediaUrl(fileUrl) {
     return fileUrl;
   }
   // Relative path — always go CDN for media dirs.
-  if (fileUrl.startsWith('/data/feed-files/') || fileUrl.startsWith('/data/chat-files/') || fileUrl.startsWith('/data/drive-files/')) {
+  if (fileUrl.startsWith('/data/feed-files/')
+      || fileUrl.startsWith('/data/chat-files/')
+      || fileUrl.startsWith('/data/drive-files/')
+      || fileUrl.startsWith('/data/status/')
+      || fileUrl.startsWith('/data/reels/')
+      || fileUrl.startsWith('/data/highlights/')) {
     return CDN_URL + fileUrl;
   }
   return BASE_URL + fileUrl;

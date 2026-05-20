@@ -202,7 +202,7 @@ function NativeImageViewerWithLoading({ url }) {
   );
 }
 
-function ImageViewer({ url, messageId, fileSize, createdAt, t }) {
+function ImageViewer({ url, messageId, fileSize, createdAt, t, placeholderUri, blurhash, thumbUri }) {
   // We deliberately DO NOT use `_NativeImageZoomView` here even on iOS. The
   // native view downloads via raw URLSession which (a) lacks the loading
   // indicator the user expects and (b) silently fails for some CDN routes.
@@ -301,8 +301,33 @@ function ImageViewer({ url, messageId, fileSize, createdAt, t }) {
     })
   ).current;
 
+  // Instant blurred placeholder backdrop. Painted BEHIND the high-res photo
+  // (and behind the spinner) so the user sees "the right photo, just fuzzy"
+  // the moment they tap — instead of staring at a black screen + spinner
+  // for the 200-2000ms while the full-res streams in. Priority order
+  // matches the bubble: blurhash > base64 LQIP > thumb URL. Falls through
+  // to nothing if the message had none of these (older messages pre-LQIP).
+  let _PlaceholderImage = Image;
+  try { _PlaceholderImage = require('expo-image').Image || Image; } catch {}
+  const _hasInstantPreview = !!(blurhash || placeholderUri || thumbUri);
+
   return (
     <View style={s.mediaContainer}>
+      {/* WhatsApp-style blurred preview behind the spinner. blurRadius keeps
+          the thumb readable but not "good enough" — encourages the eye to
+          stay until the high-res lands. blurhash uses ExpoImage native
+          decode (faster than RN Image); thumbUri is the server-side
+          small variant; placeholderUri is the embedded base64 LQIP. */}
+      {loading && !imageError && _hasInstantPreview && (
+        <_PlaceholderImage
+          source={blurhash ? { blurhash } : { uri: placeholderUri || thumbUri }}
+          style={[s.fullImage, { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }]}
+          contentFit="contain"
+          resizeMode="contain"
+          blurRadius={placeholderUri || thumbUri ? 20 : 0}
+          pointerEvents="none"
+        />
+      )}
       {loading && !imageError && <ActivityIndicator size="large" color="#fff" style={s.loader} />}
       {imageError && (
         <View style={[s.loader, { alignItems: 'center', justifyContent: 'center', padding: 24 }]}>
@@ -1659,7 +1684,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
               const isPrv = PREVIEWABLE_EXTS.includes(e);
               return (
                 <View style={{ width: SCREEN_W, flex: 1 }}>
-                  {isImg ? <ImageViewer url={u} messageId={item?.messageId || item?.id || 0} fileSize={item?.fileSize} createdAt={item?.createdAt || item?.created_at} t={t} /> :
+                  {isImg ? <ImageViewer url={u} messageId={item?.messageId || item?.id || 0} fileSize={item?.fileSize} createdAt={item?.createdAt || item?.created_at} t={t} placeholderUri={item?.placeholderUri || item?.thumbB64Uri} blurhash={item?.blurhash} thumbUri={item?.thumbUri} /> :
                    isVid ? <VideoPlayer url={u} /> :
                    isPrv ? <PreviewViewer url={u} filename={item?.fileName} messageId={item?.messageId || item?.id || 0} fileSize={item?.fileSize} t={t} /> :
                    <GenericFileViewer url={u} filename={item?.fileName} fileSize={item?.fileSize} messageId={item?.messageId || item?.id || 0} t={t} />}
@@ -1691,6 +1716,9 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
                 fileSize={_activeFileSize}
                 createdAt={_active?.createdAt || _active?.created_at}
                 t={typeof t === 'function' ? t : undefined}
+                placeholderUri={_active?.placeholderUri || _active?.thumbB64Uri}
+                blurhash={_active?.blurhash}
+                thumbUri={_active?.thumbUri}
               />
             )
           ) : isVideo ? (

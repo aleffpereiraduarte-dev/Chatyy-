@@ -200,7 +200,7 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/icon.png",
+          "icon": "./assets/android-icon-monochrome.png",
           "color": "#2563eb",
           "sounds": [
             "./assets/ringtone.wav"

@@ -192,6 +192,39 @@ function _warmCacheVideos(mine, others) {
   } catch {}
 }
 
+// Web SW pre-cache for status thumbnails + first hero of every group.
+// The service worker accepts a PREFETCH_MEDIA message and HEAD+GETs each URL
+// against media.chatyy.com.br, stashing it in MEDIA_CACHE. By the time the
+// user taps a story bubble, the thumbnail/poster is already on disk and
+// the viewer paints in <50ms instead of 200-800ms first-byte from CDN.
+function _swPrefetch(mine, others) {
+  try {
+    if (typeof navigator === 'undefined' || !navigator.serviceWorker) return;
+    const ctrl = navigator.serviceWorker.controller;
+    if (!ctrl) return;
+    const urls = [];
+    const push = (u) => {
+      if (!u || typeof u !== 'string') return;
+      if (u.startsWith('http')) urls.push(u);
+      // resolveMedia/getMediaUrl already converts /data/ → CDN URL on the
+      // caller side, but be defensive in case a status row still has a
+      // relative path. We hard-code the CDN host here (cheaper than
+      // importing api.js into the hook).
+      else if (u.startsWith('/data/')) urls.push('https://media.chatyy.com.br' + u);
+    };
+    for (const it of (mine || []).slice(0, 4)) {
+      push(it?.thumbnail_url); push(it?.media_url);
+    }
+    for (const g of (others || []).slice(0, 12)) {
+      const first = (g?.items || [])[0];
+      if (first) { push(first.thumbnail_url); push(first.media_url); }
+    }
+    if (urls.length) {
+      ctrl.postMessage({ type: 'PREFETCH_MEDIA', urls });
+    }
+  } catch {}
+}
+
 export default function useStatuses(currentEmail, opts = {}) {
   const {
     warmCacheVideos = true,
@@ -264,6 +297,9 @@ export default function useStatuses(currentEmail, opts = {}) {
         setMine(norm.mine);
         setOthers(norm.others);
         if (warmCacheVideos) _warmCacheVideos(norm.mine, norm.others);
+        // Web/PWA: ask the SW to pre-cache visible covers + first hero so
+        // tap-to-open paints from disk instead of a fresh CDN round trip.
+        if (Platform.OS === 'web') _swPrefetch(norm.mine, norm.others);
         // Persist to disk + MMKV. Fire-and-forget; failures are silent.
         setCache('statuses', { groups: norm.groups, mine: norm.mine, others: norm.others }, 2592000000).catch(() => {});
         _writeMMKV({ groups: norm.groups, mine: norm.mine, others: norm.others });

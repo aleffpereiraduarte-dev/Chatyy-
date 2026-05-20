@@ -134,7 +134,9 @@ export default function HighlightEditSheet({
         name: a.fileName || `cover_${Date.now()}.jpg`,
         type: a.mimeType || 'image/jpeg',
       });
-      const url = up?.data?.url || up?.data?.cdn_url || up?.url || '';
+      // Prefer cdn_url so the cover paints from edge immediately
+      // (status_upload now returns both; relative path stays as fallback).
+      const url = up?.data?.cdn_url || up?.data?.url || up?.url || '';
       if (!url) { Alert.alert(T('common.error', 'Erro'), 'upload_failed'); return; }
       const r = await api.statusHighlightUpdateCover?.(highlight.id, { coverUrl: url });
       if (r?.success) {

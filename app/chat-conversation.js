@@ -3138,7 +3138,13 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
                 // sound at the playhead position without animating 40 bars.
                 const dist = Math.abs(i - playedBarIdx);
                 const isLive = playing && dist <= 1;
-                const baseHeight = Math.max(3, height * 28);
+                // Clamp baseHeight so the playhead pulse (scaleY up to 1.45)
+                // can't overflow the row's 36px clip. Max bar = 22 → max
+                // visual height during pulse ≈ 22 * 1.45 ≈ 32 < 36. Without
+                // this clamp the previous max (28) hit 40px at peak pulse
+                // and the row's overflow:hidden cropped the dancing tip —
+                // user reported the wave "saindo de dentro do balão".
+                const baseHeight = Math.max(3, Math.min(22, height * 22));
                 const Bar = isLive ? Animated.View : View;
                 const liveStyle = isLive ? {
                   transform: [{
@@ -3193,7 +3199,14 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
 }
 
 const audioStyles = StyleSheet.create({
-  container: { flexDirection: 'row', alignItems: 'center', minWidth: 230, paddingVertical: 4 },
+  // overflow:'hidden' clips the dancing scaleY pulse on the playhead bar so
+  // it never escapes the bubble's rounded corners. Without this the bar at
+  // scaleY 1.45 visibly punched through the top/bottom of the bubble — user
+  // reported "as ondas saindo de dentro do balão". maxWidth caps the
+  // intrinsic minWidth:230 to bubble interior (bubble paddingH=14 each side,
+  // FlatList parent maxWidth 85%) so the row never pushes past the right
+  // border on narrow devices.
+  container: { flexDirection: 'row', alignItems: 'center', minWidth: 230, maxWidth: '100%', paddingVertical: 4, overflow: 'hidden' },
   playBtn: {
     width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center',
     ...Platform.select({
@@ -3210,8 +3223,13 @@ const audioStyles = StyleSheet.create({
     paddingHorizontal: 2,
   },
   skipLabel: { fontSize: 8, fontWeight: '800', marginTop: -2, letterSpacing: 0.2 },
-  trackWrap: { flex: 1, marginLeft: 10 },
-  waveformRow: { flexDirection: 'row', alignItems: 'center', gap: 1.5, height: 36, flex: 1 },
+  trackWrap: { flex: 1, marginLeft: 10, minWidth: 0, overflow: 'hidden' },
+  // overflow:'hidden' clips bars that scale beyond the row's 36px height
+  // during the dancing-playhead animation. flexShrink + minWidth:0 lets the
+  // row contract correctly inside flex parents so bars never visually leak
+  // past the bubble edge on narrow widths (replies + long URLs squeeze the
+  // row); without these constraints the bars cascaded off the right side.
+  waveformRow: { flexDirection: 'row', alignItems: 'center', gap: 1.5, height: 36, flex: 1, flexShrink: 1, minWidth: 0, overflow: 'hidden' },
   duration: { fontSize: 10, marginTop: 4, fontWeight: '600', letterSpacing: 0.3 },
 });
 
@@ -7564,7 +7582,7 @@ export default function ChatConversationScreen() {
   const lastReadAckRef = useRef(0); // Highest message id we've already acked as read — skip re-acking same id
   const [presence, setPresence] = useState(null); // { status, last_seen }
   const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const [mediaViewer, setMediaViewer] = useState({ visible: false, fileUrl: '', fileName: '', fileSize: 0, type: '' });
+  const [mediaViewer, setMediaViewer] = useState({ visible: false, fileUrl: '', fileName: '', fileSize: 0, type: '', blurhash: null, placeholderUri: null, thumbUri: null });
   const [forwardMsg, setForwardMsg] = useState(null);
   const [forwardConversations, setForwardConversations] = useState([]);
   // Multi-select forward (WhatsApp-style): user pode marcar várias convs e
@@ -9590,6 +9608,66 @@ export default function ChatConversationScreen() {
       aiTypingTimerRef.current = null;
     }
   }, []);
+
+  // [#1239 2026-05-20] Conversation-open media backfill (WhatsApp-grade).
+  // When a chat mounts we walk the latest media rows that don't yet have a
+  // local file on disk (no _localUri, no local_path) and force-download them
+  // in a tiny background pool. This is the "iOS reinstall → thumbs paint but
+  // tap-to-open silently fails" case: the row hydrate set up a remote URL,
+  // but ChatMediaViewer + AudioPlayer expect file:// to work offline (and
+  // even online they fail the first tap because the URL host alias bypasses
+  // syncIndex). force=true bypasses the auto-download gate — the user already
+  // sees the bubble, so we treat it as explicit intent. Capped at the last
+  // 50 media msgs to avoid hammering disk on conv with thousands of media.
+  // Guarded by didMediaBackfillRef so it only runs once per conv mount.
+  const didMediaBackfillRef = useRef(null);
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    if (!conversationId || !Array.isArray(messages) || messages.length === 0) return;
+    if (didMediaBackfillRef.current === conversationId) return;
+    didMediaBackfillRef.current = conversationId;
+
+    const MEDIA_TYPES = new Set(['image', 'video', 'audio', 'voice', 'document', 'file', 'gif', 'sticker', 'short_video']);
+    const candidates = [];
+    for (const m of messages) {
+      if (!m || !MEDIA_TYPES.has(m.type)) continue;
+      if (!m.file_url) continue;
+      if (m._localUri && typeof m._localUri === 'string' && m._localUri.startsWith('file://')) continue;
+      if (m.local_path && typeof m.local_path === 'string' && m.local_path.startsWith('file://')) continue;
+      candidates.push(m);
+    }
+    if (candidates.length === 0) return;
+    // Last 50 — newest matter most for the "I just opened the chat" UX.
+    const backlog = candidates.slice(-50);
+
+    let cancelled = false;
+    (async () => {
+      let mc;
+      try { mc = require('../services/mediaCache'); } catch { return; }
+      const { cacheMedia } = mc || {};
+      if (typeof cacheMedia !== 'function') return;
+      // Promise pool of 3 (mirrors mediaCache._MAX_CONCURRENT_DOWNLOADS).
+      const POOL = 3;
+      let cursor = 0;
+      const worker = async () => {
+        while (!cancelled && cursor < backlog.length) {
+          const m = backlog[cursor++];
+          try {
+            const url = api.getMediaUrl(m.file_url);
+            if (!url) continue;
+            await cacheMedia(url, {
+              messageId: m.id,
+              conversationId,
+              force: true, // explicit intent — user is staring at the bubble
+            });
+          } catch {}
+        }
+      };
+      await Promise.allSettled(Array.from({ length: POOL }, worker));
+    })();
+
+    return () => { cancelled = true; };
+  }, [conversationId, messages.length]);
 
   // Voice auto-advance orchestrator (WhatsApp parity). When ANY AudioPlayer
   // emits `audioFinished(msgId)` we walk forward in messages to find the
@@ -16482,16 +16560,55 @@ export default function ChatConversationScreen() {
         const url = m._localUri || resolveMediaUri(m.file_url);
         const isVideoCell = m.type === 'video';
         const poster = isVideoCell ? (url + '.thumb.jpg') : url;
+        // Build placeholder data the same way the standalone image bubble does
+        // so the fullscreen viewer paints an instant blurred preview when the
+        // user taps an album cell. Without this, the viewer fell to a black
+        // screen + spinner for ~2s on cellular — the slow path the user
+        // reported.
+        let _cellThumbUri = null;
+        if (m.image_variants) {
+          try {
+            const v = typeof m.image_variants === 'string' ? JSON.parse(m.image_variants) : m.image_variants;
+            if (v?.thumb) _cellThumbUri = v.thumb.startsWith('http') ? v.thumb : `https://chatyy.com.br${v.thumb}`;
+          } catch {}
+        }
+        const _cellLqip = m.thumb_b64 ? `data:image/jpeg;base64,${m.thumb_b64}` : null;
         return (
           <TouchableOpacity
             key={m.id || keyIdx}
             activeOpacity={0.9}
+            onPressIn={() => {
+              // Touch-down prefetch — see image bubble above for rationale.
+              if (m.deleted_at || !m.file_url) return;
+              if (Platform.OS === 'web') return;
+              if (typeof url === 'string' && url.startsWith('file://')) return;
+              try {
+                const _api = require('../services/api');
+                const remote = _api?.getMediaUrl
+                  ? _api.getMediaUrl(m.file_url)
+                  : (m.file_url.startsWith('http') ? m.file_url : `https://chatyy.com.br${m.file_url}`);
+                const { getLocalUriIfCached, cacheMedia } = require('../services/mediaCache');
+                if (!getLocalUriIfCached(remote)) {
+                  cacheMedia(remote, { force: true, conversationId }).catch(() => {});
+                }
+              } catch {}
+            }}
             onPress={() => {
               // Privacy guard: an album row whose individual item was deleted
               // (or whose entire bundle is tombstoned) must never re-open
               // the original media via tap on the cell.
               if (m.deleted_at) return;
-              if (m.file_url) setMediaViewer({ visible: true, fileUrl: m.file_url, fileName: m.file_name || m.type, fileSize: m.file_size || 0, type: m.type });
+              if (m.file_url) setMediaViewer({
+                visible: true,
+                fileUrl: m.file_url,
+                fileName: m.file_name || m.type,
+                fileSize: m.file_size || 0,
+                type: m.type,
+                messageId: m.id,
+                blurhash: m.blurhash || null,
+                placeholderUri: _cellLqip,
+                thumbUri: _cellThumbUri,
+              });
             }}
             style={cellStyle(w, h)}
           >
@@ -16820,7 +16937,14 @@ export default function ChatConversationScreen() {
           const imgUploading = !!msg._uploading;
           const imgProgress = msg._uploadPct || 0;
           const imgIndeterminate = imgUploading && (msg._uploadPct === undefined);
-          const fullUri = msg._localUri || resolveMediaUri(msg.file_url);
+          // [#1239 2026-05-20] Prefer SQLite local_path so tap-to-open works
+          // offline even when the optimistic _localUri hint isn't populated
+          // (e.g. cold-open after iOS reinstall, hydrate from cache without
+          // syncIndex hit). Coerce to file:// if the column stored a bare path.
+          const imgLocalPath = (typeof msg.local_path === 'string' && msg.local_path)
+            ? (msg.local_path.startsWith('file://') ? msg.local_path : `file://${msg.local_path}`)
+            : null;
+          const fullUri = msg._localUri || imgLocalPath || resolveMediaUri(msg.file_url);
           const thumbUri = msg.image_variants
             ? (() => { try { const v = typeof msg.image_variants === 'string' ? JSON.parse(msg.image_variants) : msg.image_variants; return v?.thumb ? (v.thumb.startsWith('http') ? v.thumb : `https://chatyy.com.br${v.thumb}`) : null; } catch { return null; } })()
             : null;
@@ -16833,10 +16957,47 @@ export default function ChatConversationScreen() {
           const hasCaption = msg.content && msg.content !== msg.file_name && !_looksLikeFilename;
           return (
             <TouchableOpacity
+              onPressIn={() => {
+                // WhatsApp-style touch-down prefetch. Tap → press → release
+                // is ~80-200ms; we use that window to start downloading the
+                // full-res photo so by the time onPress fires the bytes are
+                // either already on disk OR streaming. Bypasses the cellular
+                // gate (force:true) because tap = explicit intent. Idempotent:
+                // mediaCache dedupes inflight by URL key, so repeated taps
+                // don't spawn duplicate downloads.
+                if (selectionMode || msg._uploading || !msg.file_url) return;
+                if (Platform.OS === 'web') return;
+                if (typeof fullUri === 'string' && fullUri.startsWith('file://')) return;
+                try {
+                  const _api = require('../services/api');
+                  const remote = _api?.getMediaUrl
+                    ? _api.getMediaUrl(msg.file_url)
+                    : (msg.file_url.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`);
+                  const { getLocalUriIfCached, cacheMedia } = require('../services/mediaCache');
+                  if (!getLocalUriIfCached(remote)) {
+                    cacheMedia(remote, { force: true, conversationId }).catch(() => {});
+                  }
+                } catch {}
+              }}
               onPress={() => {
                 // Selection mode: tap toggles checkbox instead of opening viewer
                 if (selectionMode) return toggleSelection(msg.id);
-                if (!msg._uploading && msg.file_url) setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || 'image', fileSize: msg.file_size || 0, type: 'image' });
+                if (!msg._uploading && msg.file_url) setMediaViewer({
+                  visible: true,
+                  fileUrl: msg.file_url,
+                  fileName: msg.file_name || 'image',
+                  fileSize: msg.file_size || 0,
+                  type: 'image',
+                  messageId: msg.id,
+                  // Pass LQIP/blurhash/thumb through so the viewer can paint
+                  // the blurred backdrop INSTANTLY instead of showing a
+                  // black screen + spinner while the high-res streams in.
+                  // User-reported: "demora uns segundos pra carregar" → root
+                  // cause was no progressive paint at all.
+                  blurhash: msg.blurhash || null,
+                  placeholderUri: lqipUri || null,
+                  thumbUri: thumbUri || null,
+                });
               }}
               onLongPress={() => {
                 // Images intercepted long-press before the outer bubble could
@@ -17007,7 +17168,11 @@ export default function ChatConversationScreen() {
         // off or the bubble module didn't load (forward-compat safety net).
         case 'short_video': {
           if (ShortVideoBubble) {
-            const sVUri = msg._localUri || resolveMediaUri(msg.file_url);
+            // [#1239 2026-05-20] Prefer SQLite local_path for offline replay.
+            const sVLocalPath = (typeof msg.local_path === 'string' && msg.local_path)
+              ? (msg.local_path.startsWith('file://') ? msg.local_path : `file://${msg.local_path}`)
+              : null;
+            const sVUri = msg._localUri || sVLocalPath || resolveMediaUri(msg.file_url);
             const sVMeta = (typeof msg.meta === 'string') ? (() => { try { return JSON.parse(msg.meta); } catch { return null; } })() : (msg.meta || null);
             return (
               <ShortVideoBubble
@@ -17038,7 +17203,11 @@ export default function ChatConversationScreen() {
         }
         // eslint-disable-next-line no-fallthrough
         case 'video': {
-          const videoUrl = msg._localUri || resolveMediaUri(msg.file_url);
+          // [#1239 2026-05-20] Prefer SQLite local_path so offline tap plays.
+          const videoLocalPath = (typeof msg.local_path === 'string' && msg.local_path)
+            ? (msg.local_path.startsWith('file://') ? msg.local_path : `file://${msg.local_path}`)
+            : null;
+          const videoUrl = msg._localUri || videoLocalPath || resolveMediaUri(msg.file_url);
           const vidUploading = !!msg._uploading;
           const vidProgress = msg._uploadPct || 0;
           const vidIndeterminate = vidUploading && (msg._uploadPct === undefined);
@@ -17281,10 +17450,16 @@ export default function ChatConversationScreen() {
           const isTranscribing = msg._transcribing;
           const transcribeErr = msg._transcribeError;
           const canTranscribe = !audioTx && !audioUploading && typeof msg.id === 'number' && !msg._pending;
+          // [#1239 2026-05-20] Prefer SQLite-persisted local_path over the
+          // remote URL so an offline tap plays from disk instead of hitting
+          // the dead network and surfacing "falha ao reproduzir".
+          const audioLocalPath = (typeof msg.local_path === 'string' && msg.local_path)
+            ? (msg.local_path.startsWith('file://') ? msg.local_path : `file://${msg.local_path}`)
+            : null;
           return (
             <View>
               <AudioPlayer
-                url={msg._localUri || resolveMediaUri(msg.file_url)}
+                url={msg._localUri || audioLocalPath || resolveMediaUri(msg.file_url)}
                 duration={msg.duration || 0}
                 isOwn={isOwn}
                 colors={colors}
@@ -18432,10 +18607,15 @@ export default function ChatConversationScreen() {
           // If the file is actually audio/video/image based on extension, render as that type
           const _fName = (msg.file_name || msg.content || '').toLowerCase();
           if (/\.(m4a|mp3|wav|ogg|aac|opus)$/i.test(_fName)) {
+            // [#1239 2026-05-20] Prefer SQLite local_path so offline tap plays
+            // from disk. Mirrors the 'audio' case above.
+            const fileAudioLocalPath = (typeof msg.local_path === 'string' && msg.local_path)
+              ? (msg.local_path.startsWith('file://') ? msg.local_path : `file://${msg.local_path}`)
+              : null;
             // Render as audio player
             return (
               <AudioPlayer
-                url={msg._localUri || resolveMediaUri(msg.file_url)}
+                url={msg._localUri || fileAudioLocalPath || resolveMediaUri(msg.file_url)}
                 duration={msg.duration || 0}
                 isOwn={isOwn}
                 colors={colors}
@@ -24493,13 +24673,32 @@ export default function ChatConversationScreen() {
           try {
             const all = (messagesRef.current || messages || [])
               .filter(m => !m._pending && (m.type === 'image' || m.type === 'video') && m.file_url)
-              .map(m => ({
-                fileUrl: m.file_url,
-                hlsUrl: m.hls_url || null,
-                fileName: m.file_name || (m.type === 'video' ? 'video.mp4' : 'image.jpg'),
-                fileSize: m.file_size || 0,
-                type: m.type,
-              }));
+              .map(m => {
+                // Compute thumbUri (server-side small variant) from image_variants
+                // JSON the same way the bubble does so the viewer's neighbor
+                // preload + blurred backdrop reuse identical URLs.
+                let _thumbUri = null;
+                if (m.image_variants) {
+                  try {
+                    const v = typeof m.image_variants === 'string' ? JSON.parse(m.image_variants) : m.image_variants;
+                    if (v?.thumb) _thumbUri = v.thumb.startsWith('http') ? v.thumb : `https://chatyy.com.br${v.thumb}`;
+                  } catch {}
+                }
+                return {
+                  fileUrl: m.file_url,
+                  hlsUrl: m.hls_url || null,
+                  fileName: m.file_name || (m.type === 'video' ? 'video.mp4' : 'image.jpg'),
+                  fileSize: m.file_size || 0,
+                  type: m.type,
+                  messageId: m.id,
+                  // Carry LQIP / blurhash / thumb through so swipe between
+                  // photos paints an instant blurred preview for each
+                  // neighbor as the user swipes — never a black screen.
+                  blurhash: m.blurhash || null,
+                  placeholderUri: m.thumb_b64 ? `data:image/jpeg;base64,${m.thumb_b64}` : null,
+                  thumbUri: _thumbUri,
+                };
+              });
             if (all.length > 1) {
               const idx = all.findIndex(x => x.fileUrl === mv.fileUrl);
               if (idx >= 0) { mediaList = all; initialIndex = idx; }
@@ -24527,6 +24726,9 @@ export default function ChatConversationScreen() {
             initialIndex={initialIndex}
             conversationId={conversationId}
             messageId={mv.messageId || 0}
+            blurhash={mv.blurhash}
+            placeholderUri={mv.placeholderUri}
+            thumbUri={mv.thumbUri}
           />
         );
       })()}

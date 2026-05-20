@@ -62,6 +62,28 @@ function hashKey(str) {
   return Math.abs(h).toString(36);
 }
 
+// [#1239 2026-05-20] Mirror mediaCache._normalizeForKey so a voice/audio file
+// reachable via both `chatyy.com.br/...` and `media.chatyy.com.br/...` hashes
+// to the same cache slot — otherwise the bubble re-downloads on every paint
+// because api.getMediaUrl flips the host between save and lookup.
+function _normalizeAudioUrl(url) {
+  try {
+    const u = new URL(String(url));
+    const host = u.hostname.toLowerCase();
+    if (
+      host === 'media.chatyy.com.br' ||
+      host === 'chatyy.com.br' ||
+      host === 'www.chatyy.com.br' ||
+      host === 'mail.onemundo.com.br'
+    ) {
+      return u.pathname + (u.search || '');
+    }
+    return String(url);
+  } catch {
+    return String(url);
+  }
+}
+
 // Extract audio extension from URL
 function audioExt(url) {
   const m = url.match(/\.(m4a|mp3|ogg|webm|wav|aac|opus|mp4)(\?|#|$)/i);
@@ -70,9 +92,10 @@ function audioExt(url) {
 
 // Build cache filename from url + messageId
 function cacheFileName(url, messageId) {
-  const key = messageId ? String(messageId) : hashKey(url);
+  const normalized = _normalizeAudioUrl(url);
+  const key = messageId ? String(messageId) : hashKey(normalized);
   const ext = audioExt(url);
-  return key + '_' + hashKey(url) + '.' + ext;
+  return key + '_' + hashKey(normalized) + '.' + ext;
 }
 
 // ============================================================
@@ -413,9 +436,13 @@ async function ensureOutboxDir() {
 }
 
 function voiceFileName(remoteUrl, messageId) {
-  const key = messageId ? String(messageId) : hashKey(remoteUrl);
+  // [#1239 2026-05-20] Normalize host so chatyy.com.br vs media.chatyy.com.br
+  // collide on the same disk slot. Otherwise the voice note prefetched under
+  // one host stays invisible to the player's lookup under the other.
+  const normalized = _normalizeAudioUrl(remoteUrl);
+  const key = messageId ? String(messageId) : hashKey(normalized);
   const ext = audioExt(remoteUrl);
-  return 'voice_' + key + '_' + hashKey(remoteUrl) + '.' + ext;
+  return 'voice_' + key + '_' + hashKey(normalized) + '.' + ext;
 }
 
 /**
