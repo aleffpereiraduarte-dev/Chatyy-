@@ -736,6 +736,11 @@ class CallActivity : ComponentActivity() {
     remoteRenderer?.release()
     localRenderer?.release()
     LiveKitRoomHolder.clear()
+    // [#1207, 2026-05-19] Drop the Room reference from NativeCallRoom so
+    // `adoptNativeRoom()` returns null after the call ends. Idempotent —
+    // safe even if publish() was never called (e.g., bringUpRoom never
+    // ran because token resolution failed).
+    NativeCallRoom.clear()
     super.onDestroy()
   }
 
@@ -988,6 +993,13 @@ class CallActivity : ComponentActivity() {
     val r = LiveKit.create(applicationContext, options = roomOptions)
     room = r
     LiveKitRoomHolder.set(r)
+    // [#1207, 2026-05-19] Hand the Room to NativeCallRoom so JS
+    // `adoptNativeRoom(callId)` returns a real snapshot and skips its own
+    // Room.connect. Without this, /call.js spawns a second Room with the
+    // same identity on the SFU → audio fighting, mute desync, ghost
+    // participants on Android. The roomName equals `callId` because
+    // LkTokenFetcher uses callId as the LK room name throughout.
+    NativeCallRoom.publish(r, callId, callId, applicationContext)
 
     remoteRenderer?.let { r.initVideoRenderer(it) }
     localRenderer?.let { r.initVideoRenderer(it) }

@@ -1,25 +1,51 @@
 import Foundation
 import UIKit
+import LiveKit
 
 /**
- * NativeCallRoom — STUB (2026-05-15)
+ * NativeCallRoom — REAL (2026-05-19, task #1207)
  *
- * Stage 2 iOS LiveKit pre-connect (via LiveKitClient pod) caused build/runtime
- * regression — the API surface used by the agent didn't match the installed
- * pod version. Reverting to stub. The JS-driven LiveKit connect via
- * @livekit/react-native (called from app/call.js) is what handles connection
- * in this build, same as before Stage 2 was attempted.
+ * Holds a strong reference to the **single** LiveKit `Room` instance owned by
+ * `CallViewController`. JS (`app/call.js` -> `adoptNativeRoom()`) consults
+ * this singleton instead of constructing its own duplicate `Room`. That
+ * eliminated the dual-Room SFU conflict that caused:
+ *   - audio fighting on iOS (two participants with same identity, both
+ *     publishing mic, SFU mixing both into one downlink => echo / cut-out)
+ *   - lock-screen viva voz bug (system AudioSession owned by native CallKit
+ *     path while the JS-spawned Room reset .voiceChat mode behind its back)
+ *   - delay post-answer (JS had to fetch its own token + connect AFTER native
+ *     had already finished connecting; user heard 3-6s of silence)
  *
- * Stage 2 v2 will be implemented in a separate session after verifying the
- * exact LiveKit Swift SDK API on a real device build.
+ * Architecture:
+ *   1. `CallViewController.viewDidLoad` builds a `Room(delegate: self, ...)`
+ *      and after the first connect await **calls `publish(room:callId:roomName:)`**
+ *      on this singleton — exposing its Room to the rest of the process.
+ *   2. Each `RoomDelegate` callback in CallViewController calls the matching
+ *      forwarder here (`didConnect`, `didDisconnect`, etc.). Each forwarder
+ *      translates to a `NativeCallRoomEvent` and broadcasts it to the
+ *      registered `NativeCallRoomListener` (the Expo module).
+ *   3. The Expo module's listener extension (line ~2015 of ExpoCallKitModule)
+ *      maps each enum case to `safeSendEvent("onLk...", ...)` so JS receives
+ *      `onLkConnected/onLkDisconnected/onLkParticipant...` events identical
+ *      in shape to what livekit-client emits — JS treats this Room exactly
+ *      as if it had connected the Room itself.
+ *   4. `getSnapshot()` returns the live Room state (connected, identity,
+ *      participants) so `adoptNativeRoom()` can hand JS a ready-made snapshot
+ *      and short-circuit any client-side Room.connect.
  *
- * The CallKit + PKPushRegistry pre-arm path (VoipPushAppDelegateSubscriber)
- * remains active — that's what fixed the cold-start VoIP drop bug and is
- * independent of the LK Room pre-connect.
+ * Listener model:
+ *   Kept the enum-based `NativeCallRoomListener` from the stub era because
+ *   ExpoCallKitModule already conforms via extension. `addListener` (called
+ *   from the module's `adoptNativeRoom` AsyncFunction) is the registration
+ *   point; we hold a weak reference to avoid retain cycles. Multiple
+ *   listeners are supported but in practice only the module registers.
  *
- * NOTE (2026-05-15): The listener protocol + event enum below are kept so the
- * module file (which still references `extension ExpoCallKitModule:
- * NativeCallRoomListener`) compiles. The stub never emits events.
+ * Threading:
+ *   All mutations of `room`, `_callId`, `_roomName` happen on the main thread
+ *   (CallViewController calls `publish` from `viewDidLoad` / a `MainActor.run`
+ *   block, and the delegate forwarders are invoked from RoomDelegate which LK
+ *   guarantees on the main actor). `setMicEnabled` / `setCameraEnabled` /
+ *   `disconnect` spin a `Task` to use LK's async API.
  */
 
 /// Listener protocol bridging native LK events to the Expo Module's safeSendEvent.
@@ -27,8 +53,7 @@ public protocol NativeCallRoomListener: AnyObject {
     func nativeCallRoom(_ room: NativeCallRoom, didEmit event: NativeCallRoomEvent)
 }
 
-/// Mirrors the JS-visible onLk* event surface. Stage 2 v2 will emit these
-/// from the LiveKit Room delegate; stub emits nothing.
+/// Mirrors the JS-visible onLk* event surface.
 public enum NativeCallRoomEvent {
     case connected(roomName: String, localIdentity: String)
     case disconnected(reason: String)
@@ -47,9 +72,120 @@ public enum NativeCallRoomEvent {
         case idle, connecting, connected, disconnected, failed
     }
 
+    // --- Public observable state (read by ExpoCallKitModule) -----------------
+
     public private(set) var state: State = .idle
     public private(set) var lastRoomName: String?
     public private(set) var lastIdentity: String?
+
+    // --- Internal --------------------------------------------------------------
+
+    /// The single LK Room owned by CallViewController. Strong reference so the
+    /// Room survives even if the VC is dismissed mid-call (PiP path).
+    private var room: Room?
+    private var _callId: String?
+
+    /// Weak listener box — module is retained by Expo runtime; we don't want
+    /// to add a retain cycle. NSHashTable handles weak storage + dedupe.
+    private let listeners = NSHashTable<AnyObject>.weakObjects()
+
+    // --- Publication API (called from CallViewController) ---------------------
+
+    /// CallViewController calls this AFTER its own Room.connect await
+    /// resolves. After this, JS `adoptNativeRoom(callId)` will see a non-nil
+    /// connected snapshot and skip its own Room.connect.
+    public func publish(room: Room, callId: String, roomName: String) {
+        self.room = room
+        self._callId = callId
+        self.lastRoomName = roomName
+        // Identity may not be available the instant Room.connect resolves;
+        // grab the best-effort value now, the `didConnect` forwarder updates
+        // it once LK has populated localParticipant.identity.
+        self.lastIdentity = room.localParticipant.identity?.stringValue
+        self.state = (room.connectionState == .connected) ? .connected : .connecting
+        print("[NativeCallRoom] publish: room=\(roomName) callId=\(callId) state=\(state.rawValue)")
+    }
+
+    /// CallViewController calls this on hangup / dismiss so the singleton
+    /// doesn't hand JS a stale snapshot for the next call.
+    public func clear() {
+        if room != nil {
+            print("[NativeCallRoom] clear: dropping room reference (callId=\(_callId ?? "<nil>"))")
+        }
+        self.room = nil
+        self._callId = nil
+        self.lastRoomName = nil
+        self.lastIdentity = nil
+        self.state = .idle
+    }
+
+    public func currentCallId() -> String? { return _callId }
+
+    // --- Listener registration (called from adoptNativeRoom) ------------------
+
+    @objc public func addListener(_ listener: AnyObject) {
+        listeners.add(listener)
+    }
+    @objc public func removeListener(_ listener: AnyObject) {
+        listeners.remove(listener)
+    }
+
+    private func broadcast(_ event: NativeCallRoomEvent) {
+        // NSHashTable allObjects is a snapshot — safe to iterate while
+        // listeners come and go.
+        for obj in listeners.allObjects {
+            if let l = obj as? NativeCallRoomListener {
+                l.nativeCallRoom(self, didEmit: event)
+            }
+        }
+    }
+
+    // --- RoomDelegate forwarders (called from CallViewController) -------------
+    //
+    // Each method here is invoked from the matching RoomDelegate callback in
+    // CallViewController's `extension CallViewController: RoomDelegate` (so
+    // CallViewController stays the sole RoomDelegate owner — clean separation
+    // of concerns; we just receive forwarded fanout events).
+
+    public func didConnect() {
+        // localParticipant.identity is finalized at this point.
+        let identity = room?.localParticipant.identity?.stringValue ?? lastIdentity ?? ""
+        self.lastIdentity = identity
+        self.state = .connected
+        broadcast(.connected(roomName: lastRoomName ?? "", localIdentity: identity))
+    }
+
+    public func didDisconnect(reason: String?) {
+        self.state = .disconnected
+        broadcast(.disconnected(reason: reason ?? "unknown"))
+    }
+
+    public func participantConnected(identity: String, name: String? = nil) {
+        broadcast(.participantConnected(identity: identity, name: name))
+    }
+
+    public func participantDisconnected(identity: String) {
+        broadcast(.participantDisconnected(identity: identity))
+    }
+
+    public func trackSubscribed(participantId: String, trackSid: String, kind: String) {
+        broadcast(.trackSubscribed(participantIdentity: participantId,
+                                   trackSid: trackSid,
+                                   kind: kind))
+    }
+
+    public func trackUnsubscribed(participantId: String, trackSid: String, kind: String) {
+        broadcast(.trackUnsubscribed(participantIdentity: participantId,
+                                     trackSid: trackSid,
+                                     kind: kind))
+    }
+
+    public func connectionQualityChanged(identity: String, quality: String) {
+        broadcast(.connectionQualityChanged(participantIdentity: identity,
+                                            quality: quality))
+    }
+
+    // --- Snapshot API (called from adoptNativeRoom) ---------------------------
 
     public struct Snapshot {
         public let connected: Bool
@@ -57,9 +193,16 @@ public enum NativeCallRoomEvent {
         public let localIdentity: String?
         public let participants: [Any]
         public let connectionQuality: String
-        public init() {
-            connected = false; roomName = nil; localIdentity = nil
-            participants = []; connectionQuality = "unknown"
+        public init(connected: Bool = false,
+                    roomName: String? = nil,
+                    localIdentity: String? = nil,
+                    participants: [Any] = [],
+                    connectionQuality: String = "unknown") {
+            self.connected = connected
+            self.roomName = roomName
+            self.localIdentity = localIdentity
+            self.participants = participants
+            self.connectionQuality = connectionQuality
         }
         public func toDictionary() -> [String: Any] {
             return [
@@ -72,28 +215,73 @@ public enum NativeCallRoomEvent {
         }
     }
 
+    public func getSnapshot() -> Snapshot {
+        guard let r = room else { return Snapshot() }
+        let isConnected = (r.connectionState == .connected)
+        // Build a lightweight participants array shaped like livekit-client's
+        // RoomParticipants — JS reads `identity`/`name`/`isSpeaking` from each
+        // entry. We avoid leaking native opaque types: pure dicts only.
+        var participantsArr: [[String: Any]] = []
+        for (_, p) in r.remoteParticipants {
+            participantsArr.append([
+                "identity": p.identity?.stringValue ?? "",
+                "name": p.name ?? "",
+                "isSpeaking": p.isSpeaking,
+            ])
+        }
+        return Snapshot(
+            connected: isConnected,
+            roomName: lastRoomName,
+            localIdentity: r.localParticipant.identity?.stringValue,
+            participants: participantsArr,
+            connectionQuality: "unknown"
+        )
+    }
+
+    // --- JS-facing operations (called from ExpoCallKitModule) ----------------
+
+    /// Legacy entry kept so `lkConnect` in ExpoCallKitModule still compiles.
+    /// Real connect path is via CallViewController; this is now a no-op log
+    /// so JS can stop calling it without a native rebuild churn.
     public func connect(url: String, token: String, identity: String, roomName: String) {
-        print("[NativeCallRoom] Stub: connect(room=\(roomName), identity=\(identity)) — Stage 2 deferred")
+        print("[NativeCallRoom] connect() called externally — ignored. Room is owned by CallViewController (room=\(roomName), identity=\(identity)).")
     }
 
     public func disconnect() {
-        print("[NativeCallRoom] Stub: disconnect()")
+        guard let r = room else {
+            print("[NativeCallRoom] disconnect: no room to disconnect")
+            return
+        }
+        Task { await r.disconnect() }
     }
 
     public func setMicEnabled(_ enabled: Bool) {
-        print("[NativeCallRoom] Stub: setMicEnabled(\(enabled))")
+        guard let r = room else {
+            print("[NativeCallRoom] setMicEnabled(\(enabled)): no room")
+            return
+        }
+        Task {
+            do {
+                _ = try await r.localParticipant.setMicrophone(enabled: enabled)
+            } catch {
+                print("[NativeCallRoom] setMicEnabled(\(enabled)) failed: \(error)")
+            }
+        }
     }
 
     public func setCameraEnabled(_ enabled: Bool) {
-        print("[NativeCallRoom] Stub: setCameraEnabled(\(enabled))")
+        guard let r = room else {
+            print("[NativeCallRoom] setCameraEnabled(\(enabled)): no room")
+            return
+        }
+        Task {
+            do {
+                _ = try await r.localParticipant.setCamera(enabled: enabled)
+            } catch {
+                print("[NativeCallRoom] setCameraEnabled(\(enabled)) failed: \(error)")
+            }
+        }
     }
-
-    public func getSnapshot() -> Snapshot {
-        return Snapshot()
-    }
-
-    @objc public func addListener(_ listener: AnyObject) {}
-    @objc public func removeListener(_ listener: AnyObject) {}
 }
 
 /// NativeCallTokenFetcher — real fetcher used by the native CallKit answer

@@ -418,8 +418,12 @@ public class ExpoCallKitModule: Module {
 
     // [host-mute, 2026-05-17] Host-issued mute of a remote participant.
     //
-    // Architecture note: NativeCallRoom is still a stub on iOS (see
-    // NativeCallRoom.swift) so the LK Room is JS-owned via @livekit/react-native.
+    // Architecture note (post #1207, 2026-05-19): NativeCallRoom is now REAL
+    // — CallViewController publishes its Room to the singleton, JS adopts via
+    // `adoptNativeRoom()`. We *could* implement host-mute directly here via
+    // `NativeCallRoom.shared.disconnect()` + a per-participant mute API, but
+    // LK Swift SDK doesn't expose SFU-side mute through RemoteParticipant
+    // yet, so the WS round-trip below stays canonical.
     // For host mute we don't have a direct LK SFU-side mute action exposed
     // through the JS SDK either, so the agreed protocol is:
     //   1. Host calls this bridge -> POST /api/email.php?action=chat_call_mute_participant

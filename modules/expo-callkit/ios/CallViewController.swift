@@ -281,6 +281,13 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             )
             let r = Room(delegate: self, roomOptions: roomOptions)
             self.room = r
+            // [#1207 NativeCallRoom REAL, 2026-05-19] Publish to the singleton
+            // BEFORE the await so even if JS races us to `adoptNativeRoom()`
+            // mid-connect it sees the same Room reference (state will be
+            // `.connecting` until didConnect lands). Publishing here also
+            // covers paths where Room.connect throws — `clear()` runs in
+            // didDisconnect / catch so JS doesn't get a stale snapshot.
+            NativeCallRoom.shared.publish(room: r, callId: callId, roomName: callId)
             Task { [weak self] in
                 guard let self = self else { return }
                 do {
@@ -321,6 +328,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                     }
                 } catch {
                     print("[CallVC] connect/mic failed: \(error)")
+                    // [#1207 NativeCallRoom REAL] If Room.connect threw, the
+                    // singleton holds a non-connected room — clear it so a
+                    // future adoptNativeRoom doesn't hand JS a stale dead
+                    // reference. JS will fall back to its own Room.connect
+                    // (the legacy path) which is fine for the error case.
+                    NativeCallRoom.shared.clear()
                     await MainActor.run {
                         self.session.status = "Erro"
                     }
@@ -399,6 +412,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         )
         if let r = self.room {
             self.room = nil
+            // [#1207 NativeCallRoom REAL] Drop the singleton's reference so
+            // adoptNativeRoom() returns nil for any subsequent call. Mirrors
+            // didDisconnect path; runs in handleHangup because user-initiated
+            // hangup teardown happens BEFORE the LK disconnect callback lands.
+            NativeCallRoom.shared.clear()
             Task { await r.disconnect() }
         }
         // [#1184 dismiss fix, 2026-05-19] Fire CXEndCallAction so CallKit
@@ -1199,7 +1217,15 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // MARK: - Deinit
 
     deinit {
-        if let r = self.room { Task { await r.disconnect() } }
+        if let r = self.room {
+            // [#1207 NativeCallRoom REAL] Belt-and-braces: usually handleHangup
+            // or didDisconnect have already cleared the singleton by the time
+            // deinit runs, but the PiP path and force-quit can short-circuit
+            // those. Idempotent — clear() on an already-empty singleton is
+            // a no-op print.
+            NativeCallRoom.shared.clear()
+            Task { await r.disconnect() }
+        }
         if let obs = pipResignObserver { NotificationCenter.default.removeObserver(obs) }
         if let obs = dtmfObserver { NotificationCenter.default.removeObserver(obs); dtmfObserver = nil }
         if #available(iOS 15.0, *), let pip = pipController, pip.isPictureInPictureActive {
@@ -1266,10 +1292,21 @@ extension CallViewController: RoomDelegate {
         DispatchQueue.main.async { [weak self] in
             self?.session.status = "Conectado"
         }
+        // [#1207 NativeCallRoom REAL] Fanout to JS via the singleton listener
+        // so the JS-side /call.js sees onLkConnected and renders peers from
+        // the snapshot without spinning up a duplicate Room.
+        NativeCallRoom.shared.didConnect()
     }
 
     func room(_ room: Room, didDisconnectWithError error: LiveKitError?) {
         print("[CallVC] didDisconnectWithError — error=\(String(describing: error))")
+        // [#1207 NativeCallRoom REAL] Fanout to JS BEFORE we tear down the
+        // session. JS listeners need the disconnect event so they can swap
+        // back to the chat header / call list. We also clear() so a future
+        // adoptNativeRoom call doesn't see a stale snapshot.
+        let reasonStr: String = (error.map { String(describing: $0) }) ?? "remote_ended"
+        NativeCallRoom.shared.didDisconnect(reason: reasonStr)
+        NativeCallRoom.shared.clear()
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             // [#1171 redux dismiss, 2026-05-19] Mark didHangup so a follow-up
@@ -1321,28 +1358,45 @@ extension CallViewController: RoomDelegate {
     }
 
     func room(_ room: Room, participantDidConnect participant: RemoteParticipant) {
-        print("[CallVC] participantDidConnect — identity=\(participant.identity?.stringValue ?? "?")")
+        let identity = participant.identity?.stringValue ?? "?"
+        print("[CallVC] participantDidConnect — identity=\(identity)")
         DispatchQueue.main.async { [weak self] in
             self?.stopRingbackTone(reason: "participantDidConnect")
         }
+        // [#1207 NativeCallRoom REAL] Fanout so JS chat header / call grid
+        // can mark the peer as joined.
+        NativeCallRoom.shared.participantConnected(identity: identity,
+                                                   name: participant.name)
     }
 
     func room(_ room: Room, participantDidDisconnect participant: RemoteParticipant) {
-        print("[CallVC] participantDidDisconnect — identity=\(participant.identity?.stringValue ?? "?")")
+        let identity = participant.identity?.stringValue ?? "?"
+        print("[CallVC] participantDidDisconnect — identity=\(identity)")
         DispatchQueue.main.async { [weak self] in
             self?.session.remoteVideoTrack = nil
         }
+        // [#1207 NativeCallRoom REAL] Fanout so JS can drop the peer tile.
+        NativeCallRoom.shared.participantDisconnected(identity: identity)
     }
 
     func room(_ room: Room,
               participant: RemoteParticipant,
               didSubscribeTrack publication: RemoteTrackPublication) {
+        let identity = participant.identity?.stringValue ?? "?"
+        let kind = (publication.kind == .video) ? "video" : "audio"
+        // [#1207 NativeCallRoom REAL] Fanout subscribe for BOTH audio + video
+        // so JS hears about every track. The local VC only cares about
+        // video (renders the tile), but JS-side analytics / grid may want to
+        // know when audio tracks get attached too.
+        NativeCallRoom.shared.trackSubscribed(participantId: identity,
+                                              trackSid: publication.sid.map { "\($0)" } ?? "",
+                                              kind: kind)
         guard publication.kind == .video else { return }
         guard let track = publication.track as? VideoTrack else {
             print("[CallVC] didSubscribeTrack — video pub but track cast failed")
             return
         }
-        print("[CallVC] didSubscribeTrack — remote video, identity=\(participant.identity?.stringValue ?? "?")")
+        print("[CallVC] didSubscribeTrack — remote video, identity=\(identity)")
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.session.remoteVideoTrack = track
@@ -1356,6 +1410,12 @@ extension CallViewController: RoomDelegate {
     func room(_ room: Room,
               participant: RemoteParticipant,
               didUnsubscribeTrack publication: RemoteTrackPublication) {
+        let identity = participant.identity?.stringValue ?? "?"
+        let kind = (publication.kind == .video) ? "video" : "audio"
+        // [#1207 NativeCallRoom REAL] Fanout unsubscribe for both kinds.
+        NativeCallRoom.shared.trackUnsubscribed(participantId: identity,
+                                                trackSid: publication.sid.map { "\($0)" } ?? "",
+                                                kind: kind)
         guard publication.kind == .video else { return }
         print("[CallVC] didUnsubscribeTrack — remote video gone")
         DispatchQueue.main.async { [weak self] in
@@ -1383,8 +1443,19 @@ extension CallViewController: RoomDelegate {
     func room(_ room: Room,
               participant: Participant,
               didUpdateConnectionQuality quality: ConnectionQuality) {
-        // Only react for the local participant; remote participants' quality
-        // bars don't surface in the 1:1 UI.
+        let qualityStr: String
+        switch quality {
+        case .excellent: qualityStr = "excellent"
+        case .good:      qualityStr = "good"
+        case .poor:      qualityStr = "poor"
+        default:         qualityStr = "unknown"
+        }
+        // [#1207 NativeCallRoom REAL] Fanout for ALL participants — JS may
+        // surface remote quality in the group/cohost grids.
+        let identity = participant.identity?.stringValue ?? "?"
+        NativeCallRoom.shared.connectionQualityChanged(identity: identity, quality: qualityStr)
+        // Only react locally for the local participant; remote participants'
+        // quality bars don't surface in the 1:1 UI.
         guard participant.identity == room.localParticipant.identity else { return }
         let score: Int
         switch quality {
