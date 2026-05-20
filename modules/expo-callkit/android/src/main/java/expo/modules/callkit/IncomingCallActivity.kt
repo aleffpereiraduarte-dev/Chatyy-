@@ -573,12 +573,20 @@ class IncomingCallActivity : AppCompatActivity() {
   private fun onAccept() {
     stopRinging()
 
-    // #841: pre-warm AudioManager antes do RN mount pra WebRTC ontrack nao perder os primeiros 1-3s de RTP
+    // #841: pre-warm AudioManager antes do RN mount pra WebRTC ontrack nao perder os primeiros 1-3s de RTP.
+    // [#1201 audio fix, 2026-05-19] Only set MODE_IN_COMMUNICATION here — do NOT
+    // requestAudioFocus(null, …). The previous null-listener TRANSIENT focus could
+    // never be abandoned (the abandonAudioFocus(null) call doesn't match a request
+    // made on a null-listener), and on the iOS→Android receive path this leaked
+    // focus collided with WebRTC's internal AudioDeviceModule focus request once
+    // CallActivity started LiveKit playback — symptom: Android receives the call,
+    // ring stops, UI says "Conectado", but no remote voice plays (Android→iOS
+    // direction worked because IncomingCallActivity is never visited there).
+    // AudioRouter.configureForCall (called from CallActivity.onCreate ~100ms later)
+    // now owns the focus request with a proper listener so the lifecycle is clean.
     try {
       val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
       am.mode = android.media.AudioManager.MODE_IN_COMMUNICATION
-      am.requestAudioFocus(null, android.media.AudioManager.STREAM_VOICE_CALL,
-                           android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
     } catch (_: Exception) {}
 
     // Save to SharedPreferences so JS can read on cold start. JS still

@@ -20,8 +20,10 @@
 package expo.modules.callkit.audio
 
 import android.content.Context
+import android.media.AudioAttributes
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
+import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
 import android.os.Handler
@@ -59,12 +61,28 @@ class AudioRouter private constructor(private val appContext: Context) {
 
     private var deviceCallback: AudioDeviceCallback? = null
 
+    // [#1201 audio fix, 2026-05-19] Real audio focus listener + request handle.
+    // Replaces the leaked `requestAudioFocus(null, …)` that IncomingCallActivity.onAccept
+    // used to fire pre-pre-warm — that call could never be abandoned (no listener
+    // to match) and on the iOS→Android receive path it shadowed WebRTC's internal
+    // ADM focus request once playback started, manifesting as "Android receives
+    // call, says Conectado, but no remote voice plays" while the reverse direction
+    // (Android→iOS = Android never visits IncomingCallActivity = clean focus) worked.
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
+        // Log only — we don't want LK's audio publish/playback to flap on
+        // transient focus loss/gain. The peer-side speaker volume bouncing
+        // is way worse than tolerating a momentary other-app blip.
+        Log.d(TAG, "onAudioFocusChange: change=$focusChange")
+    }
+    private var focusRequest: AudioFocusRequest? = null
+    @Volatile private var focusHeld: Boolean = false
+
     // ───────────────────────── Public API
 
     /**
-     * Initial setup at call start. Pins MODE_IN_COMMUNICATION, picks the
-     * initial route (speaker for video, earpiece for audio, override to BT
-     * if connected). Idempotent.
+     * Initial setup at call start. Pins MODE_IN_COMMUNICATION, claims audio
+     * focus (STREAM_VOICE_CALL), picks the initial route (speaker for video,
+     * earpiece for audio, override to BT if connected). Idempotent.
      */
     fun configureForCall(hasVideo: Boolean) {
         this.hasVideo = hasVideo
@@ -76,8 +94,64 @@ class AudioRouter private constructor(private val appContext: Context) {
             Log.w(TAG, "set MODE_IN_COMMUNICATION failed: ${t.message}")
         }
 
+        // [#1201 audio fix] Claim audio focus with a real listener BEFORE LK
+        // initializes its AudioDeviceModule. This gives WebRTC's internal
+        // focus dance a stable parent to coexist with — and lets us
+        // properly abandonAudioFocus(listener) in teardown() so the next
+        // foreground app inherits a clean AudioManager state.
+        requestVoiceCallFocus()
+
         applyInitialRoute()
         installDeviceCallbackIfNeeded()
+    }
+
+    private fun requestVoiceCallFocus() {
+        if (focusHeld) return
+        try {
+            val result: Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val attrs = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+                val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                    .setAudioAttributes(attrs)
+                    .setOnAudioFocusChangeListener(focusListener, handler)
+                    .setAcceptsDelayedFocusGain(true)
+                    .build()
+                focusRequest = req
+                am.requestAudioFocus(req)
+            } else {
+                @Suppress("DEPRECATION")
+                am.requestAudioFocus(
+                    focusListener,
+                    AudioManager.STREAM_VOICE_CALL,
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
+                )
+            }
+            focusHeld = (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED ||
+                         result == AudioManager.AUDIOFOCUS_REQUEST_DELAYED)
+            Log.d(TAG, "requestAudioFocus result=$result held=$focusHeld")
+        } catch (t: Throwable) {
+            Log.w(TAG, "requestAudioFocus failed: ${t.message}")
+        }
+    }
+
+    private fun abandonVoiceCallFocus() {
+        if (!focusHeld) return
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                focusRequest?.let { am.abandonAudioFocusRequest(it) }
+            } else {
+                @Suppress("DEPRECATION")
+                am.abandonAudioFocus(focusListener)
+            }
+            Log.d(TAG, "abandonAudioFocus")
+        } catch (t: Throwable) {
+            Log.w(TAG, "abandonAudioFocus failed: ${t.message}")
+        } finally {
+            focusHeld = false
+            focusRequest = null
+        }
     }
 
     /**
@@ -125,8 +199,8 @@ class AudioRouter private constructor(private val appContext: Context) {
     }
 
     /**
-     * End-of-call cleanup. Drops MODE_IN_COMMUNICATION + tears down the BT
-     * device callback. Speakerphone is reset off.
+     * End-of-call cleanup. Abandons audio focus, drops MODE_IN_COMMUNICATION,
+     * tears down the BT device callback. Speakerphone is reset off.
      */
     fun teardown() {
         try {
@@ -137,6 +211,10 @@ class AudioRouter private constructor(private val appContext: Context) {
         } catch (_: Throwable) {}
         try { am.isSpeakerphoneOn = false } catch (_: Throwable) {}
         try { am.mode = AudioManager.MODE_NORMAL } catch (_: Throwable) {}
+        // [#1201 audio fix] Release focus so the next foreground app sees
+        // a clean STREAM_VOICE_CALL handle. Doing this AFTER setting mode
+        // back to NORMAL matches the Android sample call apps.
+        abandonVoiceCallFocus()
 
         val cb = deviceCallback
         if (cb != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
