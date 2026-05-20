@@ -43,7 +43,15 @@ import { Platform } from 'react-native';
 // Set 2026-05-20: kill the dual-outbox race where text msgs went through
 // MMKV → outboxDrainer while messageOutbox state machine sat empty,
 // causing UI flags ("Enviando..."/"Falhou") to desync from reality.
-export const OUTBOX_V2_ONLY = true;
+//
+// [#1225 2026-05-20] Web exception: messageOutbox is SQLite-backed and
+// returns null on web at every entry point. If V2_ONLY were true on web,
+// the legacy outboxDrainer would no-op + messageOutbox would no-op too →
+// failed sends offline have NO retry path. Keep V2_ONLY native-only so
+// web preserves the legacy MMKV/offlineCache replay flow until we wire
+// IndexedDB persistence into messageOutbox.
+import { Platform as _PlatformV2 } from 'react-native';
+export const OUTBOX_V2_ONLY = _PlatformV2.OS !== 'web';
 
 // Backoff schedule in ms. attempt index N picks BACKOFF[min(N, len-1)].
 // 1s → 2s → 5s → 15s → 1min → 5min → 30min (cap).
