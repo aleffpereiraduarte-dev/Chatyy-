@@ -1,6 +1,6 @@
 import Foundation
 import UIKit
-import LiveKit
+import LiveKitClient
 
 /**
  * NativeCallRoom — REAL (2026-05-19, task #1207)
