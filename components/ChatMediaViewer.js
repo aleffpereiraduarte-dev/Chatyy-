@@ -1292,6 +1292,81 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
     }
   }, [visible, _currentIdx, _list]);
 
+  // HLS offline manifest resolution. When the active item is a video AND we
+  // have a previously-downloaded m3u8 sitting at
+  // `documentDirectory/video-offline/<messageId>/index.m3u8`, swap the player
+  // source to that local file:// URI. Without this, an offline user sees
+  // VideoPlayer spin forever because expo-video can't fetch the manifest
+  // tree off the network. _hlsLocalUri === '' means "no cache available";
+  // null means "haven't checked yet" (player keeps streaming URL).
+  // _hlsOffline = true when device is offline AND no cache exists → render
+  // the "Vídeo não disponível offline" message instead of mounting the
+  // player at all.
+  const [_hlsLocalUri, _setHlsLocalUri] = useState(null);
+  const [_hlsOfflineUnavailable, _setHlsOfflineUnavailable] = useState(false);
+  useEffect(() => {
+    if (Platform.OS === 'web' || !visible) {
+      _setHlsLocalUri(null);
+      _setHlsOfflineUnavailable(false);
+      return;
+    }
+    const it = _list[_currentIdx];
+    if (!it) return;
+    const itType = it.type;
+    const itHls = it.hlsUrl;
+    const itFileUrl = it.fileUrl;
+    if (itType !== 'video') {
+      _setHlsLocalUri(null);
+      _setHlsOfflineUnavailable(false);
+      return;
+    }
+    // Pick a stable video id — the message id is what cacheHlsVideo uses.
+    const vidId = it.messageId || it.id || messageId;
+    if (!vidId) {
+      _setHlsLocalUri('');
+      _setHlsOfflineUnavailable(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const hlsMod = require('../services/hlsOffline');
+        const local = await hlsMod.getLocalManifest?.(String(vidId));
+        if (cancelled) return;
+        if (local) {
+          // Normalize to a file:// URI — expo-video wants the scheme.
+          _setHlsLocalUri(local.startsWith('file://') ? local : 'file://' + local);
+          _setHlsOfflineUnavailable(false);
+          return;
+        }
+        _setHlsLocalUri('');
+        // No cache. If we're also offline, surface "not available offline"
+        // rather than letting the player spin on a dead URL. HLS manifests
+        // resolved via .m3u8 will never paint without the network.
+        const isHlsSource = (itHls && String(itHls).toLowerCase().includes('.m3u8'))
+          || (itFileUrl && String(itFileUrl).toLowerCase().includes('.m3u8'));
+        if (!isHlsSource) {
+          // mp4 path — VideoPlayer + getFullUrl already handle file:// cache.
+          _setHlsOfflineUnavailable(false);
+          return;
+        }
+        try {
+          const ni = require('../services/networkInfo');
+          const t = ni.getNetworkType?.();
+          _setHlsOfflineUnavailable(t === 'none');
+        } catch {
+          _setHlsOfflineUnavailable(false);
+        }
+      } catch {
+        if (!cancelled) {
+          _setHlsLocalUri('');
+          _setHlsOfflineUnavailable(false);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [visible, _currentIdx, _list, messageId]);
+
   // OFFLINE-FIRST: when the viewer opens, force a disk cache for the active
   // item. The user's tap = explicit intent → bypass the cellular gate so
   // video/document downloads happen even when policy says wifi-only. Once
@@ -1349,9 +1424,18 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   // Prefer HLS playlist for videos when available (chunk-streamed, <500ms
   // first frame). Falls back to the progressive mp4 fileUrl when HLS isn't
   // generated yet (transcode is async during chat_send).
-  const url = (_active?.type === 'video' && _active?.hlsUrl)
+  //
+  // OFFLINE WIN: when hlsOffline.getLocalManifest() returned a file:// URI
+  // (resolved in the effect above), substitute it for the streaming URL so
+  // expo-video reads the rewritten manifest + .ts segments off disk. This is
+  // the user-visible fix for "video bubble spins forever on a dropped wifi".
+  let url = (_active?.type === 'video' && _active?.hlsUrl)
     ? getFullUrl(_active.hlsUrl)
     : getFullUrl(_active?.fileUrl);
+  if (_active?.type === 'video' && _hlsLocalUri && typeof _hlsLocalUri === 'string'
+      && _hlsLocalUri.startsWith('file://')) {
+    url = _hlsLocalUri;
+  }
   const ext = getExt(_active?.fileName);
   const isImage = _active?.type === 'image' || IMAGE_EXTS.includes(ext);
   const isVideo = _active?.type === 'video' || VIDEO_EXTS.includes(ext);
@@ -1610,7 +1694,19 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
               />
             )
           ) : isVideo ? (
-            <VideoPlayer url={url} />
+            // Offline + no HLS cache → don't mount the player (it'd spin
+            // forever on a dead manifest URL). Show a friendly message
+            // instead. The mp4 progressive path falls through to VideoPlayer
+            // because _hlsOfflineUnavailable only flips true for .m3u8 sources.
+            _hlsOfflineUnavailable ? (
+              <View style={s.mediaContainer}>
+                <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 16, textAlign: 'center', paddingHorizontal: 32 }}>
+                  {(typeof t === 'function' && t('chat.video.offlineUnavailable')) || 'Vídeo não disponível offline'}
+                </Text>
+              </View>
+            ) : (
+              <VideoPlayer url={url} />
+            )
           ) : isPreviewable ? (
             <PreviewViewer
               url={url}

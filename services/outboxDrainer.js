@@ -16,6 +16,7 @@
 import { Platform } from 'react-native';
 import { getAllPendingMessages, removePendingMessage, savePendingMessage } from './chatCache';
 import * as api from './api';
+import { OUTBOX_V2_ONLY } from './messageOutbox';
 
 let _draining = false;
 let _initialized = false;
@@ -52,6 +53,12 @@ function isHardError(r) {
 }
 
 async function drainOnce(reason = 'manual') {
+  // V2 consolidation: messageOutbox + sendWorker own the send queue now.
+  // The MMKV-backed legacy path here would compete with the SQLite state
+  // machine — same client_message_id getting double-fired, with the
+  // server dedup'ing but UI state ("Enviando..." vs "✓") flickering.
+  // No-op the entire drain when V2 is on; sendWorker.poke() takes over.
+  if (OUTBOX_V2_ONLY) return { skipped: 'v2-only', reason };
   if (_draining) return { skipped: 'already-draining' };
   if (Date.now() - _lastDrainAt < MIN_DRAIN_GAP_MS) return { skipped: 'cooldown' };
   _draining = true;
@@ -185,6 +192,13 @@ async function drainOnce(reason = 'manual') {
 export function initOutboxDrainer() {
   if (_initialized) return;
   _initialized = true;
+  // V2: skip wiring boot/NetInfo/WS/periodic triggers. sendWorker.start()
+  // covers all of these on the messageOutbox SQLite path. Keeping the
+  // legacy timers alive would just spin no-ops every 60s.
+  if (OUTBOX_V2_ONLY) {
+    try { console.log('[outboxDrainer] v2-only mode — legacy MMKV drain disabled'); } catch {}
+    return;
+  }
 
   // Initial drain ~3s after boot so chat screens have a chance to mount and
   // the app's primary work isn't competing for CPU.

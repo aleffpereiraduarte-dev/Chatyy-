@@ -34,6 +34,17 @@
  */
 import { Platform } from 'react-native';
 
+// Feature flag — when true, this SQLite-backed outbox is the SINGLE source of
+// truth for sent-message state, and the legacy MMKV path
+// (chatCache.savePendingMessage + outboxDrainer.drainOnce) is decommissioned.
+// Flip to false ONLY for emergency rollback if the v2 path regresses; the
+// legacy code still exists behind the flag for that escape hatch.
+//
+// Set 2026-05-20: kill the dual-outbox race where text msgs went through
+// MMKV → outboxDrainer while messageOutbox state machine sat empty,
+// causing UI flags ("Enviando..."/"Falhou") to desync from reality.
+export const OUTBOX_V2_ONLY = true;
+
 // Backoff schedule in ms. attempt index N picks BACKOFF[min(N, len-1)].
 // 1s → 2s → 5s → 15s → 1min → 5min → 30min (cap).
 export const BACKOFF_SCHEDULE_MS = [1000, 2000, 5000, 15000, 60000, 300000, 1800000];
@@ -512,4 +523,5 @@ export default {
   subscribe,
   BACKOFF_SCHEDULE_MS,
   MAX_ATTEMPTS,
+  OUTBOX_V2_ONLY,
 };

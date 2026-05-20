@@ -12,6 +12,7 @@ import * as api from '../services/api';
 import { useConfirm } from './ConfirmModal';
 import { emailToDisplayName, BASE_URL } from '../services/api';
 import { cacheConversations, getCachedConversations, prewarmConversationsCache, prefetchConversation } from '../services/chatCache';
+import { prefetchAvatarsForList } from '../services/avatarCache';
 import { userScopedKey } from '../services/cache';
 import { getCachedMessagesSync } from '../services/smartChatCache';
 import mqttService from '../services/mqtt';
@@ -2669,6 +2670,48 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     const safety = setTimeout(() => setLoading(false), 5000);
     return () => clearTimeout(safety);
   }, [loadConversations]);
+
+  // Disk-persist OTHER users' avatars (documentDirectory/avatar-saved).
+  // Fires whenever the conversation set's email roster changes — refs
+  // dedup so a no-op state update (same set) doesn't re-trigger. Run
+  // independently of the prewarm hook so it works even when the list
+  // is re-loaded from the silent delta sync (focus refresh).
+  const _avatarPrefetchHashRef = useRef('');
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    if (!Array.isArray(conversations) || conversations.length === 0) return;
+    // Collect unique peer emails. WhatsApp parity: each row has either a
+    // 1:1 peer (other_email / peer) or a group (members[]). Drag both
+    // shapes so group rows also seed members' faces.
+    const emailsSet = new Set();
+    for (const c of conversations) {
+      if (!c) continue;
+      const candidates = [
+        c.other_email, c.peer, c.peer_email,
+      ];
+      for (const e of candidates) {
+        if (typeof e === 'string' && e.includes('@')) emailsSet.add(e.toLowerCase());
+      }
+      if (Array.isArray(c.members)) {
+        for (const m of c.members) {
+          if (m && typeof m.email === 'string' && m.email.includes('@')) {
+            emailsSet.add(m.email.toLowerCase());
+          }
+        }
+      }
+    }
+    if (emailsSet.size === 0) return;
+    const emails = Array.from(emailsSet).sort();
+    const hash = emails.join('|');
+    if (hash === _avatarPrefetchHashRef.current) return;
+    _avatarPrefetchHashRef.current = hash;
+    // Defer one frame so the initial render commits before the network
+    // pool fills up. cacheAvatar's 3-slot semaphore keeps it bounded.
+    const kick = setTimeout(() => {
+      prefetchAvatarsForList(emails).catch(() => {});
+    }, 800);
+    return () => clearTimeout(kick);
+  }, [conversations]);
 
   // Telegram-style prewarm: once the list is painted, quietly pull the
   // last few messages of the top conversations that have no local cache

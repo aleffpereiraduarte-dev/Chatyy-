@@ -307,6 +307,15 @@ async function clearAllPerAccountCaches() {
   try { await clearAllCache(); } catch {}
   try { const fn = await getLazyClearChatCache(); await fn(); } catch {}
 
+  // 1b. Avatar disk cache (documentDirectory/avatar-saved). Avatars are
+  // user-visible identifiers — leaving them on disk after logout lets
+  // a stranger picking up the device see who the previous user chatted
+  // with. Web no-ops (no documentDirectory equivalent).
+  try {
+    const { clearAvatarCache } = require('../services/avatarCache');
+    await clearAvatarCache();
+  } catch {}
+
   // 2. AsyncStorage sweep — anything that smells user-scoped
   try {
     const allKeys = await AsyncStorage.getAllKeys();

@@ -1577,6 +1577,7 @@ export default {
   'chat.audioCall': 'Llamada de voz',
   'chat.photo': 'Foto',
   'chat.video': 'Video',
+  'chat.video.offlineUnavailable': 'Video no disponible sin conexión',
   'chat.audio': 'Audio',
   'chat.transcribe': 'Transcribir',
   'chat.transcribing': 'Transcribiendo...',

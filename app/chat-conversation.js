@@ -75,6 +75,7 @@ import SendStatusText from '../components/SendStatusText';
 import { getCachedUri, preCacheUrls, cacheMedia, saveMediaPermanent, saveConversationMedia, initSyncCache } from '../services/mediaCache';
 const ExpoImage = Image;
 import { cacheMessages, getCachedMessages, getLastSyncId, cacheSingleMessage, savePendingMessage, removePendingMessage, getPendingMessages, purgeStalePending } from '../services/chatCache';
+import messageOutbox, { OUTBOX_V2_ONLY } from '../services/messageOutbox';
 import { userScopedKey } from '../services/cache';
 import * as SmartCache from '../services/smartChatCache';
 import useIsMounted from '../hooks/useIsMounted';
@@ -11523,8 +11524,29 @@ export default function ChatConversationScreen() {
     // via WS but the sender's outbox is empty — on restart we can't replay.
     // Awaiting the pending save (typically <10ms on AsyncStorage) closes that
     // window. UI already shows the optimistic bubble so user perceives no lag.
+    //
+    // [outbox-consolidation 2026-05-20] When OUTBOX_V2_ONLY is set, write
+    // to the SQLite messageOutbox (single source of truth). The state
+    // machine there feeds SendStatusText.js + sendWorker.js. Legacy MMKV
+    // path retained for emergency rollback only — under V2 it never fires.
     const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: text, type: 'text', reply_to_id: replyId, mentions: currentMentions, created_at: optimisticMsg.created_at, sender_email: currentEmail };
-    try { await savePendingMessage(conversationId, pendingData); } catch {}
+    if (OUTBOX_V2_ONLY) {
+      try {
+        await messageOutbox.enqueue({
+          client_message_id: msgId,
+          conversation_id: conversationId,
+          temp_id: tempId,
+          content: text,
+          type: 'text',
+          reply_to_id: replyId,
+          mentions: currentMentions,
+          sender_email: currentEmail,
+          created_at: optimisticMsg.created_at,
+        });
+      } catch {}
+    } else {
+      try { await savePendingMessage(conversationId, pendingData); } catch {}
+    }
 
     // TELEGRAM-STYLE FAST DELIVERY: fire the WS relay BEFORE awaiting the
     // HTTP chat_send. Peer sees the bubble in ~30ms instead of ~300ms.
@@ -11583,6 +11605,11 @@ export default function ChatConversationScreen() {
         // understands this isn't a network issue.
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: 'encryption_failed' } : m));
         removePendingMessage(conversationId, tempId).catch(() => {});
+        if (OUTBOX_V2_ONLY) {
+          // Encryption is a hard fail — burn the row from the outbox so the
+          // worker doesn't keep retrying a payload that will never encrypt.
+          try { messageOutbox.remove(msgId).catch(() => {}); } catch {}
+        }
         setSending(false);
         try {
           const { Alert: A } = require('react-native');
@@ -11731,6 +11758,9 @@ export default function ChatConversationScreen() {
                 return { ...serverMsg, sender_email: serverMsg.sender_email || m.sender_email || currentEmail, _client_id: m._client_id || msgId };
               }));
               removePendingMessage(conversationId, tempId).catch(() => {});
+              if (OUTBOX_V2_ONLY) {
+                try { messageOutbox.markSent(msgId, serverMsg.id || null).catch(() => {}); } catch {}
+              }
               try {
                 const { removeChatSendFromQueueByClientMsgId } = require('../services/offlineCache');
                 removeChatSendFromQueueByClientMsgId(msgId).catch(() => {});
@@ -11784,6 +11814,11 @@ export default function ChatConversationScreen() {
         }));
         // Remove from pending storage now that it's confirmed
         removePendingMessage(conversationId, tempId).catch(() => {});
+        if (OUTBOX_V2_ONLY) {
+          // Single source of truth: tell the SQLite outbox the server has
+          // it so SendStatusText flips "Enviando..." → "✓" via subscribe.
+          try { messageOutbox.markSent(msgId, serverMsg.id || null).catch(() => {}); } catch {}
+        }
         // Delete the synthetic-id row from native cache, then add the real
         // server message. AWAIT both before reload so the native view sees
         // the swap atomically (no missing-message gap).
@@ -11883,6 +11918,9 @@ export default function ChatConversationScreen() {
                     return { ...serverMsg, sender_email: serverMsg.sender_email || m.sender_email || currentEmail, _client_id: m._client_id || msgId };
                   }));
                   removePendingMessage(conversationId, tempId).catch(() => {});
+                  if (OUTBOX_V2_ONLY) {
+                    try { messageOutbox.markSent(msgId, serverMsg.id || null).catch(() => {}); } catch {}
+                  }
                   try { cacheSingleMessage(conversationId, serverMsg); } catch {}
                   try { SmartCache.cacheSingleMessage(conversationId, serverMsg); } catch {}
                 }
@@ -11920,6 +11958,11 @@ export default function ChatConversationScreen() {
         } catch {
           setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
         }
+        if (OUTBOX_V2_ONLY) {
+          // Bump attempt counter in SQLite — sendWorker's periodic drain
+          // will pick up retries via the BACKOFF_SCHEDULE_MS ladder.
+          try { messageOutbox.markFailed(msgId, r?.message || r?.error || 'server_error').catch(() => {}); } catch {}
+        }
       }
     } catch (e) {
       // Log the REAL error to console for debugging (visible in Xcode/Safari dev tools)
@@ -11942,6 +11985,12 @@ export default function ChatConversationScreen() {
         });
         // Mark as queued (still pending, not failed) — UI shows clock icon
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _client_id: msgId, _sendError: e?.message || 'network' } : m));
+        if (OUTBOX_V2_ONLY) {
+          // Network error → bump attempt + schedule next retry on the
+          // SQLite ladder. sendWorker.poke() on next reconnect/foreground
+          // will drain this row in addition to the offlineCache retry.
+          try { messageOutbox.markFailed(msgId, e?.message || 'network').catch(() => {}); } catch {}
+        }
         // Transient-failure auto-replay: WS may still be connected (the
         // failure was just one HTTP hiccup), in which case the user would
         // otherwise wait for the NEXT reconnect/foreground event to drain

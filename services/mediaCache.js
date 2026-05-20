@@ -971,6 +971,28 @@ export function prefetchIncomingMessageMedia(message) {
   if (!rawUrl || typeof rawUrl !== 'string') return;
   const url = rawUrl.startsWith('http') ? rawUrl : `https://chatyy.com.br${rawUrl}`;
 
+  // HLS branch: if the message is a video AND the URL is an .m3u8 playlist,
+  // route through cacheHlsVideo() which downloads the manifest + .ts segments
+  // for true offline playback. The progressive mp4 path (cacheMedia) can't
+  // serve HLS because the player needs the whole manifest tree, not a single
+  // file. Honors the same 'videos' bucket gate as the mp4 path.
+  // Also: when the message has BOTH a file_url (mp4) and a hlsUrl, the
+  // hlsUrl is the preferred player source — try that first so the offline
+  // copy matches what ChatMediaViewer will mount.
+  const hlsCandidate = (isVideo && typeof message.hlsUrl === 'string' && message.hlsUrl)
+    ? (message.hlsUrl.startsWith('http') ? message.hlsUrl : `https://chatyy.com.br${message.hlsUrl}`)
+    : (isVideo && isHlsUrl(url) ? url : null);
+  if (hlsCandidate) {
+    const convId2 = message.conversation_id ?? message.conversationId;
+    const _hopts = {
+      messageId: message.id,
+      conversationId: convId2,
+    };
+    try { cacheHlsVideo(hlsCandidate, _hopts).catch(() => {}); } catch {}
+    if (convId2 != null) tagUrlConversation(hlsCandidate, convId2);
+    return;
+  }
+
   // Persist LQIP (thumb_b64) opportunistically so the blur placeholder is
   // available the moment the bubble mounts — even before the row hits the
   // chat-conversation render path.
@@ -1036,6 +1058,77 @@ export function prefetchAudioMessage(remoteUrl, opts = {}) {
     } catch {}
     return local;
   }).catch(() => remoteUrl);
+}
+
+// True iff the URL looks like an HLS playlist. The CDN serves these from
+// `/data/chat-files/<id>/index.m3u8` (and master variants under similar
+// suffixes), so a path-segment match is reliable. Query strings are stripped
+// before matching because signed URLs append `?token=…`.
+export function isHlsUrl(url) {
+  if (typeof url !== 'string' || !url) return false;
+  const base = url.split('?')[0].split('#')[0].toLowerCase();
+  return base.endsWith('.m3u8');
+}
+
+/**
+ * HLS counterpart of cacheMedia(): downloads the manifest + all .ts segments
+ * for offline playback, using the message id as the stable folder key. Goes
+ * through hlsOffline.downloadHls() so segment dedup / resume / concurrency
+ * cap are inherited. On success, writes the rewritten local manifest path
+ * back into messages.local_path so a cold-open of the bubble can read from
+ * disk without first probing the offline cache.
+ *
+ * Honors the same per-bucket cellular gate as cacheMedia for the 'videos'
+ * bucket (default: wifi-only). force:true (tap-to-download) bypasses.
+ *
+ * Returns the local manifest path on success or the original remote URL on
+ * failure / web / gate-rejection. Idempotent: if the manifest already exists
+ * on disk we short-circuit without re-downloading.
+ */
+export async function cacheHlsVideo(hlsUrl, opts = {}) {
+  if (!hlsUrl || Platform.OS === 'web') return hlsUrl;
+  const videoId = opts.messageId != null ? String(opts.messageId)
+    : (opts.videoId != null ? String(opts.videoId) : null);
+  if (!videoId) return hlsUrl;
+
+  // Gate. videos bucket default: wifi ON, cellular OFF, roaming OFF.
+  if (!opts.force) {
+    if (!shouldAutoDownload('video')) return hlsUrl;
+  }
+
+  let hlsMod;
+  try { hlsMod = require('./hlsOffline'); } catch { return hlsUrl; }
+
+  // Short-circuit if a completed manifest is already on disk.
+  try {
+    const existing = await hlsMod.getLocalManifest?.(videoId);
+    if (existing) return existing;
+  } catch {}
+
+  let localPath = null;
+  try {
+    localPath = await hlsMod.downloadHls(videoId, hlsUrl);
+  } catch { localPath = null; }
+
+  if (!localPath) return hlsUrl;
+
+  // Write the local manifest back into messages.local_path so cold-open
+  // paints from disk instantly — same pattern as cacheMedia for mp4/audio.
+  if (opts.messageId != null && opts.conversationId != null) {
+    try {
+      const nativeDb = require('./db');
+      if (typeof nativeDb.dbUpdateMessageFields === 'function') {
+        nativeDb.dbUpdateMessageFields(opts.conversationId, opts.messageId, {
+          local_path: localPath.startsWith('file://') ? localPath : ('file://' + localPath),
+        }).catch(() => {});
+      }
+    } catch {}
+  }
+
+  // Best-effort LRU sweep — keeps documentDirectory/video-offline bounded.
+  try { hlsMod.evictHlsCache?.().catch(() => {}); } catch {}
+
+  return localPath.startsWith('file://') ? localPath : ('file://' + localPath);
 }
 
 // Get permanent saved URI

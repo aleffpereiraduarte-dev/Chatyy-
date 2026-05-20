@@ -465,7 +465,24 @@ export async function clearChatCache() {
 
 // --- Pending (unsent) message persistence ---
 
+// Rate-limit the deprecation warning so a noisy retry loop doesn't spam.
+let _deprWarnLastAt = 0;
+function _warnDeprecatedPending() {
+  try {
+    const now = Date.now();
+    if (now - _deprWarnLastAt < 30000) return;
+    _deprWarnLastAt = now;
+    // Lazy require so the flag stays a constant and circular imports don't bite.
+    let v2 = false;
+    try { v2 = require('./messageOutbox').OUTBOX_V2_ONLY === true; } catch {}
+    if (v2) {
+      console.warn('[chatCache] savePendingMessage is DEPRECATED — use messageOutbox.enqueue() instead');
+    }
+  } catch {}
+}
+
 export async function savePendingMessage(conversationId, message) {
+  _warnDeprecatedPending();
   if (isNative && isDbReady()) {
     try { await dbSavePending({ ...message, conversation_id: conversationId }); return; } catch {}
   }

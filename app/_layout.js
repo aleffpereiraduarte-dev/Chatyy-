@@ -616,6 +616,18 @@ function AppInit({ onNotification, setOtaToast }) {
       });
     } catch {}
 
+    // [chat cloud backup scheduler, 2026-05-20] Fire-and-forget — registers
+    // the once-a-day chat backup BG task. The scheduler self-gates on the
+    // 20h window + battery ≥20% + non-roaming network, and short-circuits
+    // when the user hasn't cached a passphrase yet (setup not finished).
+    // Safe to call on every cold start: expo-task-manager + BackgroundFetch
+    // dedupe by task name, so re-registering is a no-op.
+    try {
+      import('../services/backupScheduler').then(m => {
+        try { m.scheduleDaily?.().catch(() => {}); } catch {}
+      });
+    } catch {}
+
     // [photo backup worker reconcile, 2026-05-19] Android-only — when the
     // BackupWorker uploads photos in the background while the app is
     // killed, it writes a delta file (~/files/chatyy-backup-delta.json)

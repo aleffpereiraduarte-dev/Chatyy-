@@ -2,6 +2,13 @@ import React, { useState, useEffect, memo } from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { getAvatarUrlForEmail } from '../services/api';
 import { IconSparkles } from './Icons';
+// Disk-persistent avatar cache (documentDirectory/avatar-saved). Survives
+// OS cache evictions so a contact's profile photo paints from disk on
+// cold-start / offline — even if expo-image's NSURLCache got purged.
+// Web: no-ops (browser Cache API + Cache-Control headers already cover).
+import { getCachedAvatarUriOrNull, cacheAvatar } from '../services/avatarCache';
+let _networkInfo = null;
+try { _networkInfo = require('../services/networkInfo'); } catch {}
 
 let ExpoImage = null;
 let RNImage = null;
@@ -182,7 +189,8 @@ function hashColor(name) {
 // AvatarCircle owns those concerns and forwards the right cacheBust here).
 function _CollageTile({ member, size, width, height }) {
   const [tileErr, setTileErr] = useState(false);
-  useEffect(() => { setTileErr(false); }, [member?.email, member?.avatar_url]);
+  const [tileCachedUri, setTileCachedUri] = useState(null);
+  useEffect(() => { setTileErr(false); setTileCachedUri(null); }, [member?.email, member?.avatar_url]);
   const ImageComponent = ExpoImage || RNImage;
   const memberEmail = typeof member?.email === 'string' ? member.email : '';
   const memberName = member?.display_name || member?.name || memberEmail || '';
@@ -203,6 +211,27 @@ function _CollageTile({ member, size, width, height }) {
   // has the bust (it comes from getAvatarUrlForEmail), so this is a no-op
   // for that branch but it normalizes any stale `v=` from a prior day.
   uri = normalizeAvatarUrl(uri);
+  // Disk-persistent avatar cache — same hook as the main AvatarCircle
+  // render path. Lets a group-row collage paint instantly offline once
+  // the tile's avatar has been fetched once.
+  if (Platform.OS !== 'web' && uri && /^https?:/i.test(uri)) {
+    const _diskHit = getCachedAvatarUriOrNull(uri);
+    if (_diskHit) {
+      uri = _diskHit;
+    } else if (tileCachedUri) {
+      uri = tileCachedUri;
+    } else {
+      try {
+        cacheAvatar(uri).then((result) => {
+          if (typeof result === 'string' && result.startsWith('file://')) {
+            setTileCachedUri(result);
+          }
+        }).catch(() => {});
+      } catch {}
+      const _online = _networkInfo?.isConnected?.() !== false;
+      if (!_online) uri = '';
+    }
+  }
   const initials = getInitials(memberName, memberEmail);
   const bg = hashColor((memberName || memberEmail || '').toLowerCase());
   // Allow non-square tiles (WhatsApp 1+2 layout has a full-height left tile).
@@ -283,7 +312,13 @@ function _GroupCollage({ members, size, style }) {
 function AvatarCircle({ name, email, uri, size = 48, style, online = false, ringColor = '#7C3AED', showStatus = false, members }) {
   const [imgError, setImgError] = useState(false);
   const [version, setVersion] = useState(() => getAvatarVersion(email));
-  useEffect(() => { setImgError(false); setVersion(getAvatarVersion(email)); }, [email]);
+  // Holds the file:// URI from avatarCache once a background download
+  // lands mid-session. Initial value comes from the sync index inside
+  // the render below; this state only flips when the very FIRST fetch
+  // for a brand-new URL completes (subsequent mounts get the file://
+  // from the sync index on first paint, no setState needed).
+  const [cachedFileUri, setCachedFileUri] = useState(null);
+  useEffect(() => { setImgError(false); setVersion(getAvatarVersion(email)); setCachedFileUri(null); }, [email, uri]);
 
   // ── Group collage short-circuit ────────────────────────────────
   // When the caller passes `members` and there's no single image to show
@@ -389,7 +424,46 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
   // expo-image cached during the 2026-05-18 ACL outage. Normalize so every
   // get_avatar URL carries today's bust, regardless of how it got here.
   const normalizedExplicit = normalizeAvatarUrl(explicitUri);
-  const avatarUrl = normalizedExplicit || nativeLocal || remoteAvatarUrl;
+  const _remoteResolved = normalizedExplicit || nativeLocal || remoteAvatarUrl;
+
+  // ── Disk-persistent avatar cache (other users) ──────────────────
+  // Consult avatarCache's sync index FIRST: if the bytes are on disk
+  // we hand a file:// URI to expo-image and the avatar paints on the
+  // very first commit — no network round-trip, works offline.
+  //
+  // On cache miss we fire `cacheAvatar()` fire-and-forget; the next
+  // mount of this row (after the download lands) will hit the sync
+  // index. We ALSO setState the resolved file:// path so the CURRENT
+  // mount picks it up without waiting for a re-mount (smoother for
+  // contacts the user opens before backgrounding the app).
+  //
+  // Offline + cache miss → initials only. Without this gate
+  // expo-image would attempt the fetch, fail silently, and the user
+  // sees a flash of empty avatar before the onError fires.
+  let avatarUrl = _remoteResolved;
+  if (Platform.OS !== 'web' && _remoteResolved && /^https?:/i.test(_remoteResolved)) {
+    const _diskHit = getCachedAvatarUriOrNull(_remoteResolved);
+    if (_diskHit) {
+      avatarUrl = _diskHit;
+    } else if (cachedFileUri) {
+      // Background download landed mid-session.
+      avatarUrl = cachedFileUri;
+    } else {
+      // Miss — fire background download (idempotent + deduped inside).
+      try {
+        cacheAvatar(_remoteResolved).then((result) => {
+          if (typeof result === 'string' && result.startsWith('file://')) {
+            setCachedFileUri(result);
+          }
+        }).catch(() => {});
+      } catch {}
+      // If offline AND nothing on disk, drop the URL so we render
+      // initials instead of letting expo-image flash an empty box
+      // before its onError handler fires.
+      const _online = _networkInfo?.isConnected?.() !== false;
+      if (!_online) avatarUrl = null;
+    }
+  }
   const showImage = avatarUrl && !imgError;
 
   const displayName = name || email || '';

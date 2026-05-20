@@ -1592,6 +1592,7 @@ export default {
   'chat.audioCall': 'Chamada de voz',
   'chat.photo': 'Foto',
   'chat.video': 'Vídeo',
+  'chat.video.offlineUnavailable': 'Vídeo não disponível offline',
   'chat.audio': 'Áudio',
   'chat.transcribe': 'Transcrever',
   'chat.transcribing': 'Transcrevendo...',

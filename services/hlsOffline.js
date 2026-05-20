@@ -270,6 +270,29 @@ export async function isComplete(videoId) {
   } catch { return false; }
 }
 
+/**
+ * Synchronous-style local manifest fetcher for the player mount path. Returns
+ * the file:// URI when the rewritten manifest exists on disk, otherwise null.
+ * The function is async because expo-file-system only exposes getInfoAsync,
+ * but it does a single stat — fast enough for the pre-mount check in
+ * ChatMediaViewer (we await ONCE before deciding source).
+ *
+ * Callers should pass the same `videoId` they used at downloadHls(). For chat
+ * messages we use the message id (stable, conversation-scoped).
+ */
+export async function getLocalManifest(videoId) {
+  if (Platform.OS === 'web' || !videoId) return null;
+  const fs = getFS();
+  if (!fs) return null;
+  const uri = localManifestUri(videoId);
+  if (!uri) return null;
+  try {
+    const info = await fs.getInfoAsync(uri);
+    if (info?.exists && info?.size > 0) return uri;
+  } catch {}
+  return null;
+}
+
 /** Remove a single HLS download. */
 export async function deleteHls(videoId) {
   if (Platform.OS === 'web') return false;
@@ -334,6 +357,74 @@ export async function evictOldestHls(targetFreeBytes) {
     } catch {}
   }
   return freed;
+}
+
+// 1GB ceiling for the HLS dir. Higher than the mp4 cache because a 60s HLS
+// stream at 720p is ~5-15MB — twenty 60s videos eats a quarter of the budget
+// and the user wouldn't notice. Tightened from "no cap" so the offline dir
+// doesn't grow unbounded for power users.
+const HLS_CACHE_CAP_BYTES = 1024 * 1024 * 1024;
+let _lastHlsEvictAt = 0;
+let _hlsEvictInflight = null;
+
+/**
+ * LRU sweep across `documentDirectory/video-offline/<videoId>/`. Walks every
+ * subdir, sums the bytes, and if total > 1GB deletes oldest-mtime dirs until
+ * the remaining set fits the cap.
+ *
+ * Debounced (5min) like evictIfNeeded in mediaCache so we don't re-scan after
+ * every segment write. Safe to call fire-and-forget from downloadHls()'s
+ * caller — failures are non-fatal.
+ *
+ * Returns { freed, remaining } byte counts on success, null on noop (web,
+ * debounce hit, fs missing).
+ */
+export async function evictHlsCache() {
+  if (Platform.OS === 'web') return null;
+  const now = Date.now();
+  if (now - _lastHlsEvictAt < 5 * 60 * 1000 && _hlsEvictInflight) return _hlsEvictInflight;
+  if (_hlsEvictInflight) return _hlsEvictInflight;
+  const fs = getFS();
+  if (!fs) return null;
+  const root = getRoot();
+  if (!root) return null;
+
+  _hlsEvictInflight = (async () => {
+    try {
+      await ensureDir(root);
+      let entries = [];
+      try { entries = await fs.readDirectoryAsync(root); } catch { return null; }
+      const items = [];
+      for (const name of entries) {
+        try {
+          const info = await fs.getInfoAsync(root + name);
+          if (!info.exists || !info.isDirectory) continue;
+          const size = await getHlsSize(name);
+          items.push({ name, size, mtime: info.modificationTime || 0 });
+        } catch {}
+      }
+      const total = items.reduce((a, e) => a + e.size, 0);
+      if (total <= HLS_CACHE_CAP_BYTES) {
+        return { freed: 0, remaining: total };
+      }
+      // Oldest first, evict until under cap.
+      items.sort((a, b) => a.mtime - b.mtime);
+      let freed = 0;
+      const need = total - HLS_CACHE_CAP_BYTES;
+      for (const it of items) {
+        if (freed >= need) break;
+        try {
+          await fs.deleteAsync(root + it.name, { idempotent: true });
+          freed += it.size;
+        } catch {}
+      }
+      return { freed, remaining: total - freed };
+    } finally {
+      _lastHlsEvictAt = Date.now();
+      _hlsEvictInflight = null;
+    }
+  })();
+  return _hlsEvictInflight;
 }
 
 /** Wipe every HLS download. Used by Settings → Clear video cache. */

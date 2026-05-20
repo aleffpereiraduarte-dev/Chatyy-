@@ -967,6 +967,116 @@ export async function downloadGoogleDriveBackup(fileId, passphrase) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
+// 2a. Server-hosted backup (MVP fallback when no OAuth is configured).
+// ═════════════════════════════════════════════════════════════════════════
+//
+// Until the Google OAuth client IDs are provisioned in console.cloud.google.com
+// (placeholders above), the simplest path to ship cloud backup is to push the
+// encrypted blob to our own backend. Backend stores it under sha256(email)/
+// and we get the same restore-on-fresh-device story without an external IdP.
+//
+// Endpoints (api/chat.php):
+//   • chat_backup_upload  (POST multipart "file") → { id }
+//   • chat_backup_list    (GET)                   → { backups: [{id, created_at, size_bytes, version}] }
+//   • chat_backup_download(GET ?backup_id=)       → raw octet-stream
+//
+// The blob is byte-identical to what Drive/iCloud receives — same CYB2
+// envelope, same passphrase-derived key. Decrypt path is shared.
+
+/**
+ * Upload the encrypted blob to the Chatyy backend via multipart POST. The
+ * server is zero-knowledge: it sniffs the CYB2 magic for sanity but never
+ * sees the passphrase.
+ */
+export async function uploadBundleToServer(encryptedU8, opts = {}) {
+  if (!(encryptedU8 instanceof Uint8Array)) throw new Error('encrypted must be Uint8Array');
+  const apiUrl = api.getApiUrl?.() || 'https://chatyy.com.br/api/email.php';
+  const authToken = api.getAuthToken?.() || null;
+
+  // Build a FormData blob — RN FormData supports binary via { uri } on
+  // native; on web we use a real Blob from the Uint8Array.
+  const fd = new FormData();
+  if (Platform.OS === 'web') {
+    fd.append('file', new Blob([encryptedU8], { type: 'application/octet-stream' }), `backup-${_safeTimestamp()}.enc`);
+  } else {
+    // RN-native path: write to cacheDirectory first, then attach by URI.
+    // RN FormData on iOS doesn't support inline binary; the URI handoff is
+    // the canonical pattern (matches services/api.js chat_upload).
+    if (!FileSystem.cacheDirectory) throw new Error('cacheDirectory unavailable');
+    const tmpName = `backup-${_safeTimestamp()}.enc`;
+    const tmpUri = FileSystem.cacheDirectory + tmpName;
+    await FileSystem.writeAsStringAsync(tmpUri, _u8ToBase64(encryptedU8), {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    fd.append('file', {
+      uri: tmpUri,
+      name: tmpName,
+      type: 'application/octet-stream',
+    });
+  }
+
+  const headers = { Accept: 'application/json' };
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+
+  const resp = await fetch(`${apiUrl}?action=chat_backup_upload`, {
+    method: 'POST',
+    headers,
+    body: fd,
+    credentials: 'include',
+  });
+  if (!resp.ok) {
+    let txt = '';
+    try { txt = await resp.text(); } catch {}
+    throw new Error(`Server backup upload failed (${resp.status}): ${txt.slice(0, 200)}`);
+  }
+  const j = await resp.json().catch(() => ({}));
+  if (!j?.success) {
+    throw new Error(`Server rejected backup: ${j?.message || 'unknown error'}`);
+  }
+  const id = j?.data?.id || j?.id;
+  const size = j?.data?.size_bytes || encryptedU8.length;
+  try { await SecureStore.setItemAsync(SS_LAST_BACKUP_AT, _isoNow()); } catch {}
+  return { id, size_bytes: size, createdAt: j?.data?.created_at || _isoNow() };
+}
+
+/** List server-hosted backups newest-first. */
+export async function listServerBackups() {
+  const resp = await api.apiCall('chat_backup_list', {}, 'GET');
+  // apiCall returns the unwrapped data block on success.
+  const list = resp?.backups || resp?.data?.backups || [];
+  return Array.isArray(list) ? list : [];
+}
+
+/**
+ * Download a server-hosted backup by id, decrypt, and return the bundle.
+ * The server streams the raw CYB2 envelope; we run the same KDF + secretbox
+ * open path as Drive/iCloud restores.
+ */
+export async function downloadServerBackup(backupId, passphrase) {
+  if (!backupId) throw new Error('backup_id required');
+  const apiUrl = api.getApiUrl?.() || 'https://chatyy.com.br/api/email.php';
+  const authToken = api.getAuthToken?.() || null;
+  const headers = {};
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  const url = `${apiUrl}?action=chat_backup_download&backup_id=${encodeURIComponent(backupId)}`;
+  const r = await fetch(url, { headers, credentials: 'include' });
+  if (!r.ok) throw new Error(`Server download failed (${r.status})`);
+  let buf;
+  try { buf = await r.arrayBuffer(); }
+  catch {
+    const blob = await r.blob();
+    buf = await new Promise((res, rej) => {
+      const fr = new FileReader();
+      fr.onloadend = () => res(fr.result);
+      fr.onerror = rej;
+      fr.readAsArrayBuffer(blob);
+    });
+  }
+  const encrypted = new Uint8Array(buf);
+  return decryptChatBundle(encrypted, passphrase);
+}
+
+// ═════════════════════════════════════════════════════════════════════════
 // 2b. Local export — write bundle to disk + share sheet (or browser
 //     download on web). Used by the "Export local" buttons on the UI to
 //     give the user a tangible file they can stash in Dropbox, AirDrop to
@@ -1187,14 +1297,26 @@ async function _rescheduleBackgroundTask(freq) {
           }
 
           const { encrypted } = await exportChatBundle(passphrase);
+          // Server-first (MVP): the Chatyy backend always accepts the
+          // encrypted blob, so a backup succeeds even when the user hasn't
+          // opted into Drive/iCloud yet. Provider uploads are opt-in.
+          let serverOk = false;
+          try {
+            await uploadBundleToServer(encrypted);
+            serverOk = true;
+          } catch {}
+          // Optional provider mirrors when the user explicitly opted in
+          // (presence of cached Drive refresh token / iOS platform).
+          const driveOptedIn = await SecureStore.getItemAsync(SS_DRIVE_REFRESH).catch(() => null);
           if (Platform.OS === 'ios') {
-            await saveBundleToICloud(encrypted);
-            // Also push to Drive if the user is signed in (silent path).
-            try { await uploadBundleToGoogleDrive(encrypted); } catch {}
-          } else {
-            await uploadBundleToGoogleDrive(encrypted);
+            try { await saveBundleToICloud(encrypted); } catch {}
           }
-          return BackgroundFetch.BackgroundFetchResult.NewData;
+          if (driveOptedIn) {
+            try { await uploadBundleToGoogleDrive(encrypted); } catch {}
+          }
+          return serverOk
+            ? BackgroundFetch.BackgroundFetchResult.NewData
+            : BackgroundFetch.BackgroundFetchResult.Failed;
         } catch (e) {
           return BackgroundFetch.BackgroundFetchResult.Failed;
         }
@@ -1249,6 +1371,73 @@ export async function backupToGoogleDriveNow(passphrase, opts = {}) {
   const r = await uploadBundleToGoogleDrive(encrypted);
   if (opts.rememberPassphrase) await rememberPassphrase(passphrase);
   return { ...r, manifest, size_bytes };
+}
+
+/** One-shot "Salvar no servidor Chatyy" — backend-hosted MVP path. */
+export async function backupToServerNow(passphrase, opts = {}) {
+  const { encrypted, manifest, size_bytes } = await exportChatBundle(passphrase, opts);
+  const r = await uploadBundleToServer(encrypted);
+  if (opts.rememberPassphrase) await rememberPassphrase(passphrase);
+  return { ...r, manifest, size_bytes };
+}
+
+/**
+ * runBackup() — single entry point used by the daily scheduler. Prefers the
+ * server-hosted path (always works) and additionally mirrors to providers
+ * the user explicitly opted into (Drive refresh token in keychain, or iOS
+ * for iCloud). Reads the cached passphrase from SecureStore; if absent, the
+ * caller is responsible for surfacing the "set up backup" UI before running.
+ *
+ * Returns: { serverId, mirroredToDrive, mirroredToICloud, size_bytes } or
+ * throws if no passphrase + no server reachable.
+ */
+export async function runBackup(opts = {}) {
+  const passphrase = opts.passphrase
+    || (await SecureStore.getItemAsync('chatyy_cloud_backup_passphrase').catch(() => null));
+  if (!passphrase) {
+    const e = new Error('no passphrase cached — user must complete backup setup first');
+    e.code = 'ERR_NO_PASSPHRASE';
+    throw e;
+  }
+
+  const { encrypted, size_bytes, manifest } = await exportChatBundle(passphrase, opts);
+
+  // 1. Server (always, unless explicitly disabled by caller).
+  let serverId = null;
+  let serverErr = null;
+  if (opts.preferServer !== false) {
+    try {
+      const r = await uploadBundleToServer(encrypted);
+      serverId = r.id;
+    } catch (e) {
+      serverErr = e;
+    }
+  }
+
+  // 2. Provider mirrors — only when the user previously opted in.
+  let mirroredToDrive = false;
+  let mirroredToICloud = false;
+
+  const driveOptedIn = await SecureStore.getItemAsync(SS_DRIVE_REFRESH).catch(() => null);
+  if (driveOptedIn && opts.skipDrive !== true) {
+    try {
+      await uploadBundleToGoogleDrive(encrypted);
+      mirroredToDrive = true;
+    } catch {}
+  }
+  if (Platform.OS === 'ios' && opts.skipICloud !== true) {
+    try {
+      await saveBundleToICloud(encrypted);
+      mirroredToICloud = true;
+    } catch {}
+  }
+
+  // If everything failed, propagate. If at least one path worked, return.
+  if (!serverId && !mirroredToDrive && !mirroredToICloud) {
+    throw serverErr || new Error('all backup destinations failed');
+  }
+
+  return { serverId, mirroredToDrive, mirroredToICloud, size_bytes, manifest };
 }
 
 /**
