@@ -96,14 +96,20 @@ export default function LoginScreen() {
   };
 
   // After a successful login, decide whether to surface the
-  // RestoreBackupPrompt before navigating. "New device" heuristic:
-  //   - SQLite getConversations() returns empty/null (no local chats)
-  //   - AND listBackups() returns >= 1 backup in iCloud/Google Drive
-  //   - AND the user hasn't tapped "Pular" (@chatyy_skip_restore !== '1')
-  // Web is excluded — the native module isn't available there.
-  // If any check fails / throws, we just navigate normally — restore is
-  // an opt-in enhancement, never a blocker.
-  const maybePromptRestoreThenGo = useCallback(async (isKids) => {
+  // RestoreBackupPrompt before navigating. "New device" heuristic, in order:
+  //   1. AsyncStorage(@chatyy_skip_restore) !== '1'  (user never tapped Pular)
+  //   2. MMKV(restore_prompted:<email>) is empty     (not asked this session)
+  //   3. SQLite dbGetConversations().length === 0    (no local chats yet)
+  //   4. EITHER api.chatBackupList() returns ≥1 server-hosted backup
+  //      OR     expo-chat-backup.listBackups() returns ≥1 iCloud/Drive backup
+  //
+  // Server-hosted path is preferred (always reachable — backend stores the
+  // CYB2 blob under sha256(email)/, the Wave-7 path). Drive/iCloud remains
+  // a secondary mirror for users who configured OAuth.
+  //
+  // If any check fails / throws, we navigate normally — restore is an
+  // opt-in enhancement, never a blocker.
+  const maybePromptRestoreThenGo = useCallback(async (isKids, accountEmail) => {
     const target = postLoginTarget || defaultTarget(isKids);
     pendingNavRef.current = { target };
 
@@ -116,26 +122,86 @@ export default function LoginScreen() {
     if (Platform.OS === 'web') { doNav(); return; }
 
     try {
+      // Gate 1 — global "never ask again" flag.
       const skipped = await AsyncStorage.getItem('@chatyy_skip_restore');
       if (skipped === '1') { doNav(); return; }
 
+      // Gate 2 — per-account "already prompted this install" flag (MMKV
+      // mirror keyed by email). Prevents reshowing on every cold-start after
+      // the user already declined (or restored) for this account.
+      let email = (accountEmail || '').toLowerCase().trim();
+      if (!email) {
+        try { email = (api.getActiveAccountEmail?.() || '').toLowerCase().trim(); } catch {}
+      }
+      let mmkv = null;
+      try {
+        const { MMKV } = require('react-native-mmkv');
+        mmkv = new MMKV({ id: 'chatyy-backup' });
+        if (email) {
+          const v = mmkv.getString(`restore_prompted:${email}`);
+          if (v === '1') { doNav(); return; }
+        }
+      } catch { /* mmkv unavailable — fall through and ask anyway */ }
+
+      // Gate 3 — local SQLite already has conversations? skip.
       let convs = null;
       try {
-        const localDb = require('../services/localDb');
-        if (typeof localDb.getConversations === 'function') {
-          convs = await localDb.getConversations();
+        const dbMod = require('../services/db');
+        if (typeof dbMod.dbGetConversations === 'function') {
+          convs = await dbMod.dbGetConversations(true);
         }
-      } catch { /* localDb may not be initialised yet — treat as empty */ }
+      } catch {
+        try {
+          const localDb = require('../services/localDb');
+          if (typeof localDb.getConversations === 'function') {
+            convs = await localDb.getConversations();
+          }
+        } catch { /* db not initialised — treat as empty */ }
+      }
       if (Array.isArray(convs) && convs.length > 0) { doNav(); return; }
 
-      let backups = [];
+      // Gate 4 — fetch the server-hosted backup list. This is the primary
+      // path because the backend always has the blob (Wave-7 stores under
+      // chat-backups/sha256(email)/). Drive/iCloud auth may not be set up.
+      let serverBackups = [];
       try {
-        const ChatBackup = require('expo-chat-backup');
-        backups = await ChatBackup.listBackups();
-      } catch { backups = []; }
-      if (!Array.isArray(backups) || backups.length === 0) { doNav(); return; }
+        const resp = await api.chatBackupList();
+        // apiCall unwraps to either { backups: [...] } or { data:{ backups } }.
+        const list = resp?.backups || resp?.data?.backups || [];
+        serverBackups = Array.isArray(list) ? list : [];
+      } catch { serverBackups = []; }
 
-      setRestoreBackups(backups);
+      // Fallback — try the native module (expo-chat-backup) for iCloud/Drive
+      // backups when no server-hosted blob exists. Same UI either way.
+      let cloudBackups = [];
+      if (serverBackups.length === 0) {
+        try {
+          const ChatBackup = require('expo-chat-backup');
+          cloudBackups = await ChatBackup.listBackups();
+        } catch { cloudBackups = []; }
+      }
+
+      const merged = serverBackups.length > 0
+        // Server-hosted backups — normalise to the shape RestoreBackupPrompt
+        // already renders (filename + createdAt + size), tag with `source`
+        // so the restore handler knows which path to call.
+        ? serverBackups.map((b) => ({
+            source: 'server',
+            id: b.id,
+            filename: `backup-${b.id}.enc`,
+            createdAt: b.created_at,
+            size: b.size_bytes || 0,
+          }))
+        : (Array.isArray(cloudBackups) ? cloudBackups.map((b) => ({ source: 'cloud', ...b })) : []);
+
+      if (merged.length === 0) { doNav(); return; }
+
+      // Mark prompted — write BEFORE showing so even if the user kills the
+      // app mid-prompt we don't pester them next launch. They can still
+      // hit "Restaurar conversas" manually from /chat-backup.
+      try { if (mmkv && email) mmkv.set(`restore_prompted:${email}`, '1'); } catch {}
+
+      setRestoreBackups(merged);
       setShowRestorePrompt(true);
       // Navigation deferred — fires inside handleRestorePromptClose below.
     } catch {
@@ -660,7 +726,7 @@ export default function LoginScreen() {
         // Kids go to chat, adults go to inbox
         safeHaptic(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success));
         const isKids = r.data?.is_child || isChildAccount();
-        maybePromptRestoreThenGo(isKids);
+        maybePromptRestoreThenGo(isKids, fullEmail);
       } else {
         // Backend returns "Incorrect email or password" in English + various
         // generic transport errors ("Servidor indisponivel", "Login failed").
@@ -710,7 +776,7 @@ export default function LoginScreen() {
                 } catch {}
               }
               setTimeout(() => {
-                if (mountedRef.current) maybePromptRestoreThenGo(isChildAccount());
+                if (mountedRef.current) maybePromptRestoreThenGo(isChildAccount(), chEmail);
               }, 800);
             }
           } else if (r.data.status === 'denied') {
@@ -808,7 +874,7 @@ export default function LoginScreen() {
               api.chatDeviceKeyPublish(did, pub, kind).catch(() => {});
             } catch (e) { /* non-fatal */ }
             setTimeout(() => {
-              if (mountedRef.current) maybePromptRestoreThenGo(isChildAccount());
+              if (mountedRef.current) maybePromptRestoreThenGo(isChildAccount(), res.data.email);
             }, 800);
           }
         } else if (res.data?.status === 'expired') {
@@ -1040,7 +1106,7 @@ export default function LoginScreen() {
           toValue: 1, friction: 5, tension: 90, useNativeDriver: true,
         }).start();
         setTimeout(() => {
-          if (mountedRef.current) maybePromptRestoreThenGo(isChildAccount());
+          if (mountedRef.current) maybePromptRestoreThenGo(isChildAccount(), r.data.email);
         }, 800);
         return;
       }

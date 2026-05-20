@@ -5665,8 +5665,10 @@ export async function chatPinnedMessages(conversationId) {
         } catch (e) {
           const code = e?.code || '';
           if (code === 'phone_offline' || code === 'relay_timeout' || code === 'no_paired_device' || code === 'request_timeout') {
-            try { globalThis.__chatyy_phone_offline = true; } catch {}
-            // No dedicated IDB cache for pinned — fall through to REST.
+            // [#1227 2026-05-20] No banner — PG via REST handles pinned list.
+            // The relay path was a perf optimization; falling through is the
+            // correct behavior. Wave 3 killed 4 spots; this was the 5th.
+            try { globalThis.__chatyy_phone_offline = false; } catch {}
           }
         }
       }

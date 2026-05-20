@@ -130,10 +130,23 @@ async function _drainLoop(conversationId) {
   }
 }
 
+// Media types we treat as "needs upload before chat_send".
+const MEDIA_TYPES = new Set(['image', 'video', 'voice', 'audio', 'file']);
+
 async function _processRow(row) {
   const cmi = row.client_message_id;
   const claimed = await markSending(cmi);
   if (!claimed) return; // someone else got it (boot race)
+
+  const payload = row.payload || {};
+  const ptype = payload.type || 'text';
+
+  // Media branch — upload local_uri then chain chat_send. WS-first path is
+  // text-only because the WS hub has no upload primitive.
+  if (MEDIA_TYPES.has(ptype)) {
+    await _uploadAndSendMedia(row);
+    return;
+  }
 
   // Try WS-first when authenticated and we have a chat_send-shaped payload.
   // Falls back to HTTP on timeout/error/socket-down.
@@ -147,6 +160,133 @@ async function _processRow(row) {
   }
   // WS path didn't land in time → HTTP fallback.
   await _httpSend(row);
+}
+
+// ---------------------------------------------------------------------------
+// Media upload-then-send path
+// ---------------------------------------------------------------------------
+//
+// Mirrors uploadAndSendFile() in app/chat-conversation.js (the foreground
+// path) but for offline-queued rows: read the persisted local_uri, push to
+// R2 via rustUpload (PHP fallback), then chat_send with the resulting
+// cdn_url. Marks the outbox row 'sent' on success, 'failed' otherwise.
+//
+// Platform caveats:
+//   - Native: file:// URIs in documentDirectory persist across launches, so
+//     a row enqueued days ago can still be uploaded.
+//   - Web: blob:URLs die when the tab closes. payload._blob_lost=true is set
+//     on hydrate (by chat-conversation's replay UI). We hard-fail those rows
+//     so the UI can prompt re-attach instead of looping forever.
+async function _uploadAndSendMedia(row) {
+  const api = _api();
+  if (!api) {
+    await markFailed(row.client_message_id, 'api_unavailable');
+    return;
+  }
+  const p = row.payload || {};
+  const cmi = row.client_message_id;
+  const localUri = p.local_uri || p.uri || p.file_url || null;
+  const mimeType = p.mime_type || p.type_mime || '';
+  const fileName = p.file_name || p.name || 'file';
+  const fileSize = p.file_size || 0;
+  const msgType = p.type || 'file'; // image|video|voice|audio|file
+  const caption = p.caption || p.content || '';
+
+  // Web blob lost after reload — hard fail. UI shows "re-attach" prompt
+  // bound to the failed row's client_message_id.
+  if (p._blob_lost) {
+    await markFailed(cmi, 'blob_lost');
+    return;
+  }
+  if (!localUri) {
+    await markFailed(cmi, 'no_local_uri');
+    return;
+  }
+
+  const filePayload = {
+    uri: localUri,
+    name: fileName,
+    type: mimeType,
+    size: fileSize,
+  };
+
+  try {
+    // Try Rust direct-to-R2 upload first; fall back to PHP chatUploadFile.
+    let cdnUrl = null;
+    let serverSize = fileSize;
+    let serverName = fileName;
+    let rustResult = null;
+    try {
+      if (fileSize > 1 * 1024 * 1024 && api.rustChunkedUpload) {
+        rustResult = await api.rustChunkedUpload(filePayload, p.sender_email || null, 'chat');
+      } else if (api.rustUpload) {
+        rustResult = await api.rustUpload(filePayload, p.sender_email || null, 'chat');
+      }
+    } catch (e) {
+      // Rust path failed — silent, PHP fallback below.
+      rustResult = null;
+    }
+    if (rustResult?.success && rustResult.cdn_url) {
+      cdnUrl = rustResult.cdn_url;
+      serverSize = rustResult.size || fileSize;
+      serverName = rustResult.filename || fileName;
+    }
+
+    let r = null;
+    if (cdnUrl) {
+      // Rust uploaded — call chat_send with the cdn_url.
+      r = await api.apiCall('chat_send', {
+        conversation_id: p.conversation_id,
+        content: caption || '',
+        type: msgType,
+        file_url: cdnUrl,
+        file_name: serverName,
+        file_size: serverSize,
+        view_once: p.view_once ? 1 : 0,
+        client_message_id: cmi,
+        temp_id: p.temp_id || null,
+      }, 'POST');
+    } else if (api.chatUploadFile) {
+      // PHP fallback — single combined upload + chat_send.
+      r = await api.chatUploadFile(
+        p.conversation_id,
+        filePayload,
+        caption,
+        !!p.view_once,
+        null,
+        msgType,
+        null,
+      );
+    }
+
+    if (r && (r.success || r.message_id || r.data?.message_id)) {
+      const serverId = r.message_id || r.data?.message_id || r.data?.message?.id || r.message?.id || null;
+      await markSent(cmi, serverId);
+      // Emit a WS-style local fan-out so any mounted chat screen swaps the
+      // optimistic bubble for the server-canonical row. Same hook the
+      // offlineCache replay path uses.
+      try {
+        const ws = _ws();
+        const serverMsg = r.data?.message || r.data || { id: serverId, client_message_id: cmi };
+        ws?.emit?.('chat_message', {
+          conversation_id: p.conversation_id,
+          message: serverMsg,
+        });
+        ws?.relayChatMessage?.(p.conversation_id, serverMsg, p.temp_id || null, []);
+      } catch {}
+      return;
+    }
+
+    const errMsg = r?.message || r?.error || 'upload_failed';
+    // Hard errors (413/415/403/size/mime) shouldn't retry; sentinel the row
+    // so markFailed treats max-attempts as permanent. We don't have a
+    // 'hard fail' flag in messageOutbox, so we fast-fail by pushing attempts
+    // to MAX via marking failed in a loop is overkill — simpler: pass the
+    // error string and let backoff burn off naturally (UI shows failed).
+    await markFailed(cmi, errMsg);
+  } catch (e) {
+    await markFailed(cmi, e);
+  }
 }
 
 // ---------------------------------------------------------------------------

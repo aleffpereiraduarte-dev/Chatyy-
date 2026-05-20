@@ -6,11 +6,17 @@
 //   - Platform.OS !== 'web'
 //   - the user has NOT previously dismissed this prompt
 //     (@chatyy_skip_restore !== '1')
-//   - services/localDb.getConversations() returns an empty/null list
+//   - services/db.dbGetConversations() returns an empty/null list
 //     (no local chats yet — heuristic for "fresh install on new device")
-//   - expo-chat-backup.listBackups() returns >= 1 backup
+//   - api.chatBackupList() returns ≥1 server-hosted backup, OR
+//     expo-chat-backup.listBackups() returns ≥1 iCloud/Drive backup
 //
 // The whole feature is no-op on web (the native module is iOS/Android only).
+//
+// Each backup entry carries a `source` field — 'server' (Wave-7 backend
+// blob, downloaded + decrypted in-process via chatBackupCloud.downloadAndRestore)
+// or 'cloud' (legacy expo-chat-backup native restore path). The restore
+// handler branches on `source` to call the right pipeline.
 //
 // Strings are hardcoded pt-BR for the first cut. TODO: extract to
 // i18n/pt-BR.js / en.js / es.js under `backup.restorePrompt.*` once the
@@ -175,28 +181,61 @@ export default function RestoreBackupPrompt({ visible, onClose, backups: backups
       setRestoreError('Digite a senha do backup.');
       return;
     }
-    if (!ChatBackup?.restoreFromBackup) {
-      setRestoreError('Modulo de backup nao disponivel.');
-      return;
-    }
     setStage('restoring');
     setPhaseLabel(PHASES[0].label);
     setRestoreError(null);
+
     try {
-      const r = await ChatBackup.restoreFromBackup(selected.filename, password);
-      setRestoredCount(r?.messageCount || 0);
+      let restoredCount = 0;
+
+      // Branch on source — server-hosted goes through chatBackupCloud
+      // (download via api, decrypt locally with nacl.secretbox, restore via
+      // chat_restore_from_blob); cloud-provider goes through the legacy
+      // native module expo-chat-backup (iCloud/Drive in-process restore).
+      if (selected.source === 'server') {
+        // Lazy-require so RestoreBackupPrompt remains lightweight when the
+        // server path isn't needed (e.g. a Drive-only backup pick).
+        const chatBackupCloud = require('../services/chatBackupCloud');
+        if (typeof chatBackupCloud.downloadAndRestore !== 'function') {
+          throw new Error('downloadAndRestore unavailable');
+        }
+        const r = await chatBackupCloud.downloadAndRestore(selected.id, password, {
+          onProgress: (p) => {
+            if (p?.stage === 'download') setPhaseLabel(PHASES[0].label);
+            else if (p?.stage === 'decrypt') setPhaseLabel(PHASES[1].label);
+            else if (p?.stage === 'restore') {
+              const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
+              setPhaseLabel(`Restaurando mensagens... ${pct}%`);
+            }
+          },
+        });
+        restoredCount = (r?.inserted || 0) + (r?.skipped || 0);
+      } else {
+        // Legacy iCloud/Drive native path.
+        if (!ChatBackup?.restoreFromBackup) {
+          throw new Error('Modulo de backup nao disponivel.');
+        }
+        const r = await ChatBackup.restoreFromBackup(selected.filename, password);
+        restoredCount = r?.messageCount || 0;
+      }
+
+      setRestoredCount(restoredCount);
       setStage('done');
       try { onRestored?.(); } catch {}
     } catch (e) {
       const msg = String(e?.message || e || '');
-      // Heuristic mapping: GCM tag mismatch / bad MAC → wrong password.
+      const code = e?.code || '';
       const lower = msg.toLowerCase();
       let userMsg;
-      if (lower.includes('mac') || lower.includes('gcm') || lower.includes('decrypt') || lower.includes('password') || lower.includes('senha')) {
+      // ERR_DECRYPT from chatBackupCloud OR generic mac/gcm hints from the
+      // native path → "Senha incorreta".
+      if (code === 'ERR_DECRYPT' || lower.includes('mac') || lower.includes('gcm') ||
+          lower.includes('decrypt') || lower.includes('password') || lower.includes('senha') ||
+          lower.includes('wrong passphrase')) {
         userMsg = 'Senha incorreta. Tente novamente.';
       } else if (lower.includes('corrupt') || lower.includes('magic') || lower.includes('format')) {
         userMsg = 'Backup corrompido. Tente outro arquivo.';
-      } else if (lower.includes('network') || lower.includes('download') || lower.includes('timeout')) {
+      } else if (code === 'ERR_DOWNLOAD' || lower.includes('network') || lower.includes('download') || lower.includes('timeout')) {
         userMsg = 'Falha ao baixar do cloud. Verifique sua conexao.';
       } else {
         userMsg = msg || 'Falha ao restaurar.';

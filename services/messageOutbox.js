@@ -168,6 +168,19 @@ async function _db_or_null() {
  * Enqueue a new send. `payload` MUST include client_message_id +
  * conversation_id. Returns { id, seq, state } or null if SQLite unavailable.
  * Idempotent — repeat CMI returns the existing row without re-insertion.
+ *
+ * Supported `payload.type` values:
+ *   - 'text'  : `content` is the plaintext (or envelope) string. WS-first.
+ *   - 'image' | 'video' | 'voice' | 'audio' | 'file':
+ *       Media row. Worker reads `local_uri` (file://…), uploads via Rust/PHP,
+ *       then chains `chat_send` with the resulting cdn_url. `mime_type`,
+ *       `file_size`, `file_name`, `caption` may be provided for richer
+ *       optimistic UI + server-side metadata. On web, `_blob_lost` should
+ *       be set to true on replay-after-reload because blob:URLs die when
+ *       the tab closes — the worker surfaces that as a re-attach prompt.
+ *
+ * Everything is JSON-serialized into the existing `payload` TEXT column —
+ * no schema migration needed.
  */
 export async function enqueue(payload) {
   if (Platform.OS === 'web') return null;

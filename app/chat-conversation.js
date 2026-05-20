@@ -12643,6 +12643,63 @@ export default function ChatConversationScreen() {
       };
       await savePendingMessage(conversationId, mediaPendingData);
     } catch {}
+
+    // [media-offline-queue 2026-05-20] Offline short-circuit: if the device
+    // is offline before we even attempt the upload, skip the network calls
+    // entirely and hand the row to messageOutbox (SQLite-backed). The
+    // sendWorker drains it on reconnect via NetInfo/AppState pokes. This
+    // matches WhatsApp's "compose offline → clock icon → sends on reconnect"
+    // pattern; previously we'd burn through retries and alert the user.
+    //
+    // Web caveat: the optimistic bubble holds a blob: URL which dies on
+    // tab close. We still enqueue so a quick reconnect (without reload) works,
+    // and the worker fast-fails with 'blob_lost' if the URI is gone after a
+    // reload — UI surfaces a "re-attach" affordance against the failed row.
+    let _isOffline = false;
+    try {
+      if (Platform.OS === 'web') {
+        _isOffline = (typeof navigator !== 'undefined') && navigator.onLine === false;
+      } else {
+        const { getNetworkState } = require('../services/networkInfo');
+        const ns = getNetworkState?.();
+        _isOffline = ns && ns.isConnected === false;
+      }
+    } catch {}
+    if (_isOffline && OUTBOX_V2_ONLY) {
+      try {
+        await messageOutbox.enqueue({
+          client_message_id: msgId,
+          conversation_id: conversationId,
+          temp_id: tempId,
+          type: fileType,
+          local_uri: localUri || file?.uri || '',
+          mime_type: file?.type || mimeType || '',
+          file_name: file?.name || 'file',
+          file_size: file?.size || file?.blob?.size || 0,
+          caption: caption || '',
+          view_once: forceViewOnce ? 1 : 0,
+          sender_email: user?.email,
+          created_at: optimisticMsg.created_at,
+          _blob_lost: false,
+        });
+      } catch {}
+      // Flip the bubble to the queued state — ⏱ clock icon, no spinner.
+      // Identical to the "transient network error" branch below so the
+      // visual language stays consistent.
+      setMessages(prev => prev.map(m => m.id === tempId ? {
+        ...m,
+        _failed: false,
+        _pending: true,
+        _queued: true,
+        _uploading: false,
+        pending_state: 'queued',
+      } : m));
+      setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
+      setUploading(false);
+      // No alert — the bubble's clock icon is the user-facing signal that
+      // this will be sent when the connection comes back.
+      return;
+    }
     setUploadProgress(prev => ({ ...prev, [tempId]: 0 }));
     // Register an AbortController so the X button on the pending bubble can
     // actually cancel. rustUpload/chatUploadFile each accept a signal via

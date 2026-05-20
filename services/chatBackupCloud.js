@@ -1440,6 +1440,92 @@ export async function runBackup(opts = {}) {
   return { serverId, mirroredToDrive, mirroredToICloud, size_bytes, manifest };
 }
 
+// ═════════════════════════════════════════════════════════════════════════
+// 5a. One-shot "fresh install" restore from a server-hosted backup.
+// ═════════════════════════════════════════════════════════════════════════
+//
+// Combines downloadServerBackup() + restoreBundle() into the single helper
+// that the RestoreBackupPrompt (post-login on a new device) calls. The
+// bundle is fetched as a CYB2 envelope, decrypted with the user passphrase
+// in-process (server never sees it), and the JSON manifest + messages list
+// is POSTed back to chat_restore_from_blob in 1000-row chunks (handled
+// inside restoreBundle).
+//
+// Returns { inserted, skipped, total, manifest } so the UI can render the
+// "X mensagens restauradas" confirmation. Throws with .code = 'ERR_DECRYPT'
+// when the passphrase is wrong (caller surfaces the "Senha incorreta" copy).
+
+/**
+ * Download a server-hosted backup by id, decrypt with the passphrase, and
+ * push the bundle back through chat_restore_from_blob.
+ *
+ * @param {string} backupId  Id from chat_backup_list (timestamp string).
+ * @param {string} passphrase  User passphrase (or recovery code).
+ * @param {object} [opts]
+ * @param {(p:{stage:string,done?:number,total?:number}) => void} [opts.onProgress]
+ *   Progress reporter — receives:
+ *     • { stage:'download' }                — fetch in flight
+ *     • { stage:'decrypt' }                 — KDF + secretbox open
+ *     • { stage:'restore', done, total }    — per-chunk POST
+ *     • { stage:'done', inserted, skipped } — terminal
+ */
+export async function downloadAndRestore(backupId, passphrase, opts = {}) {
+  if (!backupId) throw new Error('backup_id required');
+  if (!passphrase || typeof passphrase !== 'string' || passphrase.length < 1) {
+    const e = new Error('passphrase required');
+    e.code = 'ERR_NO_PASSPHRASE';
+    throw e;
+  }
+  const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : () => {};
+
+  onProgress({ stage: 'download' });
+
+  // downloadServerBackup() already handles the decrypt path internally —
+  // we re-implement the fetch here to surface the decrypt stage separately
+  // so the UI can rotate the phase labels (download → decrypt → restore).
+  const apiUrl = api.getApiUrl?.() || 'https://chatyy.com.br/api/email.php';
+  const authToken = api.getAuthToken?.() || null;
+  const headers = {};
+  if (authToken) headers.Authorization = `Bearer ${authToken}`;
+  const url = `${apiUrl}?action=chat_backup_download&backup_id=${encodeURIComponent(backupId)}`;
+  const r = await fetch(url, { headers, credentials: 'include' });
+  if (!r.ok) {
+    const e = new Error(`Server download failed (${r.status})`);
+    e.code = 'ERR_DOWNLOAD';
+    throw e;
+  }
+  let buf;
+  try { buf = await r.arrayBuffer(); }
+  catch {
+    const blob = await r.blob();
+    buf = await new Promise((res, rej) => {
+      const fr = new FileReader();
+      fr.onloadend = () => res(fr.result);
+      fr.onerror = rej;
+      fr.readAsArrayBuffer(blob);
+    });
+  }
+  const encrypted = new Uint8Array(buf);
+
+  onProgress({ stage: 'decrypt' });
+  let bundle;
+  try {
+    bundle = decryptChatBundle(encrypted, passphrase);
+  } catch (e) {
+    const err = new Error(e?.message || 'decrypt failed');
+    err.code = 'ERR_DECRYPT';
+    throw err;
+  }
+
+  // Restore — chunked POST to chat_restore_from_blob with progress.
+  const result = await restoreBundle(bundle, {
+    onProgress: (p) => onProgress({ ...p, stage: 'restore' }),
+  });
+
+  onProgress({ stage: 'done', inserted: result.inserted, skipped: result.skipped });
+  return { ...result, manifest: bundle.manifest };
+}
+
 /**
  * Pretty-format a manifest into the WhatsApp-style confirmation string:
  * "Encontrado backup de DD/MM com N conversas e M mensagens."

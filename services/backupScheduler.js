@@ -27,6 +27,26 @@ import { runBackup } from './chatBackupCloud';
 
 const TASK_NAME = 'chatyy-backup-scheduler-daily';
 const SS_LAST_RUN_AT = 'chatyy_backup_scheduler_last_run_at';
+// MMKV mirror key — written alongside SecureStore so other modules (and the
+// restore-on-fresh-install prompt) can read the last-backup timestamp via
+// the synchronous MMKV API without paying the async SecureStore round-trip.
+// Read it back via getLastBackupAtMMKV() in this module, or directly with
+// `new MMKV({ id: 'chatyy-backup' }).getString('last_backup_at')`.
+const MMKV_LAST_BACKUP_AT = 'last_backup_at';
+
+// Lazy MMKV instance — react-native-mmkv isn't linked in web/test builds, so
+// we feature-detect and fall back to a no-op writer.
+let _mmkvInst = null;
+function _mmkv() {
+  if (_mmkvInst !== null) return _mmkvInst;
+  try {
+    const { MMKV } = require('react-native-mmkv');
+    _mmkvInst = new MMKV({ id: 'chatyy-backup' });
+  } catch {
+    _mmkvInst = false; // explicit "tried and failed" sentinel
+  }
+  return _mmkvInst || null;
+}
 
 // Gate thresholds.
 const MIN_INTERVAL_MS = 20 * 60 * 60 * 1000; // 20h since last successful run
@@ -85,7 +105,24 @@ async function _withinDailyWindow() {
 }
 
 async function _markRanNow() {
-  try { await SecureStore.setItemAsync(SS_LAST_RUN_AT, String(Date.now())); } catch {}
+  const now = Date.now();
+  try { await SecureStore.setItemAsync(SS_LAST_RUN_AT, String(now)); } catch {}
+  // Mirror to MMKV for synchronous access from the restore prompt + diag UI.
+  try {
+    const m = _mmkv();
+    if (m) m.set(MMKV_LAST_BACKUP_AT, String(now));
+  } catch {}
+  // Diagnostic log — gives us a visible signal in adb logcat / Console.app
+  // that the scheduler successfully fired today. The 20h window gate makes
+  // false-positives essentially impossible.
+  try {
+    // eslint-disable-next-line no-console
+    console.log(
+      '[backupScheduler] backup completed at',
+      new Date(now).toISOString(),
+      `(mmkv:${_mmkv() ? 'ok' : 'unavail'})`
+    );
+  } catch {}
 }
 
 /**
@@ -185,6 +222,24 @@ export async function runBackupNow(opts = {}) {
 export async function getLastScheduledRunAt() {
   try {
     const v = await SecureStore.getItemAsync(SS_LAST_RUN_AT);
+    const n = v ? parseInt(v, 10) : null;
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Synchronous accessor for the MMKV-mirrored timestamp. Useful when the
+ * caller can't afford an async SecureStore read (e.g. the login screen's
+ * restore-prompt heuristic, which has to decide before the first frame).
+ * Returns null when MMKV is unavailable or the timestamp was never written.
+ */
+export function getLastBackupAtMMKV() {
+  try {
+    const m = _mmkv();
+    if (!m) return null;
+    const v = m.getString(MMKV_LAST_BACKUP_AT);
     const n = v ? parseInt(v, 10) : null;
     return Number.isFinite(n) ? n : null;
   } catch {
