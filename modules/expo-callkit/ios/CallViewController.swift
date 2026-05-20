@@ -1389,7 +1389,7 @@ extension CallViewController: RoomDelegate {
         // video (renders the tile), but JS-side analytics / grid may want to
         // know when audio tracks get attached too.
         NativeCallRoom.shared.trackSubscribed(participantId: identity,
-                                              trackSid: publication.sid.map { "\($0)" } ?? "",
+                                              trackSid: "\(publication.sid)",
                                               kind: kind)
         guard publication.kind == .video else { return }
         guard let track = publication.track as? VideoTrack else {
@@ -1414,7 +1414,7 @@ extension CallViewController: RoomDelegate {
         let kind = (publication.kind == .video) ? "video" : "audio"
         // [#1207 NativeCallRoom REAL] Fanout unsubscribe for both kinds.
         NativeCallRoom.shared.trackUnsubscribed(participantId: identity,
-                                                trackSid: publication.sid.map { "\($0)" } ?? "",
+                                                trackSid: "\(publication.sid)",
                                                 kind: kind)
         guard publication.kind == .video else { return }
         print("[CallVC] didUnsubscribeTrack — remote video gone")
