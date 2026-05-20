@@ -801,23 +801,10 @@ class ExpoCallKitModule : Module() {
       lkToken: String?
       ->
       try {
-        // [#1208 2026-05-19 foreground gate] If MainActivity is foreground,
-        // the rich /call.js JS UI is on screen (or about to mount via the
-        // MobileNativeBridge JS gate) and owns all the features —
-        // invite-friend, audio→video upgrade, screenshare, group grid, emoji
-        // reactions — that the Compose CallActivity doesn't have yet.
-        // Launching CallActivity now would create "duas telas de ligação" the
-        // user complained about: the JS call screen behind, the Compose
-        // CallActivity on top, with conflicting state. Skip. The JS path
-        // adopts any pre-connected LiveKit Room via
-        // `adoptNativeRoom(callId)` (NativeCallRoom singleton already
-        // populated by IncomingCallActivity.onAccept in the cold-start path).
-        // Background / killed paths (cold-start incoming, multi-device
-        // cancel) fall through and launch CallActivity as before.
-        if (isAppForeground) {
-          Log.d(TAG, "openNativeCall #1208: app foreground — skipping CallActivity for callId=$callId, JS owns UI")
-          return@AsyncFunction
-        }
+        // [#1217 2026-05-19] FULL NATIVE — gate reverted per user decision.
+        // Always launch CallActivity for every call (incoming or outgoing,
+        // foreground or background). The dual-UI approach (JS when
+        // foreground, native when background) caused too many edge cases.
         // [#1172 native-call-in-background fix, 2026-05-18] When MainActivity
         // is foreground (user tapping "Ligar" from chat), launching with just
         // FLAG_ACTIVITY_NEW_TASK + manifest singleTop is NOT enough — the OS
@@ -898,27 +885,8 @@ class ExpoCallKitModule : Module() {
         ?: "call_${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().substring(0, 8)}"
 
       try {
-        // [#1208 2026-05-19 foreground-outgoing gate] User insight: "pra ligar
-        // ele já tá dentro do app — o nativo é só pra receber". When
-        // MainActivity is foreground and JS calls startOutgoingCall, the
-        // rich /call.js JS UI is the right surface (invite-friend,
-        // audio→video upgrade, screenshare, group grid, emoji reactions) —
-        // Compose CallActivity would be a downgrade and creates the "duas
-        // telas" conflict the user reported. Skip launching CallActivity;
-        // return success so the JS Promise resolves and JS renders
-        // <CallScreenInner />. The JS side is responsible for the WS
-        // call_invite (via /call.js LiveKit room.connect + chat_call_signal
-        // backend hop). Server-side call accounting (call_status row, push
-        // fanout to callee) is unchanged.
-        //
-        // Background path (Siri shortcut, share-sheet redial, system widget
-        // initiating a call when the app isn't foreground) falls through to
-        // the legacy CallActivity launch — that's the only time the native
-        // UI is appropriate for outgoing.
-        if (isAppForeground) {
-          Log.d(TAG, "startOutgoingCall #1208: app foreground — skipping CallActivity for callId=$callId, JS /call.js owns UI")
-          return@AsyncFunction true
-        }
+        // [#1217 2026-05-19] FULL NATIVE — gate reverted. Always launch
+        // CallActivity for outgoing calls.
         // [#1172 native-call-in-background fix, 2026-05-18] Same foreground-
         // forcing flag set as openNativeCall above. Without REORDER_TO_FRONT
         // the OS keeps MainActivity's task on top and CallActivity (in its

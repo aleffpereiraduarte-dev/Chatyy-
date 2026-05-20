@@ -5071,10 +5071,6 @@ function MobileNativeBridge() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const dispatchedRef = useRef(false);
-  // [#1208] When the gate decides JS-owns-this-call, flip to render
-  // <CallScreenInner /> instead of returning null (which would unmount and
-  // pop back into chat). This is the foreground-outgoing fast path.
-  const [renderJsUI, setRenderJsUI] = useState(false);
 
   useEffect(() => {
     if (dispatchedRef.current) return;
@@ -5086,54 +5082,13 @@ function MobileNativeBridge() {
     const isCaller = params.isCaller === '1' || params.isCaller === 'true' || params.isCaller === 1 || params.isCaller === true;
     const conversationId = String(params.conversationId || '');
 
-    // [#1208 foreground gate] If the user is already inside the app
-    // (AppState 'active'), render the JS UI directly — preserves
-    // invite-friend, audio→video upgrade, screenshare, group grid, emoji
-    // reactions. Applies to BOTH outgoing AND incoming-while-foreground.
-    //
-    // For outgoing: we still call the native side (best-effort) to register
-    // the CallKit CXStartCallAction (iOS — needed for Recents + lock-screen
-    // pill) and persist accepting state (Android — needed for ongoing-call
-    // service); the native module's startOutgoingCall has its own foreground
-    // gate that suppresses presenting the native VC but keeps OS-level call
-    // accounting.
-    //
-    // For incoming + foreground: the call is already known to CallKit
-    // (PushKit/CXProvider on iOS) or FCM (Android); JS just adopts any
-    // pre-connected LiveKit Room via adoptNativeRoom inside CallScreenInner.
-    // We DON'T call openNativeCall here because the native module would skip
-    // anyway (also has foreground gate) and the bridge call is wasted.
-    const isForeground = AppState.currentState === 'active';
-
-    if (isForeground && isCaller) {
-      // [#1209 2026-05-19] Foreground OUTGOING: chat-conversation /
-      // ChatCallsTab / one.js now push /call directly when foreground (they
-      // also fire callNotify themselves). We just render the rich JS UI.
-      // We deliberately DO NOT call native startOutgoingCall here anymore —
-      // doing so was the root cause of "duas telas JS aparecendo": the
-      // native module presented the CallView/CallActivity (older builds
-      // without the suppress gate), or queued a CallKit transaction whose
-      // delegate path would still attempt to present a VC, both racing
-      // with the JS CallScreenInner that we mount below. The chat-side
-      // callsite owns the lifecycle now; if we need CallKit Recents
-      // registration in the future, do it once from inside CallScreenInner
-      // (where we already have the LK Room) and not here.
-      setRenderJsUI(true);
-      return;
-    }
-
-    if (isForeground && !isCaller) {
-      // Foreground INCOMING — already on screen via JS modal/listener.
-      // Render the rich JS UI which will call adoptNativeRoom(callId) on
-      // mount to attach to any LK Room pre-connected by the answer path.
-      // No native bridge call needed.
-      setRenderJsUI(true);
-      return;
-    }
-
-    // Default path: app is NOT foreground OR this is the cold-start adoption
-    // path (incoming routed via router.push after native answer). Dispatch to
-    // native CallActivity / CallViewController as before.
+    // [#1217 2026-05-19] FULL NATIVE — user decision after dual-UI
+    // conflicts kept resurfacing. Every call (outgoing or incoming, foreground
+    // or background) dispatches to the native CallActivity / CallViewController.
+    // The JS /call.js screen is now a stateless thin shell: it bridges to
+    // native, pops itself, and the native UI takes over as the foreground.
+    // No more renderJsUI branch, no more foreground gate. Native module is
+    // the single source of truth for call presentation.
     (async () => {
       try {
         const callkit = require('../modules/expo-callkit');
@@ -5163,14 +5118,10 @@ function MobileNativeBridge() {
     })();
   }, []);
 
-  // [#1208] Foreground-outgoing path: render the rich JS UI in-place.
-  if (renderJsUI) {
-    return (
-      <CallErrorBoundary>
-        <CallScreenInner />
-      </CallErrorBoundary>
-    );
-  }
+  // [#1217] Full-native path: render nothing — the native CallActivity /
+  // CallViewController owns the foreground. We pop ourselves via router.back()
+  // inside the dispatch effect above. Returning null prevents the JS UI from
+  // flashing during the brief window between mount and pop.
   return null;
 }
 

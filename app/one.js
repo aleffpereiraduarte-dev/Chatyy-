@@ -2224,35 +2224,26 @@ export default function OneScreen() {
           const callId = `one_${Date.now()}`;
           const contactEmail = params.contact_email;
           const contactName = contactEmail.split('@')[0];
-          // [#1209 2026-05-19] Foreground = JS owns the call surface. Push
-          // /call directly; MobileNativeBridge inside /call.js fires the
-          // CallKit hook (suppressed VC) and renders the rich JS UI. The
-          // legacy voipNative path is kept for background invocations
-          // (Siri shortcut, system widget triggering /one from outside).
+          // [#1217 2026-05-19] FULL NATIVE — /one start_call goes through
+          // voipNative on mobile, web falls back to /call.js.
           if (Platform.OS === 'ios' || Platform.OS === 'android') {
-            const { AppState: _AppState } = require('react-native');
-            const isForeground = _AppState.currentState === 'active';
-            if (isForeground) {
-              router.push(`/call?contactEmail=${encodeURIComponent(contactEmail)}&contactName=${encodeURIComponent(contactName)}&isVideo=${video}&isCaller=1&callId=${callId}`);
-            } else {
-              (async () => {
-                try {
-                  const voipNative = require('../services/voipNative');
-                  const { native } = await voipNative.startOutgoingCall({
-                    calleeEmail: contactEmail,
-                    calleeName: contactName,
-                    isVideo: !!params.video,
-                    callId,
-                  });
-                  if (!native) {
-                    router.push(`/call?contactEmail=${encodeURIComponent(contactEmail)}&contactName=${encodeURIComponent(contactName)}&isVideo=${video}&isCaller=1&callId=${callId}`);
-                  }
-                } catch (e) {
-                  console.warn('[one start_call] startOutgoingCall failed:', e);
+            (async () => {
+              try {
+                const voipNative = require('../services/voipNative');
+                const { native } = await voipNative.startOutgoingCall({
+                  calleeEmail: contactEmail,
+                  calleeName: contactName,
+                  isVideo: !!params.video,
+                  callId,
+                });
+                if (!native) {
                   router.push(`/call?contactEmail=${encodeURIComponent(contactEmail)}&contactName=${encodeURIComponent(contactName)}&isVideo=${video}&isCaller=1&callId=${callId}`);
                 }
-              })();
-            }
+              } catch (e) {
+                console.warn('[one start_call] startOutgoingCall failed:', e);
+                router.push(`/call?contactEmail=${encodeURIComponent(contactEmail)}&contactName=${encodeURIComponent(contactName)}&isVideo=${video}&isCaller=1&callId=${callId}`);
+              }
+            })();
           } else {
             router.push(`/call?contactEmail=${encodeURIComponent(contactEmail)}&contactName=${encodeURIComponent(contactName)}&isVideo=${video}&isCaller=1&callId=${callId}`);
           }

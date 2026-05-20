@@ -3153,24 +3153,9 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     const name = item.contactName || item.contact_name || '';
     if (!email) return;
     const isVideo = item.video ? '1' : '0';
-    // [#1209 2026-05-19] Foreground = JS owns the call surface. Skip
-    // voipNative to avoid the dual-UI race (native CallView/CallActivity +
-    // JS CallScreenInner). Push /call directly; MobileNativeBridge inside
-    // /call.js fires the CallKit hook and renders the rich JS UI.
+    // [#1217 2026-05-19] FULL NATIVE — redial always goes through voipNative
+    // → native CallView/CallActivity. No JS /call.js path on mobile.
     if (Platform.OS === 'ios' || Platform.OS === 'android') {
-      const isForeground = AppState.currentState === 'active';
-      if (isForeground) {
-        const callId = `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        const conversationId = item.conversation_id || item.conversationId || '';
-        try {
-          apiCallNotify(conversationId, callId, !!item.video).catch((e) => {
-            console.warn('[handleHistoryCallBack] callNotify failed:', e?.message || e);
-          });
-        } catch {}
-        router.push(`/call?callId=${callId}&contactName=${encodeURIComponent(name)}&contactEmail=${encodeURIComponent(email)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=1`);
-        return;
-      }
-      // Background path: keep legacy voipNative.
       (async () => {
         try {
           const voipNative = require('../services/voipNative');

@@ -688,30 +688,14 @@ public class ExpoCallKitModule: Module {
       }()
       let uuid = UUID()
 
-      // [#1208 2026-05-19 foreground-outgoing gate] Check app state on the
-      // main thread (UIApplication.shared APIs are not thread-safe under
-      // Swift 6 strict concurrency). If the user is already inside the app
-      // (foreground active scene), the JS /call.js screen is what they should
-      // see — it has features (invite friend, audio→video upgrade,
-      // screenshare, group grid, emoji reactions) the SwiftUI screen
-      // doesn't. We STILL register the CXStartCallAction so iOS knows about
-      // the call (Recents, lock-screen pill, audio category, hold/swap
-      // semantics), but the CX delegate handler will skip the
-      // `presentOutgoingCallVC` call when `suppressVCPresent == true`.
-      // JS adopts any LiveKit Room the native side pre-connects via
-      // `adoptNativeRoom(callId)`, otherwise creates its own Room.
-      //
-      // Edge case: Siri shortcut / background widget triggers a call → JS
-      // bundle isn't even foreground, so this returns false → native path
-      // takes over (presents CallViewController), which is what we want.
-      let isAppForeground: Bool = await MainActor.run {
-        let scenes = UIApplication.shared.connectedScenes
-        return scenes.contains { $0.activationState == .foregroundActive }
-      }
-      let suppressVCPresent = isAppForeground
-      if suppressVCPresent {
-        print("[ExpoCallKit #1208] startOutgoingCall: app foreground — registering CallKit but suppressing native VC (JS /call.js renders)")
-      }
+      // [#1217 2026-05-19] FULL NATIVE — gate reverted per user decision.
+      // The dual-UI approach (JS /call.js when foreground, native when
+      // background) kept producing race conditions and "2 telas" reports.
+      // We now always present the native CallViewController for every
+      // outgoing call, regardless of app state. JS /call.js on mobile is
+      // retired (the route still exists for legacy push, but it just
+      // dispatches to native and pops).
+      let suppressVCPresent = false
 
       // Stash params for the delegate path AND register the callId↔UUID map
       // so callAnswered/callEnded/endCall route correctly once the callee

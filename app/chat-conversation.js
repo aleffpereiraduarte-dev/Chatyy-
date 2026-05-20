@@ -15313,46 +15313,24 @@ export default function ChatConversationScreen() {
     try {
       const otherName = conversationName || t('chat.unknown');
 
-      // [#1209 2026-05-19] Foreground = JS owns the call surface, period.
-      // User reported "agora aparece 2 telas JS quando liga": chat-conversation
-      // calling voipNative.startOutgoingCall fires both the native module
-      // (CallKit register + would-be CallView/CallActivity) AND the JS path
-      // can end up pushing /call too, producing the double UI. The fix is
-      // to skip voipNative entirely when foreground and push /call directly
-      // — MobileNativeBridge inside /call.js fires the CallKit hook
-      // (CXStartCallAction registers for Recents/pill without presenting VC
-      // because of the foreground suppressVCPresent gate) and renders the
-      // rich JS CallScreenInner. Background calls (Siri shortcut, system
-      // widget) still go through voipNative since the JS bundle isn't on
-      // screen there.
-      const isMobile = Platform.OS === 'ios' || Platform.OS === 'android';
-      const isForeground = AppState.currentState === 'active';
-      if (isMobile && isForeground) {
-        const callId = `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        // Fire callNotify in the background so the callee's phone rings.
-        // Fire-and-forget — must not block the /call push.
-        try {
-          api.callNotify(conversationId, callId, !!videoEnabled).catch((e) => {
-            console.warn('callNotify fire-and-forget failed:', e?.message || e);
-          });
-        } catch {}
+      // [#1217 2026-05-19] FULL NATIVE — every outgoing call goes through
+      // voipNative which presents the native CallView (iOS SwiftUI) or
+      // CallActivity (Android Compose). No more JS /call.js on mobile. Web
+      // still falls through to /call.js via onWebFallback.
+      const voipNative = require('../services/voipNative');
+      const { callId, native } = await voipNative.startOutgoingCall({
+        calleeEmail: otherEmail,
+        calleeName: otherName,
+        callerName: currentEmail || '',
+        isVideo: !!videoEnabled,
+        conversationId,
+        onWebFallback: (cid) => {
+          router.push(`/call?callId=${cid}&contactName=${encodeURIComponent(otherName)}&contactEmail=${encodeURIComponent(otherEmail)}&isVideo=${videoEnabled ? '1' : '0'}&conversationId=${conversationId}&isCaller=1`);
+        },
+      });
+      if (!native && (Platform.OS === 'ios' || Platform.OS === 'android')) {
+        // Native module reported failure — fall back to JS as a last resort.
         router.push(`/call?callId=${callId}&contactName=${encodeURIComponent(otherName)}&contactEmail=${encodeURIComponent(otherEmail)}&isVideo=${videoEnabled ? '1' : '0'}&conversationId=${conversationId}&isCaller=1`);
-      } else {
-        // Background or web: keep the legacy voipNative path.
-        const voipNative = require('../services/voipNative');
-        const { callId, native } = await voipNative.startOutgoingCall({
-          calleeEmail: otherEmail,
-          calleeName: otherName,
-          callerName: currentEmail || '',
-          isVideo: !!videoEnabled,
-          conversationId,
-          onWebFallback: (cid) => {
-            router.push(`/call?callId=${cid}&contactName=${encodeURIComponent(otherName)}&contactEmail=${encodeURIComponent(otherEmail)}&isVideo=${videoEnabled ? '1' : '0'}&conversationId=${conversationId}&isCaller=1`);
-          },
-        });
-        if (!native && isMobile) {
-          router.push(`/call?callId=${callId}&contactName=${encodeURIComponent(otherName)}&contactEmail=${encodeURIComponent(otherEmail)}&isVideo=${videoEnabled ? '1' : '0'}&conversationId=${conversationId}&isCaller=1`);
-        }
       }
     } catch (e) {
       console.warn('Start call error:', e);
