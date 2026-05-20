@@ -769,6 +769,185 @@ export async function replayOfflineQueue(api) {
           }
           break;
         }
+        case 'status_react': {
+          // Private emoji reaction on a story. Hard errors (not_found = story
+          // expired / deleted, invalid emoji) drop silently; transient errors
+          // retry with backoff. Author only sees who reacted, viewer already
+          // got optimistic feedback so a silent drop is acceptable here.
+          const p = action.params || {};
+          if (!p.status_id || !p.emoji) break;
+          try {
+            const r = await api.statusReact(p.status_id, p.emoji);
+            if (r && r.success === false) {
+              const msg = String(r.message || r.error || '');
+              const isHardError = /not_found|invalid|permission|forbidden|expired/i.test(msg);
+              if (!isHardError) throw new Error('status_react_failed:' + msg);
+            }
+          } catch (e) {
+            const msg = String(e?.message || e || '');
+            const isHardError = /not_found|invalid|permission|forbidden|expired/i.test(msg);
+            if (!isHardError) throw e;
+          }
+          break;
+        }
+        case 'status_reply_dm': {
+          // Instagram-style DM reply to a story. Backend opens/reuses direct
+          // conversation, drops a status_reply card. Hard errors = story gone;
+          // transient = retry. We don't try to reconstruct the chatSend
+          // fallback path here (UI already did optimistic snackbar).
+          const p = action.params || {};
+          if (!p.status_id || !p.content) break;
+          try {
+            const r = await api.statusReplyDM(p.status_id, p.content);
+            if (r && r.success === false) {
+              const msg = String(r.message || r.error || '');
+              const isHardError = /not_found|invalid|permission|forbidden|expired/i.test(msg);
+              if (!isHardError) throw new Error('status_reply_dm_failed:' + msg);
+            }
+          } catch (e) {
+            const msg = String(e?.message || e || '');
+            const isHardError = /not_found|invalid|permission|forbidden|expired/i.test(msg);
+            if (!isHardError) throw e;
+          }
+          break;
+        }
+        case 'status_view': {
+          // View receipt — idempotent on the server (UNIQUE on
+          // (status_id, viewer_email)). If already viewed the row insert is a
+          // no-op; transient errors retry, hard errors drop silently.
+          const p = action.params || {};
+          if (!p.status_id) break;
+          try {
+            const r = await api.statusView(p.status_id);
+            if (r && r.success === false) {
+              const msg = String(r.message || r.error || '');
+              const isHardError = /not_found|already|duplicate|invalid|permission|forbidden|expired/i.test(msg);
+              if (!isHardError) throw new Error('status_view_failed:' + msg);
+            }
+          } catch (e) {
+            const msg = String(e?.message || e || '');
+            const isHardError = /not_found|already|duplicate|invalid|permission|forbidden|expired/i.test(msg);
+            if (!isHardError) throw e;
+          }
+          break;
+        }
+        case 'feed_like': {
+          // Toggle like on a feed post or reel (same endpoint). Server is
+          // idempotent-ish: each call flips the like state, so we coalesce
+          // by ID at queue insertion time on the caller side. Here we just
+          // replay once. Hard errors = post deleted; transient = retry.
+          const p = action.params || {};
+          if (!p.id) break;
+          try {
+            const r = await api.feedLike(p.id);
+            if (r && r.success === false) {
+              const msg = String(r.message || r.error || '');
+              const isHardError = /not_found|deleted|invalid|permission|forbidden/i.test(msg);
+              if (!isHardError) throw new Error('feed_like_failed:' + msg);
+            }
+          } catch (e) {
+            const msg = String(e?.message || e || '');
+            const isHardError = /not_found|deleted|invalid|permission|forbidden/i.test(msg);
+            if (!isHardError) throw e;
+          }
+          break;
+        }
+        case 'feed_comment': {
+          // Comment on a feed post / reel. Content + optional reply_to_id +
+          // optional media (sticker/gif). Hard errors (post gone, banned,
+          // content too long) drop silently — the optimistic comment row
+          // in the UI is not rolled back here since FeedComments already
+          // catches and removes it.
+          const p = action.params || {};
+          if (!p.post_id) break;
+          try {
+            const r = await api.feedComment(p.post_id, p.content || '', p.reply_to_id, {
+              mediaUrl: p.media_url || p.attachment_url,
+              mediaType: p.media_type,
+            });
+            if (r && r.success === false) {
+              const msg = String(r.message || r.error || '');
+              const isHardError = /not_found|deleted|invalid|permission|forbidden|too_long|banned/i.test(msg);
+              if (!isHardError) throw new Error('feed_comment_failed:' + msg);
+            }
+          } catch (e) {
+            const msg = String(e?.message || e || '');
+            const isHardError = /not_found|deleted|invalid|permission|forbidden|too_long|banned/i.test(msg);
+            if (!isHardError) throw e;
+          }
+          break;
+        }
+        case 'feed_bookmark': {
+          // Toggle bookmark on a reel/post. Server flips state per call —
+          // same idempotency caveat as feed_like (caller should de-dup at
+          // queue time). Hard errors = post gone.
+          const p = action.params || {};
+          if (!p.id) break;
+          try {
+            const r = await api.feedBookmark(p.id);
+            if (r && r.success === false) {
+              const msg = String(r.message || r.error || '');
+              const isHardError = /not_found|deleted|invalid|permission|forbidden/i.test(msg);
+              if (!isHardError) throw new Error('feed_bookmark_failed:' + msg);
+            }
+          } catch (e) {
+            const msg = String(e?.message || e || '');
+            const isHardError = /not_found|deleted|invalid|permission|forbidden/i.test(msg);
+            if (!isHardError) throw e;
+          }
+          break;
+        }
+        case 'notification_action': {
+          // User tapped a lockscreen / notification-shade action (archive,
+          // mark-read, delete, chat_read) while offline. The system UI
+          // already dismissed the notification — without this retry the
+          // server-side state stays stale forever.
+          const params = action.params || {};
+          const at = action.action_type;
+          if (!at) break;
+          try {
+            switch (at) {
+              case 'archive':
+                await api.moveEmail(params.uid, 'Archive', params.folder || 'INBOX');
+                break;
+              case 'move':
+                await api.moveEmail(params.uid, params.destination || 'Archive', params.folder || 'INBOX');
+                break;
+              case 'mark_read':
+                await api.markRead(params.uid, params.folder || 'INBOX');
+                break;
+              case 'delete':
+                await api.deleteEmail(params.uid, params.folder || 'INBOX');
+                break;
+              case 'chat_read': {
+                if (!params.conversation_id) break;
+                const r = await api.chatReadAck(params.conversation_id);
+                if (r && r.success === false) {
+                  const msg = String(r.message || r.error || '');
+                  const isHardError = /not_found|permission|forbidden|invalid/i.test(msg);
+                  if (!isHardError) throw new Error('notif_chat_read_failed:' + msg);
+                }
+                break;
+              }
+              default:
+                // Unknown notification action_type — drop silently. A
+                // future client version may have queued something this
+                // build doesn't recognize.
+                break;
+            }
+          } catch (e) {
+            const msg = String(e?.message || e || '');
+            // 404 = email/conversation gone (user deleted on another
+            // device, or the uid was stale). Don't burn retries.
+            const isHardError = /\b40[34]\b|not_found|permission|forbidden|invalid|gone/i.test(msg);
+            if (isHardError) {
+              e.isHardError = true;
+              throw e;
+            }
+            throw e;
+          }
+          break;
+        }
         default:
           break;
       }

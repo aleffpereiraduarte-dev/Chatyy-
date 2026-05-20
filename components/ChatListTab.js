@@ -1854,10 +1854,36 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
               setTimeout(() => { setShowCustomCamera(true); }, 160);
             }}
             onReply={async (story, text) => {
-              try { await api.statusReplyDM?.(story?.id, text); } catch {}
+              try {
+                await api.statusReplyDM?.(story?.id, text);
+              } catch {
+                // Offline / 5xx — queue for replay so the DM reply doesn't
+                // disappear. Server creates / reuses the direct convo idempotently.
+                try {
+                  const { queueOfflineAction } = require('../services/offlineCache');
+                  await queueOfflineAction({
+                    type: 'status_reply_dm',
+                    params: { status_id: story?.id, content: text },
+                  });
+                } catch {}
+              }
             }}
             onReact={async (story, emoji) => {
-              try { await api.statusReact?.(story?.id, emoji); } catch {}
+              try {
+                await api.statusReact?.(story?.id, emoji);
+              } catch {
+                // Offline / 5xx — queue the emoji reaction. Author-only
+                // visibility means a silent drop is invisible to the viewer
+                // but breaks the author's "X reacted" notification. Replay
+                // restores parity.
+                try {
+                  const { queueOfflineAction } = require('../services/offlineCache');
+                  await queueOfflineAction({
+                    type: 'status_react',
+                    params: { status_id: story?.id, emoji },
+                  });
+                } catch {}
+              }
             }}
             onSeenByPress={(item) => setStatusViewersFor(item)}
             viewersFor={statusViewersFor}

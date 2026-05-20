@@ -613,12 +613,17 @@ function CallScreenInner() {
   }, [reconnectMicroVisible, reconnectMicroFade]);
 
   // ───── WS signaling (RINGING only — call_invite / call_accepted / call_end) ─────
+  // [#1233 2026-05-20] No longer gate on `mailWs.isConnected` — _send() now
+  // queues call_invite/call_end/call_answer/call_reject when the socket is
+  // mid-reconnect, draining on auth_success (websocket.js ~1463). Previously
+  // a silent drop here made the callee never ring during the ~1-3s WS flap
+  // (or the caller hangup arrive after the peer already saw a phantom
+  // call). The 3-attempt retry in handleEndCall (~1809) still wraps this
+  // so we get retry + queue durability stacked.
   const sendSignaling = useCallback((type, data) => {
     try {
       const mailWs = require('../services/websocket').default;
-      if (mailWs.isConnected) {
-        mailWs._send({ type, ...data });
-      }
+      mailWs._send({ type, ...data });
     } catch {}
   }, []);
 

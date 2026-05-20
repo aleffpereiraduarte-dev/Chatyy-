@@ -455,19 +455,24 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
     const content = text.trim();
     if (!content || sending || !post?.id) return;
     setSending(true);
+    // Build optimistic comment up front so both online + offline branches
+    // can reuse it. Server returns its own canonical row on success; the
+    // optimistic one stays mounted in the offline branch.
+    const optimisticComment = {
+      id: 'tmp_' + Date.now(),
+      author_email: user?.email,
+      email: user?.email,
+      author_name: user?.name || user?.email?.split('@')[0],
+      name: user?.name || user?.email?.split('@')[0],
+      content,
+      created_at: new Date().toISOString(),
+      reply_to_id: replyTo?.id,
+      _pending: true,
+    };
     try {
       const r = await api.feedComment(post.id, content, replyTo?.id);
       if (r.success) {
-        const newComment = r.data?.comment || {
-          id: Date.now(),
-          author_email: user?.email,
-          email: user?.email,
-          author_name: user?.name || user?.email?.split('@')[0],
-          name: user?.name || user?.email?.split('@')[0],
-          content,
-          created_at: new Date().toISOString(),
-          reply_to_id: replyTo?.id,
-        };
+        const newComment = r.data?.comment || { ...optimisticComment, id: Date.now(), _pending: false };
         setComments(prev => [newComment, ...prev]);
         setText('');
         setReplyTo(null);
@@ -487,7 +492,24 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
           listRef.current?.scrollToOffset?.({ offset: 0, animated: true });
         }, 100);
       }
-    } catch {} finally {
+    } catch {
+      // Offline / 5xx — queue and keep the optimistic comment mounted so
+      // the user sees their reply land "instantly". Previous behavior was a
+      // silent drop: the comment was eaten and only showed up if the user
+      // re-typed and got lucky with timing.
+      try {
+        const { queueOfflineAction } = require('../services/offlineCache');
+        await queueOfflineAction({
+          type: 'feed_comment',
+          params: { post_id: post.id, content, reply_to_id: replyTo?.id || null },
+        });
+        setComments(prev => [optimisticComment, ...prev]);
+        setText('');
+        setReplyTo(null);
+        currentCountRef.current += 1;
+        onCommentCountChange?.(currentCountRef.current);
+      } catch {}
+    } finally {
       setSending(false);
     }
   }, [text, sending, post, replyTo, user, onCommentCountChange]);

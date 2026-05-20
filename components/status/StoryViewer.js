@@ -866,7 +866,19 @@ export default function StoryViewer({
     setVideoLoading(cur.type === 'video');
     if (cur.id && !viewedIdsRef.current.has(cur.id)) {
       viewedIdsRef.current.add(cur.id);
-      try { api.statusView?.(cur.id); } catch {}
+      // Fire-and-forget → if offline / 5xx, the receipt is silently lost,
+      // breaking the "Vistos" badge on the author's side. Queue the action
+      // so replayOfflineQueue resends on next reconnect. Server is idempotent
+      // on (status_id, viewer_email) so duplicates are a no-op.
+      try {
+        const _statusId = cur.id;
+        Promise.resolve(api.statusView?.(_statusId)).catch(() => {
+          try {
+            const { queueOfflineAction } = require('../../services/offlineCache');
+            queueOfflineAction({ type: 'status_view', params: { status_id: _statusId } });
+          } catch {}
+        });
+      } catch {}
       try { onMarkViewed?.(cur.id); } catch {}
     }
     // Pre-cache the NEXT story while this one is playing — eliminates the

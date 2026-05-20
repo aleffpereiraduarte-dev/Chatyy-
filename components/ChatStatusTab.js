@@ -1267,7 +1267,23 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     if (!currentItem?.id) return;
     setSendingReply(true);
     try {
-      const r = await api.statusReplyDM?.(currentItem.id, text);
+      let r;
+      try {
+        r = await api.statusReplyDM?.(currentItem.id, text);
+      } catch (netErr) {
+        // Offline / 5xx — queue and treat as optimistically sent so the
+        // input clears and the legacy chatSend fallback below is skipped.
+        try {
+          const { queueOfflineAction } = require('../services/offlineCache');
+          await queueOfflineAction({
+            type: 'status_reply_dm',
+            params: { status_id: currentItem.id, content: text },
+          });
+        } catch {}
+        if (typeof overrideText !== 'string') setViewerReply('');
+        setSendingReply(false);
+        return;
+      }
       if (r?.success) {
         if (typeof overrideText !== 'string') setViewerReply('');
       } else {
@@ -1576,7 +1592,15 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   const advanceViewer = useCallback(() => {
     const currentItem = viewerStatuses[viewerIndex];
     if (currentItem && !currentItem.viewed) {
-      api.statusView(currentItem.id).catch(() => {});
+      const _viewId = currentItem.id;
+      api.statusView(_viewId).catch(() => {
+        // Offline / 5xx — queue the view receipt so it lands next reconnect.
+        // Server insert is idempotent on (status_id, viewer_email).
+        try {
+          const { queueOfflineAction } = require('../services/offlineCache');
+          queueOfflineAction({ type: 'status_view', params: { status_id: _viewId } });
+        } catch {}
+      });
       // Local viewer snapshot still needs the immediate flip — `viewerStatuses`
       // was captured at openViewer time and isn't bound to the hook output,
       // so this keeps the in-modal "Vistos" badge truthy for this same item.

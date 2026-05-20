@@ -661,8 +661,20 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
         if (r.data.like_count !== undefined) setLikeCount(Number(r.data.like_count));
       }
     } catch {
-      setLiked(wasLiked);
-      setLikeCount(prev => wasLiked ? prev + 1 : Math.max(0, prev - 1));
+      // Network error — DON'T roll back the optimistic state. Instead,
+      // queue the toggle so it lands on next reconnect, matching the
+      // Instagram/TikTok pattern where likes "feel" applied while offline.
+      // The previous rollback caused the heart to flicker red→empty mid-tap
+      // when the WS pinged but HTTP was still down.
+      try {
+        const { queueOfflineAction } = require('../services/offlineCache');
+        await queueOfflineAction({ type: 'feed_like', params: { id: post.id } });
+      } catch {
+        // Last resort — if even the queue write failed, rollback so the
+        // UI doesn't lie to the user.
+        setLiked(wasLiked);
+        setLikeCount(prev => wasLiked ? prev + 1 : Math.max(0, prev - 1));
+      }
     } finally {
       likeInFlightRef.current = false;
     }

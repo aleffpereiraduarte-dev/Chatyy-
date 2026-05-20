@@ -1591,8 +1591,17 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
         if (r.data.like_count !== undefined) setLikeCount(Number(r.data.like_count));
       }
     } catch {
-      setLiked(wasLiked);
-      setLikeCount(prev => wasLiked ? prev + 1 : Math.max(0, prev - 1));
+      // Network error — keep the optimistic state and queue the toggle.
+      // TikTok / Instagram keep the heart filled while offline; rolling back
+      // mid-tap is jarring and (worse) makes the user re-tap and double-fire
+      // the toggle when net comes back.
+      try {
+        const { queueOfflineAction } = require('../services/offlineCache');
+        await queueOfflineAction({ type: 'feed_like', params: { id: reel.id } });
+      } catch {
+        setLiked(wasLiked);
+        setLikeCount(prev => wasLiked ? prev + 1 : Math.max(0, prev - 1));
+      }
     } finally {
       likeInFlightRef.current = false;
     }
@@ -1636,7 +1645,15 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
         if (r.data.bookmarked !== undefined) setBookmarked(!!r.data.bookmarked);
       }
     } catch {
-      setBookmarked(was);
+      // Offline — preserve optimistic state, queue for replay. Bookmark UI
+      // flicker is even more disruptive than like (slower animation), so we
+      // skip the rollback unless the queue itself errors.
+      try {
+        const { queueOfflineAction } = require('../services/offlineCache');
+        await queueOfflineAction({ type: 'feed_bookmark', params: { id: reel.id } });
+      } catch {
+        setBookmarked(was);
+      }
     }
   }, [bookmarked, reel.id, bookmarkScale]);
 

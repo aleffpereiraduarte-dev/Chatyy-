@@ -79,6 +79,15 @@ const TYPING_DEBOUNCE = 3000;   // Send typing every 3s max
 const TYPING_STOP_DELAY = 3000; // Send stopped_typing after 3s idle
 const CLIENT_MSG_RETRY_MS = 3000; // Retry outgoing messages after 3s
 const CLIENT_MSG_MAX_RETRIES = 3;
+// Hard cap on the in-flight ACK-tracking map. If an app sits for hours with
+// the socket flapping + retries piling up (e.g. user on poor mobile network
+// composing dozens of messages), the map could grow unbounded and leak
+// memory. 200 is well above the realistic burst (WhatsApp shows users
+// queue at most ~30 messages before noticing send failures). When we hit
+// the cap, evict the oldest entry (Map preserves insertion order) — that
+// retry is abandoned but its promise still resolves via the offline-queue
+// fallback path so the message isn't lost.
+const PENDING_OUTGOING_CAP = 200;
 
 class MailWebSocket {
   constructor() {
@@ -147,6 +156,35 @@ class MailWebSocket {
           this._hidden = false;
           if (this.connected && this.authenticated) {
             this._startPing();
+            // [audit fix] Returning from a hidden tab: the socket may have
+            // been silently killed by the browser (Chrome aggressively
+            // freezes tabs) but readyState still reads OPEN. Send a probe
+            // ping and if no pong in 3s, force-reconnect instead of waiting
+            // for the next scheduled ping (5s) + ping watchdog (18s) — at
+            // worst the user used to wait 23s for the socket to recover
+            // after switching back to the tab. Now: 3s max.
+            try {
+              const probeSentAt = Date.now();
+              this._pingTs = probeSentAt;
+              try { this._send({ type: 'ping', ts: probeSentAt }); } catch {}
+              const probeTimer = setTimeout(() => {
+                if (this.destroyed || this._hidden) return;
+                if (this.lastPongTime < probeSentAt) {
+                  // No pong within 3s — assume the socket is a zombie.
+                  try { console.warn('[WS] visibility probe failed, forcing reconnect'); } catch {}
+                  try { this._cleanup(); } catch {}
+                  if (this.token && !this.destroyed) {
+                    this.reconnectAttempt = 0;
+                    this.connect(this.token);
+                  }
+                }
+              }, 3000);
+              // If a pong comes back, cancel the watchdog early.
+              const probeUnsub = this.on('pong', () => {
+                clearTimeout(probeTimer);
+                try { probeUnsub(); } catch {}
+              });
+            } catch {}
           } else if (this.token && !this.destroyed) {
             this.reconnectAttempt = 0;
             this.connect(this.token);
@@ -559,11 +597,30 @@ class MailWebSocket {
       // alongside chat_message frames, matching WhatsApp's read receipt
       // durability (WhatsApp queues read in their persistent outbox).
       data.type === 'message_read' ||
-      data.type === 'reaction'
+      data.type === 'reaction' ||
+      // [#1233 2026-05-20] Queue call signaling frames when WS is down.
+      // Previously `sendSignaling('call_invite')` silently dropped if the
+      // socket was mid-reconnect → callee never rang. `call_end` had a
+      // 3-attempt retry (call.js ~1809) but if all 3 hit a dead socket the
+      // peer saw a phantom call. Queueing call_invite/call_end/call_answer/
+      // call_reject lets the reconnect drain (_onAuthenticated flush, line
+      // ~1463) replay them within the ~3s reconnect ceiling. Call signaling
+      // frames are tiny (<300 B) so the MAX_QUEUE_SIZE=100 cap is fine.
+      data.type === 'call_invite' ||
+      data.type === 'call_end' ||
+      data.type === 'call_answer' ||
+      data.type === 'call_reject'
     )) {
-      // Queue chat messages + read receipts + reactions when WS is not open.
+      // Queue chat messages + read receipts + reactions + call signaling
+      // when WS is not open.
       if (this._messageQueue.length < MAX_QUEUE_SIZE) {
         this._messageQueue.push(data);
+        if (data.type === 'call_invite' || data.type === 'call_end' ||
+            data.type === 'call_answer' || data.type === 'call_reject') {
+          try {
+            console.log('[WS] ' + data.type + ' queued (WS offline) call_id=' + (data.call_id || '?'));
+          } catch {}
+        }
       }
     }
   }
@@ -862,11 +919,34 @@ class MailWebSocket {
           const apiMod = require('./api');
           if (typeof apiMod.refreshAuthToken === 'function' && !this._authRefreshInFlight) {
             this._authRefreshInFlight = true;
-            apiMod.refreshAuthToken()
-              .catch(() => true)
+            // [audit fix] Cap the refresh on a 5s timeout. Without this, a
+            // network hang (TLS handshake stuck, server stuck mid-request)
+            // would leave _authRefreshInFlight=true forever — every
+            // subsequent auth_error would skip the refresh branch and the
+            // WS would loop on the same expired bearer indefinitely. The
+            // timeout sentinel resolves with `__timeout` so the .then can
+            // distinguish it from a server `false` (revoked); on timeout
+            // we treat it as a soft failure (apply auth-error backoff but
+            // don't tombstone the socket — the bearer may still be alive).
+            const TIMEOUT_SENTINEL = { __timeout: true };
+            const refreshPromise = apiMod.refreshAuthToken().catch(() => true);
+            const timeoutPromise = new Promise((resolveT) => {
+              setTimeout(() => resolveT(TIMEOUT_SENTINEL), 5000);
+            });
+            Promise.race([refreshPromise, timeoutPromise])
               .then((refreshOk) => {
                 this._authRefreshInFlight = false;
                 if (this.destroyed) return;
+                if (refreshOk === TIMEOUT_SENTINEL) {
+                  try { console.warn('[WS] refreshAuthToken timed out after 5s — applying backoff'); } catch {}
+                  // Treat hang as transient: schedule a long-ish reconnect
+                  // (don't logout — token may still be valid, network was
+                  // just stuck). On the next auth_error a new refresh will
+                  // run since _authRefreshInFlight is cleared.
+                  this._authErrorBackoff = Math.min((this._authErrorBackoff || 30000) * 1.5, 300000);
+                  setTimeout(() => { if (!this.destroyed) this.connect(this.token); }, this._authErrorBackoff);
+                  return;
+                }
                 if (refreshOk === false && !callActive) {
                   try { console.warn('[WS] refreshAuthToken returned false — bearer revoked, slowing reconnect'); } catch {}
                   this._authErrorBackoff = Math.min((this._authErrorBackoff || 30000) * 1.5, 300000);
@@ -1333,6 +1413,22 @@ class MailWebSocket {
         entry.timer = setTimeout(scheduleRetry, CLIENT_MSG_RETRY_MS);
       };
 
+      // Bound the map: evict the oldest entry if we'd exceed the cap.
+      // Map.keys() yields insertion order, so the first key is the oldest.
+      // We clear its timer and resolve its promise with failed=true so any
+      // caller awaiting it unblocks (instead of hanging forever on a
+      // silently-dropped entry).
+      if (this._pendingOutgoing.size >= PENDING_OUTGOING_CAP) {
+        const oldestKey = this._pendingOutgoing.keys().next().value;
+        if (oldestKey !== undefined) {
+          const oldEntry = this._pendingOutgoing.get(oldestKey);
+          if (oldEntry?.timer) clearTimeout(oldEntry.timer);
+          if (typeof oldEntry?.resolve === 'function') {
+            try { oldEntry.resolve({ failed: true, msg_id: oldestKey, evicted: true }); } catch {}
+          }
+          this._pendingOutgoing.delete(oldestKey);
+        }
+      }
       this._pendingOutgoing.set(msgId, entry);
       attempt();
       entry.timer = setTimeout(scheduleRetry, CLIENT_MSG_RETRY_MS);

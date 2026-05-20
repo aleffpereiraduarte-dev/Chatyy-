@@ -1,6 +1,8 @@
 import { Platform, AppState } from 'react-native';
 import Constants from 'expo-constants';
 import { router } from 'expo-router';
+import { getJSON, setJSON } from './mmkv';
+import { isOnline, queueOfflineAction } from './offlineCache';
 
 let Notifications = null;
 let Device = null;
@@ -839,30 +841,164 @@ export async function registerForPushNotifications() {
   }
 }
 
+// ============================================================
+// PENDING TOKEN SENDS (offline retry)
+// ============================================================
+// If sendTokenToBackend() fails (network down, server 5xx, /etc/mail-api.env
+// reload mid-deploy) we lose the token registration silently and the user
+// never receives push notifications until the next 6h foreground refresh —
+// which itself can fail forever in a row. The MMKV-backed queue below
+// retries on every AppState foreground transition + WS auth ack, dedups by
+// token, caps at 5 entries (LRU drop oldest) so we don't pile up forever
+// across multi-account toggles.
+const PENDING_TOKEN_SENDS_KEY = 'pending_token_sends';
+const PENDING_TOKEN_SENDS_MAX = 5;
+// Track tokens we've already successfully sent in this app session so two
+// flushes (foreground + WS auth_ack firing back-to-back) don't re-POST the
+// same {token, email} pair to the backend.
+const _flushedTokensInSession = new Set();
+
+function _readPendingTokenSends() {
+  const v = getJSON(PENDING_TOKEN_SENDS_KEY);
+  return Array.isArray(v) ? v : [];
+}
+
+function _writePendingTokenSends(arr) {
+  setJSON(PENDING_TOKEN_SENDS_KEY, Array.isArray(arr) ? arr.slice(-PENDING_TOKEN_SENDS_MAX) : []);
+}
+
+function _enqueuePendingTokenSend(entry) {
+  if (!entry?.token) return;
+  const list = _readPendingTokenSends();
+  // Dedup by (token, email, token_type). If an identical entry already
+  // exists, refresh its ts (LRU bump) instead of duplicating — protects
+  // against a user toggling foreground 20× while still offline.
+  const sig = (e) => `${e.token}|${e.email || ''}|${e.token_type || ''}`;
+  const incomingSig = sig(entry);
+  const next = list.filter((e) => sig(e) !== incomingSig);
+  next.push({ ...entry, ts: entry.ts || Date.now() });
+  // LRU cap — drop OLDEST so the most recent token rotation always wins
+  // (a rotated FCM token from the same install is more useful than a stale
+  // entry from a previous session).
+  while (next.length > PENDING_TOKEN_SENDS_MAX) next.shift();
+  _writePendingTokenSends(next);
+}
+
+async function _getActiveEmailSafe() {
+  try {
+    const { getActiveAccountEmail } = require('./api');
+    return (typeof getActiveAccountEmail === 'function' ? getActiveAccountEmail() : '') || '';
+  } catch { return ''; }
+}
+
 export async function sendTokenToBackend(pushToken) {
   _diagPush('send_start', pushToken ? ('len=' + String(pushToken).length) : 'no token');
   if (!pushToken) return;
+  const email = await _getActiveEmailSafe();
   try {
     const { apiCall } = require('./api');
     const r1 = await apiCall('register_push_token', { token: pushToken, platform: Platform.OS }, 'POST');
     _diagPush('send_expo', r1?.success ? 'ok' : ('fail:' + (r1?.error || 'unknown')));
+    if (r1?.success) {
+      _flushedTokensInSession.add(pushToken + '|' + email + '|');
+    } else {
+      // API returned a non-throwing failure (e.g. 5xx wrapped in success:false).
+      // Queue for retry just like a network throw.
+      _enqueuePendingTokenSend({ token: pushToken, email, platform: Platform.OS });
+    }
 
     // Also register the raw FCM device token for Android incoming calls
     if (Platform.OS === 'android') {
       if (pushNotificationsState.deviceToken) {
+        const fcmTok = pushNotificationsState.deviceToken;
         const r2 = await apiCall('register_push_token', {
-          token: pushNotificationsState.deviceToken,
+          token: fcmTok,
           platform: 'android',
           token_type: 'fcm_device',
         }, 'POST');
         _diagPush('send_fcm', r2?.success ? 'ok' : ('fail:' + (r2?.error || 'unknown')));
+        if (r2?.success) {
+          _flushedTokensInSession.add(fcmTok + '|' + email + '|fcm_device');
+        } else {
+          _enqueuePendingTokenSend({ token: fcmTok, email, platform: 'android', token_type: 'fcm_device' });
+        }
       } else {
         _diagPush('send_fcm_skip', 'no deviceToken in state');
       }
     }
   } catch (err) {
     _diagPush('send_err', err?.message || String(err));
+    // Offline / network throw — persist the intent so we retry on next
+    // foreground or WS auth_ack. Without this the backend never learns the
+    // token until the 6h ensurePushTokenFresh throttle expires AND the
+    // device happens to be online at that moment (incident 2026-05-12:
+    // Android had zero tokens registered because every cold start retry
+    // hit the same offline window).
+    _enqueuePendingTokenSend({ token: pushToken, email, platform: Platform.OS });
+    if (Platform.OS === 'android' && pushNotificationsState.deviceToken) {
+      _enqueuePendingTokenSend({
+        token: pushNotificationsState.deviceToken,
+        email,
+        platform: 'android',
+        token_type: 'fcm_device',
+      });
+    }
   }
+}
+
+/**
+ * Drain the pending_token_sends queue. Iterates each entry, POSTs to the
+ * backend, removes on success (or hard 4xx) and keeps on transient failure.
+ * Called on AppState foreground transition + on WS auth_ack via the
+ * connection event listener registered in setupNotificationListeners().
+ *
+ * Dedup: a token+email pair successfully flushed in the current session
+ * is skipped on subsequent flushes — prevents a foreground bounce + WS
+ * reconnect double-firing the same register_push_token call.
+ */
+export async function flushPendingTokens() {
+  if (Platform.OS === 'web') return { flushed: 0, kept: 0 };
+  // Bail when we're certain the network is down — saves the round-trip
+  // and keeps the entries queued for the next attempt. isOnline() is a
+  // best-effort signal (NetInfo cached value) so we still try when it
+  // says "online but actually unreachable" — apiCall will catch + requeue.
+  try { if (typeof isOnline === 'function' && isOnline() === false) return { flushed: 0, kept: -1 }; } catch {}
+  const list = _readPendingTokenSends();
+  if (!list.length) return { flushed: 0, kept: 0 };
+  const { apiCall } = require('./api');
+  const kept = [];
+  let flushed = 0;
+  for (const entry of list) {
+    const dedupKey = entry.token + '|' + (entry.email || '') + '|' + (entry.token_type || '');
+    if (_flushedTokensInSession.has(dedupKey)) {
+      flushed++;
+      continue;
+    }
+    try {
+      const payload = { token: entry.token, platform: entry.platform || Platform.OS };
+      if (entry.token_type) payload.token_type = entry.token_type;
+      const r = await apiCall('register_push_token', payload, 'POST');
+      if (r?.success) {
+        flushed++;
+        _flushedTokensInSession.add(dedupKey);
+      } else {
+        // Server returned a structured failure. If the response shape
+        // suggests a permanent error (invalid token format, account
+        // deleted) we drop it; otherwise keep for retry. Without a
+        // discriminator we keep — better to retry a few extra times
+        // than to silently lose registration forever.
+        const msg = String(r?.error || r?.message || '').toLowerCase();
+        const isHard = /invalid.?token|malformed|account.?(deleted|not.?found)|forbidden/.test(msg);
+        if (!isHard) kept.push(entry);
+      }
+    } catch (err) {
+      _diagPush('flush_pending_err', err?.message || String(err));
+      kept.push(entry);
+    }
+  }
+  _writePendingTokenSends(kept);
+  _diagPush('flush_pending_done', `flushed=${flushed} kept=${kept.length}`);
+  return { flushed, kept: kept.length };
 }
 
 // Cache the Expo push token from the most recent getExpoPushTokenAsync()
@@ -1234,9 +1370,41 @@ export async function setupNotificationListeners() {
     handleNotificationNavigation(data);
   });
 
+  // ─── Offline retry wiring for pending_token_sends ────────────────────
+  // 1. Drain on every foreground transition (matches the existing 6h
+  //    ensurePushTokenFresh hook in AuthContext but cheaper: no permission
+  //    prompt, no re-derive token, just retry the persisted POST).
+  // 2. Drain on WS auth_ack — the same network event that flushes the
+  //    chat outbox is the strongest "we're back online" signal we have,
+  //    much faster than the AppState bounce in carrier-flap scenarios.
+  let _flushAppStateSub = null;
+  let _flushWsConnUnsub = null;
+  try {
+    _flushAppStateSub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        flushPendingTokens().catch(() => {});
+      }
+    });
+  } catch {}
+  try {
+    const mailWs = require('./websocket').default;
+    if (mailWs && typeof mailWs.on === 'function') {
+      _flushWsConnUnsub = mailWs.on('connection', (evt) => {
+        if (evt?.status === 'authenticated') {
+          flushPendingTokens().catch(() => {});
+        }
+      });
+    }
+  } catch {}
+  // Best-effort initial drain in case there were pending entries from the
+  // last session (cold start with stale queue).
+  flushPendingTokens().catch(() => {});
+
   return () => {
     receivedSub?.remove?.();
     responseSub?.remove?.();
+    try { _flushAppStateSub?.remove?.(); } catch {}
+    try { _flushWsConnUnsub?.(); } catch {}
   };
 }
 
@@ -1367,36 +1535,95 @@ function handleNotificationNavigation(data) {
   }
 }
 
+// Notification action handlers — these run when the user taps Archive /
+// Mark-read / Delete / Reply directly from the lockscreen / notification
+// shade. Before Wave 5 these used `.catch(() => {})` which silently dropped
+// the action on offline / 5xx: the user saw the swipe animation succeed
+// (system UI dismisses the notification regardless) but the email/chat
+// stayed unread on the server forever. Now we queue via offlineCache's
+// replay engine so the next foreground / WS reconnect retries with the
+// same backoff cadence as in-app actions.
+async function _queueNotificationAction(actionType, params) {
+  try {
+    await queueOfflineAction({
+      type: 'notification_action',
+      action_type: actionType,
+      params,
+    });
+  } catch (e) {
+    _diagPush('notif_action_queue_err', e?.message || String(e));
+  }
+}
+
 async function handleArchiveFromNotification(data) {
+  const params = { uid: data.uid, folder: data.folder || 'INBOX', destination: 'Archive' };
   try {
     const { apiCall } = require('./api');
-    await apiCall('move', { uid: data.uid, folder: data.folder || 'INBOX', destination: 'Archive' }, 'POST');
-  } catch {}
+    await apiCall('move', params, 'POST');
+  } catch (err) {
+    _diagPush('notif_archive_offline', err?.message || String(err));
+    await _queueNotificationAction('archive', params);
+  }
 }
 
 async function handleMarkReadFromNotification(data) {
+  const params = { uid: data.uid, folder: data.folder || 'INBOX' };
   try {
     const { apiCall } = require('./api');
-    await apiCall('mark_read', { uid: data.uid, folder: data.folder || 'INBOX' }, 'POST');
-  } catch {}
+    await apiCall('mark_read', params, 'POST');
+  } catch (err) {
+    _diagPush('notif_markread_offline', err?.message || String(err));
+    await _queueNotificationAction('mark_read', params);
+  }
 }
 
 async function handleDeleteFromNotification(data) {
+  const params = { uid: data.uid, folder: data.folder || 'INBOX' };
   try {
     const { apiCall } = require('./api');
-    await apiCall('delete', { uid: data.uid, folder: data.folder || 'INBOX' }, 'POST');
-  } catch {}
+    await apiCall('delete', params, 'POST');
+  } catch (err) {
+    _diagPush('notif_delete_offline', err?.message || String(err));
+    await _queueNotificationAction('delete', params);
+  }
 }
 
 async function handleChatReplyFromNotification(conversationId, text) {
   try {
     const { chatSend, chatRead } = require('./api');
-    await chatSend(conversationId, text, 'text');
-    // Mark as read too
-    await chatRead(conversationId, 0);
+    const r = await chatSend(conversationId, text, 'text');
+    if (!r || r.success === false) throw new Error(r?.error || r?.message || 'chat_send_failed');
+    // Mark as read too — best effort; failure here doesn't roll back the
+    // send, just queues a chat_read retry.
+    try {
+      await chatRead(conversationId, 0);
+    } catch (readErr) {
+      await _queueNotificationAction('chat_read', { conversation_id: conversationId });
+    }
     try { await refreshBadgeCount?.(); } catch {}
   } catch (err) {
-    console.warn('[Push] Chat reply failed:', err.message);
+    // HTTP fallback dropped — queue as the canonical chat_send action that
+    // replayOfflineQueue already knows how to retry (same backoff, same
+    // server idempotency via client_message_id). Without the cmid, server
+    // dedup can't protect us from a duplicate if the original POST actually
+    // landed but the response was lost — so we mint one here.
+    console.warn('[Push] Chat reply failed:', err?.message || err);
+    _diagPush('notif_chat_reply_offline', err?.message || String(err));
+    try {
+      const cmid = 'qr-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+      await queueOfflineAction({
+        type: 'chat_send',
+        conversation_id: conversationId,
+        content: text,
+        msgType: 'text',
+        client_message_id: cmid,
+      });
+      // Also queue a chat_read so when the reply finally lands, the
+      // conversation is marked read just like the inline tap would.
+      await _queueNotificationAction('chat_read', { conversation_id: conversationId });
+    } catch (qErr) {
+      _diagPush('notif_chat_reply_queue_err', qErr?.message || String(qErr));
+    }
   }
 }
 
@@ -1405,7 +1632,10 @@ async function handleMarkReadChatFromNotification(conversationId) {
     const { chatRead } = require('./api');
     await chatRead(conversationId, 0);
     try { await refreshBadgeCount?.(); } catch {}
-  } catch {}
+  } catch (err) {
+    _diagPush('notif_chat_markread_offline', err?.message || String(err));
+    await _queueNotificationAction('chat_read', { conversation_id: conversationId });
+  }
 }
 
 // ============================================================

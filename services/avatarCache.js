@@ -182,6 +182,11 @@ function _scanDir() {
 const _MAX_CONCURRENT = 3;
 let _activeDownloads = 0;
 const _waitQueue = [];
+// Abort flag — flipped true by `clearAvatarCache()` so any in-flight
+// download bails before writing to a dir that's about to be wiped, and
+// any queued download that hadn't started yet short-circuits to the
+// remote URL instead of materializing a file inside the deleted dir.
+let _aborted = false;
 
 function _acquireSlot() {
   if (_activeDownloads < _MAX_CONCURRENT) {
@@ -255,6 +260,10 @@ export function getCachedAvatarUriOrNull(url) {
  */
 export async function cacheAvatar(url) {
   if (!url || Platform.OS === 'web') return url;
+  // Logout in progress — don't materialize new files into a dir that's
+  // about to be deleted (would race fs.deleteAsync, and the file would
+  // outlive the clear, leaking the prev user's contacts).
+  if (_aborted) return url;
   const fs = getFS();
   if (!fs) return url;
 
@@ -289,6 +298,7 @@ export async function cacheAvatar(url) {
   if (_inflight.has(key)) return _inflight.get(key);
 
   const dlPromise = (async () => {
+    if (_aborted) return url;
     try {
       const dirInfo = await fs.getInfoAsync(dir);
       if (!dirInfo.exists) {
@@ -297,6 +307,12 @@ export async function cacheAvatar(url) {
     } catch {}
 
     await _acquireSlot();
+    // Re-check after waiting for a semaphore slot — a logout might have
+    // landed while we were queued behind 3 other downloads.
+    if (_aborted) {
+      _releaseSlot();
+      return url;
+    }
     try {
       // 15s timeout — avatars are tiny so a stuck CDN means dead edge.
       // Cheaper to bail and let the next mount retry than hold the
@@ -453,6 +469,16 @@ export async function clearAvatarCache() {
   if (Platform.OS === 'web') return;
   const fs = getFS();
   if (!fs) return;
+  // Flip the abort flag so any in-flight cacheAvatar() bails before
+  // writing into the dir we're about to delete. Then drain — wait for
+  // already-started downloads to finish (or hit the 5s cap, after which
+  // we proceed; deleteAsync is `idempotent` so a stragger writing
+  // mid-delete just throws and gets garbage-collected on next launch).
+  _aborted = true;
+  const start = Date.now();
+  while (_activeDownloads > 0 && Date.now() - start < 5000) {
+    await new Promise(r => setTimeout(r, 50));
+  }
   const dir = getAvatarDir();
   try {
     await fs.deleteAsync(dir, { idempotent: true });
@@ -466,6 +492,8 @@ export async function clearAvatarCache() {
   } catch {}
   _lastEvictAt = 0;
   _scanPromise = null;
+  // Reset the abort gate so a subsequent login can resume caching.
+  _aborted = false;
 }
 
 // Kick the dir scan after the splash so subsequent renders hit the

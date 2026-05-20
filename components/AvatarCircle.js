@@ -1,4 +1,4 @@
-import React, { useState, useEffect, memo } from 'react';
+import React, { useState, useEffect, useRef, memo } from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { getAvatarUrlForEmail } from '../services/api';
 import { IconSparkles } from './Icons';
@@ -190,6 +190,11 @@ function hashColor(name) {
 function _CollageTile({ member, size, width, height }) {
   const [tileErr, setTileErr] = useState(false);
   const [tileCachedUri, setTileCachedUri] = useState(null);
+  // Tracks mount status so async cacheAvatar() resolutions don't setState
+  // after the tile unmounts (chat-list rapid scroll → React warning +
+  // memory leak when 100 tiles fire downloads but only 8 stay mounted).
+  const isMountedRef = useRef(true);
+  useEffect(() => () => { isMountedRef.current = false; }, []);
   useEffect(() => { setTileErr(false); setTileCachedUri(null); }, [member?.email, member?.avatar_url]);
   const ImageComponent = ExpoImage || RNImage;
   const memberEmail = typeof member?.email === 'string' ? member.email : '';
@@ -223,6 +228,7 @@ function _CollageTile({ member, size, width, height }) {
     } else {
       try {
         cacheAvatar(uri).then((result) => {
+          if (!isMountedRef.current) return;
           if (typeof result === 'string' && result.startsWith('file://')) {
             setTileCachedUri(result);
           }
@@ -318,6 +324,13 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
   // for a brand-new URL completes (subsequent mounts get the file://
   // from the sync index on first paint, no setState needed).
   const [cachedFileUri, setCachedFileUri] = useState(null);
+  // Tracks mount status so async cacheAvatar() resolutions don't setState
+  // after unmount. Without this, scrolling a long chat list fires N
+  // downloads then 90% of the rows unmount before the downloads land,
+  // and each resolution triggers a setState-on-unmounted-component
+  // warning (+ wasted re-render scheduling).
+  const isMountedRef = useRef(true);
+  useEffect(() => () => { isMountedRef.current = false; }, []);
   useEffect(() => { setImgError(false); setVersion(getAvatarVersion(email)); setCachedFileUri(null); }, [email, uri]);
 
   // ── Group collage short-circuit ────────────────────────────────
@@ -452,6 +465,7 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
       // Miss — fire background download (idempotent + deduped inside).
       try {
         cacheAvatar(_remoteResolved).then((result) => {
+          if (!isMountedRef.current) return;
           if (typeof result === 'string' && result.startsWith('file://')) {
             setCachedFileUri(result);
           }
