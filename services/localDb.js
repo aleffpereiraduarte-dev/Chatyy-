@@ -310,12 +310,12 @@ async function _createTables() {
       sync_seq INTEGER DEFAULT 0
     );
 
-    -- localDb's key-value sync table. Renamed from `sync_state` (which
-    -- db.js also owns with a different schema (table_name, last_sync,
-    -- last_id, version)) to avoid the same CREATE-IF-NOT-EXISTS race that
+    -- localDb key-value sync table. Renamed from sync_state (which
+    -- db.js also owns with a different schema: table_name, last_sync,
+    -- last_id, version) to avoid the same CREATE-IF-NOT-EXISTS race that
     -- bled messages. Both modules can now coexist without stepping on
-    -- each other. All localDb.* sync_state helpers below target this
-    -- table; db.js's dbGetSyncState/dbSetSyncState target the other one.
+    -- each other. All localDb sync_state helpers below target this
+    -- table; db.js dbGetSyncState/dbSetSyncState target the other one.
     CREATE TABLE IF NOT EXISTS sync_state_kv (
       key TEXT PRIMARY KEY,
       value TEXT
