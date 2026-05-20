@@ -455,15 +455,22 @@ export default function StoryViewer({
 
   // Auto-pause when the app backgrounds — without this, the timer keeps
   // ticking, the user comes back, and the story they wanted to look at
-  // already advanced (or finished). Restores prior paused state on resume.
+  // already advanced (or finished). Resume when active so the user doesn't
+  // have to manually tap to un-pause after every background→foreground cycle
+  // (previous "resume handled by paused=false default" comment was wrong —
+  // paused is sticky once true, it only flips back via gesture release/tap).
+  // Skip resume if the reply input is focused (typing-pause owns that state).
   useEffect(() => {
     if (!visible) return undefined;
     const sub = AppState.addEventListener('change', (next) => {
-      if (next === 'active') return; // resume handled by paused=false default
+      if (next === 'active') {
+        if (!replyFocused) setPaused(false);
+        return;
+      }
       setPaused(true);
     });
     return () => { try { sub.remove(); } catch {} };
-  }, [visible]);
+  }, [visible, replyFocused]);
 
   // Realtime reaction toast (owner side). When a viewer reacts to one of
   // OUR stories the backend fires `status_react` on our personal channel;

@@ -840,9 +840,20 @@ const ConversationRow = React.memo(function ConversationRow({
                 const ageLabel = (() => {
                   if (ageMs === null || ageMs < 3600000) return null;
                   const hours = Math.floor(ageMs / 3600000);
-                  if (hours < 24) return `há ${hours}h`;
+                  // Use locale-aware "hAgo" prefix (pt-BR "há", es "hace",
+                  // en="") and the "ago" suffix (en "ago", pt-BR/es "atrás").
+                  // Builds the form  "<prefix> Xh <suffix>" trimmed — pt-BR
+                  // "há 2h", es "hace 2h", en "2h ago". Without this fix the
+                  // chat list shipped a hardcoded "há" to every locale.
+                  const pre = (t && t('time.hAgo')) || '';
+                  const suf = (t && t('time.ago')) || '';
+                  if (hours < 24) {
+                    const unit = `${hours}h`;
+                    return [pre, unit, pre ? '' : suf].filter(Boolean).join(' ').trim();
+                  }
                   const days = Math.floor(hours / 24);
-                  return `há ${days}d`;
+                  const unit = `${days}d`;
+                  return [pre, unit, pre ? '' : suf].filter(Boolean).join(' ').trim();
                 })();
                 const muted = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.45)';
                 const tint = isFresh ? '#dc2626' : muted;

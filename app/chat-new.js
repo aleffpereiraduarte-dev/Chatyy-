@@ -1557,6 +1557,8 @@ export default function ChatNewScreen() {
             data={searchResults}
             keyExtractor={(item, i) => item.email || String(i)}
             renderItem={renderContact}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
             ListHeaderComponent={(searchChannelResults && searchChannelResults.length > 0)
               ? (
                 <View style={{ paddingTop: 4, paddingBottom: 8 }}>

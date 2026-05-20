@@ -4857,7 +4857,12 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
       >
         {/* Header */}
         <View style={previewStyles.header}>
-          <TouchableOpacity onPress={onClose} style={previewStyles.headerBtn}>
+          <TouchableOpacity
+            onPress={onClose}
+            style={previewStyles.headerBtn}
+            accessibilityLabel={t('common.close') || 'Close'}
+            accessibilityRole="button"
+          >
             <IconX size={24} color="#fff" />
           </TouchableOpacity>
           <View style={{ flex: 1 }} />
@@ -10703,7 +10708,15 @@ export default function ChatConversationScreen() {
           // Clear any peer typing/recording bubbles immediately on disconnect —
           // we won't get a stop_typing event from the dead socket and stale
           // "X is typing..." would linger until the next foreground reconnect.
-          if (mountedRef.current) setTypingUsers(new Map());
+          // Also nuke the pending 5s auto-clear timers on each entry — without
+          // this they fired against an empty Map and silently leaked through
+          // a navigation away from this chat.
+          if (mountedRef.current) {
+            setTypingUsers(prev => {
+              prev.forEach(v => { if (v?.timer) { try { clearTimeout(v.timer); } catch {} } });
+              return new Map();
+            });
+          }
           // Only show banner if we HAD a connection before (not on initial load).
           // Grace bumped 3.5s → 5s to match WhatsApp pattern: brief flaps
           // (carrier handoff, AP roam, server reload) now finish reconnecting

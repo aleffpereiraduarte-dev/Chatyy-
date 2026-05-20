@@ -2205,10 +2205,15 @@ function QRScannerView({ onScan, onClose }) {
       <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center' }}>
         {/* Scan frame */}
         <View style={{ width: 250, height: 250, borderWidth: 3, borderColor: '#fff', borderRadius: 20, backgroundColor: 'transparent' }} />
-        <Text style={{ color: '#fff', fontSize: 16, fontWeight: '500', marginTop: 24, textAlign: 'center' }}>Aponte para o QR Code na tela do computador</Text>
+        <Text style={{ color: '#fff', fontSize: 16, fontWeight: '500', marginTop: 24, textAlign: 'center' }}>{t?.('login.qrScanHint') || 'Aponte para o QR Code na tela do computador'}</Text>
       </View>
       {/* Close button */}
-      <TouchableOpacity onPress={onClose} style={{ position: 'absolute', top: 50, left: 20, padding: 12, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 25 }}>
+      <TouchableOpacity
+        onPress={onClose}
+        style={{ position: 'absolute', top: 50, left: 20, padding: 12, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 25 }}
+        accessibilityLabel={t?.('common.close') || 'Close'}
+        accessibilityRole="button"
+      >
         <IconX size={24} color="#fff" />
       </TouchableOpacity>
     </View>
