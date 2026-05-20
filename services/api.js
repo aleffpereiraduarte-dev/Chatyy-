@@ -2646,12 +2646,45 @@ export async function chatConversations(search = '', includeArchived = false) {
         } catch (e) {
           const code = e?.code || '';
           if (code === 'phone_offline' || code === 'relay_timeout' || code === 'no_paired_device' || code === 'request_timeout') {
+            // [STAGE-D 2026-05-20] Auto-wake the phone via silent FCM/APNs BEFORE
+            // surfacing the offline banner. WhatsApp Web does this transparently:
+            // user clicks chat, server pings phone, phone wakes, replies, user
+            // never sees an offline state for the common "phone in pocket / Doze"
+            // case. We rate-limit ourselves once per 60s so a truly dead phone
+            // doesn't burn FCM quota. The relay request itself was already up
+            // to ~10s timeout; the wake push usually lands within 1-2s, so we
+            // do one more relay round-trip after wake before giving up.
+            let attemptedWake = false;
+            try {
+              const lastWake = Number(globalThis.__chatyy_last_auto_wake || 0);
+              if (Date.now() - lastWake > 60000) {
+                globalThis.__chatyy_last_auto_wake = Date.now();
+                attemptedWake = true;
+                // Fire-and-forget; we don't await the wake itself.
+                fetch('/api/chat.php', {
+                  method: 'POST',
+                  credentials: 'include',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ action: 'chat_wake_my_phone' }),
+                }).catch(() => {});
+                // Give the phone up to 2.5s to receive + reconnect WS.
+                await new Promise(res => setTimeout(res, 2500));
+                if (await relay.isAvailable()) {
+                  try {
+                    const r2 = await relay.getConversationsViaRelay();
+                    try { globalThis.__chatyy_phone_offline = false; } catch {}
+                    return r2;
+                  } catch {}
+                }
+              }
+            } catch {}
+            // Wake failed or threw — show the banner so the user can retry.
             try { globalThis.__chatyy_phone_offline = true; } catch {}
             try {
               const { webGetConversations } = require('./localDb');
               const cached = await webGetConversations();
               if (cached && cached.length > 0) {
-                return { success: true, data: { conversations: cached }, _stale: true };
+                return { success: true, data: { conversations: cached }, _stale: true, _autoWakeTried: attemptedWake };
               }
             } catch {}
             // Cache miss too — fall through to REST so the screen isn't blank.
