@@ -130,13 +130,21 @@ function _onReaction(data) {
     SmartCache.updateCachedMessage?.(convId, mid, { reactions });
   });
   // Mirror to SQLite raw_json so cold-open shows the same reactions.
-  _safe(() => {
+  // [#1212 2026-05-19] AWAIT + RETRY: previously fire-and-forget; if the
+  // first write raced the schema-init transaction we lost the reaction
+  // silently. Now: await the first attempt and retry once after 300ms on
+  // failure. Still wrapped in _safe so we never propagate to the WS pump.
+  _safe(async () => {
     const { updateCachedMessage } = require('./chatCache');
     const SmartCache = require('./smartChatCache');
     const arr = SmartCache.getCachedMessagesSync?.(convId, 500) || [];
     const target = arr.find(m => m && String(m.id) === String(mid));
-    if (target?.reactions) {
-      updateCachedMessage(convId, mid, { reactions: target.reactions }).catch(() => {});
+    if (!target?.reactions) return;
+    try {
+      await updateCachedMessage(convId, mid, { reactions: target.reactions });
+    } catch {
+      await new Promise(r => setTimeout(r, 300));
+      try { await updateCachedMessage(convId, mid, { reactions: target.reactions }); } catch {}
     }
   });
 }
@@ -153,9 +161,15 @@ function _onEdit(data) {
     const SmartCache = require('./smartChatCache');
     SmartCache.updateCachedMessage?.(convId, mid, { content, edited_at: editedAt });
   });
-  _safe(() => {
+  // [#1212 2026-05-19] AWAIT + RETRY edit write.
+  _safe(async () => {
     const { updateCachedMessage } = require('./chatCache');
-    updateCachedMessage(convId, mid, { content, edited_at: editedAt }).catch(() => {});
+    try {
+      await updateCachedMessage(convId, mid, { content, edited_at: editedAt });
+    } catch {
+      await new Promise(r => setTimeout(r, 300));
+      try { await updateCachedMessage(convId, mid, { content, edited_at: editedAt }); } catch {}
+    }
   });
 }
 
@@ -175,17 +189,28 @@ function _onDelete(data) {
     const SmartCache = require('./smartChatCache');
     SmartCache.updateCachedMessage?.(convId, mid, tombstone);
   });
-  _safe(() => {
+  // [#1212 2026-05-19] Sequence delete writes with await + retry. Tombstone
+  // first (so cold-open paints "Esta mensagem foi apagada"), then hard
+  // delete from native SQLite. Fire-and-forget was losing deletes under
+  // schema-race; now we await each step and retry once on failure.
+  _safe(async () => {
     const { updateCachedMessage } = require('./chatCache');
-    updateCachedMessage(convId, mid, tombstone).catch(() => {});
+    try {
+      await updateCachedMessage(convId, mid, tombstone);
+    } catch {
+      await new Promise(r => setTimeout(r, 300));
+      try { await updateCachedMessage(convId, mid, tombstone); } catch {}
+    }
   });
-  // Hard remove from native SQLite messages table — `chatCache.deleteCachedMessage`
-  // already covers the SQLite row, but only the active chat screen was calling
-  // it before. We mirror it here so a delete event landing on the list screen
-  // still scrubs disk.
-  _safe(() => {
+  _safe(async () => {
     const nativeDb = require('./db');
-    nativeDb.dbDeleteMessage?.(convId, mid);
+    if (!nativeDb.dbDeleteMessage) return;
+    try {
+      await nativeDb.dbDeleteMessage(convId, mid);
+    } catch {
+      await new Promise(r => setTimeout(r, 300));
+      try { await nativeDb.dbDeleteMessage(convId, mid); } catch {}
+    }
   });
 }
 

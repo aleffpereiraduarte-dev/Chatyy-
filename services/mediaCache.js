@@ -704,8 +704,29 @@ export async function cacheMedia(url, opts = {}) {
     return url;
   })();
   _inflightDownloads.set(key, dlPromise);
-  try { return await dlPromise; }
-  finally {
+  try {
+    const result = await dlPromise;
+    // [#1215 2026-05-19] PHONE-FIRST MEDIA WRITE-BACK
+    // When a foto/áudio/vídeo/gif/sticker/file download lands, mirror the
+    // file:// path into the messages row's local_path column. This is what
+    // lets a cold-open phone paint the media instantly from disk — without
+    // it, the chatMediaCache index alone could desync and the bubble would
+    // show "Mídia removida do cache" even though the file is sitting in
+    // documentDirectory. The lookup goes via the message id we pass through
+    // opts.messageId from prefetchIncomingMessageMedia.
+    if (result && opts.messageId != null && opts.conversationId != null &&
+        Platform.OS !== 'web' && typeof result === 'string' && result.startsWith('file://')) {
+      try {
+        const nativeDb = require('./db');
+        if (typeof nativeDb.dbUpdateMessageFields === 'function') {
+          nativeDb.dbUpdateMessageFields(opts.conversationId, opts.messageId, {
+            local_path: result,
+          }).catch(() => {});
+        }
+      } catch {}
+    }
+    return result;
+  } finally {
     _inflightDownloads.delete(key);
     // Fire-and-forget LRU sweep (debounced inside) — keeps saved dir
     // bounded after each new download lands.
@@ -889,7 +910,13 @@ export function prefetchIncomingMessageMedia(message) {
       // gate via cacheMedia. Photos default to wifi, video/docs default to
       // never; tap-to-download in the bubble bypasses with { force: true }.
       // Fire-and-forget; failures don't bubble up to the WS handler.
-      cacheMedia(url, convId != null ? { conversationId: convId } : undefined).catch(() => {});
+      // [#1215 2026-05-19] Pass messageId so cacheMedia can write the
+      // resulting file:// path back into the messages row's local_path
+      // column on success — phone-first storage parity.
+      const _opts = convId != null
+        ? { conversationId: convId, messageId: message.id }
+        : (message.id != null ? { messageId: message.id } : undefined);
+      cacheMedia(url, _opts).catch(() => {});
     }
   } catch {}
 }

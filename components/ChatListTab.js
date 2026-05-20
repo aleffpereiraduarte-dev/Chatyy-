@@ -3069,7 +3069,43 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       unsubs.push(() => { try { fgGraceAppStateSub.remove(); } catch {} });
       unsubs.push(mailWs.on('connection', (data) => {
         if (data?.status === 'authenticated') {
-          if (!wasConnected) { try { loadConversations(false); } catch {} }
+          if (!wasConnected) {
+            try { loadConversations(false); } catch {}
+            // [#1211 2026-05-19] PHONE-FIRST CATCH-UP: pull every event missed
+            // for known convs since their last-seen pts and let chatSync
+            // mirror the new_message hydrated rows into SQLite (the applyEvents
+            // SQLite hook lives in services/chatSync.js). Before this, only
+            // the conv list was refreshed on reconnect; missed messages for
+            // convs the user wasn't actively viewing never landed on disk —
+            // they'd show up briefly on the chat-conversation screen via
+            // applyEvents but disappear on cold start. With this hook the
+            // device DB stays in sync regardless of which screen is up.
+            // We pull conv IDs from the cached chat list (chatCache) instead
+            // of the React state closure (which can be stale at WS-connect
+            // time) so cold-start reconnects catch up correctly.
+            (async () => {
+              try {
+                const { getCachedConversations } = require('../services/chatCache');
+                const cs = (await getCachedConversations?.()) || [];
+                const ids = (Array.isArray(cs) ? cs : [])
+                  .map(c => Number(c?.id))
+                  .filter(n => Number.isFinite(n) && n > 0)
+                  .slice(0, 200);
+                if (ids.length === 0) return;
+                const { syncConversations: _syncConvs, applyEvents: _applyEv } = require('../services/chatSync');
+                if (typeof _syncConvs !== 'function') return;
+                const perConv = await _syncConvs(ids);
+                if (!Array.isArray(perConv)) return;
+                for (const c of perConv) {
+                  try {
+                    // No-op setMessages — applyEvents will mirror to SQLite
+                    // via the chatCache hook inside chatSync.applyEvents.
+                    _applyEv?.(c.events || [], null, () => {}, c.messages || []);
+                  } catch {}
+                }
+              } catch {}
+            })();
+          }
           wasConnected = true;
           if (bannerTimer) { clearTimeout(bannerTimer); bannerTimer = null; }
           // Fade-out (500ms) instead of an abrupt flip when we reconnect.

@@ -176,6 +176,48 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
   // Normaliza ids pra Number — antes ids vinham como string em alguns
   // events e number em outros, e o get() do Map falhava silenciosamente.
   const hydratedMap = new Map(hydratedMessages.map(m => [Number(m.id), m]));
+
+  // [#1211 2026-05-19] PHONE-FIRST STORAGE: write every catch-up event to
+  // SQLite/chatCache so the disk DB stays in sync even when this delta
+  // arrives while the user is on a different screen. Before this, applyEvents
+  // only patched React state — if the user wasn't on the conv at reconnect
+  // time, the hydrated rows landed in `next` but the local SQLite never got
+  // them, so the messages disappeared on next cold-open (user report
+  // "ainda não está salvando tudo no celular"). Fire-and-forget, swallow
+  // errors — best-effort mirror.
+  try {
+    const chatCache = require('./chatCache');
+    for (const ev of events) {
+      const mid = Number(ev?.payload?.message_id) || 0;
+      if (!mid) continue;
+      if (ev.type === 'new_message') {
+        const hyd = hydratedMap.get(mid);
+        if (hyd && hyd.conversation_id) {
+          chatCache.cacheSingleMessage?.(hyd.conversation_id, hyd).catch?.(() => {});
+        }
+      } else if (ev.type === 'edit') {
+        const newContent = ev?.payload?.content;
+        const convId = ev?.payload?.conversation_id;
+        if (convId && typeof newContent === 'string') {
+          chatCache.updateCachedMessage?.(convId, mid, { content: newContent, edited_at: ev.created_at }).catch?.(() => {});
+        }
+      } else if (ev.type === 'delete') {
+        const convId = ev?.payload?.conversation_id;
+        if (convId) {
+          chatCache.updateCachedMessage?.(convId, mid, { deleted_at: ev.created_at, content: '', file_url: '', file_name: '' }).catch?.(() => {});
+        }
+      } else if (ev.type === 'reaction') {
+        const convId = ev?.payload?.conversation_id;
+        const rx = ev?.payload?.reactions;
+        if (convId && Array.isArray(rx)) {
+          chatCache.updateCachedMessage?.(convId, mid, { reactions: rx }).catch?.(() => {});
+        }
+      }
+    }
+  } catch (e) {
+    if (__DEV__) console.warn('[chatSync] applyEvents SQLite mirror failed (non-fatal):', e?.message || e);
+  }
+
   setMessages(prev => {
     const next = [...prev];
     const indexById = new Map(next.map((m, i) => [Number(m.id), i]));

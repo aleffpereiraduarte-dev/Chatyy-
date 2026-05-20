@@ -266,6 +266,20 @@ export async function initDatabase() {
       "ALTER TABLE messages ADD COLUMN reactions TEXT",
       "ALTER TABLE messages ADD COLUMN read_by TEXT",
       "ALTER TABLE messages ADD COLUMN raw_json TEXT",
+      // [#1215 2026-05-19] Phone-first media: store the local file:// path
+      // alongside the remote file_url so media rows survive a wipe of the
+      // separate chatMediaCache index. Applies to photo/audio/video/gif/
+      // sticker/file rows. When mediaCache.cacheMedia resolves, the
+      // resulting filesystem URI is written here AND the optimistic _localUri
+      // on the row is preserved. Polls/gifts/diamond bubbles keep their full
+      // payload in raw_json so no extra columns needed for them.
+      "ALTER TABLE messages ADD COLUMN local_path TEXT",
+      // Media metadata (width/height/duration) — render the right aspect
+      // ratio before the file finishes downloading. Backend already returns
+      // these in some payloads; we just add the columns so they land.
+      "ALTER TABLE messages ADD COLUMN media_width INTEGER",
+      "ALTER TABLE messages ADD COLUMN media_height INTEGER",
+      "ALTER TABLE messages ADD COLUMN media_duration INTEGER",
     ];
     for (const sql of ADDITIVE_COLUMNS) {
       try { await _db.execAsync(sql); }
@@ -543,6 +557,44 @@ export async function dbUpdateMessage(messageId, updates) {
       JSON.stringify(merged), merged.content || '', merged.edited_at || null, messageId
     ]);
   } catch {}
+}
+
+/**
+ * [#1215 2026-05-19] Targeted field update — used by mediaCache write-back.
+ * Updates ONLY the column(s) provided in `fields` (local_path, media_width,
+ * media_height, media_duration, etc.) without touching content/edited_at.
+ * Also merges into raw_json so cold reads via dbGetMessages reflect the
+ * new file:// path immediately. Whitelisted columns only — silently
+ * ignores unknown keys to avoid SQL injection from JS callers.
+ */
+const _ALLOWED_FIELD_UPDATES = new Set([
+  'local_path', 'media_width', 'media_height', 'media_duration',
+  'read_at', 'deleted_at', 'pending_state', 'sync_seq',
+]);
+export async function dbUpdateMessageFields(conversationId, messageId, fields) {
+  if (isWeb || !_db) return;
+  if (!fields || typeof fields !== 'object') return;
+  const entries = Object.entries(fields).filter(([k]) => _ALLOWED_FIELD_UPDATES.has(k));
+  if (entries.length === 0) return;
+  try {
+    // Pull current row so we can merge into raw_json too.
+    const row = await _db.getFirstAsync(
+      'SELECT raw_json FROM messages WHERE id = ? AND conversation_id = ?',
+      [messageId, conversationId]
+    );
+    if (!row) return;
+    let merged = {};
+    try { merged = { ...JSON.parse(row.raw_json || '{}'), ...fields }; } catch { merged = { ...fields }; }
+    const setSql = entries.map(([k]) => `${k} = ?`).join(', ');
+    const params = entries.map(([_, v]) => v);
+    params.push(JSON.stringify(merged), messageId, conversationId);
+    await _db.runAsync(
+      `UPDATE messages SET ${setSql}, raw_json = ? WHERE id = ? AND conversation_id = ?`,
+      params
+    );
+  } catch (e) {
+    if (__DEV__) console.warn('[db] dbUpdateMessageFields failed:', e?.message || e);
+  }
 }
 
 // ══════════════════════════════════════
