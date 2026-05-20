@@ -560,6 +560,81 @@ export async function dbUpdateMessage(messageId, updates) {
 }
 
 /**
+ * [#1216 2026-05-19] Phone-first sync completeness — WhatsApp-restore parity.
+ * Returns a single object with counters the UI uses to surface "Backup
+ * completo no celular ✓" vs "Baixando: 12 mídias pendentes":
+ *   - convsTotal:    rows in conversations table (a proxy for "everything
+ *                    the server knows we're part of"); the SyncBar shows
+ *                    this as the denominator.
+ *   - msgsTotal:     rows in messages table.
+ *   - mediaTotal:    msgs of media-bearing types (image/video/audio/voice/
+ *                    short_video/gif/sticker/file/document).
+ *   - mediaOnDisk:   mediaTotal where local_path IS NOT NULL.
+ *   - mediaPending:  mediaTotal - mediaOnDisk.
+ *
+ * Cheap: 3 COUNT queries, no full table scan. Suitable for polling from
+ * a Settings tile or the SyncBar status line.
+ */
+export async function getSyncStats() {
+  if (isWeb || !_db) return null;
+  try {
+    const cTotal = await _db.getFirstAsync('SELECT COUNT(*) AS n FROM conversations');
+    const mTotal = await _db.getFirstAsync('SELECT COUNT(*) AS n FROM messages');
+    const mMedia = await _db.getFirstAsync(
+      "SELECT COUNT(*) AS n FROM messages WHERE type IN ('image','video','audio','voice','short_video','gif','sticker','file','document')"
+    );
+    const mDisk = await _db.getFirstAsync(
+      "SELECT COUNT(*) AS n FROM messages WHERE type IN ('image','video','audio','voice','short_video','gif','sticker','file','document') AND local_path IS NOT NULL AND local_path <> ''"
+    );
+    const convsTotal = Number(cTotal?.n || 0);
+    const msgsTotal = Number(mTotal?.n || 0);
+    const mediaTotal = Number(mMedia?.n || 0);
+    const mediaOnDisk = Number(mDisk?.n || 0);
+    return {
+      convsTotal,
+      msgsTotal,
+      mediaTotal,
+      mediaOnDisk,
+      mediaPending: Math.max(0, mediaTotal - mediaOnDisk),
+      // 100 when there's no media at all (nothing to download = complete).
+      mediaPercent: mediaTotal === 0 ? 100 : Math.floor((mediaOnDisk / mediaTotal) * 100),
+    };
+  } catch (e) {
+    if (__DEV__) console.warn('[db] getSyncStats failed:', e?.message);
+    return null;
+  }
+}
+
+/**
+ * [#1216 2026-05-19] List media rows missing local_path so a Settings
+ * "Baixar tudo agora" button can re-queue them through mediaCache. Caps
+ * at 500 per call so we don't load the whole table into RAM on big
+ * accounts; caller paginates if needed.
+ */
+export async function getMissingMediaMessages(limit = 500) {
+  if (isWeb || !_db) return [];
+  try {
+    const rows = await _db.getAllAsync(
+      `SELECT id, conversation_id, type, file_url, content, thumb_b64
+       FROM messages
+       WHERE type IN ('image','video','audio','voice','short_video','gif','sticker','file','document')
+         AND (local_path IS NULL OR local_path = '')
+         AND (
+           (file_url IS NOT NULL AND file_url <> '')
+           OR (type IN ('gif','sticker') AND content LIKE 'http%')
+         )
+       ORDER BY id DESC
+       LIMIT ?`,
+      [Math.max(1, Math.min(limit, 2000))]
+    );
+    return rows || [];
+  } catch (e) {
+    if (__DEV__) console.warn('[db] getMissingMediaMessages failed:', e?.message);
+    return [];
+  }
+}
+
+/**
  * [#1215 2026-05-19] Targeted field update — used by mediaCache write-back.
  * Updates ONLY the column(s) provided in `fields` (local_path, media_width,
  * media_height, media_duration, etc.) without touching content/edited_at.
