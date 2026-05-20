@@ -231,7 +231,8 @@ export async function initDatabase() {
           content,
           sender_email UNINDEXED,
           conversation_id UNINDEXED,
-          content_rowid = id
+          content_rowid = id,
+          tokenize = "unicode61 remove_diacritics 2"
         );
         CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
           INSERT INTO messages_fts(rowid, content, sender_email, conversation_id)
@@ -246,6 +247,42 @@ export async function initDatabase() {
           DELETE FROM messages_fts WHERE rowid = old.id;
         END;
       `);
+      // [#1223 2026-05-20 Wave 6] Migration: rebuild FTS5 if it was created
+      // without the unicode61+remove_diacritics tokenizer. Existing installs
+      // (pre-tokenizer) silently miss matches like "café" ↔ "cafe". The
+      // tokenizer is a CREATE-time setting — SQLite doesn't expose ALTER for
+      // it, so we DROP and recreate, then re-populate from messages. Done
+      // once via user_version gate to avoid re-indexing on every cold start.
+      try {
+        const ver = await _db.getFirstAsync('PRAGMA user_version');
+        const userVersion = ver?.user_version ?? 0;
+        if (userVersion < 6) {
+          // Check if FTS5 was created with old tokenizer by reading the
+          // schema. unicode61 with remove_diacritics shows in sqlite_master.
+          const ftsSchema = await _db.getFirstAsync(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='messages_fts'"
+          );
+          const hasNewTokenizer = String(ftsSchema?.sql || '').includes('remove_diacritics');
+          if (!hasNewTokenizer) {
+            console.warn('[DB] FTS5 migration: rebuilding with remove_diacritics');
+            await _db.execAsync(`
+              DROP TABLE IF EXISTS messages_fts;
+              CREATE VIRTUAL TABLE messages_fts USING fts5(
+                content,
+                sender_email UNINDEXED,
+                conversation_id UNINDEXED,
+                content_rowid = id,
+                tokenize = "unicode61 remove_diacritics 2"
+              );
+              INSERT INTO messages_fts(rowid, content, sender_email, conversation_id)
+                SELECT id, content, sender_email, conversation_id FROM messages WHERE content IS NOT NULL AND content != '';
+            `);
+          }
+          await _db.execAsync('PRAGMA user_version = 6');
+        }
+      } catch (e) {
+        console.warn('[DB] FTS5 tokenizer migration skipped:', e?.message);
+      }
     } catch (err) {
       console.warn('[DB] FTS5 setup skipped:', err?.message);
     }
@@ -306,6 +343,31 @@ export async function initDatabase() {
         CREATE INDEX IF NOT EXISTS idx_messages_client_temp ON messages(client_temp_id);
       `);
     } catch {}
+
+    // [#1223 2026-05-20 Wave 6] pending_messages schema mismatch.
+    // chatCache.savePendingMessage() persists sender_email + client_message_id
+    // + reply_to_id + mentions but the ORIGINAL table only had temp_id,
+    // conversation_id, content, type, file_url, file_name, created_at,
+    // retries, raw_json. Result: native INSERT silently fails (caught by
+    // savePendingMessage's catch), MMKV fallback works, but cold-start
+    // hydration from SQLite returns empty list — pending msgs DISAPPEAR
+    // forever if MMKV is purged. Add the missing columns idempotently.
+    const PENDING_ADDITIVE_COLUMNS = [
+      "ALTER TABLE pending_messages ADD COLUMN sender_email TEXT",
+      "ALTER TABLE pending_messages ADD COLUMN client_message_id TEXT",
+      "ALTER TABLE pending_messages ADD COLUMN reply_to_id INTEGER",
+      "ALTER TABLE pending_messages ADD COLUMN mentions TEXT",
+      "ALTER TABLE pending_messages ADD COLUMN updated_at TEXT",
+    ];
+    for (const sql of PENDING_ADDITIVE_COLUMNS) {
+      try { await _db.execAsync(sql); }
+      catch (e) {
+        const msg = String(e?.message || '');
+        if (!/duplicate column/i.test(msg)) {
+          console.warn('[DB] pending_messages migration failed:', sql, msg);
+        }
+      }
+    }
 
     // ── Self-check: blow up loud if schema is still missing required cols ──
     // This is the diagnostic that would have caught the localDb/db.js race

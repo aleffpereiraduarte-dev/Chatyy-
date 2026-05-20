@@ -1228,6 +1228,13 @@ export function AuthProvider({ children }) {
             //  The cache-scope lock + cleared SmartCache below keep stale
             //  data from painting; minor flash is acceptable for stable
             //  WS lifecycle.)
+            // [#1223 2026-05-20 Wave 6] Clear chatyy_offline_user FIRST so a
+            // hard kill DURING the cache wipe doesn't resurrect the previous
+            // account on next cold start via hydrateOffline. Previously this
+            // ran AFTER clearAllCache, leaving a window where User A's
+            // payload remained in AsyncStorage even though SmartCache was
+            // already nuked — could flash User A's data to User B.
+            try { await AsyncStorage.removeItem('chatyy_offline_user'); } catch {}
             _lockCacheScopeSync(500);
             setCacheUser(null);
             try { await clearAllCache(); } catch {}
