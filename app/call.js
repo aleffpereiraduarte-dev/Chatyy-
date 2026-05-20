@@ -5045,10 +5045,37 @@ class CallErrorBoundary extends React.Component {
 // router.push('/call?...') caller (chat-conversation.js, ChatCallsTab,
 // OngoingCallBar, CallStatusBar, IncomingCallListener, pushNotifications.js,
 // app/one.js) keeps working without edits — preserves the deep-link surface.
+//
+// [#1208 2026-05-19] Foreground-outgoing gate. User insight:
+// "quando o iOS faz ligação ele abre o nativo para ligar aí dá conflito —
+// o nativo é só pra receber, pq pra ligar ele já tá dentro do app". The
+// native CallActivity / CallViewController exists primarily so the OS-level
+// CallKit/IncomingCallActivity flow can ring → answer → render even when the
+// app is killed. When the user is already INSIDE the app (foreground) and
+// taps "Ligar", switching to the native screen LOSES features (invite friend,
+// audio→video upgrade, screenshare, group grid, emoji reactions) that only
+// exist in the JS /call.js — and confuses the user with "duas telas
+// diferentes" that look inconsistent.
+//
+// New behavior:
+//   - OUTGOING + AppState.currentState === 'active'  → render /call.js (JS UI)
+//   - OUTGOING + app NOT foreground (Siri shortcut / background widget) → native
+//   - INCOMING + foreground (rare, listener already hands off)         → JS UI
+//   - INCOMING + background/killed (the common cold-start ring path)   → native
+//
+// Native side ALSO double-checks (single source of truth — see iOS
+// ExpoCallKitModule.startOutgoingCall and Android ExpoCallKitModule.openNativeCall/
+// startOutgoingCall foreground gate). The JS-side check here is the cheap
+// fast-path so we don't pay the bridge roundtrip when we know we're foreground.
 function MobileNativeBridge() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const dispatchedRef = useRef(false);
+  // [#1208] When the gate decides JS-owns-this-call, flip to render
+  // <CallScreenInner /> instead of returning null (which would unmount and
+  // pop back into chat). This is the foreground-outgoing fast path.
+  const [renderJsUI, setRenderJsUI] = useState(false);
+
   useEffect(() => {
     if (dispatchedRef.current) return;
     dispatchedRef.current = true;
@@ -5058,6 +5085,64 @@ function MobileNativeBridge() {
     const isVideo = params.isVideo === '1' || params.isVideo === 'true' || params.isVideo === 1 || params.isVideo === true;
     const isCaller = params.isCaller === '1' || params.isCaller === 'true' || params.isCaller === 1 || params.isCaller === true;
     const conversationId = String(params.conversationId || '');
+
+    // [#1208 foreground gate] If the user is already inside the app
+    // (AppState 'active'), render the JS UI directly — preserves
+    // invite-friend, audio→video upgrade, screenshare, group grid, emoji
+    // reactions. Applies to BOTH outgoing AND incoming-while-foreground.
+    //
+    // For outgoing: we still call the native side (best-effort) to register
+    // the CallKit CXStartCallAction (iOS — needed for Recents + lock-screen
+    // pill) and persist accepting state (Android — needed for ongoing-call
+    // service); the native module's startOutgoingCall has its own foreground
+    // gate that suppresses presenting the native VC but keeps OS-level call
+    // accounting.
+    //
+    // For incoming + foreground: the call is already known to CallKit
+    // (PushKit/CXProvider on iOS) or FCM (Android); JS just adopts any
+    // pre-connected LiveKit Room via adoptNativeRoom inside CallScreenInner.
+    // We DON'T call openNativeCall here because the native module would skip
+    // anyway (also has foreground gate) and the bridge call is wasted.
+    const isForeground = AppState.currentState === 'active';
+
+    if (isForeground && isCaller) {
+      // Foreground OUTGOING — render JS UI + fire-and-forget native CallKit hook.
+      (async () => {
+        try {
+          const callkit = require('../modules/expo-callkit');
+          if (callkit?.startOutgoingCall) {
+            // Native module is the source of truth for the foreground check —
+            // it'll register CallKit / persist state but skip presenting.
+            callkit.startOutgoingCall({
+              callee_email: contactEmail,
+              callee_name: contactName || contactEmail,
+              is_video: !!isVideo,
+              conversation_id: conversationId,
+              call_id: callId,
+            }).catch((e) => {
+              console.warn('[CallScreen #1208] foreground startOutgoingCall hook failed (non-fatal):', e?.message || e);
+            });
+          }
+        } catch (e) {
+          console.warn('[CallScreen #1208] foreground startOutgoingCall require failed:', e?.message || e);
+        }
+      })();
+      setRenderJsUI(true);
+      return;
+    }
+
+    if (isForeground && !isCaller) {
+      // Foreground INCOMING — already on screen via JS modal/listener.
+      // Render the rich JS UI which will call adoptNativeRoom(callId) on
+      // mount to attach to any LK Room pre-connected by the answer path.
+      // No native bridge call needed.
+      setRenderJsUI(true);
+      return;
+    }
+
+    // Default path: app is NOT foreground OR this is the cold-start adoption
+    // path (incoming routed via router.push after native answer). Dispatch to
+    // native CallActivity / CallViewController as before.
     (async () => {
       try {
         const callkit = require('../modules/expo-callkit');
@@ -5086,11 +5171,22 @@ function MobileNativeBridge() {
       }
     })();
   }, []);
+
+  // [#1208] Foreground-outgoing path: render the rich JS UI in-place.
+  if (renderJsUI) {
+    return (
+      <CallErrorBoundary>
+        <CallScreenInner />
+      </CallErrorBoundary>
+    );
+  }
   return null;
 }
 
 export default function CallScreen(props) {
-  // Web keeps the rich JS UI. Mobile native dispatches to the native screen.
+  // Web keeps the rich JS UI. Mobile native dispatches to the native screen
+  // UNLESS the call is outgoing + app is foreground (see MobileNativeBridge
+  // #1208 gate) — then JS owns the call.
   if (Platform.OS !== 'web') {
     return <MobileNativeBridge />;
   }

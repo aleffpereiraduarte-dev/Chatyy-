@@ -160,6 +160,18 @@ public class ExpoCallKitModule: Module {
     let conversationId: String
     let lkUrl: String?
     let lkToken: String?
+    /// [#1208 2026-05-19] When the app is foreground at the moment JS calls
+    /// `startOutgoingCall`, we still want to register the CXStartCallAction
+    /// (so iOS shows the call in Recents, surfaces the lock-screen pill,
+    /// owns the audio session properly) BUT we DON'T want to present
+    /// CallViewController — the rich JS /call.js UI is already on screen
+    /// and has features (invite friend, audio→video upgrade, screenshare,
+    /// group grid, emoji reactions) the SwiftUI screen doesn't. The CX
+    /// delegate handler reads this flag and skips
+    /// `presentOutgoingCallVC` when true. JS adopts the LiveKit Room via
+    /// `adoptNativeRoom` if/when one was pre-connected, otherwise creates
+    /// its own Room via @livekit/react-native.
+    let suppressVCPresent: Bool
   }
   private var pendingOutgoingCalls: [UUID: OutgoingCallParams] = [:]
 
@@ -607,6 +619,21 @@ public class ExpoCallKitModule: Module {
     // path stays in charge (fallback for unmigrated callers).
     AsyncFunction("openNativeCall") { (callId: String, callerName: String, callerEmail: String, hasVideo: Bool, lkUrl: String?, lkToken: String?) -> Void in
       await MainActor.run {
+        // [#1208 2026-05-19 foreground gate] If the app is foreground at the
+        // moment JS calls openNativeCall, the rich /call.js JS UI is already
+        // mounted (or about to mount via the MobileNativeBridge JS gate).
+        // Skipping the SwiftUI VC here prevents the double-mount
+        // ("duas telas de ligação" complaint) and lets the JS path adopt any
+        // pre-connected LiveKit Room via `adoptNativeRoom(callId)`.
+        // Background / killed paths (cold-start incoming, multi-device cancel,
+        // CallKit-driven answer where the app hasn't come to foreground yet)
+        // fall through and present CallViewController as before.
+        let scenes = UIApplication.shared.connectedScenes
+        let isAppForeground = scenes.contains { $0.activationState == .foregroundActive }
+        if isAppForeground {
+          print("[ExpoCallKit #1208] openNativeCall: app foreground — skipping native VC for callId=\(callId), JS owns UI")
+          return
+        }
         // [#1172 fix, 2026-05-18] resolvePresentingViewController handles
         // backgrounded scenes, CallKit ring-sheet contention, and multi-scene
         // iPad windows — see helper docstring.
@@ -661,6 +688,31 @@ public class ExpoCallKitModule: Module {
       }()
       let uuid = UUID()
 
+      // [#1208 2026-05-19 foreground-outgoing gate] Check app state on the
+      // main thread (UIApplication.shared APIs are not thread-safe under
+      // Swift 6 strict concurrency). If the user is already inside the app
+      // (foreground active scene), the JS /call.js screen is what they should
+      // see — it has features (invite friend, audio→video upgrade,
+      // screenshare, group grid, emoji reactions) the SwiftUI screen
+      // doesn't. We STILL register the CXStartCallAction so iOS knows about
+      // the call (Recents, lock-screen pill, audio category, hold/swap
+      // semantics), but the CX delegate handler will skip the
+      // `presentOutgoingCallVC` call when `suppressVCPresent == true`.
+      // JS adopts any LiveKit Room the native side pre-connects via
+      // `adoptNativeRoom(callId)`, otherwise creates its own Room.
+      //
+      // Edge case: Siri shortcut / background widget triggers a call → JS
+      // bundle isn't even foreground, so this returns false → native path
+      // takes over (presents CallViewController), which is what we want.
+      let isAppForeground: Bool = await MainActor.run {
+        let scenes = UIApplication.shared.connectedScenes
+        return scenes.contains { $0.activationState == .foregroundActive }
+      }
+      let suppressVCPresent = isAppForeground
+      if suppressVCPresent {
+        print("[ExpoCallKit #1208] startOutgoingCall: app foreground — registering CallKit but suppressing native VC (JS /call.js renders)")
+      }
+
       // Stash params for the delegate path AND register the callId↔UUID map
       // so callAnswered/callEnded/endCall route correctly once the callee
       // accepts (the answer event comes through the same CallKit channel).
@@ -679,7 +731,8 @@ public class ExpoCallKitModule: Module {
           roomName: roomName.isEmpty ? callId : roomName,
           conversationId: conversationId,
           lkUrl: lkUrl,
-          lkToken: lkToken
+          lkToken: lkToken,
+          suppressVCPresent: suppressVCPresent
         )
       }
 
@@ -1733,6 +1786,18 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     lkUrl: String?,
     lkToken: String?
   ) {
+    // [#1208 2026-05-19 foreground-outgoing gate] If JS flagged this call as
+    // foreground-initiated, skip presenting the native CallViewController —
+    // the JS /call.js screen is the source of truth for UX (it has features
+    // the SwiftUI screen lacks). The CXStartCallAction transaction has
+    // already been fulfilled by the delegate, so CallKit's accounting is
+    // intact (Recents, lock-screen pill, audio session). JS will adopt the
+    // LiveKit Room via `adoptNativeRoom` if/when the answer path pre-connects
+    // it, or it'll connect its own Room via @livekit/react-native.
+    if params.suppressVCPresent {
+      print("[ExpoCallKit #1208] presentOutgoingCallVC: suppressed for foreground call \(params.callId) — JS owns UI")
+      return
+    }
     // [#1171 redux dismiss, 2026-05-19] Same race guard as presentNativeCallVC.
     // If the user tapped hangup on the CallKit outgoing-call sheet (system
     // pill on the lock screen, or the green status-bar pill) BEFORE the
