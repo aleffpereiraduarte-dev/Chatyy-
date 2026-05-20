@@ -32,15 +32,12 @@ permissions:
 
 jobs:
   build:
-    # 2026-05-20: switched from self-hosted (chatyy prod server) to GitHub's
-    # hosted runner. Self-hosted on prod shares CPU with PHP-FPM + WS and
-    # was taking 40-50min. `ubuntu-latest-large` (8-core/32GB) requires
-    # org-admin enrolled larger runners — we don't have access, so jobs
-    # sat in queue forever. `ubuntu-latest` (4-core/16GB on public repos,
-    # 2-core/7GB on private) is always available and gets us ~20-25min builds,
-    # still 2× faster than self-hosted prod.
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # 2026-05-20: voltei pro self-hosted (chatyy prod server 217.216.67.99).
+    # GitHub Large Runners requerem billing pago — user prefere usar próprio
+    # servidor mesmo que 40min vs 8min. Ubuntu-latest standard só dá 2-core
+    # em private repos = na verdade mais lento que self-hosted Ryzen.
+    runs-on: [self-hosted, linux, android-build]
+    timeout-minutes: 60
     steps:
       - name: Sanity check — required secrets
         run: |
@@ -136,9 +133,24 @@ jobs:
       - name: Build Android .aab locally
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          # Belt-and-suspenders: $GITHUB_ENV propagates between steps but the
+          # eas-cli-local-build-plugin spawns gradle in /tmp/runner/eas-build-
+          # local-nodejs/<uuid>/build/android/ — and a stale gradle daemon (or
+          # the spawn API on this runner) loses ANDROID_HOME. Setting it at
+          # step env guarantees the immediate child process sees it. Gradle
+          # falls back from ANDROID_HOME → ANDROID_SDK_ROOT → local.properties,
+          # so we feed all three.
+          ANDROID_HOME: /opt/android-sdk
+          ANDROID_SDK_ROOT: /opt/android-sdk
           SENTRY_DISABLE_AUTO_UPLOAD: 'true'
           SENTRY_ALLOW_FAILURE: 'true'
         run: |
+          # Kill any orphan gradle daemons that may still hold env from a
+          # previous run without ANDROID_HOME — they'd crash with the same
+          # "SDK location not found" otherwise.
+          pkill -f 'GradleDaemon' 2>/dev/null || true
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls -d "$ANDROID_HOME/platforms" "$ANDROID_HOME/build-tools" 2>/dev/null || true
           npx eas-cli build \
             --platform android \
             --profile production \
