@@ -83,18 +83,24 @@ export function onIncomingVoiceMessage(message) {
         trackVoiceMessage(message.id, message.conversation_id || message.conversationId, false);
       }
     } catch {}
+    // [#1220 2026-05-20] Pass conversationId so cacheVoiceMessage can write
+    // the local file:// path back into messages.local_path via dbUpdate. The
+    // WS prefetch path was missing this — voice notes downloaded fine but
+    // the SQLite row never got updated, so cold-open showed "mídia ainda
+    // não foi baixada" even though the file was sitting on disk.
+    const convId = message.conversation_id || message.conversationId || null;
     // Web: defer to the browser's HTTP cache + Cache API (cacheMedia
     // already populates it for audio URLs). Skip the FS download path.
     if (Platform.OS === 'web') {
       // Still hit cacheVoiceMessage so the Cache API entry lands —
       // when the user opens the chat the <audio> element pulls from
       // service-worker cache instead of the network.
-      cacheVoiceMessage(url, message.id, peaks).catch(() => {}).finally(() => {
+      cacheVoiceMessage(url, message.id, peaks, { conversationId: convId }).catch(() => {}).finally(() => {
         if (id) _inFlight.delete(id);
       });
       return;
     }
-    cacheVoiceMessage(url, message.id, peaks)
+    cacheVoiceMessage(url, message.id, peaks, { conversationId: convId })
       .catch(() => {})
       .finally(() => { if (id) _inFlight.delete(id); });
   } catch {}
