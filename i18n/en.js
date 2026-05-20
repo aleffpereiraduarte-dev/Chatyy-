@@ -2552,6 +2552,11 @@ export default {
   'chatConv.liveCommentPlaceholder': 'Add a comment (optional)',
   'chatConv.livePrivacyNote': 'Only people in this chat see your location. You can stop at any time.',
   'chatConv.liveShareConfirm': 'Share live',
+  // Dup-session guard card in LocationPickerSheet (2026-05-19).
+  'chatConv.liveAlreadySharing': "You're already sharing live location",
+  'chatConv.liveTimeLeft': '{mins} left',
+  'chatConv.liveUnlimited': 'Unlimited sharing',
+  'chatConv.liveStop': 'Stop',
   'common.back': 'Back',
   'signup.stepPhone.cancel': 'Cancel',
   'signup.validation.invalidPhone': 'Enter a valid phone number',

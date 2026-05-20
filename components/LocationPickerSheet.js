@@ -46,7 +46,27 @@ const LIVE_DURATIONS = [
   { key: 'inf', label: 'Sempre', seconds: -1 },
 ];
 
-export default function LocationPickerSheet({ visible, onClose, onSend, onLiveStart, colors, t }) {
+// Format remaining ms as a human-readable countdown for the dup-session
+// guard card. Mirrors WhatsApp's "47min restantes" style: minutes when the
+// session has more than 1h left, "Xh Ymin" when shorter, "<1min" near the
+// tail. We don't sub-second update — caller re-renders every 1s and we
+// recompute. Sentinel `isUnlimited` returns null so the caller can render
+// the dedicated "Compartilhamento ilimitado" string instead of a number.
+function formatRemaining(activeLive) {
+  if (!activeLive) return '';
+  if (activeLive.isUnlimited) return null;
+  const ms = (activeLive.expiresAt || 0) - Date.now();
+  if (ms <= 0) return '';
+  const totalMin = Math.ceil(ms / 60000);
+  if (totalMin >= 60) {
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    return m > 0 ? `${h}h ${m}min` : `${h}h`;
+  }
+  return `${Math.max(1, totalMin)}min`;
+}
+
+export default function LocationPickerSheet({ visible, onClose, onSend, onLiveStart, activeLive, onStopLive, colors, t }) {
   const [loading, setLoading] = useState(true);
   const [coords, setCoords] = useState(null); // { latitude, longitude, accuracy }
   const [address, setAddress] = useState('');
@@ -61,6 +81,15 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
   const [liveConfirm, setLiveConfirm] = useState(null); // { seconds, label }
   const [liveCaption, setLiveCaption] = useState('');
   const cancelRef = useRef(false);
+  // 1s tick to repaint the dup-session guard's countdown. We only spin the
+  // interval while the sheet is visible AND a live session is active —
+  // otherwise it's a wasted setInterval keeping the JS thread busy.
+  const [, setNowTick] = useState(0);
+  useEffect(() => {
+    if (!visible || !activeLive || activeLive.isUnlimited) return undefined;
+    const id = setInterval(() => setNowTick(n => (n + 1) % 1_000_000), 1000);
+    return () => clearInterval(id);
+  }, [visible, activeLive]);
 
   // Reset confirm step + caption when sheet closes/reopens so a previous
   // selection doesn't bleed into the next session.
@@ -211,6 +240,66 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
             </TouchableOpacity>
           </View>
 
+          {/* Dup-session guard — WhatsApp parity. When `activeLive` is set
+              the caller already has a running live broadcast in this chat,
+              so we render a red-tinted card with countdown + "Parar"
+              instead of letting the user start a 2nd session. The static
+              "Enviar localização atual" CTA below remains tappable — it's
+              an orthogonal one-shot pin, not the continuous broadcast.
+              The live-duration chips section further down is hidden via
+              the `!activeLive` gate. */}
+          {activeLive && (() => {
+            const remaining = formatRemaining(activeLive);
+            const subtitle = activeLive.isUnlimited
+              ? (t?.('chatConv.liveUnlimited') || 'Compartilhamento ilimitado')
+              : (remaining
+                  ? (t?.('chatConv.liveTimeLeft', { mins: remaining }) || `${remaining} restantes`)
+                  : '');
+            // Theme-aware bg/text — we keep the red/burgundy palette
+            // because the card communicates "ongoing broadcast, action
+            // required to stop". Light: rose-100. Dark: rose-900-ish.
+            const isDark = !!colors?.isDark || (colors?.background && /^#0|^#1|^#2/.test(String(colors.background)));
+            const bg = isDark ? '#7F1D1D33' : '#FEE2E2';
+            const fg = isDark ? '#FECACA' : '#7F1D1D';
+            return (
+              <View style={{
+                flexDirection: 'row', alignItems: 'center',
+                backgroundColor: bg, borderRadius: 12,
+                paddingHorizontal: 12, paddingVertical: 10,
+                marginBottom: 14,
+              }}>
+                <View style={{
+                  width: 32, height: 32, borderRadius: 16,
+                  backgroundColor: isDark ? '#991B1B66' : '#FCA5A580',
+                  alignItems: 'center', justifyContent: 'center', marginRight: 10,
+                }}>
+                  <IconMapPin size={18} color={fg} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: fg, fontSize: 13, fontWeight: '700' }} numberOfLines={1}>
+                    {t?.('chatConv.liveAlreadySharing') || 'Você já está dividindo localização ao vivo'}
+                  </Text>
+                  {!!subtitle && (
+                    <Text style={{ color: fg, fontSize: 12, opacity: 0.85, marginTop: 2 }} numberOfLines={1}>
+                      {subtitle}
+                    </Text>
+                  )}
+                </View>
+                <TouchableOpacity
+                  onPress={() => onStopLive?.()}
+                  hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+                  style={{ paddingHorizontal: 10, paddingVertical: 6 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={t?.('chatConv.liveStop') || 'Parar'}
+                >
+                  <Text style={{ color: '#EF4444', fontSize: 14, fontWeight: '700' }}>
+                    {t?.('chatConv.liveStop') || 'Parar'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            );
+          })()}
+
           {/* Body: loading / error / preview */}
           {loading && !coords && (
             <View style={{ height: 200, alignItems: 'center', justifyContent: 'center' }}>
@@ -288,7 +377,7 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                   Snap-Map 2026-05-18: "Sempre" chip = unlimited until
                   user stops manually (highlighted differently so it reads
                   as a power-user choice, not a default). */}
-              {onLiveStart && (
+              {onLiveStart && !activeLive && (
                 <View style={{ marginTop: 18 }}>
                   <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textSecondary, marginBottom: 8, letterSpacing: 0.5 }}>
                     {(t?.('chatConv.liveLocation') || 'COMPARTILHAR AO VIVO').toUpperCase()}

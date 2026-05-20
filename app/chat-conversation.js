@@ -6289,6 +6289,14 @@ export default function ChatConversationScreen() {
   // tracking — without this a "share live location" stayed marked-live on
   // the server even after the user left the chat.
   const liveLocMsgIdRef = useRef(null);
+  // Reactive mirror of the active live-location session so the
+  // LocationPickerSheet can render a "Você já está dividindo" guard card and
+  // hide the duration chips. Refs above are great for cleanup but don't
+  // trigger renders; the sheet needs to know the state on every open.
+  //   shape: { messageId, expiresAt: epoch_ms, isUnlimited: bool } | null
+  // WhatsApp parity: opening the picker while a live session is active shows
+  // a top card + Stop button instead of letting the user start a 2nd session.
+  const [liveLocActive, setLiveLocActive] = useState(null);
   const presenceIntervalRef = useRef(null);
   const mountedRef = useRef(true);
   // Sync ref for messages count — used by loadMessages to detect empty screen
@@ -6321,6 +6329,9 @@ export default function ChatConversationScreen() {
       try { api.chatStopLiveLocation?.(liveLocMsgIdRef.current).catch(() => {}); } catch {}
       liveLocMsgIdRef.current = null;
     }
+    // Unmount race: don't bother updating the reactive state (the component
+    // is going away) but clear the ref intent so a re-mount sees a clean
+    // slate. setLiveLocActive(null) here would be a no-op anyway.
     if (presenceIntervalRef.current) clearInterval(presenceIntervalRef.current);
     if (pollRef.current) clearInterval(pollRef.current);
     // Typing timers: pending firings could send stop_typing WS events after
@@ -13293,6 +13304,39 @@ export default function ChatConversationScreen() {
     }
   };
 
+  // Shared "stop my live broadcast right now" used by the picker guard
+  // card (and any future surface). Mirrors the bubble's Parar button —
+  // server stop + clear interval/timeout/refs + clear the reactive guard
+  // so the picker offers chips again on next open.
+  const stopLiveLocationNow = useCallback(async () => {
+    const msgId = liveLocActive?.messageId || liveLocMsgIdRef.current;
+    try {
+      if (msgId && api.chatStopLiveLocation) await api.chatStopLiveLocation(msgId);
+    } catch {}
+    try {
+      if (liveLocIntervalRef.current) { clearInterval(liveLocIntervalRef.current); liveLocIntervalRef.current = null; }
+      if (liveLocTimeoutRef.current) { clearTimeout(liveLocTimeoutRef.current); liveLocTimeoutRef.current = null; }
+    } catch {}
+    liveLocMsgIdRef.current = null;
+    setLiveLocActive(null);
+    // Flip any matching bubble in the visible thread to "encerrada" without
+    // waiting for the WS round-trip — same optimistic UI the bubble Stop
+    // button does, so users tapping Parar from the picker see consistent
+    // feedback whether they triggered it from the bubble or the sheet.
+    if (msgId) {
+      setMessages(prev => prev.map(m => {
+        if (m.id !== msgId) return m;
+        try {
+          const c = JSON.parse(m.content || '{}');
+          c.live_until = Math.floor(Date.now() / 1000) - 1;
+          c.live = false;
+          c.is_unlimited = false;
+          return { ...m, content: JSON.stringify(c), is_unlimited: false };
+        } catch { return m; }
+      }));
+    }
+  }, [liveLocActive]);
+
   const startLiveLocation = async (durationSec, preset) => {
     // Guard against starting a second session — the old interval/timeout
     // would be cleared but the server-side session would orphan.
@@ -13453,6 +13497,16 @@ export default function ChatConversationScreen() {
         // Start background location updates (stored for cleanup on unmount)
         const msgId = r.data.id;
         liveLocMsgIdRef.current = msgId;
+        // Mirror to reactive state so the picker sheet (re-opened later) can
+        // render the "you're already sharing" guard card with countdown. We
+        // pick the same `liveUntil` math used in the WS payload above for
+        // consistency — unlimited gets the ~10y sentinel which the picker
+        // renders as "compartilhamento ilimitado" instead of a countdown.
+        setLiveLocActive({
+          messageId: msgId,
+          expiresAt: liveUntil * 1000,
+          isUnlimited,
+        });
         if (liveLocIntervalRef.current) clearInterval(liveLocIntervalRef.current);
         if (liveLocTimeoutRef.current) clearTimeout(liveLocTimeoutRef.current);
         // Keep live-location alive on transient failures — the prior version
@@ -13512,6 +13566,10 @@ export default function ChatConversationScreen() {
             liveLocIntervalRef.current = null;
             liveLocTimeoutRef.current = null;
             api.chatStopLiveLocation(msgId).catch(() => {});
+            // Auto-expiry path: clear the guard so a brand-new picker open
+            // immediately offers duration chips again (no manual "Parar"
+            // needed if the session already lapsed on its own).
+            setLiveLocActive(null);
           }, durationSec * 1000);
         }
       }
@@ -17295,6 +17353,12 @@ export default function ChatConversationScreen() {
                         if (liveLocTimeoutRef.current) { clearTimeout(liveLocTimeoutRef.current); liveLocTimeoutRef.current = null; }
                       } catch {}
                       try { api.chatStopLiveLocation?.(msg.id).catch(() => {}); } catch {}
+                      // Mirror the bubble's Stop into the picker-side guard so
+                      // reopening Anexar > Localização right after tapping
+                      // Parar offers fresh duration chips (no leftover "já
+                      // dividindo" banner pointing at a now-dead session).
+                      if (liveLocMsgIdRef.current === msg.id) liveLocMsgIdRef.current = null;
+                      setLiveLocActive(null);
                       // Optimistic: flip the bubble to "encerrada" instantly
                       // so the user sees feedback before the server responds.
                       setMessages(prev => prev.map(m => {
@@ -22590,6 +22654,14 @@ export default function ChatConversationScreen() {
           setShowLocationPickerSheet(false);
           startLiveLocation(durationSec, opts || null);
         }}
+        // Dup-session guard — passes the current live broadcast state into
+        // the sheet so it can render a "Você já está dividindo" card +
+        // countdown and HIDE the duration chips. Static "Enviar localização
+        // atual" stays available (it's a one-shot pin, orthogonal to the
+        // continuous live share). User report 2026-05-19: tapped duration
+        // twice and ended up with two simultaneous server sessions.
+        activeLive={liveLocActive}
+        onStopLive={stopLiveLocationNow}
         colors={colors}
         t={t}
       />

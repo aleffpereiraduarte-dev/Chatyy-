@@ -2552,6 +2552,11 @@ export default {
   'chatConv.liveCommentPlaceholder': 'Agregar comentario (opcional)',
   'chatConv.livePrivacyNote': 'Solo las personas de este chat ven tu ubicación. Puedes detenerla en cualquier momento.',
   'chatConv.liveShareConfirm': 'Compartir en vivo',
+  // Tarjeta del guardia de sesión-duplicada en LocationPickerSheet (2026-05-19).
+  'chatConv.liveAlreadySharing': 'Ya estás compartiendo ubicación en vivo',
+  'chatConv.liveTimeLeft': 'Quedan {mins}',
+  'chatConv.liveUnlimited': 'Compartiendo sin límite',
+  'chatConv.liveStop': 'Detener',
   'common.back': 'Volver',
   'signup.stepPhone.cancel': 'Cancelar',
   'signup.validation.invalidPhone': 'Ingresa un número de teléfono valido',

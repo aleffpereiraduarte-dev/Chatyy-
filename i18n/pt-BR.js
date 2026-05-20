@@ -2584,6 +2584,13 @@ export default {
   'chatConv.liveCommentPlaceholder': 'Adicionar comentário (opcional)',
   'chatConv.livePrivacyNote': 'Apenas pessoas desta conversa veem sua localização. Você pode parar a qualquer momento.',
   'chatConv.liveShareConfirm': 'Compartilhar ao vivo',
+  // Dup-session guard card in LocationPickerSheet (2026-05-19): when the user
+  // already has an active live-location broadcast in this chat, we show this
+  // banner with countdown + Stop instead of letting them start a 2nd session.
+  'chatConv.liveAlreadySharing': 'Você já está dividindo localização ao vivo',
+  'chatConv.liveTimeLeft': '{mins} restantes',
+  'chatConv.liveUnlimited': 'Compartilhamento ilimitado',
+  'chatConv.liveStop': 'Parar',
   'common.back': 'Voltar',
   'signup.validation.invalidPhone': 'Digite um número de telefone válido',
   'signup.validation.sendError': 'Erro ao enviar código',
