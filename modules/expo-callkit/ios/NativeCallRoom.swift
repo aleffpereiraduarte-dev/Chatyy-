@@ -216,11 +216,15 @@ public enum NativeCallRoomEvent {
     }
 
     public func getSnapshot() -> Snapshot {
+        // [FIX 2026-05-20 #954 regression] If a Room object exists at all (even
+        // mid-connect), return a snapshot so JS can adopt it and wait via the
+        // onLkConnected listener instead of racing a second Room.connect.
+        // Previously this returned `Snapshot()` for any non-`.connected` state,
+        // which made the JS `adoptNativeRoom` gate reject the room and fall
+        // through to its own Room.connect → duplicate identity → SFU evicts
+        // one → audio fight ("atende mas não toca audio").
         guard let r = room else { return Snapshot() }
         let isConnected = (r.connectionState == .connected)
-        // Build a lightweight participants array shaped like livekit-client's
-        // RoomParticipants — JS reads `identity`/`name`/`isSpeaking` from each
-        // entry. We avoid leaking native opaque types: pure dicts only.
         var participantsArr: [[String: Any]] = []
         for (_, p) in r.remoteParticipants {
             participantsArr.append([
@@ -237,6 +241,10 @@ public enum NativeCallRoomEvent {
             connectionQuality: "unknown"
         )
     }
+
+    /// True if a Room object exists, regardless of connection state. JS uses
+    /// this to decide whether to adopt the native room or spawn its own.
+    public func hasRoom() -> Bool { return room != nil }
 
     // --- JS-facing operations (called from ExpoCallKitModule) ----------------
 

@@ -551,16 +551,23 @@ public class ExpoCallKitModule: Module {
     // [Stage 1+2 alignment] Match Android signature: adoptNativeRoom(callId)
     // returns the snapshot dict or nil if no room or callId mismatch.
     AsyncFunction("adoptNativeRoom") { (callId: String) -> [String: Any]? in
+      // [FIX 2026-05-20 #954 regression] Loosened: accept the Room even when
+      // it's still .connecting. JS will mark peerConnected=false and wait for
+      // the onLkConnected event (via installNativeCallStateBridge). Previously
+      // the strict `snap.connected` gate caused a 2-4s window where JS
+      // assumed no native Room existed and spawned its own → duplicate Room
+      // with same identity → SFU evicts one → audio one-way / mute desync.
       NativeCallRoom.shared.addListener(self)
-      let snap = NativeCallRoom.shared.getSnapshot()
-      guard snap.connected else { return nil }
+      guard NativeCallRoom.shared.hasRoom() else { return nil }
       if let active = NativeCallRoom.shared.lastRoomName, !active.isEmpty,
          active != callId {
         print("[ExpoCallKit] adoptNativeRoom: room is for \(active), not \(callId)")
         return nil
       }
+      let snap = NativeCallRoom.shared.getSnapshot()
       var dict = snap.toDictionary()
-      dict["alreadyConnected"] = true
+      dict["alreadyConnected"] = snap.connected
+      dict["state"] = NativeCallRoom.shared.state.rawValue
       return dict
     }
 

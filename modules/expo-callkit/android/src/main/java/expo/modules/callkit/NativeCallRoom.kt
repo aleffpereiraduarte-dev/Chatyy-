@@ -63,16 +63,21 @@ object NativeCallRoom {
     fun currentCallId(): String? = callId
 
     /**
-     * Snapshot consumed by `adoptNativeRoom(callId)`. Returns null if there
-     * is no live Room or the Room hasn't reached CONNECTED yet — JS then
-     * falls back to its own connect path.
+     * Snapshot consumed by `adoptNativeRoom(callId)`. Returns null only when
+     * there is no Room object at all — if the Room exists but is still
+     * CONNECTING, we still return a snapshot with `connected=false` so JS
+     * can adopt it and wait via the onLkConnected listener.
+     * [FIX 2026-05-20 #954 regression] Previously rejected on `state !=
+     * CONNECTED` → JS spawned a duplicate Room with same identity → SFU
+     * evicted one → audio one-way / mute desync.
      */
     fun getSnapshot(): Map<String, Any?>? {
         val r = room ?: return null
-        if (r.state != Room.State.CONNECTED) return null
+        val isConnected = (r.state == Room.State.CONNECTED)
         return mapOf(
-            "connected" to true,
-            "alreadyConnected" to true,
+            "connected" to isConnected,
+            "alreadyConnected" to isConnected,
+            "state" to r.state.toString(),
             "roomName" to (roomName ?: ""),
             "localIdentity" to (r.localParticipant.identity?.value ?: ""),
             "participants" to r.remoteParticipants.size,
