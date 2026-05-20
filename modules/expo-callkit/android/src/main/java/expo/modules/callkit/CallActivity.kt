@@ -1091,6 +1091,50 @@ class CallActivity : ComponentActivity() {
     val r = LiveKit.create(applicationContext, options = roomOptions)
     room = r
     LiveKitRoomHolder.set(r)
+    // [Wave 17.6 F2] Wire ScreenAudioMixer.mixInto() into the local mic
+    // audio track so app audio captured by ScreenShareService gets merged
+    // into the published mic stream. LK Android 2.10.3 doesn't expose a
+    // public AudioCustomSource — but it DOES expose audio processing via
+    // reflection on AudioBufferCallback / MixerAudioBufferCallback against
+    // Room's javaAudioDeviceModule. We do this best-effort; if the SDK
+    // surface changes the screen-share still works (just no app-audio
+    // merge), so we never throw.
+    try {
+      val adm = r.javaClass.getDeclaredField("audioDeviceModule")
+        .apply { isAccessible = true }
+        .get(r)
+      val setMixerMethod = adm?.javaClass?.methods?.firstOrNull {
+        it.name.contains("setLocalMixerCallback", ignoreCase = true) ||
+        it.name.contains("setSamplesReadyCallback", ignoreCase = true) ||
+        it.name.contains("audioMixer", ignoreCase = true)
+      }
+      if (setMixerMethod != null && adm != null) {
+        // We pass a lambda compatible with LK 2.10's MixerAudioBufferCallback,
+        // which mixes our PCM16 into the mic capture buffer.
+        val cb = java.lang.reflect.Proxy.newProxyInstance(
+          adm.javaClass.classLoader,
+          arrayOf(setMixerMethod.parameterTypes.firstOrNull() ?: Any::class.java)
+        ) { _, _, args ->
+          if (!expo.modules.screenshare.ScreenAudioMixer.isEnabled() || args.isNullOrEmpty()) {
+            return@newProxyInstance null
+          }
+          val maybeShortArr = args.firstOrNull { it is ShortArray } as? ShortArray
+          val maybeByteBuf = args.firstOrNull { it is java.nio.ByteBuffer } as? java.nio.ByteBuffer
+          if (maybeShortArr != null) {
+            expo.modules.screenshare.ScreenAudioMixer.mixInto(maybeShortArr, 0, maybeShortArr.size)
+          } else if (maybeByteBuf != null) {
+            expo.modules.screenshare.ScreenAudioMixer.drainInto(maybeByteBuf, maybeByteBuf.remaining())
+          }
+          null
+        }
+        setMixerMethod.invoke(adm, cb)
+        Log.d(TAG, "ScreenAudioMixer wired via ADM.${setMixerMethod.name}")
+      } else {
+        Log.d(TAG, "ScreenAudioMixer wire skipped — no mixer hook on this LK SDK version")
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "ScreenAudioMixer wire failed: ${t.message}")
+    }
     // [#1207, 2026-05-19] Hand the Room to NativeCallRoom so JS
     // `adoptNativeRoom(callId)` returns a real snapshot and skips its own
     // Room.connect. Without this, /call.js spawns a second Room with the

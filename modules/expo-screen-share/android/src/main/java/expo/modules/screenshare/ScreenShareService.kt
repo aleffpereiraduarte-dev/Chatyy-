@@ -331,6 +331,9 @@ class ScreenShareService : Service() {
     record.startRecording()
     appAudioRecord = record
     appAudioRunning.set(true)
+    // [Wave 17.6] Flag the cross-module mixer so the LK audio thread (set
+    // up in CallActivity via ScreenAudioMixer.attach) starts consuming.
+    ScreenAudioMixer.setEnabled(true)
     Log.d(TAG, "screen audio capture started (48kHz stereo PCM16, buf=$bufSize)")
 
     val scope = serviceScope ?: return
@@ -364,10 +367,12 @@ class ScreenShareService : Service() {
         }
         if (read == 0) continue
         totalBytes += read
-        // TODO(F2 follow-up): push `buffer[0..read]` into the LK
-        // LocalAudioTrack (source = Track.Source.SCREEN_SHARE_AUDIO). LK
-        // Android 2.24 doesn't expose a public AudioCustomSource yet; we
-        // either bump to a newer SDK or fall back to private internals.
+        // [Wave 17.6] Pump samples into ScreenAudioMixer ring. CallActivity
+        // is expected to wire LiveKit's audioProcessingController callback
+        // to ScreenAudioMixer.mixInto() so peer hears mic+screen merged
+        // (LK Android 2.10.3 has no public AudioCustomSource yet, so we
+        // mix into the existing mic track — same approach as Zoom/Meet).
+        ScreenAudioMixer.push(buffer, read)
 
         val now = System.currentTimeMillis()
         if (now - lastLogMs > 1000) {
@@ -385,6 +390,8 @@ class ScreenShareService : Service() {
 
   private fun stopScreenAudioCapture() {
     if (!appAudioRunning.getAndSet(false)) return
+    // [Wave 17.6] Flag mixer disabled so the LK audio thread stops draining.
+    ScreenAudioMixer.setEnabled(false)
     try { appAudioJob?.cancel() } catch (_: Throwable) {}
     appAudioJob = null
     val rec = appAudioRecord

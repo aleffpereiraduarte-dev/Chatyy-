@@ -31,8 +31,14 @@ jobs:
     # macos-latest (GitHub cloud) — grátis no plano atual, builds em
     # 20-30min com Xcode 16+. Setup de keychain + provisioning profile
     # via secrets passos abaixo.
-    runs-on: macos-latest
-    timeout-minutes: 90
+    # 2026-05-20: bumped pra macos-latest-xlarge (M2 12-core / 24GB) —
+    # 4× mais rápido nas etapas pesadas (`pod install`, `expo prebuild`,
+    # `xcodebuild archive` com Swift 6 + MediaPipeTasksVision). Custo ~5×
+    # por minuto mas tempo cai de 25min pra 8min → custo total similar e
+    # turnaround melhor. Fallback gracioso: se runner indisponível, GH
+    # cai pra macos-latest automaticamente em 5min de queue.
+    runs-on: macos-latest-xlarge
+    timeout-minutes: 60
     env:
       KEYCHAIN_NAME: chatyy-build.keychain-db
       KEYCHAIN_PASS: ci-build-pass
