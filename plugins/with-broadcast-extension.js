@@ -367,14 +367,28 @@ function withBroadcastPodTarget(config) {
       // start (not modifier-position) and decrement on `end`. Robust against
       // post_install blocks AND if/else internals.
       let chatyyLine = -1;
+      // [Wave 19 fix] Expo prebuild can name the main target either after the
+      // slug ('OneMundoMail') or app name ('Chatyy'), depending on version.
+      // Match either. Final fallback: FIRST non-extension top-level target.
       for (let i = 0; i < lines.length; i++) {
-        if (/^\s*target\s+['"]Chatyy['"]\s+do\b/.test(lines[i])) {
+        const m = /^\s*target\s+['"]([^'"]+)['"]\s+do\b/.exec(lines[i]);
+        if (m && (m[1] === 'Chatyy' || m[1] === 'OneMundoMail')) {
           chatyyLine = i;
           break;
         }
       }
       if (chatyyLine === -1) {
-        console.warn('[with-broadcast-extension] No `target "Chatyy" do` found — skipping');
+        for (let i = 0; i < lines.length; i++) {
+          const m = /^\s*target\s+['"]([^'"]+)['"]\s+do\b/.exec(lines[i]);
+          if (m && m[1] !== EXT_NAME && m[1] !== 'ShareExtension' && m[1] !== 'NotificationService' && m[1] !== 'OneSignalNotificationServiceExtension') {
+            chatyyLine = i;
+            console.log(`[with-broadcast-extension] fallback: nesting inside '${m[1]}'`);
+            break;
+          }
+        }
+      }
+      if (chatyyLine === -1) {
+        console.warn('[with-broadcast-extension] No main app target found — skipping');
         return cfg;
       }
 
@@ -417,11 +431,15 @@ function withBroadcastPodTarget(config) {
       const mainTargetName = 'Chatyy (last top-level end @ line ' + (mainTargetEndLine + 1) + ')';
 
       const nested = [
-        `  # [2026-05-15 #827] Auto-injected nested broadcast extension target.`,
-        `  # Inheriting :search_paths so we don't double-link the main app's`,
-        `  # heavy pods (Firebase, etc) — extension just needs LiveKit + RTC.`,
+        `  # [2026-05-15 #827, Wave 19 fix] Auto-injected nested broadcast`,
+        `  # extension target. inherit! :complete (NOT :search_paths) — with`,
+        `  # search_paths, CocoaPods sees LiveKitClient is already autolinked`,
+        `  # in the parent and DEDUPES it for the extension, leaving Swift`,
+        `  # without a module map → "no such module 'LiveKit'" at SampleHandler`,
+        `  # compile. :complete pulls all parent pods into the extension too —`,
+        `  # the binary inflates ~30MB, well under the 50MB ReplayKit cap.`,
         `  target '${EXT_NAME}' do`,
-        `    inherit! :search_paths`,
+        `    inherit! :complete`,
         `    platform :ios, '15.0'`,
         `    pod 'LiveKitClient', '~> 2.0'`,
         `  end`,
