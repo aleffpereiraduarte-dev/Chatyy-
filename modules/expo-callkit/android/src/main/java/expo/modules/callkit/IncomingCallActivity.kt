@@ -87,6 +87,14 @@ class IncomingCallActivity : AppCompatActivity() {
       )
     }
 
+    // [STAGE-B 2026-05-20] After Stage B IncomingCallActivity is the
+    // visual UI launched FROM Telecom (via FSI dispatched by the system
+    // when the self-managed Connection enters STATE_RINGING), not the
+    // entry point. The lockscreen-bypass flags must run BEFORE setContent
+    // / setContentView (which buildUI calls below) — that ordering is
+    // already correct here, just leaving the marker so future refactors
+    // don't move them after the setContentView call. Telecom requires
+    // these to dismiss the keyguard for the FSI it delivers on our behalf.
     // Show on lock screen and turn screen on
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
       setShowWhenLocked(true)
@@ -469,41 +477,20 @@ class IncomingCallActivity : AppCompatActivity() {
   }
 
   private fun startRinging() {
-    // [2026-05-15 #fix-6] Removed the activity-side RingtoneManager playback.
-    // The NotificationChannel "incoming_calls" (CallNotificationService.kt:87)
-    // already configures setSound(defaultRingtoneUri, USAGE_NOTIFICATION_RINGTONE)
-    // at IMPORTANCE_HIGH, so the OS is already ringing as soon as the
-    // foreground notification posts — playing a second Ringtone here
-    // produced a 1-2s audible double-ring (channel sound + Ringtone) at
-    // call start before audio focus settled. The channel is the single
-    // owner of the ringtone audio path; vibration stays here because the
-    // activity needs a tighter on/off cadence than the channel pattern.
-
-    // Vibrate
-    try {
-      vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        val vibratorManager = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
-        vibratorManager.defaultVibrator
-      } else {
-        @Suppress("DEPRECATION")
-        getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-      }
-
-      val pattern = longArrayOf(0, 1000, 1000) // wait, vibrate, pause, repeat
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        vibrator?.vibrate(
-          VibrationEffect.createWaveform(pattern, 0),
-          AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-            .build()
-        )
-      } else {
-        @Suppress("DEPRECATION")
-        vibrator?.vibrate(pattern, 0)
-      }
-    } catch (e: Exception) {
-      // Vibration may not be available
-    }
+    // [STAGE-B 2026-05-20] Ringtone + vibration ownership migrated to
+    // CallRingingService (the foreground service with
+    // FOREGROUND_SERVICE_TYPE_PHONE_CALL). Reasons:
+    //   - Telecom self-managed Connection may launch the FSI from outside
+    //     this Activity (BT headset / Auto / Wear accept) — vibration that
+    //     lives in the Activity wouldn't start until the Activity is
+    //     actually created. Moving to FGS guarantees vibration the instant
+    //     FCM lands.
+    //   - The FGS already owns the foreground service type that holds the
+    //     ringtone NotificationChannel audio policy. Co-locating vibration
+    //     keeps the start/stop lifecycle in a single place.
+    // The ringtone itself was already owned by the channel since #fix-6
+    // (2026-05-15); we simply removed the duplicate Ringtone playback then.
+    // This method is now a no-op kept for source-compat with onCreate.
   }
 
   private fun stopRinging() {

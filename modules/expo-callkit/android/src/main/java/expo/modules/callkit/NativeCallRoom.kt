@@ -1,7 +1,9 @@
 package expo.modules.callkit
 
 import android.content.Context
+import android.content.Intent
 import android.util.Log
+import io.livekit.android.LiveKit
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.room.Room
@@ -47,6 +49,16 @@ object NativeCallRoom {
     @Volatile private var callId: String? = null
     @Volatile private var roomName: String? = null
     @Volatile private var listenerJob: Job? = null
+
+    // [STAGE-B 2026-05-20] Pre-warm state. When the FCM payload lands, we
+    // call preconnect(url, token, callId) which kicks LiveKit.create +
+    // Room.connect in a background coroutine BEFORE the user has tapped
+    // Accept. By the time Telecom fires Connection.onAnswer → adoptForCall,
+    // the Room is typically already CONNECTED — adoptForCall just publishes
+    // mic and returns. Saves ~200-500ms on the "tap → audio" budget which
+    // is the bulk of the gap between Chatyy and WhatsApp today.
+    @Volatile private var preconnectingCallId: String? = null
+    @Volatile private var preconnectJob: Job? = null
 
     // SupervisorJob so a single event handler crash doesn't kill the whole
     // listener scope. Main dispatcher so emit* calls (which post to React
@@ -135,6 +147,11 @@ object NativeCallRoom {
         val hadRoom = room != null
         listenerJob?.cancel()
         listenerJob = null
+        // [STAGE-B] Also tear down preconnect bookkeeping so a stale
+        // preconnect Job + callId pointer doesn't survive a finishCall.
+        preconnectJob?.cancel()
+        preconnectJob = null
+        preconnectingCallId = null
         room = null
         callId = null
         roomName = null
@@ -274,6 +291,155 @@ object NativeCallRoom {
                 // are handled inside CallActivity's own collector for the
                 // Compose UI. JS doesn't need every event mirrored.
             }
+        }
+    }
+
+    // ────────────── [STAGE-B 2026-05-20] Pre-warm / Telecom adopt ──────────────
+
+    /**
+     * [STAGE-B] Kick off LiveKit.create + Room.connect for the incoming
+     * call BEFORE the user accepts. Called from CallFirebaseMessagingService
+     * the instant the FCM payload arrives. By the time Telecom delivers
+     * Connection.onAnswer, the Room is typically CONNECTED already and
+     * adoptForCall just needs to publish mic (~50-150ms instead of the
+     * full ~500-800ms cold connect).
+     *
+     * Idempotent across same callId — a second preconnect for the same
+     * callId no-ops. A second preconnect for a DIFFERENT callId clears the
+     * prior Room (the previous call must be over or the FCM payload is
+     * stale; either way we keep the most recent).
+     *
+     * Failure modes:
+     *   - LK SDK init throws (e.g. missing native libs) → log + clear.
+     *   - Room.connect times out → handled by Room.events
+     *     FailedToConnect; adoptForCall will fall back to CallActivity
+     *     restart with the same token (which is still cached via
+     *     LkTokenFetcher.setCached).
+     */
+    fun preconnect(ctx: Context, url: String, token: String, callId: String) {
+        if (url.isBlank() || token.isBlank() || callId.isBlank()) {
+            Log.w(TAG, "preconnect: missing params (url=${url.isNotBlank()} tk=${token.isNotBlank()} id=${callId.isNotBlank()})")
+            return
+        }
+        if (preconnectingCallId == callId && room != null) {
+            Log.d(TAG, "preconnect: already in-flight or done for callId=$callId")
+            return
+        }
+        if (preconnectingCallId != null && preconnectingCallId != callId) {
+            Log.w(TAG, "preconnect: switching from ${preconnectingCallId} → $callId; clearing prior Room")
+            try { room?.disconnect() } catch (_: Throwable) {}
+            clear()
+        }
+        preconnectingCallId = callId
+        // Stash the token in LkTokenFetcher so the cache-hit fallback path
+        // (Connection.onAnswer → adoptForCall → CallActivity restart) still
+        // sees fresh creds even if our preconnect Room somehow died.
+        try {
+            LkTokenFetcher.setCached(ctx.applicationContext, callId, token, url)
+        } catch (_: Throwable) {}
+
+        Log.i(TAG, "preconnect: kicking LK.create + Room.connect for callId=$callId url=$url")
+        preconnectJob?.cancel()
+        preconnectJob = scope.launch {
+            try {
+                val r = LiveKit.create(ctx.applicationContext)
+                // publish() here so events.collect is wired BEFORE we await
+                // connect — otherwise the first Connected event might fire
+                // before our listener attaches and JS would miss it.
+                publish(r, callId, callId, ctx.applicationContext)
+                r.connect(url, token)
+                Log.i(TAG, "preconnect: Room.connect returned, state=${r.state}")
+            } catch (t: Throwable) {
+                Log.w(TAG, "preconnect failed for callId=$callId: ${t.message}")
+                // Don't clear() — the cached token still lets onAnswer's
+                // fallback launch CallActivity cleanly.
+                preconnectingCallId = null
+            }
+        }
+    }
+
+    /** True when preconnect() has been called for [callId] and the Room
+     *  is at least CONNECTING (so adoptForCall can wait on it instead of
+     *  starting from scratch). */
+    fun isPreconnected(callId: String): Boolean {
+        val r = room ?: return false
+        if (this.callId != callId) return false
+        return when (r.state) {
+            Room.State.CONNECTED, Room.State.CONNECTING, Room.State.RECONNECTING -> true
+            else -> false
+        }
+    }
+
+    /**
+     * [STAGE-B] Called from ChatyyConnection.onAnswer. By the time we get
+     * here:
+     *   - preconnect() may have already CONNECTED the Room (warm path)
+     *   - or preconnect() failed / never ran (cold path)
+     *
+     * Either way, the user has tapped Accept and the audio focus is now
+     * ours (Telecom set it via setActive()). Our job is:
+     *
+     *   1. If Room is CONNECTED: setMicEnabled(true) and we're done.
+     *   2. If Room is still CONNECTING/RECONNECTING: setMicEnabled(true)
+     *      anyway — LiveKit queues mic publish until the connection is
+     *      live.
+     *   3. If no Room (preconnect never ran or failed): launch
+     *      CallActivity with the lkUrl/lkToken in the Intent. CallActivity
+     *      owns the cold-connect path identical to the existing flow.
+     */
+    fun adoptForCall(
+        ctx: Context,
+        callId: String,
+        lkUrl: String?,
+        lkToken: String?,
+        callerName: String,
+        callerEmail: String,
+        conversationId: String,
+        hasVideo: Boolean,
+        callerAvatar: String,
+    ) {
+        Log.i(TAG, "adoptForCall: callId=$callId preconnected=${isPreconnected(callId)}")
+        if (isPreconnected(callId)) {
+            // Warm path. Just attach the mic and we're done.
+            try {
+                setMicEnabled(true)
+                if (hasVideo) setCameraEnabled(true)
+            } catch (t: Throwable) {
+                Log.w(TAG, "adoptForCall: setMic/Cam failed: ${t.message}")
+            }
+            // Fire-and-forget signal to caller.
+            try {
+                CallSignalWs.fireCallAnswered(ctx.applicationContext, callId, conversationId)
+            } catch (_: Throwable) {}
+            return
+        }
+        // Cold path — no preconnect (or it failed). Hand off to CallActivity
+        // exactly the way the legacy IncomingCallActivity did.
+        Log.w(TAG, "adoptForCall: no preconnect — falling back to CallActivity cold-launch")
+        try {
+            val intent = Intent(ctx, CallActivity::class.java).apply {
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK
+                        or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                        or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                )
+                putExtra(CallActivity.EXTRA_CALL_ID, callId)
+                putExtra(CallActivity.EXTRA_CALLER_NAME, callerName)
+                putExtra(CallActivity.EXTRA_CALLER_EMAIL, callerEmail)
+                putExtra(CallActivity.EXTRA_CONVERSATION_ID, conversationId)
+                putExtra(CallActivity.EXTRA_HAS_VIDEO, hasVideo)
+                if (!lkUrl.isNullOrEmpty()) putExtra(CallActivity.EXTRA_LK_URL, lkUrl)
+                if (!lkToken.isNullOrEmpty()) putExtra(CallActivity.EXTRA_LK_TOKEN, lkToken)
+                if (callerAvatar.isNotEmpty()) putExtra(CallActivity.EXTRA_CALLER_AVATAR, callerAvatar)
+                ExpoCallKitModule.enrichIntentWithAuth(ctx.applicationContext, this)
+            }
+            ctx.startActivity(intent)
+            try {
+                CallSignalWs.fireCallAnswered(ctx.applicationContext, callId, conversationId)
+            } catch (_: Throwable) {}
+        } catch (t: Throwable) {
+            Log.e(TAG, "adoptForCall fallback launch failed: ${t.message}")
         }
     }
 }

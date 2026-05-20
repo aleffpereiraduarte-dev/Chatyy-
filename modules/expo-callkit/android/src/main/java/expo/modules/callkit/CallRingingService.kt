@@ -1,10 +1,15 @@
 package expo.modules.callkit
 
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.AudioAttributes
 import android.os.Build
 import android.os.IBinder
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.util.Log
 import java.util.concurrent.atomic.AtomicReference
 
@@ -57,6 +62,12 @@ class CallRingingService : Service() {
     private var callerName: String = ""
     private var conversationId: String = ""
     private var callerAvatar: String = ""
+    // [STAGE-B 2026-05-20] Vibrator handle. Moved here from
+    // IncomingCallActivity so vibration survives the user dismissing the
+    // FSI without accepting (which previously killed the activity but
+    // left the OS notification ring playing — now we own both as the
+    // single FGS that holds the ringtone audio policy).
+    private var vibrator: Vibrator? = null
     private val timeoutRunnable = Runnable {
         val cid = callId
         Log.d(TAG, "Ringing timed out for callId=$cid — broadcasting missed event")
@@ -187,6 +198,37 @@ class CallRingingService : Service() {
             return START_NOT_STICKY
         }
 
+        // [STAGE-B 2026-05-20] Vibrate from the FGS, not the Activity.
+        // Now that Telecom can launch the FSI on its own schedule (the
+        // user may never see IncomingCallActivity if they accept from a
+        // BT headset / Auto), the vibration source has to live in the
+        // FGS so it starts the instant FCM arrives and stops on Connection
+        // .onAnswer / Connection.onReject — independent of the Activity's
+        // own lifecycle.
+        try {
+            vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+                vm.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            }
+            val pattern = longArrayOf(0, 1000, 1000)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator?.vibrate(
+                    VibrationEffect.createWaveform(pattern, 0),
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                        .build()
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator?.vibrate(pattern, 0)
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "[STAGE-B] vibrator start failed: ${t.message}")
+        }
+
         // Auto-stop after timeout (missed call)
         handler.postDelayed(timeoutRunnable, RINGING_TIMEOUT_MS)
 
@@ -195,6 +237,11 @@ class CallRingingService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        // [STAGE-B 2026-05-20] Stop vibration alongside FGS teardown.
+        try {
+            vibrator?.cancel()
+            vibrator = null
+        } catch (_: Throwable) {}
         // [#1179 cleanup, 2026-05-19] Explicit stopForeground(REMOVE) so the
         // ringing heads-up notification disappears the instant the service is
         // stopped. Without this, on some OEMs a stale "Chamada de X" pill

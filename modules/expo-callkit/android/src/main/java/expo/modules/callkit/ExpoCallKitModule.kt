@@ -195,6 +195,15 @@ class ExpoCallKitModule : Module() {
     fun emitAudioRouteChanged(route: String) {
       instance.get()?.sendEvent("onAudioRouteChanged", mapOf("route" to route))
     }
+    // [STAGE-B 2026-05-20] Overload — Telecom's onCallAudioStateChanged
+    // hands us both the active route AND the muted flag. JS-side
+    // /call.js mute pill should reflect Telecom mute (lockscreen / Auto /
+    // Wear mute taps go through Telecom, not through our Compose buttons),
+    // so emit both fields together.
+    fun emitAudioRouteChanged(route: String, muted: Boolean) {
+      instance.get()?.sendEvent("onAudioRouteChanged",
+        mapOf("route" to route, "muted" to muted))
+    }
     fun emitCallHoldChanged(held: Boolean) {
       instance.get()?.sendEvent("onCallHoldChanged", mapOf("held" to held))
     }
@@ -226,6 +235,89 @@ class ExpoCallKitModule : Module() {
         if (!base.isNullOrEmpty()) intent.putExtra("api_base", base)
       } catch (t: Throwable) {
         Log.w(TAG, "enrichIntentWithAuth failed: ${t.message}")
+      }
+    }
+
+    /**
+     * [STAGE-B 2026-05-20] Register the self-managed ConnectionService
+     * PhoneAccount with TelecomManager. Idempotent (TelecomManager dedupes
+     * by handle). Returns true iff the account is now registered.
+     *
+     * The companion `ChatyyInCallService.registerPhoneAccount` already
+     * registers a sibling account for the InCallService side. We register
+     * BOTH so the OS can bind the InCallService for the dialer Recents UI
+     * AND bind the ConnectionService for the actual Call lifecycle.
+     */
+    fun registerConnectionServicePhoneAccount(ctx: Context): Boolean {
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+        Log.i(TAG, "registerConnectionServicePhoneAccount: pre-O — skipping")
+        return false
+      }
+      return try {
+        val tm = ctx.getSystemService(Context.TELECOM_SERVICE) as? android.telecom.TelecomManager
+          ?: return false.also { Log.w(TAG, "TelecomManager unavailable") }
+        val handle = ChatyyConnectionService.phoneAccountHandle(ctx)
+        val account = android.telecom.PhoneAccount.builder(handle, "Chatyy Calls")
+          .setCapabilities(
+            android.telecom.PhoneAccount.CAPABILITY_SELF_MANAGED or
+            android.telecom.PhoneAccount.CAPABILITY_SUPPORTS_VIDEO_CALLING or
+            android.telecom.PhoneAccount.CAPABILITY_VIDEO_CALLING
+          )
+          .setShortDescription("Chatyy voice + video (self-managed)")
+          .build()
+        tm.registerPhoneAccount(account)
+        Log.i(TAG, "ConnectionService PhoneAccount registered: ${handle.id}")
+        true
+      } catch (t: Throwable) {
+        Log.w(TAG, "registerConnectionServicePhoneAccount failed: ${t.message}")
+        false
+      }
+    }
+
+    /**
+     * [STAGE-B 2026-05-20] Drive the Telecom self-managed path for an
+     * incoming call. The FCM service AND the JS `displayIncomingCall`
+     * AsyncFunction both go through this so the call surfaces in the
+     * system call UI (lock-screen FSI, Auto, Wear) the same way for
+     * push-driven AND WS-driven invites.
+     *
+     * On API ≥ O with the PhoneAccount registered, we hand the call to
+     * TelecomManager.addNewIncomingCall. The OS then binds our
+     * ConnectionService.onCreateIncomingConnection, which returns a
+     * Connection in STATE_RINGING. If addNewIncomingCall throws (e.g.
+     * MANAGE_OWN_CALLS denied, or another self-managed app is currently
+     * holding the audio) we fall back to the Stage A
+     * CallRingingService + IncomingCallActivity path.
+     */
+    fun startTelecomIncomingCall(
+      ctx: Context,
+      callId: String,
+      callerName: String,
+      callerEmail: String,
+      conversationId: String,
+      hasVideo: Boolean,
+      callerAvatar: String,
+      lkUrl: String?,
+      lkToken: String?,
+    ): Boolean {
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+      return try {
+        val tm = ctx.getSystemService(Context.TELECOM_SERVICE) as? android.telecom.TelecomManager
+          ?: return false
+        val handle = ChatyyConnectionService.phoneAccountHandle(ctx)
+        val inner = ChatyyConnectionService.buildIncomingExtras(
+          callId, callerName, callerEmail, conversationId, hasVideo,
+          callerAvatar, lkUrl, lkToken
+        )
+        val outer = android.os.Bundle().apply {
+          putBundle(android.telecom.TelecomManager.EXTRA_INCOMING_CALL_EXTRAS, inner)
+        }
+        tm.addNewIncomingCall(handle, outer)
+        Log.i(TAG, "addNewIncomingCall dispatched: callId=$callId")
+        true
+      } catch (t: Throwable) {
+        Log.w(TAG, "startTelecomIncomingCall failed: ${t.message}")
+        false
       }
     }
 
@@ -307,6 +399,19 @@ class ExpoCallKitModule : Module() {
         Log.w(TAG, "registerPhoneAccount failed: ${t.message}")
       }
 
+      // [STAGE-B 2026-05-20] Register the self-managed ConnectionService
+      // PhoneAccount. This is the OTHER half of the Telecom integration —
+      // ChatyyInCallService registered the dialer/UI side; this one
+      // registers the audio-focus + lifecycle owner side. With both
+      // accounts present, addNewIncomingCall(handle) succeeds and the
+      // Connection.onAnswer → setActive() → MODE_IN_COMMUNICATION chain
+      // works without us touching AudioManager directly.
+      try {
+        registerConnectionServicePhoneAccount(context)
+      } catch (t: Throwable) {
+        Log.w(TAG, "registerConnectionServicePhoneAccount failed: ${t.message}")
+      }
+
       // [2026-05-17 RNNoise + MediaPipe] Touch processor singletons so the
       // reflective class lookups + native lib loads run at setup time, not
       // at first frame (which would block the audio thread for ~200ms).
@@ -331,10 +436,24 @@ class ExpoCallKitModule : Module() {
       }
     }
 
-    AsyncFunction("displayIncomingCall") { callId: String, callerName: String, hasVideo: Boolean, callerEmail: String?, conversationId: String? ->
-      // Start the foreground ringing service (preferred) or fall back to direct notification
+    AsyncFunction("displayIncomingCall") { callId: String, callerName: String, hasVideo: Boolean, callerEmail: String?, conversationId: String?, lkToken: String?, lkUrl: String? ->
+      // [STAGE-B 2026-05-20] WhatsApp parity path. We do THREE things in
+      // parallel:
+      //   1. Start CallRingingService — owns the ringtone + vibration FGS
+      //      with FOREGROUND_SERVICE_TYPE_PHONE_CALL. Required to keep the
+      //      process alive past the FCM service's brief grant.
+      //   2. Pre-warm LiveKit Room.connect via NativeCallRoom.preconnect
+      //      so by the time the user taps Accept, audio is ~50ms away.
+      //   3. Hand the call to TelecomManager.addNewIncomingCall via the
+      //      self-managed ConnectionService. The OS surfaces its own FSI
+      //      (immune to USE_FULL_SCREEN_INTENT runtime grants on A14+) and
+      //      claims STREAM_VOICE_CALL focus when the user accepts.
+      // If Telecom path fails (pre-O, MANAGE_OWN_CALLS denied, already
+      // holding the audio), Stage A IncomingCallActivity covers us.
       val email = callerEmail ?: ""
       val convId = conversationId ?: ""
+
+      // 1. Ringtone foreground service (Stage A — still required).
       try {
         val serviceIntent = Intent(context, CallRingingService::class.java).apply {
           putExtra("call_id", callId)
@@ -351,13 +470,30 @@ class ExpoCallKitModule : Module() {
       } catch (e: Exception) {
         Log.e(TAG, "Failed to start ringing service, falling back", e)
         CallNotificationService.showIncomingCallNotification(
-          context,
-          callId,
-          callerName,
-          hasVideo,
-          email,
-          convId
+          context, callId, callerName, hasVideo, email, convId
         )
+      }
+
+      // 2. [STAGE-B] Pre-warm LK Room. Best effort — if we don't have
+      // creds (rare; backend mints them in the FCM payload via
+      // _mintLivekitTokenForUser), skip. NativeCallRoom guards against
+      // duplicate calls for the same callId.
+      try {
+        if (!lkUrl.isNullOrBlank() && !lkToken.isNullOrBlank()) {
+          NativeCallRoom.preconnect(context.applicationContext, lkUrl, lkToken, callId)
+        }
+      } catch (t: Throwable) {
+        Log.w(TAG, "preconnect skipped: ${t.message}")
+      }
+
+      // 3. [STAGE-B] Drive Telecom self-managed path.
+      try {
+        ExpoCallKitModule.startTelecomIncomingCall(
+          context.applicationContext, callId, callerName, email, convId, hasVideo,
+          callerAvatar = "", lkUrl = lkUrl, lkToken = lkToken
+        )
+      } catch (t: Throwable) {
+        Log.w(TAG, "Telecom addNewIncomingCall failed (Stage A fallback active): ${t.message}")
       }
     }
 

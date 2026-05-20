@@ -159,6 +159,44 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
                 }
 
                 Log.d(TAG, "Started CallRingingService for callId=$callId")
+
+                // [STAGE-B 2026-05-20] Pre-warm the LiveKit Room while the
+                // user is still looking at the ringing UI. By the time
+                // Telecom delivers Connection.onAnswer (typically 2-5s
+                // later when the user actually taps Accept), the SFU
+                // handshake is done and we just need to publish the mic.
+                // Trims the "tap → audio" budget from ~500-800ms cold to
+                // ~50-150ms warm. Best-effort: skip if we don't have
+                // creds (the FCM payload doesn't always include them, e.g.
+                // when MaxConnectionsPerEmail evicts the WS path).
+                if (preLkUrl != null && preLkToken != null) {
+                    try {
+                        NativeCallRoom.preconnect(
+                            applicationContext, preLkUrl, preLkToken, callId
+                        )
+                        Log.d(TAG, "[STAGE-B] preconnect kicked for callId=$callId")
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "[STAGE-B] preconnect failed: ${t.message}")
+                    }
+                }
+
+                // [STAGE-B 2026-05-20] Drive Telecom self-managed path so
+                // the call surfaces in the system call UI (lockscreen FSI,
+                // Android Auto, Wear OS) with proper audio focus on accept.
+                // The CallRingingService FGS above continues to own the
+                // ringtone — Telecom and our FGS coexist (Telecom doesn't
+                // play sound for self-managed accounts; we do). If
+                // addNewIncomingCall throws, IncomingCallActivity's full-
+                // screen intent still surfaces via CallNotificationService.
+                try {
+                    ExpoCallKitModule.startTelecomIncomingCall(
+                        applicationContext, callId, callerName, callerEmail,
+                        conversationId, hasVideo, callerAvatar,
+                        lkUrl = preLkUrl, lkToken = preLkToken
+                    )
+                } catch (t: Throwable) {
+                    Log.w(TAG, "[STAGE-B] Telecom addNewIncomingCall failed: ${t.message}")
+                }
             } catch (e: Throwable) {
                 // [2026-05-15] Explicit branches for the two failure modes we
                 // can actually observe in the wild on Android 12+/14+:

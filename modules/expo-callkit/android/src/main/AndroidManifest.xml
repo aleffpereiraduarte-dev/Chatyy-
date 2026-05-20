@@ -15,6 +15,14 @@
   -->
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
   <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
+  <!--
+    [STAGE-B 2026-05-20] Self-managed Telecom integration. WhatsApp parity.
+    READ_PHONE_NUMBERS lets the system attribute calls to our PhoneAccount
+    in Recents without prompting; required for the dialer to display
+    "Chatyy" as the call source. No runtime grant required — it's in the
+    normal permission tier on API 26+.
+  -->
+  <uses-permission android:name="android.permission.READ_PHONE_NUMBERS" />
 
   <application>
 
@@ -200,6 +208,32 @@
         android:value="false" />
       <intent-filter>
         <action android:name="android.telecom.InCallService" />
+      </intent-filter>
+    </service>
+
+    <!--
+      [STAGE-B 2026-05-20] Self-managed ConnectionService — the other
+      half of the Telecom integration. ChatyyInCallService above is the
+      InCallService binding (system → us for dialer UI); this one is the
+      ConnectionService binding (us → system for the Call lifecycle).
+      BIND_TELECOM_CONNECTION_SERVICE is the contract permission the
+      framework requires on every ConnectionService. Without this entry
+      addNewIncomingCall(handle) throws SecurityException and the call
+      never appears in the system call UI — we fall back to Stage A's
+      FSI+IncomingCallActivity path silently.
+
+      exported=true is correct here: the Telecom framework lives in the
+      `com.android.server.telecom` system process and binds us across
+      processes via the BIND_TELECOM_CONNECTION_SERVICE permission gate.
+      No third-party app can bind because the permission is signature/
+      privileged-only.
+    -->
+    <service
+      android:name=".ChatyyConnectionService"
+      android:exported="true"
+      android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE">
+      <intent-filter>
+        <action android:name="android.telecom.ConnectionService" />
       </intent-filter>
     </service>
 
