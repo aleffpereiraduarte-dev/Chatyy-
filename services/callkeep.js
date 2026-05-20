@@ -299,11 +299,30 @@ export function displayIncomingCall(callId, callerName, callerEmail, isVideo = f
   }
 }
 
-export function endCall(callId) {
+// [gap H5 2026-05-20] Reason strings the iOS agent maps to CXCallEndedReason
+// before calling provider.reportCall(...endedReason:). Letting the JS side
+// describe WHY the call ended produces a more accurate Recents entry
+// ("Failed" vs "Declined" vs "Missed") and the native logs/diagnostics line
+// up with the WS reason the backend received.
+//
+//   'unanswered'        → CXCallEndedReason.unanswered           (missed)
+//   'declinedElsewhere' → CXCallEndedReason.answeredElsewhere    (other dev)
+//   'remoteEnded'       → CXCallEndedReason.remoteEnded          (peer hung up)
+//   'failed'            → CXCallEndedReason.failed               (network etc)
+//
+// Default 'remoteEnded' so a bare endCall(callId) keeps the previous
+// behaviour (CallKit treats a missing reason as remoteEnded internally).
+export function endCall(callId, reason = 'remoteEnded') {
   if (!loadModule()) return;
   try {
-    ExpoCallKit.endCall(callId);
-  } catch {}
+    // Pass reason as a 2nd arg. Older native builds ignore extra args, so
+    // this is forward-compat: the iOS agent already accepts (callId, reason)
+    // and Android's endCall just ignores it.
+    ExpoCallKit.endCall(callId, reason);
+  } catch {
+    // Fallback to 1-arg form for older binaries that throw on extra args.
+    try { ExpoCallKit.endCall(callId); } catch {}
+  }
 }
 
 /**

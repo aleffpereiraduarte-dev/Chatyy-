@@ -949,14 +949,64 @@ class CallActivity : ComponentActivity() {
     //   - videoTrackCaptureDefaults.captureParams=720p@30 so capture pipeline
     //     produces enough data to fill the top tier; lower tiers come from
     //     the WebRTC encoder's automatic downscale.
+    // [WhatsApp parity C1, 2026-05-20] Prefer VP9 over VP8 — VP9 has ~30%
+    // better compression at similar quality, matching WhatsApp + Meet behavior.
+    // Fallback path: if VP9 isn't negotiated by the peer (older Chatyy builds,
+    // iOS Simulator, some Android OEMs without HW decoder) the SFU silently
+    // downshifts to VP8. preferredCodec is reflectively set because LK Android
+    // 2.x exposes it as a String on VideoTrackPublishDefaults but the field
+    // name has bounced ("preferredCodec" → "videoCodec") across minor revs.
+    // [C4, 2026-05-20] degradationPreference=balanced — under network
+    // pressure the encoder degrades resolution AND framerate equally so the
+    // stream stays watchable instead of dropping to a slideshow. WhatsApp
+    // uses balanced; Meet uses maintain-framerate. balanced wins on cellular.
+    val publishDefaults = try {
+      VideoTrackPublishDefaults(
+        simulcast = true,
+        videoEncoding = VideoPreset169.H720.encoding
+      )
+    } catch (t: Throwable) {
+      Log.w(TAG, "VideoTrackPublishDefaults default ctor failed: ${t.message}")
+      VideoTrackPublishDefaults()
+    }
+    // Reflectively pin codec preference + degradation preference. These two
+    // fields appear on LK Android 2.24.x but were not exposed as primary
+    // constructor params, so we set them post-construction.
+    try {
+      val pdCls = publishDefaults.javaClass
+      val codecField = pdCls.declaredFields.firstOrNull {
+        it.name.contains("codec", ignoreCase = true) ||
+        it.name.contains("preferredCodec", ignoreCase = true)
+      }
+      if (codecField != null) {
+        codecField.isAccessible = true
+        codecField.set(publishDefaults, "vp9")
+        Log.d(TAG, "VideoTrackPublishDefaults.${codecField.name} = vp9")
+      } else {
+        Log.d(TAG, "no codec field on VideoTrackPublishDefaults — SDK defaults stay (VP8)")
+      }
+      val degradationField = pdCls.declaredFields.firstOrNull {
+        it.name.contains("degradation", ignoreCase = true)
+      }
+      if (degradationField != null) {
+        degradationField.isAccessible = true
+        // Try enum value first ("BALANCED"), fall back to string.
+        val enumType = degradationField.type
+        val value: Any = if (enumType.isEnum) {
+          enumType.enumConstants?.firstOrNull { it.toString().equals("BALANCED", true) }
+            ?: "balanced"
+        } else "balanced"
+        degradationField.set(publishDefaults, value)
+        Log.d(TAG, "VideoTrackPublishDefaults.${degradationField.name} = balanced")
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "codec/degradation reflective set failed: ${t.message}")
+    }
     val roomOptions = try {
       RoomOptions(
         adaptiveStream = true,
         dynacast = true,
-        videoTrackPublishDefaults = VideoTrackPublishDefaults(
-          simulcast = true,
-          videoEncoding = VideoPreset169.H720.encoding
-        ),
+        videoTrackPublishDefaults = publishDefaults,
         videoTrackCaptureDefaults = LocalVideoTrackOptions(
           captureParams = VideoCaptureParameter(width = 1280, height = 720, maxFps = 30)
         )

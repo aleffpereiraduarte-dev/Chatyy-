@@ -26,7 +26,15 @@ object CallNotificationService {
    *  sound + vibration are immutable post-creation, so a parallel channel is
    *  the only way to honor the toggle without losing existing ringing UX. */
   const val CHANNEL_ID_SILENT = "incoming_calls_silent"
+  /** [A1 gap Android, 2026-05-20] Missed-call channel. Distinct from
+   *  ringing channels: LOW importance, no sound (would be annoying after the
+   *  fact), but still posts a heads-up so the user notices. Channel is
+   *  created lazily the first time a call times out without an answer. */
+  const val CHANNEL_ID_MISSED = "missed_calls"
   private const val NOTIFICATION_TAG = "call_notification"
+  /** [A1 gap Android, 2026-05-20] Separate tag so a posted missed-call
+   *  notification doesn't collide with the (now-cancelled) ringing one. */
+  private const val NOTIFICATION_TAG_MISSED = "missed_call_notification"
   private const val TAG = "CallNotificationService"
 
   // Cache fetched avatar bitmaps por URL pra evitar re-download enquanto a
@@ -138,6 +146,138 @@ object CallNotificationService {
         setSound(null, null)
       }
       notificationManager.createNotificationChannel(silentChannel)
+    }
+  }
+
+  /**
+   * [A1 gap Android, 2026-05-20] Idempotent create of the missed-call
+   * channel. Separate from the ringing channels because the user can
+   * silence ringing in DND mode but still want to see that they missed
+   * a call — and because heads-up presentation differs (LOW importance,
+   * no sound). Called by CallRingingService.timeoutRunnable right before
+   * the first notify(), and by tests via direct invocation.
+   */
+  fun createMissedCallChannel(context: Context) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+      if (nm.getNotificationChannel(CHANNEL_ID_MISSED) != null) return
+      val channel = NotificationChannel(
+        CHANNEL_ID_MISSED,
+        "Chamadas perdidas",
+        NotificationManager.IMPORTANCE_LOW
+      ).apply {
+        description = "Notificacao silenciosa quando uma chamada nao foi atendida"
+        lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+        setSound(null, null)
+        enableVibration(false)
+        setShowBadge(true)
+      }
+      nm.createNotificationChannel(channel)
+    }
+  }
+
+  /**
+   * [A1 gap Android, 2026-05-20] Build + post a missed-call notification.
+   * Called from CallRingingService.timeoutRunnable. Distinct notification
+   * ID (callId.hashCode() XORed with a tag) so it survives even after the
+   * ringing FGS removes its own notification on stopSelf().
+   *
+   * Tap target: opens the chat conversation (chat-conversation deeplink).
+   * Auto-cancel on tap. Title is the i18n missed-call string ("Chamada
+   * perdida") because the user might miss a call from a different language
+   * context than where they answer it.
+   */
+  fun showMissedCallNotification(
+    context: Context,
+    callId: String,
+    callerName: String,
+    callerEmail: String,
+    conversationId: String,
+    callerAvatarUrl: String = "",
+    isVideo: Boolean = false,
+  ) {
+    createMissedCallChannel(context)
+
+    // Distinct ID so it doesn't collide with the (now-cancelled) ringing
+    // notification — using callId.hashCode() XOR a tag bit.
+    val notificationId = callId.hashCode() xor 0x4D495353 // "MISS"
+
+    // Build deeplink intent to chat-conversation. The host activity that
+    // consumes this is the React Native MainActivity — Expo router parses
+    // the `path` extra and navigates to /chat-conversation?id=<conv>.
+    val tapIntent = try {
+      val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+      launchIntent?.apply {
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        putExtra("path", "/chat-conversation")
+        putExtra("conv_id", conversationId)
+        putExtra("caller_email", callerEmail)
+        putExtra("from_missed_call", true)
+      } ?: Intent()
+    } catch (_: Throwable) {
+      Intent()
+    }
+    val tapPI = PendingIntent.getActivity(
+      context,
+      notificationId,
+      tapIntent,
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+
+    val smallIconRes = try {
+      context.resources.getIdentifier("phone_missed", "drawable", context.packageName)
+        .takeIf { it != 0 }
+        ?: context.resources.getIdentifier("ic_notification", "drawable", context.packageName)
+          .takeIf { it != 0 }
+        ?: context.applicationInfo.icon
+    } catch (_: Exception) { context.applicationInfo.icon }
+
+    // Reuse the avatar cache so the same bitmap displayed during ringing
+    // shows on the missed-call notification too (cheaper + visually
+    // consistent).
+    val largeIcon: Bitmap? = if (callerAvatarUrl.isNotEmpty()) {
+      avatarCache.get(callerAvatarUrl)
+    } else null
+
+    val callTypeText = if (isVideo) "Chamada de video perdida" else "Chamada de voz perdida"
+
+    val builder = NotificationCompat.Builder(context, CHANNEL_ID_MISSED)
+      .setSmallIcon(smallIconRes)
+      .setContentTitle("Chamada perdida")
+      .setContentText(callerName.takeIf { it.isNotBlank() } ?: callTypeText)
+      .setSubText(callTypeText)
+      .setPriority(NotificationCompat.PRIORITY_LOW)
+      .setCategory(NotificationCompat.CATEGORY_MISSED_CALL)
+      .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+      .setAutoCancel(true)
+      .setContentIntent(tapPI)
+      .setWhen(System.currentTimeMillis())
+      .setShowWhen(true)
+
+    if (largeIcon != null) builder.setLargeIcon(largeIcon)
+
+    try {
+      val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+      nm.notify(NOTIFICATION_TAG_MISSED, notificationId, builder.build())
+      Log.d(TAG, "Missed-call notification posted for callId=$callId notifId=$notificationId")
+    } catch (t: Throwable) {
+      Log.w(TAG, "showMissedCallNotification failed: ${t.message}")
+    }
+
+    // If the avatar is not cached but we have a URL, fetch it async and
+    // re-post with the bitmap (same notify ID → in-place update, matches
+    // ringing notification refresh pattern).
+    if (largeIcon == null && callerAvatarUrl.isNotEmpty()) {
+      Thread {
+        val bmp = fetchAvatarBitmap(callerAvatarUrl) ?: return@Thread
+        try {
+          builder.setLargeIcon(bmp)
+          val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+          nm.notify(NOTIFICATION_TAG_MISSED, notificationId, builder.build())
+        } catch (t: Throwable) {
+          Log.w(TAG, "missed-call avatar refresh failed: ${t.message}")
+        }
+      }.start()
     }
   }
 

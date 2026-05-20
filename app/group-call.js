@@ -124,6 +124,39 @@ export default function GroupCallScreen() {
   // Refs we read inside callbacks without re-binding.
   const webViewRef = useRef(null);
 
+  // [gap E3 2026-05-20] Local per-participant volume / silence-for-me map.
+  // Keyed by lowercase email → number in [0..1]. Persisted only for the
+  // duration of the call; reset on leave. NOT mirrored to other clients
+  // (this is local audio mix only).
+  const [silencedEmails, setSilencedEmails] = useState({});
+
+  // [gap E4 2026-05-20] Long-press participant menu state.
+  const [participantMenu, setParticipantMenu] = useState(null); // { email, name }
+
+  // [gap E4 2026-05-20] Debounced active-speaker mirror for focus mode.
+  // We expose `displayedSpeaker` separately from `activeSpeakerEmail` so
+  // the halo (which can flicker fast) keeps the snappy feel while the
+  // big focus tile only swaps after ACTIVE_SPEAKER_DEBOUNCE_MS of
+  // sustained speaking.
+  const [displayedSpeaker, setDisplayedSpeaker] = useState(null);
+  const _speakerDebounceTimerRef = useRef(null);
+  useEffect(() => {
+    if (!activeSpeakerEmail) return;
+    if (activeSpeakerEmail === displayedSpeaker) return;
+    if (_speakerDebounceTimerRef.current) {
+      try { clearTimeout(_speakerDebounceTimerRef.current); } catch {}
+    }
+    _speakerDebounceTimerRef.current = setTimeout(() => {
+      setDisplayedSpeaker(activeSpeakerEmail);
+    }, ACTIVE_SPEAKER_DEBOUNCE_MS);
+    return () => {
+      if (_speakerDebounceTimerRef.current) {
+        try { clearTimeout(_speakerDebounceTimerRef.current); } catch {}
+        _speakerDebounceTimerRef.current = null;
+      }
+    };
+  }, [activeSpeakerEmail, displayedSpeaker]);
+
   // Add-member pill press anim — soft scale-down on press for tactility.
   const pillScale = useState(new Animated.Value(1))[0];
   // Recording badge pulse — slow opacity wobble for visibility.
@@ -402,6 +435,23 @@ export default function GroupCallScreen() {
     _postToWebView({ type: pinned ? 'pin' : 'unpin', email: targetEmail });
   }, [_postToWebView]);
 
+  // [gap E3 2026-05-20] Silence / unsilence a specific remote for me only.
+  // Posts `set_remote_volume` (0 or 1) to the WebView so livekit-room.html
+  // calls RemoteParticipant.setVolume on the LK side. Tracks state locally
+  // for the menu toggle indicator. Does NOT mute the participant globally;
+  // peers still hear them.
+  const handleToggleSilenceForMe = useCallback((targetEmail) => {
+    if (!targetEmail) return;
+    const k = String(targetEmail).toLowerCase();
+    setSilencedEmails(prev => {
+      const isOn = !!prev[k];
+      const next = { ...prev };
+      if (isOn) delete next[k]; else next[k] = 1;
+      _postToWebView({ type: 'set_remote_volume', email: k, volume: isOn ? 1 : 0 });
+      return next;
+    });
+  }, [_postToWebView]);
+
   // ─── Host-only handlers ───
 
   const handleMuteAll = useCallback(async () => {
@@ -473,50 +523,103 @@ export default function GroupCallScreen() {
   // Native grid skeleton — only shown while we don't have the live LiveKit
   // WebView feed. Builds a fixed-cell grid so cells don't reflow when the
   // count changes.
+  //
+  // [gap E4 2026-05-20] >4 participants → focus layout: big active-speaker
+  // tile (75% height) + horizontal filmstrip with everyone else (scroll-x).
+  // 4-or-fewer keeps the original 2x2 grid.
   const ParticipantGrid = useMemo(() => {
     if (!participants.length) return null;
-    const cols = pickGridCols(participants.length);
-    const cellSize = cols === 2 ? 140 : cols === 3 ? 100 : 100;
-    const wrap = participants.length > 9; // scrollable
-    const Container = wrap ? ScrollView : View;
-    return (
-      <Container
-        contentContainerStyle={[styles.gridWrap, { paddingHorizontal: 16 }]}
-        style={{ flex: 1 }}
-        showsVerticalScrollIndicator={false}
-      >
-        {participants.map((p) => {
-          const isSpeaking = activeSpeakerEmail && p.email === activeSpeakerEmail;
-          // Interpolate the shared pulse value into a halo opacity so all
-          // speaking tiles glow in sync.
-          const haloOpacity = speakerPulse.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0.85] });
-          return (
-            <Pressable
-              key={p.email}
-              onLongPress={() => handlePin(p.email, (pinnedEmail || '').toLowerCase() !== (p.email || '').toLowerCase())}
-              style={[styles.gridCell, { width: cellSize + 16, height: cellSize + 40 }]}
-            >
-              <View style={[
-                styles.avatarShell,
-                { width: cellSize, height: cellSize, borderRadius: cellSize / 2 },
-                isSpeaking && styles.avatarShellSpeaking,
-                (pinnedEmail || '').toLowerCase() === (p.email || '').toLowerCase() && styles.avatarShellPinned,
-              ]}>
-                {isSpeaking && (
-                  <Animated.View style={[
-                    styles.speakerHalo,
-                    { width: cellSize + 8, height: cellSize + 8, borderRadius: (cellSize + 8) / 2, opacity: haloOpacity },
-                  ]} />
-                )}
-                <AvatarCircle email={p.email} name={p.name} size={cellSize - 8} />
+    const mode = pickGridCols(participants.length);
+    // Halo opacity shared across modes.
+    const haloOpacity = speakerPulse.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0.85] });
+
+    const renderTile = (p, size, opts = {}) => {
+      const isSpeaking = activeSpeakerEmail && p.email === activeSpeakerEmail;
+      const isSilenced = !!silencedEmails[(p.email || '').toLowerCase()];
+      return (
+        <Pressable
+          key={p.email}
+          onLongPress={() => setParticipantMenu({ email: p.email, name: p.name })}
+          delayLongPress={350}
+          style={[styles.gridCell, { width: size + 16, height: size + 40 }, opts.cellStyle]}
+        >
+          <View style={[
+            styles.avatarShell,
+            { width: size, height: size, borderRadius: size / 2 },
+            isSpeaking && styles.avatarShellSpeaking,
+            (pinnedEmail || '').toLowerCase() === (p.email || '').toLowerCase() && styles.avatarShellPinned,
+          ]}>
+            {isSpeaking && (
+              <Animated.View style={[
+                styles.speakerHalo,
+                { width: size + 8, height: size + 8, borderRadius: (size + 8) / 2, opacity: haloOpacity },
+              ]} />
+            )}
+            <AvatarCircle email={p.email} name={p.name} size={size - 8} />
+            {isSilenced && (
+              <View style={styles.silencedBadge}>
+                <Svg width={12} height={12} viewBox="0 0 24 24" fill="none">
+                  <SvgPath
+                    d="M23 9l-6 6M17 9l6 6M15 8.94V5a3 3 0 0 0-6 0v6m6 1v3a3 3 0 0 1-6 0v-1m6-3l-9 9"
+                    stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"
+                  />
+                </Svg>
               </View>
-              <Text style={styles.gridName} numberOfLines={1}>{p.name}</Text>
-            </Pressable>
-          );
-        })}
-      </Container>
+            )}
+          </View>
+          <Text style={styles.gridName} numberOfLines={1}>{p.name}</Text>
+        </Pressable>
+      );
+    };
+
+    if (mode === 'focus') {
+      // Resolve who occupies the big tile. Preference order:
+      //   1. pinned participant (user explicitly chose them)
+      //   2. debounced active speaker
+      //   3. first non-self participant
+      //   4. first participant
+      const pinnedLc = (pinnedEmail || '').toLowerCase();
+      const speakerLc = (displayedSpeaker || '').toLowerCase();
+      let primary = participants.find(p => (p.email || '').toLowerCase() === pinnedLc);
+      if (!primary) primary = participants.find(p => (p.email || '').toLowerCase() === speakerLc);
+      if (!primary) primary = participants.find(p => (p.email || '').toLowerCase() !== myEmail);
+      if (!primary) primary = participants[0];
+      const others = participants.filter(p => p !== primary);
+
+      // Match the rest of the screen — 75% available height for the
+      // big tile, 25% for the filmstrip. Use Dimensions to size deterministically
+      // so the layout doesn't reflow when participant.length changes.
+      const bigSize = Math.min(SCREEN_W - 40, 320);
+      const stripSize = 76;
+      return (
+        <View style={{ flex: 1 }}>
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 }}>
+            {primary ? renderTile(primary, bigSize, { cellStyle: { marginBottom: 8 } }) : null}
+          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 12, gap: 8 }}
+            style={{ flexGrow: 0 }}
+          >
+            {others.map(p => renderTile(p, stripSize))}
+          </ScrollView>
+        </View>
+      );
+    }
+
+    // Default: 2x2 grid for <=4 participants.
+    const cellSize = 140;
+    return (
+      <View
+        style={{ flex: 1 }}
+      >
+        <View style={[styles.gridWrap, { paddingHorizontal: 16 }]}>
+          {participants.map(p => renderTile(p, cellSize))}
+        </View>
+      </View>
     );
-  }, [participants, activeSpeakerEmail, speakerPulse, pinnedEmail, handlePin]);
+  }, [participants, activeSpeakerEmail, displayedSpeaker, speakerPulse, pinnedEmail, silencedEmails, myEmail]);
 
   // Floating reaction layer — sits above the WebView. Each reaction
   // animates upward + fades out.
@@ -698,6 +801,59 @@ export default function GroupCallScreen() {
         onToggleRecording={handleToggleRecording}
         onShareLink={handleShareLink}
       />
+      {/* [gap E3 + E4 long-press menu, 2026-05-20] Per-participant actions.
+          Includes "Silenciar pra mim" (local mute) + Pin/Unpin. Host actions
+          (mute remote, remove, promote) live in the participant list sheet. */}
+      {participantMenu ? (
+        <View style={styles.menuOverlay} pointerEvents="box-none">
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => setParticipantMenu(null)}
+          />
+          <View style={styles.menuSheet}>
+            <Text style={styles.menuTitle} numberOfLines={1}>
+              {participantMenu.name || participantMenu.email}
+            </Text>
+            <TouchableOpacity
+              style={styles.menuRow}
+              onPress={() => {
+                const target = participantMenu.email;
+                setParticipantMenu(null);
+                handleToggleSilenceForMe(target);
+              }}
+            >
+              <Text style={styles.menuRowText}>
+                {silencedEmails[(participantMenu.email || '').toLowerCase()]
+                  ? (t('call.group.unsilenceForMe') || 'Cancelar silêncio pra mim')
+                  : (t('call.group.silenceForMe') || 'Silenciar pra mim')}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.menuRow}
+              onPress={() => {
+                const target = participantMenu.email;
+                const isPinned = (pinnedEmail || '').toLowerCase() === (target || '').toLowerCase();
+                setParticipantMenu(null);
+                handlePin(target, !isPinned);
+              }}
+            >
+              <Text style={styles.menuRowText}>
+                {(pinnedEmail || '').toLowerCase() === (participantMenu.email || '').toLowerCase()
+                  ? (t('call.group.unpin') || 'Desafixar')
+                  : (t('call.group.pin') || 'Fixar')}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.menuRow, styles.menuCancel]}
+              onPress={() => setParticipantMenu(null)}
+            >
+              <Text style={[styles.menuRowText, { color: '#9ca3af' }]}>
+                {t('common.cancel') || 'Cancelar'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
     </>
   );
 
@@ -892,6 +1048,58 @@ const styles = StyleSheet.create({
     marginTop: 8,
     maxWidth: 140,
     textAlign: 'center',
+  },
+  // [gap E3] Silenced-for-me badge — sits bottom-right of avatar to flag
+  // "you've muted them locally" so the user doesn't think they're silent.
+  silencedBadge: {
+    position: 'absolute',
+    right: 0,
+    bottom: 0,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#ef4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#000',
+  },
+  // [gap E3+E4] Long-press participant action menu — bottom-sheet overlay.
+  menuOverlay: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'flex-end',
+  },
+  menuSheet: {
+    backgroundColor: '#1c1c1e',
+    paddingTop: 12,
+    paddingBottom: 28,
+    paddingHorizontal: 16,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+  },
+  menuTitle: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+    textAlign: 'center',
+    paddingBottom: 12,
+    opacity: 0.7,
+  },
+  menuRow: {
+    paddingVertical: 14,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(255,255,255,0.08)',
+  },
+  menuRowText: {
+    color: '#fff',
+    fontSize: 16,
+    textAlign: 'center',
+  },
+  menuCancel: {
+    marginTop: 6,
+    borderTopWidth: 0,
   },
   connectingHud: {
     position: 'absolute',

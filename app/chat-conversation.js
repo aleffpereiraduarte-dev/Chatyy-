@@ -7019,6 +7019,30 @@ export default function ChatConversationScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
   const loadingMoreRef = useRef(false); // Ref guard to prevent duplicate pagination calls
   const loadMessagesSeqRef = useRef(0); // Sequence id for race-safe loadMessages
+
+  // [#1232 Wave 14 2026-05-20] Device-first SQLite hydrate.
+  // SmartCache (MMKV) caps em 200 msg/conv — quando cold-start pega uma
+  // conv com 500+ msgs salvas no SQLite, SmartCache fica null e o usuário
+  // espera o server. Aqui paint instant do SQLite (que tem full history)
+  // antes do API call disparar — server vira refresh-only quando local
+  // tem dados.
+  useEffect(() => {
+    if (!conversationId) return;
+    if (_initialCached && _initialCached.length > 0) return; // SmartCache já paintou
+    let cancelled = false;
+    (async () => {
+      try {
+        const { getCachedMessages } = require('../services/chatCache');
+        const cached = await getCachedMessages(conversationId, 100);
+        if (cancelled || !cached || cached.length === 0) return;
+        if (_messagesCountRef.current > 0) return; // server já chegou
+        setMessages(normalizeMessageTypes(cached));
+        setLoading(false);
+        setHasMore(true);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  }, [conversationId]); // eslint-disable-line react-hooks/exhaustive-deps
   const searchSeqRef = useRef(0); // Sequence id for race-safe handleSearchMessages
   const rsvpInflightRef = useRef(new Set()); // Pending meetup RSVPs (de-dupes rapid taps)
   const pollVoteLocksRef = useRef(new Set()); // Per-poll-id mutex for vote requests
@@ -7285,6 +7309,19 @@ export default function ChatConversationScreen() {
           draftSavedRef.current = remote;
           const AsyncStorage = require('@react-native-async-storage/async-storage').default;
           await AsyncStorage.setItem(userScopedKey(`chat_draft_${conversationId}`), remote);
+        }
+      } catch {}
+      // [gap H5 2026-05-20] Missed-call return-flow: ChatCallsTab passes
+      // ?prefill=Voltei%20sua%20liga%C3%A7%C3%A3o when the user taps a
+      // missed-call row. Only apply when no saved/remote draft already
+      // populated the input — we never clobber the user's in-flight text.
+      try {
+        const raw = typeof params?.prefill === 'string' ? params.prefill : '';
+        if (raw) {
+          const text = decodeURIComponent(raw);
+          if (text && !draftSavedRef.current) {
+            setInputText(text);
+          }
         }
       } catch {}
     })();

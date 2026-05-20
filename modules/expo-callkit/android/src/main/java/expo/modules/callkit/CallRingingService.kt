@@ -71,6 +71,32 @@ class CallRingingService : Service() {
     private val timeoutRunnable = Runnable {
         val cid = callId
         Log.d(TAG, "Ringing timed out for callId=$cid — broadcasting missed event")
+        // [A1 gap Android, 2026-05-20] BEFORE stopSelf (which tears down the
+        // ringing notification + FGS), post the missed-call notification on
+        // its own channel so the user sees "Chamada perdida" in their tray
+        // — matching iOS CallKit's `reportEndedCall(reason: unanswered)`
+        // post-call surface and WhatsApp's missed-call notification.
+        // Stable per-call notification ID inside showMissedCallNotification
+        // (XORed with a "MISS" tag bit) so concurrent missed calls don't
+        // overwrite each other.
+        if (!cid.isNullOrEmpty()) {
+            try {
+                CallNotificationService.showMissedCallNotification(
+                    context = this,
+                    callId = cid,
+                    callerName = callerName,
+                    callerEmail = callerEmail,
+                    conversationId = conversationId,
+                    callerAvatarUrl = callerAvatar,
+                    isVideo = false  // captured at notify time; ringing service
+                                     // doesn't keep video flag in state (matches
+                                     // hasVideo intent extra but not worth threading)
+                )
+            } catch (t: Throwable) {
+                Log.w(TAG, "showMissedCallNotification failed: ${t.message}")
+            }
+        }
+
         // Notify the rest of the system that this call was missed. Without
         // this, the service used to silently stopSelf and the JS layer /
         // call history never recorded the missed call (caller still rings,

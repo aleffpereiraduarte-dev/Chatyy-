@@ -299,6 +299,11 @@ class ExpoCallKitModule : Module() {
       callerAvatar: String,
       lkUrl: String?,
       lkToken: String?,
+      // [A2 gap, 2026-05-20] Caller's E.164 phone (from chat_phone_registry).
+      // Optional — when present we drive a `tel:` URI in the Telecom address
+      // so the system dialer attributes the call as if it came from a real
+      // phone number (Recents tab parity with WhatsApp).
+      callerPhoneE164: String? = null,
     ): Boolean {
       if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
       return try {
@@ -307,7 +312,7 @@ class ExpoCallKitModule : Module() {
         val handle = ChatyyConnectionService.phoneAccountHandle(ctx)
         val inner = ChatyyConnectionService.buildIncomingExtras(
           callId, callerName, callerEmail, conversationId, hasVideo,
-          callerAvatar, lkUrl, lkToken
+          callerAvatar, lkUrl, lkToken, callerPhoneE164
         )
         val outer = android.os.Bundle().apply {
           putBundle(android.telecom.TelecomManager.EXTRA_INCOMING_CALL_EXTRAS, inner)

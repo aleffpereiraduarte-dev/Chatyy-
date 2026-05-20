@@ -84,6 +84,13 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
             // (CHANNEL_ID_SILENT) so the FSI/heads-up still surfaces but
             // without sound or vibration.
             val muteRingtone = data["mute_ringtone"] == "1" || data["mute_ringtone"] == "true"
+            // [A2 gap, 2026-05-20] Caller E.164 phone number. Forwarded to
+            // ChatyyConnectionService.buildIncomingExtras so the Telecom
+            // self-managed Connection uses a `tel:` address — the stock
+            // dialer Recents tab then displays the call exactly like a
+            // regular phone call. Matches WhatsApp's Recent calls UX.
+            val callerPhoneE164 = data["caller_phone_e164"]?.takeIf { it.isNotBlank() }
+              ?: data["caller_phone"]?.takeIf { it.isNotBlank() }
             // [#1183-followup, 2026-05-19] Pre-minted LK creds for the receiver
             // shipped IN the FCM data (backend chat.php call_notify now mints
             // per-recipient via _mintLivekitTokenForUser). When present, we
@@ -192,7 +199,8 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
                     ExpoCallKitModule.startTelecomIncomingCall(
                         applicationContext, callId, callerName, callerEmail,
                         conversationId, hasVideo, callerAvatar,
-                        lkUrl = preLkUrl, lkToken = preLkToken
+                        lkUrl = preLkUrl, lkToken = preLkToken,
+                        callerPhoneE164 = callerPhoneE164
                     )
                 } catch (t: Throwable) {
                     Log.w(TAG, "[STAGE-B] Telecom addNewIncomingCall failed: ${t.message}")

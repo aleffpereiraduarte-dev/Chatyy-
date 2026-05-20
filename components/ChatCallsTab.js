@@ -4,6 +4,7 @@ import Svg, { Path, Polyline, Circle as SvgCircle, Line, Rect } from 'react-nati
 import AvatarCircle from './AvatarCircle';
 import BrandFab from './BrandFab';
 import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus, IconTrash, IconSmartphone, IconCheck, IconCalendar } from './Icons';
+import SwipeAction from './SwipeAction';
 import ScheduleCallModal from './ScheduleCallModal';
 import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, voipCall, voipToken, voipSipCredentials, voipMinutesRemaining, voipUpdateDuration, searchContacts, voipVerifiedNumberRequest, voipVerifiedNumberConfirm, getProfile, callNotify as apiCallNotify } from '../services/api';
 import { getCached, setCache } from '../services/cache';
@@ -662,7 +663,7 @@ function SilenceToggle({ isDark }) {
   );
 }
 
-const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language, onPress, onInfoPress, onCallBack }) {
+const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language, onPress, onInfoPress, onCallBack, onLongPress }) {
   const isMissed = item.type === 'missed';
   const nameColor = isMissed ? RED : (isDark ? '#ffffff' : '#000000');
   const subColor = isDark ? '#8e8e93' : '#8e8e93';
@@ -686,6 +687,8 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
     <TouchableOpacity
       style={s.historyRow}
       onPress={() => onPress(item)}
+      onLongPress={() => onLongPress?.(item)}
+      delayLongPress={350}
       activeOpacity={0.6}
     >
       {/* Left: Avatar or flag (red ring for missed, transparent otherwise) */}
@@ -3117,6 +3120,16 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     const email = item.contactEmail || item.contact_email || '';
     const name = item.contactName || item.contact_name || '';
     if (!email) return;
+    // [gap H5 2026-05-20] Missed-call rows pre-fill the chat input with a
+    // "Voltei sua ligação" draft so the user can shoot a quick context
+    // message before re-dialing. chat-conversation.js reads ?prefill=.
+    const isMissed = item.type === 'missed' || item.status === 'missed';
+    const prefillText = isMissed
+      ? (t?.('calls.callBackPrefill') || 'Voltei sua ligação')
+      : '';
+    const prefillQ = prefillText
+      ? `&prefill=${encodeURIComponent(prefillText)}`
+      : '';
     // Resolve (or create) the direct conversation FIRST so the chat screen
     // gets a real `id` param. Without this, the screen opened with id=0
     // and the message loader skipped, leaving an infinite skeleton.
@@ -3125,7 +3138,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
       const r = await chatCreate([email], '', 'direct');
       const convId = r?.data?.conversation_id || r?.data?.id;
       if (r?.success && convId) {
-        router.push(`/chat-conversation?id=${convId}&name=${encodeURIComponent(r?.data?.name || name)}&type=direct&email=${encodeURIComponent(email)}`);
+        router.push(`/chat-conversation?id=${convId}&name=${encodeURIComponent(r?.data?.name || name)}&type=direct&email=${encodeURIComponent(email)}${prefillQ}`);
         return;
       }
     } catch {}
@@ -3133,9 +3146,115 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     // for direct chats with a known peer.
     router.push({
       pathname: '/chat-conversation',
-      params: { id: '0', type: 'direct', email, name },
+      params: { id: '0', type: 'direct', email, name, ...(prefillText ? { prefill: prefillText } : {}) },
     });
-  }, [router]);
+  }, [router, t]);
+
+  // [gap H2 2026-05-20] WhatsApp-parity row actions:
+  //   • Right-swipe → delete that one entry (calls chat_call_history_delete).
+  //   • Long-press → ActionSheetIOS (iOS) / Alert (Android+web) with:
+  //     Block caller, Report spam, Add to contacts, Copy number, Delete.
+  const handleDeleteEntry = useCallback(async (item) => {
+    if (!item?.id) return;
+    try { await callHistoryDelete(item.id); } catch {}
+    // Optimistic: drop from local state right away. The next refresh
+    // catches any server-side disagreement.
+    setChatCalls(prev => Array.isArray(prev) ? prev.filter(c => c.id !== item.id) : prev);
+  }, []);
+
+  const handleRowLongPress = useCallback((item) => {
+    if (!item) return;
+    const caller = item.contactEmail || item.contact_email || '';
+    const number = item.to_number || '';
+    const name = item.contactName || item.contact_name || '';
+    const optBlock = t?.('calls.blockCaller') || 'Bloquear contato';
+    const optReport = t?.('calls.reportSpam') || 'Denunciar spam';
+    const optAddContact = t?.('calls.addToContacts') || 'Adicionar aos contatos';
+    const optCopyNumber = t?.('calls.copyNumber') || 'Copiar número';
+    const optDelete = t?.('common.delete') || 'Apagar';
+    const cancel = t?.('common.cancel') || 'Cancelar';
+
+    const handleSelected = async (label) => {
+      if (label === optDelete) return handleDeleteEntry(item);
+      if (label === optCopyNumber) {
+        try {
+          const Clipboard = require('expo-clipboard');
+          await Clipboard.setStringAsync(number || caller || '');
+        } catch {}
+        return;
+      }
+      if (label === optBlock) {
+        // Block surfaces via existing voipBlockCaller / addBlockedCaller helper
+        // when present; fallback Alert if not wired.
+        try {
+          const api = require('../services/api');
+          if (typeof api.voipBlockCaller === 'function') {
+            await api.voipBlockCaller(caller || number);
+          } else if (typeof api.addBlockedCaller === 'function') {
+            await api.addBlockedCaller(caller || number);
+          }
+        } catch {}
+        return;
+      }
+      if (label === optReport) {
+        try {
+          const api = require('../services/api');
+          if (typeof api.voipReportSpam === 'function') {
+            await api.voipReportSpam(caller || number);
+          } else if (typeof api.reportSpamCaller === 'function') {
+            await api.reportSpamCaller(caller || number);
+          }
+        } catch {}
+        return;
+      }
+      if (label === optAddContact) {
+        try {
+          const Contacts = require('expo-contacts');
+          if (Contacts?.presentFormAsync) {
+            await Contacts.presentFormAsync(null, {
+              [Contacts.Fields.Name]: name || '',
+              [Contacts.Fields.PhoneNumbers]: number ? [{ number, label: 'mobile' }] : [],
+              [Contacts.Fields.Emails]: caller ? [{ email: caller, label: 'work' }] : [],
+            });
+          }
+        } catch {}
+        return;
+      }
+    };
+
+    if (Platform.OS === 'ios') {
+      try {
+        const { ActionSheetIOS } = require('react-native');
+        const options = [optBlock, optReport, optAddContact, optCopyNumber, optDelete, cancel];
+        ActionSheetIOS.showActionSheetWithOptions({
+          options,
+          cancelButtonIndex: options.length - 1,
+          destructiveButtonIndex: options.length - 2, // Delete
+          title: name || number || caller,
+        }, (idx) => {
+          if (idx == null || idx === options.length - 1) return;
+          handleSelected(options[idx]);
+        });
+      } catch {}
+    } else {
+      // Android + web — Alert with buttons. Alert caps at ~3 buttons on
+      // Android so we collapse into a small list; if there are more than
+      // 3 entries we use 'options' style which shows a popup.
+      Alert.alert(
+        name || number || caller || '',
+        '',
+        [
+          { text: optBlock,       onPress: () => handleSelected(optBlock) },
+          { text: optReport,      onPress: () => handleSelected(optReport) },
+          { text: optAddContact,  onPress: () => handleSelected(optAddContact) },
+          { text: optCopyNumber,  onPress: () => handleSelected(optCopyNumber) },
+          { text: optDelete,      style: 'destructive', onPress: () => handleSelected(optDelete) },
+          { text: cancel,         style: 'cancel' },
+        ],
+        { cancelable: true }
+      );
+    }
+  }, [t, handleDeleteEntry]);
 
   // Memory #832: tap on the green phone icon in a call history row should
   // redial the Chatyy call directly (WhatsApp parity), NOT just re-open the
@@ -3451,15 +3570,31 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
                     {idx > 0 && (
                       <View style={[s.separator, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }]} />
                     )}
-                    <CallHistoryRow
-                      item={item}
-                      isDark={isDark}
-                      t={t}
-                      language={language}
-                      onPress={handleHistoryPress}
-                      onInfoPress={setInfoItem}
-                      onCallBack={handleHistoryCallBack}
-                    />
+                    <SwipeAction
+                      onSwipeLeft={() => handleDeleteEntry(item)}
+                      rightContent={(
+                        <View style={{
+                          width: 80,
+                          height: '100%',
+                          backgroundColor: '#ef4444',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}>
+                          <IconTrash size={20} color="#fff" />
+                        </View>
+                      )}
+                    >
+                      <CallHistoryRow
+                        item={item}
+                        isDark={isDark}
+                        t={t}
+                        language={language}
+                        onPress={handleHistoryPress}
+                        onInfoPress={setInfoItem}
+                        onCallBack={handleHistoryCallBack}
+                        onLongPress={handleRowLongPress}
+                      />
+                    </SwipeAction>
                   </React.Fragment>
                 ))}
               </View>

@@ -344,6 +344,96 @@ export default function IncomingCallListener() {
       return;
     }
     console.log('[IncomingCall] showCall: caller=' + (data.caller_email || '?') + ' call_id=' + normalizedCallId);
+    // [gap H3 2026-05-20] Silence unknown callers. Async gate that runs
+    // BEFORE we touch the ringer / show any UI:
+    //   1. read AsyncStorage `silence_unknown_callers` flag (default OFF)
+    //   2. if ON: check whether the caller is in device contacts OR in
+    //      chat_phone_registry friends (via check_contacts).
+    //   3. if NEITHER: fire `chat_call_status` decline silently and log
+    //      to history with auto_declined=true so the user sees "Silenciado
+    //      automaticamente" badge.
+    // We deliberately swallow all errors → fall through to the normal
+    // ring path. The gate is opt-in; a misbehaving lookup must never
+    // block legitimate calls.
+    (async () => {
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const flag = await AsyncStorage.getItem('silence_unknown_callers');
+        if (flag !== 'true' && flag !== '1') return;
+        const callerEmail = String(data.caller_email || '').toLowerCase();
+        const callerPhone = String(data.caller_phone || '');
+        if (!callerEmail && !callerPhone) return;
+        // 2a. Device contacts (warmed index — lookupName returns null when
+        // not in contacts, a string when matched).
+        let known = false;
+        try {
+          if (callerPhone) {
+            const localName = lookupDeviceContactName(callerPhone);
+            if (localName) known = true;
+          }
+        } catch {}
+        // 2b. chat_phone_registry friend check via backend (also returns
+        // 'has_chatyy' style metadata we ignore here — we only care if
+        // backend says this contact is a saved friend of mine).
+        if (!known) {
+          try {
+            const api = require('../services/api');
+            if (typeof api.checkContacts === 'function') {
+              const r = await api.checkContacts(
+                callerEmail ? [callerEmail] : [],
+                callerPhone ? [callerPhone] : [],
+              );
+              const list = r?.data?.contacts || r?.data?.results || r?.data || [];
+              if (Array.isArray(list)) {
+                for (const c of list) {
+                  // Backend marks saved friends with is_friend / saved /
+                  // has_chatyy + matches. Treat any positive flag as known.
+                  if (c?.is_friend || c?.saved || c?.is_contact) { known = true; break; }
+                }
+              }
+            }
+          } catch {}
+        }
+        if (known) return;
+        // 3. Unknown caller — auto-decline silently.
+        try {
+          const api = require('../services/api');
+          if (typeof api.callStatus === 'function') {
+            api.callStatus(normalizedCallId, 'declined', 0).catch(() => {});
+          }
+        } catch {}
+        // Mark history with auto_declined so the UI surfaces a chip.
+        try {
+          initAddCallToHistory();
+          addCallToHistory({
+            contactEmail: callerEmail,
+            contactName: data.caller_name || callerEmail?.split('@')[0] || '',
+            callId: normalizedCallId,
+            type: 'missed',
+            video: data.video !== false,
+            timestamp: new Date().toISOString(),
+            duration: 0,
+            auto_declined: true,
+          }).catch(() => {});
+        } catch {}
+        // Clear all in-flight ringing state and dismiss native UI.
+        try { stopRingtone(); } catch {}
+        try { callRef.current = null; } catch {}
+        callStateRef.current = null;
+        if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+        setCall(null);
+        acceptedRef.current = false;
+        handlingRef.current = false;
+        try {
+          const { endCall } = require('../services/callkeep');
+          endCall(normalizedCallId, 'declinedElsewhere');
+        } catch {}
+        console.log('[IncomingCall] silence-unknown: auto-declined', callerEmail || callerPhone);
+      } catch (e) {
+        // Never let the gate break legitimate calls.
+        if (__DEV__) console.warn('[IncomingCall] silence-unknown gate err:', e?.message);
+      }
+    })();
     // Reset flags for new ringing call
     acceptedRef.current = false;
     handlingRef.current = false;
@@ -815,7 +905,10 @@ export default function IncomingCallListener() {
           // never existed in this project; calling them was a silent no-op.
           try {
             const { endCall } = require('../services/callkeep');
-            endCall(data?.call_id || '');
+            // [gap H5 2026-05-20] dispatch reason — answeredElsewhere ⇒
+            // 'declinedElsewhere' (CallKit also maps to the same enum
+            // via the native side).
+            endCall(data?.call_id || '', 'declinedElsewhere');
           } catch (_) {}
         }
       }));
@@ -844,7 +937,8 @@ export default function IncomingCallListener() {
           // JS state clears (build 503-505 race).
           try {
             const { endCall } = require('../services/callkeep');
-            endCall(data?.call_id || '');
+            // [gap H5 2026-05-20] reason — caller cancelled before answer.
+            endCall(data?.call_id || '', 'remoteEnded');
           } catch (_) {}
         }
       }));
@@ -881,7 +975,8 @@ export default function IncomingCallListener() {
           handlingRef.current = false;
           try {
             const { endCall } = require('../services/callkeep');
-            endCall(data?.call_id || '');
+            // [gap H5 2026-05-20] reason — server-issued ring timeout.
+            endCall(data?.call_id || '', 'unanswered');
           } catch (_) {}
         }
       }));

@@ -394,10 +394,17 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                     //                 AudioCaptureOptions? = nil,
                     //                 publishOptions: AudioPublishOptions? = nil)
                     //   async throws -> LocalTrackPublication?
-                    try await r.localParticipant.setMicrophone(
+                    let micPub = try await r.localParticipant.setMicrophone(
                         enabled: true,
                         captureOptions: Self.defaultAudioCaptureOptions()
                     )
+                    // [Wave WhatsApp parity, 2026-05-20 gap B3 iOS] Cache the
+                    // local mic track so subsequent applyMicEnabled toggles
+                    // take the track.mute() / unmute() fast-path. setMicrophone
+                    // returns the publication directly on LK 2.5+.
+                    if let track = micPub?.track as? LocalAudioTrack {
+                        await MainActor.run { self.localAudioTrackRef = track }
+                    }
                     print("[CallVC] Mic published (aec+agc+ns) — callId=\(self.callId)")
                     if self.hasVideo {
                         // [Wave C, 2026-05-18] Pass explicit captureOptions +
@@ -646,7 +653,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                         if found != nil { break }
                     }
                     await MainActor.run { self.localAudioTrackRef = found }
-                    print("[CallVC] mic first-publish enabled=\(enabled) cached=\(track != nil) — callId=\(self.callId)")
+                    print("[CallVC] mic first-publish enabled=\(enabled) cached=\(found != nil) — callId=\(self.callId)")
                 }
             } catch {
                 print("[CallVC] applyMicEnabled(\(enabled)) failed: \(error)")

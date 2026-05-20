@@ -1696,9 +1696,10 @@ function CallScreenInner() {
         // Cap maxBitrate=200 kbps, 15 fps, 360p target, 2-layer simulcast
         // (180p + 360p — drop the 720p layer the SFU won't pick anyway).
         let lowData = false;
+        let userToggleOn = false;
         try {
           const flag = await AsyncStorage.getItem('chatyy_low_data_calls');
-          if (flag === 'true' || flag === '1') lowData = true;
+          if (flag === 'true' || flag === '1') { lowData = true; userToggleOn = true; }
         } catch {}
         if (!lowData && Platform.OS !== 'web') {
           try {
@@ -1725,7 +1726,7 @@ function CallScreenInner() {
           // adaptive loop above will still pull the bitrate down to the
           // matching bucket on the first poll.
           if (camPubOpts) {
-            try { _diag('low_data_mode_on', { auto: !(await AsyncStorage.getItem('chatyy_low_data_calls')) }); } catch {}
+            try { _diag('low_data_mode_on', { auto: !userToggleOn }); } catch {}
             await r.localParticipant.setCameraEnabled(true, undefined, camPubOpts);
           } else {
             await r.localParticipant.setCameraEnabled(true);

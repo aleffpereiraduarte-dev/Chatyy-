@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  [WhatsApp parity, 2026-05-20] Color tokens for the in-call native UI +
+  notification surfaces. brand_green matches Chatyy's #2ECC71 used across
+  the Compose CallScreen (SpeakerRing palette token) and the iOS SwiftUI
+  CallView greenAccent. brand_red mirrors HangupColor (#E53935).
+
+  Used by:
+    - CallOngoingService.buildOngoingNotification → setColor(brand_green)
+      for the colorized CallStyle notification (Android 12+ shows the
+      whole notification with a green tint, matching WhatsApp).
+    - Future PiP RemoteActions / heads-up surfaces.
+-->
+<resources>
+    <color name="brand_green">#FF2ECC71</color>
+    <color name="brand_red">#FFE53935</color>
+    <color name="brand_dark">#FF142028</color>
+</resources>

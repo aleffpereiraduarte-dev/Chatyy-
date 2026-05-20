@@ -98,7 +98,14 @@ class ChatyyConnectionService : ConnectionService() {
       hasVideo: Boolean,
       callerAvatar: String,
       lkUrl: String?,
-      lkToken: String?
+      lkToken: String?,
+      // [A2 gap, 2026-05-20] E.164 phone number of the caller. Carried in the
+      // FCM payload as `caller_phone_e164`; populated by chat.php call_notify
+      // when the caller's chat_phone_registry entry resolves. Used by
+      // onCreateIncomingConnection to build a `tel:` address so the stock
+      // dialer Recents tab shows the call as if it came from a phone number
+      // instead of a SIP URI — matching WhatsApp's "Recent calls" UX.
+      callerPhoneE164: String? = null
     ): Bundle = Bundle().apply {
       putString("call_id", callId)
       putString("caller_name", callerName)
@@ -108,6 +115,7 @@ class ChatyyConnectionService : ConnectionService() {
       putString("caller_avatar", callerAvatar)
       if (!lkUrl.isNullOrEmpty()) putString("lk_url", lkUrl)
       if (!lkToken.isNullOrEmpty()) putString("lk_token", lkToken)
+      if (!callerPhoneE164.isNullOrEmpty()) putString("caller_phone_e164", callerPhoneE164)
     }
 
     /**
@@ -145,8 +153,11 @@ class ChatyyConnectionService : ConnectionService() {
     val callerAvatar = inner.getString("caller_avatar") ?: ""
     val lkUrl = inner.getString("lk_url")
     val lkToken = inner.getString("lk_token")
+    // [A2 gap, 2026-05-20] Phone number lookup for the caller in E.164.
+    val callerPhoneE164 = inner.getString("caller_phone_e164")
 
-    Log.i(TAG, "onCreateIncomingConnection: callId=$callId from=$callerName video=$hasVideo")
+    Log.i(TAG, "onCreateIncomingConnection: callId=$callId from=$callerName video=$hasVideo " +
+      "phoneE164=${!callerPhoneE164.isNullOrEmpty()}")
 
     val conn = ChatyyConnection(
       ctx = applicationContext,
@@ -162,15 +173,43 @@ class ChatyyConnectionService : ConnectionService() {
       // Required on every self-managed Connection.
       c.setAudioModeIsVoip(true)
       c.connectionProperties = Connection.PROPERTY_SELF_MANAGED
-      c.connectionCapabilities = (
+      // [A2 gap, 2026-05-20] Base capabilities + video capabilities when the
+      // call is video. CAPABILITY_SUPPORTS_VT_LOCAL_RX + _REMOTE_RX tell the
+      // Telecom framework that this Connection can carry a video stream, so
+      // Android Auto / Wear OS / stock dialer surface the appropriate UI
+      // (Hands-free voice-to-video upgrade, etc.). Without these, the system
+      // treats us as voice-only and grays out video controls in the call UI.
+      var caps = (
         Connection.CAPABILITY_HOLD
           or Connection.CAPABILITY_MUTE
           or Connection.CAPABILITY_SUPPORT_HOLD
       )
-      // Caller display.
-      val addressUri = Uri.fromParts("sip", callerEmail.ifBlank { "chatyy" }, null)
+      if (hasVideo) {
+        caps = caps or
+          Connection.CAPABILITY_SUPPORTS_VT_LOCAL_RX or
+          Connection.CAPABILITY_SUPPORTS_VT_REMOTE_RX
+      }
+      c.connectionCapabilities = caps
+      // [A2 gap, 2026-05-20] Caller display. Prefer a real `tel:` URI when
+      // the caller's E.164 phone is known — Recents shows it as if a phone
+      // call came in (matches WhatsApp). Fall back to the email-based `sip:`
+      // URI when phone is missing (callers that signed up via email only).
+      val addressUri = if (!callerPhoneE164.isNullOrEmpty()) {
+        Uri.fromParts("tel", callerPhoneE164, null)
+      } else {
+        Uri.fromParts("tel", callerEmail.ifBlank { "chatyy" }, null)
+      }
       c.setAddress(addressUri, TelecomManager.PRESENTATION_ALLOWED)
       c.setCallerDisplayName(callerName, TelecomManager.PRESENTATION_ALLOWED)
+      // [A2 gap, 2026-05-20] Set video state on the Connection when applicable.
+      // VideoProfile.STATE_BIDIRECTIONAL says both sides can send + receive.
+      if (hasVideo) {
+        try {
+          c.videoState = android.telecom.VideoProfile.STATE_BIDIRECTIONAL
+        } catch (t: Throwable) {
+          Log.w(TAG, "set videoState failed: ${t.message}")
+        }
+      }
       c.setRinging()
     }
     return conn
