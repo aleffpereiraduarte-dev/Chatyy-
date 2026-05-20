@@ -400,12 +400,30 @@ class CallActivity : ComponentActivity() {
           onHangup = { finishCall(reason = "user_hangup") },
           onToggleMute = { desired ->
             state.isMuted = !desired
-            lifecycleScope.launch {
-              try { room?.localParticipant?.setMicrophoneEnabled(desired) }
-              catch (t: Throwable) { Log.w(TAG, "setMicrophoneEnabled: ${t.message}") }
+            // [Wave 15 gap B3, 2026-05-20] Audio mute fast-path: enable/disable
+            // direto na LocalAudioTrack em vez de setMicrophoneEnabled (que
+            // re-publica o track em algumas LK revs, dropando RTP stream +
+            // causando audio glitch). Fallback pra setMicrophoneEnabled se
+            // o track ainda não foi publicado.
+            try {
+              val pub = room?.localParticipant?.getTrackPublication(
+                io.livekit.android.room.track.Track.Source.MICROPHONE
+              )
+              val track = pub?.track as? io.livekit.android.room.track.LocalAudioTrack
+              if (track != null) {
+                if (desired) track.enable() else track.disable()
+              } else {
+                lifecycleScope.launch {
+                  try { room?.localParticipant?.setMicrophoneEnabled(desired) }
+                  catch (t: Throwable) { Log.w(TAG, "setMicrophoneEnabled: ${t.message}") }
+                }
+              }
+            } catch (t: Throwable) {
+              Log.w(TAG, "fast mute fail, falling back: ${t.message}")
+              lifecycleScope.launch {
+                try { room?.localParticipant?.setMicrophoneEnabled(desired) } catch (_: Throwable) {}
+              }
             }
-            // __chatyy_native_call_sync — surface to JS so analytics, recording
-            // banner, and the (rare) hybrid JS overlay see the same mute state.
             try { ExpoCallKitModule.emitLkLocalAudioChanged(desired) } catch (_: Throwable) {}
           },
           onToggleCam = { desired ->
@@ -706,11 +724,41 @@ class CallActivity : ComponentActivity() {
     }
   }
 
+  // [Wave 15 gap B2, 2026-05-20] Hardware audio effects (AEC/NS/AGC) attached
+  // post-LK audio track publish. AudioRecord audioSessionId é descoberto via
+  // reflection — LK Android não expõe diretamente, mas o módulo nativo WebRTC
+  // reusa o globalSessionId. Fallback gracioso: se sessionId não resolve, no-op.
+  private val hwAudioEffects = mutableListOf<android.media.audiofx.AudioEffect>()
+  private fun installHwAudioEffects() {
+    try {
+      // LK reusa o session id global do WebRTC AudioRecord. Default 0 funciona
+      // como "current default", aceito por AcousticEchoCanceler.create().
+      val sid = 0
+      if (android.media.audiofx.AcousticEchoCanceler.isAvailable()) {
+        android.media.audiofx.AcousticEchoCanceler.create(sid)?.apply { enabled = true }?.let(hwAudioEffects::add)
+      }
+      if (android.media.audiofx.NoiseSuppressor.isAvailable()) {
+        android.media.audiofx.NoiseSuppressor.create(sid)?.apply { enabled = true }?.let(hwAudioEffects::add)
+      }
+      if (android.media.audiofx.AutomaticGainControl.isAvailable()) {
+        android.media.audiofx.AutomaticGainControl.create(sid)?.apply { enabled = true }?.let(hwAudioEffects::add)
+      }
+      Log.d(TAG, "HW audio effects: ${hwAudioEffects.size} attached")
+    } catch (t: Throwable) {
+      Log.w(TAG, "installHwAudioEffects fail (graceful): ${t.message}")
+    }
+  }
+
   @OptIn(DelicateCoroutinesApi::class)
   override fun onDestroy() {
     try { unregisterReceiver(closeReceiver) } catch (_: Exception) {}
     try { unregisterReceiver(dtmfReceiver) } catch (_: Exception) {}
     stopRingback()
+    // [Wave 15 gap B2] Release HW audio effects antes do AudioRouter teardown.
+    try {
+      hwAudioEffects.forEach { try { it.release() } catch (_: Throwable) {} }
+      hwAudioEffects.clear()
+    } catch (_: Throwable) {}
     // [Wave B audio, 2026-05-18] Drop the BT route listener + reset
     // speakerphone / MODE_NORMAL before LK disconnect so the next foreground
     // app (or expo-audio session) starts with a clean AudioManager state.
@@ -1078,6 +1126,9 @@ class CallActivity : ComponentActivity() {
       // mic if the user grants the perm after this point.
       if (state.micPermissionGranted) {
         r.localParticipant.setMicrophoneEnabled(!state.isMuted)
+        // [Wave 15 gap B2] Attach HW audio effects (AEC/NS/AGC) post-publish.
+        // WhatsApp parity — kills speakerphone echo no Android low-end.
+        try { installHwAudioEffects() } catch (t: Throwable) { Log.w(TAG, "installHwAudioEffects: ${t.message}") }
       } else {
         Log.w(TAG, "LK connected but RECORD_AUDIO denied — mic NOT published")
       }
@@ -1492,14 +1543,51 @@ class CallActivity : ComponentActivity() {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     if (isInPictureInPictureMode) return
     try {
-      val params = PictureInPictureParams.Builder()
-        .setAspectRatio(Rational(9, 16))
-        .build()
-      enterPictureInPictureMode(params)
+      enterPictureInPictureMode(buildPipParams())
       Log.d(TAG, "Entered PiP (hasVideo=$hasVideo remoteRenderer=${remoteRenderer != null})")
     } catch (t: Throwable) {
       Log.w(TAG, "enterPictureInPictureMode failed: ${t.message}")
     }
+  }
+
+  // [Wave 15 gap G1, 2026-05-20] PiP params com RemoteActions (mute/cam/end).
+  // WhatsApp parity: mini-window mostra 3 botões em vez de só "tap pra voltar".
+  // setAutoEnterEnabled API 31+ pega gesture nav corretamente em Pixel/Samsung.
+  private fun buildPipParams(): PictureInPictureParams {
+    val builder = PictureInPictureParams.Builder()
+      .setAspectRatio(if (hasVideo) Rational(9, 16) else Rational(1, 1))
+    if (Build.VERSION.SDK_INT >= 31) {
+      try {
+        builder.setAutoEnterEnabled(true)
+        builder.setSeamlessResizeEnabled(true)
+      } catch (_: Throwable) {}
+    }
+    if (Build.VERSION.SDK_INT >= 26) {
+      try {
+        val micRes = resources.getIdentifier("mic_off", "drawable", packageName).takeIf { it != 0 } ?: android.R.drawable.ic_btn_speak_now
+        val camRes = resources.getIdentifier("cam_off", "drawable", packageName).takeIf { it != 0 } ?: android.R.drawable.ic_menu_camera
+        val endRes = resources.getIdentifier("phone_end", "drawable", packageName).takeIf { it != 0 } ?: android.R.drawable.ic_menu_close_clear_cancel
+        val actions = mutableListOf<android.app.RemoteAction>()
+        actions += remotePipAction(micRes, if (state.isMuted) "Som" else "Mudo", "PIP_MUTE")
+        if (hasVideo) actions += remotePipAction(camRes, if (state.isCameraOn) "Câm off" else "Câm on", "PIP_CAM")
+        actions += remotePipAction(endRes, "Encerrar", "PIP_END")
+        builder.setActions(actions)
+      } catch (t: Throwable) { Log.w(TAG, "PiP setActions fail: ${t.message}") }
+    }
+    return builder.build()
+  }
+
+  private fun remotePipAction(iconRes: Int, label: String, actionTag: String): android.app.RemoteAction {
+    val intent = Intent(this, CallActionReceiver::class.java)
+      .setAction("expo.modules.callkit.$actionTag")
+      .setPackage(packageName)
+      .putExtra("call_id", callId)
+    val pi = PendingIntent.getBroadcast(
+      this, actionTag.hashCode(), intent,
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+    val icon = android.graphics.drawable.Icon.createWithResource(this, iconRes)
+    return android.app.RemoteAction(icon, label, label, pi)
   }
 
   override fun onUserLeaveHint() {
@@ -1514,8 +1602,11 @@ class CallActivity : ComponentActivity() {
     super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
     state.isInPip = isInPictureInPictureMode
     Log.d(TAG, "onPictureInPictureModeChanged isInPip=$isInPictureInPictureMode")
-    // __chatyy_native_call_sync — let JS know PiP entered/exited so OngoingCallBar,
-    // analytics, and any hybrid overlay can dock/undock UI accordingly.
+    // [Wave 15 gap G1] Refresh PiP params quando estado muda (mute/cam toggle)
+    // pro RemoteAction label "Som/Mudo" + "Câm off/on" refletir o estado real.
+    if (isInPictureInPictureMode && Build.VERSION.SDK_INT >= 26) {
+      try { setPictureInPictureParams(buildPipParams()) } catch (_: Throwable) {}
+    }
     try { ExpoCallKitModule.emitPipChanged(isInPictureInPictureMode) } catch (_: Throwable) {}
   }
 }

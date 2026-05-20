@@ -133,6 +133,34 @@ class CallOngoingService : Service() {
                 .takeIf { it != 0 } ?: android.R.drawable.ic_menu_close_clear_cancel
         } catch (_: Exception) { android.R.drawable.ic_menu_close_clear_cancel }
 
+        // [Wave 14 gap G2, 2026-05-20] Notification.CallStyle.forOngoingCall
+        // — Android 12+ renders the green pill in status bar com Person +
+        // hangup proeminente, igual WhatsApp/Telegram. Fallback gracioso pra
+        // NotificationCompat.Builder em < API 31.
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            try {
+                val person = android.app.Person.Builder()
+                    .setName(callerName)
+                    .setImportant(true)
+                    .build()
+                val brandGreen = try { getColor(R.color.brand_green) } catch (_: Throwable) { 0xFF2ECC71.toInt() }
+                return android.app.Notification.Builder(this, CHANNEL_ID)
+                    .setSmallIcon(iconRes)
+                    .setStyle(android.app.Notification.CallStyle.forOngoingCall(person, hangupPI))
+                    .setColorized(true)
+                    .setColor(brandGreen)
+                    .setCategory(android.app.Notification.CATEGORY_CALL)
+                    .setVisibility(android.app.Notification.VISIBILITY_PUBLIC)
+                    .setOngoing(true)
+                    .setShowWhen(true)
+                    .setUsesChronometer(true)
+                    .setContentIntent(pi)
+                    .build()
+            } catch (t: Throwable) {
+                Log.w(TAG, "CallStyle build failed, falling back: ${t.message}")
+            }
+        }
+
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(iconRes)
             .setContentTitle("Chamada em andamento")

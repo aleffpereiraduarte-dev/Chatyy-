@@ -93,6 +93,29 @@ class CallActionReceiver : BroadcastReceiver() {
         CallSignalWs.fireCallAnswered(context.applicationContext, callId, conversationId)
       }
 
+      "expo.modules.callkit.PIP_MUTE" -> {
+        // [Wave 15 gap G1] PiP RemoteAction toggle mute. Broadcast pra
+        // CallActivity (que segura o LK Room) e atualiza Notification.
+        try {
+          val muteIntent = Intent("expo.modules.callkit.PIP_TOGGLE_MUTE").setPackage(context.packageName)
+          context.sendBroadcast(muteIntent)
+        } catch (_: Exception) {}
+      }
+      "expo.modules.callkit.PIP_CAM" -> {
+        try {
+          val camIntent = Intent("expo.modules.callkit.PIP_TOGGLE_CAM").setPackage(context.packageName)
+          context.sendBroadcast(camIntent)
+        } catch (_: Exception) {}
+      }
+      "expo.modules.callkit.PIP_END" -> {
+        // PiP "Encerrar" — mesmo behavior do ACTION_HANGUP.
+        try {
+          context.sendBroadcast(Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY"))
+        } catch (_: Exception) {}
+        try { context.stopService(Intent(context, CallOngoingService::class.java)) } catch (_: Exception) {}
+        ExpoCallKitModule.emitCallEnded(callId)
+      }
+
       ACTION_HANGUP -> {
         // [hangup-from-notif, 2026-05-19] User tapped "Encerrar" on the
         // persistent in-progress notification. Sequence mirrors the JS
