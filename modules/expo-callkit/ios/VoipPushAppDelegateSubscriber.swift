@@ -253,6 +253,48 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
                 hasVideo: hasVideo,
                 payload: dict
             )
+
+            // [STAGE-A 2026-05-20] GAP #2 — Kick Room.connect during the ring
+            // window, BEFORE the user taps Accept. Audio is hot the instant
+            // they answer (WhatsApp parity). The push may carry an inline
+            // `lk_token`+`lk_url` (server-side fast-path) OR JS may have
+            // persisted them ahead of time via `persistPendingLkToken`. Try
+            // inline first, then App Group cache, then async token fetch.
+            let lkTokenInline = (dict["lk_token"] as? String) ?? ""
+            let lkUrlInline   = (dict["lk_url"]   as? String) ?? ""
+            if !lkTokenInline.isEmpty && !lkUrlInline.isEmpty {
+                Task.detached(priority: .userInitiated) {
+                    CallViewController.preconnectRoom(url: lkUrlInline, token: lkTokenInline, callId: callId)
+                }
+            } else if let ud = UserDefaults(suiteName: kAppGroupId),
+                      let cachedTok = ud.string(forKey: "lk_token_\(callId)"), !cachedTok.isEmpty,
+                      let cachedUrl = ud.string(forKey: "lk_url_\(callId)"), !cachedUrl.isEmpty {
+                Task.detached(priority: .userInitiated) {
+                    CallViewController.preconnectRoom(url: cachedUrl, token: cachedTok, callId: callId)
+                }
+            } else {
+                // No inline / cached token — fetch then preconnect. This still
+                // races the ring timer but typically resolves in 300-600ms.
+                let identityForFetch: String = {
+                    if let s = dict["identity"] as? String, !s.isEmpty { return s }
+                    if let ud = UserDefaults(suiteName: kAppGroupId),
+                       let e = ud.string(forKey: "user_email"), !e.isEmpty { return e }
+                    return callId
+                }()
+                Task.detached(priority: .userInitiated) {
+                    do {
+                        let tok = try await NativeCallTokenFetcher.shared.fetchToken(
+                            roomName: callId,
+                            identity: identityForFetch,
+                            role: "publisher"
+                        )
+                        CallViewController.preconnectRoom(url: tok.url, token: tok.token, callId: callId)
+                    } catch {
+                        print("[VoipSubscriber] STAGE-A preconnect token fetch failed: \(error)")
+                    }
+                }
+            }
+
             NotificationCenter.default.post(
                 name: Notification.Name("ExpoCallKitPendingVoipCall"),
                 object: nil,
@@ -311,6 +353,13 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
                                                        callerEmail: String,
                                                        hasVideo: Bool,
                                                        payload: [AnyHashable: Any]) {
+        // [STAGE-A 2026-05-20] GAP #3 — Bail if the module's ProviderDelegate
+        // is already live; the module owns presentation in that case and a
+        // stub-side present would double-mount CallViewController.
+        if ExpoCallKitModule.hasBoundProviderDelegate() {
+            print("[VoipSubscriber] STAGE-A startAutoAcceptNativeCall: module owns provider — bailing")
+            return
+        }
         // Cached LK token short-circuit (server may have published one via
         // the existing `persistPendingLkToken` JS function before the push).
         if let ud = UserDefaults(suiteName: kAppGroupId),
@@ -359,6 +408,12 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
                                                  hasVideo: Bool,
                                                  lkUrl: String,
                                                  lkToken: String) {
+        // [STAGE-A 2026-05-20] GAP #3 — Last-line defense: if the module is
+        // bound between the async hop and present, abort cleanly.
+        if ExpoCallKitModule.hasBoundProviderDelegate() {
+            print("[VoipSubscriber] STAGE-A presentAutoAcceptVC: module owns provider — bailing")
+            return
+        }
         // [#1172 fix, 2026-05-18] Robust window/VC resolver — falls back
         // across scene activation states and presented VCs so a cold-start
         // VoIP push auto-accept actually surfaces CallViewController instead
@@ -443,6 +498,24 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
     }
 
     public func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
+        // [STAGE-A 2026-05-20] GAP #3 — Gate against dual-present race. Once
+        // the real ExpoCallKitModule.ProviderDelegate is bound (RN bundle
+        // booted), the module owns CXAnswer handling end-to-end. The stub
+        // should only fire when the cold-start path is still active — i.e.
+        // when *this* delegate is the earlyProvider. If the provider passed
+        // to us is anything else, or the module's delegate is already wired,
+        // immediately fulfill and bail to avoid double-presenting the
+        // CallViewController.
+        guard provider === Self.earlyProvider else {
+            print("[VoipSubscriber] STAGE-A: CXAnswer on non-early provider — module owns it; stub fulfilling and bailing")
+            action.fulfill()
+            return
+        }
+        if ExpoCallKitModule.hasBoundProviderDelegate() {
+            print("[VoipSubscriber] STAGE-A: ExpoCallKitModule has ProviderDelegate bound — stub fulfilling and bailing")
+            action.fulfill()
+            return
+        }
         print("[VoipSubscriber] stub CXAnswerCallAction — marking pending accept + native LK pre-connect")
         let uuid = action.callUUID
 
@@ -451,17 +524,11 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
             ud.set(uuid.uuidString, forKey: "pendingAcceptUUID")
         }
 
-        // 2. Configure AVAudioSession FIRST. CallKit will activate it after
-        //    fulfill() returns; setting category/mode early avoids a race
-        //    where LiveKit's first audio capture runs before voiceChat mode.
-        do {
-            try AVAudioSession.sharedInstance().setCategory(
-                .playAndRecord, mode: .voiceChat,
-                options: [.allowBluetoothA2DP, .allowBluetoothHFP]
-            )
-        } catch {
-            print("[VoipSubscriber] setCategory pre-connect failed: \(error)")
-        }
+        // [STAGE-A 2026-05-20] GAP #4 — AVAudioSession config DELETED from
+        // here. AudioRouter.configureForCall (invoked from
+        // provider:didActivate audioSession:) is the single owner of
+        // setCategory/setMode. Calling it before didActivate races with
+        // CallKit's own session ownership and clobbers options set later.
 
         // 3. Grab the payload we stashed when the push arrived. If it's gone
         //    (rare — possibly an app cold-restart between push and answer),

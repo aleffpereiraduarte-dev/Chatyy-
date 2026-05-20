@@ -241,6 +241,56 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         ])
         host.didMove(toParent: self)
 
+        // [STAGE-A 2026-05-20] GAP #2 — If preconnectRoom (push-receive path)
+        // already published a Room for this callId, adopt it instead of
+        // building a second one. The singleton's Room is either .connecting
+        // or .connected; in either case the RoomDelegate hooks fire through
+        // NativeCallRoom forwarders + the listener bag, so we don't even need
+        // to bind self as a RoomDelegate (CallView reads `session` which
+        // mirrors the NativeCallRoom state). This is what makes audio hot
+        // the instant the user taps Accept.
+        if NativeCallRoom.shared.isPreconnected(callId: callId) {
+            print("[CallVC] STAGE-A: adopting preconnected Room for \(callId)")
+            // Take over the Room reference + register as RoomDelegate so
+            // participant/track events flow into our SwiftUI session state
+            // and the existing extension callbacks fire as if we'd built the
+            // Room ourselves.
+            if let preRoom = NativeCallRoom.shared.currentRoom() {
+                self.room = preRoom
+                NativeCallRoom.shared.attachDelegate(self)
+            }
+            // Update session.status if already connected.
+            if NativeCallRoom.shared.state == .connected {
+                self.session.status = "Conectado"
+            }
+            // If this is a video call we still need to publish the local
+            // camera — preconnectRoom only published the mic to keep the
+            // ring-window light. Publish here on the same Task pattern as
+            // the legacy path.
+            if hasVideo, let r = self.room {
+                Task { [weak self] in
+                    guard let self = self else { return }
+                    let captureOpts = Self.defaultCameraCaptureOptions(position: self.currentCameraPosition)
+                    let publishOpts = Self.defaultVideoPublishOptions()
+                    if let pub = try? await r.localParticipant.setCamera(
+                        enabled: true,
+                        captureOptions: captureOpts,
+                        publishOptions: publishOpts
+                    ), let track = pub.track as? LocalVideoTrack {
+                        await MainActor.run { self.session.localVideoTrack = track }
+                        print("[CallVC] STAGE-A: late camera publish on preconnect adopt")
+                    }
+                }
+            }
+            // PiP still set up based on hasVideo. Ringback skipped — adopt
+            // path is always incoming-answered, never outgoing.
+            if hasVideo {
+                setupPiPController()
+                installBackgroundObserverForPiP()
+            }
+            return
+        }
+
         // Connect LiveKit if we have credentials. The connect Task is detached
         // from the view's lifetime via the captured `r` reference so the
         // suspend chain survives even if the VC is dismissed mid-handshake.
@@ -1248,6 +1298,57 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     }
 
     // MARK: - Presentation helper
+
+    /// [STAGE-A 2026-05-20] GAP #2 — Pre-connect the LiveKit Room DURING the
+    /// CallKit ring window (i.e. before the user taps Accept). Same plumbing
+    /// as the `viewDidLoad` connect path minus the SwiftUI presentation: we
+    /// build a Room, publish to NativeCallRoom (so adoptNativeRoom / the
+    /// CXAnswer path can adopt it instantly), and kick the connect Task.
+    ///
+    /// Audio is hot the instant the user taps Accept — there's no second
+    /// Room.connect round-trip after CXAnswer fires. WhatsApp parity.
+    static func preconnectRoom(url: String, token: String, callId: String) {
+        guard !url.isEmpty, !token.isEmpty, !callId.isEmpty else {
+            print("[CallVC] preconnectRoom: missing url/token/callId — skip")
+            return
+        }
+        // Bail if a Room is already mid-connect for this call (idempotent).
+        if NativeCallRoom.shared.isPreconnected(callId: callId) {
+            print("[CallVC] preconnectRoom: already pre-connected for \(callId) — skip")
+            return
+        }
+        // Touch processor singletons so the first published audio frame sees
+        // the user's RNNoise / background-blur toggle state.
+        _ = RNNoiseAudioProcessor.shared
+        _ = BackgroundProcessor.shared
+        let roomOptions = RoomOptions(
+            defaultCameraCaptureOptions: Self.defaultCameraCaptureOptions(),
+            defaultAudioCaptureOptions: Self.defaultAudioCaptureOptions(),
+            defaultVideoPublishOptions: Self.defaultVideoPublishOptions(),
+            adaptiveStream: true,
+            dynacast: true
+        )
+        // delegate: nil — there's no VC yet. CallViewController.viewDidLoad
+        // (called when present() lands) will rebind its own RoomDelegate via
+        // the singleton's published Room reference. Until then, NativeCallRoom
+        // .didConnect forwarders fire via the JS adoptNativeRoom listener bag.
+        let r = Room(delegate: nil, roomOptions: roomOptions)
+        NativeCallRoom.shared.publish(room: r, callId: callId, roomName: callId)
+        Task.detached(priority: .userInitiated) {
+            do {
+                try await r.connect(url: url, token: token)
+                try await r.localParticipant.setMicrophone(
+                    enabled: true,
+                    captureOptions: Self.defaultAudioCaptureOptions()
+                )
+                NativeCallRoom.shared.didConnect()
+                print("[CallVC] preconnectRoom: connected callId=\(callId)")
+            } catch {
+                print("[CallVC] preconnectRoom: failed callId=\(callId) err=\(error)")
+                NativeCallRoom.shared.clear()
+            }
+        }
+    }
 
     static func present(
         from base: UIViewController,

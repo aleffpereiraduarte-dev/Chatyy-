@@ -1128,7 +1128,19 @@ function CallScreenInner() {
     if (Platform.OS !== 'web') {
       try {
         const ExpoCallKit = require('../modules/expo-callkit');
-        const snap = await ExpoCallKit.adoptNativeRoom?.(callId);
+        // [STAGE-A 2026-05-20] GAP #6 — Poll up to 1500ms for the native
+        // Room. The native side (CallViewController.preconnectRoom invoked
+        // during the ring window OR CXAnswer-time fetch) may still be
+        // mid-connect when JS mounts /call.js. A single adoptNativeRoom call
+        // would miss it and JS would spawn a duplicate Room → SFU evicts
+        // → mute-toggle desync. 100ms × 15 = 1500ms is the WhatsApp answer
+        // budget; if still nothing by then the legacy fallback runs.
+        let snap = null;
+        for (let i = 0; i < 15; i++) {
+          snap = await ExpoCallKit.adoptNativeRoom?.(callId);
+          if (snap) break;
+          await new Promise((r) => setTimeout(r, 100));
+        }
         if (snap && (snap.alreadyConnected || snap.connected || snap.roomName || snap.localIdentity)) {
           console.log('[Call] adopting native Room — skip JS Room.connect', { callId, snap });
           _diag('adopted_native_room', { snap_keys: Object.keys(snap || {}).join(',') });

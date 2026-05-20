@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import CryptoKit
 import LiveKitClient
 
 /**
@@ -246,6 +247,31 @@ public enum NativeCallRoomEvent {
     /// this to decide whether to adopt the native room or spawn its own.
     public func hasRoom() -> Bool { return room != nil }
 
+    /// [STAGE-A 2026-05-20] GAP #2 pre-connect check. Returns true when the
+    /// current Room was published for the given callId AND is at least
+    /// `.connecting`. The CXAnswer path uses this to skip a duplicate
+    /// Room.connect when the push receive path already kicked one off during
+    /// the ring window.
+    public func isPreconnected(callId: String) -> Bool {
+        guard room != nil else { return false }
+        if let active = _callId, !active.isEmpty, active != callId { return false }
+        return state == .connecting || state == .connected
+    }
+
+    /// [STAGE-A 2026-05-20] GAP #2 — Expose the underlying Room so the
+    /// CallViewController adopt path can attach itself as RoomDelegate the
+    /// moment it mounts. Without this, the preconnect Room (created with
+    /// delegate=nil during the ring window) would miss participant /
+    /// track-subscribed events.
+    public func currentRoom() -> Room? { return room }
+
+    /// [STAGE-A 2026-05-20] GAP #2 — Bind a RoomDelegate to the preconnected
+    /// Room. Idempotent: LiveKit's `Room.add(delegate:)` is a multicast set.
+    public func attachDelegate(_ delegate: RoomDelegate) {
+        guard let r = room else { return }
+        r.add(delegate: delegate)
+    }
+
     // --- JS-facing operations (called from ExpoCallKitModule) ----------------
 
     /// Legacy entry kept so `lkConnect` in ExpoCallKitModule still compiles.
@@ -320,6 +346,14 @@ public class NativeCallTokenFetcher {
     }
     public static let shared = NativeCallTokenFetcher()
 
+    /// [STAGE-A 2026-05-20] GAP #7 — MD5 hex helper for the per-device
+    /// identity suffix. CryptoKit's Insecure.MD5 is fine here: we only
+    /// need a stable, short, low-collision hash (not a security primitive).
+    fileprivate static func md5Hex(_ s: String) -> String {
+        let digest = Insecure.MD5.hash(data: Data(s.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
     enum FetchError: Error, LocalizedError {
         case missingAppGroup
         case missingAuth
@@ -363,13 +397,27 @@ public class NativeCallTokenFetcher {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
 
+        // [STAGE-A 2026-05-20] GAP #7 — Per-device identity. Mint a stable
+        // 8-char device hash from identifierForVendor + callId (MD5) and
+        // suffix it onto the identity so each physical device joining the
+        // same room gets a unique LiveKit identity. Without this, phone+
+        // tablet+laptop on the same account all join with identity=email and
+        // the SFU evicts the older participant ("connected from another
+        // device"). Server still authorizes via the bearer token; identity
+        // is purely a routing key inside LiveKit.
+        let deviceId = UIDevice.current.identifierForVendor?.uuidString ?? "unknown"
+        let raw = "\(deviceId):\(roomName)"
+        let md5Hex = Self.md5Hex(raw)
+        let deviceHash = String(md5Hex.prefix(8))
+        let deviceIdentity = identity.isEmpty ? deviceHash : "\(identity)#\(deviceHash)"
+
         // Mirror the JS body shape (apiCall POST puts the action into the
         // body too, so server-side $input always has it). `identity` and
         // `role` are accepted-but-ignored today; included for forward compat.
         let body: [String: Any] = [
             "action": "chat_livekit_token",
             "room": roomName,
-            "identity": identity,
+            "identity": deviceIdentity,
             "role": role,
         ]
         req.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])

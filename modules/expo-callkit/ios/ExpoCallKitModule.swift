@@ -114,6 +114,24 @@ public class ExpoCallKitModule: Module {
     ProviderDelegate.dismissActiveCallSurfaces(reason: reason)
   }
 
+  /// [STAGE-A 2026-05-20] GAP #3 — Atomically-updated flag set in
+  /// `setupProvider()` after `providerDelegate` is wired up. The cold-start
+  /// stub in VoipPushAppDelegateSubscriber reads this to decide whether the
+  /// module owns CXAnswer / presentation — if true, the stub's CXAnswer
+  /// handler immediately fulfills and bails (no dual-present race).
+  private static var _providerDelegateBound: Bool = false
+  private static let _providerDelegateBoundLock = NSLock()
+  static func hasBoundProviderDelegate() -> Bool {
+    _providerDelegateBoundLock.lock()
+    defer { _providerDelegateBoundLock.unlock() }
+    return _providerDelegateBound
+  }
+  fileprivate static func _setProviderDelegateBound(_ v: Bool) {
+    _providerDelegateBoundLock.lock()
+    _providerDelegateBound = v
+    _providerDelegateBoundLock.unlock()
+  }
+
   /// [#1171 redux dismiss, 2026-05-19] Race guard for the post-hangup
   /// present window. `presentNativeCallVC` / `presentOutgoingCallVC` both
   /// fire from a `Task.detached` that awaits the LK token fetch (200-500ms
@@ -626,21 +644,16 @@ public class ExpoCallKitModule: Module {
     // path stays in charge (fallback for unmigrated callers).
     AsyncFunction("openNativeCall") { (callId: String, callerName: String, callerEmail: String, hasVideo: Bool, lkUrl: String?, lkToken: String?) -> Void in
       await MainActor.run {
-        // [#1208 2026-05-19 foreground gate] If the app is foreground at the
-        // moment JS calls openNativeCall, the rich /call.js JS UI is already
-        // mounted (or about to mount via the MobileNativeBridge JS gate).
-        // Skipping the SwiftUI VC here prevents the double-mount
-        // ("duas telas de ligação" complaint) and lets the JS path adopt any
-        // pre-connected LiveKit Room via `adoptNativeRoom(callId)`.
-        // Background / killed paths (cold-start incoming, multi-device cancel,
-        // CallKit-driven answer where the app hasn't come to foreground yet)
-        // fall through and present CallViewController as before.
-        let scenes = UIApplication.shared.connectedScenes
-        let isAppForeground = scenes.contains { $0.activationState == .foregroundActive }
-        if isAppForeground {
-          print("[ExpoCallKit #1208] openNativeCall: app foreground — skipping native VC for callId=\(callId), JS owns UI")
-          return
-        }
+        // [STAGE-A 2026-05-20] GAP #8 — Foreground gate REMOVED. WhatsApp
+        // (and FaceTime) ALWAYS present the native CallKit-owned call UI,
+        // even when the app is open. CallViewController is the source of
+        // truth; /call.js becomes a read-only fallback observer for legacy
+        // unmigrated callers. The double-mount ("duas telas de ligação")
+        // concern is now mitigated upstream: services/callkeep no longer
+        // router.push('/call') when openNativeCall succeeds (handled by
+        // MobileNativeBridge JS gate). If a stale /call.js does mount it
+        // will adopt the native Room via the GAP #6 poll loop and stay
+        // invisible behind the SwiftUI VC.
         // [#1172 fix, 2026-05-18] resolvePresentingViewController handles
         // backgrounded scenes, CallKit ring-sheet contention, and multi-scene
         // iPad windows — see helper docstring.
@@ -1017,6 +1030,10 @@ public class ExpoCallKitModule: Module {
     providerDelegate = ProviderDelegate(module: self)
     provider?.setDelegate(providerDelegate, queue: DispatchQueue.main)
     callController = CXCallController()
+    // [STAGE-A 2026-05-20] GAP #3 — module's ProviderDelegate is now LIVE.
+    // From this point onwards the cold-start stub in VoipPushAppDelegate-
+    // Subscriber will bail on CXAnswer / present so we don't double-mount.
+    ExpoCallKitModule._setProviderDelegateBound(true)
 
     // Listen for system audio interruptions (incoming PSTN call, alarm, etc).
     // WhatsApp pauses WebRTC during interruption and resumes after.
@@ -1473,26 +1490,10 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     // via `provider:didActivate audioSession:` AFTER action.fulfill() returns
     // — that handler (already implemented below) is where the actual
     // activation happens. This is the "answer fails on cold start" bug.
-    let audioSession = AVAudioSession.sharedInstance()
-    // [bug 2026-05-15 #981 lock-screen viva-voz] Removed `.defaultToSpeaker`.
-    // When CallKit answers from the lock screen, this option forced every
-    // audio call to route to the loudspeaker (user complaint: "atendo com
-    // tela bloqueada só fica no viva voz"). The JS side (/call) explicitly
-    // toggles speaker for video calls via `setSpeakerEnabled(true)` once
-    // mounted, so the native default should be earpiece (WhatsApp pattern).
-    //
-    // [bug 2026-05-15 #10] `.allowBluetooth` is deprecated since iOS 8.
-    // `.allowBluetoothA2DP` covers media playback over BT; `.allowBluetoothHFP`
-    // covers hands-free profile (in-call). Same set is used in didActivate
-    // and CXSetHeldCallAction.resume for consistency.
-    do {
-      try audioSession.setCategory(
-        .playAndRecord, mode: .voiceChat,
-        options: [.allowBluetoothA2DP, .allowBluetoothHFP]
-      )
-    } catch {
-      print("[ExpoCallKit] Audio category set failed (non-fatal): \(error)")
-    }
+    // [STAGE-A 2026-05-20] GAP #4 — setCategory/setMode DELETED. The single
+    // owner is AudioRouter.configureForCall(hasVideo:) invoked from
+    // provider:didActivate audioSession:. Calling setCategory here races
+    // CallKit's own ownership and forced earpiece even for video calls.
     // [native call screen day-3 finale, 2026-05-16] Fire the JS event AND
     // call action.fulfill() FIRST. Then, on a separate Task, fetch (or read
     // cached) the LiveKit token + present CallViewController directly. This
@@ -1969,29 +1970,19 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
 
   func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
     print("[ExpoCallKit] Audio session activated — configuring for VoIP")
-    // CallKit owns the AVAudioSession during a call. Configure it explicitly
-    // so the system ringtone (and post-answer call audio) play reliably.
-    // Without this, AVAudioSession can stay in .ambient/.solo from a prior
-    // expo-audio call and silently drop the ringtone.
+    // [STAGE-A 2026-05-20] GAP #4 — Single owner for AVAudioSession config.
+    // AudioRouter.configureForCall sets .playAndRecord + .voiceChat + the BT
+    // / duckOthers options + the initial route override. CallKit already
+    // activated the session for us. We default to hasVideo=false (earpiece)
+    // here — if the call is actually video, CallViewController.viewDidLoad
+    // will call configureForCall(hasVideo:true) seconds later which
+    // idempotently overrides to speaker. WhatsApp pattern: ring-time audio
+    // never blasts the speaker.
+    AudioRouter.shared.configureForCall(hasVideo: false)
     do {
-      try audioSession.setCategory(
-        .playAndRecord,
-        mode: .voiceChat,
-        // [bug 2026-05-15 #10] removed `.allowBluetooth` (deprecated). The
-        // A2DP + HFP options give us bluetooth headset support across modern
-        // iOS without the deprecation warning that breaks the build on newer
-        // Xcode toolchains.
-        options: [.allowBluetoothA2DP, .allowBluetoothHFP, .duckOthers]
-      )
       try audioSession.setActive(true, options: [])
-      // [bug 2026-05-15 #981] Force default routing (earpiece / Bluetooth /
-      // headset — whatever the system picks). Without this, a previous
-      // setCategory(.defaultToSpeaker) leaves the route override pinned to
-      // speaker even after we drop the option. `.none` is the canonical
-      // LiveKit/WhatsApp workaround.
-      try audioSession.overrideOutputAudioPort(.none)
     } catch {
-      print("[ExpoCallKit] Failed to configure AVAudioSession: \(error)")
+      print("[ExpoCallKit] STAGE-A: setActive(true) post-router failed: \(error)")
     }
     // [bug 2026-05-14 uplink-mic-silent] When user accepts via native CallKit
     // UI, AVAudioSession.didActivate fires BEFORE JS creates the
