@@ -12567,6 +12567,7 @@ export default function ChatConversationScreen() {
         _localUri: localUri,
         created_at: optimisticMsg.created_at,
         sender_email: user?.email,
+        is_view_once: forceViewOnce ? 1 : 0,
       };
       await savePendingMessage(conversationId, mediaPendingData);
     } catch {}

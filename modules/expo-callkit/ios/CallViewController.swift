@@ -1456,7 +1456,7 @@ extension CallViewController: RoomDelegate {
         NativeCallRoom.shared.connectionQualityChanged(identity: identity, quality: qualityStr)
         // Only react locally for the local participant; remote participants'
         // quality bars don't surface in the 1:1 UI.
-        guard participant.identity == room.localParticipant.identity else { return }
+        guard participant.identity?.stringValue == room.localParticipant.identity?.stringValue else { return }
         let score: Int
         switch quality {
         case .excellent: score = 3
@@ -1474,7 +1474,8 @@ extension CallViewController: RoomDelegate {
     func room(_ room: Room,
               participant: RemoteParticipant?,
               didReceiveData data: Data,
-              forTopic topic: String?) {
+              forTopic topic: String,
+              encryptionType: EncryptionType) {
         guard let str = String(data: data, encoding: .utf8) else { return }
         guard str.hasPrefix("R:") else { return }
         let emoji = String(str.dropFirst(2))

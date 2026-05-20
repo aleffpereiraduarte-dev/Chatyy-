@@ -398,12 +398,20 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
           isVideo={isVideo}
           t={t}
           senderName={msg?.sender_name || ''}
-          onClose={() => setModalOpen(false)}
-          onLoaded={() => {
-            // Mark consumed only when the media actually rendered. If it errored
-            // the pill stays tap-to-view so the user can try again.
+          onClose={() => {
+            // [FIX 2026-05-20] Lock state moves to onClose so the Modal stays
+            // mounted while the user is actually viewing. Previously setLocalViewed
+            // ran on onLoaded → isLocked flipped true mid-render → component
+            // switched to "expired" branch → Modal unmounted before the user
+            // saw anything ("abre e fecha na hora"). WhatsApp parity: lock
+            // only after user dismisses.
+            setModalOpen(false);
             if (msg?.id != null) { _markLocalViewed(msg.id).catch(() => {}); }
             setLocalViewed(true);
+          }}
+          onLoaded={() => {
+            // Tell the server it was opened (so the sender sees "Aberta") but
+            // DO NOT flip local state yet — that would unmount the Modal.
             onView?.(msg?.id);
           }}
           onError={() => { /* keep pill open for retry */ }}
