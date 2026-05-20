@@ -223,22 +223,25 @@ export function classifyQuality({ rtt = 0, loss = 0, jitter = 0 } = {}) {
   else if (rtt > 150 || loss > 1 || jitter > 80) level = 2;
   else if (rtt > 80  || loss > 0.5) level = 3;
 
-  // Bitrate ladder (in bps for LiveKit audioPreset.maxBitrate).
+  // [Wave 16 gap B4, 2026-05-20] Bitrate ladder bumped pra WhatsApp parity:
+  // antes plafonava em 64kbps mono. WhatsApp vai até 128kbps stereo em
+  // wifi forte. Ceiling agora 96kbps (sweet spot voz HD sem desperdiço).
+  // Bitrate em bps. RED ativo em level 2+3 (perdas pequenas) — FEC sozinho
+  // não cobre bursts. RED OFF em level 4 (sem perdas, RED só dobra packets).
   let bitrate;
   switch (level) {
-    case 4: bitrate = 64000; break;
-    case 3: bitrate = 64000; break;
-    case 2: bitrate = 48000; break;
-    case 1: bitrate = 32000; break;
-    default: bitrate = 24000; break;
+    case 4: bitrate = 96000; break;  // excellent — full Opus HD
+    case 3: bitrate = 64000; break;  // good
+    case 2: bitrate = 48000; break;  // medium
+    case 1: bitrate = 32000; break;  // poor
+    default: bitrate = 24000; break; // lost — NB Opus fallback
   }
 
-  // DTX harder when bandwidth is tight. FEC always on for voice — the
-  // 1-packet recovery is worth the ~10% overhead.
   const dtx = true;
   const fec = true;
-  // RED only at level 4 (we can afford the packet doubling). Off otherwise.
-  const red = level === 4;
+  // [Wave 16 B4] RED ativo em loss bands 2-3, off em excelente + perdido.
+  // Pacote redundante ajuda bursts curtos de loss — onde FEC sozinho falha.
+  const red = level === 2 || level === 3;
 
   const label = LEVEL_LABEL[level];
   return { level, label, bitrate, dtx, fec, red };
@@ -420,4 +423,51 @@ export async function triggerIceRestart(room) {
   } catch {
     return false;
   }
+}
+
+// ────────────────────────────────────────────────────────────────────
+// 6. [Wave 16 gap B4] Opus SDP munge — apply WhatsApp-grade tuning.
+// ────────────────────────────────────────────────────────────────────
+/**
+ * Mutate an SDP offer/answer string to force Opus quality knobs that
+ * LiveKit Room.publishDefaults can't reach: maxaveragebitrate, cbr,
+ * useinbandfec, usedtx. WhatsApp parity — at 96kbps these matter a lot.
+ *
+ * Usage: call.js wraps room.engine.publisher.pc.createOffer with this.
+ * Reflective hook (web/native) — degrades to no-op silently.
+ */
+export function applyOpusSdpMunge(sdp, opts = {}) {
+  if (typeof sdp !== 'string' || !sdp.includes('opus')) return sdp;
+  const maxBitrate = Math.max(24000, Math.min(opts.maxBitrate || 96000, 128000));
+  const cbr = opts.cbr ? 1 : 0;
+  const usedtx = opts.dtx === false ? 0 : 1;
+  const useinbandfec = 1;
+  const stereo = opts.stereo ? 1 : 0;
+  // Find Opus payload type from m=audio + rtpmap.
+  const ptMatch = sdp.match(/a=rtpmap:(\d+)\s+opus\//i);
+  if (!ptMatch) return sdp;
+  const pt = ptMatch[1];
+  const fmtpRe = new RegExp('a=fmtp:' + pt + ' (.*)', 'i');
+  const fmtpLine = sdp.match(fmtpRe);
+  const knobs = [
+    `maxaveragebitrate=${maxBitrate}`,
+    `cbr=${cbr}`,
+    `useinbandfec=${useinbandfec}`,
+    `usedtx=${usedtx}`,
+    stereo ? `stereo=1;sprop-stereo=1` : null,
+  ].filter(Boolean).join(';');
+  if (fmtpLine) {
+    // Merge with existing, dropping any duplicate keys our knobs set.
+    const existing = fmtpLine[1].split(';').map(s => s.trim()).filter(s => {
+      const k = s.split('=')[0];
+      return !['maxaveragebitrate','cbr','useinbandfec','usedtx','stereo','sprop-stereo'].includes(k);
+    });
+    const merged = [...existing, knobs].filter(Boolean).join(';');
+    return sdp.replace(fmtpRe, `a=fmtp:${pt} ${merged}`);
+  }
+  // No fmtp line existed — inject one right after rtpmap.
+  return sdp.replace(
+    new RegExp('(a=rtpmap:' + pt + ' opus/[^\\n]+\\n)'),
+    `$1a=fmtp:${pt} ${knobs}\n`
+  );
 }
