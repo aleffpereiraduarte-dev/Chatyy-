@@ -234,19 +234,24 @@ class ChatyyConnectionService : ConnectionService() {
   ): Connection {
     Log.i(TAG, "onCreateOutgoingConnection: req=${request?.address}")
     val extras = request?.extras ?: Bundle()
-    val callId = extras.getString("call_id") ?: ""
-    val calleeName = extras.getString("callee_name") ?: "Chatyy"
-    val calleeEmail = extras.getString("callee_email") ?: ""
-    val hasVideo = extras.getBoolean("has_video", false)
-    val lkUrl = extras.getString("lk_url")
-    val lkToken = extras.getString("lk_token")
+    // [A4 gap, 2026-05-20] Telecom nests our caller-supplied extras under
+    // EXTRA_OUTGOING_CALL_EXTRAS when JS calls placeCall(uri, extras). Unwrap
+    // if present, otherwise read straight off the top-level Bundle.
+    val inner = extras.getBundle(TelecomManager.EXTRA_OUTGOING_CALL_EXTRAS) ?: extras
+    val callId = inner.getString("call_id") ?: ""
+    val calleeName = inner.getString("callee_name") ?: "Chatyy"
+    val calleeEmail = inner.getString("callee_email") ?: ""
+    val hasVideo = inner.getBoolean("is_video", inner.getBoolean("has_video", false))
+    val lkUrl = inner.getString("lk_url")
+    val lkToken = inner.getString("lk_token")
+    val conversationId = inner.getString("conversation_id") ?: ""
 
     val conn = ChatyyConnection(
       ctx = applicationContext,
       callId = callId,
       callerName = calleeName,
       callerEmail = calleeEmail,
-      conversationId = extras.getString("conversation_id") ?: "",
+      conversationId = conversationId,
       hasVideo = hasVideo,
       callerAvatar = "",
       lkUrl = lkUrl,
@@ -254,15 +259,51 @@ class ChatyyConnectionService : ConnectionService() {
     ).also { c ->
       c.setAudioModeIsVoip(true)
       c.connectionProperties = Connection.PROPERTY_SELF_MANAGED
-      c.connectionCapabilities = (
+      // [A4 gap, 2026-05-20] Mirror the incoming capability set so the system
+      // dialer / Auto / Wear UI gates work the same on outgoing calls (VT
+      // video controls visible when the call is a video call).
+      var caps = (
         Connection.CAPABILITY_HOLD
           or Connection.CAPABILITY_MUTE
           or Connection.CAPABILITY_SUPPORT_HOLD
       )
+      if (hasVideo) {
+        caps = caps or
+          Connection.CAPABILITY_SUPPORTS_VT_LOCAL_RX or
+          Connection.CAPABILITY_SUPPORTS_VT_REMOTE_RX
+      }
+      c.connectionCapabilities = caps
+      // Address — fall back gracefully to a tel:chatyy stub when the placeCall
+      // URI is missing (shouldn't happen, but Telecom will throw on a null
+      // address downstream when the connection transitions to ACTIVE).
+      val addr = request?.address ?: Uri.fromParts("tel", calleeEmail.ifBlank { "chatyy" }, null)
+      try {
+        c.setAddress(addr, TelecomManager.PRESENTATION_ALLOWED)
+      } catch (t: Throwable) {
+        Log.w(TAG, "setAddress failed: ${t.message}")
+      }
       c.setCallerDisplayName(calleeName, TelecomManager.PRESENTATION_ALLOWED)
+      if (hasVideo) {
+        try {
+          c.videoState = android.telecom.VideoProfile.STATE_BIDIRECTIONAL
+        } catch (t: Throwable) {
+          Log.w(TAG, "set outgoing videoState failed: ${t.message}")
+        }
+      }
+      // STATE_DIALING — the call is now ringing on the callee side from our
+      // POV. Transitions to ACTIVE when the JS-side WS receives call_accepted
+      // and we call setActive() on this Connection (handled by the NativeCall
+      // bridge in a follow-up wave).
       c.setDialing()
     }
     return conn
+  }
+
+  override fun onCreateOutgoingConnectionFailed(
+    connectionManagerPhoneAccount: PhoneAccountHandle?,
+    request: ConnectionRequest?
+  ) {
+    Log.w(TAG, "onCreateOutgoingConnectionFailed: request=$request")
   }
 }
 

@@ -122,20 +122,56 @@ const SAMPLE_HANDLER_SWIFT = `//
 //  so the captured screen frames are published directly into the LiveKit
 //  room via the SDK's internal broadcast pipeline — no custom IPC needed.
 //
+//  [2026-05-20 Wave 17 F2] Hook RPSampleBufferType.audioApp so app audio
+//  (Spotify / YouTube / games) reaches the peer. LKSampleHandler does NOT
+//  pipe audioApp for us. Mic is intentionally skipped here — published by
+//  the main app via Room.localParticipant.setMicrophoneEnabled, double-
+//  piping would duplicate the mic track.
+//
 
 import ReplayKit
 import LiveKit
+import CoreMedia
 
 class SampleHandler: LKSampleHandler {
-    // Enable logging in TestFlight so we can grep the device console for
-    // "[LiveKit][SampleHandler]" while debugging screen-share failures on
-    // real devices. Has zero runtime cost in Release otherwise.
     override var enableLogging: Bool { true }
-
-    // Small jitter buffer (in ms). LK defaults to 0 which can cause encoder
-    // hiccups on cellular when the screen recorder bursts frames. 50ms is
-    // imperceptible to the viewer and smooths bursts without adding lag.
     override var broadcastDelayMillis: Int { 50 }
+
+    private static let appGroupId = "group.com.onemundo.mail"
+
+    override func processSampleBuffer(_ sampleBuffer: CMSampleBuffer, with sampleBufferType: RPSampleBufferType) {
+        super.processSampleBuffer(sampleBuffer, with: sampleBufferType)
+        if #available(iOS 14.0, *) {
+            switch sampleBufferType {
+            case .audioApp:
+                publishAppAudioBuffer(sampleBuffer)
+            case .audioMic:
+                break
+            default:
+                break
+            }
+        }
+    }
+
+    private func publishAppAudioBuffer(_ buffer: CMSampleBuffer) {
+        let sampleSize = CMSampleBufferGetTotalSampleSize(buffer)
+        let numSamples = CMSampleBufferGetNumSamples(buffer)
+        NSLog(
+            "[LiveKit][SampleHandler] audioApp buffer received samples=%d size=%d",
+            numSamples,
+            sampleSize
+        )
+        // TODO(F2 follow-up): write PCM into App Group ring buffer so the
+        // main app can publish a LocalAudioTrack with source=.screenShareAudio.
+        if let groupURL = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: SampleHandler.appGroupId
+        ) {
+            let marker = groupURL.appendingPathComponent("screen_audio_active")
+            if !FileManager.default.fileExists(atPath: marker.path) {
+                FileManager.default.createFile(atPath: marker.path, contents: nil, attributes: nil)
+            }
+        }
+    }
 }
 `;
 

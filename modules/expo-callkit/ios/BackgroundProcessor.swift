@@ -3,7 +3,7 @@
 //
 // Apache 2 — Google MediaPipe Tasks Vision
 // (https://developers.google.com/mediapipe/solutions/vision/image_segmenter).
-// Pod entry: `pod 'MediaPipeTasksVision'` — see ExpoCallKit.podspec.
+// Pod entry: `pod 'MediaPipeTasksVision'` — see ios/Podfile.
 //
 // Pipeline:
 //   1. LiveKit Swift exposes a custom `VideoProcessor` (LKClient 2.x). The
@@ -11,9 +11,12 @@
 //      we wrap into a CVPixelBuffer.
 //   2. We hand the CVPixelBuffer to MPImage and call
 //      ImageSegmenter.segment(image:). The result's `categoryMask` is a
-//      CVPixelBuffer too — we composite over either a Core Image Gaussian
-//      blur of the original frame (BLUR mode) or a bundled UIImage (IMAGE).
-//   3. Compose with CIContext + CIColorMatrix, then drop the resulting
+//      CVPixelBuffer too — we use it as an alpha map for
+//      CIFilter.maskedVariableBlur so the foreground (person) stays sharp
+//      and only the background gets the mode's blur radius. IMAGE mode
+//      uses the mask as a Porter-Duff DstIn composite over a bundled
+//      wallpaper.
+//   3. Compose with CIContext + CIFilter, then drop the resulting
 //      CVPixelBuffer back into a new VideoFrame.
 //
 // Performance:
@@ -24,16 +27,40 @@
 //     composite only runs at 15 fps. The skipped frames pass through
 //     unchanged (small blur "judder" is acceptable per task spec).
 //
-// Reflection-loaded MediaPipe import so a missing pod degrades to a no-op.
+// #if canImport(MediaPipeTasksVision) gating: when the pod is present on a
+// Mac with `pod install` run, real segmentation lights up. Without the pod
+// (e.g. in a fresh Linux clone where `pod install` was never executed) we
+// fall back to a full-frame blur — degraded but still functional UI.
+//
+// TODO: REQUIRES MAC + `pod install`. The `pod 'MediaPipeTasksVision'`
+// entry is in ios/Podfile but the framework headers only land after the
+// developer runs `cd ios && pod install` on a Mac with Xcode. Until that
+// happens this file compiles into the fallback (full-frame blur) path.
+//
+// TODO: REQUIRES MANUAL ASSET ADD. The `selfie_segmenter.tflite` model
+// (~250KB float16) must be added to the OneMundoMail target in Xcode:
+//   - Download from
+//     https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite
+//   - Drag into Xcode under OneMundoMail → Build Phases → Copy Bundle
+//     Resources. Cannot be automated via JS / package.json — the .xcodeproj
+//     pbxproj must reference the file. Without the model, MediaPipe load
+//     fails at runtime and we silently fall back to full-frame blur.
+//
 // Singleton lifetime matches the iOS RNNoise processor — survives Room
 // teardown so the next call inherits the latest mode without rebuilding the
 // segmenter.
 
 import Foundation
 import CoreImage
+import CoreImage.CIFilterBuiltins
 import CoreMedia
+import CoreVideo
 import UIKit
 import os.log
+
+#if canImport(MediaPipeTasksVision)
+import MediaPipeTasksVision
+#endif
 
 @objc public enum BackgroundMode: Int {
     case off = 0
@@ -64,59 +91,73 @@ import os.log
     private var frameCounter: UInt64 = 0
     private var wallpaperCache: [String: CIImage] = [:]
 
-    /// MediaPipe segmenter handle — runtime-loaded via Objective-C runtime so
-    /// a missing pod doesn't break the build. Real type when MediaPipe is
-    /// linked: `MPPImageSegmenter`.
-    private var segmenter: AnyObject?
+    #if canImport(MediaPipeTasksVision)
+    /// Real MediaPipe SelfieSegmenter. Lazy so a missing model bundle (see
+    /// TODO at top of file) degrades cleanly to the fallback path instead of
+    /// crashing init. Created on first frame inside `processPixelBuffer` so
+    /// the segmenter's thread affinity is the capture thread.
+    private lazy var imageSegmenter: ImageSegmenter? = {
+        guard let path = Bundle.main.path(forResource: "selfie_segmenter", ofType: "tflite") else {
+            os_log("selfie_segmenter.tflite missing from bundle — see TODO at top of BackgroundProcessor.swift",
+                   log: log, type: .error)
+            return nil
+        }
+        let opts = ImageSegmenterOptions()
+        opts.baseOptions.modelAssetPath = path
+        opts.runningMode = .video
+        opts.shouldOutputCategoryMask = true
+        opts.shouldOutputConfidenceMasks = false
+        do {
+            return try ImageSegmenter(options: opts)
+        } catch {
+            os_log("MediaPipe ImageSegmenter init failed: %{public}@",
+                   log: log, type: .error, String(describing: error))
+            return nil
+        }
+    }()
+    #endif
 
-    /// True once we resolved and instantiated MPPImageSegmenter successfully.
-    @objc public private(set) var available: Bool = false
+    /// True once we resolved and instantiated the segmenter successfully.
+    /// On a build without the MediaPipe pod we always report `true` so the
+    /// fallback (full-frame blur) path stays reachable from the UI — the UI
+    /// pill should still work even in degraded mode.
+    @objc public private(set) var available: Bool = true
 
     private override init() {
         super.init()
-        available = tryLoadSegmenter()
-        if available {
-            os_log("MediaPipe segmenter ready", log: log, type: .info)
-        } else {
-            os_log("MediaPipe unavailable — background effects skipped", log: log, type: .info)
-        }
-    }
-
-    /// Try to instantiate the MediaPipe SelfieSegmenter. Uses Objective-C
-    /// runtime so we don't hard-link MediaPipe at compile time. Real flow on
-    /// the device when the pod is present:
-    ///
-    ///   let options = MPPImageSegmenterOptions()
-    ///   options.runningMode = .video
-    ///   options.baseOptions.modelAssetPath =
-    ///       Bundle.main.path(forResource: "selfie_segmenter", ofType: "tflite")
-    ///   options.outputCategoryMask = true
-    ///   let segmenter = try MPPImageSegmenter(options: options)
-    ///
-    /// We skip the actual instantiation in this stub and resolve at first
-    /// process call; this lets the module load even when MediaPipe is absent.
-    private func tryLoadSegmenter() -> Bool {
-        let cls: AnyClass? = NSClassFromString("MPPImageSegmenter")
-        return cls != nil
+        #if canImport(MediaPipeTasksVision)
+        os_log("MediaPipe pod linked — real segmentation enabled (pending .tflite asset)",
+               log: log, type: .info)
+        #else
+        os_log("MediaPipe pod NOT linked — falling back to full-frame blur. Run `cd ios && pod install` on a Mac to enable real segmentation.",
+               log: log, type: .info)
+        #endif
     }
 
     /// Process a CVPixelBuffer in place. Returns a new buffer with the same
     /// pixel format but the background masked / blurred / replaced. If mode
-    /// is .off or the segmenter is unavailable, returns the input buffer
-    /// unchanged.
+    /// is .off returns the input buffer unchanged.
     @objc public func processPixelBuffer(_ input: CVPixelBuffer) -> CVPixelBuffer {
-        if mode == .off || !available { return input }
+        if mode == .off { return input }
 
         frameCounter += 1
         if thermalThrottled && (frameCounter & 1) == 0 {
             return input
         }
 
-        // Stub composite path: we apply a Core Image Gaussian blur to the WHOLE
-        // frame (no segmentation mask) until the real MediaPipe pipeline is
-        // wired against a real device. This means BLUR_* modes work end-to-end
-        // (just without the person being sharp) so the UI is testable; IMAGE
-        // mode falls back to BLUR_HIGH.
+        #if canImport(MediaPipeTasksVision)
+        // Real path: run MediaPipe SelfieSegmenter, use the returned category
+        // mask to drive a CIMaskedVariableBlur so the person stays sharp.
+        if let seg = imageSegmenter,
+           let mask = segmentMask(pixelBuffer: input, segmenter: seg) {
+            let composed = compositeWithMask(input: input, maskImage: mask, mode: mode)
+            return renderToBuffer(composed, like: input) ?? input
+        }
+        #endif
+
+        // Fallback: full-frame blur (degraded mode — pod missing OR model
+        // asset missing OR mask compute failed on this frame). UI still
+        // works; person just isn't kept sharp.
         let ciInput = CIImage(cvPixelBuffer: input)
         let blurred: CIImage
         switch mode {
@@ -128,6 +169,106 @@ import os.log
         }
         return renderToBuffer(blurred, like: input) ?? input
     }
+
+    #if canImport(MediaPipeTasksVision)
+    /// Run the MediaPipe segmenter against a frame. Returns the category mask
+    /// wrapped as a CIImage (alpha 0 = background, 1 = foreground) sized to
+    /// the input pixel buffer. Mask is returned in the input's coordinate
+    /// space so the caller can composite directly.
+    private func segmentMask(pixelBuffer: CVPixelBuffer, segmenter: ImageSegmenter) -> CIImage? {
+        do {
+            // MPImage wraps a CVPixelBuffer cheaply (no copy on common pixel
+            // formats — kCVPixelFormatType_32BGRA / NV12).
+            let mpImage = try MPImage(pixelBuffer: pixelBuffer)
+            // Use frameCounter as a monotonically-increasing timestamp (ms).
+            // MediaPipe in .video mode requires strictly-increasing values.
+            let timestampMs = Int(frameCounter * 33) // 30 fps → ~33 ms/frame
+            let result = try segmenter.segment(videoFrame: mpImage,
+                                               timestampInMilliseconds: timestampMs)
+            guard let categoryMask = result.categoryMask else { return nil }
+            // MediaPipe category mask is a single-channel UInt8 buffer where
+            // pixel value 0 = background, non-zero = foreground (selfie model
+            // uses a single foreground category, value 255).
+            let maskBuffer = categoryMask.uint8Data
+            let w = categoryMask.width
+            let h = categoryMask.height
+            let bytesPerRow = w
+            let data = Data(bytes: maskBuffer, count: bytesPerRow * h)
+            // Build a CIImage from the raw mask. Use kCIFormatR8 so it lives
+            // as a single-channel image; CIFilter consumes it as alpha when
+            // we re-tag it via CIColorMatrix.
+            let ci = CIImage(bitmapData: data,
+                             bytesPerRow: bytesPerRow,
+                             size: CGSize(width: w, height: h),
+                             format: .R8,
+                             colorSpace: nil)
+            // Scale mask to match input pixel buffer extent (segmenter may
+            // downsample internally).
+            let inW = CVPixelBufferGetWidth(pixelBuffer)
+            let inH = CVPixelBufferGetHeight(pixelBuffer)
+            let scaleX = CGFloat(inW) / CGFloat(w)
+            let scaleY = CGFloat(inH) / CGFloat(h)
+            return ci.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+        } catch {
+            os_log("segmenter.segment failed: %{public}@",
+                   log: log, type: .debug, String(describing: error))
+            return nil
+        }
+    }
+
+    /// Composite a foreground (person) over a blurred or replaced background
+    /// using the mask. For BLUR_* modes we use CIMaskedVariableBlur which
+    /// reads the mask as a per-pixel blur radius multiplier — pixels where
+    /// mask=0 (background) get the full blur, mask=1 (foreground) stays
+    /// crisp. For IMAGE mode we DstOver composite the masked person on top
+    /// of the wallpaper.
+    private func compositeWithMask(input: CVPixelBuffer, maskImage: CIImage, mode: BackgroundMode) -> CIImage {
+        let foreground = CIImage(cvPixelBuffer: input)
+        switch mode {
+        case .off:
+            return foreground
+        case .blurLow, .blurMedium, .blurHigh:
+            let radius: Double = {
+                switch mode {
+                case .blurLow: return 6.0
+                case .blurMedium: return 14.0
+                case .blurHigh: return 24.0
+                default: return 14.0
+                }
+            }()
+            // CIMaskedVariableBlur: input + per-pixel mask → background
+            // pixels (mask=0) get full radius, foreground (mask=255) stays
+            // sharp. The mask we got from MediaPipe is INVERTED for this
+            // filter's expectation (it wants high values = MORE blur), so
+            // invert the alpha first.
+            let invertedMask = invertMask(maskImage)
+            let mvb = CIFilter.maskedVariableBlur()
+            mvb.inputImage = foreground
+            mvb.mask = invertedMask
+            mvb.radius = Float(radius)
+            return mvb.outputImage?.cropped(to: foreground.extent) ?? foreground
+        case .image:
+            // Wallpaper background + person (foreground) on top via mask.
+            let wallpaper = compositeImage(foreground) ?? applyBlur(foreground, radius: 24.0)
+            // Blend with the mask as the alpha channel: foreground.alpha =
+            // mask, then composite over wallpaper.
+            let blend = CIFilter.blendWithMask()
+            blend.inputImage = foreground
+            blend.backgroundImage = wallpaper
+            blend.maskImage = maskImage
+            return blend.outputImage?.cropped(to: foreground.extent) ?? foreground
+        }
+    }
+
+    /// Invert a mask so 0 → 255 and vice versa. Used to flip the MediaPipe
+    /// category mask (foreground=255) into the CIMaskedVariableBlur
+    /// convention (foreground=0, no blur there).
+    private func invertMask(_ image: CIImage) -> CIImage {
+        let filter = CIFilter.colorInvert()
+        filter.inputImage = image
+        return filter.outputImage ?? image
+    }
+    #endif
 
     private func applyBlur(_ image: CIImage, radius: Double) -> CIImage {
         guard let filter = CIFilter(name: "CIGaussianBlur") else { return image }
@@ -253,13 +394,19 @@ import LiveKitClient
 }
 #endif
 
-// MANUAL STEPS (one-time, requires Mac + Xcode):
-// 1. `cd ios && pod install` after the Podfile edit lands the MediaPipe
-//    pod. Run after pulling the branch and before the first build.
+// MANUAL STEPS (one-time, requires Mac + Xcode — cannot be automated):
+// 1. `cd ios && pod install` so MediaPipeTasksVision actually links into the
+//    Xcode project (the `pod 'MediaPipeTasksVision', '~> 0.10.14'` line is
+//    already in ios/Podfile but the framework only appears in Pods/ after
+//    `pod install` runs on a Mac). Once linked, #if canImport(...) flips on
+//    in this file and real segmentation activates.
 // 2. Drop the SelfieSegmenter .tflite model into the app bundle:
 //      - Download `selfie_segmenter.tflite` from
 //        https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite
+//        (~250 KB, float16)
 //      - Add it to OneMundoMail target → Build Phases → Copy Bundle Resources.
+//      - Without it `imageSegmenter` returns nil at runtime and we fall
+//        back to full-frame blur (still functional, just no person sharpness).
 // 3. Drop the 6 wallpaper images into Assets.xcassets/Backgrounds/ with the
 //    asset names matching `BackgroundProcessor.builtinWallpapers`.
-// 4. Run `npx eas-cli build --platform ios --profile production` to ship.
+// 4. Run `scripts/ship.sh ios "msg"` (NOT eas build manual — see CLAUDE.md).

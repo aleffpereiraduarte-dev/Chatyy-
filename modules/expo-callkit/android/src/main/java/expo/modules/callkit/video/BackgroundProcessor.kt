@@ -12,6 +12,11 @@ import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.os.Build
 import android.util.Log
+import com.google.mediapipe.framework.image.BitmapImageBuilder
+import com.google.mediapipe.tasks.core.BaseOptions
+import com.google.mediapipe.tasks.vision.core.RunningMode
+import com.google.mediapipe.tasks.vision.imagesegmenter.ImageSegmenter
+import java.nio.ByteBuffer
 import kotlin.math.max
 
 /**
@@ -30,8 +35,15 @@ import kotlin.math.max
  *      API 31+ (hardware-accelerated), falling back to a fast box blur for older devices.
  *
  * Mode lifecycle is owned by ExpoCallKitModule; UI sends new mode + asset name and we
- * just remember + apply. Reflection-based loading so a missing MediaPipe AAR degrades
- * gracefully (the pipeline becomes a pass-through).
+ * just remember + apply.
+ *
+ * TODO: REQUIRES MANUAL ASSET ADD. The `selfie_segmenter.tflite` model (~250 KB float16)
+ * must be placed at `modules/expo-callkit/android/src/main/assets/selfie_segmenter.tflite`
+ * before running `eas build` / `scripts/ship.sh`. Download from Google AI Hub:
+ *   https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite
+ * Without this asset the ImageSegmenter init throws at first use, we log the failure,
+ * and the pipeline falls back to a full-frame blur (degraded — person not kept sharp,
+ * but the UI toggles still work).
  *
  * The actual binding to LiveKit `LocalVideoTrack.setProcessor()` happens in
  * BackgroundProcessor.attach(track). Detach is a clean no-op if we never attached.

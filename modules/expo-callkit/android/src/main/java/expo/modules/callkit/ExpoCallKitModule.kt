@@ -1082,6 +1082,70 @@ class ExpoCallKitModule : Module() {
       }
     }
 
+    // [Wave 17 A4 gap, 2026-05-20] Telecom-routed outgoing call. Hands the
+    // call to TelecomManager.placeCall so the system tracks it as a
+    // self-managed call (audio focus, Recents, BT/Auto/Wear answer, cellular
+    // arbitration) instead of CallActivity bypassing Telecom and racing
+    // with any in-progress cellular call. JS-callable counterpart of
+    // startTelecomIncomingCall. On API < 26 or when MANAGE_OWN_CALLS is
+    // unavailable, returns false so the caller can fall back to the
+    // pre-Telecom startOutgoingCall path. Fire-and-forget: the actual
+    // Connection arrives in ChatyyConnectionService.onCreateOutgoingConnection.
+    AsyncFunction("startTelecomOutgoingCall") { callId: String, calleeIdentifier: String, isVideo: Boolean ->
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+        Log.i(TAG, "startTelecomOutgoingCall: pre-O — skipping (Telecom self-managed requires API 26+)")
+        return@AsyncFunction false
+      }
+      if (calleeIdentifier.isEmpty()) {
+        Log.w(TAG, "startTelecomOutgoingCall: empty calleeIdentifier — rejecting")
+        return@AsyncFunction false
+      }
+      try {
+        val tm = context.getSystemService(Context.TELECOM_SERVICE) as? android.telecom.TelecomManager
+          ?: return@AsyncFunction false.also { Log.w(TAG, "startTelecomOutgoingCall: TelecomManager unavailable") }
+        val handle = ChatyyConnectionService.phoneAccountHandle(context)
+        // Pick the URI scheme based on whether the callee is a phone number
+        // or an email. tel: gets richer Recents UI; sip: keeps Telecom happy
+        // for email-only callees.
+        val looksLikePhone = calleeIdentifier.matches(Regex("^\\+?[0-9 ()\\-]+$"))
+        val uri = if (looksLikePhone) {
+          android.net.Uri.fromParts("tel", calleeIdentifier.replace(Regex("[^+0-9]"), ""), null)
+        } else {
+          android.net.Uri.fromParts("sip", calleeIdentifier, null)
+        }
+        // Inner bundle = our payload (read in onCreateOutgoingConnection).
+        val inner = android.os.Bundle().apply {
+          putString("call_id", callId)
+          putString("callee_email", calleeIdentifier)
+          putString("callee_name", calleeIdentifier)
+          putBoolean("is_video", isVideo)
+        }
+        val outer = android.os.Bundle().apply {
+          putParcelable(android.telecom.TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, handle)
+          putBundle(android.telecom.TelecomManager.EXTRA_OUTGOING_CALL_EXTRAS, inner)
+          if (isVideo) {
+            putInt(
+              android.telecom.TelecomManager.EXTRA_START_CALL_WITH_VIDEO_STATE,
+              android.telecom.VideoProfile.STATE_BIDIRECTIONAL
+            )
+          } else {
+            putInt(
+              android.telecom.TelecomManager.EXTRA_START_CALL_WITH_VIDEO_STATE,
+              android.telecom.VideoProfile.STATE_AUDIO_ONLY
+            )
+          }
+        }
+        tm.placeCall(uri, outer)
+        Log.i(TAG, "startTelecomOutgoingCall: placeCall dispatched callId=$callId callee=$calleeIdentifier video=$isVideo uri=$uri")
+        return@AsyncFunction true
+      } catch (t: Throwable) {
+        // SecurityException (MANAGE_OWN_CALLS denied) or any other Telecom
+        // failure — caller should fall back to the legacy startOutgoingCall.
+        Log.w(TAG, "startTelecomOutgoingCall failed: ${t.message}")
+        return@AsyncFunction false
+      }
+    }
+
     // [2026-05-16] Group call launcher — sibling of openNativeCall, but for
     // the N-way GroupCallActivity. Replaces /group-call.js (RN WebView). JS
     // passes a JSON-stringified participants list so the activity can pre-seed

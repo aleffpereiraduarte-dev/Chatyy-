@@ -1,5 +1,6 @@
 package expo.modules.screenshare
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -8,11 +9,16 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioPlaybackCaptureConfiguration
+import android.media.AudioRecord
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import kotlinx.coroutines.CoroutineScope
@@ -22,8 +28,10 @@ import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import io.livekit.android.room.track.screencapture.ScreenCaptureParams
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * [2026-05-16 Android screenshare Stage 1] Foreground service that owns the
@@ -79,6 +87,15 @@ class ScreenShareService : Service() {
   private var mediaProjection: MediaProjection? = null
   private var serviceScope: CoroutineScope? = null
   private var mediaProjectionCallback: MediaProjection.Callback? = null
+
+  // [2026-05-20 Wave 17 F2] Screen-audio capture: AudioPlaybackCaptureConfiguration
+  // requires API 29 (Q) and a live MediaProjection. We start it after the LK
+  // video track is published and stop it in stopSelfClean. Real wire into a
+  // LK LocalAudioTrack with source=SCREEN_SHARE_AUDIO is still TODO — see
+  // pumpAppAudio() for the consumer stub.
+  private var appAudioRecord: AudioRecord? = null
+  private val appAudioRunning = AtomicBoolean(false)
+  private var appAudioJob: Job? = null
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -221,6 +238,23 @@ class ScreenShareService : Service() {
       // from MediaProjectionManager.createScreenCaptureIntent().
       room.localParticipant.setScreenShareEnabled(true, ScreenCaptureParams(resultData))
       Log.d(TAG, "LK screen share enabled (setScreenShareEnabled true)")
+
+      // [2026-05-20 Wave 17 F2] Now that the LK video track is up, start
+      // capturing app/playback audio so Spotify / YouTube / games come
+      // through to the peer. API 29+ only; older Androids silently skip.
+      val mp = mediaProjection
+      if (mp != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        try {
+          startScreenAudioCapture(mp)
+        } catch (t: Throwable) {
+          // Non-fatal: video share keeps working, peer just won't hear app
+          // audio. Likely cause is OEM lockdown of playback capture (some
+          // builds mark all audio as DO_NOT_CAPTURE by default).
+          Log.w(TAG, "screen audio capture failed: ${t.message}", t)
+        }
+      } else {
+        Log.d(TAG, "skipping screen audio capture (API < 29 or no projection)")
+      }
     } catch (t: Throwable) {
       Log.e(TAG, "setScreenShareEnabled failed: ${t.message}", t)
       // Fallback path (not exercised in normal flow): if LK ever changes the
@@ -231,10 +265,152 @@ class ScreenShareService : Service() {
     }
   }
 
+  /**
+   * [2026-05-20 Wave 17 F2] Capture device playback audio (music, video,
+   * game SFX) via AudioPlaybackCaptureConfiguration so the peer hears what
+   * the user is sharing — not just sees it. Today this is a STUB: we open
+   * the AudioRecord, start a drain loop, and log frame sizes. Wiring the
+   * PCM into a LiveKit LocalAudioTrack with source=SCREEN_SHARE_AUDIO is a
+   * follow-up — the SDK side of that needs an AudioCustomSource which LK
+   * 2.24 only exposes via internals. Until then the bytes get read and
+   * dropped, which is enough to validate that capture works + that no app
+   * playback session has DO_NOT_CAPTURE policy set.
+   *
+   * NOTE: requires android.permission.RECORD_AUDIO (already declared by the
+   * host app for the mic) AND a live MediaProjection. The system enforces
+   * that the playback capture config has the same MediaProjection token as
+   * the screen capture — you can't reuse one from a different session.
+   *
+   * Apps that opt out (or whose audio attributes are CONTENT_TYPE_SPEECH /
+   * USAGE_VOICE_COMMUNICATION) won't appear in the captured stream. That's
+   * by design from Android: protects calls / voicemail / etc.
+   */
+  @RequiresApi(Build.VERSION_CODES.Q)
+  @SuppressLint("MissingPermission")
+  private fun startScreenAudioCapture(projection: MediaProjection) {
+    if (appAudioRunning.get()) {
+      Log.d(TAG, "screen audio capture already running")
+      return
+    }
+
+    val config = AudioPlaybackCaptureConfiguration.Builder(projection)
+      .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+      .addMatchingUsage(AudioAttributes.USAGE_GAME)
+      .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
+      .build()
+
+    val format = AudioFormat.Builder()
+      .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+      .setSampleRate(48_000)
+      .setChannelMask(AudioFormat.CHANNEL_IN_STEREO)
+      .build()
+
+    val minBuf = AudioRecord.getMinBufferSize(
+      48_000,
+      AudioFormat.CHANNEL_IN_STEREO,
+      AudioFormat.ENCODING_PCM_16BIT
+    )
+    if (minBuf <= 0) {
+      Log.w(TAG, "AudioRecord.getMinBufferSize returned $minBuf — abort")
+      return
+    }
+    val bufSize = minBuf * 4
+
+    val record = AudioRecord.Builder()
+      .setAudioPlaybackCaptureConfig(config)
+      .setAudioFormat(format)
+      .setBufferSizeInBytes(bufSize)
+      .build()
+
+    if (record.state != AudioRecord.STATE_INITIALIZED) {
+      Log.w(TAG, "AudioRecord failed to initialize, state=${record.state}")
+      try { record.release() } catch (_: Throwable) {}
+      return
+    }
+
+    record.startRecording()
+    appAudioRecord = record
+    appAudioRunning.set(true)
+    Log.d(TAG, "screen audio capture started (48kHz stereo PCM16, buf=$bufSize)")
+
+    val scope = serviceScope ?: return
+    appAudioJob = scope.launch(Dispatchers.IO) {
+      pumpAppAudio(record, bufSize)
+    }
+  }
+
+  /**
+   * Drain loop for the playback-capture AudioRecord. Today this is a stub
+   * that reads + discards so the system kernel buffer doesn't overflow
+   * (which would cause the AudioRecord to enter ERROR state). Real consumer
+   * needs to push the bytes into a LK LocalAudioTrack — see TODO at
+   * startScreenAudioCapture. Log every ~1s to confirm samples are flowing.
+   */
+  private suspend fun pumpAppAudio(record: AudioRecord, bufSize: Int) {
+    val buffer = ByteArray(bufSize)
+    var totalBytes = 0L
+    var lastLogMs = System.currentTimeMillis()
+    try {
+      while (appAudioRunning.get() && (serviceScope?.isActive == true)) {
+        val read = try {
+          record.read(buffer, 0, buffer.size)
+        } catch (t: Throwable) {
+          Log.w(TAG, "AudioRecord.read threw: ${t.message}")
+          break
+        }
+        if (read < 0) {
+          Log.w(TAG, "AudioRecord.read returned error $read — stopping pump")
+          break
+        }
+        if (read == 0) continue
+        totalBytes += read
+        // TODO(F2 follow-up): push `buffer[0..read]` into the LK
+        // LocalAudioTrack (source = Track.Source.SCREEN_SHARE_AUDIO). LK
+        // Android 2.24 doesn't expose a public AudioCustomSource yet; we
+        // either bump to a newer SDK or fall back to private internals.
+
+        val now = System.currentTimeMillis()
+        if (now - lastLogMs > 1000) {
+          Log.d(TAG, "screen audio: ${totalBytes} bytes captured (last 1s)")
+          totalBytes = 0
+          lastLogMs = now
+        }
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "pumpAppAudio loop error: ${t.message}", t)
+    } finally {
+      Log.d(TAG, "screen audio pump exiting")
+    }
+  }
+
+  private fun stopScreenAudioCapture() {
+    if (!appAudioRunning.getAndSet(false)) return
+    try { appAudioJob?.cancel() } catch (_: Throwable) {}
+    appAudioJob = null
+    val rec = appAudioRecord
+    appAudioRecord = null
+    if (rec != null) {
+      try {
+        if (rec.recordingState == AudioRecord.RECORDSTATE_RECORDING) rec.stop()
+      } catch (t: Throwable) {
+        Log.w(TAG, "AudioRecord.stop failed: ${t.message}")
+      }
+      try { rec.release() } catch (_: Throwable) {}
+      Log.d(TAG, "screen audio capture stopped + released")
+    }
+  }
+
   @OptIn(DelicateCoroutinesApi::class)
   private fun stopSelfClean(reason: String = "unknown") {
     Log.d(TAG, "stopSelfClean reason=$reason")
     isRunning = false
+
+    // [2026-05-20 Wave 17 F2] Stop screen-audio capture BEFORE we release
+    // the MediaProjection — AudioRecord built from AudioPlaybackCaptureConfig
+    // becomes invalid the moment the projection dies, and a late .stop()
+    // call against a stale record sometimes throws IllegalStateException on
+    // OEM ROMs (Samsung/Xiaomi). Tear it down explicitly here.
+    stopScreenAudioCapture()
 
     // [Bridge #1 2026-05-19] Notify the module process (same app, but a
     // BroadcastReceiver inside ExpoScreenShareModule listens for this) BEFORE
@@ -292,6 +468,7 @@ class ScreenShareService : Service() {
   override fun onDestroy() {
     Log.d(TAG, "onDestroy")
     isRunning = false
+    stopScreenAudioCapture()
     try {
       mediaProjectionCallback?.let { mediaProjection?.unregisterCallback(it) }
     } catch (_: Throwable) {}
