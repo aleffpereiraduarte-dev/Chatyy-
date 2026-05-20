@@ -361,9 +361,25 @@ export class TCPClient extends EventEmitter {
   }
 
   /**
-   * Send read receipt
+   * Send read receipt.
+   *
+   * [#1213 2026-05-20] Persist `read_at` locally in SQLite BEFORE firing the
+   * TCP frame so a cold-restart (or a TCP send failure that we don't see)
+   * keeps the unread badge in sync with what the user already saw. Before
+   * this change, markAsRead only sent the wire frame — if delivery failed
+   * silently the local cache stayed unread and the badge counter showed a
+   * fake "1 new" on next open even though the user already scrolled past
+   * the message. Mirror is fire-and-forget so we don't block the TCP send.
    */
   markAsRead(conversationId, messageId) {
+    try {
+      const nativeDb = require('./db');
+      if (typeof nativeDb.dbUpdateMessageFields === 'function' && conversationId != null && messageId != null) {
+        nativeDb.dbUpdateMessageFields(conversationId, messageId, {
+          read_at: new Date().toISOString(),
+        }).catch(() => {});
+      }
+    } catch {}
     this.sendFrame(MSG_TYPES.CHAT_READ, {
       conversation_id: conversationId,
       message_id: messageId,
