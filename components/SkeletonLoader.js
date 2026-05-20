@@ -302,7 +302,7 @@ export function NoteGridSkeleton({ count = 6, columns = 2 }) {
 export function ChatBubbleSkeleton({ count = 8 }) {
   const widths = [0.65, 0.45, 0.7, 0.35, 0.55, 0.4, 0.6, 0.5];
   return (
-    <View style={{ flex: 1, paddingHorizontal: 16, paddingTop: 20, gap: 12, justifyContent: 'flex-end' }}>
+    <View style={{ paddingHorizontal: 16, paddingTop: 20, paddingBottom: 8, gap: 12 }}>
       {Array.from({ length: count }).map((_, i) => {
         const isRight = i % 2 === 1;
         const w = widths[i % widths.length];

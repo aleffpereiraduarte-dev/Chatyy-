@@ -12548,6 +12548,7 @@ export default function ChatConversationScreen() {
       _uploading: true,
       _client_id: msgId,
       _batch_id: batchId || null,
+      is_view_once: forceViewOnce ? 1 : 0,
     };
     setMessages(prev => [...prev, optimisticMsg]);
     // [SEND-01, 2026-05-19] Persist optimistic media to local SQLite BEFORE
@@ -15901,11 +15902,13 @@ export default function ChatConversationScreen() {
   // dependencies trigger a refresh.
   const listEmpty = useMemo(() => {
     if (loading && ChatBubbleSkeleton) {
+      // [FIX 2026-05-20] One <ChatBubbleSkeleton count={6}> instead of 6× nested
+      // (each nested call renders 8 inner bubbles → 48 total + flex:1 stole the
+      // viewport, leaving a giant white plane on slow Suporte chats with many
+      // view-once rows). Single call with count=6 matches the actual prop API.
       return (
         <View style={{ transform: [{ scaleY: -1 }], paddingTop: 20 }}>
-          {[1,2,3,4,5,6].map(i => (
-            <ChatBubbleSkeleton key={i} isOwn={i % 2 === 0} colors={colors} isDark={isDark} />
-          ))}
+          <ChatBubbleSkeleton count={6} />
         </View>
       );
     }
