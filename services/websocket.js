@@ -193,6 +193,10 @@ class MailWebSocket {
         if (nextState === 'inactive') return;
         if (nextState === 'active') {
           this._hidden = false;
+          // [STAGE-E 2026-05-20 GAP#1] Re-publish presence=online when
+          // returning to foreground. Pairs with the offline publish
+          // on background transition.
+          try { this._send && this._send({ type: 'presence', status: 'online' }); } catch {}
           // Check if WS is still alive
           if (this.ws && this.ws.readyState === WebSocket.OPEN && this.authenticated) {
             // Socket SAYS alive, but on iOS the OS often returns
@@ -253,6 +257,11 @@ class MailWebSocket {
           // stopped_typing NOW instead of letting their UI show a
           // stuck indicator until our next foreground.
           this._clearAllTypingState();
+          // [STAGE-E 2026-05-20 GAP#1] Explicit presence_publish=offline
+          // when backgrounding. Without this, peers see "online" for up
+          // to 60s after we leave the app (server staleness). WhatsApp
+          // flips to "visto agora" within ~3s — we now match.
+          try { this._send && this._send({ type: 'presence', status: 'offline' }); } catch {}
         }
       });
     }

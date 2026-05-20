@@ -9939,7 +9939,10 @@ export default function ChatConversationScreen() {
             if (readDebounceRef.current) clearTimeout(readDebounceRef.current);
             const msgId = msg.id;
             pendingReadMsgIdRef.current = msgId;
-            readDebounceRef.current = setTimeout(() => { readDebounceRef.current = null; pendingReadMsgIdRef.current = null; markReadUpTo(msgId); }, 500);
+            // [STAGE-E 2026-05-20 GAP#2] WhatsApp parity: blue ticks flip
+            // INSTANT on chat open. Drop 500ms → 0 so the in-band WS read
+            // fires immediately. lastReadAckRef de-dupes the HTTP write.
+            readDebounceRef.current = setTimeout(() => { readDebounceRef.current = null; pendingReadMsgIdRef.current = null; markReadUpTo(msgId); }, 0);
             if (isScrolledUpRef.current) setNewMsgCount(c => c + 1);
           }
 
@@ -20959,6 +20962,13 @@ export default function ChatConversationScreen() {
               }
               return { ...m, reactions };
             }));
+            // [STAGE-E 2026-05-20 GAP#5] WhatsApp parity: fast WS reaction
+            // event so peer sees the chip in <50ms. HTTP write below still
+            // is the source of truth for persistence + cross-device sync.
+            try {
+              const mailWs = require('../services/websocket').default;
+              mailWs?._send?.({ type: 'reaction', conversation_id: conversationId, message_id: messageId, emoji });
+            } catch {}
             api.chatReact(messageId, emoji).then(r => {
               if (r?.success && Array.isArray(r.data?.reactions)) {
                 setMessages(prev => prev.map(m => String(m.id) === String(messageId) ? { ...m, reactions: r.data.reactions } : m));
@@ -22306,7 +22316,8 @@ export default function ChatConversationScreen() {
                 // last keystroke. Old code waited 500ms of silence which meant
                 // fast typers NEVER triggered the indicator.
                 const TYPING_THROTTLE_MS = 3000;
-                const TYPING_STOP_MS = 4000;
+                // [STAGE-E 2026-05-20 GAP#4] 4s → 3s WhatsApp parity
+                const TYPING_STOP_MS = 3000;
                 const now = Date.now();
                 if (text.length > 0) {
                   if (now - typingLastSentAt.current > TYPING_THROTTLE_MS) {

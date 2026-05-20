@@ -2861,6 +2861,11 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             }
           }
         } catch {}
+        // [STAGE-E 2026-05-20 GAP#3] WhatsApp parity: conversation moves
+        // to top INSTANTLY on new message. Drop 100ms debounce → 0 so the
+        // list shifts in the same frame as the WS event. LayoutAnimation
+        // smooths the move. Bursts still coalesce naturally because React
+        // batches state updates per frame.
         if (wsUpdateTimer.current) clearTimeout(wsUpdateTimer.current);
         wsUpdateTimer.current = setTimeout(() => {
           // Don't bump unread for messages we sent ourselves (echoed back
@@ -2995,7 +3000,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             }
             return [...pinned, updated, ...unpinned];
           });
-        }, 100);
+        }, 0);
       };
       unsubs.push(mailWs.on('chat_message', onIncomingForList));
       // chat_summary is the new per-user-channel event introduced by the
