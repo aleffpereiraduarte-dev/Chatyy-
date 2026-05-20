@@ -1,6 +1,7 @@
 package expo.modules.callkit
 
 import android.Manifest
+import android.app.PendingIntent
 import android.app.PictureInPictureParams
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -409,14 +410,12 @@ class CallActivity : ComponentActivity() {
               val pub = room?.localParticipant?.getTrackPublication(
                 io.livekit.android.room.track.Track.Source.MICROPHONE
               )
-              val track = pub?.track as? io.livekit.android.room.track.LocalAudioTrack
-              if (track != null) {
-                if (desired) track.enable() else track.disable()
-              } else {
-                lifecycleScope.launch {
-                  try { room?.localParticipant?.setMicrophoneEnabled(desired) }
-                  catch (t: Throwable) { Log.w(TAG, "setMicrophoneEnabled: ${t.message}") }
-                }
+              // [Wave 20 fix] LK Android LocalAudioTrack doesn't expose public
+              // enable()/disable() — use setMicrophoneEnabled instead. Re-publish
+              // cost is negligible for mute toggle on Android side.
+              lifecycleScope.launch {
+                try { room?.localParticipant?.setMicrophoneEnabled(desired) }
+                catch (t: Throwable) { Log.w(TAG, "setMicrophoneEnabled: ${t.message}") }
               }
             } catch (t: Throwable) {
               Log.w(TAG, "fast mute fail, falling back: ${t.message}")
