@@ -3474,13 +3474,20 @@ export async function chatUpdateLiveLocation(messageId, latitude, longitude, add
   // opts.unlimited / opts.duration_seconds let the snap-map "sempre ativo"
   // share keep the right sentinel on every tick. Older callers (no opts)
   // still get the legacy 1h-default behavior on the backend.
-  const payload = { message_id: messageId, latitude, longitude, address };
+  // [WAVE 62 2026-05-21] opts.conversation_id is a belt-and-suspenders
+  // fallback when message_id resolution might fail (legacy deleted parent,
+  // schema drift). Backend prefers conversation_id when both are sent.
+  const payload = { message_id: messageId, latitude, longitude };
+  // Only include address when it's a real string — earlier callers passed
+  // `{ address }` (an object) by mistake, which serialized to noise.
+  if (typeof address === 'string' && address) payload.address = address;
   if (opts && opts.unlimited) {
     payload.unlimited = true;
     payload.duration_seconds = -1;
   } else if (opts && typeof opts.duration_seconds === 'number') {
     payload.duration_seconds = opts.duration_seconds;
   }
+  if (opts && opts.conversation_id) payload.conversation_id = opts.conversation_id;
   return apiCall('chat_update_live_location', payload, 'POST');
 }
 

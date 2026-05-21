@@ -762,10 +762,13 @@ function MediaStatusFooter({ msg, isOwn, variant }) {
     }
     if (!showChecks) return null;
     if (msg._readStatus === 2) {
+      // [2026-05-21] WhatsApp parity: read = blue (#53BDEB), not lavender.
+      // Was rendering as light purple #C4B5FD which didn't read as "blue"
+      // to users coming from WhatsApp. Unified with AnimatedCheckStatus.
       return (
         <View style={{ flexDirection: 'row', marginLeft: 1, flexShrink: 0 }}>
-          <IconCheck size={12} strokeWidth={2.6} color="#C4B5FD" style={{ marginRight: -6 }} />
-          <IconCheck size={12} strokeWidth={2.6} color="#C4B5FD" />
+          <IconCheck size={12} strokeWidth={2.6} color="#53BDEB" style={{ marginRight: -6 }} />
+          <IconCheck size={12} strokeWidth={2.6} color="#53BDEB" />
         </View>
       );
     }
@@ -10690,9 +10693,15 @@ export default function ChatConversationScreen() {
         if (String(data?.conversation_id) !== String(conversationId)) return;
         const mid = data?.message_id;
         if (!mid) return;
+        // [2026-05-21] Also stamp delivered_at so the cold-load enrichment
+        // path (line ~16291: `item.delivered_at` → status 1.5) picks it up
+        // on next render. Without this, _delivered flag worked in-thread
+        // but vanished after navigating away and back (refetch dropped the
+        // transient flag while the server-side row hadn't been re-queried).
+        const deliveredStamp = data?.delivered_at || new Date().toISOString();
         setMessages(prev => prev.map(m =>
           m.id === mid && m.status !== 'read'
-            ? { ...m, status: 'delivered', _delivered: true }
+            ? { ...m, status: 'delivered', _delivered: true, delivered_at: m.delivered_at || deliveredStamp }
             : m
         ));
       });
@@ -13953,8 +13962,11 @@ export default function ChatConversationScreen() {
             const newContent = JSON.stringify({ latitude, longitude, label: address, address });
             // Update locally
             setMessages(prev => prev.map(m => m.id === inserted.id ? { ...m, content: newContent } : m));
-            // Persist server-side via update_live_location (works for static too)
-            try { await api.chatUpdateLiveLocation(inserted.id, latitude, longitude, { address }); } catch {}
+            // Persist server-side via update_live_location (works for static too).
+            // [WAVE 62 2026-05-21] 4th positional arg is `address` (string), not
+            // `{ address }` — passing an object made the backend payload ship a
+            // useless `{address:{address:'...'}}` blob (harmless but wrong).
+            try { await api.chatUpdateLiveLocation(inserted.id, latitude, longitude, address); } catch {}
           }
         } catch {}
       })();
@@ -14246,12 +14258,39 @@ export default function ChatConversationScreen() {
             // keep the right expires_at sentinel on every tick. Without
             // this, the backend defaults to 3600s and a sempre-ativo share
             // auto-decays to a 1h share for off-conv viewers.
-            const tickOpts = isUnlimited ? { unlimited: true } : undefined;
-            const res = await api.chatUpdateLiveLocation(msgId, lat2, lng2, undefined, tickOpts);
+            // [WAVE 62 2026-05-21] Also pass conversation_id as a belt-and-
+            // suspenders backup — the message-id resolution silently no-op'd
+            // for some users (PG primary-key cast quirk + deleted parents),
+            // and the heartbeat would 400-loop until liveFailCount killed it.
+            // Backend prefers conversation_id when both are present.
+            const tickOpts = isUnlimited
+              ? { unlimited: true, conversation_id: conversationId }
+              : { conversation_id: conversationId };
+            let res = null;
+            try {
+              res = await api.chatUpdateLiveLocation(msgId, lat2, lng2, undefined, tickOpts);
+            } catch (apiErr) {
+              console.warn('[liveloc] heartbeat tick threw:', apiErr?.message);
+            }
             if (res?.success) {
               liveFailCount = 0;
             } else {
               liveFailCount++;
+              if (res && !res.success) {
+                console.warn('[liveloc] heartbeat tick rejected:', res?.message, res?.data?.error);
+              }
+              // Visual surface after 3 consecutive failures so the user knows
+              // their "compartilhamento ilimitado" pin is no longer alive.
+              // Previously the share silently froze (peer's map went stale)
+              // and the user had no way to know without leaving + re-opening.
+              if (liveFailCount === 3) {
+                try {
+                  safeAlert(
+                    t('common.warning') || 'Aviso',
+                    t('chatConv.liveLocStaleWarning') || 'Sua localização ao vivo não está sendo atualizada. Verifique GPS / internet.',
+                  );
+                } catch {}
+              }
               if (liveFailCount >= 5) { clearInterval(liveLocIntervalRef.current); liveLocIntervalRef.current = null; }
             }
           } catch (err) {
@@ -17801,7 +17840,7 @@ export default function ChatConversationScreen() {
                       <Text style={{ fontSize: 10.5, color: isOwn ? 'rgba(255,255,255,0.85)' : colors.textTertiary, fontWeight: '500' }}>{formatTime(msg.created_at)}</Text>
                       {isOwn && !msg._pending && !msg._failed && (
                         msg._readStatus === 2
-                          ? <View style={{ flexDirection: 'row', marginLeft: 1, flexShrink: 0 }}><IconCheck size={12} strokeWidth={2.6} color="#C4B5FD" style={{ marginRight: -6 }} /><IconCheck size={12} strokeWidth={2.6} color="#C4B5FD" /></View>
+                          ? <View style={{ flexDirection: 'row', marginLeft: 1, flexShrink: 0 }}><IconCheck size={12} strokeWidth={2.6} color="#53BDEB" style={{ marginRight: -6 }} /><IconCheck size={12} strokeWidth={2.6} color="#53BDEB" /></View>
                           : msg._readStatus === 1.5
                           ? <View style={{ flexDirection: 'row', marginLeft: 1, flexShrink: 0 }}><IconCheck size={11} color={isOwn ? 'rgba(255,255,255,0.85)' : colors.textTertiary} style={{ marginRight: -6 }} /><IconCheck size={11} color={isOwn ? 'rgba(255,255,255,0.85)' : colors.textTertiary} /></View>
                           : <IconCheck size={11} color={isOwn ? 'rgba(255,255,255,0.75)' : colors.textTertiary} style={{ marginLeft: 1 }} />

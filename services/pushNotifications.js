@@ -213,6 +213,23 @@ async function loadModules() {
               });
             } catch {}
           }
+          // WhatsApp parity: ack delivered the moment the push lands in
+          // foreground too. addNotificationReceivedListener also fires this,
+          // but the receivedSub path runs AFTER handleNotification on some
+          // platforms — eager ack here removes the ~50-200ms window where
+          // the sender's UI is at ✓ while we're already handling the body.
+          if (data?.type === 'chat_message' && data.conversation_id && data.message_id) {
+            try {
+              const convId = Number(data.conversation_id) || data.conversation_id;
+              const mid = Number(data.message_id);
+              if (mid > 0) {
+                const api = require('./api');
+                if (typeof api.chatDeliveryAckBatched === 'function') {
+                  api.chatDeliveryAckBatched(convId, [mid]);
+                }
+              }
+            } catch {}
+          }
           return {
             shouldShowAlert: false,
             shouldPlaySound: false,
@@ -1155,6 +1172,30 @@ export async function setupNotificationListeners() {
         const ws = require('./websocket').default;
         if (ws) {
           ws._emit('push_chat_refresh', { conversation_id: data.conversation_id });
+        }
+      } catch {}
+    }
+    // WhatsApp parity (2026-05-21): the moment a chat_message push lands on
+    // this device — regardless of whether the WS is connected, the app is
+    // foreground/background, or the user opens the conversation — fire a
+    // delivery ack so the sender's ticks flip from ✓ (sent) to ✓✓ (delivered)
+    // immediately. Previously delivery only acked when the message arrived
+    // via WS (active app) OR the user opened the thread; users with the app
+    // killed would leave the sender stuck at single check until they next
+    // tapped the notification. The backend `chat_delivery_ack` action is
+    // idempotent (ON CONFLICT preserves first-write timestamp) so an extra
+    // ack from a later WS handler is a no-op.
+    if (data?.type === 'chat_message' && data.conversation_id && data.message_id) {
+      try {
+        const convId = Number(data.conversation_id) || data.conversation_id;
+        const mid = Number(data.message_id);
+        if (mid > 0) {
+          const api = require('./api');
+          if (typeof api.chatDeliveryAckBatched === 'function') {
+            api.chatDeliveryAckBatched(convId, [mid]);
+          } else if (typeof api.chatDeliveryAck === 'function') {
+            api.chatDeliveryAck(convId, [mid]).catch(() => {});
+          }
         }
       } catch {}
     }

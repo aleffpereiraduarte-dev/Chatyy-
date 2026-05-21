@@ -3477,6 +3477,7 @@ export default {
   'chatConv.uploadError': 'Failed to send file',
   'chatConv.filePickError': 'Could not open file picker',
   'chatConv.locationError': 'Could not get location',
+  'chatConv.liveLocStaleWarning': "Your live location isn't being updated. Check GPS / internet.",
   'chatConv.locationTimeoutHint': "Couldn't lock your position. Try outdoors or turn GPS on.",
   'chatConv.locationShare': 'Share location',
   'chatConv.locationFetching': 'Getting your location…',

@@ -3477,6 +3477,7 @@ export default {
   'chatConv.uploadError': 'Error al enviar archivo',
   'chatConv.filePickError': 'No se pudo abrir el selector de archivos',
   'chatConv.locationError': 'No se pudo obtener la ubicacion',
+  'chatConv.liveLocStaleWarning': 'Tu ubicación en vivo no se está actualizando. Revisa GPS / internet.',
   'chatConv.locationTimeoutHint': 'No pudimos obtener tu posicion. Intenta al aire libre o activa el GPS.',
   'chatConv.locationShare': 'Compartir ubicación',
   'chatConv.locationFetching': 'Obteniendo tu ubicación…',

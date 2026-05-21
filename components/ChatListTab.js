@@ -646,16 +646,17 @@ const ConversationRow = React.memo(function ConversationRow({
     );
   }, [conversation]);
 
-  // ── Status checkmarks (Chatyy purple on read, gray on delivered/sent) ──
-  // Purple (#7C3AED) is the Chatyy brand color — replaces the WhatsApp blue
-  // so the list matches the thread's own read indicator.
+  // ── Status checkmarks (WhatsApp parity: blue on read, gray on delivered/sent) ──
+  // [2026-05-21] User explicit request: "quando ver fica azul" — matches
+  // the thread's own AnimatedCheckStatus (#53BDEB). Was Chatyy brand purple
+  // (#7C3AED) but the user expects WhatsApp blue.
   const renderStatusIcon = () => {
     if (!statusType) return null;
     if (statusType === 'read') {
       return (
         <View style={{ flexDirection: 'row', marginRight: 3 }}>
-          <IconCheck size={15} color="#7C3AED" style={{ marginRight: -8 }} />
-          <IconCheck size={15} color="#7C3AED" />
+          <IconCheck size={15} strokeWidth={2.6} color="#53BDEB" style={{ marginRight: -8 }} />
+          <IconCheck size={15} strokeWidth={2.6} color="#53BDEB" />
         </View>
       );
     }
