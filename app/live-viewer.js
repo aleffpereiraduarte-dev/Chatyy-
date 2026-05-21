@@ -1016,6 +1016,45 @@ export default function LiveViewerScreen() {
           setStreamType('cf_hls');
           setHlsWarmup(true);
         }
+        if (pipeline === 'livekit') {
+          // [WAVE 110] LK session detected via REST fallback — synthesize the
+          // live_session_info payload that the WS would have sent. The WS path
+          // is preferred; REST only fires here when the WS didn't dispatch
+          // live_session_info within the first 4s (e.g. old C++ WS build).
+          liveSessionInfoSeenRef.current = true;
+          setStreamType('livekit');
+          setError('');
+          cancelled = true;
+          // Trigger the LK join async. We can't await here (effect callback
+          // is sync) so we fire-and-forget identical to the WS handler above.
+          ;(async () => {
+            try {
+              const _lk2 = loadLiveKit();
+              if (!_lk2?.Room) return;
+              const _jr = await api.liveJoinLk(paramSessionId);
+              if (!_jr?.success || !_jr?.data?.lk_token) return;
+              const { lk_url: _lu, lk_token: _lt, lk_room: _lr } = _jr.data;
+              const _rm = new _lk2.Room({ adaptiveStream: true, dynacast: false });
+              lkViewerRoomRef.current = _rm;
+              const _ct = () => {
+                const _ts = [];
+                _rm.remoteParticipants.forEach((p) => {
+                  p.trackPublications.forEach((pub) => {
+                    if (pub.track) _ts.push({ track: pub.track, participant: p, kind: pub.kind });
+                  });
+                });
+                setLkTracks([..._ts]);
+              };
+              _rm.on(_lk2.RoomEvent.TrackSubscribed, _ct);
+              _rm.on(_lk2.RoomEvent.TrackUnsubscribed, _ct);
+              _rm.on(_lk2.RoomEvent.Disconnected, () => { lkViewerRoomRef.current = null; setLkTracks([]); });
+              await _rm.connect(_lu || 'wss://livekit.chatyy.com.br', _lt);
+              setConnected(true);
+              _ct();
+            } catch (_e2) { console.warn('[WAVE-110 REST] LK join failed:', _e2?.message); }
+          })();
+          return;
+        }
         if (pipeline === 'legacy_p2p') {
           // Old WebRTC P2P — nothing to do here, the offer path handles it.
           liveSessionInfoSeenRef.current = true;
@@ -1246,29 +1285,16 @@ export default function LiveViewerScreen() {
               }
             })();
           } else if (msg.stream_type === 'cf_hls' && msg.hls_url) {
-          // Backend tells us how this session is streamed. For Cloudflare
-          // Stream we just hand the m3u8 URL to expo-video; for WebRTC we
-          // fall through and wait for `live_offer` like before.
-          if (msg.stream_type === 'cf_hls' && msg.hls_url) {
+            // CF Stream HLS — hand m3u8 to expo-video.
             setStreamType('cf_hls');
             setHlsUrl(String(msg.hls_url));
             setHlsError(false);
-            setHlsWarmup(false); // [WAVE 111] host is now publishing
+            setHlsWarmup(false);
             setError('');
-            // Reset retry state — fresh stream, fresh attempt budget.
             hlsRetryAttemptRef.current = 0;
             if (hlsRetryTimerRef.current) { clearTimeout(hlsRetryTimerRef.current); hlsRetryTimerRef.current = null; }
-            // Force remount the player on cf_input_uid change.
             setHlsRetryKey(k => k + 1);
           } else if (msg.stream_type === 'cf_hls' && msg.cf_input_uid && !msg.hls_url) {
-            // Cloudflare live input exists but no HLS playback URL yet —
-            // backend created the CF Stream input but the broadcaster hasn't
-            // actually published RTMP/WHIP. Surface a friendly diagnostic
-            // instead of leaving the viewer staring at a black "Conectando…"
-            // forever. This catches the #2 silent fail: cf_input_uid set,
-            // but no native RTMP publisher running on the host side.
-            // [WAVE 111] Also set hlsWarmup so the connecting overlay can
-            // show "Aguardando o host iniciar..." instead of the generic spinner.
             console.warn('[Live] cf_hls session has cf_input_uid but no hls_url — publisher path missing');
             setStreamType('cf_hls');
             setHlsWarmup(true);
@@ -1731,6 +1757,11 @@ export default function LiveViewerScreen() {
       guestPcRef.current = null;
       try { guestStreamRef.current?.getTracks().forEach(tr => tr.stop()); } catch {}
       guestStreamRef.current = null;
+      // [WAVE 110] Disconnect LK viewer room on unmount.
+      if (lkViewerRoomRef.current) {
+        try { lkViewerRoomRef.current.disconnect(); } catch {}
+        lkViewerRoomRef.current = null;
+      }
       if (endTimerRef.current) clearTimeout(endTimerRef.current);
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
       if (hlsRetryTimerRef.current) { clearTimeout(hlsRetryTimerRef.current); hlsRetryTimerRef.current = null; }
@@ -2872,7 +2903,50 @@ export default function LiveViewerScreen() {
           burst over the stream without stealing taps from controls overlaid
           on top (those have higher zIndex). */}
       <Pressable style={StyleSheet.absoluteFill} onPress={handleStageTap}>
-        {streamType === 'cf_hls' && hlsUrl ? (
+        {streamType === 'livekit' && lkTracks.length > 0 ? (
+          // [WAVE 110] LiveKit SFU viewer — render the first video track from
+          // a remote participant (the host). _LK_VideoView is the native
+          // VideoView from @livekit/react-native; web falls back to a plain
+          // HTMLVideoElement rendered via track.attach(). Since livekit-client
+          // is already in the bundle (call.js) this resolves synchronously.
+          (() => {
+            const _vt = lkTracks.find(t => t.kind === 'video');
+            if (!_vt?.track) return (
+              <View style={[StyleSheet.absoluteFill, styles.preStreamFallback]}>
+                <AvatarCircle name={displayHostName} email={displayHostEmail} size={88} style={styles.preStreamAvatar} />
+              </View>
+            );
+            const _LK = loadLiveKit();
+            if (Platform.OS === 'web') {
+              // Web: attach the MediaStreamTrack to a video element.
+              return (
+                <video
+                  key={`lk-${_vt.participant?.identity}`}
+                  ref={(el) => { if (el) { const ms = new MediaStream([_vt.track.mediaStreamTrack]); el.srcObject = ms; el.play().catch(() => {}); } }}
+                  autoPlay playsInline
+                  style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', backgroundColor: '#0f0f1a' }}
+                />
+              );
+            }
+            if (_LK?.VideoView) {
+              return (
+                <View collapsable={false} style={[StyleSheet.absoluteFill, { backgroundColor: '#0f0f1a', overflow: 'hidden' }]}>
+                  <_LK.VideoView
+                    key={`lk-${_vt.participant?.identity}`}
+                    videoTrack={_vt.track}
+                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
+                    objectFit="cover"
+                  />
+                </View>
+              );
+            }
+            return (
+              <View style={[StyleSheet.absoluteFill, styles.preStreamFallback]}>
+                <AvatarCircle name={displayHostName} email={displayHostEmail} size={88} style={styles.preStreamAvatar} />
+              </View>
+            );
+          })()
+        ) : streamType === 'cf_hls' && hlsUrl ? (
           // Cloudflare Stream HLS branch — no PeerConnection. Web uses the
           // platform <video> tag (HLS plays natively on Safari; on
           // Chrome/Firefox the player still requests the manifest fine for
