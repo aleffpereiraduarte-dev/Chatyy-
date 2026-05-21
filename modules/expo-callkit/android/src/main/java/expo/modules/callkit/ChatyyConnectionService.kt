@@ -397,6 +397,11 @@ class ChatyyConnection(
     Log.i(TAG, "onDisconnect: callId=$callId")
     setDisconnected(DisconnectCause(DisconnectCause.LOCAL))
     ExpoCallKitModule.emitCallEnded(callId)
+    // [WAVE 116 2026-05-21] Issue 4 — purge the cached LK token/url that
+    // JS pre-stashed via persistPendingLkToken. Called after Telecom
+    // disconnects (call fully ended) — safe, CXAnswer equivalent (onAnswer)
+    // already ran and consumed the token.
+    LkTokenFetcher.clearCached(ctx, callId)
     try {
       val stop = Intent(ctx, CallRingingService::class.java)
       ctx.stopService(stop)
@@ -445,6 +450,10 @@ class ChatyyConnection(
   private fun rejectInternal(reason: String) {
     setDisconnected(DisconnectCause(DisconnectCause.REJECTED))
     ExpoCallKitModule.emitCallEnded(callId)
+    // [WAVE 116 2026-05-21] Issue 4 — purge cached LK token on decline too.
+    // Token was stashed ahead of answer; since the call is being rejected
+    // it will never be consumed, so clear it now.
+    LkTokenFetcher.clearCached(ctx, callId)
     try {
       val stop = Intent(ctx, CallRingingService::class.java)
       ctx.stopService(stop)

@@ -1162,6 +1162,9 @@ public class ExpoCallKitModule: Module {
           print("[ExpoCallKit] remote-end \(callId): cleared activeCalls + sharedUUID")
         }
       }
+      // [WAVE 116 2026-05-21] Issue 4 — purge pending LK token on remote-end
+      // path too (peer hung up via WS → ExpoCallKitNativeCallEnded).
+      ExpoCallKitModule.clearPendingLkToken(callId: callId)
       self?.safeSendEvent("onCallEnded", ["callId": callId])
       // [#1179 cleanup, 2026-05-19] When the peer hangs up via WS, CallSignalWs
       // posts this notification (handleIncomingCallEndLocked). The CallKit
@@ -1532,6 +1535,8 @@ public class ExpoCallKitModule: Module {
       }
       ExpoCallKitModule._shared_setUUID(nil, forCallId: callId)
       print("[ExpoCallKit] endCallActionWithReason \(callId) reason=\(reasonRaw)")
+      // [WAVE 116 2026-05-21] Issue 4 — purge pending LK token.
+      ExpoCallKitModule.clearPendingLkToken(callId: callId)
       safeSendEvent("onCallEnded", ["callId": callId, "reason": reasonRaw])
     } else {
       // Unknown callId — still dismiss the UI as the legacy path would
