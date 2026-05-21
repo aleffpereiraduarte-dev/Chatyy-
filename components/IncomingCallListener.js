@@ -262,19 +262,13 @@ export default function IncomingCallListener() {
   // Note on hooks: Platform.OS is stable for the lifetime of the JS VM,
   // so this early-return never reorders hook calls across renders of the
   // same mounted instance — React's rules-of-hooks invariant holds.
-  // [WAVE 113, 2026-05-21] Removed the blanket `if (Platform.OS !== 'web') return null`.
-  // Root cause of user report "app aberto mas CallKit banner aparece": backend was
-  // sending VoIP push even when callee had active WS (app foreground). Backend now
-  // skips VoIP+FCM when _isCalleeWsActive() — so for foreground calls, ONLY the
-  // WS call_invite fires, and this JS overlay is the canonical incoming-call UI.
-  //
-  // For background/offline calls: backend still sends VoIP push → CallKit fires
-  // natively (correct). This overlay never mounts when app is closed.
-  //
-  // On mobile: Modal only renders when `call` is non-null (set by showCall).
-  // showCall gates Android native (displayIncomingCall) to non-foreground only
-  // (line ~451). For iOS foreground, WS call_invite → showCall → Modal renders.
-  // CallKit listeners are still wired for offline/background answer events.
+  // [WAVE 117, 2026-05-21] User mandate "tudo nativo no mobile" — re-add the
+  // hard gate so this JS overlay NEVER renders on mobile (iOS/Android). Native
+  // CallKit (iOS) + IncomingCallActivity (Android) own 100% of incoming-call UI.
+  // WAVE 113 had tried foreground=JS hybrid but user kept reporting "2 telas",
+  // "JS misturado com nativo", phantom calls — full native wins. Web keeps using
+  // this overlay since browser has no CallKit equivalent.
+  if (Platform.OS !== 'web') return null;
 
   const { colors } = useTheme();
   const { user } = useAuth();

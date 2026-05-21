@@ -170,14 +170,14 @@ export async function startOutgoingCall({
   //      activity's onNewIntent picks up the late token and calls
   //      bringUpRoom() without re-creating the UI.
   const nativePresent = ExpoCallKit.startOutgoingCall({
-    calleeEmail,
-    calleeName: calleeName || calleeEmail,
-    calleeAvatar,
-    callerName: callerName || '',
-    isVideo: !!isVideo,
-    roomName: cid,
-    conversationId: conversationId || '',
-    callId: cid,
+    callee_email: String(calleeEmail ?? ''),
+    callee_name: String(calleeName || calleeEmail || ''),
+    callee_avatar: String(calleeAvatar ?? ''),
+    caller_name: String(callerName ?? ''),
+    is_video: !!isVideo,
+    room_name: String(cid ?? ''),
+    conversation_id: String(conversationId ?? ''),
+    call_id: String(cid ?? ''),
   });
 
   // Background: mint LK token then forward it to native.
@@ -199,16 +199,16 @@ export async function startOutgoingCall({
           if (Platform.OS === 'android') {
             try {
               await ExpoCallKit.startOutgoingCall({
-                calleeEmail,
-                calleeName: calleeName || calleeEmail,
-                calleeAvatar,
-                callerName: callerName || '',
-                isVideo: !!isVideo,
-                roomName: cid,
-                conversationId: conversationId || '',
-                callId: cid,
-                lkUrl,
-                lkToken,
+                callee_email: String(calleeEmail ?? ''),
+                callee_name: String(calleeName || calleeEmail || ''),
+                callee_avatar: String(calleeAvatar ?? ''),
+                caller_name: String(callerName ?? ''),
+                is_video: !!isVideo,
+                room_name: String(cid ?? ''),
+                conversation_id: String(conversationId ?? ''),
+                call_id: String(cid ?? ''),
+                lk_url: String(lkUrl ?? ''),
+                lk_token: String(lkToken ?? ''),
               });
             } catch (e) {
               console.warn(TAG, 'android late-token re-launch failed:', e?.message || e);
