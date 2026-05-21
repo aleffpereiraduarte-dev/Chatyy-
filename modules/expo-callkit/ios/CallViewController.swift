@@ -1688,35 +1688,32 @@ extension CallViewController: RoomDelegate {
             guard !self.session.didHangup else { return }
             NSLog("[CallVC][relay-first] Phase-2: attempting P2P upgrade via engine.publisher.restartIce")
             // Access the publisher PeerConnection through LK Swift internals.
-            // Mirror walk is fragile but safe — we catch everything.
-            do {
-                let eng = r.engine
-                let engMirror = Mirror(reflecting: eng)
-                for child in engMirror.children {
-                    if let label = child.label,
-                       (label == "publisher" || label == "pcManager"),
-                       let pub = child.value as? AnyObject {
-                        let sel = NSSelectorFromString("restartIce")
-                        if pub.responds(to: sel) {
-                            pub.perform(sel)
-                            NSLog("[CallVC][relay-first] Phase-2: restartIce() called on \(label)")
-                        }
-                        // Also walk pub for a nested .pc / .peerConnection
-                        let pubMirror = Mirror(reflecting: pub)
-                        for pchild in pubMirror.children {
-                            if let plabel = pchild.label,
-                               (plabel == "pc" || plabel == "peerConnection"),
-                               let pc = pchild.value as? AnyObject {
-                                if pc.responds(to: sel) {
-                                    pc.perform(sel)
-                                    NSLog("[CallVC][relay-first] Phase-2: restartIce() called on pub.\(plabel)")
-                                }
+            // Mirror walk is fragile but safe — no code here throws, so no
+            // do-catch needed (bare scope removed; ObjC perform is non-throwing).
+            let eng = r.engine
+            let engMirror = Mirror(reflecting: eng)
+            for child in engMirror.children {
+                if let label = child.label,
+                   (label == "publisher" || label == "pcManager"),
+                   let pub = child.value as? AnyObject {
+                    let sel = NSSelectorFromString("restartIce")
+                    if pub.responds(to: sel) {
+                        pub.perform(sel)
+                        NSLog("[CallVC][relay-first] Phase-2: restartIce() called on \(label)")
+                    }
+                    // Also walk pub for a nested .pc / .peerConnection
+                    let pubMirror = Mirror(reflecting: pub)
+                    for pchild in pubMirror.children {
+                        if let plabel = pchild.label,
+                           (plabel == "pc" || plabel == "peerConnection"),
+                           let pc = pchild.value as? AnyObject {
+                            if pc.responds(to: sel) {
+                                pc.perform(sel)
+                                NSLog("[CallVC][relay-first] Phase-2: restartIce() called on pub.\(plabel)")
                             }
                         }
                     }
                 }
-            } catch {
-                NSLog("[CallVC][relay-first] Phase-2 error: \(error)")
             }
         }
     }
