@@ -6,6 +6,138 @@
  * like CallStatusBar.js (Expo Router loads screens in separate chunks).
  */
 
+// ─── Single Source of Truth — WAVE 116 Issue 5 ─────────────────────────────
+// Canonical call lifecycle state.  Additive: the 3 legacy flags
+// (callStateRef, _callActive, globalThis.__chatyyNativeCallActive) are NOT
+// removed — they continue to work unchanged. This module mirrors the
+// authoritative state back into those globals so they stay in sync.
+
+export const CALL_STATE = Object.freeze({
+  IDLE:     'idle',
+  RINGING:  'ringing',
+  ANSWERED: 'answered',
+  ACTIVE:   'active',
+  ENDED:    'ended',
+});
+
+let _callStateCurrent = CALL_STATE.IDLE;
+let _callStateMeta    = null;
+const _callStateSubscribers = new Set();
+
+/** Returns the current canonical call state string (one of CALL_STATE values). */
+export function getCallState() {
+  return _callStateCurrent;
+}
+
+/**
+ * Atomically update the canonical call state.
+ * Also mirrors into globalThis.__chatyyNativeCallActive so legacy consumers
+ * stay in sync without invasive changes.
+ *
+ * @param {string} newState  One of the CALL_STATE values.
+ * @param {object} [meta]    Optional metadata (callId, contactEmail, …).
+ */
+export function setCallState(newState, meta) {
+  if (!Object.values(CALL_STATE).includes(newState)) return;
+  _callStateCurrent = newState;
+  _callStateMeta    = meta ?? _callStateMeta;
+
+  // Mirror into globalThis flag so legacy guards (callkeep.js guards, etc.)
+  // remain accurate without needing their own audit pass.
+  try {
+    if (newState === CALL_STATE.ACTIVE || newState === CALL_STATE.ANSWERED) {
+      globalThis.__chatyyNativeCallActive = true;
+    } else if (newState === CALL_STATE.ENDED || newState === CALL_STATE.IDLE) {
+      globalThis.__chatyyNativeCallActive = false;
+    }
+  } catch {}
+
+  // Dispatch to all typed subscribers.
+  for (const fn of [..._callStateSubscribers]) {
+    try { fn({ state: newState, meta: _callStateMeta }); } catch {}
+  }
+}
+
+/**
+ * Subscribe to canonical call state changes.
+ * Callback receives `{ state, meta }`.
+ * @returns {function} Unsubscribe function.
+ */
+export function subscribeCallState(cb) {
+  if (typeof cb !== 'function') return () => {};
+  _callStateSubscribers.add(cb);
+  return () => _callStateSubscribers.delete(cb);
+}
+
+// ─── Media state (mute / cam / speaker / route / pip / hold) ────────────────
+// Updated by the notify* helpers called from callkeep.js safeNotify().
+
+let _mediaState = {
+  muted:       false,
+  camEnabled:  true,
+  speakerOn:   false,
+  route:       null,
+  frontCamera: true,
+  held:        false,
+  inPip:       false,
+};
+
+const _mediaSubscribers = new Set();
+
+function _notifyMedia(patch) {
+  _mediaState = { ..._mediaState, ...patch };
+  for (const fn of [..._mediaSubscribers]) {
+    try { fn({ ..._mediaState }); } catch {}
+  }
+}
+
+/** Subscribe to media state changes. Callback receives full _mediaState snapshot. */
+export function subscribeMediaState(cb) {
+  if (typeof cb !== 'function') return () => {};
+  _mediaSubscribers.add(cb);
+  return () => _mediaSubscribers.delete(cb);
+}
+
+/** Returns a snapshot of the current media state. */
+export function getMediaState() {
+  return { ..._mediaState };
+}
+
+// Named notifiers — called by callkeep.js safeNotify() via `callState[name](data)`.
+// MUST be exported as named members (safeNotify does `callState?.[name]`).
+
+export function notifyMuteChanged({ muted }) {
+  _notifyMedia({ muted: !!muted });
+}
+
+export function notifyCamChanged({ enabled }) {
+  _notifyMedia({ camEnabled: !!enabled });
+}
+
+export function notifySpeakerChanged({ speakerOn }) {
+  _notifyMedia({ speakerOn: !!speakerOn });
+}
+
+export function notifyAudioRouteChanged({ route }) {
+  _notifyMedia({ route: route ?? null });
+}
+
+export function notifyCameraFlipped({ front }) {
+  _notifyMedia({ frontCamera: !!front });
+}
+
+export function notifyHoldChanged({ held }) {
+  _notifyMedia({ held: !!held });
+}
+
+export function notifyPipChanged(inPipOrObj) {
+  // Accept both `true/false` (legacy onPipChanged path) and `{ inPip }` object
+  // (safeNotify path — callkeep passes `{ inPip }` per line 626).
+  const inPip = typeof inPipOrObj === 'object' ? !!inPipOrObj?.inPip : !!inPipOrObj;
+  _notifyMedia({ inPip });
+}
+// ─── End WAVE 116 additions ──────────────────────────────────────────────────
+
 // Lightweight event listeners for system-driven call state changes
 // (audio interruption from PSTN call, network reachability, etc).
 const _audioInterruptionListeners = new Set();

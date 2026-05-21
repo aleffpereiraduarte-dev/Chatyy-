@@ -1333,11 +1333,15 @@ function CallScreenInner() {
         // budget; if still nothing by then the legacy fallback runs.
         let snap = null;
         let polls = 0;
-        // [WAVE 92 2026-05-21] Bug 2 — extend poll window when JS knows the
-        // native VC is presented in parallel (adoptNative=1 query param). Old
-        // 1.5s ceiling raced with native cold-start (token fetch + LK SFU
-        // handshake = 1500-3500ms on first call after install).
-        const maxPolls = wantsAdoptNative ? 40 : 15;
+        // [WAVE 116 2026-05-21] Issue 3 — uniform 4 s poll window for ALL
+        // call paths. On Android outgoing, ExpoCallKitModule.startOutgoingCall
+        // calls NativeCallRoom.preconnect(); if JS times out at 1.5 s before
+        // native is ready, JS spawns its own Room.connect → 2 publishers in
+        // the SFU → mute desync. 100 ms × 40 = 4 s covers the worst-case
+        // cold-start (token fetch + LK SFU handshake on first call post-install
+        // ≈ 1500-3500 ms). The old 15-poll (1.5 s) ceiling only ran when
+        // wantsAdoptNative was false; unified to 40 for all paths.
+        const maxPolls = 40; // was: wantsAdoptNative ? 40 : 15
         for (let i = 0; i < maxPolls; i++) {
           polls = i + 1;
           snap = await ExpoCallKit.adoptNativeRoom?.(callId);

@@ -566,6 +566,7 @@ function installNativeCallStateBridge() {
   // Native Room is connected → JS knows the audio path is owned by the OS.
   _stateListeners.push(ExpoCallKit.onLkEvent('onLkConnected', () => {
     try { globalThis.__chatyyNativeCallActive = true; } catch {}
+    try { require('./callState').setCallState('active'); } catch {}
   }));
   // Track native answer so the 3s spurious-end guard below can ignore the
   // iOS CXEndCallAction ghost event that fires right after CXAnswerCallAction.
@@ -574,6 +575,7 @@ function installNativeCallStateBridge() {
       _stateListeners.push(ExpoCallKit.onCallAnswered(() => {
         _lastNativeAnswerAt = Date.now();
         try { globalThis.__chatyyNativeCallActive = true; } catch {}
+        try { require('./callState').setCallState('answered'); } catch {}
       }));
     }
   } catch {}
@@ -582,9 +584,19 @@ function installNativeCallStateBridge() {
   _stateListeners.push(ExpoCallKit.onCallEnded(() => {
     if (_lastNativeAnswerAt && Date.now() - _lastNativeAnswerAt < 3000) return;
     try { globalThis.__chatyyNativeCallActive = false; } catch {}
+    try {
+      const cs = require('./callState');
+      cs.setCallState('ended');
+      setTimeout(() => { try { cs.setCallState('idle'); } catch {} }, 500);
+    } catch {}
   }));
   _stateListeners.push(ExpoCallKit.onLkEvent('onLkDisconnected', () => {
     try { globalThis.__chatyyNativeCallActive = false; } catch {}
+    try {
+      const cs = require('./callState');
+      cs.setCallState('ended');
+      setTimeout(() => { try { cs.setCallState('idle'); } catch {} }, 500);
+    } catch {}
   }));
 
   // The actual state mirrors — fan out into a single analytics surface that

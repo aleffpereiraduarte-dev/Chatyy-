@@ -1486,8 +1486,27 @@ public class ExpoCallKitModule: Module {
     if let cid = callId { ExpoCallKitModule._shared_setUUID(nil, forCallId: cid) }
     if let callId = callId {
       print("[ExpoCallKit] callEnded: callId=\(callId), jsReady=\(jsListenersReady)")
+      // [WAVE 116 2026-05-21] Issue 4 — purge the pending LK token/url/ts
+      // that was stashed in UserDefaults by persistPendingLkToken (JS) or by
+      // the inline VoIP push handler. Safe here: CXEndCallAction fires AFTER
+      // the call is fully answered (CXAnswer already ran) — the token is no
+      // longer needed.
+      ExpoCallKitModule.clearPendingLkToken(callId: callId)
       safeSendEvent("onCallEnded", ["callId": callId])
     }
+  }
+
+  // [WAVE 116 2026-05-21] Issue 4 — remove the trio of UserDefaults keys that
+  // persistPendingLkToken / VoipPushAppDelegateSubscriber write for a given
+  // callId / roomName. Called from every call-end path so tokens don't
+  // accumulate over the app lifetime. Must be called AFTER the call ends —
+  // CXAnswer still reads lk_token_<callId> during answer-time preconnect.
+  static func clearPendingLkToken(callId: String) {
+    guard let ud = UserDefaults(suiteName: kAppGroupId) else { return }
+    ud.removeObject(forKey: "lk_token_\(callId)")
+    ud.removeObject(forKey: "lk_url_\(callId)")
+    ud.removeObject(forKey: "lk_ts_\(callId)")
+    print("[ExpoCallKit] clearPendingLkToken: removed lk_*_\(callId) from UserDefaults")
   }
 
   /// Force-end a call by UUID with a CallKit-known reason. Used by the
