@@ -74,7 +74,26 @@ import ChatNotificationSettingsSheet from '../components/ChatNotificationSetting
 import SafetyNumberSheet from '../components/SafetyNumberSheet';
 import SendStatusText from '../components/SendStatusText';
 import { getCachedUri, preCacheUrls, cacheMedia, saveMediaPermanent, saveConversationMedia, initSyncCache } from '../services/mediaCache';
-const ExpoImage = Image;
+// [WAVE 42 2026-05-20] Root cause Android thumb sumindo: ExpoImage was aliased
+// to react-native's <Image>, which does NOT understand `source={{ blurhash }}`
+// nor `cachePolicy`/`contentFit`/`priority` props. The blurhash backdrop layer
+// (and the LQIP/thumb layers below it) silently rendered nothing on Android,
+// leaving only the HSL pastel base painted while the full image streamed.
+// On iOS the full photo decoded fast enough that the missing backdrop was
+// invisible; on Android the gap was visible for 200-800ms (or forever if
+// the network stalled) — user-reported "thumb da foto sumindo".
+// Fix: pull the real `Image` from expo-image so blurhash + cachePolicy +
+// contentFit + priority + recyclingKey all behave. ChatMedia (used for the
+// main image) already imports the real expo-image — only the backdrop
+// layers in this file were broken.
+let _ExpoImageReal = Image;
+try { _ExpoImageReal = require('expo-image').Image; } catch {}
+const ExpoImage = _ExpoImageReal;
+// LinearGradient (only used by the video poster overlay for legibility of
+// the duration pill). Lazy-required so a missing native module doesn't
+// break the entire chat screen.
+let _LinearGradient = null;
+try { _LinearGradient = require('expo-linear-gradient').LinearGradient; } catch {}
 import { cacheMessages, getCachedMessages, getLastSyncId, cacheSingleMessage, savePendingMessage, removePendingMessage, getPendingMessages, purgeStalePending } from '../services/chatCache';
 import messageOutbox, { OUTBOX_V2_ONLY } from '../services/messageOutbox';
 import { userScopedKey } from '../services/cache';
@@ -17356,33 +17375,36 @@ export default function ChatConversationScreen() {
               activeOpacity={0.9}
               style={{ marginHorizontal: -13, marginTop: -8, marginBottom: hasCaption ? 0 : -8 }}>
               <View style={{ overflow: 'hidden', width: imgBoxW, height: imgBoxH }}>
-                {/* [WAVE 39 2026-05-20] BUG 4 — Android image thumb backdrop regression.
-                    Root cause: WAVE 38 eager cacheMedia trigger started downloading
-                    BEFORE the blurhash/lqip backdrop painted, so on Android (where
-                    ExpoImage blurhash decode is slower than iOS) the user saw a
-                    "blank box" period before the ChatMedia onLoadStart fired. Fix:
-                    ALWAYS render the HSL base-color background layer at the bottom
-                    (zIndex 0) regardless of blurhash/lqip availability. Blurhash/lqip
-                    sits on TOP of it (zIndex 1), so if those silently fail to render
-                    on Android, the user still sees a coloured backdrop instead of
-                    white. Priority: HSL bg (always) → blurhash → lqip → thumb → real img. */}
-                {!msg._localUri && !imgLocalPath && (
-                  <View style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', zIndex: 0, backgroundColor: (() => {
-                    const u = String(msg.file_url || msg.id || '');
-                    let h = 0;
-                    for (let i = 0; i < u.length; i++) h = (h * 31 + u.charCodeAt(i)) & 0xffffffff;
-                    return `hsl(${Math.abs(h) % 360}, 28%, 82%)`;
-                  })(), alignItems: 'center', justifyContent: 'center' }}>
-                    {!imgUploading && !imgFailed && !msg.blurhash && !lqipUri && !thumbUri && (
-                      <>
-                        <ActivityIndicator size="small" color="rgba(60,60,60,0.55)" />
-                        <Text style={{ marginTop: 6, fontSize: 11, fontWeight: '500', color: 'rgba(60,60,60,0.65)' }}>
-                          {t('chatConv.loadingImage') || (t('common.loading') || 'Carregando...')}
-                        </Text>
-                      </>
-                    )}
-                  </View>
-                )}
+                {/* [WAVE 42 2026-05-20] Photo thumb sumindo Android — root cause.
+                    `ExpoImage` was aliased to react-native's <Image> which silently
+                    ignored `source={{ blurhash }}` and the expo-image-specific props
+                    (cachePolicy, contentFit, priority). On Android the blurhash/lqip
+                    backdrop never painted, so the user saw the HSL pastel base alone
+                    while the full photo streamed (and a "white empty bubble" if it
+                    stalled). Fix lives in the import block above: ExpoImage now
+                    resolves to the real expo-image module.
+                    Belt-and-suspenders here: render the HSL base ALWAYS (was gated on
+                    `!msg._localUri && !imgLocalPath` — meaning if a stale local_path
+                    was set but the file was missing, ChatMedia would render its
+                    error chip with no HSL backdrop behind it = bubble looked empty).
+                    Now the HSL sits at zIndex 0 for the bubble's entire lifetime;
+                    when the real image paints on top (zIndex 4 via ChatMedia order),
+                    HSL is hidden — but if anything fails, HSL is still there. */}
+                <View pointerEvents="none" style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', zIndex: 0, backgroundColor: (() => {
+                  const u = String(msg.file_url || msg.id || '');
+                  let h = 0;
+                  for (let i = 0; i < u.length; i++) h = (h * 31 + u.charCodeAt(i)) & 0xffffffff;
+                  return `hsl(${Math.abs(h) % 360}, 28%, 82%)`;
+                })(), alignItems: 'center', justifyContent: 'center' }}>
+                  {!imgUploading && !imgFailed && !msg.blurhash && !lqipUri && !thumbUri && !msg._localUri && !imgLocalPath && (
+                    <>
+                      <ActivityIndicator size="small" color="rgba(60,60,60,0.55)" />
+                      <Text style={{ marginTop: 6, fontSize: 11, fontWeight: '500', color: 'rgba(60,60,60,0.65)' }}>
+                        {t('chatConv.loadingImage') || (t('common.loading') || 'Carregando...')}
+                      </Text>
+                    </>
+                  )}
+                </View>
                 {/* WhatsApp-style backdrop: blurhash sits BEHIND the real image
                     and stays painted the whole time it loads. Even if the
                     crossfade has a hitch the user never sees blank/flicker —
@@ -17391,17 +17413,27 @@ export default function ChatConversationScreen() {
                     [WAVE 39] zIndex bumped to 1 so it paints OVER the HSL base
                     fallback. Priority="high" added so paint orders before the
                     full image fetch begins. */}
+                {/* [WAVE 42] All backdrop layers below now use the REAL expo-image
+                    Image (resolved at module init from `require('expo-image')`),
+                    so `source={{ blurhash }}` actually decodes on Android and
+                    `cachePolicy`/`contentFit`/`priority` are honored. `key` is
+                    stable per-msg so FlashList recycling doesn't carry a stale
+                    blurhash from a previous row. resizeMode hint helps Android
+                    skip the auto-detect path that occasionally returned 0×0. */}
                 {msg.blurhash && !msg._localUri && (
                   <ExpoImage
+                    key={`bh-${msg.id}`}
                     source={{ blurhash: msg.blurhash }}
                     style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', zIndex: 1 }}
                     contentFit="cover"
                     recyclingKey={`bh-${msg.id}`}
                     priority="high"
+                    {...(Platform.OS === 'android' ? { allowDownscaling: true } : {})}
                   />
                 )}
                 {!msg.blurhash && lqipUri && !msg._localUri && (
                   <ExpoImage
+                    key={`lqip-${msg.id}`}
                     source={{ uri: lqipUri }}
                     style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', zIndex: 1 }}
                     contentFit="cover"
@@ -17412,12 +17444,16 @@ export default function ChatConversationScreen() {
                 )}
                 {!msg.blurhash && !lqipUri && thumbUri && !msg._localUri && (
                   <ExpoImage
+                    key={`thumb-${msg.id}-${thumbUri.split('?')[0]}`}
                     source={{ uri: thumbUri }}
                     style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', zIndex: 1 }}
                     contentFit="cover"
                     cachePolicy="memory-disk"
                     blurRadius={8}
                     priority="high"
+                    onError={() => {
+                      if (__DEV__) console.warn('[THUMB-TRACE]', msg.id, 'thumbUri onError', thumbUri);
+                    }}
                   />
                 )}
                 {/* [WAVE 34 2026-05-20] Shimmer skeleton overlay. Visible while
@@ -17900,11 +17936,40 @@ export default function ChatConversationScreen() {
                       </View>
                     </View>
                   )}
-                  {/* Subtle gradient overlay so the duration badge stays
-                      readable on bright thumbnails and the play button
-                      pops on dark ones. Bottom-half black fade only. */}
+                  {/* [WAVE 42 2026-05-20] Bottom gradient overlay for duration
+                      pill legibility. Uses LinearGradient when available (smooth
+                      40% fade transparent→black 0.55) and a stronger flat overlay
+                      fallback. The previous 18% flat overlay disappeared on
+                      light/bright thumbnails — duration pill became unreadable. */}
                   {!vidUploading && !vidIsDownloading && (
-                    <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 70, backgroundColor: 'rgba(0,0,0,0.18)' }} />
+                    _LinearGradient ? (
+                      <_LinearGradient
+                        pointerEvents="none"
+                        colors={['transparent', 'rgba(0,0,0,0.55)']}
+                        locations={[0, 1]}
+                        style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 80 }}
+                      />
+                    ) : (
+                      <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 80, backgroundColor: 'rgba(0,0,0,0.32)' }} />
+                    )
+                  )}
+                  {/* [WAVE 42 2026-05-20] Shimmer skeleton over video poster
+                      while it's still loading. Reuses the same mediaShimmerAnim
+                      driver as the photo bubble so we don't spawn a new RAF loop.
+                      Hidden once download completes or upload finishes. */}
+                  {!vidUploading && !vidIsDownloading && !vidIsLocal && downloadProgress[msg.id] === undefined && (
+                    <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, width: 280, height: 200, overflow: 'hidden' }}>
+                      <Animated.View
+                        style={{
+                          position: 'absolute', top: 0, bottom: 0,
+                          width: 280 * 0.55,
+                          backgroundColor: 'rgba(255,255,255,0.10)',
+                          transform: [{
+                            translateX: mediaShimmerAnim.interpolate({ inputRange: [0, 1], outputRange: [-280 * 0.55, 280] }),
+                          }, { skewX: '-20deg' }],
+                        }}
+                      />
+                    </View>
                   )}
                 </View>
               )}
@@ -17918,20 +17983,26 @@ export default function ChatConversationScreen() {
                   expo-blur into the chat tree — too heavy for every
                   bubble). Position bumped to bottom: 8 / left: 10 to
                   match WhatsApp's exact placement. */}
+              {/* [WAVE 42 2026-05-20] Frosted-glass duration pill —
+                  bumped padding, rounded 14, white border 1px, tabular-nums
+                  for the timer so digits don't dance frame-to-frame, and a
+                  larger video glyph. Sits above the gradient overlay so
+                  the contrast holds on every thumbnail. */}
               {(vidDurationStr || vidSizeStr) && !vidUploading && (
                 <View style={{
-                  position: 'absolute', bottom: 8, left: 10,
-                  flexDirection: 'row', alignItems: 'center', gap: 5,
-                  backgroundColor: 'rgba(0,0,0,0.62)',
-                  borderRadius: 12,
-                  paddingHorizontal: 8, paddingVertical: 3,
-                  borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.18)',
+                  position: 'absolute', bottom: 10, left: 10,
+                  flexDirection: 'row', alignItems: 'center', gap: 6,
+                  backgroundColor: 'rgba(0,0,0,0.68)',
+                  borderRadius: 14,
+                  paddingHorizontal: 10, paddingVertical: 4,
+                  borderWidth: 1, borderColor: 'rgba(255,255,255,0.22)',
                   ...Platform.select({
-                    ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.25, shadowRadius: 3 },
+                    ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.35, shadowRadius: 4 },
+                    android: { elevation: 2 },
                   }),
                 }}>
-                  <IconVideo size={11} color="rgba(255,255,255,0.95)" />
-                  <Text style={{ fontSize: 11, color: '#fff', fontWeight: '600', letterSpacing: 0.2 }}>{vidDurationStr || vidSizeStr}</Text>
+                  <IconVideo size={12} color="rgba(255,255,255,0.95)" />
+                  <Text style={{ fontSize: 11.5, color: '#fff', fontWeight: '700', letterSpacing: 0.3, fontVariant: ['tabular-nums'] }}>{vidDurationStr || vidSizeStr}</Text>
                 </View>
               )}
               {/* Time + read receipts pill bottom-right (WhatsApp-style).
