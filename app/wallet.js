@@ -551,7 +551,7 @@ export default function WalletScreen() {
         <Animated.View style={[styles.heroBalRow, { transform: [{ scale: breathScale }] }]}>
           <IconDiamond size={42} color="#fff" style={{ marginRight: 10 }} />
           <Text style={styles.heroBalVal} numberOfLines={1} adjustsFontSizeToFit>
-            {formatInt(balance, language)}
+            {hideAmounts ? '••••' : formatInt(balance, language)}
           </Text>
         </Animated.View>
         <Text style={styles.heroSub}>
@@ -973,7 +973,18 @@ export default function WalletScreen() {
   );
 
   // Subset of items to render: top 5 if collapsed, all if "Ver tudo" tapped.
-  const visibleItems = showAllHistory ? items : items.slice(0, 5);
+  // [WAVE 51] When expanded, apply category filter chips. When collapsed,
+  // ignore the filter and show top 5 ledger rows as a teaser.
+  const filteredHistory = useMemo(() => {
+    if (historyFilter === 'all') return items;
+    return items.filter(it => {
+      if (historyFilter === 'cashout') return it.kind === 'cashout' || it.kind === 'payout';
+      if (historyFilter === 'in')  return it.direction === 'credit';
+      if (historyFilter === 'out') return it.direction === 'debit' && it.kind !== 'cashout' && it.kind !== 'payout';
+      return true;
+    });
+  }, [items, historyFilter]);
+  const visibleItems = showAllHistory ? filteredHistory : items.slice(0, 5);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
