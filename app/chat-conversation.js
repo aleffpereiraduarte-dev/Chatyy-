@@ -17098,7 +17098,11 @@ export default function ChatConversationScreen() {
                     backdrop already provides shape/color; the shimmer just
                     needs to whisper "still working" — same pattern WhatsApp
                     uses. translateX driven via shared mediaShimmerAnim. */}
-                {!imgUploading && !imgFailed && downloadProgress[msg.id] !== undefined && !msg._localUri && (
+                {/* WAVE 35 hotfix: shimmer só aparece quando NÃO há fonte local
+                    nenhuma (nem _localUri nem imgLocalPath nem fullUri file://).
+                    Antes (WAVE 34) ficava preso em msgs com local_path no SQLite
+                    porque _localUri pode estar vazio mesmo com arquivo no disco. */}
+                {!imgUploading && !imgFailed && downloadProgress[msg.id] !== undefined && !msg._localUri && !imgLocalPath && !(typeof fullUri === 'string' && fullUri.startsWith('file://')) && (
                   <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, width: imgBoxW, height: imgBoxH, overflow: 'hidden', zIndex: 1 }}>
                     <Animated.View
                       style={{

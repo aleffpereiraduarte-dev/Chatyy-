@@ -4706,6 +4706,8 @@ export default {
   'wallet.myDiamonds': 'Mis diamantes',
   'wallet.topupCta': 'Toca para comprar diamantes',
   'wallet.diamondsLabel': 'diamantes',
+  'wallet.sendAction': 'Enviar',
+  'wallet.cashoutAction': 'Retirar',
   'diamondShop.title': 'Tienda de Diamantes',
   'diamondShop.heroSubtitle': 'Compra diamantes para enviar a amigos, dar propina a creadores y desbloquear contenido.',
   'diamondShop.bestValue': 'Mejor valor',

@@ -4709,6 +4709,8 @@ export default {
   'wallet.myDiamonds': 'My diamonds',
   'wallet.topupCta': 'Tap to buy diamonds',
   'wallet.diamondsLabel': 'diamonds',
+  'wallet.sendAction': 'Send',
+  'wallet.cashoutAction': 'Cash out',
   'diamondShop.title': 'Diamond Shop',
   'diamondShop.heroSubtitle': 'Buy diamonds to send to friends, tip creators, and unlock content.',
   'diamondShop.bestValue': 'Best value',
