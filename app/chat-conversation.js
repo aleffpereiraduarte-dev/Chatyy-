@@ -87,8 +87,24 @@ import { getCachedUri, preCacheUrls, cacheMedia, saveMediaPermanent, saveConvers
 // main image) already imports the real expo-image — only the backdrop
 // layers in this file were broken.
 let _ExpoImageReal = Image;
-try { _ExpoImageReal = require('expo-image').Image; } catch {}
+let _ExpoImageLoadFailed = false;
+try {
+  _ExpoImageReal = require('expo-image').Image;
+  if (!_ExpoImageReal) {
+    _ExpoImageReal = Image;
+    _ExpoImageLoadFailed = true;
+  }
+} catch (e) {
+  _ExpoImageLoadFailed = true;
+  // [WAVE 58 2026-05-21] Surface require('expo-image') failure in __DEV__ —
+  // silent catch in WAVE 45 hid the case where the native module isn't in
+  // the bundle (causing photo thumbs to show only HSL pink in Android).
+  if (__DEV__) try { console.warn('[THUMB-DIAG] expo-image require failed:', e?.message || e); } catch {}
+}
 const ExpoImage = _ExpoImageReal;
+// Export diag so the bubble render can read this and fall back to RN Image
+// with a remote URL backdrop (which RN Image DOES decode without blurhash).
+const __ExpoImageAvailable = !_ExpoImageLoadFailed;
 // LinearGradient (only used by the video poster overlay for legibility of
 // the duration pill). Lazy-required so a missing native module doesn't
 // break the entire chat screen.
@@ -17303,8 +17319,17 @@ export default function ChatConversationScreen() {
               const _tkey = `img:${msg.id}`;
               if (!globalThis.__chatyy_thumb_trace.has(_tkey)) {
                 globalThis.__chatyy_thumb_trace.add(_tkey);
-                const _src = msg._localUri ? 'localUri' : imgLocalPath ? 'sqliteLocalPath' : msg.blurhash ? 'blurhash' : lqipUri ? 'lqip' : thumbUri ? 'thumb' : 'hsl-only';
-                console.log('[THUMB-TRACE]', msg.id, _src, { hasFileUrl: !!msg.file_url, w: _w, h: _h });
+                // [WAVE 58 2026-05-21] Added remote-bd source (defense-in-depth
+                // blurred remote URL when no other backdrop is available) +
+                // expoImageAvailable flag so diag reveals if require failed.
+                const _src = msg._localUri ? 'localUri'
+                  : imgLocalPath ? 'sqliteLocalPath'
+                  : msg.blurhash ? 'blurhash'
+                  : lqipUri ? 'lqip'
+                  : thumbUri ? 'thumb'
+                  : msg.file_url ? 'remote-bd'
+                  : 'hsl-only';
+                console.log('[THUMB-TRACE]', msg.id, _src, { hasFileUrl: !!msg.file_url, w: _w, h: _h, expoImageAvailable: __ExpoImageAvailable });
               }
             } catch {}
           }
@@ -17497,6 +17522,39 @@ export default function ChatConversationScreen() {
                     }}
                   />
                 )}
+                {/* [WAVE 58 2026-05-21] DEFENSE-IN-DEPTH photo backdrop.
+                    User report: "thumb das fotos no Android ta so rosa nao ta certo"
+                    after WAVE 45. Root cause: backend does NOT generate `blurhash`
+                    nor `image_variants` (only `thumb_b64` for new uploads). Legacy
+                    msgs + uploads where GD lib failed → no progressive backdrop
+                    at all. ChatMedia below renders only when bytes arrive AND
+                    the ExpoImage native decoder fires onLoadEnd — Android can
+                    take 800-3000ms over cellular. During that window only the
+                    HSL pink z=0 shows.
+                    Fix: paint the FULL remote URL here at z=1 with heavy
+                    blurRadius=20 — guarantees that as soon as ANY bytes arrive
+                    on Android, the user sees a blurry version of the real photo
+                    sitting OVER the HSL pink. Once ChatMedia paints the unblurred
+                    version above (in normal flow), this layer is hidden behind it.
+                    Gated on: no upload, no local file, no other backdrop source,
+                    AND we have a remote file_url. msg._localUri / imgLocalPath
+                    skip this layer because the file:// path already paints
+                    instantly via ChatMedia. */}
+                {!imgUploading && !imgFailed && !msg.blurhash && !lqipUri && !thumbUri && !msg._localUri && !imgLocalPath && msg.file_url && (
+                  <ExpoImage
+                    key={`remote-bd-${msg.id}`}
+                    source={{ uri: typeof fullUri === 'string' && fullUri.startsWith('http') ? fullUri : (msg.file_url.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`) }}
+                    style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', top: 0, left: 0, zIndex: 1 }}
+                    contentFit="cover"
+                    cachePolicy="memory-disk"
+                    blurRadius={20}
+                    priority="high"
+                    recyclingKey={`remote-bd-${msg.id}`}
+                    onError={() => {
+                      if (__DEV__) console.warn('[THUMB-DIAG] remote-bd onError', msg.id, msg.file_url);
+                    }}
+                  />
+                )}
                 {/* [WAVE 34 2026-05-20] Shimmer skeleton overlay. Visible while
                     the full image hasn't emitted onLoadEnd AND we have no
                     local file. Sits above the blurhash/lqip backdrop, below
@@ -17533,7 +17591,12 @@ export default function ChatConversationScreen() {
                   uri={fullUri}
                   messageId={msg.id}
                   fileSize={msg.file_size || 0}
-                  style={{ width: imgBoxW, height: imgBoxH, opacity: imgUploading ? 0.7 : 1 }}
+                  /* [WAVE 58 2026-05-21] Explicit zIndex 3 so the main image
+                     always paints ABOVE the WAVE 58 remote-blurred backdrop
+                     (z=1) AND the shimmer overlay (z=2). Previously this was
+                     normal-flow which Android sometimes rendered BEHIND
+                     absolute-positioned siblings with no explicit z. */
+                  style={{ width: imgBoxW, height: imgBoxH, opacity: imgUploading ? 0.7 : 1, zIndex: 3 }}
                   contentFit="cover"
                   // Local cached file:// → no transition, instant. Remote
                   // first paint → 280ms cross-dissolve over the blurhash
