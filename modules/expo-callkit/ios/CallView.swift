@@ -30,18 +30,24 @@ import Combine
 import LiveKitClient
 import AVKit
 
-// MARK: - [Wave C-2] Group participant model
+// MARK: - [Wave C-2] 1:1 call participant model
 
-/// A remote participant in a multi-person call. The VC populates this array
-/// from `room.remoteParticipants` and keeps it up-to-date via RoomDelegate
-/// callbacks so the grid reflects the live room state without requiring a full
-/// Room re-scan on every event.
+/// Lightweight participant model used only by CallView's 1:1 multi-participant
+/// grid. Deliberately separate from `GroupParticipant` (GroupCallView.swift)
+/// which carries the full group-call roster state (audioMuted, handRaised,
+/// connectionQuality, etc.) — naming it `CallParticipant` avoids the
+/// `invalid redeclaration` Swift error that fires when two source files in the
+/// same module define identically-named types.
+///
+/// The VC populates this array from `room.remoteParticipants` and keeps it
+/// up-to-date via RoomDelegate callbacks so the grid reflects live room state
+/// without requiring a full Room re-scan on every event.
 ///
 /// `videoTrack` is nil when the participant hasn't published video yet, is
 /// muted, or the call is audio-only. The tile shows an avatar block in that
 /// case.  The VC sets `videoTrack` on `didSubscribeTrack` (kind == .video) and
 /// clears it on `didUnsubscribeTrack`.
-struct GroupParticipant: Identifiable, Equatable {
+struct CallParticipant: Identifiable, Equatable {
     /// LiveKit identity string — unique per-participant in a room.
     let id: String
     /// Display name (may be empty).
@@ -54,7 +60,7 @@ struct GroupParticipant: Identifiable, Equatable {
     /// Camera VideoTrack from LiveKit subscription. Nil → show avatar tile.
     var videoTrack: VideoTrack?
 
-    static func == (lhs: GroupParticipant, rhs: GroupParticipant) -> Bool {
+    static func == (lhs: CallParticipant, rhs: CallParticipant) -> Bool {
         lhs.id == rhs.id && lhs.name == rhs.name
         // Intentionally ignores videoTrack so SwiftUI .onChange(of:) on the
         // array fires only for join/leave events, not every track-update.
@@ -1280,7 +1286,7 @@ struct CallView: View {
 /// The name label is pinned to the bottom-leading corner, mirroring WhatsApp
 /// and Google Meet group-call tile labelling conventions.
 struct GroupTileView: View {
-    let participant: GroupParticipant
+    let participant: CallParticipant
     let chipColor: Color
     let backgroundColor: Color
 

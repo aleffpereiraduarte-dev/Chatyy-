@@ -88,7 +88,7 @@ final class CallSessionState: ObservableObject {
     // or video muted). CallViewController mutates this array on the main
     // thread from `participantDidConnect`, `participantDidDisconnect`, and
     // `didSubscribeTrack` / `didUnsubscribeTrack` delegates.
-    @Published var groupParticipants: [GroupParticipant] = []
+    @Published var groupParticipants: [CallParticipant] = []
 
     init(status: String = "Conectando\u{2026}",
          micEnabled: Bool = true,
@@ -1826,7 +1826,7 @@ extension CallViewController: RoomDelegate {
             // delivers the video publication.
             if !self.session.groupParticipants.contains(where: { $0.id == identity }) {
                 self.session.groupParticipants.append(
-                    GroupParticipant(id: identity, name: participant.name ?? "")
+                    CallParticipant(id: identity, name: participant.name ?? "")
                 )
             }
         }
@@ -1886,9 +1886,9 @@ extension CallViewController: RoomDelegate {
                 self.session.groupParticipants[idx].videoTrack = track
             } else {
                 self.session.groupParticipants.append(
-                    GroupParticipant(id: identity,
-                                     name: participant.name ?? "",
-                                     videoTrack: track)
+                    CallParticipant(id: identity,
+                                    name: participant.name ?? "",
+                                    videoTrack: track)
                 )
             }
         }
