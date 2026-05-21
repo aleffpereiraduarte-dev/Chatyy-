@@ -264,6 +264,18 @@ export default function LiveViewerScreen() {
   const [showViewersList, setShowViewersList] = useState(false);
   const [chatMessages, setChatMessages] = useState([]);
   const [liveEnded, setLiveEnded] = useState(false);
+  // [WAVE 111 2026-05-21] Pre-join ended detection — REST check fires
+  // immediately on mount BEFORE the WS live_join, so a viewer who opens
+  // a stale session_id (live ended minutes ago) sees "Live encerrada"
+  // instantly instead of staring at "Conectando..." for 30s.
+  // null = checking, false = live active (or check failed — safe default),
+  // true = confirmed ended before join.
+  const [preJoinChecking, setPreJoinChecking] = useState(true);
+  // [WAVE 111 2026-05-21] HLS warmup — set to true once the WS confirms
+  // stream_type=cf_hls but hls_url is still absent (host WHIP/RTMP not
+  // yet publishing). Drives a friendlier "Aguardando o host iniciar..."
+  // message in the connecting overlay instead of the opaque spinner.
+  const [hlsWarmup, setHlsWarmup] = useState(false);
   // Replay save flow — viewer can bookmark the recorded live so it shows
   // up in /lives-saved after CF Stream finalizes the VOD (30s-2min).
   // `replaySaved` flips immediately on tap (optimistic) and we call the
@@ -428,6 +440,10 @@ export default function LiveViewerScreen() {
   // didn't dispatch `live_session_info` at all, so cf_hls viewers stalled on
   // `streamType='webrtc'` forever waiting for an offer that never came.
   const liveSessionInfoSeenRef = useRef(false);
+  // [WAVE 110] LiveKit viewer room ref — non-null when connected via LK SFU.
+  const lkViewerRoomRef = useRef(null);
+  // Tracks remote LK video/audio tracks so the render tree can show them.
+  const [lkTracks, setLkTracks] = useState([]); // [{track, participant}]
   // Full-screen container ref — used by react-native-view-shot to snap the
   // live frame + comment overlay (Instagram/TikTok "save snap" parity).
   const screenRef = useRef(null);
@@ -690,6 +706,44 @@ export default function LiveViewerScreen() {
     liveEndedRef.current = liveEnded;
   }, [liveEnded]);
 
+  // [WAVE 111 2026-05-21] Pre-join ended detection.
+  // Fires on mount before any WS live_join. Calls live_status_cf for this
+  // session_id. If the backend returns status=ended / ended_at present /
+  // is_live=false, flip liveEnded immediately so the viewer sees "Live
+  // encerrada" before connecting — covers Caso A (joined 6+ min after end).
+  // On any error or ambiguous response we clear preJoinChecking and let the
+  // normal WS path proceed — fail-open to avoid false ended screens.
+  useEffect(() => {
+    if (!paramSessionId) { setPreJoinChecking(false); return undefined; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await Promise.race([
+          api.liveStatusCf(paramSessionId),
+          new Promise((resolve) => setTimeout(() => resolve(null), 3000)),
+        ]);
+        if (cancelled) return;
+        if (!r) { setPreJoinChecking(false); return; } // timeout — proceed normally
+        const ds = String(r?.data?.status || r?.status || '').toLowerCase();
+        const endedAt = r?.data?.ended_at || r?.ended_at;
+        const isLive = r?.data?.is_live ?? r?.is_live;
+        const confirmedEnded = ds === 'ended' || ds === 'finished' || ds === 'complete'
+          || (endedAt != null && endedAt !== '' && endedAt !== '0')
+          || (isLive === false && (ds === 'ended' || ds === 'finished'));
+        console.log('[LIVE-TRACE] preJoinCheck', { sessionId: paramSessionId, ds, endedAt, isLive, confirmedEnded });
+        if (confirmedEnded) {
+          liveEndedRef.current = true;
+          setLiveEnded(true);
+        }
+      } catch (e) {
+        console.log('[LIVE-TRACE] preJoinCheck threw', { message: e?.message });
+      } finally {
+        if (!cancelled) setPreJoinChecking(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [paramSessionId]);
+
   useEffect(() => {
     if (connected || liveEnded) return undefined;
     // HLS sessions need a longer warm-up budget — CF Stream first-segment is
@@ -943,6 +997,7 @@ export default function LiveViewerScreen() {
           setStreamType('cf_hls');
           setHlsUrl(hls);
           setHlsError(false);
+          setHlsWarmup(false); // [WAVE 111] host started publishing
           setError('');
           hlsRetryAttemptRef.current = 0;
           if (hlsRetryTimerRef.current) {
@@ -955,8 +1010,11 @@ export default function LiveViewerScreen() {
         }
         if (pipeline === 'cf_stream' && cfUid && !hls) {
           // Input exists but host not publishing yet — keep polling, the
-          // host may be 5-15s behind us. Don't surface "publisher missing"
-          // from REST (the WS will tell us if needed).
+          // host may be 5-15s behind us. Surface warmup message via state
+          // so the connecting overlay can be more helpful than a bare spinner.
+          // [WAVE 111 2026-05-21] set hlsWarmup here too (REST path mirrors WS path).
+          setStreamType('cf_hls');
+          setHlsWarmup(true);
         }
         if (pipeline === 'legacy_p2p') {
           // Old WebRTC P2P — nothing to do here, the offer path handles it.
@@ -1078,6 +1136,14 @@ export default function LiveViewerScreen() {
     // when the user is viewing their own live. The early-return JSX below
     // renders a "this is your live" bounce-back card instead.
     if (isSelfLive) return undefined;
+    // [WAVE 111] Pre-join check still in-flight — hold off on WS connect
+    // so we don't send live_join to a session that's already ended. The
+    // check resolves in ≤3s, after which preJoinChecking flips false and
+    // this effect re-runs. If the session is already ended the liveEnded
+    // guard below will short-circuit before we open any socket.
+    if (preJoinChecking) return undefined;
+    // Pre-join check confirmed ended — skip WS entirely.
+    if (liveEnded) return undefined;
     // WebRTC absence is no longer fatal here — sessions that stream via HLS
     // (Cloudflare Stream) don't need a PeerConnection at all. We only bail
     // if WebRTC is missing AND the backend later confirms `stream_type` is
@@ -1130,7 +1196,56 @@ export default function LiveViewerScreen() {
             liveSessionInfoSeenRef.current = true;
           } else if (msg.stream_type === 'webrtc') {
             liveSessionInfoSeenRef.current = true;
+          } else if (msg.stream_type === 'livekit' || msg.pipeline === 'livekit') {
+            liveSessionInfoSeenRef.current = true;
           }
+          // [WAVE 110] LiveKit SFU path: backend sends pipeline='livekit'.
+          // We call live_join_lk to get a subscribe-only token and connect
+          // directly to the LK room. No HLS poll, no WHIP, no CF ICE.
+          if (msg.stream_type === 'livekit' || msg.pipeline === 'livekit') {
+            setStreamType('livekit');
+            setError('');
+            const _lkSid = msg.session_id || paramSessionId;
+            ;(async () => {
+              try {
+                const _lk = loadLiveKit();
+                if (!_lk?.Room) throw new Error('LK SDK not available');
+                const _joinRes = await api.liveJoinLk(_lkSid);
+                if (!_joinRes?.success || !_joinRes?.data?.lk_token) {
+                  throw new Error('live_join_lk failed: ' + (_joinRes?.message || 'no token'));
+                }
+                const { lk_url: _lkUrl, lk_token: _lkToken, lk_room: _lkRoom } = _joinRes.data;
+                const _room = new _lk.Room({ adaptiveStream: true, dynacast: false });
+                lkViewerRoomRef.current = _room;
+                const _collectTracks = () => {
+                  const _tracks = [];
+                  _room.remoteParticipants.forEach((p) => {
+                    p.trackPublications.forEach((pub) => {
+                      if (pub.track) _tracks.push({ track: pub.track, participant: p, kind: pub.kind });
+                    });
+                  });
+                  setLkTracks([..._tracks]);
+                };
+                _room.on(_lk.RoomEvent.TrackSubscribed, _collectTracks);
+                _room.on(_lk.RoomEvent.TrackUnsubscribed, _collectTracks);
+                _room.on(_lk.RoomEvent.ParticipantConnected, _collectTracks);
+                _room.on(_lk.RoomEvent.ParticipantDisconnected, _collectTracks);
+                _room.on(_lk.RoomEvent.Disconnected, () => {
+                  lkViewerRoomRef.current = null;
+                  setLkTracks([]);
+                });
+                await _room.connect(_lkUrl || 'wss://livekit.chatyy.com.br', _lkToken);
+                setConnected(true);
+                console.log('[WAVE-110] LK viewer connected — room', _lkRoom);
+                _collectTracks();
+              } catch (_lkErr) {
+                const _lkMsg = _lkErr?.message || String(_lkErr);
+                console.warn('[WAVE-110] LK viewer connect failed, falling back to webrtc:', _lkMsg);
+                setStreamType('webrtc');
+                setError('');
+              }
+            })();
+          } else if (msg.stream_type === 'cf_hls' && msg.hls_url) {
           // Backend tells us how this session is streamed. For Cloudflare
           // Stream we just hand the m3u8 URL to expo-video; for WebRTC we
           // fall through and wait for `live_offer` like before.
@@ -1138,6 +1253,7 @@ export default function LiveViewerScreen() {
             setStreamType('cf_hls');
             setHlsUrl(String(msg.hls_url));
             setHlsError(false);
+            setHlsWarmup(false); // [WAVE 111] host is now publishing
             setError('');
             // Reset retry state — fresh stream, fresh attempt budget.
             hlsRetryAttemptRef.current = 0;
@@ -1151,8 +1267,11 @@ export default function LiveViewerScreen() {
             // instead of leaving the viewer staring at a black "Conectando…"
             // forever. This catches the #2 silent fail: cf_input_uid set,
             // but no native RTMP publisher running on the host side.
+            // [WAVE 111] Also set hlsWarmup so the connecting overlay can
+            // show "Aguardando o host iniciar..." instead of the generic spinner.
             console.warn('[Live] cf_hls session has cf_input_uid but no hls_url — publisher path missing');
             setStreamType('cf_hls');
+            setHlsWarmup(true);
             setHlsError(true);
             setError(t('live.publisherMissing') || 'Aguardando o host publicar a transmissão...');
           } else if (msg.stream_type === 'webrtc') {
@@ -1627,7 +1746,7 @@ export default function LiveViewerScreen() {
       cohostRoomRef.current = null;
       cohostLocalTrackRef.current = null;
     };
-  }, [paramSessionId, user, isSelfLive]);
+  }, [paramSessionId, user, isSelfLive, preJoinChecking, liveEnded]);
 
   // TikTok-style cohost — host approved us → connect to LK room as publisher.
   // Camera + mic only; no screen share. We bail loudly via Alert if anything
@@ -2531,11 +2650,17 @@ export default function LiveViewerScreen() {
           size={96}
           style={styles.endedAvatar}
         />
-        <Text style={styles.endedText}>{t('live.liveEnded') || 'Live encerrada'}</Text>
+        <Text style={styles.endedText}>
+          {t('live.endedTitle') || 'Live encerrada'}
+        </Text>
         <Text style={styles.endedSub} numberOfLines={2}>
           {displayHostName
-            ? `${displayHostName} ${t('live.hostEnded') || 'encerrou a transmissão'}`
+            ? `${t('live.endedOf') || 'Live de'} ${displayHostName} ${t('live.hostEnded') || 'encerrou a transmissão'}`
             : (t('live.hostEnded') || 'O host encerrou a transmissão')}
+        </Text>
+        {/* [WAVE 111] Replay hint — informa que o replay pode estar disponível */}
+        <Text style={[styles.endedSub, { marginTop: 4, opacity: 0.7, fontSize: 12 }]} numberOfLines={2}>
+          {t('live.endedSubtitle') || 'Você pode ver o replay quando estiver disponível'}
         </Text>
 
         <View style={styles.endedActions}>
@@ -2651,15 +2776,17 @@ export default function LiveViewerScreen() {
 
         {/* Suggestion footer — drives the viewer back to the live tab so they
             can hop into another stream instead of bouncing out of the app
-            entirely. Mirrors Instagram's "Voltar para o feed" affordance. */}
+            entirely. Mirrors Instagram's "Voltar para o feed" affordance.
+            [WAVE 111] Now routes to /live-discover (lives feed) instead of
+            /chat so the CTA delivers on its promise of "other lives". */}
         <TouchableOpacity
-          onPress={() => { try { router.replace('/chat'); } catch { router.back(); } }}
+          onPress={() => { try { router.replace('/live-discover'); } catch { try { router.push('/live-discover'); } catch { router.back(); } } }}
           activeOpacity={0.7}
           style={styles.endedDiscover}
-          accessibilityLabel={t('live.discoverMore') || 'Descobrir mais lives'}
+          accessibilityLabel={t('live.seeOtherLives') || 'Ver outras lives'}
           accessibilityRole="button"
         >
-          <Text style={styles.endedDiscoverText}>{t('live.discoverMore') || 'Descobrir mais lives'}</Text>
+          <Text style={styles.endedDiscoverText}>{t('live.seeOtherLives') || 'Ver outras lives'}</Text>
         </TouchableOpacity>
       </Animated.View>
     );
@@ -2837,11 +2964,22 @@ export default function LiveViewerScreen() {
           hostName={displayHostName}
           hostEmail={displayHostEmail}
           errorText={
-            hlsError && streamType === 'cf_hls'
+            // [WAVE 111] hlsWarmup has its own warmupText prop — don't show
+            // as errorText so the viewer doesn't think something broke.
+            (hlsError && streamType === 'cf_hls' && !hlsWarmup)
               ? (t('live.streamUnavailable') || 'Live indisponível')
-              : (!!error && /unavail|connection failed|stream/i.test(error) ? error : null)
+              : (!!error && /unavail|connection failed|stream/i.test(error) && !hlsWarmup ? error : null)
           }
-          showRetry={(hlsError && streamType === 'cf_hls') || (!!error && /unavail|stream/i.test(error))}
+          // [WAVE 111 2026-05-21] Warmup hint — host is live but WHIP/RTMP
+          // not publishing yet (HLS input created, no segments). Shows amber
+          // "Aguardando o host iniciar..." text under the spinner so the
+          // viewer understands they should wait, not that it failed.
+          warmupText={
+            hlsWarmup
+              ? (t('live.warmupWaiting') || 'Aguardando o host iniciar a transmissão...')
+              : null
+          }
+          showRetry={(hlsError && streamType === 'cf_hls' && !hlsWarmup) || (!!error && /unavail|stream/i.test(error) && !hlsWarmup)}
           onRetry={() => {
             setError('');
             if (streamType === 'cf_hls') {

@@ -590,25 +590,28 @@ function CallScreenInner() {
       setConnectPhase('slow');
       setShowSlowConnectOverlay(true);
     }, 15000);
-    // [WAVE 74 2026-05-21] Hard 25s ceiling. If the peer never joined the
-    // LK room by 25s, something is wrong (network, server, room mismatch,
-    // SFU eviction). Surface connectionFailed so the existing "Tentar de
-    // novo / Desligar" UI is exposed. 25s matches WhatsApp's pre-answer
-    // ceiling. We DO NOT auto-end the call — user picks retry vs hangup.
+    // [WAVE 109 2026-05-21] Hard 60s ceiling (bumped from 25s).
+    // Root cause of "Não foi possível conectar": iOS cold-start VoIP push
+    // answer path needs up to 30s for WS reconnect + LK token fetch + SFU
+    // join. Old 25s ceiling was firing before callee's LK Room.connect()
+    // completed, leaving caller on the failed screen even though the callee
+    // was actively answering. Primary signal is now LK ParticipantConnected
+    // (fires as soon as callee joins SFU) which resets this timer; 60s is
+    // only the safety net for the case where LK itself is unreachable.
     const tFailed = setTimeout(() => {
       if (endedRef.current || peerConnected || peerRinging) return;
       try {
-        console.warn('[CALL-TRACE][HARD-FAIL] 25s elapsed without peer join — connectionFailed', {
+        console.warn('[CALL-TRACE][HARD-FAIL] 60s elapsed without peer join — connectionFailed', {
           callId,
           ts: Date.now(),
         });
       } catch {}
       // [WAVE 104F] Telemetry — connect timeout reached.
-      try { _callDiagAppend('error', 'connect timeout — 25s without peer join', { call_id: callId, role: isCaller ? 'caller' : 'callee', peer_ringing: peerRinging }); } catch {}
+      try { _callDiagAppend('error', 'connect timeout — 60s without peer join', { call_id: callId, role: isCaller ? 'caller' : 'callee', peer_ringing: peerRinging }); } catch {}
       try {
         const api = require('../services/api');
         api.apiCall?.('push_diag', {
-          step: 'lk_connect_hard_fail_25s',
+          step: 'lk_connect_hard_fail_60s',
           platform: Platform.OS,
           info: `cid=${String(callId).slice(-12)} peerConnected=${peerConnected} peerRinging=${peerRinging}`,
           anon_id: `call-${String(callId).slice(-12)}`,
@@ -631,7 +634,7 @@ function CallScreenInner() {
           : (t('call.connectionFailed') || 'Não foi possível conectar. Tente novamente.');
         setErrorMsg(msg);
       } catch {}
-    }, 25000);
+    }, 60000);
     return () => {
       clearTimeout(tEstablishing);
       clearTimeout(tSlow);
@@ -1672,7 +1675,16 @@ function CallScreenInner() {
     r.on(RoomEvent.ParticipantConnected, (participant) => {
       if (endedRef.current) return;
       console.log('[Call] Participant connected:', participant.identity);
+      // [WAVE 109 2026-05-21] Primary callee-accepted signal: LK ParticipantConnected
+      // fires as soon as the callee joins the SFU room, which is faster and more
+      // reliable than WS call_accepted (which requires a healthy WS socket on the
+      // callee side — can be dead on cold-start from VoIP push). This is the
+      // WhatsApp pattern: caller detects answer via media-layer join, not signaling.
+      // Also set peerRinging=true so callerTimeoutRef is cleared (it checks peerConnected
+      // which is set below, but peerRinging clears it in the WS handler too — belt+suspenders).
       setPeerConnected(true);
+      setPeerRinging(true);
+      if (callerTimeoutRef.current) { clearTimeout(callerTimeoutRef.current); callerTimeoutRef.current = null; }
       peerJoinedAtRef.current = Date.now();
       setRemoteParticipant(participant);
       _refreshRemoteTracks(participant);

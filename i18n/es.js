@@ -4502,6 +4502,11 @@ export default {
   'live.watchingNow': 'En vivo ahora',
   'live.endedTitle': 'Transmisión finalizada',
   'live.endedBody': 'Esta transmisión ya ha terminado.',
+  // [WAVE 111 2026-05-21]
+  'live.endedOf': 'Transmisión de',
+  'live.endedSubtitle': 'Puedes ver el replay cuando esté disponible',
+  'live.warmupWaiting': 'Esperando que el host inicie la transmisión...',
+  'live.seeOtherLives': 'Ver otras transmisiones',
   'live.joinNewerSession': 'Entrar a la nueva transmisión de {name}',
   'live.searchNewerSession': 'Buscar nueva transmisión de {name}',
   'live.searching': 'Buscando…',

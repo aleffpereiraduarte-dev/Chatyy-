@@ -18,6 +18,11 @@ export default function LiveConnectingOverlay({
   hostName,
   hostEmail,
   errorText = null,
+  // [WAVE 111 2026-05-21] warmupText — shown when the live IS active but
+  // the host hasn't started publishing yet (HLS cf_input_uid exists, no
+  // hls_url). Renders a soft amber message below the spinner so the viewer
+  // knows to wait, not that something is broken. No retry/back buttons.
+  warmupText = null,
   showRetry = false,
   onRetry,
   onBack,
@@ -119,6 +124,13 @@ export default function LiveConnectingOverlay({
               ? connectingTo.replace('{name}', hostName)
               : connectingFallback}
           </Animated.Text>
+          {/* [WAVE 111] HLS warmup hint — amber text under spinner when host
+              is live but hasn't started the WHIP/RTMP publish yet. */}
+          {warmupText ? (
+            <Animated.Text style={[styles.warmupText, { opacity: pulse }]}>
+              {warmupText}
+            </Animated.Text>
+          ) : null}
         </>
       )}
     </Animated.View>
@@ -175,6 +187,15 @@ const styles = StyleSheet.create({
     marginTop: 14,
     textAlign: 'center',
     paddingHorizontal: 22,
+  },
+  warmupText: {
+    color: '#f59e0b',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 10,
+    textAlign: 'center',
+    paddingHorizontal: 28,
+    letterSpacing: 0.2,
   },
   actions: {
     flexDirection: 'row',

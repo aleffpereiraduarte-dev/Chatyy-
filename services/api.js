@@ -7170,6 +7170,22 @@ export async function liveStartCf(title, opts = {}) {
 export async function liveStatusCf(sessionId) {
   return apiCall('live_status_cf', { session_id: sessionId }, 'POST');
 }
+// ─── LiveKit SFU pipeline — WAVE 110 ───
+// Host: create LK room + mint publish token. Viewer: subscribe-only token.
+// Both resolve to { session_id, lk_room, lk_url, lk_token, pipeline:'livekit' }.
+export async function liveStartLk(title, opts = {}) {
+  const payload = { title: title || 'Live' };
+  if (opts && opts.audience) payload.audience = opts.audience;
+  if (opts && opts.category) payload.category = opts.category;
+  if (opts && opts.subscribersOnly) payload.subscribers_only = 1;
+  return apiCall('live_start_lk', payload, 'POST');
+}
+export async function liveJoinLk(sessionId) {
+  return apiCall('live_join_lk', { session_id: sessionId }, 'POST');
+}
+export async function liveStatusLk(sessionId) {
+  return apiCall('live_status_lk', { session_id: sessionId }, 'POST');
+}
 // List CF Stream live sessions (host-only — own sessions).
 export async function liveListCf() { return apiCall('live_list_cf', {}, 'POST'); }
 export async function liveList() { return apiCall('live_list', {}, 'POST'); }

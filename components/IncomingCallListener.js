@@ -1222,21 +1222,25 @@ export default function IncomingCallListener() {
             // of the user sitting on a blank CallKit accept-then-nothing.
           }
 
-          // Wait for WS to connect + authenticate, then:
-          // 1. Send call_accepted (with callerEmail from callStateRef, which WS call_invite will update)
-          // 2. Wait for pending SDP offer from server
-          // 3. Navigate to call screen
-          let navigated = false;
+          // [WAVE 109 2026-05-21] Decouple navigation from WS call_accepted.
+          // ROOT CAUSE of "Não foi possível conectar": CallKit answer fires
+          // here, WS is dead (cold-start / background socket killed by iOS).
+          // Old code waited for mailWs.isConnected BEFORE navigating — if WS
+          // reconnect took >25s, caller's hard-fail timer fired first and the
+          // caller saw "A pessoa não atendeu". Callee never even got to /call.
+          //
+          // Fix: navigate to /call IMMEDIATELY (LK Room.connect() is what
+          // matters — WS is optional for LK media). Send call_accepted async
+          // in background. Caller detects callee join via LK ParticipantConnected
+          // (WhatsApp pattern) so the UI transitions without needing WS ack.
           const doNavigate = () => {
-            if (navigated) return;
-            navigated = true;
             // Re-read callStateRef — WS call_invite may have updated it with callerEmail
             const updatedCall = callStateRef.current;
             const finalCallerEmail = updatedCall?.caller_email || callerEmail;
             const finalCallerName = updatedCall?.caller_name || callerName;
             const finalConversationId = updatedCall?.conversation_id || conversationId;
             callStateRef.current = null;
-            console.log('[IncomingCall] Navigating to call: email=' + finalCallerEmail + ' hasSDP=' + !!_pendingOfferSdp);
+            console.log('[IncomingCall] Navigating to call (immediate): email=' + finalCallerEmail);
             // [hybrid 2026-05-16] Push /call.js on all platforms — the rich
             // JS UI is now the visible screen on mobile too. Native CallKit /
             // IncomingCallActivity stay for ringing/lock-screen, but the
@@ -1254,18 +1258,23 @@ export default function IncomingCallListener() {
             router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(finalCallerName)}&contactEmail=${encodeURIComponent(finalCallerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(finalConversationId)}&isCaller=0${adoptParam}`);
           };
 
+          // Navigate immediately — don't gate on WS connection.
+          voipDiag('navigate_immediate_wave109', callId);
+          doNavigate();
+
+          // Send call_accepted async in background (best-effort, caller also
+          // detects via LK ParticipantConnected as primary signal).
           let attempts = 0;
           let acceptSent = false;
           const poll = () => {
             attempts++;
-            if (navigated) return;
 
             if (mailWs.isConnected && !acceptSent) {
               // WS connected — send call_accepted
               // Re-read callerEmail from callStateRef (WS call_invite may have arrived by now)
               const email = callStateRef.current?.caller_email || callerEmail;
               const convId = callStateRef.current?.conversation_id || conversationId;
-              console.log('[IncomingCall] WS connected (attempt ' + attempts + '), sending call_accepted to ' + email);
+              console.log('[IncomingCall] BG poll WS connected (attempt ' + attempts + '), sending call_accepted to ' + email);
               voipDiag('ws_connected_sending_accept', callId, { attempts, email, hasEmail: !!email });
               mailWs._send({
                 type: 'call_accepted',
@@ -1277,33 +1286,18 @@ export default function IncomingCallListener() {
               voipDiag('accept_sent', callId, { email });
             }
 
-            // [bug 2026-05-15 livekit-native-answer-not-sync]
-            // LiveKit does NOT use SDP-over-WS (no `_pendingOfferSdp` event).
-            // The peer-to-peer SDP negotiation happens INSIDE the LiveKit
-            // room after both clients call r.connect(). So waiting for
-            // `_pendingOfferSdp` here blocks navigation forever and the
-            // user sits on the native CallKit/IncomingCallActivity screen
-            // doing nothing — that's the "native answer não funciona" bug.
-            // As soon as WS `call_accepted` is sent, just navigate.
-            if (acceptSent) {
-              console.log('[IncomingCall] LiveKit: accept sent, navigating immediately');
-              voipDiag('lk_accept_sent_navigating', callId, { attempts });
-              doNavigate();
-              return;
-            }
-
-            // Keep polling for up to 30s — token decrypt + WS handshake +
-            // server round-trip can be slow on cellular cold-start. Once
-            // `acceptSent` flips true the block above navigates.
+            // Keep polling to send call_accepted for up to 30s even after
+            // navigation. Server is idempotent; sends are a no-op after state
+            // flips. Caller primary signal is LK ParticipantConnected; WS
+            // call_accepted is fallback for older clients + server state.
+            if (acceptSent) return; // done
             if (attempts < 60) {
               if (attempts === 1 || attempts === 5 || attempts === 15 || attempts === 30) {
-                voipDiag('poll_tick', callId, { attempts, wsConnected: !!mailWs.isConnected, acceptSent, hasSDP: !!_pendingOfferSdp });
+                voipDiag('poll_tick', callId, { attempts, wsConnected: !!mailWs.isConnected, acceptSent });
               }
               setTimeout(poll, 500);
             } else {
-              console.log('[IncomingCall] Timeout after 30s, navigating anyway (hasSDP=' + !!_pendingOfferSdp + ' accepted=' + acceptSent + ')');
-              voipDiag('timeout_30s', callId, { hasSDP: !!_pendingOfferSdp, acceptSent });
-              doNavigate();
+              voipDiag('poll_timeout_30s', callId, { acceptSent });
             }
           };
           poll();

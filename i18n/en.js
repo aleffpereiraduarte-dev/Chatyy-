@@ -4505,6 +4505,11 @@ export default {
   'live.watchingNow': 'Watch live now',
   'live.endedTitle': 'Live ended',
   'live.endedBody': 'This broadcast has already ended.',
+  // [WAVE 111 2026-05-21]
+  'live.endedOf': "{name}'s",
+  'live.endedSubtitle': 'You can watch the replay when it becomes available',
+  'live.warmupWaiting': 'Waiting for the host to start the stream...',
+  'live.seeOtherLives': 'See other lives',
   'live.joinNewerSession': "Join {name}'s new live",
   'live.searchNewerSession': "Search for {name}'s new live",
   'live.searching': 'Searching…',

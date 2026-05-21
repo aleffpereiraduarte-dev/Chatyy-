@@ -50,6 +50,34 @@ if (Platform.OS === 'web') {
   }
 }
 
+// [WAVE 110] LiveKit SFU host publishing — lazy-loaded same as call.js so the
+// cold-start path for the broadcast screen pays no cost if LK never kicks in.
+// livekit-client + @livekit/react-native are already in the bundle (call.js
+// drags them in), so the require resolves synchronously off Metro's cache.
+let _LK_Room, _LK_RoomEvent, _LK_VideoView, _LK_createLocalVideoTrack, _LK_createLocalAudioTrack;
+function _loadLkBroadcast() {
+  if (_LK_Room) return true;
+  try {
+    const lkc = require('livekit-client');
+    _LK_Room = lkc.Room;
+    _LK_RoomEvent = lkc.RoomEvent;
+    _LK_createLocalVideoTrack = lkc.createLocalVideoTrack;
+    _LK_createLocalAudioTrack = lkc.createLocalAudioTrack;
+    try {
+      const lkrn = require('@livekit/react-native');
+      _LK_VideoView = lkrn.VideoView || lkrn.VideoRenderer;
+      if (typeof lkrn.registerGlobals === 'function' && !_LK_Room._rnRegistered) {
+        lkrn.registerGlobals();
+        _LK_Room._rnRegistered = true;
+      }
+    } catch (_) {}
+    return true;
+  } catch (e) {
+    console.warn('[Live-LK] load failed:', e?.message);
+    return false;
+  }
+}
+
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const WS_URL = Platform.OS === 'web' ? 'wss://chatyy.com.br/ws' : 'wss://ws.chatyy.com.br/ws';
 const LIVE_RED = '#dc2626';
@@ -323,6 +351,11 @@ export default function LiveBroadcastScreen() {
   const cfPublisherRef = useRef(null);
   const cfModeRef = useRef(false);
   const cfIngestRef = useRef(null); // { cf_input_uid, hls_url, rtmps_url, rtmps_key }
+  // [WAVE 110] LiveKit SFU host pipeline. lkModeRef=true once we own the session
+  // via live_start_lk. lkRoomRef holds the connected LK Room so performEndLive
+  // can disconnect cleanly before hitting live_end_cf / live_end.
+  const lkModeRef = useRef(false);
+  const lkRoomRef = useRef(null); // livekit-client Room instance when publishing
   // Single-flight gate for handleStartLive — without this a double-tap
   // (or a re-render that immediately re-fires the press) calls live_start
   // twice in <1s, creating TWO chat_live_sessions rows. The host's UI only
@@ -1447,35 +1480,77 @@ export default function LiveBroadcastScreen() {
       let res;
       let sid;
       if (wantsCf) {
-        res = await api.liveStartCf(liveTitle, { audience, category: liveCategory, subscribersOnly });
-        sid = res.data?.session_id || res.data?.session?.id;
+        // [WAVE 110] Race CF against LK: LK wins if CF WHIP fails ICE (mobile NAT).
+        // live_start_lk is the preferred path — it uses the same self-hosted SFU
+        // that already works for 1:1 calls. CF stays as the fallback so VOD
+        // recording still lands on Cloudflare when LK is unavailable.
+        const lkOpts = { audience, category: liveCategory, subscribersOnly };
+        const lkPromise = api.liveStartLk(liveTitle, lkOpts);
+        const cfPromise = api.liveStartCf(liveTitle, { ...lkOpts });
+        const wrapM = (p, mode) => p.then((r) => ({ r, mode })).catch((e) => ({ r: null, mode, err: e }));
+        const lkW = wrapM(lkPromise, 'lk');
+        const cfW = wrapM(cfPromise, 'cf');
+        const pick = (x) => (x?.r?.success && (x.r.data?.session_id || x.r.data?.id)) ? x : null;
+        try {
+          const ceiling = new Promise((_, rej) => setTimeout(() => rej(new Error('race ceiling 25s')), 25000));
+          const winner = await Promise.race([
+            lkW.then(x => pick(x) || new Promise(() => {})),
+            cfW.then(x => pick(x) || new Promise(() => {})),
+            ceiling,
+          ]);
+          res = winner.r;
+          sid = res?.data?.session_id || res?.data?.id;
+          if (winner.mode === 'lk') {
+            lkModeRef.current = true;
+            cfModeRef.current = false;
+            console.log('[Live] WAVE-110 race winner: live_start_lk (LK SFU)');
+          } else {
+            cfModeRef.current = true;
+            lkModeRef.current = false;
+            console.log('[Live] WAVE-110 race winner: live_start_cf (CF fallback)');
+          }
+        } catch {
+          // Ceiling hit — grab whichever settled first.
+          try {
+            const settled = await Promise.race([lkW, cfW]);
+            res = settled?.r;
+            sid = res?.data?.session_id || res?.data?.id;
+            if (settled?.mode === 'lk') { lkModeRef.current = true; cfModeRef.current = false; }
+            else { cfModeRef.current = true; lkModeRef.current = false; }
+          } catch {}
+        }
       } else {
-        // [WAVE 37 2026-05-20] User report: "live ta dando erro ao iniciar".
-        // Previously we gave live_start a 7s head start before kicking off
-        // live_start_cf, which still left users staring at a spinner when
-        // P2P backend was slow but not dead. Now both endpoints race from
-        // t=0 — the FIRST one to return a valid session_id wins. CF costs
-        // a little more (creates a CF input that may be dropped) but
-        // recovers instantly from any P2P-only stall.
+        // [WAVE 110] Three-way race: LK (preferred) + P2P + CF.
+        // LK wins most of the time — self-hosted SFU, no ICE NAT issues.
+        // P2P and CF remain for devices where LK SDK fails to load.
+        const lkOpts = { audience, category: liveCategory, subscribersOnly };
+        const lk = api.liveStartLk(liveTitle, lkOpts);
         const primary = api.liveStart(liveTitle, { audience, category: liveCategory, subscribersOnly });
         const cf = api.liveStartCf(liveTitle, { audience, category: liveCategory, subscribersOnly });
         const wrapWithMode = (p, mode) => p.then((r) => ({ r, mode })).catch((e) => ({ r: null, mode, err: e }));
+        const lkWrapped = wrapWithMode(lk, 'lk');
         const primaryWrapped = wrapWithMode(primary, 'p2p');
         const cfWrapped = wrapWithMode(cf, 'cf');
-        const pickIfSuccess = (x) => (x?.r?.success && (x.r.data?.session_id || x.r.data?.session?.id)) ? x : null;
+        const pickIfSuccess = (x) => (x?.r?.success && (x.r.data?.session_id || x.r.data?.id)) ? x : null;
         try {
           // Each promise resolves with the wrapped result IF successful, else
           // hangs forever — Promise.race picks the first WINNER, not the
-          // first SETTLER. 25s ceiling guards against both endpoints hanging
+          // first SETTLER. 25s ceiling guards against all endpoints hanging
           // past the WS ack window (30s) so we don't deadlock.
+          const lkRace = lkWrapped.then(x => pickIfSuccess(x) || new Promise(() => {}));
           const primaryRace = primaryWrapped.then(x => pickIfSuccess(x) || new Promise(() => {}));
           const cfRace = cfWrapped.then(x => pickIfSuccess(x) || new Promise(() => {}));
           const ceiling = new Promise((_, rej) => setTimeout(() => rej(new Error('race ceiling 25s')), 25000));
-          const winner = await Promise.race([primaryRace, cfRace, ceiling]);
+          const winner = await Promise.race([lkRace, primaryRace, cfRace, ceiling]);
           res = winner.r;
-          sid = res.data?.session_id || res.data?.session?.id;
-          if (winner.mode === 'cf') {
+          sid = res.data?.session_id || res.data?.id;
+          if (winner.mode === 'lk') {
+            lkModeRef.current = true;
+            cfModeRef.current = false;
+            console.log('[Live] WAVE-110 race winner: live_start_lk (LK SFU)');
+          } else if (winner.mode === 'cf') {
             cfModeRef.current = true;
+            lkModeRef.current = false;
             console.warn('[Live] race winner: live_start_cf (P2P slow or failed)');
           } else {
             console.log('[Live] race winner: live_start (P2P)');
@@ -1484,10 +1559,11 @@ export default function LiveBroadcastScreen() {
           // Race timed out — try awaiting whichever has settled (or fallback
           // to settled-or-null). Symmetric: never hang past 25s.
           try {
-            const settled = await Promise.race([primaryWrapped, cfWrapped]);
+            const settled = await Promise.race([lkWrapped, primaryWrapped, cfWrapped]);
             res = settled?.r;
-            sid = res?.data?.session_id || res?.data?.session?.id;
-            if (settled?.mode === 'cf') cfModeRef.current = true;
+            sid = res?.data?.session_id || res?.data?.id;
+            if (settled?.mode === 'lk') { lkModeRef.current = true; cfModeRef.current = false; }
+            else if (settled?.mode === 'cf') cfModeRef.current = true;
           } catch {}
         }
       }
@@ -1512,6 +1588,53 @@ export default function LiveBroadcastScreen() {
       if (res.success && sid) {
         setSessionId(sid);
         sessionIdRef.current = sid;
+
+        // [WAVE 110] ── LiveKit SFU publish ──
+        // If LK won the race, connect the host to the LK room and publish
+        // camera+mic via the SFU. This is the preferred path — no WHIP,
+        // no CF ICE issues, works on all mobile NATs via LK's own TURN.
+        // Non-fatal: if LK SDK fails to load we fall through to CF/P2P.
+        if (lkModeRef.current && res.data?.lk_room && res.data?.lk_token) {
+          const lkUrl = res.data.lk_url || 'wss://livekit.chatyy.com.br';
+          const lkRoom = res.data.lk_room;
+          const lkToken = res.data.lk_token;
+          ;(async () => {
+            try {
+              if (!_loadLkBroadcast()) throw new Error('LK SDK not available');
+              const room = new _LK_Room({
+                adaptiveStream: true,
+                dynacast: true,
+              });
+              lkRoomRef.current = room;
+              await room.connect(lkUrl, lkToken);
+              // Publish from the already-acquired localStream if available;
+              // otherwise create dedicated LK tracks from camera/mic.
+              if (localStreamRef.current) {
+                const vt = localStreamRef.current.getVideoTracks()[0];
+                const at = localStreamRef.current.getAudioTracks()[0];
+                if (vt) await room.localParticipant.publishTrack(vt);
+                if (at) await room.localParticipant.publishTrack(at);
+              } else {
+                const [vTrack, aTrack] = await Promise.all([
+                  _LK_createLocalVideoTrack && _LK_createLocalVideoTrack({ facingMode: 'user' }),
+                  _LK_createLocalAudioTrack && _LK_createLocalAudioTrack(),
+                ]);
+                if (vTrack) await room.localParticipant.publishTrack(vTrack);
+                if (aTrack) await room.localParticipant.publishTrack(aTrack);
+              }
+              console.log('[WAVE-110] LK host publish OK — room', lkRoom);
+              try { liveDiagAppend('info', 'LK host publish OK', { sessionId: sid, room: lkRoom }); } catch {}
+            } catch (e) {
+              const msg = e?.message || String(e);
+              console.warn('[WAVE-110] LK host publish failed:', msg);
+              try { liveDiagAppend('error', 'LK host publish failed: ' + msg, { sessionId: sid }); } catch {}
+              // Non-fatal: LK failure doesn't kill the session — WS P2P
+              // viewers still get the offer from the normal signaling path.
+              lkModeRef.current = false;
+              lkRoomRef.current = null;
+            }
+          })();
+        }
 
         // ── CF Stream WHIP publish ──
         // If we asked the backend for the CF pipeline, kick off the WHIP
@@ -1792,6 +1915,11 @@ export default function LiveBroadcastScreen() {
           host_email: (user?.email || '').toLowerCase(),
         });
       } catch {}
+      // [WAVE 110] Disconnect LK room if we were publishing via SFU.
+      if (lkRoomRef.current) {
+        try { lkRoomRef.current.disconnect(); } catch {}
+        lkRoomRef.current = null;
+      }
       // Close the CF Stream WHIP publisher (if we went through that path)
       // BEFORE telling the backend to finalize the recording. CF stops
       // ingest the moment we close the PC; if we did it after live_end_cf
@@ -1805,8 +1933,9 @@ export default function LiveBroadcastScreen() {
       // plain "Concluído" (legacy P2P — no VOD will materialize). The
       // endpoint pick mirrors the start path: CF sessions go through
       // live_end_cf so the cron-live-recordings finalizer picks them up,
-      // legacy sessions stay on live_end. Memory-safe — fires after teardown.
-      const endFn = cfModeRef.current ? api.liveEndCf : api.liveEnd;
+      // LK sessions use live_end (no CF VOD), legacy sessions stay on live_end.
+      // Memory-safe — fires after teardown.
+      const endFn = (cfModeRef.current && !lkModeRef.current) ? api.liveEndCf : api.liveEnd;
       // [LIVE-VOD-TRACE] Wave 44 — show a tangible "Replay sendo processado"
       // toast the moment the host taps end-live. The previous UX let users
       // walk away thinking nothing was happening (the end-card just said
