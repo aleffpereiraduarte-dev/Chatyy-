@@ -386,7 +386,12 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
       key: 'activity',
       title: t?.('settings.yourActivity') || 'Sua atividade',
       rows: [
-        { icon: IconClock,    label: t?.('settings.timeOnApp') || 'Tempo no app',                  tint: ICON_TEAL, onPress: () => push('about') },
+        // 2026-05-20 — "Tempo no app" row removed: it was routing to push('about')
+        // (Sobre o Chatyy screen), which has nothing to do with time-on-app
+        // analytics. Until we ship a real usage/screen-time feature, the row
+        // misled users. Replaced with a route to /activity-log (security audit
+        // log) which is the closest real "your activity" surface.
+        { icon: IconClock,    label: t?.('settings.activityHistory') || 'Histórico de atividades',  tint: ICON_TEAL, onPress: () => closeAndRun(() => { try { router?.push?.('/activity-log'); } catch {} }) },
         { icon: IconUsers,    label: t?.('settings.linkedDevices') || 'Aparelhos conectados',  tint: ICON_TEAL, onPress: () => push('devices') },
         { icon: IconDatabase, label: t?.('settings.exportData') || 'Baixar meus dados',           tint: ICON_TEAL, onPress: () => push('export') },
         // Reels P1 — Painel de criador (creator monetization dashboard).

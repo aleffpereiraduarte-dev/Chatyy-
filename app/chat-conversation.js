@@ -74,7 +74,7 @@ import ChatNotificationSettingsSheet from '../components/ChatNotificationSetting
 import SafetyNumberSheet from '../components/SafetyNumberSheet';
 import SendStatusText from '../components/SendStatusText';
 import { getCachedUri, preCacheUrls, cacheMedia, saveMediaPermanent, saveConversationMedia, initSyncCache } from '../services/mediaCache';
-// [WAVE 42 2026-05-20] Root cause Android thumb sumindo: ExpoImage was aliased
+// [WAVE 45 2026-05-21] Root cause Android thumb sumindo: ExpoImage was aliased
 // to react-native's <Image>, which does NOT understand `source={{ blurhash }}`
 // nor `cachePolicy`/`contentFit`/`priority` props. The blurhash backdrop layer
 // (and the LQIP/thumb layers below it) silently rendered nothing on Android,
@@ -17267,7 +17267,7 @@ export default function ChatConversationScreen() {
           // photo streaming on top — user sees a blurred version of the
           // actual photo instantly, never a blank box.
           const lqipUri = msg.thumb_b64 ? `data:image/jpeg;base64,${msg.thumb_b64}` : null;
-          // [WAVE 42 2026-05-20] One-shot dev trace per msg id so we can see
+          // [WAVE 45 2026-05-21] One-shot dev trace per msg id so we can see
           // which backdrop source wins on Android. Helps the next regression
           // investigation — silenced in production by __DEV__ check.
           if (__DEV__) {
@@ -17389,7 +17389,7 @@ export default function ChatConversationScreen() {
               activeOpacity={0.9}
               style={{ marginHorizontal: -13, marginTop: -8, marginBottom: hasCaption ? 0 : -8 }}>
               <View style={{ overflow: 'hidden', width: imgBoxW, height: imgBoxH }}>
-                {/* [WAVE 42 2026-05-20] Photo thumb sumindo Android — root cause.
+                {/* [WAVE 45 2026-05-21] Photo thumb sumindo Android — root cause.
                     `ExpoImage` was aliased to react-native's <Image> which silently
                     ignored `source={{ blurhash }}` and the expo-image-specific props
                     (cachePolicy, contentFit, priority). On Android the blurhash/lqip
@@ -17427,7 +17427,7 @@ export default function ChatConversationScreen() {
                     [WAVE 39] zIndex bumped to 1 so it paints OVER the HSL base
                     fallback. Priority="high" added so paint orders before the
                     full image fetch begins. */}
-                {/* [WAVE 42] All backdrop layers below now use the REAL expo-image
+                {/* [WAVE 45] All backdrop layers below now use the REAL expo-image
                     Image (resolved at module init from `require('expo-image')`),
                     so `source={{ blurhash }}` actually decodes on Android and
                     `cachePolicy`/`contentFit`/`priority` are honored. `key` is
@@ -17936,7 +17936,7 @@ export default function ChatConversationScreen() {
                       </View>
                     </View>
                   ) : (
-                    // [WAVE 42 2026-05-20] Frosted-glass play button —
+                    // [WAVE 45 2026-05-21] Frosted-glass play button —
                     // bigger outer ring (78×78), thicker white border (2px),
                     // inner pure-white core (58×58) with a chunkier triangle
                     // (28×28). Purple glow extended for both iOS shadow and
@@ -17968,7 +17968,7 @@ export default function ChatConversationScreen() {
                       </View>
                     </View>
                   )}
-                  {/* [WAVE 42 2026-05-20] Bottom gradient overlay for duration
+                  {/* [WAVE 45 2026-05-21] Bottom gradient overlay for duration
                       pill legibility. Uses LinearGradient when available (smooth
                       40% fade transparent→black 0.55) and a stronger flat overlay
                       fallback. The previous 18% flat overlay disappeared on
@@ -17985,7 +17985,7 @@ export default function ChatConversationScreen() {
                       <View pointerEvents="none" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 80, backgroundColor: 'rgba(0,0,0,0.32)' }} />
                     )
                   )}
-                  {/* [WAVE 42 2026-05-20] Shimmer skeleton over video poster
+                  {/* [WAVE 45 2026-05-21] Shimmer skeleton over video poster
                       while it's still loading. Reuses the same mediaShimmerAnim
                       driver as the photo bubble so we don't spawn a new RAF loop.
                       Hidden once download completes or upload finishes. */}
@@ -18015,7 +18015,7 @@ export default function ChatConversationScreen() {
                   expo-blur into the chat tree — too heavy for every
                   bubble). Position bumped to bottom: 8 / left: 10 to
                   match WhatsApp's exact placement. */}
-              {/* [WAVE 42 2026-05-20] Frosted-glass duration pill —
+              {/* [WAVE 45 2026-05-21] Frosted-glass duration pill —
                   bumped padding, rounded 14, white border 1px, tabular-nums
                   for the timer so digits don't dance frame-to-frame, and a
                   larger video glyph. Sits above the gradient overlay so
