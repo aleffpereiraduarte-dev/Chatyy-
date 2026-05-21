@@ -2643,28 +2643,48 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
   // never seek past the file. Updates progress+currentTime so the waveform
   // bars repaint immediately even when paused.
   const skipBy = useCallback(async (deltaSec) => {
+    // [#1226 2026-05-21] Skip-15 buttons (the "setinhas" the user calls them)
+    // were dead because: (a) on native we read `duration`/`currentTime` from
+    // React STATE — which is empty until the listener has fired at least
+    // once. The listener only emits while `status.playing` (line 2972), so
+    // tapping skip BEFORE pressing play, or right after pressing play but
+    // before the first 200ms tick, found dur=0 and bailed. (b) the React
+    // state is also captured in the useCallback closure — pinned at mount.
+    // Fix: always read live position/duration from the player object itself
+    // (snd.currentTime / snd.duration are exposed live by expo-audio and by
+    // HTMLAudioElement). Fall back to React state only as a last resort.
     const snd = soundRef.current;
-    if (!snd) return;
+    if (!snd) {
+      if (__DEV__) console.warn('[AudioPlayer/skipBy] no player yet — tap play first');
+      return;
+    }
     try {
-      if (Platform.OS === 'web') {
-        const dur = snd.duration;
-        const cur = snd.currentTime || 0;
-        if (!isFinite(dur) || dur <= 0) return;
-        const next = Math.max(0, Math.min(dur, cur + deltaSec));
-        snd.currentTime = next;
-        setCurrentTime(next);
-        setProgress(next / dur);
-      } else {
-        const dur = duration || 0;
-        if (dur <= 0) return;
-        const cur = currentTime || 0;
-        const next = Math.max(0, Math.min(dur, cur + deltaSec));
-        if (typeof snd.seekTo === 'function') await snd.seekTo(next);
-        else if ('currentTime' in snd) snd.currentTime = next;
-        setCurrentTime(next);
-        setProgress(next / dur);
+      // Live values from the player itself — bypasses stale React state.
+      let liveDur = (typeof snd.duration === 'number' && isFinite(snd.duration) && snd.duration > 0)
+        ? snd.duration
+        : (duration || 0);
+      let liveCur = (typeof snd.currentTime === 'number' && isFinite(snd.currentTime))
+        ? snd.currentTime
+        : (currentTime || 0);
+      if (liveDur <= 0) {
+        if (__DEV__) console.warn('[AudioPlayer/skipBy] duration not ready', { liveDur, liveCur });
+        return;
       }
-    } catch {}
+      const next = Math.max(0, Math.min(liveDur, liveCur + deltaSec));
+      if (Platform.OS === 'web') {
+        snd.currentTime = next;
+      } else {
+        if (typeof snd.seekTo === 'function') {
+          await snd.seekTo(next);
+        } else if ('currentTime' in snd) {
+          snd.currentTime = next;
+        }
+      }
+      setCurrentTime(next);
+      setProgress(next / liveDur);
+    } catch (e) {
+      if (__DEV__) console.warn('[AudioPlayer/skipBy] failed', deltaSec, e?.message);
+    }
   }, [duration, currentTime]);
 
   // Pre-cache audio on mount
