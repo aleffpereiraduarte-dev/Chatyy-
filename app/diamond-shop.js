@@ -109,10 +109,25 @@ export default function DiamondShopScreen() {
       } else if (r?.message === 'cancelled') {
         // silent
       } else if (r?.message === 'web_fallback' || r?.message === 'iap_unavailable') {
-        Alert.alert(
-          t('wallet.topupUnavailableTitle') || 'Compra indisponível',
-          t('wallet.topupUnavailableBody') || 'Não conseguimos iniciar a compra. Tente novamente em alguns minutos.',
-        );
+        // [WAVE 36 2026-05-20] Android: surface web-checkout fallback instead
+        // of dead-ending. See DiamondTopUpSheet for matching logic.
+        if (Platform.OS === 'android') {
+          const base = (typeof getBaseUrl === 'function' ? getBaseUrl() : 'https://chatyy.com.br').replace(/\/$/, '');
+          const buyUrl = `${base}/diamantes${pack?.sku ? `?sku=${encodeURIComponent(pack.sku)}` : ''}`;
+          Alert.alert(
+            t('wallet.topupUnavailableTitle') || 'Compra indisponível',
+            t('wallet.androidWebBuyBody') || 'A compra direta no Android chega em breve. Quer abrir a loja no navegador para comprar agora?',
+            [
+              { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+              { text: t('wallet.openWebStore') || 'Abrir loja web', onPress: () => { try { Linking.openURL(buyUrl); } catch {} } },
+            ],
+          );
+        } else {
+          Alert.alert(
+            t('wallet.topupUnavailableTitle') || 'Compra indisponível',
+            t('wallet.topupUnavailableBody') || 'Não conseguimos iniciar a compra. Tente novamente em alguns minutos.',
+          );
+        }
       } else {
         Alert.alert(t('common.error') || 'Erro', r?.message || (t('wallet.topupFailed') || 'Falha na compra.'));
       }

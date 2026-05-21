@@ -586,19 +586,46 @@ export default function LiveBroadcastScreen() {
           }
           console.log('[Live] sending live_start session=' + sid);
           ws.send(JSON.stringify({ type: 'live_start', session_id: sid }));
-          // Ack watchdog — if WS server doesn't echo live_started in 5s, the
+          // Ack watchdog — if WS server doesn't echo live_started, the
           // subscribe never happened. Surface the error instead of waiting forever.
+          //
+          // [WAVE 36 2026-05-20] User print 3: full-screen "Sem resposta do
+          // servidor" 5s after Go Live. Root cause: 5s is WAY too tight for
+          // live boot — backend live_start PG insert + WS channel subscribe
+          // + LiveKit publish can easily take 10-15s on cellular. WhatsApp/
+          // Instagram both give live-start ~30s. Bumped to 30s + we already
+          // race liveStart/liveStartCf inside handleStartLive (see Wave 34),
+          // so the user only sees this error when BOTH paths timed out AND
+          // the channel subscribe never landed — meaning the WS is genuinely
+          // dead. Also surface a more helpful message if NetInfo says we're
+          // online (it's a backend issue, not their wifi).
           if (liveStartedAckTimeoutRef.current) clearTimeout(liveStartedAckTimeoutRef.current);
-          liveStartedAckTimeoutRef.current = setTimeout(() => {
+          liveStartedAckTimeoutRef.current = setTimeout(async () => {
             if (!liveStartedAckRef.current && !endedRef.current) {
-              console.error('[Live] live_started ack timeout (5s) — WS subscribe failed');
-              setError(t('live.startTimeout') || 'Sem resposta do servidor');
+              console.error('[Live] live_started ack timeout (30s) — WS subscribe failed');
+              // NetInfo probe — if user has wifi/data, the backend is busy.
+              // Otherwise generic "no response" is fine. Soft-import so a
+              // missing dep on web doesn't crash the watchdog.
+              let isConnected = true;
+              try {
+                const NetInfoMod = require('@react-native-community/netinfo');
+                const NI = NetInfoMod?.default || NetInfoMod;
+                if (NI?.fetch) {
+                  const s = await NI.fetch();
+                  isConnected = !!s?.isConnected;
+                }
+              } catch {}
+              if (isConnected) {
+                setError(t('live.serverBusy') || 'Servidor ocupado. Tente novamente em alguns segundos.');
+              } else {
+                setError(t('live.startTimeout') || 'Sem resposta do servidor');
+              }
               // Reject the waiter so handleStartLive can bail out instead of
               // staring at a black countdown screen (Codex #3).
               try { liveStartedWaiterRef.current?.reject?.(new Error('live_started timeout')); } catch {}
               liveStartedWaiterRef.current = null;
             }
-          }, 5000);
+          }, 30000);
           break;
         }
         case 'live_started':
@@ -1351,10 +1378,57 @@ export default function LiveBroadcastScreen() {
       // error. This kept legacy P2P working as a safety net for the CF
       // pipeline rollout, and now does the symmetric job in the other
       // direction too.
-      let res = wantsCf
-        ? await api.liveStartCf(liveTitle, { audience, category: liveCategory, subscribersOnly })
-        : await api.liveStart(liveTitle, { audience, category: liveCategory, subscribersOnly });
-      let sid = res.data?.session_id || res.data?.session?.id;
+      // [WAVE 36 2026-05-20] When the user picked P2P (default — wantsCf=false),
+      // race the legacy live_start against the CF fallback after a 7s head-
+      // start. Backend's live_start CAN hang on PG hot-row lock or rate-limit
+      // checks for 10-20s, which used to dump the user into the "Sem resposta
+      // do servidor" screen with no recovery. By starting live_start_cf in
+      // parallel after 7s and racing, we cover the slow-backend case while
+      // keeping live_start as the preferred (cheaper, faster) path.
+      let res;
+      let sid;
+      if (wantsCf) {
+        res = await api.liveStartCf(liveTitle, { audience, category: liveCategory, subscribersOnly });
+        sid = res.data?.session_id || res.data?.session?.id;
+      } else {
+        const primary = api.liveStart(liveTitle, { audience, category: liveCategory, subscribersOnly });
+        // 7s head-start — if live_start hasn't resolved by then, kick off
+        // the CF parallel fetch. Math.race() picks whichever surfaces a
+        // session_id first. Each promise resolves to {res, mode} so we know
+        // which path won and can set cfModeRef accordingly.
+        const wrapWithMode = (p, mode) => p.then((r) => ({ r, mode })).catch((e) => ({ r: null, mode, err: e }));
+        const primaryWrapped = wrapWithMode(primary, 'p2p');
+        // NOTE: using `cfTimerId` (not `t`) — `t` is already the i18n func in scope.
+        let cfTimerId = null;
+        const cfDelayedWrapped = new Promise((resolve) => {
+          cfTimerId = setTimeout(() => {
+            wrapWithMode(api.liveStartCf(liveTitle, { audience, category: liveCategory, subscribersOnly }), 'cf').then(resolve);
+          }, 7000);
+        });
+        // Belt-and-suspenders: if primary settles fast, cancel the CF timer.
+        primary.finally(() => { if (cfTimerId) clearTimeout(cfTimerId); }).catch(() => {});
+        const pickIfSuccess = (x) => (x?.r?.success && (x.r.data?.session_id || x.r.data?.session?.id)) ? x : null;
+        try {
+          // Each promise resolves with the wrapped result IF successful, else
+          // hangs forever — that way Promise.race picks the first WINNER, not
+          // the first SETTLER. A 25s ceiling guards against both endpoints
+          // hanging past the WS ack window (30s) so we don't deadlock.
+          const primaryRace = primaryWrapped.then(x => pickIfSuccess(x) || new Promise(() => {}));
+          const cfRace = cfDelayedWrapped.then(x => pickIfSuccess(x) || new Promise(() => {}));
+          const ceiling = new Promise((_, rej) => setTimeout(() => rej(new Error('race ceiling 25s')), 25000));
+          const winner = await Promise.race([primaryRace, cfRace, ceiling]);
+          res = winner.r;
+          sid = res.data?.session_id || res.data?.session?.id;
+          if (winner.mode === 'cf') {
+            cfModeRef.current = true;
+            console.warn('[Live] race winner: live_start_cf (P2P was slow >7s)');
+          }
+        } catch {
+          // Race timed out or both legitimately failed — fall through to the
+          // legacy fallback path below which awaits primary properly.
+          try { res = await primary; sid = res?.data?.session_id || res?.data?.session?.id; } catch {}
+        }
+      }
       if ((!res?.success || !sid) && !wantsCf) {
         // P2P path failed — try CF as a fallback before giving up. This
         // catches the case where live_start regressed (backend deploy mid-

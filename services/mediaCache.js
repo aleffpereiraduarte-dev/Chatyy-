@@ -1179,7 +1179,15 @@ export async function getSavedUri(url) {
 // attachment type — image, video, audio/voice, gif, sticker, and plain file.
 // Anything with a file_url is eligible; the type filter was previously too
 // narrow and left gifs/stickers/files re-downloading every app launch.
-export async function saveConversationMedia(messages) {
+//
+// [WAVE 36 2026-05-20] Optional second arg `convIdHint`. Callers from
+// chat-conversation pass the active conversationId so the local_path
+// write-back works even when individual rows have no conversation_id
+// property (some chat_sync payload shapes carry it only on the envelope,
+// not on each message). QA hit msg 8413: video 62KB, file on disk in
+// /chat-media-saved/, but local_path NULL because the writeback bailed at
+// `msg.conversation_id != null` (both convId fields were absent).
+export async function saveConversationMedia(messages, convIdHint) {
   if (Platform.OS === 'web' || !messages?.length) return;
   // Voice-message side hook — feed every type==='voice'|'audio' row into
   // voicePrefetch so server-side wave_peaks are persisted in MMKV (bubble
@@ -1223,11 +1231,18 @@ export async function saveConversationMedia(messages) {
       // but msg.local_path NULL — bubble showed "mídia não foi baixada".
       return saveMediaPermanent(url).then((local) => {
         try {
-          if (typeof local === 'string' && local.startsWith('file://')
-              && msg.id != null && (msg.conversation_id != null || msg.conversationId != null)) {
-            const nativeDb = require('./db');
-            const convId = msg.conversation_id || msg.conversationId;
-            nativeDb.dbUpdateMessageFields?.(convId, msg.id, { local_path: local });
+          // [WAVE 36 2026-05-20] Coerce file path → file:// URI form before
+          // checking. saveMediaPermanent returns whatever path expo-fs gave
+          // it; on Android documentDirectory often comes back without the
+          // file:// prefix from the underlying SAF call, which made this
+          // check silently no-op. Now we accept both.
+          const localFileUri = (typeof local === 'string' && local && (local.startsWith('file://') ? local : (local.startsWith('/') ? `file://${local}` : null))) || null;
+          if (localFileUri && msg.id != null) {
+            const convId = msg.conversation_id || msg.conversationId || convIdHint;
+            if (convId != null) {
+              const nativeDb = require('./db');
+              nativeDb.dbUpdateMessageFields?.(convId, msg.id, { local_path: localFileUri });
+            }
           }
         } catch {}
         return local;

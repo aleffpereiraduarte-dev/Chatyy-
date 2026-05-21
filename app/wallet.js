@@ -38,8 +38,16 @@ function LedgerRow({ item, colors, isDark, t, lang }) {
       tip_send:  t('wallet.kind.tipSend')  || 'Gorjeta enviada',
       tip_recv:  t('wallet.kind.tipRecv')  || 'Gorjeta recebida',
       promote:   t('wallet.kind.promote')  || 'Promoção',
+      bonus:     t('wallet.kind.bonus')    || 'Bônus',
+      daily_bonus: t('wallet.kind.bonus')  || 'Bônus',
     };
-    return map[item.kind] || item.kind;
+    // [WAVE 36 2026-05-20] When the row has no kind OR an unknown kind AND
+    // amount > 0 credited, fall back to "Bônus" instead of showing a raw
+    // server enum like "ledger_grant". QA saw "-0 ◆" rows with empty label.
+    const fallback = (isCredit && (!item.kind || !map[item.kind]))
+      ? (t('wallet.kind.bonus') || 'Bônus')
+      : (item.kind || '');
+    return map[item.kind] || fallback;
   })();
   const when = (() => {
     const ts = Number(item.created_at_ts) * 1000;
@@ -84,7 +92,14 @@ export default function WalletScreen() {
       const offset = append ? items.length : 0;
       const r = await api.walletHistory({ limit: 50, offset });
       if (r?.success && r.data) {
-        const next = Array.isArray(r.data.items) ? r.data.items : [];
+        // [WAVE 36 2026-05-20] Drop zero/near-zero rows (Math.abs<1). Server
+        // sometimes emits ledger no-ops (refunded promote, reconciled tip)
+        // with amount=0 — these used to render as "-0 ◆" with an empty
+        // label, which QA flagged as confusing. Keep credit rows even
+        // amount=0 IF kind suggests a real event (e.g., daily bonus with
+        // amount=0 because already-granted); those are filtered server-side.
+        const next = (Array.isArray(r.data.items) ? r.data.items : [])
+          .filter(it => Number.isFinite(Number(it?.amount)) && Math.abs(Number(it.amount)) >= 1);
         setItems(prev => append ? [...prev, ...next] : next);
         setBalance(Number(r.data.diamond_balance) || 0);
         setPendingPayout(Number(r.data.pending_payout_cents) || 0);

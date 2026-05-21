@@ -9220,8 +9220,10 @@ export default function ChatConversationScreen() {
               // Auto-save media permanently for offline access (WhatsApp-style).
               // Filtra pra só tipos permitidos no momento — saveConversationMedia
               // baixa tudo cegamente, então em cellular não passamos vídeos.
+              // [WAVE 36 2026-05-20] Pass conversationId so SQLite local_path
+              // write-back works for rows missing conversation_id property.
               const allowedMsgs = newMsgs.filter(m => allowedTypes.includes(m.type));
-              saveConversationMedia(allowedMsgs).catch(() => {});
+              saveConversationMedia(allowedMsgs, conversationId).catch(() => {});
             }).catch(() => {});
           }
         }
@@ -9523,6 +9525,79 @@ export default function ChatConversationScreen() {
       }).catch(() => {});
     }
   }, [loadMessages]);
+
+  // [WAVE 36 2026-05-20] WhatsApp-grade auto-download on conv open.
+  // ───────────────────────────────────────────────────────────────
+  // Bug seen in user print 2: photo bubble paints the HSL-pastel fallback
+  // (~340x300 pink) and the download never starts — image cache miss + no
+  // onPressIn touch + ChatMedia not aggressively fetching = stuck forever.
+  // WhatsApp fetches the last N media on open by default (wifi-only by
+  // policy). We mirror that here: walk the most recent 15 image/video/voice
+  // messages that lack a local file, and trigger cacheMedia() in a
+  // bounded-concurrency pool (max 4 in flight, 250ms stagger to avoid radio
+  // saturation on cellular when the policy permits).
+  //
+  // saveConversationMedia already runs after loadMessages() to bulk-fetch
+  // everything; this effect is the EXTRA "WhatsApp speed" layer that
+  // prioritizes the freshest items and bypasses cellular gating ONLY for
+  // the visible head of the thread (force:true on those). Per-message
+  // dedup is handled inside cacheMedia (in-flight set).
+  const _autoDLFiredRef = useRef(false);
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    if (!conversationId) return;
+    if (!messages || messages.length === 0) return;
+    if (_autoDLFiredRef.current) return; // single-shot per conv open
+    _autoDLFiredRef.current = true;
+    const types = new Set(['image', 'video', 'voice', 'audio', 'gif', 'sticker']);
+    // Take the LAST 15 (newest), filter to media without local file,
+    // then prioritize by recency (server gives us oldest-first).
+    const tail = messages.slice(-15).filter((m) => {
+      if (!m || !types.has(m.type)) return false;
+      if (!m.file_url) return false;
+      // Already on disk? Skip.
+      if (typeof m.local_path === 'string' && m.local_path.startsWith('file://')) return false;
+      if (typeof m._localUri === 'string' && m._localUri.startsWith('file://')) return false;
+      return true;
+    });
+    if (tail.length === 0) return;
+    // Bounded-concurrency runner. 4 workers pull from the queue.
+    let _api, _mc;
+    try {
+      _api = require('../services/api');
+      _mc = require('../services/mediaCache');
+    } catch { return; }
+    if (!_api?.getMediaUrl || !_mc?.cacheMedia) return;
+    const queue = tail.slice().reverse(); // newest first
+    let active = 0;
+    const MAX = 4;
+    const STAGGER_MS = 250;
+    let lastStart = 0;
+    const runNext = () => {
+      if (!mountedRef.current) return;
+      if (queue.length === 0 && active === 0) return;
+      while (active < MAX && queue.length > 0) {
+        const msg = queue.shift();
+        active++;
+        const delay = Math.max(0, (lastStart + STAGGER_MS) - Date.now());
+        lastStart = Date.now() + delay;
+        setTimeout(() => {
+          if (!mountedRef.current) { active--; return; }
+          try {
+            const remote = _api.getMediaUrl(msg.file_url);
+            // force:true bypasses cellular gate for the user-visible head —
+            // WhatsApp-parity (always wants the newest photos cached).
+            _mc.cacheMedia(remote, { force: true, conversationId, messageId: msg.id })
+              .catch(() => {})
+              .finally(() => { active--; runNext(); });
+          } catch { active--; runNext(); }
+        }, delay);
+      }
+    };
+    runNext();
+    return () => { _autoDLFiredRef.current = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId, messages.length > 0]);
 
   // WebSocket real-time messages + slow polling fallback
   const [typingUsers, setTypingUsers] = useState(new Map()); // Map<email, { name, recording, timer }>
@@ -17253,14 +17328,16 @@ export default function ChatConversationScreen() {
                 )}
                 {/* Download progress ring — shown when receiving an image from
                     the server and the full-resolution is still fetching.
-                    Identical visual to the upload ring so users recognize it. */}
+                    [WAVE 36 2026-05-20] Switched to purple Chatyy ring (#7C3AED)
+                    + white translucent backing per user spec — much more visible
+                    on the HSL-pastel fallback placeholder backgrounds. */}
                 {!imgUploading && downloadProgress[msg.id] !== undefined && downloadProgress[msg.id] < 100 && (() => {
                   const dlPct = downloadProgress[msg.id] || 0;
                   return (
-                    <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.35)' }}>
-                      <View style={{ width: 60, height: 60, borderRadius: 30, borderWidth: 3, borderColor: 'rgba(255,255,255,0.25)', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.25)' }}>
-                        <CircularProgressArc pct={dlPct} size={60} strokeWidth={3} style={{ position: 'absolute' }} />
-                        <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{dlPct}%</Text>
+                    <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.25)', zIndex: 2 }}>
+                      <View style={{ width: 56, height: 56, borderRadius: 28, borderWidth: 2, borderColor: 'rgba(124,58,237,0.25)', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.92)' }}>
+                        <CircularProgressArc pct={dlPct} size={56} strokeWidth={3} color="#7C3AED" style={{ position: 'absolute' }} />
+                        <Text style={{ color: '#7C3AED', fontSize: 13, fontWeight: '800' }}>{dlPct}%</Text>
                       </View>
                     </View>
                   );

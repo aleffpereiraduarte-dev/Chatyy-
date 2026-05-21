@@ -116,10 +116,26 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
       } else if (r?.message === 'cancelled') {
         // User dismissed StoreKit — silent.
       } else if (r?.message === 'web_fallback' || r?.message === 'iap_unavailable') {
-        Alert.alert(
-          t('wallet.topupUnavailableTitle') || 'Compra indisponível',
-          t('wallet.topupUnavailableBody') || 'Não conseguimos iniciar a compra. Tente novamente em alguns minutos.',
-        );
+        // [WAVE 36 2026-05-20] On Android — IAP is still rolling out via Play
+        // Billing. Instead of dead-ending the user with "try again later", offer
+        // a deeplink to chatyy.com.br/diamantes where Stripe handles checkout.
+        // iOS doesn't get this branch — App Store policy bans steering off-platform.
+        if (Platform.OS === 'android') {
+          const buyUrl = `${(typeof getBaseUrl === 'function' ? getBaseUrl() : 'https://chatyy.com.br').replace(/\/$/, '')}/diamantes${pack?.sku ? `?sku=${encodeURIComponent(pack.sku)}` : ''}`;
+          Alert.alert(
+            t('wallet.topupUnavailableTitle') || 'Compra indisponível',
+            t('wallet.androidWebBuyBody') || 'A compra direta no Android chega em breve. Quer abrir a loja no navegador para comprar agora?',
+            [
+              { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+              { text: t('wallet.openWebStore') || 'Abrir loja web', onPress: () => { try { Linking.openURL(buyUrl); } catch {} } },
+            ],
+          );
+        } else {
+          Alert.alert(
+            t('wallet.topupUnavailableTitle') || 'Compra indisponível',
+            t('wallet.topupUnavailableBody') || 'Não conseguimos iniciar a compra. Tente novamente em alguns minutos.',
+          );
+        }
       } else if (r?.message === 'sku_not_in_catalog') {
         // SKU exists in our ladder but App Store Connect hasn't activated it
         // (or it's still propagating). Show a friendly note instead of the raw
