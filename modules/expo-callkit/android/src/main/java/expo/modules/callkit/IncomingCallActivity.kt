@@ -658,7 +658,9 @@ class IncomingCallActivity : AppCompatActivity() {
       // services/api.js call_answered fires in parallel via emitCallAnswered
       // → JS listener; server dedupes by call_id, so the duplicate is safe.
       // Empty conversationId is tolerated for dialer-style calls.
-      CallSignalWs.fireCallAnswered(applicationContext, id, conversationId ?: "")
+      // [WAVE 104C] Pass callerEmail = email (the person who called us) so
+      // the C++ WS relay can route the frame to their chat_user_ channel.
+      CallSignalWs.fireCallAnswered(applicationContext, id, conversationId ?: "", email)
       return
     }
 
@@ -683,7 +685,8 @@ class IncomingCallActivity : AppCompatActivity() {
         // token failure because the user did tap Accept — letting the
         // caller's UI know the callee answered is independent of whether
         // the media plane comes up. Server dedupes by call_id.
-        CallSignalWs.fireCallAnswered(applicationContext, id, conversationId ?: "")
+        // [WAVE 104C] Pass callerEmail so C++ WS relay can route the frame.
+        CallSignalWs.fireCallAnswered(applicationContext, id, conversationId ?: "", email)
       }
     }.start()
   }

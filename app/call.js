@@ -596,6 +596,10 @@ function CallScreenInner() {
         }, 'POST').catch(() => {});
       } catch {}
       setConnectionFailed(true);
+      // [WAVE 104B] Dismiss slow-connect overlay when flipping to failed so
+      // the two states never render simultaneously (screenshot bug 2026-05-21:
+      // "Conectando..." modal appeared ON TOP OF the failed-state pill).
+      setShowSlowConnectOverlay(false);
       // [WAVE 92 2026-05-21] Bug 1 — surface a slightly more actionable
       // message. Generic "Não foi possível conectar" was unactionable. New
       // copy hints at network/peer state which is the actual root cause 90%
@@ -2485,6 +2489,10 @@ function CallScreenInner() {
     console.log('[Call] manual reconnect requested');
     setConnectionFailed(false);
     setErrorMsg(null);
+    // [WAVE 104B] Reset overlay + phase so the fresh connect attempt starts
+    // from T+0 "Conectando..." instead of being stuck in 'slow'/'failed'.
+    setShowSlowConnectOverlay(false);
+    setConnectPhase('connecting');
     setReconnecting(true);
     try {
       const r = roomRef.current;
@@ -4092,7 +4100,13 @@ function CallScreenInner() {
               )}
               {connectionFailed && !ended && (
                 <View style={styles.reconnectContainer}>
-                  <TouchableOpacity style={styles.reconnectBtn} onPress={handleReconnect} activeOpacity={0.7}>
+                  <TouchableOpacity
+                    style={styles.reconnectBtn}
+                    onPress={handleReconnect}
+                    activeOpacity={0.7}
+                    accessibilityLabel={t('call.reconnect') || 'Reconectar'}
+                    accessibilityRole="button"
+                  >
                     <IconPhone size={18} color="#fff" />
                     <Text style={styles.reconnectBtnText}>{t('call.reconnect') || 'Reconectar'}</Text>
                   </TouchableOpacity>
@@ -4106,6 +4120,7 @@ function CallScreenInner() {
                       activeOpacity={0.7}
                       disabled={pstnFallbackBusy}
                       accessibilityLabel={t('call.via.phone') || 'Ligar via telefone'}
+                      accessibilityRole="button"
                     >
                       {pstnFallbackBusy ? (
                         <ActivityIndicator size="small" color="#fff" />
@@ -4117,7 +4132,13 @@ function CallScreenInner() {
                       </Text>
                     </TouchableOpacity>
                   )}
-                  <TouchableOpacity style={styles.reconnectEndBtn} onPress={handleEndCall} activeOpacity={0.7}>
+                  <TouchableOpacity
+                    style={styles.reconnectEndBtn}
+                    onPress={handleEndCall}
+                    activeOpacity={0.7}
+                    accessibilityLabel={t('call.hangUp') || 'Desligar'}
+                    accessibilityRole="button"
+                  >
                     <IconPhoneOff size={18} color="#fff" />
                     <Text style={styles.reconnectEndBtnText}>{t('call.hangUp') || 'Desligar'}</Text>
                   </TouchableOpacity>
@@ -4277,8 +4298,12 @@ function CallScreenInner() {
         onClose={() => setShowAudioStats(false)}
       />
 
-      {/* Bottom controls */}
-      {!ended && (
+      {/* Bottom controls
+          [WAVE 104B] Hidden when connectionFailed. The reconnectContainer in
+          the center area already exposes "Reconectar" + "Desligar" (+ PSTN
+          fallback when available). Showing Mudo/Vídeo/Speaker/Tela alongside
+          those was visual noise and introduced duplicate Desligar buttons. */}
+      {!ended && !connectionFailed && (
         <Animated.View style={[styles.controlsBar, {
           paddingBottom: insets.bottom + 16,
           opacity: Animated.multiply(controlsFadeAnim, barEnterAnim),
@@ -4286,8 +4311,12 @@ function CallScreenInner() {
             translateY: barEnterAnim.interpolate({ inputRange: [0, 1], outputRange: [28, 0] }),
           }],
         }]}>
-          {/* Secondary row */}
-          <View style={styles.controlsRowTop}>
+          {/* Secondary row — hidden when connectionFailed (controls are useless
+              before connection; only Reconectar/Desligar matter at that point,
+              both of which are in the centered reconnectContainer above).
+              [WAVE 104B] Eliminates the "Mudo/Vídeo/Alto-falante/Tela/Ruido Off"
+              row visible alongside "Reconectar/Desligar" in the screenshot. */}
+          <View style={[styles.controlsRowTop, connectionFailed && { display: 'none' }]}>
             <TouchableOpacity
               style={styles.controlBtn}
               onPress={handleToggleNoiseCancellation}
@@ -4747,8 +4776,13 @@ function CallScreenInner() {
         </Modal>
       )}
 
-      {/* Slow-connect overlay */}
-      {showSlowConnectOverlay && !peerConnected && !peerRinging && !ended && (
+      {/* Slow-connect overlay
+          [WAVE 104B] Guard includes !connectionFailed so the T+15s overlay is
+          never visible simultaneously with the T+25s failed state. The primary
+          dismiss happens in the T+25s callback (setShowSlowConnectOverlay(false))
+          but this guard is defense-in-depth against any future state-machine
+          race between the two timers. */}
+      {showSlowConnectOverlay && !connectionFailed && !peerConnected && !peerRinging && !ended && (
         <View
           pointerEvents="box-none"
           style={{

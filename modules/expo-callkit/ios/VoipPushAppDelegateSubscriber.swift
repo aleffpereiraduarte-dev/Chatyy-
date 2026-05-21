@@ -306,6 +306,24 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
             let lkTokenInline = (dict["lk_token"] as? String) ?? ""
             let lkUrlInline   = (dict["lk_url"]   as? String) ?? ""
             if !lkTokenInline.isEmpty && !lkUrlInline.isEmpty {
+                // [WAVE 104D fix, 2026-05-21] Persist inline push token to App Group
+                // so the CXAnswer handler (ExpoCallKitModule.provider:perform:
+                // CXAnswerCallAction) finds it in cache and doesn't fire a second
+                // NativeCallTokenFetcher.fetchToken() round-trip. Before this fix:
+                //   1. Push arrives with lk_token (pre-minted by backend).
+                //   2. preconnectRoom fires — Room connects with token A (identity X).
+                //   3. User taps Accept — CXAnswer reads lk_token_<callId> from
+                //      App Group → missing → falls through to fetchToken() → mints
+                //      token B (identity Y, different device-hash window) → presents
+                //      CallViewController with token B → LK SFU sees two publishers
+                //      for the same user → evicts one → audio gone or stuck "Conectando".
+                // Post-fix: token A is in App Group at push-receive time, CXAnswer
+                // uses it directly, single Room identity, no SFU eviction.
+                if let ud = UserDefaults(suiteName: kAppGroupId) {
+                    ud.set(lkTokenInline, forKey: "lk_token_\(callId)")
+                    ud.set(lkUrlInline,   forKey: "lk_url_\(callId)")
+                    print("[VoipSubscriber] WAVE104D: persisted inline lk_token to App Group for \(callId)")
+                }
                 Task.detached(priority: .userInitiated) {
                     CallViewController.preconnectRoom(url: lkUrlInline, token: lkTokenInline, callId: callId)
                 }
@@ -717,6 +735,36 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
         }
         guard !roomName.isEmpty, !identity.isEmpty else {
             print("[VoipSubscriber] LK pre-connect skipped — missing room=\(roomName) identity=\(identity)")
+            return
+        }
+        // [WAVE 104D fix, 2026-05-21] Short-circuit: if the push carried an
+        // inline lk_token (already persisted to App Group in the push-receive
+        // path above), use it directly instead of fetching a NEW token with a
+        // different identity hash. Minting a second token here would cause the
+        // SFU to see two publisher identities for the same callee → evict one
+        // → "Conectando" stuck on callee screen.
+        let inlineToken = (payload["lk_token"] as? String) ?? ""
+        let inlineUrl   = (payload["lk_url"]   as? String) ?? ""
+        if !inlineToken.isEmpty && !inlineUrl.isEmpty {
+            NativeCallRoom.shared.connect(
+                url: inlineUrl,
+                token: inlineToken,
+                identity: identity,
+                roomName: roomName
+            )
+            return
+        }
+        // Also check App Group cache (populated by WAVE104D persist block above
+        // or by JS persistPendingLkToken).
+        if let ud = UserDefaults(suiteName: kAppGroupId),
+           let cachedTok = ud.string(forKey: "lk_token_\(roomName)"), !cachedTok.isEmpty,
+           let cachedUrl = ud.string(forKey: "lk_url_\(roomName)"), !cachedUrl.isEmpty {
+            NativeCallRoom.shared.connect(
+                url: cachedUrl,
+                token: cachedTok,
+                identity: identity,
+                roomName: roomName
+            )
             return
         }
         Task.detached(priority: .userInitiated) {

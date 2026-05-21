@@ -134,12 +134,18 @@ object CallSignalWs {
     fun fireCallAnswered(
         context: Context,
         callId: String,
-        conversationId: String
+        conversationId: String,
+        callerEmail: String = ""
     ) {
         val payload = JSONObject().apply {
             put("type", "call_answered")
             put("call_id", callId)
             put("conversation_id", conversationId)
+            // [WAVE 104C] target_email is required for the C++ WS relay to
+            // route this frame to the caller's chat_user_<email> channel and
+            // fan it out as call_accepted. Without it the C++ WS has no target
+            // and the iOS "Conectando..." UI never transitions to connected.
+            if (callerEmail.isNotEmpty()) put("target_email", callerEmail)
             put("ts", System.currentTimeMillis())
         }.toString()
         enqueueAndShip(context, payload)

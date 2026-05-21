@@ -478,8 +478,9 @@ object NativeCallRoom {
                 Log.w(TAG, "adoptForCall: setMic/Cam failed: ${t.message}")
             }
             // Fire-and-forget signal to caller.
+            // [WAVE 104C] Pass callerEmail so C++ WS relay routes the frame.
             try {
-                CallSignalWs.fireCallAnswered(ctx.applicationContext, callId, conversationId)
+                CallSignalWs.fireCallAnswered(ctx.applicationContext, callId, conversationId, callerEmail)
             } catch (_: Throwable) {}
             return
         }
@@ -505,8 +506,9 @@ object NativeCallRoom {
                 ExpoCallKitModule.enrichIntentWithAuth(ctx.applicationContext, this)
             }
             ctx.startActivity(intent)
+            // [WAVE 104C] Pass callerEmail so C++ WS relay routes the frame.
             try {
-                CallSignalWs.fireCallAnswered(ctx.applicationContext, callId, conversationId)
+                CallSignalWs.fireCallAnswered(ctx.applicationContext, callId, conversationId, callerEmail)
             } catch (_: Throwable) {}
         } catch (t: Throwable) {
             Log.e(TAG, "adoptForCall fallback launch failed: ${t.message}")
