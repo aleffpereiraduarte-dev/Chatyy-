@@ -1605,13 +1605,51 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
 
         let sourceUri = url;
 
+        // [WAVE 81 2026-05-21] file:// existence guard. User report iOS:
+        //   "ao salvar the file ahsgvg.jpg could not be opened because
+        //    there is no such file"
+        // Root cause: url here resolves via getFullUrl(_active.fileUrl) which
+        // can return a stale file:// path when the chat-conversation row
+        // passed `fullUri` (msg._localUri or imgLocalPath) and the underlying
+        // file was evicted by iOS or deleted from chat-media-saved/. The
+        // iOS PHPhotoLibrary errors include the missing filename literally —
+        // sanitize-recover instead of bubbling the cryptic error.
+        if (sourceUri.startsWith('file://')) {
+          try {
+            const info = await FS.getInfoAsync(sourceUri);
+            if (!info?.exists) {
+              // Local gone — fall back to remote URL on the active item.
+              const remote = _active?.fileUrl
+                ? (_active.fileUrl.startsWith('http')
+                    ? _active.fileUrl
+                    : `https://chatyy.com.br${_active.fileUrl}`)
+                : null;
+              if (remote) sourceUri = remote;
+            }
+          } catch {
+            // getInfoAsync threw — fall back to remote if we have one.
+            const remote = _active?.fileUrl
+              ? (_active.fileUrl.startsWith('http')
+                  ? _active.fileUrl
+                  : `https://chatyy.com.br${_active.fileUrl}`)
+              : null;
+            if (remote) sourceUri = remote;
+          }
+        }
+
         // If the URL is already a local file:// (from mediaCache), skip the
         // download step entirely — FS.downloadAsync of a file:// URL fails
         // with "unsupported scheme" on iOS.
         if (!sourceUri.startsWith('file://')) {
-          // Download remote URL to a temp file so MediaLibrary can ingest it.
-          const ext = (fileName || sourceUri.split('/').pop() || 'file').split('?')[0].split('.').pop() || 'jpg';
-          const tempPath = FS.cacheDirectory + 'chatyy_save_' + Date.now() + '.' + ext;
+          // [WAVE 81 2026-05-21] Derive ext from URL only, never from the
+          // user-supplied fileName. Sanitize fileName-derived ext to safe
+          // alphanumeric. iOS rejects/echos user filenames containing weird
+          // chars in PHPhotoLibrary error messages ("ahsgvg.jpg" came from
+          // a user-typed name on send).
+          const urlExt = sourceUri.match(/\.(png|jpe?g|gif|webp|heic|heif|mp4|mov|m4v|webm)(\?|$)/i)?.[1];
+          const nameExt = (fileName || '').split('?')[0].split('.').pop();
+          const safeExt = (urlExt || (nameExt && /^[a-zA-Z0-9]{2,5}$/.test(nameExt) ? nameExt : 'jpg')).toLowerCase();
+          const tempPath = FS.cacheDirectory + 'chatyy_save_' + Date.now() + '.' + safeExt;
           const download = await FS.downloadAsync(sourceUri, tempPath);
           if (!download?.uri || (download.status && download.status >= 400)) {
             Alert.alert('Erro', `Download falhou (status ${download?.status || '?'}).`);
@@ -1620,6 +1658,19 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
           }
           sourceUri = download.uri;
         }
+
+        // [WAVE 81 2026-05-21] Sanity-check the final source path exists.
+        // Without this, ML.createAssetAsync/saveToLibraryAsync surface the
+        // cryptic "could not be opened because there is no such file" error
+        // with the user-typed filename ("ahsgvg.jpg") — confusing UX.
+        try {
+          const fc = await FS.getInfoAsync(sourceUri);
+          if (!fc?.exists) {
+            Alert.alert('Erro ao salvar', 'Arquivo não disponível. Tente abrir a imagem e salvar novamente.');
+            setSaving(false);
+            return;
+          }
+        } catch { /* getInfoAsync may throw on some URIs; fall through */ }
 
         // Save to gallery — try createAssetAsync first (creates a proper
         // PHAsset with full EXIF). Fallback to saveToLibraryAsync which
@@ -1633,7 +1684,14 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
             await ML.saveToLibraryAsync(sourceUri);
             ok = true;
           } catch (saveErr2) {
-            Alert.alert('Erro ao salvar', String(saveErr2?.message || saveErr?.message || 'Verifique as permissões de Fotos em Ajustes > Chatyy'));
+            // [WAVE 81 2026-05-21] Strip the iOS-supplied filename from the
+            // error message so users don't see weird names like "ahsgvg.jpg"
+            // in their own UI — surface a clean friendly message instead.
+            const rawMsg = String(saveErr2?.message || saveErr?.message || '');
+            const cleanMsg = /no such file|could not be opened/i.test(rawMsg)
+              ? 'Arquivo não encontrado. Toque na imagem pra abrir e tente salvar de novo.'
+              : (rawMsg || 'Verifique as permissões de Fotos em Ajustes > Chatyy');
+            Alert.alert('Erro ao salvar', cleanMsg);
           }
         }
         if (ok) {

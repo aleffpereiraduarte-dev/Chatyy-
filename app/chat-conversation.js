@@ -15746,15 +15746,56 @@ export default function ChatConversationScreen() {
       let FileSystem;
       try { FileSystem = require('expo-file-system/legacy'); } catch { FileSystem = require('expo-file-system'); }
       let sourceUri = url;
+      // [WAVE 81 2026-05-21] file:// existence guard. User report iOS:
+      //   "ao salvar dá erro 'the file ahsgvg.jpg could not be opened
+      //    because there is no such file'"
+      // Root cause: msg.file_url (or upstream resolveMediaUri) returned a
+      // stale file:// path (iOS cacheDirectory eviction or chat-media-saved
+      // file that was cleaned). ML.saveToLibraryAsync hands that path to
+      // PHPhotoLibrary which surfaces "no such file" with the filename in
+      // the error message. Check existence first; if missing, fall back to
+      // downloading from the remote CDN URL (msg.file_url stored on the row,
+      // not the local file://).
+      if (sourceUri.startsWith('file://')) {
+        try {
+          const info = await FileSystem.getInfoAsync(sourceUri);
+          if (!info?.exists) {
+            if (__DEV__) console.warn('[saveMedia] stale local file, refetching remote', sourceUri);
+            const remote = (msg.file_url && /^https?:\/\//i.test(msg.file_url))
+              ? msg.file_url
+              : (msg.file_url ? `https://chatyy.com.br${msg.file_url}` : null);
+            if (!remote) throw new Error('no_remote_url');
+            sourceUri = remote;
+          }
+        } catch (existsErr) {
+          // getInfoAsync may throw on permission-restricted paths — retry from remote.
+          const remote = (msg.file_url && /^https?:\/\//i.test(msg.file_url))
+            ? msg.file_url
+            : (msg.file_url ? `https://chatyy.com.br${msg.file_url}` : null);
+          if (remote) sourceUri = remote;
+        }
+      }
       // Skip the download step when the URL is already local (from our
       // media cache). FS.downloadAsync(file://) fails on iOS.
       if (!sourceUri.startsWith('file://')) {
-        const ext = (url.match(/\.(png|jpe?g|gif|webp|mp4|mov|webm)(\?|$)/i)?.[1] || 'png').toLowerCase();
+        const ext = (sourceUri.match(/\.(png|jpe?g|gif|webp|mp4|mov|webm)(\?|$)/i)?.[1] || 'jpg').toLowerCase();
+        // [WAVE 81 2026-05-21] sanitize filename — NEVER use user-supplied
+        // msg.file_name in the temp path. iOS PHPhotoLibrary echoes the
+        // filename in its error message and weird names ("ahsgvg.jpg",
+        // accents, emoji, slashes) confuse the underlying NSURL APIs.
         const filename = 'chatyy_' + Date.now() + '.' + ext;
         const dest = (FileSystem.cacheDirectory || FileSystem.documentDirectory) + filename;
-        const dl = await FileSystem.downloadAsync(url, dest);
+        const dl = await FileSystem.downloadAsync(sourceUri, dest);
         if (!dl?.uri || (dl.status && dl.status >= 400)) throw new Error(`download_failed_${dl?.status || '?'}`);
         sourceUri = dl.uri;
+      }
+      // [WAVE 81 2026-05-21] Last existence check before MediaLibrary so we
+      // surface a clearer message than "no such file" if anything went wrong.
+      try {
+        const fc = await FileSystem.getInfoAsync(sourceUri);
+        if (!fc?.exists) throw new Error('source_missing_after_download');
+      } catch (chkErr) {
+        if (chkErr?.message === 'source_missing_after_download') throw chkErr;
       }
       await ML.saveToLibraryAsync(sourceUri);
       try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}

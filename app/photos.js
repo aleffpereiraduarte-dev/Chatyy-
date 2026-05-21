@@ -1129,9 +1129,15 @@ export default function PhotosScreen() {
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     setPage(1);
-    await Promise.all([loadCloudPhotos(1), loadStorageInfo(), loadDevicePhotos()]);
+    // WAVE 80: pull-to-refresh re-fetches memories from backend (which serves
+    // from chat_user_memories cache, regenerating if >24h stale). Stable order
+    // preserved — same yearsAgo sort the carousel already uses.
+    const memTask = refreshMemories().then(next => {
+      if (next && next.length > 0) setMemoriesData(next);
+    });
+    await Promise.all([loadCloudPhotos(1), loadStorageInfo(), loadDevicePhotos(), memTask]);
     setRefreshing(false);
-  }, [loadCloudPhotos, loadStorageInfo, loadDevicePhotos]);
+  }, [loadCloudPhotos, loadStorageInfo, loadDevicePhotos, refreshMemories]);
 
   const loadMore = useCallback(() => {
     // Load more cloud photos
@@ -1156,15 +1162,61 @@ export default function PhotosScreen() {
   }, [cloudPhotos, devicePhotos]);
 
   // Memories: TIER 1 — backend-driven "On this day" (DOY ±3 days vs prev years).
-  // Backend: drive_memories returns { buckets: [{ type:'years_ago', years:N, photos:[] },
-  //   { type:'this_week', photos:[] }] }. We adapt that to the legacy shape
-  //   { yearsAgo, photos } the carousel render expects, so lines 2707-2817 don't
-  //   need to change. If backend fails (cold deploy, 500, offline) we fall back to
-  //   the client-side month-of-year heuristic so the strip never goes empty.
+  // Backend: drive_memories returns { buckets: [{ type:'years_ago', years:N, photos:[],
+  //   memory_key }, { type:'this_week', photos:[], memory_key }] }. We adapt that to
+  //   the legacy shape { yearsAgo, photos, memoryKey } the carousel render expects.
+  //
+  // WAVE 80 (2026-05-21) — Persistence hardening:
+  //   1) Hydrate from AsyncStorage IMMEDIATELY on mount (no flicker on cold start).
+  //   2) Backend now persists buckets in chat_user_memories (PG) with 7-day TTL
+  //      → same cards stay visible all week, not just for the exact DOY.
+  //   3) Stop re-fetching on every allPhotos change — only on mount + manual
+  //      refresh. Was a major "memories sumindo" cause: as device photos
+  //      streamed in, the effect re-ran, hit fallback (allPhotos transient
+  //      empty) and overwrote the carousel mid-render.
+  //   4) Respect locally-muted memory_keys (long-press "Não mostrar").
   const [memoriesData, setMemoriesData] = useState([]);
+  const [mutedMemoryKeys, setMutedMemoryKeys] = useState(() => new Set());
+  const memoriesLoadedRef = useRef(false);
+  const memCacheKey = `photo_memories_v1_${user?.email || 'anon'}`;
+  const memMuteKey = `photo_memories_muted_v1_${user?.email || 'anon'}`;
+
+  const refreshMemories = useCallback(async () => {
+    try {
+      const r = await api.driveMemories();
+      const buckets = r?.success && Array.isArray(r.data?.buckets) ? r.data.buckets : null;
+      if (!buckets || buckets.length === 0) return null;
+      const yearsCards = [];
+      const thisWeek = buckets.find(b => b?.type === 'this_week');
+      buckets.forEach(b => {
+        if (!b || !Array.isArray(b.photos) || b.photos.length === 0) return;
+        if (b.type === 'years_ago') {
+          yearsCards.push({
+            yearsAgo: Number(b.years) || 1,
+            photos: b.photos,
+            memoryKey: b.memory_key || `ya_${b.years || 1}`,
+          });
+        }
+      });
+      yearsCards.sort((a, b) => a.yearsAgo - b.yearsAgo);
+      let next = yearsCards;
+      if (yearsCards.length === 0 && thisWeek?.photos?.length) {
+        next = [{
+          yearsAgo: 0,
+          photos: thisWeek.photos,
+          memoryKey: thisWeek.memory_key || 'wk_current',
+        }];
+      }
+      try { await AsyncStorage.setItem(memCacheKey, JSON.stringify(next)); } catch {}
+      return next;
+    } catch (e) {
+      return null;
+    }
+  }, [memCacheKey]);
 
   useEffect(() => {
     let cancelled = false;
+    if (memoriesLoadedRef.current) return;
 
     const buildClientFallback = () => {
       if (!allPhotos || allPhotos.length === 0) return [];
@@ -1178,7 +1230,7 @@ export default function PhotosScreen() {
             const d = new Date(p.created_at || p.uploaded_at || p.modificationTime);
             if (!isNaN(d.getTime()) && d.getMonth() === currentMonth && d.getFullYear() < currentYear) {
               const yearsAgo = currentYear - d.getFullYear();
-              if (!groups.has(yearsAgo)) groups.set(yearsAgo, { yearsAgo, photos: [] });
+              if (!groups.has(yearsAgo)) groups.set(yearsAgo, { yearsAgo, photos: [], memoryKey: `local_ya_${yearsAgo}` });
               groups.get(yearsAgo).photos.push(p);
             }
           } catch {}
@@ -1188,48 +1240,66 @@ export default function PhotosScreen() {
     };
 
     (async () => {
+      // 1) Hydrate muted set from AsyncStorage so cards we hid stay hidden.
       try {
-        const r = await api.driveMemories();
-        if (cancelled) return;
-        const buckets = r?.success && Array.isArray(r.data?.buckets) ? r.data.buckets : null;
-        if (!buckets || buckets.length === 0) {
-          setMemoriesData(buildClientFallback());
-          return;
+        const muteRaw = await AsyncStorage.getItem(memMuteKey);
+        if (muteRaw && !cancelled) {
+          const arr = JSON.parse(muteRaw);
+          if (Array.isArray(arr)) setMutedMemoryKeys(new Set(arr));
         }
-        // Map to the shape the existing render reads (yearsAgo + photos).
-        // Skip the 'this_week' bucket here — carousel cards are years-ago tiles;
-        // "Esta semana" is shown by the preset card alongside, so we don't want
-        // a duplicate. We still include it as yearsAgo=0 to surface recents
-        // when no prev-year matches exist (e.g. brand-new accounts).
-        const yearsCards = [];
-        const thisWeek = buckets.find(b => b?.type === 'this_week');
-        buckets.forEach(b => {
-          if (!b || !Array.isArray(b.photos) || b.photos.length === 0) return;
-          if (b.type === 'years_ago') {
-            yearsCards.push({ yearsAgo: Number(b.years) || 1, photos: b.photos });
-          }
-        });
-        yearsCards.sort((a, b) => a.yearsAgo - b.yearsAgo);
+      } catch {}
 
-        if (yearsCards.length === 0 && thisWeek?.photos?.length) {
-          // Surface "Esta semana" como card de memória (yearsAgo=0). Garante
-          // que users que só têm backup recente (sem fotos de anos anteriores)
-          // vejam ALGUMA coisa no carrossel — root cause da queixa "memórias
-          // deveria pegar do backup automaticamente". Antes caía em
-          // buildClientFallback() que dependia de allPhotos local (que pode
-          // estar vazio se device não fez backup ainda mas tem fotos no R2).
-          setMemoriesData([{ yearsAgo: 0, photos: thisWeek.photos }]);
-          return;
+      // 2) Hydrate from AsyncStorage cache FIRST so the carousel paints
+      //    instantly on cold-start (no "blink to empty" while network call).
+      try {
+        const cached = await AsyncStorage.getItem(memCacheKey);
+        if (cached && !cancelled) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setMemoriesData(parsed);
+            memoriesLoadedRef.current = true;
+          }
         }
-        setMemoriesData(yearsCards);
-      } catch (e) {
-        if (cancelled) return;
+      } catch {}
+
+      // 3) Fetch fresh from backend (cache-served by chat_user_memories on backend).
+      const next = await refreshMemories();
+      if (cancelled) return;
+      if (next && next.length > 0) {
+        setMemoriesData(next);
+        memoriesLoadedRef.current = true;
+      } else if (!memoriesLoadedRef.current) {
+        // Last resort — client-side from current allPhotos (may be empty mid-load).
         setMemoriesData(buildClientFallback());
+        memoriesLoadedRef.current = true;
       }
     })();
 
     return () => { cancelled = true; };
-  }, [allPhotos]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.email]);
+
+  // Long-press handler — hide a memory locally AND ask backend to mute it.
+  const muteMemory = useCallback(async (memoryKey) => {
+    if (!memoryKey) return;
+    setMutedMemoryKeys(prev => {
+      const next = new Set(prev);
+      next.add(memoryKey);
+      try { AsyncStorage.setItem(memMuteKey, JSON.stringify(Array.from(next))); } catch {}
+      return next;
+    });
+    try {
+      await api.apiCall?.('photo_memories_mute', { memory_key: memoryKey, muted: 1 }, 'POST');
+    } catch {}
+  }, [memMuteKey]);
+
+  // Apply mute filter so hidden memories don't render. Order is preserved
+  // (stable across renders — same yearsAgo ordering returned by backend).
+  const visibleMemoriesData = useMemo(() => {
+    if (!Array.isArray(memoriesData) || memoriesData.length === 0) return memoriesData;
+    if (mutedMemoryKeys.size === 0) return memoriesData;
+    return memoriesData.filter(m => !mutedMemoryKeys.has(m.memoryKey));
+  }, [memoriesData, mutedMemoryKeys]);
 
   // ML search results (from Claude Vision API)
   const [mlSearchResults, setMlSearchResults] = useState(null);
@@ -3158,12 +3228,12 @@ export default function PhotosScreen() {
               {/* Hard guard: section is hidden entirely when there's nothing to surface — */}
               {/*   no memoriesData buckets AND not enough photos for the curated presets. */}
               {/* Bucket-empty case (e.g. brand-new account) collapses cleanly. */}
-              {!searchText && !showFavorites && !presetFilter && (memoriesData.length > 0 || filteredPhotos.length > 6) && (
+              {!searchText && !showFavorites && !presetFilter && (visibleMemoriesData.length > 0 || filteredPhotos.length > 6) && (
                 <MemoriesCarousel
                   colors={colors}
                   isDark={isDark}
                   t={t}
-                  memoriesData={memoriesData}
+                  memoriesData={visibleMemoriesData}
                   filteredPhotos={filteredPhotos}
                   getThumbnailUrl={getThumbnailUrl}
                   openViewer={openViewer}
@@ -3171,6 +3241,7 @@ export default function PhotosScreen() {
                   setPresetFilter={setPresetFilter}
                   setPresetMLIds={setPresetMLIds}
                   setPresetLoading={setPresetLoading}
+                  onMuteMemory={muteMemory}
                   s={s}
                 />
               )}
@@ -5255,7 +5326,8 @@ function PhotosMapTab({ colors, isDark, insets, t, api, allPhotos, openViewer })
 
 function MemoriesCarousel({
   colors, isDark, t, memoriesData, filteredPhotos, getThumbnailUrl,
-  openViewer, api, setPresetFilter, setPresetMLIds, setPresetLoading, s,
+  openViewer, api, setPresetFilter, setPresetMLIds, setPresetLoading,
+  onMuteMemory, s,
 }) {
   // Build the card list up front so stagger indexes line up with what renders.
   // Years-ago buckets first (up to 4), then curated presets — same order as
@@ -5348,7 +5420,7 @@ function MemoriesCarousel({
             ? (t('photos.yearsAgo', { n: 1 }) || '1 ano atrás')
             : (t('photos.yearsAgoPlural', { n: mem.yearsAgo }) || `${mem.yearsAgo} anos atrás`);
           return (
-            <React.Fragment key={`mem-${mem.yearsAgo}`}>
+            <React.Fragment key={`mem-${mem.memoryKey || mem.yearsAgo}`}>
               {renderAnimCard(idx, (
                 <Pressable
                   style={[s.memoryCardLg, { backgroundColor: colors.surface }]}
@@ -5359,6 +5431,25 @@ function MemoriesCarousel({
                     const idx0 = filteredPhotos.findIndex(p => p.id === cover?.id);
                     if (idx0 >= 0) openViewer(idx0);
                   }}
+                  onLongPress={() => {
+                    // Long-press → "Não mostrar essa memória". Mute is local
+                    // (AsyncStorage) + backend (chat_user_memories.muted = 1)
+                    // so it sticks across cold-starts AND across devices.
+                    if (!onMuteMemory || !mem.memoryKey) return;
+                    try {
+                      Alert.alert(
+                        t('photos.hideMemoryTitle') || 'Ocultar memória',
+                        t('photos.hideMemoryBody') || 'Você não verá essa memória novamente.',
+                        [
+                          { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+                          { text: t('photos.hide') || 'Ocultar', style: 'destructive', onPress: () => onMuteMemory(mem.memoryKey) },
+                        ]
+                      );
+                    } catch {
+                      onMuteMemory(mem.memoryKey);
+                    }
+                  }}
+                  delayLongPress={400}
                 >
                   {coverUri ? (
                     <Image source={{ uri: coverUri }} style={s.memoryCoverLg} resizeMode="cover" />
