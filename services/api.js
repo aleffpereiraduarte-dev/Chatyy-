@@ -7068,6 +7068,11 @@ export async function feedBookmarks(page = 1) {
 export async function notificationsList(page = 1, limit = 30) {
   return apiCall('notifications_list', { page, limit }, 'POST');
 }
+// [WAVE 100] Compact manifest — id/type/actor/read/created_at only, ~5KB for
+// 50 rows. Use to detect "nothing changed" before triggering heavy list.
+export async function notificationsManifest(limit = 50) {
+  return apiCall('notifications_manifest', { limit }, 'POST');
+}
 export async function notificationsMarkRead(id) {
   return apiCall('notifications_mark_read', id ? { id } : {}, 'POST');
 }

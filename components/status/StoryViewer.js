@@ -366,6 +366,19 @@ export default function StoryViewer({
   // before the first decoded frame paints. Poster usually masks this but on
   // older statuses without thumbnail_url the user used to see a black hole.
   const [videoLoading, setVideoLoading] = useState(false);
+  // [WAVE 99 2026-05-21] Image error tracking — symmetric counterpart to
+  // videoError. Without it, when expo-image fails (404, decode error, signed
+  // URL expired, CORS) onLoad never fires + imageFade stayed at 0 → the
+  // viewer's media canvas was solid #0f172a / black to the user with NO
+  // signal to retry. Bug user 2026-05-21 print: "Aleff Duarte 21h / 1
+  // visualização / mídia área PRETO PURO". Real status row in DB, URL
+  // returns 200, but expo-image's memory-disk cache likely held a
+  // poisoned/half-written entry from an earlier tap. Now: onError flips
+  // this flag → we paint a brand-tinted error card with a Retry tap that
+  // bumps the retry counter, which forces a `key=` remount + bypasses the
+  // cache for the next attempt.
+  const [imageError, setImageError] = useState(false);
+  const [imageRetry, setImageRetry] = useState(0);
   // Caught-up "all done" overlay shown for 1.4s before the modal closes when
   // the user finishes the last story — Instagram pattern, replaces the abrupt
   // dismiss that left users wondering "did I tap something wrong?".
@@ -871,6 +884,10 @@ export default function StoryViewer({
     imageFade.setValue(0);
     setVideoError(false);
     setVideoLoading(cur.type === 'video');
+    // [WAVE 99 2026-05-21] Reset image error state per item so a stale error
+    // from a prior story doesn't bleed into the next one. Retry counter stays
+    // — it's tied to mediaUrl key remount + bumps only on explicit user retry.
+    setImageError(false);
     // [WAVE 93 2026-05-21] Safety net for `imageFade` — when expo-image
     // serves the source from its own memory cache (same uri viewed earlier
     // in this session, or pre-warmed via prefetch) the `onLoad` callback can

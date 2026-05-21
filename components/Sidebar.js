@@ -8,7 +8,7 @@ import {
   IconArchive, IconStarFilled, IconCompose, IconFolder, IconClock,
   IconFolderPlus, IconPlus, IconX, IconCheck,
   IconFilm, IconMessageSquare, IconCalendar, IconGlobe, IconUser, IconZap, IconCamera, IconStar, IconStickyNote, IconBell, IconSearch, IconBookmark, IconChevronDown, IconLogout,
-  IconMapPin,
+  IconMapPin, IconPlay,
 } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import { LABEL_COLORS, LABEL_NAMES } from './LabelPicker';
@@ -459,6 +459,13 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
           // dedicated screen (tabs, search, schedule reminders). Floppy-
           // disk feel uses IconBookmark since the codebase already ships it.
           { label: t('chat.savedMessages') || 'Mensagens Salvas', icon: IconBookmark, route: '/saved-messages', color: '#7C3AED' },
+          // Lives salvas — replays of broadcasts the user saved (CF Stream
+          // VOD). WAVE 99 (2026-05-21): user reported "salvo em lives mas
+          // onde tá essa opção?" — the only discoverable entry points were
+          // the Profile "Lives" tab and the end-card CTA after a broadcast.
+          // Surfacing it in the sidebar More section gives a permanent
+          // navigation target so the host can find their replays anytime.
+          { label: t('sidebar.livesSaved') || 'Lives salvas', icon: IconPlay, route: '/lives-saved', color: '#7C3AED' },
           // Snap-Map / Friends-on-a-Map — Snapchat-style "where are my
           // friends" screen. Pin-icon is overloaded for "live location"
           // semantics already; the green color (matches the live-share

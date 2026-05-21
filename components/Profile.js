@@ -29,6 +29,7 @@ import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import AvatarCircle from './AvatarCircle';
+import AvatarLightbox from './AvatarLightbox';
 import StoryRingAvatar from './status/StoryRingAvatar';
 import StoryViewer from './status/StoryViewer';
 import StatusCamera from './StatusCamera';
@@ -921,6 +922,12 @@ export default function Profile({
   const [livesLoading, setLivesLoading] = useState(false);
   const [livesLoaded, setLivesLoaded] = useState(false);
   const [storyViewer, setStoryViewer] = useState({ open: false, startIdx: 0 });
+  // WAVE 95 (2026-05-21): tap-to-fullscreen profile photo lightbox for
+  // OTHER users (no stories). Previously the avatar tap fired into the
+  // StoryViewer with a synthetic empty list, which renders an empty story
+  // (black screen, no photo). Lightbox gives users a real WhatsApp-style
+  // "see the photo big" affordance.
+  const [avatarLightboxOpen, setAvatarLightboxOpen] = useState(false);
   // [feat-10] Highlight viewer state — separate from storyViewer so opening a
   // highlight doesn't clobber the live-stories starting index. items[] mirrors
   // the shape StoryViewer expects (id, media_url, type, bg_color, ...).
@@ -2199,17 +2206,16 @@ export default function Profile({
                   >{inner}</TouchableOpacity>
                 );
               }
-              // Other user, no stories → at least open the photo viewer.
+              // Other user, no stories → open the AvatarLightbox (WAVE 95).
+              // Was: setStoryViewer({ open: true, startIdx: 0 }) which fed an
+              // empty list into StoryViewer (black screen). Lightbox shows
+              // the actual profile photo big, pinch-zoom, tap-out to close.
               return (
                 <TouchableOpacity
                   onPress={() => {
-                    // Lightweight: open ProfilePostViewer would be wrong (no posts),
-                    // so we open story viewer with a synthetic single-item list.
-                    try {
-                      const url = identity?.avatar_url || (identity?.email ? api.getAvatarUrlForEmail?.(identity.email) : '');
-                      if (!url) return;
-                      setStoryViewer({ open: true, startIdx: 0 });
-                    } catch {}
+                    const url = identity?.avatar_url || (identity?.email ? api.getAvatarUrlForEmail?.(identity.email) : '');
+                    if (!url) return;
+                    setAvatarLightboxOpen(true);
                   }}
                   activeOpacity={0.85}
                   accessibilityLabel={t?.('profile.viewPhoto') || 'Ver foto'}
@@ -2867,6 +2873,20 @@ export default function Profile({
       t={t}
       router={router}
       user={currentUser}
+    />
+  );
+
+  // WAVE 95 (2026-05-21) — Tap-to-fullscreen avatar lightbox for OTHER
+  // users. Was: empty StoryViewer (black screen) which never showed the
+  // actual photo. Now: full-resolution profile photo with pinch-zoom,
+  // swipe-down to dismiss, WhatsApp/Telegram parity.
+  const avatarLightboxNode = (
+    <AvatarLightbox
+      visible={avatarLightboxOpen}
+      email={identity?.email || null}
+      uri={identity?.avatar_url || null}
+      name={identity?.name || identity?.username || identity?.email || ''}
+      onClose={() => setAvatarLightboxOpen(false)}
     />
   );
 
@@ -3564,6 +3584,7 @@ export default function Profile({
         </ScrollView>
         {viewerNode}
         {storyViewerNode}
+        {avatarLightboxNode}
         {highlightViewerNode}
         {highlightActionSheetNode}
         {highlightEditNode}
@@ -3594,6 +3615,7 @@ export default function Profile({
     extras={<>
       {viewerNode}
       {storyViewerNode}
+      {avatarLightboxNode}
       {highlightViewerNode}
       {highlightActionSheetNode}
       {highlightEditNode}

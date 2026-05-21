@@ -5160,6 +5160,9 @@ export default {
   // Live replay / "Lives salvas" tab — gravações pós-live (CF Stream VOD).
   'liveReplay.tab': 'Lives salvas',
   'liveReplay.viewReplays': 'Ver Lives Salvas',
+  'live.viewSavedHint': 'Toque para abrir',
+  'live.viewSavedHintProcessing': 'Aparece em 1-2 min',
+  'sidebar.livesSaved': 'Lives salvas',
   'liveReplay.save': 'Salvar live',
   'liveReplay.saved': 'Salvo',
   'liveReplay.savedToast': 'Salvo em Lives',

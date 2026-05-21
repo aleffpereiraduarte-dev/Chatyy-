@@ -20806,6 +20806,19 @@ export default function ChatConversationScreen() {
                   // [WAVE 43D] Multi-select sticky — tap on group sender
                   // avatar toggles selection instead of opening the profile.
                   if (selectionMode) return toggleSelection(msg.id);
+                  // WAVE 95 (2026-05-21): tap a group sender's avatar →
+                  // open the fullscreen photo lightbox (user explicit
+                  // request: "se eu clico na foto de perfil do meu amigo
+                  // deveria ficar grande"). Long-press still opens the
+                  // profile peek elsewhere; for direct, fast "show me the
+                  // photo" the lightbox is the obvious affordance.
+                  setAvatarLightbox({ name: msg.sender_name || msg.sender_email, email: msg.sender_email, uri: null });
+                }}
+                onLongPress={() => {
+                  // Long-press keeps the profile peek path so users can still
+                  // reach the contact card / shared media / nickname-edit UI
+                  // from a group bubble without leaving the chat.
+                  if (selectionMode) return;
                   setProfileViewer({ name: msg.sender_name || msg.sender_email, email: msg.sender_email });
                 }}>
                   <AvatarCircle name={msg.sender_name || msg.sender_email} email={msg.sender_email} size={28} style={{ marginRight: 6 }} />
@@ -21829,6 +21842,36 @@ export default function ChatConversationScreen() {
               })()}
               uri={conversationType === 'group' ? conversationAvatar : undefined}
               size={36}
+              onPress={() => {
+                // WAVE 95: tap the header avatar → fullscreen lightbox of the
+                // friend's profile photo (WhatsApp parity). The outer
+                // TouchableOpacity below still wraps the name area and opens
+                // the profile peek when tapped — nested touchables route to
+                // the innermost responder so this avatar tap doesn't double-
+                // fire the peek sheet.
+                if (conversationType === 'group') {
+                  // Groups have no single "friend" photo. Use the conversation
+                  // avatar (uri) if set; otherwise just open group info — same
+                  // as the rest of the header.
+                  if (conversationAvatar) {
+                    setAvatarLightbox({ name: conversationName, email: null, uri: conversationAvatar });
+                  } else {
+                    setEditGroupName(conversationName);
+                    loadGroupMembers();
+                    setShowGroupInfo(true);
+                  }
+                  return;
+                }
+                const _meLc = (currentEmail || '').toLowerCase();
+                const fromMembers = (membersRef.current || []).find(m => (m?.email || '').toLowerCase() !== _meLc && (m?.email || ''))?.email;
+                const friendEmail = fromMembers || params.email || '';
+                if (!friendEmail || friendEmail.toLowerCase() === _meLc) {
+                  // Defensive: fall back to peek if we can't resolve a friend.
+                  setProfileViewer({ name: conversationName, email: params.email || '' });
+                  return;
+                }
+                setAvatarLightbox({ name: conversationName, email: friendEmail, uri: null });
+              }}
             />
             {presence?.status === 'online' && conversationType === 'direct' && (
               <PresencePulse isDark={isDark} />
@@ -26135,6 +26178,20 @@ export default function ChatConversationScreen() {
             }));
           })().catch(() => {});
         }}
+      />
+
+      {/* WAVE 95 (2026-05-21) — Fullscreen avatar lightbox.
+          Triggered by tapping the avatar in the chat header (and the sender
+          avatar in group message bubbles below). Distinct from the peek
+          Profile sheet: this is purely a photo viewer with pinch-zoom and
+          swipe-down-to-dismiss. WhatsApp/Telegram parity for the "tap the
+          friend's photo to see it big" gesture users expect. */}
+      <AvatarLightbox
+        visible={!!avatarLightbox}
+        email={avatarLightbox?.email}
+        uri={avatarLightbox?.uri}
+        name={avatarLightbox?.name}
+        onClose={() => setAvatarLightbox(null)}
       />
 
       {/* Profile viewer modal */}

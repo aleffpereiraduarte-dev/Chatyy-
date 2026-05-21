@@ -13,7 +13,7 @@ import * as api from '../services/api';
 import LiveChat from '../components/LiveChat'; // eslint-disable-line no-unused-vars -- kept for fallback
 import LiveChatOverlay from '../components/live/LiveChatOverlay';
 import AvatarCircle from '../components/AvatarCircle';
-import { IconX, IconCameraFlip, IconMic, IconMicOff, IconVideo, IconVideoOff, IconHeart, IconShare, IconSend, IconSettings, IconUserPlus, IconSparkles, IconFilter, IconPin, IconStar, IconStarFilled, IconGlobe, IconLock, IconUsers, IconEye, IconStop, IconCheck, IconBookmark, IconChevronRight, IconChevronDown, IconBarChart, IconBrush, IconBookmarkFilled } from '../components/Icons';
+import { IconX, IconCameraFlip, IconMic, IconMicOff, IconVideo, IconVideoOff, IconHeart, IconShare, IconSend, IconSettings, IconUserPlus, IconSparkles, IconFilter, IconPin, IconStar, IconStarFilled, IconGlobe, IconLock, IconUsers, IconEye, IconStop, IconCheck, IconBookmark, IconChevronRight, IconChevronDown, IconBarChart, IconBrush, IconBookmarkFilled, IconPlay } from '../components/Icons';
 import { useTheme } from '../context/ThemeContext';
 import AnimatedViewerCount from '../components/AnimatedViewerCount';
 import LiveTopGifters from '../components/LiveTopGifters';
@@ -3031,11 +3031,17 @@ export default function LiveBroadcastScreen() {
           </View>
 
           {/* "Ver Lives Salvas" — surfaces the replay landing page right
-              after the host ends. Only shown when the backend confirms a
-              recording is in flight (CF Stream pipeline + save_replay=true).
-              Without this CTA the host had no idea WHERE the replay went
-              (incident: user complaint "Replay onde tá?? Cadê?"). */}
-          {(endedHasRecording || endedReplayStatus === 'saved') && saveReplay ? (
+              after the host ends. WAVE 99 (2026-05-21): user reported "salvo
+              em lives mas onde tá essa opção?" — the old gate `endedHasRecording
+              || endedReplayStatus==='saved'` waited for a server roundtrip that
+              could take 1-2 minutes (CF Stream finalization), and during the
+              wait the host saw only the small "Processando…" pill with no
+              obvious navigation target. Now: as long as `saveReplay` was on
+              when the host ended, the big CTA is shown UNCONDITIONALLY so
+              the user always knows where to find the replay. Even if the
+              replay is still processing, tapping the CTA takes them to
+              /lives-saved which polls for the new row to surface. */}
+          {saveReplay ? (
             <TouchableOpacity
               onPress={() => {
                 try { router.replace('/lives-saved'); }
@@ -3044,12 +3050,22 @@ export default function LiveBroadcastScreen() {
               style={styles.endCardSeeReplays}
               activeOpacity={0.85}
               accessibilityRole="button"
-              accessibilityLabel={t('liveReplay.tab') || 'Lives salvas'}
+              accessibilityLabel={t('liveReplay.viewReplays') || 'Ver Lives Salvas'}
             >
-              <IconStarFilled size={16} color="#fff" />
-              <Text style={styles.endCardSeeReplaysText}>
-                {t('liveReplay.viewReplays') || 'Ver Lives Salvas'}
-              </Text>
+              <View style={styles.endCardSeeReplaysIconWrap}>
+                <IconPlay size={20} color="#fff" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.endCardSeeReplaysText}>
+                  {t('liveReplay.viewReplays') || 'Ver Lives Salvas'}
+                </Text>
+                <Text style={styles.endCardSeeReplaysHint} numberOfLines={1}>
+                  {endedReplayStatus === 'processing'
+                    ? (t('live.viewSavedHintProcessing') || 'Aparece em 1-2 min')
+                    : (t('live.viewSavedHint') || 'Toque para abrir')}
+                </Text>
+              </View>
+              <Text style={styles.endCardSeeReplaysChevron}>›</Text>
             </TouchableOpacity>
           ) : null}
 
@@ -6419,19 +6435,43 @@ const styles = StyleSheet.create({
   endCardSeeReplays: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: 'rgba(124,58,237,0.85)',
-    paddingVertical: 12,
+    gap: 12,
+    backgroundColor: '#7C3AED',
+    paddingVertical: 16,
     paddingHorizontal: 18,
-    borderRadius: 14,
-    marginTop: 10,
+    borderRadius: 16,
+    marginTop: 12,
     marginHorizontal: 4,
+    shadowColor: '#7C3AED',
+    shadowOpacity: 0.45,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 8,
+  },
+  endCardSeeReplaysIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   endCardSeeReplaysText: {
     color: '#fff',
-    fontSize: 14,
-    fontWeight: '700',
+    fontSize: 15,
+    fontWeight: '800',
     letterSpacing: 0.2,
+  },
+  endCardSeeReplaysHint: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 12,
+    fontWeight: '500',
+    marginTop: 2,
+  },
+  endCardSeeReplaysChevron: {
+    color: '#fff',
+    fontSize: 28,
+    fontWeight: '300',
+    marginLeft: 4,
   },
 });

@@ -27,6 +27,7 @@ function mqttSubscribeAll(conversations) {
 import CachedImage from './CachedImage';
 import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye, IconMusic, IconUserPlus, IconSparkles, IconHeart, IconUsers, IconBell } from './Icons';
 import AvatarCircle from './AvatarCircle';
+import AvatarLightbox from './AvatarLightbox';
 import ChatyyOneAvatar from './ChatyyOneAvatar';
 import StatusCamera, { FILTERS as STATUS_FILTERS, FilterOverlay } from './StatusCamera';
 import BroadcastModal from './BroadcastModal';
@@ -354,6 +355,10 @@ const ConversationRow = React.memo(function ConversationRow({
   conversation, colors, onPress, onPressIn, onDelete, onArchive, onMute, onPin, onMarkUnread, onEmail,
   currentEmail, t, language, isOnline: isOnlineProp, isDark, isLocked, typingUsers,
   selectionMode, isSelected, onLongPress, onToggleSelect, draftText, draftEditedAt, noteText, lastSeen,
+  // WAVE 95 (2026-05-21): tap-on-avatar opens fullscreen lightbox while the
+  // rest of the row still opens the conversation. Without this prop the
+  // avatar stays a non-tappable visual element (legacy behavior).
+  onAvatarPress,
 }) {
   const isGroup = conversation.type === 'group';
   const isChannel = conversation.type === 'channel';
@@ -770,6 +775,12 @@ const ConversationRow = React.memo(function ConversationRow({
                   name={displayName}
                   email={otherEmail}
                   size={50}
+                  // WAVE 95: tap-avatar → fullscreen lightbox (only for direct
+                  // chats; group/channel avatars don't have a single photo to
+                  // enlarge — the row tap still opens the conversation).
+                  // Disabled in selection mode so multi-select gestures still
+                  // work without ambiguity.
+                  onPress={selectionMode ? undefined : (onAvatarPress ? () => onAvatarPress({ name: displayName, email: otherEmail }) : undefined)}
                 />
               </View>
             )}
@@ -2482,6 +2493,9 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   })();
   // Lazy single-pass partition — was 2× filter (active + archived) on every
   // initial mount even when both sets came from the same array.
+  // WAVE 95 (2026-05-21): chat-list row avatar tap → fullscreen lightbox.
+  // Row tap (anywhere else) still opens the conversation.
+  const [avatarLightbox, setAvatarLightbox] = useState(null); // { name, email }
   const [conversations, setConversations] = useState(() => _initialConvs.filter(c => !c.archived));
   const [archivedConversations, setArchivedConversations] = useState(() => {
     if (!_initialConvs.length) return [];

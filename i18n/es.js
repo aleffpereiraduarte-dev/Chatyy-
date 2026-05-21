@@ -5071,6 +5071,9 @@ export default {
   // Live replay / "Lives guardadas" tab — grabaciones post-live (CF Stream VOD).
   'liveReplay.tab': 'Lives guardadas',
   'liveReplay.viewReplays': 'Ver Lives Guardadas',
+  'live.viewSavedHint': 'Toca para abrir',
+  'live.viewSavedHintProcessing': 'Listo en 1-2 min',
+  'sidebar.livesSaved': 'Lives guardadas',
   'liveReplay.save': 'Guardar live',
   'liveReplay.saved': 'Guardado',
   'liveReplay.savedToast': 'Guardado en Lives',

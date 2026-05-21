@@ -5075,6 +5075,9 @@ export default {
   // Live replay / "Saved lives" tab — post-broadcast recordings (CF Stream VOD).
   'liveReplay.tab': 'Saved lives',
   'liveReplay.viewReplays': 'View Saved Lives',
+  'live.viewSavedHint': 'Tap to open',
+  'live.viewSavedHintProcessing': 'Ready in 1-2 min',
+  'sidebar.livesSaved': 'Saved Lives',
   'liveReplay.save': 'Save live',
   'liveReplay.saved': 'Saved',
   'liveReplay.savedToast': 'Saved to Lives',
