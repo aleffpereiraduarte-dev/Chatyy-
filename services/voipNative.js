@@ -89,9 +89,23 @@ export async function startOutgoingCall({
   callId,
   onWebFallback,
 } = {}) {
-  if (!calleeEmail) {
-    throw new Error('startOutgoingCall: calleeEmail is required');
+  // [2026-05-21] Defensive validation. The native (iOS/Android) layer
+  // returns cryptic errors ("callee_email required", "Cannot convert
+  // [object Object]... Value is undefined") when the JS payload is
+  // malformed. Catch upstream and surface the actual offending value so
+  // the caller (chat-conversation.js, ChatCallsTab.js, one.js) can show
+  // a meaningful Alert instead of "empty string reached native".
+  const calleeEmailStr = (calleeEmail == null ? '' : String(calleeEmail)).trim();
+  if (!calleeEmailStr) {
+    const err = new Error(
+      'callee_email required (got: ' + JSON.stringify(calleeEmail) + ')'
+    );
+    err.code = 'CALLEE_EMAIL_EMPTY';
+    throw err;
   }
+  // Use the trimmed value below so downstream native layers receive a
+  // clean string with no whitespace surprises.
+  calleeEmail = calleeEmailStr;
   const cid = callId || generateCallId();
   // [CALL-TRACE 2026-05-20 WAVE42] Step 2/12 — JS hands the call off to
   // native CallKit / CallActivity. From this point the foreground UI is
