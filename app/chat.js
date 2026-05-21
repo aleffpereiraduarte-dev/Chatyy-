@@ -497,8 +497,11 @@ function ChatHub() {
     if (tab === 'one') { try { router.push('/one'); } catch (e) { console.warn("[chat] router.push failed:", e); } return; }
     // "Email" jumps to the inbox screen (same pattern as One).
     if (tab === 'email') { try { router.push('/inbox'); } catch (e) { console.warn("[chat] router.push failed:", e); } return; }
-    // "Reels" opens feed with reels tab active
-    if (tab === 'reels') { setPendingReels(true); handleTabPress('feed'); return; }
+    // "Reels" bottom-nav button opens the feed screen on the Posts tab by
+    // default (Reels is the second sub-tab inside the feed). Reverts #896
+    // which forced reels mode — user feedback 2026-05-21: clicking Reels
+    // should land on Posts so the feed feels like an Instagram-style home.
+    if (tab === 'reels') { handleTabPress('feed'); return; }
     if (tab === activeTab) return;
     const idx = TAB_KEYS.indexOf(tab);
 
