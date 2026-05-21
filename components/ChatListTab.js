@@ -5282,22 +5282,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             borderBottomColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
           }}
         >
-          <View style={{
-            width: 52, height: 52, borderRadius: 26,
-            backgroundColor: '#7C3AED',
-            alignItems: 'center', justifyContent: 'center',
-          }}>
-            <View style={{
-              position: 'absolute', top: 4, left: 6,
-              width: 18, height: 12, borderRadius: 10,
-              backgroundColor: 'rgba(255,255,255,0.22)',
-              transform: [{ rotate: '-25deg' }],
-            }} />
-            <Svg width={26} height={26} viewBox="0 0 24 24" fill="none">
-              <Path d="M12 3l1.8 4.6L18 9l-4.2 1.4L12 15l-1.8-4.6L6 9l4.2-1.4z" fill="#fff" />
-              <Path d="M19 15l.9 2.3L22 18l-2.1.7L19 21l-.9-2.3L16 18l2.1-.7z" fill="#fff" />
-            </Svg>
-          </View>
+          {/* WAVE 46 (2026-05-21): swap solid purple + sparkle for the real
+              app icon with a winking-eye animation (~every 4–8s). Same 52px
+              footprint so layout doesn't shift. */}
+          <ChatyyOneAvatar size={52} />
           <View style={{ flex: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>

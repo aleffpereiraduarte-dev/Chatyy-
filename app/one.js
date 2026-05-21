@@ -27,6 +27,7 @@ import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import { OneRealtimeSession, isRealtimeSupported } from '../services/oneRealtime';
 import SmartReplyChips from '../components/SmartReplyChips';
+import ChatyyOneAvatar from '../components/ChatyyOneAvatar';
 
 // Strip the trailing `<followups>q1|q2|q3</followups>` marker the server-side
 // prompt appends to every One reply. Lets us hide it from rendered markdown
@@ -1538,9 +1539,9 @@ function MessageRow({ item, colors, isDark, onSpeak, speakingId, t, onCopy, onRe
         onLongPress={() => { if (item.content && !isStreaming) onLongPressAI?.(item); }}
         style={st.aiHeaderRow}
       >
-        <View style={st.aiHeaderAvatar}>
-          <IconSparkles size={11} color="#fff" />
-        </View>
+        {/* WAVE 46 (2026-05-21): real app icon avatar w/ blinking eyes (random 4-8s).
+            Sized 18px to match the existing aiHeaderAvatar footprint. */}
+        <ChatyyOneAvatar size={18} />
         <Text style={[st.aiHeaderLabel, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>One</Text>
       </TouchableOpacity>
 
@@ -3472,7 +3473,7 @@ export default function OneScreen() {
               loading && !messages.some(m => m._streaming) ? (
                 <View style={{ paddingHorizontal: 4, marginTop: 8 }}>
                   <View style={st.aiHeaderRow}>
-                    <View style={st.aiHeaderAvatar}><IconSparkles size={11} color="#fff" /></View>
+                    <ChatyyOneAvatar size={18} />
                     <Text style={[st.aiHeaderLabel, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>One</Text>
                   </View>
                   <InlineStreamingDots isDark={isDark} />
