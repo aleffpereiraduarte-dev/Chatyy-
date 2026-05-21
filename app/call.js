@@ -529,6 +529,14 @@ function CallScreenInner() {
   //   T+0-4s    'connecting'   default — pulsing dot, "Conectando..."
   //   T+4-15s   'establishing' "Estabelecendo conexão segura..." (calmer)
   //   T+15s+    'slow'         show the slowConnectHint banner
+  //   T+25s+    'failed'       flip connectionFailed so the end-card surface
+  //                            shows "Não foi possível conectar — Tentar de
+  //                            novo?" instead of leaving the user stranded
+  //                            on "Estabelecendo conexão segura" forever
+  //                            (WAVE 74 root cause: room-name mismatch put
+  //                            caller + callee in different LK rooms; even
+  //                            after backend fix, defense-in-depth ceiling
+  //                            so we never hang on this screen again).
   // peerRinging/peerConnected cancels all phase escalation immediately.
   useEffect(() => {
     if (peerConnected || peerRinging || ended) {
@@ -551,11 +559,38 @@ function CallScreenInner() {
       setConnectPhase('slow');
       setShowSlowConnectOverlay(true);
     }, 15000);
+    // [WAVE 74 2026-05-21] Hard 25s ceiling. If the peer never joined the
+    // LK room by 25s, something is wrong (network, server, room mismatch,
+    // SFU eviction). Surface connectionFailed so the existing "Tentar de
+    // novo / Desligar" UI is exposed. 25s matches WhatsApp's pre-answer
+    // ceiling. We DO NOT auto-end the call — user picks retry vs hangup.
+    const tFailed = setTimeout(() => {
+      if (endedRef.current || peerConnected || peerRinging) return;
+      try {
+        console.warn('[CALL-TRACE][HARD-FAIL] 25s elapsed without peer join — connectionFailed', {
+          callId,
+          ts: Date.now(),
+        });
+      } catch {}
+      try {
+        const api = require('../services/api');
+        api.apiCall?.('push_diag', {
+          step: 'lk_connect_hard_fail_25s',
+          platform: Platform.OS,
+          info: `cid=${String(callId).slice(-12)} peerConnected=${peerConnected} peerRinging=${peerRinging}`,
+          anon_id: `call-${String(callId).slice(-12)}`,
+          ts: new Date().toISOString(),
+        }, 'POST').catch(() => {});
+      } catch {}
+      setConnectionFailed(true);
+      try { setErrorMsg(t('call.connectionFailed') || 'Não foi possível conectar.'); } catch {}
+    }, 25000);
     return () => {
       clearTimeout(tEstablishing);
       clearTimeout(tSlow);
+      clearTimeout(tFailed);
     };
-  }, [peerConnected, peerRinging, ended]);
+  }, [peerConnected, peerRinging, ended, callId, t]);
 
   // [WAVE 68 2026-05-21] Defer the orange "Reconectando..." banner so a 1-2s
   // ICE blip (very common on cellular bouncing 4G↔5G or SFU edge migration)
