@@ -26,6 +26,16 @@ dependencies {
   implementation 'androidx.annotation:annotation:1.7.1'
   // kotlinx-coroutines-android is on the classpath transitively via expo-modules-core,
   // so we don't redeclare it here (avoids duplicate-class warnings on aggregate builds).
+
+  // [2026-05-21 ExpoFaceLandmarkerModule] AR face tracking for status filters.
+  // ML Kit Face Detection ships the model bundled in the AAR — no Play Services
+  // model download required at runtime, which matters for first-launch UX.
+  // CameraX is the lightest path to a buffered front-camera stream (expo-camera
+  // would require a UI host; face tracking only needs the pixel buffer).
+  implementation 'com.google.mlkit:face-detection:16.1.5'
+  implementation 'androidx.camera:camera-core:1.3.4'
+  implementation 'androidx.camera:camera-camera2:1.3.4'
+  implementation 'androidx.camera:camera-lifecycle:1.3.4'
 }
 
 def safeExtGet(prop, fallback) {

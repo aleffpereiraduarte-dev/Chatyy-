@@ -19,13 +19,15 @@
       "ExpoNativeSkeletonModule",
       "ExpoNativeWallpaperModule",
       "ExpoNativeClipboardHandoffModule",
-      "ExpoChatyyIntentsModule"
+      "ExpoChatyyIntentsModule",
+      "ExpoFaceLandmarkerModule"
     ]
   },
   "android": {
     "modules": [
       "expo.modules.nativetoolkit.ExpoNativeAudioModule",
-      "expo.modules.nativetoolkit.ExpoNativeImageModule"
+      "expo.modules.nativetoolkit.ExpoNativeImageModule",
+      "expo.modules.nativetoolkit.ExpoFaceLandmarkerModule"
     ]
   }
 }

@@ -30,8 +30,12 @@ export default function FaceFilterOverlay({ filterKey, previewSize, facing = 'fr
   // back to the preset's centered fallback anchor.
   useEffect(() => {
     if (!preset || preset.key === 'none') return undefined;
-    const mp = getMediaPipe();
-    if (!mp) return undefined;
+    let mp = null;
+    try { mp = getMediaPipe(); } catch (e) {
+      if (__DEV__) console.warn('[FaceFilterOverlay] getMediaPipe threw:', e?.message);
+      return undefined;
+    }
+    if (!mp || typeof mp.startFaceLandmarker !== 'function') return undefined;
     try {
       const fps = getTargetFps();
       // Start inference at target fps. Binding handles native-side
@@ -43,7 +47,9 @@ export default function FaceFilterOverlay({ filterKey, previewSize, facing = 'fr
         setFace(data.landmarks[0]); // first face only — single-subject status
       };
       subRef.current = mp.addListener?.('faceLandmarks', handler);
-    } catch {}
+    } catch (e) {
+      if (__DEV__) console.warn('[FaceFilterOverlay] startFaceLandmarker threw:', e?.message);
+    }
     return () => {
       try { subRef.current?.remove?.(); } catch {}
       try { getMediaPipe()?.stopFaceLandmarker?.(); } catch {}
@@ -60,7 +66,11 @@ export default function FaceFilterOverlay({ filterKey, previewSize, facing = 'fr
     return () => clearInterval(id);
   }, [face]);
 
-  if (!preset || preset.key === 'none' || !preset.asset || !previewSize?.width) return null;
+  // Belt-and-braces: bail when any prerequisite is missing. Each check
+  // protects a separate crash path we've actually seen in the wild —
+  // missing asset (someone deleted the PNG but kept the preset), 0×0
+  // previewSize (camera not laid out yet), or stale filterKey post-HMR.
+  if (!preset || preset.key === 'none' || !preset.asset || !previewSize?.width || !previewSize?.height) return null;
 
   const { width: pw, height: ph } = previewSize;
 
@@ -142,6 +152,12 @@ export default function FaceFilterOverlay({ filterKey, previewSize, facing = 'fr
             ],
           }}
           resizeMode="contain"
+          // Swallow PNG decode errors so a missing/corrupt asset doesn't
+          // crash the camera. The overlay just renders blank — capture
+          // still works.
+          onError={(e) => {
+            if (__DEV__) console.warn('[FaceFilterOverlay] image load error:', e?.nativeEvent?.error);
+          }}
         />
       ))}
     </View>

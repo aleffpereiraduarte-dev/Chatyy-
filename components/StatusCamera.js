@@ -5,7 +5,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Animated, Dimensions,
-  Platform, Image, Pressable, ScrollView, FlatList, Linking, Modal,
+  Platform, Image, Pressable, ScrollView, FlatList, Linking, Modal, Alert,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
@@ -501,9 +501,40 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
 
   // ─── Capture ───
   const takePhoto = useCallback(async () => {
-    if (!cameraRef.current) return;
+    // Defensive guard wave — WAVE 84 crash fix. Reports: app hard-crashes
+    // when the user taps the shoot button while an AR face filter overlay
+    // is active. Multiple failure paths converge here, so we harden every
+    // step instead of guessing the exact one:
+    //   1. cameraRef may be null mid-mount (modal opening race) — bail.
+    //   2. takePictureAsync can REJECT (camera busy, surface lost when
+    //      AR overlay is rendering) — outer try/catch swallows it.
+    //   3. takePictureAsync can RESOLVE with null/undefined (expo-camera
+    //      v55 returns null when called during a video-mode swap) —
+    //      accessing photo.uri then throws TypeError. Now guarded.
+    //   4. ImageManipulator.manipulateAsync can throw if uri is a
+    //      content:// URI without read access — inner catch keeps the
+    //      raw photo as fallback (was already there, kept).
+    //   5. onCapture from parent could be undefined — already optional.
+    //   6. activeFilter/FACE_FILTER_PRESETS could be undefined if the
+    //      idx is stale after a hot-reload — fall back to safe defaults.
+    if (!cameraRef.current) {
+      if (__DEV__) console.warn('[StatusCamera] takePhoto called with null cameraRef');
+      return;
+    }
+    let photo = null;
     try {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.92, exif: false });
+      photo = await cameraRef.current.takePictureAsync({ quality: 0.92, exif: false });
+    } catch (e) {
+      console.warn('[StatusCamera] takePictureAsync threw:', e?.message || e);
+      try { Alert.alert('Erro', 'Falha ao tirar foto. Tenta novamente.'); } catch {}
+      return;
+    }
+    if (!photo || !photo.uri) {
+      console.warn('[StatusCamera] takePictureAsync returned empty photo');
+      try { Alert.alert('Erro', 'Não foi possível capturar a foto. Tenta novamente.'); } catch {}
+      return;
+    }
+    try {
       let finalUri = photo.uri;
       // Front-camera mirror fix: flip horizontally so the saved photo matches
       // what the user saw in the preview (iOS/Android save a non-mirrored image
@@ -516,7 +547,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
             [{ flip: ImageManipulator.FlipType.Horizontal }],
             { compress: 0.92, format: ImageManipulator.SaveFormat.JPEG }
           );
-          finalUri = flipped.uri;
+          if (flipped?.uri) finalUri = flipped.uri;
         } catch (e) { console.warn('[StatusCamera] flip failed:', e?.message); }
       }
       // Skip the in-camera preview/filter pass — the parent's StatusEditor
@@ -525,20 +556,27 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
       // local preview tried to render an mp4 inside <CachedImage>).
       // Carry the live-selected filter forward (Feature E) so the StatusEditor
       // re-applies it and stores it in status meta.
+      const safeFilter = activeFilter || FILTERS[0] || { key: 'normal' };
+      const arPreset = FACE_FILTER_PRESETS[arFilterIdx] || FACE_FILTER_PRESETS[0];
       onCapture?.({
         uri: finalUri,
         type: 'photo',
         width: photo.width,
         height: photo.height,
-        filter: activeFilter.key !== 'normal' ? activeFilter.key : undefined,
-        filterAdjust: activeFilter.adjust || undefined,
+        filter: safeFilter.key !== 'normal' ? safeFilter.key : undefined,
+        filterAdjust: safeFilter.adjust || undefined,
         beauty: beauty || undefined,
         music: musicTrack || undefined,
+        face_filter: arPreset?.key && arPreset.key !== 'none' ? arPreset.key : undefined,
       });
     } catch (e) {
-      console.warn('[StatusCamera] photo error:', e);
+      console.warn('[StatusCamera] photo post-process error:', e?.message || e);
+      // Last-resort: still surface the raw photo so the user doesn't lose the capture.
+      try {
+        onCapture?.({ uri: photo.uri, type: 'photo', width: photo.width, height: photo.height });
+      } catch {}
     }
-  }, [facing, onCapture, activeFilter, beauty, musicTrack]);
+  }, [facing, onCapture, activeFilter, beauty, musicTrack, arFilterIdx]);
 
   const startRecording = useCallback(async () => {
     if (!cameraRef.current || recording) return;
