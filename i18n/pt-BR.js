@@ -4842,6 +4842,19 @@ export default {
   'wallet.kind.tipRecv': 'Gorjeta recebida',
   'wallet.kind.promote': 'Promoção',
   'wallet.kind.bonus': 'Bônus',
+  // [WAVE 50 2026-05-21] Premium polish na tela Meus diamantes —
+  // hero gradient + quick actions + pacotes em destaque + stats +
+  // top senders + empty state.
+  'wallet.diamondsAvailable': 'diamantes disponíveis',
+  'wallet.featuredPacks': 'Pacotes em destaque',
+  'wallet.mostPopular': 'MAIS POPULAR',
+  'wallet.recentActivity': 'Atividade recente',
+  'wallet.monthlySpend': 'Gasto este mês',
+  'wallet.last7Days': 'Últimos 7 dias',
+  'wallet.topSenders': 'Quem te enviou mais',
+  'wallet.seeFullHistory': 'Ver histórico completo',
+  'wallet.emptyTitle': 'Comece sua coleção',
+  'wallet.emptyBody': 'Compre diamantes para presentear criadores, enviar para amigos e desbloquear conteúdo exclusivo.',
   'walletSend.openCta': 'Enviar diamante',
   'walletSend.title': 'Enviar diamantes',
   'walletSend.cta': 'Enviar {n} ◆',

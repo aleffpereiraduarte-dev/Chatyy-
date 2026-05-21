@@ -6630,13 +6630,25 @@ export default function ChatConversationScreen() {
     mountedRef.current = false;
     if (liveLocIntervalRef.current) clearInterval(liveLocIntervalRef.current);
     if (liveLocTimeoutRef.current) clearTimeout(liveLocTimeoutRef.current);
-    // Notify server to stop live-location tracking for this message.
-    // Fire-and-forget — if the app has no network it'll just expire on the
-    // server-side TTL, but the happy path cleans up immediately.
-    if (liveLocMsgIdRef.current) {
-      try { api.chatStopLiveLocation?.(liveLocMsgIdRef.current).catch(() => {}); } catch {}
-      liveLocMsgIdRef.current = null;
-    }
+    // [WAVE 49 2026-05-21 snap-map-disconnect-fix]
+    // Previously we called api.chatStopLiveLocation() on unmount, which made
+    // the backend DELETE the chat_live_locations row + chat_friend_location_shares
+    // row + auto_chat grants. Result: the moment the sender navigated away from
+    // the chat screen, every peer on snap-map saw the pin DISAPPEAR instantly
+    // — even though the user picked "1h" / "8h" / "sempre ativo" durations.
+    // This was the dominant root cause of the user feedback "ta desconectando
+    // com as pessoas que ta dividindo loc com a pessoa".
+    //
+    // Fix: do NOT auto-stop on unmount. The server-side TTL (expires_at, set
+    // when the user picked the duration) will naturally cull the share when
+    // the chosen window elapses. Peers keep seeing the last-known pin with a
+    // "stale" indicator if no heartbeat reaches them. Only explicit "Parar"
+    // taps (handleStopLiveLocation + bubble Stop action) actually nuke the
+    // session via api.chatStopLiveLocation.
+    //
+    // We still drop our LOCAL refs so a re-mount of the screen doesn't think
+    // it's mid-share — the next picker open will offer fresh duration chips.
+    liveLocMsgIdRef.current = null;
     // Unmount race: don't bother updating the reactive state (the component
     // is going away) but clear the ref intent so a re-mount sees a clean
     // slate. setLiveLocActive(null) here would be a no-op anyway.

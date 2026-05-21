@@ -932,6 +932,10 @@ export default function Profile({
   // disappeared until the next mount (user report: "adicionei o destaque
   // e some, não deixa ver"). Independent state survives those overwrites.
   const [highlights, setHighlights] = useState([]);
+  // [WAVE 52 / 2026-05-21] Loading state powers the skeleton row that paints
+  // 4 shimmer circles while the first statusHighlightList resolves — IG shows
+  // the strip outline immediately on profile open, never a blank gap.
+  const [highlightsLoading, setHighlightsLoading] = useState(true);
   // [2026-05-18 IG-Pro] Action sheet + edit/share modals for highlights.
   // The action sheet opens on long-press of a highlight tile and routes
   // into either the inline edit sheet (rename/cover/items) or the share
@@ -1176,7 +1180,12 @@ export default function Profile({
         );
         return [...pendingOptimistic, ...normalized];
       });
-    } catch {}
+    } catch {} finally {
+      // [WAVE 52] Drop the skeleton once the first list resolves (success or
+      // failure). Subsequent refetches keep the painted strip and only swap
+      // data — never re-trigger the skeleton flash on AppState refocus.
+      setHighlightsLoading(false);
+    }
   }, [identity?.email]);
 
   useEffect(() => {
@@ -1633,18 +1642,43 @@ export default function Profile({
   }, [identity]);
 
   // ─── Story Highlights row (Instagram parity) ────────────────────────
-  // Horizontal-scroll row of circular highlight covers (64px). When the
-  // viewer is `is_self` and there are zero highlights, show a "Novo" tile
-  // with a + icon as the first slot — Instagram pattern that nudges users
-  // to start curating. Backend doesn't expose highlights yet so we mock
-  // gracefully off `data.highlights` (array of {id, title, cover_url}).
+  // Horizontal-scroll row of circular highlight covers (72px ring — IG's
+  // current spec lands between 70–77 depending on screen width; 72 keeps
+  // the row balanced on 360dp Androids while feeling proper on 414dp iOS).
+  // When the viewer is `is_self` and there are zero highlights, show a
+  // "Novo" tile with a + icon as the first slot — Instagram pattern that
+  // nudges users to start curating.
+  // [WAVE 52] Skeleton row paints 4 shimmer placeholders during the first
+  // refetch so the strip never collapses to a blank gap; stagger fade-in
+  // makes the real tiles slide up after data arrives.
   const renderHighlights = () => {
     const isSelf = !!actions?.is_self;
-    if (highlights.length === 0 && !isSelf) return null;
-    const SIZE = 64;
+    const SIZE = 72;
     const RING = SIZE + 6; // 3px ring on each side
     const tone = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.06)';
     const borderTone = isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.10)';
+    // Skeleton while waiting for first list. Mirrors strip dimensions so
+    // there's zero layout shift when data resolves.
+    if (highlightsLoading && highlights.length === 0) {
+      return (
+        <View style={{ flexDirection: 'row', paddingHorizontal: 14, paddingVertical: 6, gap: 16 }}>
+          {[0,1,2,3].map(i => (
+            <View key={i} style={{ alignItems: 'center', width: SIZE + 8 }}>
+              <View style={{
+                width: RING, height: RING, borderRadius: RING / 2,
+                backgroundColor: tone,
+                borderWidth: 1.5, borderColor: borderTone,
+              }} />
+              <View style={{
+                width: SIZE - 18, height: 9, borderRadius: 4,
+                backgroundColor: tone, marginTop: 8,
+              }} />
+            </View>
+          ))}
+        </View>
+      );
+    }
+    if (highlights.length === 0 && !isSelf) return null;
     return (
       <ScrollView
         horizontal

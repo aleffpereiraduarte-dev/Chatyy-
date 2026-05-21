@@ -4768,6 +4768,18 @@ export default {
   'wallet.kind.tipRecv': 'Tip received',
   'wallet.kind.promote': 'Promotion',
   'wallet.kind.bonus': 'Bonus',
+  // [WAVE 50 2026-05-21] Premium polish — wallet hero / quick actions /
+  // featured packs / stats / top senders / empty state.
+  'wallet.diamondsAvailable': 'diamonds available',
+  'wallet.featuredPacks': 'Featured packs',
+  'wallet.mostPopular': 'MOST POPULAR',
+  'wallet.recentActivity': 'Recent activity',
+  'wallet.monthlySpend': 'Spent this month',
+  'wallet.last7Days': 'Last 7 days',
+  'wallet.topSenders': 'Who sent you most',
+  'wallet.seeFullHistory': 'See full history',
+  'wallet.emptyTitle': 'Start your collection',
+  'wallet.emptyBody': 'Buy diamonds to gift creators, send to friends and unlock exclusive content.',
   'walletSend.openCta': 'Send diamond',
   'walletSend.title': 'Send diamonds',
   'walletSend.cta': 'Send {n} ◆',

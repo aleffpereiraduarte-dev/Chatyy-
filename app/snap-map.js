@@ -48,7 +48,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform,
   ScrollView, Dimensions, Modal, Pressable, ActivityIndicator, Alert,
-  Linking, StatusBar,
+  Linking, StatusBar, AppState,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
@@ -62,6 +62,7 @@ import AvatarCircle from '../components/AvatarCircle';
 import { getAvatarUrlForEmail } from '../services/api';
 import {
   IconArrowLeft, IconMapPin, IconUser, IconMessageSquare, IconX, IconNavigation,
+  IconPhone, IconEyeOff, IconClock, IconRefresh, IconFilter,
 } from '../components/Icons';
 
 // Google Maps JS API key. Read from app.json `extra.GOOGLE_MAPS_KEY` —
@@ -118,12 +119,30 @@ function buildMapHtml({ apiKey, center, zoom, isDark, initialPins, initialMe }) 
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
 <style>
   html,body,#map{margin:0;padding:0;width:100%;height:100%;background:${isDark ? '#0d0d0d' : '#e5e7eb'};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
-  .pin{position:absolute;transform:translate(-50%,-100%);display:flex;flex-direction:column;align-items:center;cursor:pointer;pointer-events:auto;user-select:none}
-  .pin .ring{width:48px;height:48px;border-radius:24px;background:#fff;padding:3px;box-sizing:border-box;box-shadow:0 3px 10px rgba(0,0,0,0.35);border:3px solid #22c55e}
-  .pin.unlimited .ring{border-color:#7C3AED}
+  .pin{position:absolute;transform:translate(-50%,-100%);display:flex;flex-direction:column;align-items:center;cursor:pointer;pointer-events:auto;user-select:none;will-change:transform}
+  /* Gradient ring around the avatar — same look as Snapchat / Find-My.
+     Live (fresh) = green gradient, unlimited = purple gradient, stale =
+     desaturated gray. We use a two-layer box-shadow trick so the ring has
+     both an outer halo + a hairline white separator inside, matching the
+     iOS Find-My pin design. */
+  .pin .ring{width:52px;height:52px;border-radius:26px;background:linear-gradient(135deg,#22c55e,#16a34a);padding:3px;box-sizing:border-box;box-shadow:0 4px 14px rgba(0,0,0,0.45),0 0 0 2px rgba(255,255,255,0.95) inset;position:relative}
+  .pin.unlimited .ring{background:linear-gradient(135deg,#a855f7,#7C3AED)}
+  .pin.stale .ring{background:linear-gradient(135deg,#9ca3af,#6b7280);opacity:0.85}
   .pin .ring img{width:100%;height:100%;border-radius:50%;display:block;object-fit:cover;background:#7C3AED}
   .pin .ring .ini{width:100%;height:100%;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:18px;background:#7C3AED}
-  .pin .label{margin-top:3px;background:rgba(0,0,0,0.78);color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* Live breathing pulse — only shown for fresh (non-stale) sharers. The
+     ring radiates a soft green glow that fades, signaling "this person is
+     ACTIVE right now". Stale pins skip the animation so the eye is drawn
+     to the live ones. */
+  .pin:not(.stale) .ring::after{content:'';position:absolute;inset:-4px;border-radius:50%;border:2px solid rgba(34,197,94,0.55);animation:pinPulse 2.4s ease-out infinite;pointer-events:none}
+  .pin.unlimited:not(.stale) .ring::after{border-color:rgba(124,58,237,0.6)}
+  @keyframes pinPulse{0%{transform:scale(1);opacity:.7}100%{transform:scale(1.45);opacity:0}}
+  .pin .label{margin-top:5px;background:rgba(0,0,0,0.82);color:#fff;font-size:10px;font-weight:700;padding:3px 9px;border-radius:11px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;backdrop-filter:blur(8px)}
+  /* "há Xmin" badge stacked under the name label so users can eyeball at a
+     glance whether a friend just updated or has been stale for a while.
+     Rendered ONLY when ago_label is set so old/missing rows degrade. */
+  .pin .ago{margin-top:2px;background:rgba(255,255,255,0.92);color:#111;font-size:9px;font-weight:600;padding:1px 7px;border-radius:9px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pin.stale .ago{background:rgba(239,68,68,0.92);color:#fff}
   .me{position:absolute;transform:translate(-50%,-50%);pointer-events:none}
   .me .dot{width:18px;height:18px;border-radius:50%;background:#3B82F6;border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4);position:relative}
   /* WhatsApp/Google-style breathing pulse around the blue dot. The outer
@@ -167,7 +186,16 @@ function pinHtml(pin) {
     ? '<img src="' + pin.avatar_url + '" onerror="this.style.display=\\'none\\';this.nextElementSibling&&(this.nextElementSibling.style.display=\\'flex\\')"/><div class="ini" style="display:none">' + initial + '</div>'
     : '<div class="ini">' + initial + '</div>';
   var name = (pin.name || (pin.email ? pin.email.split('@')[0] : '?'));
-  return '<div class="ring">' + img + '</div><div class="label">' + escapeHtml(name) + '</div>';
+  var nameShort = name.split(' ')[0];
+  // ago_label is a short relative-time string ("agora", "há 5min", "há 2h")
+  // computed in RN-land via the `ago()` helper. We render it inside the pin
+  // so users see at a glance how fresh the position is — the dominant
+  // user feedback ("ta desconectando") was actually peers seeing stale pins
+  // and assuming the share died, when it's still live just heartbeat-quiet.
+  var agoHtml = pin.ago_label
+    ? '<div class="ago">' + escapeHtml(pin.ago_label) + '</div>'
+    : '';
+  return '<div class="ring">' + img + '</div><div class="label">' + escapeHtml(nameShort) + '</div>' + agoHtml;
 }
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});
@@ -197,7 +225,7 @@ function bootGmaps() {
   AvatarOverlay.prototype = new google.maps.OverlayView();
   AvatarOverlay.prototype.onAdd = function() {
     var div = document.createElement('div');
-    div.className = 'pin' + (this.pin.is_unlimited ? ' unlimited' : '');
+    div.className = 'pin' + (this.pin.is_unlimited ? ' unlimited' : '') + (this.pin.is_stale ? ' stale' : '');
     div.innerHTML = pinHtml(this.pin);
     var self = this;
     div.addEventListener('click', function(){ rnPost({ type: 'pin_tap', email: self.pin.email }); });
@@ -220,7 +248,7 @@ function bootGmaps() {
   AvatarOverlay.prototype.update = function(pin) {
     this.pin = pin;
     if (this.div) {
-      this.div.className = 'pin' + (pin.is_unlimited ? ' unlimited' : '');
+      this.div.className = 'pin' + (pin.is_unlimited ? ' unlimited' : '') + (pin.is_stale ? ' stale' : '');
       this.div.innerHTML = pinHtml(pin);
       var self = this;
       this.div.addEventListener('click', function(){ rnPost({ type: 'pin_tap', email: self.pin.email }); });
@@ -358,16 +386,14 @@ function bootLeaflet() {
     var lOverlays = {};
     var lMe = null;
     function makePinIcon(pin) {
-      var initial = (pin.name || pin.email || '?').trim().charAt(0).toUpperCase();
-      var img = pin.avatar_url
-        ? '<img src="' + pin.avatar_url + '" onerror="this.style.display=\\'none\\';this.nextElementSibling&&(this.nextElementSibling.style.display=\\'flex\\')"/><div class="ini" style="display:none">' + initial + '</div>'
-        : '<div class="ini">' + initial + '</div>';
-      var name = (pin.name || (pin.email ? pin.email.split('@')[0] : '?'));
       return L.divIcon({
         className: '',
-        iconSize: [120, 80],
-        iconAnchor: [60, 80],
-        html: '<div class="pin' + (pin.is_unlimited ? ' unlimited' : '') + '"><div class="ring">' + img + '</div><div class="label">' + escapeHtml(name) + '</div></div>',
+        iconSize: [120, 96],
+        iconAnchor: [60, 96],
+        // Reuse the same pinHtml() helper so the gmaps + leaflet renderers
+        // stay byte-identical for the inner DOM — that's how the stale
+        // ring + ago badge stay consistent across both code paths.
+        html: '<div class="pin' + (pin.is_unlimited ? ' unlimited' : '') + (pin.is_stale ? ' stale' : '') + '">' + pinHtml(pin) + '</div>',
       });
     }
     window.__renderPins = function(pins) {
@@ -543,6 +569,52 @@ export default function SnapMapScreen() {
   // avoids fighting with the WebView's native pan/zoom touches.
   const [listExpanded, setListExpanded] = useState(false);
 
+  // [WAVE 49 2026-05-21] Filter pills above the map — Snapchat-style.
+  // 'all'      = everyone I have a grant from
+  // 'nearby'   = friends within 5km of me (needs myLocation)
+  // 'live'     = friends with fresh updates (last_seen < 2min)
+  // 'always'   = "sempre ativo" sessions only (is_unlimited)
+  // Filter state is intentionally local — it doesn't persist across mounts
+  // because the right filter depends on context (just-opened vs deep-link).
+  const [filter, setFilter] = useState('all');
+
+  // Ghost mode — when ON, the user is hidden from snap-map peers. We don't
+  // wipe their existing share session; we just flip a local flag the chat-
+  // conversation heartbeat reads to skip its tick. The peer's pin will go
+  // stale after ~2min and eventually expire. UI source-of-truth for the
+  // toggle is `ghost_mode_on` in AsyncStorage so the heartbeat (lives in
+  // chat-conversation.js) can read it without prop-drilling.
+  const [ghostMode, setGhostMode] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const v = await AsyncStorage.getItem('snap_map_ghost_mode');
+        if (alive) setGhostMode(v === '1');
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, []);
+  const toggleGhostMode = useCallback(async () => {
+    const next = !ghostMode;
+    setGhostMode(next);
+    try {
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      await AsyncStorage.setItem('snap_map_ghost_mode', next ? '1' : '0');
+    } catch {}
+  }, [ghostMode]);
+
+  // Now-tick: drives the "há Xmin" labels + stale ring re-renders. We
+  // re-render the list every 30s so distance/freshness stays current even
+  // when no new WS events arrive (which is exactly what looks like a
+  // "disconnect" to users — the pin frozen with an old timestamp).
+  const [nowTick, setNowTick] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNowTick(Date.now()), 30000);
+    return () => clearInterval(t);
+  }, []);
+
   const sharesRef = useRef([]);
   sharesRef.current = shares;
 
@@ -660,6 +732,31 @@ export default function SnapMapScreen() {
     };
   }, []);
 
+  // [WAVE 49 2026-05-21 snap-map-disconnect-fix]
+  // AppState foreground re-sync. The other half of the "disconnect" bug:
+  // when the user backgrounds the app, JS timers freeze (30s poll dies) AND
+  // WS bridge tears down on most OSes after ~60s. Without this listener,
+  // returning to the foreground left the map showing the same shares from
+  // 10min ago — peers who had stopped sharing meanwhile still showed pins,
+  // and new sharers were missing. Tap-the-app-icon → screen surfaced with
+  // a snapshot of the past, looking like "everything desyncs".
+  //
+  // Fix: on every active→foreground transition, force-refresh shares +
+  // grants. The WS layer will auto-reconnect on its own; this just bridges
+  // the gap until that completes.
+  useEffect(() => {
+    let lastState = AppState.currentState;
+    const sub = AppState.addEventListener('change', (next) => {
+      const wasInactive = lastState !== 'active';
+      lastState = next;
+      if (next === 'active' && wasInactive) {
+        // Fire-and-forget; the API helper already swallows errors.
+        try { refreshShares(); } catch {}
+      }
+    });
+    return () => { try { sub?.remove?.(); } catch {} };
+  }, [refreshShares]);
+
   // Center: prefer my GPS; fall back to first friend; final fallback Brazil.
   // We only compute center ONCE — on mount — to seed the WebView HTML.
   // After mount, the user is free to pan/zoom; we don't yank them back to
@@ -672,21 +769,69 @@ export default function SnapMapScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);   // ← intentionally empty; first paint only
 
+  // [WAVE 49 2026-05-21] Apply the filter pill before computing the pin
+  // payload. We compute it here (vs inside pinsPayload) so the list panel
+  // below also reflects the same filter — visual + tabular states stay in
+  // lockstep.
+  const filteredShares = useMemo(() => {
+    if (filter === 'all') return shares;
+    return shares.filter((s) => {
+      if (filter === 'nearby') {
+        if (!myLocation) return false;
+        const lat = Number(s.latitude), lng = Number(s.longitude);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+        const d = haversineMeters(myLocation.lat, myLocation.lng, lat, lng);
+        return d !== null && d <= 5000;
+      }
+      if (filter === 'live') {
+        // "live" = last update within 2min — the same threshold the pin
+        // uses to flip into the stale state below. This way 'live' filter
+        // shows exactly the green/purple non-stale pins.
+        if (!s.updated_at) return false;
+        let ts = 0;
+        try { ts = new Date(s.updated_at.replace(' ', 'T') + 'Z').getTime(); } catch {}
+        if (!ts) return false;
+        return (nowTick - ts) < 2 * 60 * 1000;
+      }
+      if (filter === 'always') return !!s.is_unlimited;
+      return true;
+    });
+  }, [shares, filter, myLocation, nowTick]);
+
   // Build the pin payload the WebView understands. avatar_url is the
   // backend's /get_avatar endpoint so the map shows the friend's actual
   // profile photo instead of just initials.
+  //
+  // is_stale + ago_label power the new stale visual state in the WebView
+  // pin (gray ring + red "há Xh" badge) — telling the user at a glance
+  // that the share is alive on the backend but hasn't sent a fresh tick
+  // recently. This is the user-facing answer to "ta desconectando": the
+  // pin stays visible with an explicit "stale" UI instead of vanishing.
+  const STALE_THRESHOLD_MS = 2 * 60 * 1000; // 2min without a tick → stale
   const pinsPayload = useMemo(() => (
-    shares
+    filteredShares
       .filter((s) => Number.isFinite(s.latitude) && Number.isFinite(s.longitude))
-      .map((s) => ({
-        email: s.email,
-        name: s.name || s.email?.split('@')[0] || '',
-        lat: Number(s.latitude),
-        lng: Number(s.longitude),
-        is_unlimited: !!s.is_unlimited,
-        avatar_url: s.email ? getAvatarUrlForEmail(s.email) : null,
-      }))
-  ), [shares]);
+      .map((s) => {
+        let ageMs = null;
+        if (s.updated_at) {
+          try {
+            const ts = new Date(s.updated_at.replace(' ', 'T') + 'Z').getTime();
+            if (ts) ageMs = Math.max(0, nowTick - ts);
+          } catch {}
+        }
+        const isStale = ageMs !== null && ageMs > STALE_THRESHOLD_MS;
+        return {
+          email: s.email,
+          name: s.name || s.email?.split('@')[0] || '',
+          lat: Number(s.latitude),
+          lng: Number(s.longitude),
+          is_unlimited: !!s.is_unlimited,
+          is_stale: isStale,
+          ago_label: ageMs !== null ? ago(s.updated_at) : '',
+          avatar_url: s.email ? getAvatarUrlForEmail(s.email) : null,
+        };
+      })
+  ), [filteredShares, nowTick]);
   const mePayload = useMemo(() => (
     myLocation ? { lat: myLocation.lat, lng: myLocation.lng } : null
   ), [myLocation]);
