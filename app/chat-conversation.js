@@ -8050,6 +8050,11 @@ export default function ChatConversationScreen() {
   const [starredMessages, setStarredMessages] = useState([]);
   const [starredLoading, setStarredLoading] = useState(false);
   const [profileViewer, setProfileViewer] = useState(null); // { name, email }
+  // WAVE 95 (2026-05-21): tap-to-fullscreen avatar viewer. WhatsApp-style.
+  // User: "se eu clico na foto de perfil do meu amigo deveria ficar grande
+  // pra eu ver". Opens a dedicated lightbox (not ChatMediaViewer — see the
+  // comment block in components/AvatarLightbox.js for the rationale).
+  const [avatarLightbox, setAvatarLightbox] = useState(null); // { name, email, uri }
   const [members, setMembers] = useState([]);
   const membersRef = useRef([]);
   useEffect(() => { membersRef.current = members; }, [members]);
