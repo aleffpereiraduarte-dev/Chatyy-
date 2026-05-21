@@ -92,7 +92,9 @@ export function isAllowedGifUrl(raw) {
 //      blank skeleton on cold start once we've seen the user before.
 let _mmkvPreloaded = null;
 let _mmkvAttempted = false;
+let _mmkvAttemptedForEmail = null; // invalidate preload memo on account switch
 let _liveStore = null; // module-scope live snapshot — survives unmount/re-mount
+let _liveStoreEmail = null; // owner of the live snapshot — drop on account switch
 function _mmkvStatusKey() {
   try {
     const { getActiveAccountEmail } = require('../services/api');
@@ -108,12 +110,16 @@ function _mmkvManifestKey() {
   } catch { return 'chat_status_manifest'; }
 }
 function _readMMKVOnce() {
-  if (_mmkvAttempted) return _mmkvPreloaded;
-  _mmkvAttempted = true;
   if (Platform.OS === 'web') return null;
+  const scopedKey = _mmkvStatusKey();
+  // Invalidate memo if the active account changed (login switch in same JS
+  // session). Without this, account B would inherit A's preload until reload.
+  if (_mmkvAttempted && _mmkvAttemptedForEmail === scopedKey) return _mmkvPreloaded;
+  _mmkvAttempted = true;
+  _mmkvAttemptedForEmail = scopedKey;
+  _mmkvPreloaded = null;
   try {
     const { getString } = require('../services/mmkv');
-    const scopedKey = _mmkvStatusKey();
     // Try scoped first, then legacy unscoped (one-time migration on read).
     let raw = getString(scopedKey);
     if (!raw && scopedKey !== 'chat_statuses') {
@@ -316,6 +322,12 @@ export default function useStatuses(currentEmail, opts = {}) {
   // _liveStore matters when the user navigates away (e.g. Chat → Inbox → Chat)
   // and the hook unmounts/remounts. Without it, even with a valid MMKV blob,
   // the JSON.parse+normalize triggered another paint flicker.
+  // Drop live snapshot when the account changes so we don't show user A's
+  // statuses to user B. _readMMKVOnce already invalidates on email change.
+  if (enabled && currentEmail && _liveStoreEmail && _liveStoreEmail !== String(currentEmail).toLowerCase()) {
+    _liveStore = null;
+    _liveStoreEmail = null;
+  }
   const _preload = enabled
     ? (_liveStore || _readMMKVOnce() || getCachedSync('statuses'))
     : null;
@@ -397,6 +409,65 @@ export default function useStatuses(currentEmail, opts = {}) {
     if (!enabled || _hadPreload || manifestPaintedRef.current) return;
     manifestPaintedRef.current = true;
     let alive = true;
+    // Local painter — builds placeholder groups from a manifest users[] array
+    // and pushes them to state. Returns true when something was painted so
+    // the caller can avoid double-paint after the network resolves.
+    const paintFromUsers = (users) => {
+      if (!Array.isArray(users) || users.length === 0) return false;
+      const me = String(currentEmail || '').toLowerCase();
+      const placeholderGroups = [];
+      const placeholderMine = [];
+      const placeholderOthers = [];
+      for (const u of users) {
+        const isMine = String(u.email || '').toLowerCase() === me;
+        const total = Math.max(0, Number(u.count) || 0);
+        const unviewed = Math.max(0, Math.min(total, Number(u.unviewed) || 0));
+        const items = [];
+        for (let i = 0; i < total; i++) {
+          const viewed = i < (total - unviewed);
+          items.push({
+            id: `__manifest_${u.email}_${i}`,
+            type: u.has_video ? 'video' : 'image',
+            media_url: '',
+            thumbnail_url: '',
+            hls_url: '',
+            bgColor: '#6D28D9',
+            bg_color: '#6D28D9',
+            created_at: u.latest_at,
+            timestamp: u.latest_at,
+            viewed,
+            view_count: 0,
+            views: 0,
+            meta: null,
+            _placeholder: true,
+          });
+        }
+        if (items.length === 0) continue;
+        const g = {
+          email: u.email,
+          name: u.name || (u.email || '').split('@')[0],
+          is_own: !!u.is_own,
+          items,
+        };
+        placeholderGroups.push(g);
+        if (isMine) placeholderMine.push(...items);
+        else placeholderOthers.push({
+          ownerEmail: u.email,
+          ownerName: g.name,
+          items,
+        });
+      }
+      if (placeholderGroups.length === 0) return false;
+      // DON'T set fpRef — placeholders have no real ids/created_at, so
+      // when the real fetch completes the fingerprint diff WILL see a
+      // change and replace them seamlessly.
+      setGroups(placeholderGroups);
+      setMine(placeholderMine);
+      setOthers(placeholderOthers);
+      setLoading(false);
+      return true;
+    };
+
     (async () => {
       try {
         // [WAVE 71 2026-05-21] Cached manifest is paintable INSTANTLY before
@@ -406,10 +477,11 @@ export default function useStatuses(currentEmail, opts = {}) {
         const cachedManifest = _readManifestMMKV();
         const cachedUsers = cachedManifest?.users;
         if (Array.isArray(cachedUsers) && cachedUsers.length > 0 && !fpRef.current) {
-          try {
-            _paintFromManifestUsers(cachedUsers);
-            if (__DEV__) console.log('[STATUS-CACHE] manifest-cache-hit', cachedUsers.length);
-          } catch {}
+          if (paintFromUsers(cachedUsers)) {
+            if (__DEV__) {
+              try { console.log('[STATUS-CACHE] manifest-cache-hit', cachedUsers.length); } catch {}
+            }
+          }
         }
         const r = await api.statusManifest?.();
         if (!alive || !r?.success || !r.data?.users) return;
@@ -422,62 +494,7 @@ export default function useStatuses(currentEmail, opts = {}) {
         if (fpRef.current) return;
         const users = r.data.users || [];
         if (users.length === 0) { setLoading(false); return; }
-        const me = String(currentEmail || '').toLowerCase();
-        const placeholderGroups = [];
-        const placeholderMine = [];
-        const placeholderOthers = [];
-        for (const u of users) {
-          const isMine = String(u.email || '').toLowerCase() === me;
-          // Build N skeleton items so the dotted ring renders with the
-          // right count + viewed/unviewed mix. We don't know which exact
-          // items are viewed — only that `count - unviewed` are. Fill
-          // viewed ones first to keep the leading bubble unviewed (matches
-          // status_list's "freshest unviewed first" sort within a group).
-          const total = Math.max(0, Number(u.count) || 0);
-          const unviewed = Math.max(0, Math.min(total, Number(u.unviewed) || 0));
-          const items = [];
-          for (let i = 0; i < total; i++) {
-            const viewed = i < (total - unviewed);
-            items.push({
-              id: `__manifest_${u.email}_${i}`,
-              type: u.has_video ? 'video' : 'image',
-              media_url: '',
-              thumbnail_url: '',
-              hls_url: '',
-              bgColor: '#6D28D9',
-              bg_color: '#6D28D9',
-              created_at: u.latest_at,
-              timestamp: u.latest_at,
-              viewed,
-              view_count: 0,
-              views: 0,
-              meta: null,
-              _placeholder: true,
-            });
-          }
-          if (items.length === 0) continue;
-          const g = {
-            email: u.email,
-            name: u.name || (u.email || '').split('@')[0],
-            is_own: !!u.is_own,
-            items,
-          };
-          placeholderGroups.push(g);
-          if (isMine) placeholderMine.push(...items);
-          else placeholderOthers.push({
-            ownerEmail: u.email,
-            ownerName: g.name,
-            items,
-          });
-        }
-        if (placeholderGroups.length === 0) return;
-        // DON'T set fpRef — placeholders have no real ids/created_at, so
-        // when the real fetch completes the fingerprint diff WILL see a
-        // change and replace them seamlessly.
-        setGroups(placeholderGroups);
-        setMine(placeholderMine);
-        setOthers(placeholderOthers);
-        setLoading(false);
+        paintFromUsers(users);
       } catch {}
     })();
     return () => { alive = false; };
@@ -526,9 +543,22 @@ export default function useStatuses(currentEmail, opts = {}) {
         // Web/PWA: ask the SW to pre-cache visible covers + first hero so
         // tap-to-open paints from disk instead of a fresh CDN round trip.
         if (Platform.OS === 'web') _swPrefetch(norm.mine, norm.others);
-        // Persist to disk + MMKV. Fire-and-forget; failures are silent.
-        setCache('statuses', { groups: norm.groups, mine: norm.mine, others: norm.others }, 2592000000).catch(() => {});
-        _writeMMKV({ groups: norm.groups, mine: norm.mine, others: norm.others });
+        // [WAVE 71 2026-05-21] Persist on THREE tiers:
+        //   1. _liveStore (module-scope) — survives unmount/re-mount instantly
+        //   2. disk cache (services/cache.js, user-scoped, 30d TTL)
+        //   3. MMKV scoped key (user-scoped, no expiry) — sync read on next mount
+        // Fire-and-forget; failures are silent.
+        const snapshot = { groups: norm.groups, mine: norm.mine, others: norm.others };
+        _liveStore = snapshot;
+        _liveStoreEmail = String(currentEmail || '').toLowerCase();
+        _mmkvPreloaded = snapshot; // so a fresh useStatuses() sees fresh data
+        setCache('statuses', snapshot, 2592000000).catch(() => {});
+        _writeMMKV(snapshot);
+        if (__DEV__) {
+          try { console.log('[STATUS-CACHE] persisted', norm.groups.length, 'groups'); } catch {}
+        }
+      } else if (__DEV__) {
+        try { console.log('[STATUS-CACHE] refetch fingerprint match — skip persist'); } catch {}
       }
     } catch (e) {
       // [silent-fail-w3] Network/throw: keep current UI state but arm a 5s
@@ -578,17 +608,31 @@ export default function useStatuses(currentEmail, opts = {}) {
   // Optimistic mark-viewed. Mutates both shapes so renderers stay consistent
   // even if they only listen to one. Backend status_view is fire-and-forget;
   // the next refetch will reconcile if the call failed.
+  //
+  // [WAVE 71 2026-05-21] Also update _liveStore + MMKV so re-mount after
+  // a nav-away keeps the viewed flag (was reverting to unviewed for ~1
+  // poll cycle, causing ring-color flicker).
   const markViewed = useCallback((statusId) => {
     const stamp = new Date().toISOString();
-    setMine(prev => prev.map(it => it.id === statusId ? { ...it, viewed: true, viewed_at: stamp } : it));
-    setOthers(prev => prev.map(g => ({
-      ...g,
-      items: (g.items || []).map(it => it.id === statusId ? { ...it, viewed: true, viewed_at: stamp } : it),
-    })));
-    setGroups(prev => prev.map(g => ({
-      ...g,
-      items: (g.items || []).map(it => it.id === statusId ? { ...it, viewed: true, viewed_at: stamp } : it),
-    })));
+    const mapItem = (it) => it.id === statusId ? { ...it, viewed: true, viewed_at: stamp } : it;
+    setMine(prev => {
+      const next = prev.map(mapItem);
+      if (_liveStore) _liveStore = { ..._liveStore, mine: next };
+      return next;
+    });
+    setOthers(prev => {
+      const next = prev.map(g => ({ ...g, items: (g.items || []).map(mapItem) }));
+      if (_liveStore) _liveStore = { ..._liveStore, others: next };
+      return next;
+    });
+    setGroups(prev => {
+      const next = prev.map(g => ({ ...g, items: (g.items || []).map(mapItem) }));
+      if (_liveStore) {
+        _liveStore = { ..._liveStore, groups: next };
+        _writeMMKV(_liveStore);
+      }
+      return next;
+    });
     // Invalidate fingerprint so the next poll/WS doesn't see "no change"
     // and skip persisting the viewed flag to MMKV.
     fpRef.current = null;
