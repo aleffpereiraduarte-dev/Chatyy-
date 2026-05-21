@@ -446,27 +446,37 @@ export default function NotificationsHub({
   useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
 
   const load = useCallback(async () => {
+    // [WAVE 100] SWR — paint cache via lazy init in useState, then revalidate.
+    // swr() dedupes concurrent callers (bell + /notifications mounting at the
+    // same time share one round-trip). 30min TTL, skip net if <15s old.
     try {
-      const r = await api.notificationsFeed();
-      if (r?.success && r.data && Array.isArray(r.data.items)) {
-        setItems(r.data.items);
-      } else {
-        setItems([]);
+      const fresh = await swr(
+        HUB_KEY,
+        () => api.notificationsFeed(),
+        null,
+        null,
+        { ttlMs: 30 * 60 * 1000, staleAfterMs: 15 * 1000 }
+      );
+      const list = fresh?.data?.items;
+      if (Array.isArray(list)) {
+        _writeHubLive(list);
+        setItems(list);
       }
-    } catch {
-      setItems([]);
-    }
+    } catch {}
   }, []);
 
   useEffect(() => {
     if (!visible) return;
     let cancelled = false;
+    // Skip spinner if cache already painted something — SWR replaces silently.
+    const hasContent = items && items.length > 0;
     (async () => {
-      setLoading(true);
+      if (!hasContent) setLoading(true);
       await load();
       if (!cancelled) setLoading(false);
     })();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, load]);
 
   const close = useCallback(() => { onClose?.(); }, [onClose]);
@@ -487,7 +497,15 @@ export default function NotificationsHub({
   const markAllRead = useCallback(async () => {
     try {
       await api.notificationsRead?.({ all: true });
-      setItems(prev => prev.map(n => ({ ...n, read: true })));
+      setItems(prev => {
+        const next = prev.map(n => ({ ...n, read: true }));
+        // [WAVE 100] Mirror into live store + MMKV so re-open shows read state.
+        try {
+          _writeHubLive(next);
+          setCache(HUB_KEY, { success: true, data: { items: next } }, 30 * 60 * 1000);
+        } catch {}
+        return next;
+      });
     } catch {}
   }, []);
 
