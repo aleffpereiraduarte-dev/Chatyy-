@@ -173,51 +173,24 @@ struct CallView: View {
 
     var body: some View {
         ZStack {
-            // ── [Wave C-2] MULTI-PARTICIPANT PATH ─────────────────────────────
-            // When the room has ≥2 remote participants, render a grid of tiles
-            // instead of the 1:1 full-bleed remote video. The 1:1 code path
-            // (backgroundLayer + avatarBlock) is left entirely untouched so
-            // existing 1:1 calls are not affected.
-            if session.groupParticipants.count >= 2 {
-                participantGrid
-                    .ignoresSafeArea()
-
-                // Semi-transparent gradient so the top/bottom bars stay
-                // legible over the tile grid.
-                VStack(spacing: 0) {
-                    LinearGradient(
-                        colors: [Color.black.opacity(0.55), Color.black.opacity(0.0)],
-                        startPoint: .top, endPoint: .bottom
-                    ).frame(height: 120)
-                    Spacer()
-                    LinearGradient(
-                        colors: [Color.black.opacity(0.0), Color.black.opacity(0.55)],
-                        startPoint: .top, endPoint: .bottom
-                    ).frame(height: 160)
-                }
+            // ── 1. Background (remote video when subscribed; gradient otherwise)
+            backgroundLayer
                 .ignoresSafeArea()
 
-            } else {
-                // ── 1. Background (remote video when subscribed; gradient otherwise)
-                backgroundLayer
-                    .ignoresSafeArea()
-
-                // ── 2. Subtle glassmorphism overlay so the avatar / status text
-                //      stay readable even when the remote feed is bright. Skipped
-                //      when there's no video so the dark color shows through.
-                if !hasVideo || session.remoteVideoTrack == nil {
-                    LinearGradient(
-                        colors: [
-                            Color.black.opacity(0.0),
-                            Color.black.opacity(0.55)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .ignoresSafeArea()
-                }
+            // ── 2. Subtle glassmorphism overlay so the avatar / status text
+            //      stay readable even when the remote feed is bright. Skipped
+            //      when there's no video so the dark color shows through.
+            if !hasVideo || session.remoteVideoTrack == nil {
+                LinearGradient(
+                    colors: [
+                        Color.black.opacity(0.0),
+                        Color.black.opacity(0.55)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
             }
-            // ── END multi-participant / 1:1 split ─────────────────────────────
 
             // ── 3. Main content stack (avatar + name + status + controls)
             VStack(spacing: 0) {
@@ -229,11 +202,8 @@ struct CallView: View {
 
                 Spacer().frame(height: 24)
 
-                // [Wave C-2] In group mode (≥2 remote participants) the grid
-                // already fills the background — we only show the 1:1 avatar
-                // block when there are 0 or 1 remote participants.
-                if session.groupParticipants.count < 2 &&
-                   (!hasVideo || session.remoteVideoTrack == nil) {
+                // 1:1 layout: show avatar block when no remote video.
+                if !hasVideo || session.remoteVideoTrack == nil {
                     avatarBlock
                 }
 
@@ -366,38 +336,6 @@ struct CallView: View {
                 endPoint: .bottom
             )
         }
-    }
-
-    // MARK: - [Wave C-2] Multi-participant grid
-
-    /// 2-column grid for 2–4 participants; 3-column for 5–9.
-    /// Audio-only participants get an avatar tile (no `SwiftUIVideoView`).
-    /// The overall container fills the safe-area so tiles extend behind the
-    /// status bar, matching WhatsApp / Telegram group-call aesthetics.
-    @ViewBuilder
-    private var participantGrid: some View {
-        let participants = session.groupParticipants
-        let columns = participants.count <= 4 ? 2 : 3
-        let gridColumns = Array(
-            repeating: GridItem(.flexible(), spacing: 4),
-            count: columns
-        )
-
-        ScrollView {
-            LazyVGrid(columns: gridColumns, spacing: 4) {
-                ForEach(participants) { participant in
-                    GroupTileView(
-                        participant: participant,
-                        chipColor: chipColor,
-                        backgroundColor: backgroundColor
-                    )
-                    .aspectRatio(9.0 / 16.0, contentMode: .fill)
-                    .clipped()
-                }
-            }
-            .padding(4)
-        }
-        .background(backgroundColor)
     }
 
     // MARK: - Top bar
