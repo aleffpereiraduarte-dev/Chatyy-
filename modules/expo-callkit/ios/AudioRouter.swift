@@ -60,6 +60,36 @@ import AVFoundation
             print("[AudioRouter] setCategory failed: \(error)")
         }
 
+        // [WAVE 44B, 2026-05-21 gap A1] Pin AVAudioSession to 48kHz mono with
+        // a short IO buffer for WhatsApp-grade audio. Without these prefs:
+        //   • older iPhones default to 44.1kHz → LK resamples (CPU + jitter)
+        //   • IO buffer can be 23ms → adds round-trip latency
+        //   • input channels can be 2 (stereo mic on iPhone Pro) → wastes
+        //     bandwidth, downmixed mono is what voice codec wants anyway
+        // All three are PREFERRED hints — iOS may ignore on hardware that
+        // can't honor (BT headset locks at 16kHz). We do NOT setActive; CallKit
+        // owns activation. Failure is logged but non-fatal.
+        do {
+            try session.setPreferredSampleRate(48_000)
+        } catch {
+            print("[AudioRouter] setPreferredSampleRate failed: \(error)")
+        }
+        do {
+            // 10ms IO buffer — matches WebRTC's internal frame size. iOS
+            // rounds to nearest hardware-supported value (typically 0.01s
+            // on A12+, 0.02s on older).
+            try session.setPreferredIOBufferDuration(0.01)
+        } catch {
+            print("[AudioRouter] setPreferredIOBufferDuration failed: \(error)")
+        }
+        do {
+            try session.setPreferredInputNumberOfChannels(1)
+        } catch {
+            // Some BT headsets only expose stereo — non-fatal, LK downmixes.
+            print("[AudioRouter] setPreferredInputNumberOfChannels failed: \(error)")
+        }
+        print("[AudioRouter] preferred: rate=\(session.sampleRate)Hz buf=\(session.ioBufferDuration)s inCh=\(session.inputNumberOfChannels)")
+
         // Pick the initial route. If a wired/BT headset is connected we let
         // that win (don't override). Otherwise: speaker for video, earpiece
         // (port .none) for audio.

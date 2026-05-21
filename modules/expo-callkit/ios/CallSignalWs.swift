@@ -448,6 +448,61 @@ final class CallSignalWs: NSObject {
             return
         }
 
+        // [foreground gate, 2026-05-21] WhatsApp/Telegram parity for INCOMING.
+        // When the app is currently foreground, the JS WS subscription
+        // (services/websocket.js → IncomingCallListener.js `mailWs.on
+        // 'call_invite'`) has already received this same frame and is
+        // rendering the rich in-app IncomingCallSheet (avatar + accept /
+        // decline + ringtone). Reporting to CallKit here would surface a
+        // SECOND ring sheet on top of the JS UI ("2 telas" feedback — the
+        // same dual-UI bug we already fixed on the Android FCM path).
+        //
+        // Apple's strict reportNewIncomingCall requirement only applies to
+        // PushKit VoIP push deliveries (see VoipPushAppDelegateSubscriber).
+        // WS-driven invites are NOT subject to that deadline — we can skip
+        // CallKit safely when the app is foreground. The server still sends
+        // a VoIP push for the killed/backgrounded path; that path always
+        // reports as before.
+        //
+        // Detection: read UIApplication.applicationState on main. .active
+        // = foreground active. .inactive = transitioning (we treat as
+        // foreground too so the JS UI gets priority during a quick switch).
+        // .background = killed or backgrounded → fall through to CallKit.
+        let isAppForeground: Bool = {
+            if Thread.isMainThread {
+                let s = UIApplication.shared.applicationState
+                return s == .active || s == .inactive
+            }
+            return DispatchQueue.main.sync {
+                let s = UIApplication.shared.applicationState
+                return s == .active || s == .inactive
+            }
+        }()
+        if isAppForeground {
+            NSLog("[CallSignalWs] call_invite \(callId): app foreground — JS WS handler owns the UI, skipping CallKit report")
+            // Best-effort: nudge ExpoCallKitModule so any onIncomingCall
+            // listener wired through the module also gets a copy (parity
+            // with the VoIP push path). JS-side primary surface remains
+            // the mailWs `call_invite` subscription.
+            let payload: [String: Any] = [
+                "callId": callId,
+                "callerName": callerName,
+                "callerEmail": callerEmail,
+                "conversationId": conversationId,
+                "hasVideo": hasVideo,
+                "foreground": true,
+                "source": "ws",
+            ]
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(
+                    name: Notification.Name("ExpoCallKitIncomingCallForeground"),
+                    object: nil,
+                    userInfo: payload
+                )
+            }
+            return
+        }
+
         NSLog("[CallSignalWs] call_invite \(callId) from \(callerEmail) — reporting to CallKit")
         let uuid = UUID()
         // [#1179 cleanup, 2026-05-19] Remember the UUID so a later inbound
