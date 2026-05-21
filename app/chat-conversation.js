@@ -15794,10 +15794,45 @@ export default function ChatConversationScreen() {
       try {
         const fc = await FileSystem.getInfoAsync(sourceUri);
         if (!fc?.exists) throw new Error('source_missing_after_download');
+        if (fc.size !== undefined && fc.size === 0) throw new Error('source_empty');
       } catch (chkErr) {
-        if (chkErr?.message === 'source_missing_after_download') throw chkErr;
+        if (chkErr?.message === 'source_missing_after_download' || chkErr?.message === 'source_empty') throw chkErr;
       }
-      await ML.saveToLibraryAsync(sourceUri);
+      // [WAVE 91 2026-05-21] Robust save: createAssetAsync first (guarantees
+      // a PHAsset id on iOS + a MediaStore row on Android), verify the
+      // returned id, then move into a "Chatyy" album for discoverability.
+      // Previous code called saveToLibraryAsync which returns void: success
+      // was inferred from "didn't throw" but on Android 10+ scoped storage
+      // it could silently write to an invisible bucket → user got "Salvo"
+      // toast but the photo never appeared in Gallery / Camera Roll. The
+      // user report: "tap salvar foto no celular → mostra salvou mas não
+      // aparece em /Photos/Camera Roll".
+      let savedAsset = null;
+      try {
+        const asset = await ML.createAssetAsync(sourceUri);
+        if (asset && asset.id) {
+          savedAsset = asset;
+        } else {
+          throw new Error('asset_id_missing');
+        }
+      } catch (caErr) {
+        // createAssetAsync failed → last-resort saveToLibraryAsync. If
+        // that also throws, propagate to the outer catch where we show
+        // a real error (not a fake "Salvo" toast).
+        await ML.saveToLibraryAsync(sourceUri);
+      }
+      // Best-effort album placement so the photo shows up under
+      // Photos > Albums > Chatyy (iOS) / Gallery > Chatyy (Android).
+      if (savedAsset && savedAsset.id) {
+        try {
+          const album = await ML.getAlbumAsync('Chatyy');
+          if (album) {
+            await ML.addAssetsToAlbumAsync([savedAsset], album, false);
+          } else {
+            await ML.createAlbumAsync('Chatyy', savedAsset, false);
+          }
+        } catch {}
+      }
       try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
       safeAlert(t('common.saved') || 'Salvo', t('chatConv.mediaSaved') || 'Salvo na galeria');
     } catch (e) {

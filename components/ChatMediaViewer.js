@@ -1672,15 +1672,45 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
           }
         } catch { /* getInfoAsync may throw on some URIs; fall through */ }
 
-        // Save to gallery — try createAssetAsync first (creates a proper
-        // PHAsset with full EXIF). Fallback to saveToLibraryAsync which
-        // works even in restricted-access mode.
+        // [WAVE 91 2026-05-21] Save to gallery — robust pipeline. Previous
+        // implementation flipped setSaved(true) on createAssetAsync success
+        // but the asset wasn't guaranteed to surface in the user's gallery
+        // app (Android 10+ MediaStore can write to an invisible private
+        // bucket; iOS limited-access can create the PHAsset off the main
+        // library album). User report: "diz que salvou mas não aparece em
+        // /Photos/Camera Roll". Fix:
+        //   1. createAssetAsync → guarantees PHAsset (iOS) / MediaStore row.
+        //   2. Verify the returned asset has a valid id BEFORE flipping
+        //      saved=true. Without id the call silently no-ops.
+        //   3. Move into a "Chatyy" album so the photo is discoverable in
+        //      Photos > Albums (iOS) / Gallery > Chatyy (Android).
+        //   4. Surface real errors instead of swallowing them.
         let ok = false;
+        let savedAsset = null;
         try {
+          // [WAVE 91] getInfoAsync(file://) right before save — last-line
+          // defense against file disappearing between download and save.
+          if (sourceUri.startsWith('file://')) {
+            const info = await FS.getInfoAsync(sourceUri);
+            if (!info?.exists || (info.size !== undefined && info.size === 0)) {
+              throw new Error('source_missing_or_empty');
+            }
+          }
           const asset = await ML.createAssetAsync(sourceUri);
-          if (asset) ok = true;
+          if (asset && asset.id) {
+            savedAsset = asset;
+            ok = true;
+          } else {
+            // createAssetAsync resolved but didn't return a valid id — that
+            // means the file system call succeeded but the MediaStore /
+            // PHPhotoLibrary insertion didn't take. Fall through to
+            // saveToLibraryAsync as a last attempt.
+            throw new Error('asset_id_missing');
+          }
         } catch (saveErr) {
           try {
+            // saveToLibraryAsync returns void on iOS (and undefined on
+            // Android); we treat resolution-without-throw as success.
             await ML.saveToLibraryAsync(sourceUri);
             ok = true;
           } catch (saveErr2) {
@@ -1690,8 +1720,32 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
             const rawMsg = String(saveErr2?.message || saveErr?.message || '');
             const cleanMsg = /no such file|could not be opened/i.test(rawMsg)
               ? 'Arquivo não encontrado. Toque na imagem pra abrir e tente salvar de novo.'
+              : /source_missing_or_empty/i.test(rawMsg)
+              ? 'Arquivo vazio ou ausente. Tente abrir a imagem novamente.'
               : (rawMsg || 'Verifique as permissões de Fotos em Ajustes > Chatyy');
             Alert.alert('Erro ao salvar', cleanMsg);
+          }
+        }
+        // [WAVE 91 2026-05-21] After a successful createAssetAsync, move
+        // the asset into a "Chatyy" album so it's discoverable in the
+        // user's Photos app. Without this on iOS limited-access mode the
+        // asset shows up only in "Recents" (sometimes missed by user) and
+        // on Android 11+ the bucket name comes out as
+        // "expo-media-library" which never appears in the Gallery UI.
+        // Best-effort: failure here doesn't undo the save.
+        if (ok && savedAsset && savedAsset.id) {
+          try {
+            const album = await ML.getAlbumAsync('Chatyy');
+            if (album) {
+              await ML.addAssetsToAlbumAsync([savedAsset], album, false);
+            } else {
+              await ML.createAlbumAsync('Chatyy', savedAsset, false);
+            }
+          } catch (albumErr) {
+            // Album move failed — the asset is still in the library, just
+            // not in a Chatyy album. Don't surface this to the user; the
+            // photo IS saved.
+            if (__DEV__) try { console.warn('[saveMedia] album move failed', albumErr); } catch {}
           }
         }
         if (ok) {

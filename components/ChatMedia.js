@@ -120,11 +120,19 @@ export default function ChatMedia({
   const [retryEpoch, setRetryEpoch] = useState(0);
   const [redownloading, setRedownloading] = useState(false);
   const [redownloadDeleted, setRedownloadDeleted] = useState(false);
+  // [WAVE 91 2026-05-21] Stale-file:// detection. When syncIndex points to
+  // a file that iOS/Android evicted under storage pressure (or that was
+  // never actually flushed to disk), ExpoImage paints transparent and
+  // onError doesn't always fire reliably on Android (user sees "frame
+  // só, foto não aparece, clica abre"). When this happens we want to
+  // fall back to the absolute remote URL so the bubble paints SOMETHING.
+  const [forceRemote, setForceRemote] = useState(false);
   // Reset failure when the URI changes (FlashList row recycling +
   // fresh cache hit).
   useEffect(() => {
     setFailed(false);
     setRedownloadDeleted(false);
+    setForceRemote(false);
   }, [localUri]);
   const handleRetry = useCallback(async () => {
     // When the bubble passed a messageId we go through the server-side
@@ -199,19 +207,45 @@ export default function ChatMedia({
       </TouchableOpacity>
     );
   }
+  // [WAVE 91 2026-05-21] If a previous render flipped forceRemote because
+  // the file:// path painted blank, force the absolute remote URL so the
+  // bubble actually paints. Without this fallback the user reported
+  // "só o frame aparece" — bubble container + HSL backdrop visible,
+  // main photo never paints because syncIndex pointed at an evicted file.
+  const effectiveUri = (forceRemote && localUri && localUri.startsWith('file://'))
+    ? resolveAbsolute(uri)
+    : localUri;
   return (
     <ExpoImage
       key={retryEpoch}
-      source={{ uri: localUri }}
+      source={{ uri: effectiveUri }}
       style={style}
       contentFit={contentFit}
       // file:// never benefits from network cachePolicy; forcing 'memory'
       // here also avoids ExpoImage trying to re-download a remote URL
       // on the rare race where syncIndex flips back to URL.
-      cachePolicy={localUri.startsWith('file://') ? 'memory' : 'memory-disk'}
+      cachePolicy={effectiveUri.startsWith('file://') ? 'memory' : 'memory-disk'}
       recyclingKey={recyclingKey}
       transition={transition}
-      onError={() => setFailed(true)}
+      onError={() => {
+        // [WAVE 91 2026-05-21] If the failing source was a file:// path,
+        // assume the cached file was evicted/corrupt and flip to remote
+        // BEFORE rendering the retry chip. WhatsApp/Telegram both auto-
+        // refetch silently on stale cache; only after a remote failure
+        // do we surface the user-visible chip. This kills the "só
+        // frame, clica abre" regression: the viewer fetched fresh,
+        // bubble was stuck on dead file://.
+        if (effectiveUri && effectiveUri.startsWith('file://') && !forceRemote) {
+          setForceRemote(true);
+          // Also kick a fresh cacheMedia to refill syncIndex with a valid path.
+          try {
+            const abs = resolveAbsolute(uri);
+            if (abs) cacheMedia(abs).catch(() => {});
+          } catch {}
+          return;
+        }
+        setFailed(true);
+      }}
       {...rest}
     />
   );

@@ -236,6 +236,7 @@
         }
       ],
       "./plugins/with-custom-share-extension",
+      "./plugins/with-android-share-intents",
       [
         "expo-calendar",
         {

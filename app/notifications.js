@@ -367,6 +367,26 @@ function NotificationsScreenInner() {
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // [follow-back-fix 2026-05-21] Lightweight inline toast: confirms the
+  // server actually persisted the follow (or surfaces a failure) so the
+  // user doesn't see the button vanish with zero feedback and assume "não
+  // funcionou". Driven by Animated.Value driving opacity + translateY.
+  const [toastMsg, setToastMsg] = useState(null);
+  const toastAnim = useRef(new Animated.Value(0)).current;
+  const toastTimerRef = useRef(null);
+  const showToast = useCallback((msg) => {
+    setToastMsg(msg);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    Animated.timing(toastAnim, {
+      toValue: 1, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: true,
+    }).start();
+    toastTimerRef.current = setTimeout(() => {
+      Animated.timing(toastAnim, {
+        toValue: 0, duration: 220, easing: Easing.in(Easing.cubic), useNativeDriver: true,
+      }).start(() => setToastMsg(null));
+    }, 2400);
+  }, [toastAnim]);
+  useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
 
   const cacheRef = useRef({});
 
@@ -441,27 +461,55 @@ function NotificationsScreenInner() {
     }
   }, [markAllFadeAnim]);
 
-  const handleAction = useCallback((notif, kind) => {
+  const handleAction = useCallback(async (notif, kind) => {
     if (kind === 'follow_back') {
-      // followUser espera o email como string, não objeto. O bug original
-      // empurrava `{ email }` que virava `target_email = { email: '...' }`
-      // no backend e o follow nunca era persistido. Resultado: usuário
-      // apertava "Seguir de volta", UI marcava `action_taken` mas o servidor
-      // nunca registrou o follow.
-      if (notif?.author_email) {
-        api.followUser?.(notif.author_email).catch((e) => {
-          console.warn('[notifications] followUser failed:', e?.message || e);
-        });
+      // [follow-back-fix 2026-05-21] Several issues compounded into "não
+      // funciona":
+      //   1. Fire-and-forget call swallowed errors silently → if the
+      //      bearer drifted or the network blipped, the button vanished
+      //      but the server never saw the follow.
+      //   2. Zero feedback after success → user assumed nothing happened.
+      //   3. action_taken só vivia em memória → próximo refresh trazia
+      //      o botão de volta, reforçando a impressão de bug.
+      //   4. A notificação não era marcada como lida ao agir → contador
+      //      da bell ficava colado.
+      //
+      // Fix: optimistic flip, await the API, on success ALSO mark the
+      // notification read (server-side); on failure revert + toast the
+      // user so they can retry. Toast on success too — explicit UX.
+      const target = notif?.author_email;
+      if (!target) {
+        showToast(t('notifications.followBackError') || 'Não foi possível seguir agora.');
+        return;
       }
-      const tag = (n) => n.id === notif.id ? { ...n, action_taken: 'follow_back' } : n;
+      const tagAction = (taken) => (n) => n.id === notif.id ? { ...n, action_taken: taken, read: taken ? true : n.read } : n;
+      // Optimistic
       Object.keys(cacheRef.current).forEach(k => {
-        cacheRef.current[k] = cacheRef.current[k].map(tag);
+        cacheRef.current[k] = (cacheRef.current[k] || []).map(tagAction('follow_back'));
       });
-      setNotifications(prev => prev.map(tag));
+      setNotifications(prev => prev.map(tagAction('follow_back')));
+      try {
+        const r = await api.followUser?.(target);
+        if (!r || r.success === false) throw new Error(r?.error || 'follow_failed');
+        // Persist read so the bell counter ticks down. Backend is idempotent.
+        try { api.notificationsMarkRead?.(notif.id).catch(() => {}); } catch {}
+        const nameRaw = (notif.author_name || (notif.author_email || '').split('@')[0] || '').trim();
+        showToast(
+          (t('notifications.followBackOk') || 'Você está seguindo {name} agora').replace('{name}', nameRaw)
+        );
+      } catch (e) {
+        console.warn('[notifications] followUser failed:', e?.message || e);
+        // Revert action_taken so the user can retry from the same row.
+        Object.keys(cacheRef.current).forEach(k => {
+          cacheRef.current[k] = (cacheRef.current[k] || []).map(tagAction(null));
+        });
+        setNotifications(prev => prev.map(tagAction(null)));
+        showToast(t('notifications.followBackError') || 'Não foi possível seguir agora. Tente de novo.');
+      }
     } else if (kind === 'message') {
       router.push({ pathname: '/chat-conversation', params: { peer: notif.author_email } });
     }
-  }, [router]);
+  }, [router, showToast, t]);
 
   const handleTap = useCallback(async (notif) => {
     if (!notif.read) {
@@ -626,6 +674,29 @@ function NotificationsScreenInner() {
         removeClippedSubviews={Platform.OS !== 'web'}
         windowSize={10}
       />
+
+      {/* [follow-back-fix 2026-05-21] Floating inline toast confirms the
+          follow back actually persisted (or surfaces an error). Lives
+          above the list, pointerEvents=none so taps fall through. */}
+      {toastMsg ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.toast,
+            {
+              opacity: toastAnim,
+              transform: [{
+                translateY: toastAnim.interpolate({ inputRange: [0, 1], outputRange: [24, 0] }),
+              }],
+              bottom: 24 + (insets.bottom || 0),
+              backgroundColor: isDark ? 'rgba(20,20,28,0.95)' : 'rgba(20,20,28,0.92)',
+            },
+          ]}
+        >
+          <IconCheck size={16} color="#10b981" />
+          <Text style={styles.toastText}>{toastMsg}</Text>
+        </Animated.View>
+      ) : null}
     </View>
   );
 }
@@ -786,6 +857,34 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 20,
     maxWidth: 280,
+  },
+
+  // [follow-back-fix 2026-05-21] Floating toast
+  toast: {
+    position: 'absolute',
+    left: 16, right: 16,
+    paddingHorizontal: 14, paddingVertical: 12,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOpacity: 0.22,
+        shadowRadius: 14,
+        shadowOffset: { width: 0, height: 6 },
+      },
+      android: { elevation: 8 },
+      web: { boxShadow: '0 6px 18px rgba(0,0,0,0.22)' },
+    }),
+  },
+  toastText: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 13.5,
+    fontWeight: '600',
+    letterSpacing: -0.1,
   },
 });
 

@@ -158,6 +158,12 @@ function ParentalScreenInner() {
 
   // Pending unlock requests (red-dot banner at top)
   const [pendingRequests, setPendingRequests] = useState([]);
+  // Modal to approve/reject pending requests (banner deep-linked here
+  // before but `?tab=requests` doesn't exist in /parental-monitor — bug
+  // 2026-05-21 #wave89). Now opens this sheet inline so accept/reject
+  // works without navigation.
+  const [requestsModal, setRequestsModal] = useState(false);
+  const [resolvingId, setResolvingId] = useState(null);
 
   // Heartbeat — drives bedtime countdown + relative-time refresh.
   // Tick once per minute is enough for HH:MM display.
@@ -1959,7 +1965,7 @@ function ParentalScreenInner() {
     return (
       <TouchableOpacity
         style={[s.pendingBanner, { backgroundColor: isDark ? '#3b1115' : '#fef2f2', borderColor: '#ef444460' }]}
-        onPress={() => { haptics.tap('light'); router.push('/parental-monitor?tab=requests'); }}
+        onPress={() => { haptics.tap('light'); setRequestsModal(true); }}
         activeOpacity={0.85}
         accessibilityLabel={`${pendingCount} pedidos pendentes`}
         accessibilityRole="button"
