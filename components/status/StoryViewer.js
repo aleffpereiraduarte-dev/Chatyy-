@@ -927,6 +927,12 @@ export default function StoryViewer({
     }
     if (cur.type === 'video') return;
     if (paused) return;
+    // [WAVE 79 2026-05-21] Placeholder items have no real media yet —
+    // freeze the progress bar so the timer doesn't tick through ghost items
+    // while status_list is still in flight. Parent (ChatListTab) refetches
+    // and swaps to real items in-place; the next render of this effect will
+    // see `cur._placeholder === undefined` and resume normal cadence.
+    if (cur._placeholder) return;
     // Reply grace — if the user just dismissed the reply keyboard we extend
     // the remaining-time so they can actually read whatever made them reply.
     // Grace flag is cleared 4s later by the blur handler so a second visit
@@ -1101,6 +1107,22 @@ export default function StoryViewer({
       );
     }
     if (!mediaUrl) {
+      // [WAVE 79 2026-05-21] Manifest-only placeholder items have NO media_url
+      // because status_manifest only ships per-owner aggregates (count + email
+      // + latest_at). When the user taps before status_list resolves we'd land
+      // on "Mídia indisponível" — wrong message. Show a spinner + "Carregando"
+      // instead so the viewer feels alive while the real payload streams in.
+      // Bug user 2026-05-21: "foto não aparece, se volta aparece".
+      if (cur?._placeholder) {
+        return (
+          <View style={{ flex: 1, backgroundColor: '#0f172a', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
+            <ActivityIndicator size="large" color="rgba(255,255,255,0.85)" />
+            <Text style={{ marginTop: 16, color: 'rgba(255,255,255,0.85)', fontSize: 14, fontWeight: '600', textAlign: 'center' }}>
+              {t?.('status.loading') || 'Carregando…'}
+            </Text>
+          </View>
+        );
+      }
       return (
         <View style={{ flex: 1, backgroundColor: '#0f172a', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
           <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 40, marginBottom: 12 }}>📷</Text>

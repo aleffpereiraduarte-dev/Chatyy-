@@ -856,6 +856,10 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   const [viewerIndex, setViewerIndex] = useState(0);
   const [viewerOwnerName, setViewerOwnerName] = useState('');
   const [viewerOwnerEmail, setViewerOwnerEmail] = useState('');
+  // [WAVE 79 2026-05-21] Deferred-open pending target — when the user taps
+  // a placeholder bubble, this holds the owner email until real items land
+  // via hookOthers. Declared up here (before mirror effect) to avoid TDZ.
+  const _pendingViewerEmailRef = useRef(null);
   // Long-press preview state — shows the latest status as a small floating
   // card on top of the row, dismissible by tap-outside. Doesn't mark the
   // status as viewed (vs the full viewer modal).
@@ -1396,6 +1400,21 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     }
     setContactStatuses(hookOthers);
     if (hookLoading === false && loading) setLoading(false);
+    // [WAVE 79 2026-05-21] If a tap is pending while waiting for real items
+    // to land, resolve + open the viewer the moment its group has real data.
+    if (_pendingViewerEmailRef?.current) {
+      const lc = String(_pendingViewerEmailRef.current).toLowerCase();
+      const g = (hookOthers || []).find(x => String(x.ownerEmail || '').toLowerCase() === lc)
+        || ((hookMine && hookMine.length && lc === String(user?.email || '').toLowerCase())
+          ? { ownerEmail: user?.email, ownerName: user?.name || (user?.email || '').split('@')[0], items: hookMine }
+          : null);
+      if (g && (g.items || []).length > 0 && !(g.items || []).every(it => it?._placeholder)) {
+        const target = g;
+        _pendingViewerEmailRef.current = null;
+        // Open on next tick so the setState above settles first.
+        setTimeout(() => openViewer(target), 0);
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hookMine, hookOthers, hookLoading, loading, archivedStatusIds]);
 
@@ -1473,13 +1492,32 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
 
   // ─── Viewer Logic ───
   const openViewer = useCallback((statusGroup) => {
-    // [WAVE 54 2026-05-21] Manifest-only placeholder guard. If user taps a
-    // bubble before status_list resolves, force a refetch and abort the
-    // open — empty stories would just flash + close anyway.
-    const isPlaceholder = (statusGroup?.items || []).every(it => it?._placeholder);
+    // [WAVE 79 2026-05-21] Manifest-only placeholder guard — instead of
+    // silently returning (which left the user wondering why the tap did
+    // nothing), stash the target email and force a refetch. The effect
+    // below opens the viewer the moment real items arrive. Falls back to
+    // a normal open after 4s if status_list never resolves so the user's
+    // tap isn't lost (StoryViewer's per-item _placeholder spinner covers
+    // the brief gap). Bug user 2026-05-21: "foto não aparece, se volta aparece".
+    const isPlaceholder = (statusGroup?.items || []).length > 0 && (statusGroup?.items || []).every(it => it?._placeholder);
     if (isPlaceholder) {
+      _pendingViewerEmailRef.current = statusGroup?.ownerEmail || null;
       try { loadStatuses?.(); } catch {}
+      // Light haptic so the user knows the tap registered.
+      try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+      setTimeout(() => {
+        if (_pendingViewerEmailRef.current === (statusGroup?.ownerEmail || null)) {
+          _pendingViewerEmailRef.current = null;
+          // Fallback: open with placeholders anyway after 4s so the spinner
+          // surface in StoryViewer takes over from this point.
+          openViewer({ ...statusGroup, _forcePlaceholderOpen: true });
+        }
+      }, 4000);
       return;
+    }
+    if (statusGroup?._forcePlaceholderOpen) {
+      // Acceptable: viewer's per-item _placeholder branch will render
+      // a spinner + "Carregando…" until items get swapped.
     }
     // Light haptic on tap — Instagram/WhatsApp parity. Without this the
     // tap into the story viewer feels unanchored vs other taps in the app.

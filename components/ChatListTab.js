@@ -1499,39 +1499,113 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
   }, [statusViewersFor?.id]);
   const [statusViewIdx, setStatusViewIdx] = useState(0);
   const _viewedIds = useRef(new Set());
+  // [WAVE 79 2026-05-21] When the user taps a status bubble that is still
+  // a manifest-only placeholder (real status_list hasn't resolved yet) we
+  // can't open the viewer with empty media_urls or it shows the "Mídia
+  // indisponível" empty-state. Instead, stash the pending email here and
+  // wait for the next hookGroups update to land with real items, then open.
+  // Bug user 2026-05-21: "abre status, foto não aparece, se eu volto e
+  // entro de novo aí aparece".
+  const [pendingStatusEmail, setPendingStatusEmail] = useState(null);
+  const pendingTimeoutRef = useRef(null);
   const openStatus = (email) => {
     setStatusViewIdx(0);
-    setStatusViewerEmail(email || null);
-    // Snapshot the matched group/items NOW so a subsequent refetch can't
-    // empty them and force-close the viewer.
-    if (email) {
-      const lc = String(email).toLowerCase();
-      const g = statuses.find(s => String(s.email || '').toLowerCase() === lc);
-      if (g) {
-        // [WAVE 54 2026-05-21] If the group is a manifest-only placeholder
-        // (items have no media_url + _placeholder=true), don't lock those —
-        // wait for refetch to supply real items so the viewer doesn't try
-        // to render an empty story. Refetch is already scheduled by the
-        // mount effect, but in the rare case user taps within the first
-        // ~200ms before status_list resolves we force one more refetch.
-        const isPlaceholder = (g.items || []).every(it => it?._placeholder);
-        if (isPlaceholder) {
-          setStatusViewerLockedGroup(null);
-          setStatusViewerLockedItems(null);
-          try { refetchStatuses?.(); } catch {}
-        } else {
-          setStatusViewerLockedGroup(g);
-          setStatusViewerLockedItems(g.items || []);
-        }
-      } else {
-        setStatusViewerLockedGroup(null);
-        setStatusViewerLockedItems(null);
-      }
-    } else {
+    if (!email) {
+      setStatusViewerEmail(null);
       setStatusViewerLockedGroup(null);
       setStatusViewerLockedItems(null);
+      setPendingStatusEmail(null);
+      return;
     }
+    const lc = String(email).toLowerCase();
+    const g = statuses.find(s => String(s.email || '').toLowerCase() === lc);
+    const isPlaceholder = !!g && (g.items || []).length > 0 && (g.items || []).every(it => it?._placeholder);
+    if (g && !isPlaceholder) {
+      // Happy path: real items already cached. Open immediately and lock
+      // the snapshot so a mid-watch refetch can't collapse the modal.
+      setStatusViewerLockedGroup(g);
+      setStatusViewerLockedItems(g.items || []);
+      setStatusViewerEmail(email);
+      setPendingStatusEmail(null);
+      return;
+    }
+    // Placeholder or missing group → wait for real data. Mark pending +
+    // force a refetch + arm a 4s timeout fallback. Effect below opens the
+    // viewer the moment real items arrive.
+    setStatusViewerLockedGroup(null);
+    setStatusViewerLockedItems(null);
+    setStatusViewerEmail(null);
+    setPendingStatusEmail(email);
+    try { refetchStatuses?.(); } catch {}
+    if (pendingTimeoutRef.current) clearTimeout(pendingTimeoutRef.current);
+    pendingTimeoutRef.current = setTimeout(() => {
+      // Last-chance fallback after 4s: open with whatever we have (placeholder
+      // or all) so the user isn't stuck on a tap with no feedback. Viewer's
+      // per-item _placeholder loading state will cover the visual gap.
+      setPendingStatusEmail(prev => {
+        if (prev) {
+          setStatusViewerEmail(prev);
+          const lc2 = String(prev).toLowerCase();
+          const g2 = statuses.find(s => String(s.email || '').toLowerCase() === lc2);
+          if (g2) {
+            setStatusViewerLockedGroup(g2);
+            setStatusViewerLockedItems(g2.items || []);
+          }
+        }
+        return null;
+      });
+    }, 4000);
   };
+  // Resolve pending open the moment hookGroups lands with real items.
+  useEffect(() => {
+    if (!pendingStatusEmail) return;
+    const lc = String(pendingStatusEmail).toLowerCase();
+    const g = statuses.find(s => String(s.email || '').toLowerCase() === lc);
+    if (!g) return;
+    const stillPlaceholder = (g.items || []).length > 0 && (g.items || []).every(it => it?._placeholder);
+    if (stillPlaceholder) return;
+    if (pendingTimeoutRef.current) { clearTimeout(pendingTimeoutRef.current); pendingTimeoutRef.current = null; }
+    setStatusViewerLockedGroup(g);
+    setStatusViewerLockedItems(g.items || []);
+    setStatusViewerEmail(pendingStatusEmail);
+    setPendingStatusEmail(null);
+  }, [statuses, pendingStatusEmail]);
+  useEffect(() => () => { if (pendingTimeoutRef.current) clearTimeout(pendingTimeoutRef.current); }, []);
+
+  // [WAVE 79 2026-05-21] Eager prefetch of the FIRST media item for the top
+  // 5 status groups in the strip — fires as soon as the strip has real
+  // (non-placeholder) items. By the time the user taps a bubble, the first
+  // image is already on disk so the viewer paints instantly without the
+  // "tela em branco" gap. Top 5 keeps the bandwidth bounded (R2 + native
+  // disk cache); the viewer's existing per-tap prefetch covers the rest.
+  const stripPrefetchedRef = useRef(new Set());
+  useEffect(() => {
+    if (!statuses || statuses.length === 0) return;
+    const candidates = statuses.slice(0, 5);
+    const urls = [];
+    for (const g of candidates) {
+      const first = (g.items || [])[0];
+      if (!first || first._placeholder) continue;
+      const raw = first.media_url || ((first.type === 'image' || first.type === 'video') && /^(\/|https?:\/\/)/.test(String(first.content || '')) ? String(first.content).split('\n')[0] : '');
+      if (!raw) continue;
+      const url = raw.startsWith('http') ? raw : `${api.BASE_URL}${raw}`;
+      if (stripPrefetchedRef.current.has(url)) continue;
+      stripPrefetchedRef.current.add(url);
+      urls.push({ url, isVideo: first.type === 'video' });
+    }
+    if (urls.length === 0) return;
+    try {
+      const { Image: ExpoImg } = require('expo-image');
+      const imgUrls = urls.filter(u => !u.isVideo).map(u => u.url);
+      if (imgUrls.length && ExpoImg?.prefetch) ExpoImg.prefetch(imgUrls).catch(() => {});
+    } catch {}
+    if (Platform.OS !== 'web') {
+      try {
+        const { cacheMedia } = require('../services/mediaCache');
+        urls.forEach(({ url }) => { cacheMedia(url, { force: true }).catch(() => {}); });
+      } catch {}
+    }
+  }, [statuses]);
 
   // Prefetch the next few status items' images as soon as a viewer opens
   // or advances — this makes left/right taps feel instant instead of
