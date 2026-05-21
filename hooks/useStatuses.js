@@ -599,6 +599,40 @@ export default function useStatuses(currentEmail, opts = {}) {
     if (_mailWs?.on) {
       subs.push(_mailWs.on('status_new', scheduleReload));
       subs.push(_mailWs.on('status_update', scheduleReload));
+      subs.push(_mailWs.on('status_added', scheduleReload));
+      subs.push(_mailWs.on('status_deleted', scheduleReload));
+      // [WAVE 93 2026-05-21] Owner-side: increment view count in-place
+      // when a viewer sees one of MY stories. Avoids the 45s wait for
+      // the next poll to refresh the "Vistos N" pill — Instagram parity.
+      // Cheap: just bumps the items[].views integer + invalidates fp.
+      subs.push(_mailWs.on('status_view', (data) => {
+        try {
+          const sid = data?.status_id ? Number(data.status_id) : null;
+          if (!sid) return;
+          const viewer = String(data?.viewer_email || '').toLowerCase();
+          const meLc = String(currentEmail || '').toLowerCase();
+          // Don't count my own re-views (some backends fire this for the
+          // owner re-opening their story; deduped server-side too).
+          if (viewer && viewer === meLc) return;
+          const bumpItem = (it) => {
+            if (it.id !== sid) return it;
+            const next = (it.views || it.view_count || 0) + 1;
+            return { ...it, views: next, view_count: next };
+          };
+          setMine(prev => prev.map(bumpItem));
+          setGroups(prev => prev.map(g => ({ ...g, items: (g.items || []).map(bumpItem) })));
+          // Persist to live store so re-mount during the same session
+          // doesn't lose the increment.
+          if (_liveStore) {
+            _liveStore = {
+              ..._liveStore,
+              mine: (_liveStore.mine || []).map(bumpItem),
+              groups: (_liveStore.groups || []).map(g => ({ ...g, items: (g.items || []).map(bumpItem) })),
+            };
+          }
+          fpRef.current = null; // next refetch persists fresh counts
+        } catch {}
+      }));
     }
 
     // Belt-and-suspenders polling against a missed WS frame.
@@ -635,6 +669,11 @@ export default function useStatuses(currentEmail, opts = {}) {
       if (_liveStore) {
         _liveStore = { ..._liveStore, groups: next };
         _writeMMKV(_liveStore);
+        // [WAVE 93 2026-05-21] Also push to disk cache (services/cache.js).
+        // Without this the strip ring goes back to "unviewed" purple after a
+        // cold start until the next status_list poll lands (~3-5s on cellular).
+        // Fire-and-forget; failure is silent.
+        try { setCache('statuses', _liveStore, 2592000000).catch(() => {}); } catch {}
       }
       return next;
     });
@@ -665,8 +704,27 @@ export default function useStatuses(currentEmail, opts = {}) {
   const removeGroup = useCallback((email) => {
     const lc = String(email || '').toLowerCase();
     if (!lc) return;
-    setGroups(prev => prev.filter(g => String(g.email || '').toLowerCase() !== lc));
-    setOthers(prev => prev.filter(g => String(g.email || '').toLowerCase() !== lc));
+    setGroups(prev => {
+      const next = prev.filter(g => String(g.email || '').toLowerCase() !== lc);
+      // [WAVE 93 2026-05-21] Persist mute → live store + disk + MMKV so the
+      // muted user doesn't re-appear in the strip on the next mount before
+      // the server's status_list filters them out. Without this, ChatListTab's
+      // mirror useEffect re-paints the group from the next hookGroups update
+      // (which hadn't refetched yet) and the user sees their muted contact
+      // flashing back in. Live store + MMKV write makes the local optimistic
+      // mutation durable across nav.
+      if (_liveStore) {
+        _liveStore = {
+          ..._liveStore,
+          groups: next,
+          others: (_liveStore.others || []).filter(g => String(g.ownerEmail || g.email || '').toLowerCase() !== lc),
+        };
+        _writeMMKV(_liveStore);
+        try { setCache('statuses', _liveStore, 2592000000).catch(() => {}); } catch {}
+      }
+      return next;
+    });
+    setOthers(prev => prev.filter(g => String(g.ownerEmail || g.email || '').toLowerCase() !== lc));
     fpRef.current = null;
   }, []);
 

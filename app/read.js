@@ -99,12 +99,32 @@ export default function ReadScreen() {
       if (cancelled) return;
       // Sempre seta email/thread baseado no resultado atual — antes deixava
       // estado anterior "vazar" ao falhar carga ou ao trocar de uid.
-      setEmail(msgResult?.success ? msgResult.data : null);
+      // Optimistic local seen=true so EmailReader header reflects "read"
+      // even before the IMAP flag round-trips back. Bug user (WAVE 94):
+      // "no email quando abrir ele já deve mostrar que eu já vi o email" —
+      // sem isso o reader podia render com o styling de unread por uns
+      // ms entre fetch e markAsRead, e em alguns paths o seen ficava
+      // false até reload.
       if (msgResult?.success) {
+        setEmail({ ...msgResult.data, seen: true, read: true });
+      } else {
+        setEmail(null);
+      }
+      if (msgResult?.success) {
+        // Only mark on server when actually unread — saves a no-op IMAP
+        // round-trip on already-read emails and keeps the IMAP server from
+        // being hammered when the user navigates with j/k between read msgs.
+        // The MailContext markAsRead also does optimistic inbox row update
+        // (seen=true) + persists to recentlyRead so the inbox doesn't revert
+        // when user navigates back. Always call so inbox list updates even
+        // if Rust path already flipped the IMAP flag silently.
+        const wasUnread = msgResult.data && msgResult.data.seen === false;
         markAsRead(uid, folder);
-        // Refresh app-icon badge so the unread count drops immediately
-        // when the user opens a thread (lockscreen + home-screen badge).
-        import('../services/pushNotifications').then(m => m.refreshBadgeCount?.()).catch(() => {});
+        if (wasUnread) {
+          // Refresh app-icon badge so the unread count drops immediately
+          // when the user opens a thread (lockscreen + home-screen badge).
+          import('../services/pushNotifications').then(m => m.refreshBadgeCount?.()).catch(() => {});
+        }
       }
       setThread(threadResult?.success && threadResult.data?.length > 1 ? threadResult.data : null);
     }).finally(() => { if (!cancelled) setLoading(false); });

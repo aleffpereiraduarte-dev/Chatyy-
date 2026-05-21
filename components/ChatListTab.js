@@ -1250,6 +1250,19 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
     return () => clearInterval(t);
   }, [loadNotes]);
 
+  // [WAVE 93 2026-05-21] Pull-to-refresh bus subscription. Parent's onRefresh
+  // emits 'refresh' here; we drive refetchStatuses + loadNotes together so
+  // the entire strip surface stays consistent with the rest of the chat list
+  // pull cadence. Bus is a one-line shim (components/statusRefreshBus.js)
+  // — keeps the hook ownership untouched.
+  useEffect(() => {
+    try {
+      const bus = require('./statusRefreshBus').default;
+      const unsub = bus.on('refresh', () => { try { load(); } catch {} });
+      return () => { try { unsub?.(); } catch {} };
+    } catch { return undefined; }
+  }, [load]);
+
   // Active live broadcasts (Instagram parity). Map: lowercased email → session id.
   // Refreshed every 45s. Lives outrank story rings — a host who is both
   // posting status AND streaming live shows the red AO VIVO ring, with tap
@@ -1581,17 +1594,37 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
   const stripPrefetchedRef = useRef(new Set());
   useEffect(() => {
     if (!statuses || statuses.length === 0) return;
-    const candidates = statuses.slice(0, 5);
+    // [WAVE 93 2026-05-21] Widened from top-5/first-item to top-8/first-two.
+    // Users who blast through the strip with quick taps hit cold cache on
+    // the second item (because the viewer's i+1 prefetch fires only after
+    // it mounts → 200-400ms behind). Pre-warming the second item from the
+    // strip closes that gap. Cap kept tight (16 URLs max) to stay polite
+    // on cellular — R2 + expo-image dedup so re-renders are cheap.
+    const candidates = statuses.slice(0, 8);
     const urls = [];
-    for (const g of candidates) {
-      const first = (g.items || [])[0];
-      if (!first || first._placeholder) continue;
-      const raw = first.media_url || ((first.type === 'image' || first.type === 'video') && /^(\/|https?:\/\/)/.test(String(first.content || '')) ? String(first.content).split('\n')[0] : '');
-      if (!raw) continue;
+    const pushItem = (it) => {
+      if (!it || it._placeholder) return;
+      const raw = it.media_url || ((it.type === 'image' || it.type === 'video') && /^(\/|https?:\/\/)/.test(String(it.content || '')) ? String(it.content).split('\n')[0] : '');
+      if (!raw) return;
       const url = raw.startsWith('http') ? raw : `${api.BASE_URL}${raw}`;
-      if (stripPrefetchedRef.current.has(url)) continue;
+      if (stripPrefetchedRef.current.has(url)) return;
       stripPrefetchedRef.current.add(url);
-      urls.push({ url, isVideo: first.type === 'video' });
+      urls.push({ url, isVideo: it.type === 'video' });
+      // Also warm the thumbnail for video items so the poster paints
+      // instantly when the viewer mounts — kills the black-flash gap.
+      if (it.thumbnail_url) {
+        const traw = String(it.thumbnail_url);
+        const turl = traw.startsWith('http') ? traw : `${api.BASE_URL}${traw}`;
+        if (!stripPrefetchedRef.current.has(turl)) {
+          stripPrefetchedRef.current.add(turl);
+          urls.push({ url: turl, isVideo: false });
+        }
+      }
+    };
+    for (const g of candidates) {
+      const items = g.items || [];
+      pushItem(items[0]);
+      pushItem(items[1]);
     }
     if (urls.length === 0) return;
     try {
@@ -3690,7 +3723,19 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     };
   }, [conversations, user?.email]);
 
-  const onRefresh = useCallback(() => { setRefreshing(true); loadConversations(false); }, [loadConversations]);
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadConversations(false);
+    // [WAVE 93 2026-05-21] Refresh the Status strip too when the user pulls
+    // to refresh. Without this the strip's last-known data sat stale for
+    // up to the poll cadence (now 45s) even though the user explicitly
+    // requested fresh data. The hook's refetch is debounced + fingerprint-
+    // diffed so a no-change response is a free no-op render-wise.
+    try {
+      const ev = require('./statusRefreshBus').default;
+      ev.emit?.('refresh');
+    } catch {}
+  }, [loadConversations]);
 
   // Pull-to-refresh sync: when the user pulls from the very top of the list,
   // negative scrollY translates the StatusStoriesRow downward so the strip

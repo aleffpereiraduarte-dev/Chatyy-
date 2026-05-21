@@ -1205,12 +1205,22 @@ export default function StoryViewer({
       // Prefer expo-video (SDK 55+); fall back to expo-av for older bundles.
       try {
         const { useVideoPlayer, VideoView } = require('expo-video');
-        const InnerVideo = ({ uri }) => {
+        const InnerVideo = ({ uri, loop, initialMuted }) => {
+          // [WAVE 93 2026-05-21] Pass `loop` + `initialMuted` as props so the
+          // useVideoPlayer init callback reads the CURRENT idx's values (vs
+          // the captured first-render values when stale). Was: every advance
+          // to a new video item kept the FIRST item's mute + loop semantics
+          // because `isBoomerang` and `videoMuted` were closed over in the
+          // outer render.
           const player = useVideoPlayer(uri, (p) => {
-            try { p.loop = isBoomerang; p.muted = videoMuted; p.play(); } catch {}
+            try { p.loop = !!loop; p.muted = !!initialMuted; p.play(); } catch {}
           });
           // Sync mute toggle live — caller flips videoMuted, we push it down.
           useEffect(() => { try { player.muted = videoMuted; } catch {} }, [videoMuted]); // eslint-disable-line react-hooks/exhaustive-deps
+          // Sync loop flag too — a status carousel can mix boomerang + normal
+          // clips, so we have to update player.loop when isBoomerang changes
+          // between idx steps without the player being recreated.
+          useEffect(() => { try { player.loop = !!loop; } catch {} }, [loop]); // eslint-disable-line react-hooks/exhaustive-deps
           // Listen for status updates to detect load errors + ready state.
           useEffect(() => {
             const sub = player.addListener?.('statusChange', (s) => {
@@ -1235,7 +1245,7 @@ export default function StoryViewer({
             </View>
           );
         };
-        return <InnerVideo uri={mediaUrl} />;
+        return <InnerVideo uri={mediaUrl} loop={isBoomerang} initialMuted={videoMuted} />;
       } catch {}
       try {
         const V = require('expo-av').Video;

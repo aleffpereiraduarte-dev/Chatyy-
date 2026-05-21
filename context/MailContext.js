@@ -344,14 +344,18 @@ export function MailProvider({ children }) {
     try {
       const r = await api.getMessage(uid, folder || currentFolder);
       if (r.success) {
-        setSelectedEmail(r.data);
+        // Optimistic: stamp seen=true on the selected message so the reader
+        // pane never shows the "unread" pill/styling after open. The IMAP
+        // \Seen flag flips server-side via Rust ?mark_seen=true OR via the
+        // markAsRead POST below; either way the UI must not lag.
+        setSelectedEmail({ ...r.data, seen: true, read: true });
         markAsRead(uid, folder);
         saveMessageToCache(uid, r.data).catch(() => {});
       }
     } catch {
       // Fallback to cached message
       const cached = await getMessageFromCache(uid);
-      if (cached) setSelectedEmail(cached);
+      if (cached) setSelectedEmail({ ...cached, seen: true, read: true });
     } finally {
       setLoadingMessage(false);
     }
@@ -360,8 +364,30 @@ export function MailProvider({ children }) {
   // Mark email as read — updates both server and local state
   const markAsRead = useCallback(async (uid, folder) => {
     const uidStr = String(uid);
-    // Optimistic UI update
-    setEmails(prev => prev.map(e => String(e.uid) === uidStr ? { ...e, seen: true } : e));
+    const targetFolder = folder || currentFolder;
+    // Optimistic UI update — capture whether the row was actually unread
+    // so we only decrement the folder badge once (idempotent re-marks
+    // shouldn't drift the counter negative).
+    let wasUnread = false;
+    setEmails(prev => prev.map(e => {
+      if (String(e.uid) !== uidStr) return e;
+      if (e.seen) return e; // already read — no change, no decrement
+      wasUnread = true;
+      return { ...e, seen: true };
+    }));
+    // Optimistic folder badge decrement — Sidebar reads
+    // folders[i].unread/.unseen for the badge. Without this the
+    // sidebar count lags until the next folders refresh (often >5s),
+    // so users see the email move to "read" styling in the list but
+    // the sidebar still shows the old unread count. (WAVE 94 fix.)
+    if (wasUnread) {
+      setFolders(prev => prev.map(f => {
+        if (f.name !== targetFolder) return f;
+        const cur = (f.unread ?? f.unseen ?? 0) | 0;
+        const next = Math.max(0, cur - 1);
+        return { ...f, unread: next, unseen: next };
+      }));
+    }
     // Track this UID as recently read — prevents revert from stale server data
     recentlyReadRef.current.add(uidStr);
     // Persist so it survives app restarts
@@ -383,12 +409,12 @@ export function MailProvider({ children }) {
     } catch {}
     // Call the server — await so it completes before app might close
     try {
-      const r = await api.markRead(uid, folder || currentFolder);
+      const r = await api.markRead(uid, targetFolder);
       if (!r?.success) console.warn('markRead failed for uid', uid, r?.message);
     } catch (e) {
       console.warn('markRead error for uid', uid, e);
       // Queue for offline retry
-      queueOfflineAction({ type: 'markRead', uid, folder: folder || currentFolder }).catch(() => {});
+      queueOfflineAction({ type: 'markRead', uid, folder: targetFolder }).catch(() => {});
     }
     // No auto-expire timer needed — recentlyRead is cleaned up from
     // persisted storage on load (24h cutoff) and the ref is cleared on unmount.
