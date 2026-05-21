@@ -443,6 +443,16 @@ class ChatyyConnection(
     try {
       ExpoCallKitModule.emitAudioRouteChanged(route, s.isMuted)
     } catch (_: Throwable) {}
+    // [2026-05-21] Sync AudioRouter's cached speakerOn flag with what Telecom
+    // says is the current route. Without this, after a Bluetooth headset
+    // disconnects, AudioRouter still thinks speaker is OFF (its last setSpeaker
+    // call) while Telecom routed to SPEAKER as fallback — the next JS
+    // toggleSpeaker() then flips to the wrong direction (speaker→earpiece
+    // instead of speaker→off). Mirror Telecom's view of reality here.
+    try {
+      val isSpeaker = s.route == android.telecom.CallAudioState.ROUTE_SPEAKER
+      expo.modules.callkit.audio.AudioRouter.get(ctx).setSpeaker(isSpeaker)
+    } catch (_: Throwable) {}
   }
 
   // ─────────── Private helpers ───────────

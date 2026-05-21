@@ -44,5 +44,5 @@ Pod::Spec.new do |s|
 
   s.source_files = '**/*.swift'
 
-  s.frameworks = 'CallKit', 'PushKit', 'AVFoundation', 'CoreImage', 'CoreVideo'
+  s.frameworks = 'CallKit', 'PushKit', 'AVFoundation', 'CoreImage', 'CoreVideo', 'Intents'
 end

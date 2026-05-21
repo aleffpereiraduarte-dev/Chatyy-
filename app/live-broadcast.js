@@ -1935,7 +1935,7 @@ export default function LiveBroadcastScreen() {
       // live_end_cf so the cron-live-recordings finalizer picks them up,
       // LK sessions use live_end (no CF VOD), legacy sessions stay on live_end.
       // Memory-safe — fires after teardown.
-      const endFn = (cfModeRef.current && !lkModeRef.current) ? api.liveEndCf : api.liveEnd;
+      const endFn = lkModeRef.current ? api.liveEndLk : (cfModeRef.current ? api.liveEndCf : api.liveEnd);
       // [LIVE-VOD-TRACE] Wave 44 — show a tangible "Replay sendo processado"
       // toast the moment the host taps end-live. The previous UX let users
       // walk away thinking nothing was happening (the end-card just said
@@ -2922,7 +2922,7 @@ export default function LiveBroadcastScreen() {
             host_email: (user?.email || '').toLowerCase(),
           });
         } catch {}
-        const endFn = cfModeRef.current ? api.liveEndCf : api.liveEnd;
+        const endFn = lkModeRef.current ? api.liveEndLk : (cfModeRef.current ? api.liveEndCf : api.liveEnd);
         const tryEnd = (attempt) => {
           endFn(sid).catch((err) => {
             console.warn('[Live] liveEnd attempt ' + attempt + ' failed:', err?.message || err);

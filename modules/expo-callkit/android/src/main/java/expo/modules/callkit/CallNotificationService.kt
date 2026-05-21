@@ -357,6 +357,20 @@ object CallNotificationService {
 
     val callTypeText = if (hasVideo) "Chamada de video" else "Chamada de voz"
 
+    // TODO [2026-05-21] Migrate to `Notification.CallStyle.forIncomingCall()`
+    // (API 31+) for the Android 12+ "phone-style" incoming call layout —
+    // larger caller photo, prominent Accept/Decline buttons, Person.Builder
+    // metadata. Migration is non-trivial because:
+    //   1. CallStyle requires platform Notification.Builder (not the
+    //      NotificationCompat.Builder pattern used below for FSI gating + mute).
+    //   2. NotificationCompat.CallStyle exists but locks the action slots
+    //      (no extra addAction for "Reply with message" etc).
+    //   3. The mute-ringtone variant + setOngoing(true) + setFullScreenIntent
+    //      interplay needs re-verification per CallStyle.
+    // Keeping the current NotificationCompat builder until we can QA the
+    // CallStyle path on real devices across API 31–35. Heads-up + FSI already
+    // work today, so this is a polish improvement, not a correctness fix.
+
     // Get the app icon resource
     val appIconRes = context.applicationInfo.icon
     val smallIconRes = try {

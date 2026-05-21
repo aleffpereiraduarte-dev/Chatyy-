@@ -7140,6 +7140,14 @@ export async function liveEndCf(sessionId, opts = {}) {
   }
   return apiCall('live_end_cf', payload, 'POST');
 }
+// LiveKit live end — closes the chat_live_sessions row + stops LK Egress.
+// Without this, the legacy `liveEnd` action returns 400 and rows stay
+// status='live' forever (incident 2026-05-21: profile "AO VIVO" eterno).
+export async function liveEndLk(sessionId, opts = {}) {
+  const payload = { session_id: sessionId };
+  if (opts && 'save_replay' in opts) payload.save_replay = opts.save_replay ? 1 : 0;
+  return apiCall('live_end_lk', payload, 'POST');
+}
 // Cloudflare Stream pipeline (managed ingest + HLS/DASH + automatic VOD).
 // Returns { sessionId, cf_input_uid, rtmps_url, rtmps_key, srt_url,
 // srt_passphrase, srt_stream_id, webrtc_url (WHIP), hls_url, dash_url }.
@@ -7173,15 +7181,36 @@ export async function liveStatusCf(sessionId) {
 // ─── LiveKit SFU pipeline — WAVE 110 ───
 // Host: create LK room + mint publish token. Viewer: subscribe-only token.
 // Both resolve to { session_id, lk_room, lk_url, lk_token, pipeline:'livekit' }.
+//
+// [2026-05-21 device_id propagation] Backend Agent A adds an identity suffix
+// derived from device_id so multi-device sessions don't collide in LK. Without
+// device_id in the payload, backend falls back to a random per-request value
+// and the dedup logic on identity breaks. Lazy require avoids circular deps
+// (services/e2e.js itself requires('./api')).
+async function _getDeviceIdSafe() {
+  try {
+    const _e2e = require('./e2e');
+    if (_e2e && typeof _e2e.getDeviceId === 'function') {
+      const _id = await _e2e.getDeviceId();
+      if (_id && typeof _id === 'string') return _id;
+    }
+  } catch {}
+  return null;
+}
 export async function liveStartLk(title, opts = {}) {
   const payload = { title: title || 'Live' };
   if (opts && opts.audience) payload.audience = opts.audience;
   if (opts && opts.category) payload.category = opts.category;
   if (opts && opts.subscribersOnly) payload.subscribers_only = 1;
+  const _did = await _getDeviceIdSafe();
+  if (_did) payload.device_id = _did;
   return apiCall('live_start_lk', payload, 'POST');
 }
 export async function liveJoinLk(sessionId) {
-  return apiCall('live_join_lk', { session_id: sessionId }, 'POST');
+  const payload = { session_id: sessionId };
+  const _did = await _getDeviceIdSafe();
+  if (_did) payload.device_id = _did;
+  return apiCall('live_join_lk', payload, 'POST');
 }
 export async function liveStatusLk(sessionId) {
   return apiCall('live_status_lk', { session_id: sessionId }, 'POST');
@@ -8753,8 +8782,13 @@ export async function chatThreadMessages(parentMessageId) {
 }
 
 // ─── LiveKit (group calls SFU) ───
+// [2026-05-21] Pass device_id so backend Agent A can suffix the LK identity
+// for dedup across multi-device sessions (phone + web + share-ext etc.).
 export async function chatLivekitToken(conversationId, room = '') {
-  return apiCall('chat_livekit_token', { conversation_id: conversationId, room }, 'POST');
+  const payload = { conversation_id: conversationId, room };
+  const _did = await _getDeviceIdSafe();
+  if (_did) payload.device_id = _did;
+  return apiCall('chat_livekit_token', payload, 'POST');
 }
 
 // [gap E2 2026-05-20] "Join ongoing call" banner.

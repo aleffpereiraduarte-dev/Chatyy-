@@ -1256,9 +1256,29 @@ export default function LiveViewerScreen() {
               try {
                 const _lk = loadLiveKit();
                 if (!_lk?.Room) throw new Error('LK SDK not available');
-                const _joinRes = await api.liveJoinLk(_lkSid);
-                if (!_joinRes?.success || !_joinRes?.data?.lk_token) {
-                  throw new Error('live_join_lk failed: ' + (_joinRes?.message || 'no token'));
+                // [2026-05-21 viewer-join race fix] Backend may return 410
+                // momentarily if the viewer arrives during the host's start
+                // race (row status=pending for ~1s). Retry up to 3× with 1s
+                // backoff before falling back to webrtc — that fallback was
+                // causing permanent "Conectando..." for early viewers.
+                let _joinRes = null;
+                for (let _attempt = 0; _attempt < 3; _attempt++) {
+                  try {
+                    _joinRes = await api.liveJoinLk(_lkSid);
+                    if (_joinRes?.success) break;
+                    // 410 = ended; bail
+                    if (_joinRes?.status === 410) throw new Error('Live ended');
+                  } catch (_je) {
+                    const _jeMsg = String(_je?.message || '');
+                    if (_jeMsg.includes('410') || _jeMsg.includes('Live ended')) {
+                      // confirmed ended — re-throw
+                      throw _je;
+                    }
+                    if (_attempt < 2) await new Promise(r => setTimeout(r, 1000));
+                  }
+                }
+                if (!_joinRes || !_joinRes.success || !_joinRes?.data?.lk_token) {
+                  throw new Error('live_join_lk failed: ' + (_joinRes?.message || 'no token after 3 attempts'));
                 }
                 const { lk_url: _lkUrl, lk_token: _lkToken, lk_room: _lkRoom } = _joinRes.data;
                 const _room = new _lk.Room({ adaptiveStream: true, dynacast: false });

@@ -45,6 +45,12 @@ final class CallSessionState: ObservableObject {
     // Connection / status
     @Published var status: String
 
+    /// [2026-05-21] Set true while LiveKit Room is in `.reconnecting`.
+    /// CallView reads this to surface a banner ("Reconectando...") above the
+    /// participants grid. Reset to false when the Room comes back to `.connected`
+    /// or fully disconnects.
+    @Published var isReconnecting: Bool = false
+
     // Audio
     @Published var micEnabled: Bool
     @Published var speakerOn: Bool
@@ -1692,6 +1698,17 @@ extension CallViewController: RoomDelegate {
         DispatchQueue.main.async { [weak self] in
             self?.session.status = "Conectado"
         }
+        // [2026-05-21] On outgoing calls we MUST tell CallKit "the remote
+        // answered" via reportOutgoingCall(with:connectedAt:). Without it,
+        // CallKit keeps the lock-screen pill saying "Calling…" forever and
+        // never starts the in-call duration timer. We reuse the early VoIP
+        // provider (same pattern as didDisconnectWithError below).
+        if isOutgoing,
+           let uuid = ExpoCallKitModule.sharedCallKitUUID(forCallId: callId),
+           let provider = VoipPushAppDelegateSubscriber.earlyProvider {
+            provider.reportOutgoingCall(with: uuid, connectedAt: nil)
+            print("[CallVC] roomDidConnect: reportOutgoingCall(connectedAt:nil) uuid=\(uuid)")
+        }
         // [#1207 NativeCallRoom REAL] Fanout to JS via the singleton listener
         // so the JS-side /call.js sees onLkConnected and renders peers from
         // the snapshot without spinning up a duplicate Room.
@@ -1734,6 +1751,31 @@ extension CallViewController: RoomDelegate {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// [2026-05-21] Reconnect lifecycle banner. When the underlying transport
+    /// briefly drops (cellular handoff, brief Wi-Fi blip) LK swaps to
+    /// `.reconnecting`; we surface "Reconectando…" so the user doesn't think
+    /// the call is silent. On `.connected` after reconnect we flip back to
+    /// "Conectado"; full `.disconnected` is handled by `didDisconnectWithError`
+    /// further below but we keep the status synced here too.
+    func room(_ room: Room, didUpdate connectionState: ConnectionState, oldValue: ConnectionState) {
+        Task { @MainActor in
+            switch connectionState {
+            case .reconnecting:
+                self.session.status = "Reconectando..."
+                self.session.isReconnecting = true
+            case .connected:
+                if self.session.isReconnecting {
+                    self.session.status = "Conectado"
+                    self.session.isReconnecting = false
+                }
+            case .disconnected:
+                self.session.status = "Desconectado"
+                self.session.isReconnecting = false
+            default: break
             }
         }
     }

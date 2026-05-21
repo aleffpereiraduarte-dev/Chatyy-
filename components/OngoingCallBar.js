@@ -65,19 +65,11 @@ export default function OngoingCallBar() {
         if (typeof call.onResume === 'function') {
           try { call.onResume(); return; } catch {}
         }
-        // [hybrid 2026-05-16] /call.js owns the call UI on mobile.
-        if (false) {
-          try {
-            const ExpoCallKit = require('../modules/expo-callkit');
-            ExpoCallKit.openNativeCall({
-              callId: call.callId || '',
-              callerName: call.contactName || call.number || '',
-              callerEmail: call.contactEmail || '',
-              hasVideo: !!call.isVideo,
-              lkUrl: null,
-              lkToken: null,
-            }).catch((e) => console.warn('[OngoingCallBar] openNativeCall failed:', e));
-          } catch (e) { console.warn('[OngoingCallBar] openNativeCall import failed:', e); }
+        // [2026-05-21 "2 sistemas" fix] Mobile must re-open native call UI,
+        // not the JS /call screen — those two running simultaneously is the
+        // smoking-gun for "atende e desliga". Only web falls through to JS.
+        if (Platform.OS === 'ios' || Platform.OS === 'android') {
+          try { require('../modules/expo-callkit').openNativeCall?.(); } catch {}
           return;
         }
         router.push('/call');

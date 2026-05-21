@@ -4,6 +4,7 @@ import PushKit
 import AVFoundation
 import Network
 import UIKit
+import Intents
 
 // [bug 2026-05-15 cold-start-voip-drop] PKPushRegistry is OWNED by
 // AppDelegate (created in didFinishLaunchingWithOptions). This module
@@ -775,6 +776,29 @@ public class ExpoCallKitModule: Module {
       if !calleeAvatar.isEmpty, let ud = UserDefaults(suiteName: kAppGroupId) {
         ud.set(calleeAvatar, forKey: "callAvatar:\(callId)")
       }
+
+      // [2026-05-21] Donate an INStartCallIntent so iOS records this outgoing
+      // call in Siri / Recents / "Suggestions" surfaces. Without donation
+      // the system can't surface a "Call <name>" shortcut and the call won't
+      // appear in the user's call history outside the in-app list.
+      let person = INPerson(
+        personHandle: INPersonHandle(value: calleeEmail, type: .emailAddress),
+        nameComponents: nil,
+        displayName: calleeName,
+        image: nil,
+        contactIdentifier: nil,
+        customIdentifier: nil
+      )
+      let intent = INStartCallIntent(
+        callRecordFilter: nil,
+        callRecordToCallBack: nil,
+        audioRoute: .unknown,
+        destinationType: .normal,
+        contacts: [person],
+        callCapability: isVideo ? .videoCall : .audioCall
+      )
+      let interaction = INInteraction(intent: intent, response: nil)
+      interaction.donate(completion: nil)
 
       // [fix 2026-05-21] OnCreate dispatches setupProvider via main.async, so on
       // very fast taps (< ~50ms after launch) callController may still be nil.
@@ -1745,6 +1769,25 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
       return callId
     }()
 
+    // [STAGE-A 2026-05-21] If NativeCallRoom already kicked off a Room.connect
+    // during the ring window (push receive path optimistically pre-connects),
+    // we can skip the LK token fetch entirely and just present the
+    // CallViewController. The VC's adopt path will bind to the live Room via
+    // NativeCallRoom.currentRoom() / attachDelegate() and not re-connect.
+    if NativeCallRoom.shared.isPreconnected(callId: callId) {
+      print("[ExpoCallKit] Answer: Room preconnected for \(callId) — skipping token fetch")
+      DispatchQueue.main.async {
+        Self.presentNativeCallVC(callId: callId,
+                                 callerName: snapshot.callerName,
+                                 callerEmail: snapshot.callerEmail,
+                                 hasVideo: snapshot.hasVideo,
+                                 lkUrl: "",
+                                 lkToken: "",
+                                 conversationId: snapshot.conversationId)
+      }
+      return
+    }
+
     // First try the App Group LK token cache (populated by JS-side
     // `persistPendingLkToken` whenever a chat_livekit_token mint round-trips
     // through JS before the push lands). If the cache misses, fetch via
@@ -1771,6 +1814,10 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
       return
     }
 
+    // Capture a weak ref to the module so the failure path can route through
+    // endCallActionWithReason — `Task.detached` otherwise can't reach `self`
+    // safely under Swift 6 strict concurrency.
+    weak var moduleRef = self.module
     Task.detached(priority: .userInitiated) {
       do {
         let result = try await NativeCallTokenFetcher.shared.fetchToken(
@@ -1788,9 +1835,17 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
                                    conversationId: snapshot.conversationId)
         }
       } catch {
-        // No native screen this round — JS-side router.push('/call') is the
-        // fallback and will retry the token fetch through @livekit/react-native.
-        print("[ExpoCallKit] LK token fetch failed in CXAnswer path: \(error). JS fallback will retry.")
+        // [2026-05-21] Without ending the call, the user is stuck on the lock
+        // screen with phantom ringing while CallKit thinks the call is active
+        // but no UI ever surfaces. End cleanly so iOS rolls back to the lock
+        // screen / Recents with a typed `.failed` reason. We funnel through
+        // the existing endCallActionWithReason path so all the bookkeeping
+        // (activeCalls cleanup, App Group LK token purge, onCallEnded JS event)
+        // fires consistently with peer-end / decline.
+        print("[ExpoCallKit] LK token fetch failed in CXAnswer: \(error) — ending call")
+        await MainActor.run {
+          moduleRef?.endCallActionWithReason(callId: callId, reasonRaw: "failed")
+        }
       }
     }
   }
@@ -2040,6 +2095,17 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
   }
 
   func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
+    // [2026-05-21] Purge App Group side-channel state for this callId BEFORE
+    // calling callEnded() drops the UUID → callId reverse map. Without this
+    // cleanup, callAvatar:<cid> / lk_token_<cid> / lk_url_<cid> entries leak
+    // forever and a future call with a colliding callId (unlikely but
+    // possible on cold-start ID generation collisions) would reuse stale data.
+    if let cid = self.module?.callIdForUUID(action.callUUID),
+       let ud = UserDefaults(suiteName: kAppGroupId) {
+      ud.removeObject(forKey: "callAvatar:\(cid)")
+      ud.removeObject(forKey: "lk_token_\(cid)")
+      ud.removeObject(forKey: "lk_url_\(cid)")
+    }
     module?.callEnded(uuid: action.callUUID)
     // [#1179 cleanup, 2026-05-19] Dismiss the presented native call UI.
     // CXEndCallAction can be triggered three ways:

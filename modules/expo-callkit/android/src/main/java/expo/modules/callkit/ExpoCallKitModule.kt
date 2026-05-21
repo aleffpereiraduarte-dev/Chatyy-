@@ -206,6 +206,17 @@ class ExpoCallKitModule : Module() {
       instance.get()?.sendEvent("onLkError",
         mapOf("callId" to callId, "message" to message))
     }
+    // [2026-05-21] LiveKit reconnect lifecycle events. JS subscribers show a
+    // "Reconnecting..." banner so users don't think the call has dropped when
+    // the SFU briefly loses the WS (Wi-Fi → cellular, tunnel reset, etc.).
+    fun emitLkReconnecting(callId: String) {
+      instance.get()?.sendEvent("nativeCallRoomReconnecting",
+        mapOf("callId" to callId))
+    }
+    fun emitLkReconnected(callId: String) {
+      instance.get()?.sendEvent("nativeCallRoomReconnected",
+        mapOf("callId" to callId))
+    }
 
     // __chatyy_native_call_sync 2026-05-19 — control-state mirrors fired by
     // CallActivity (Compose) so JS overlays/analytics see the SAME state the
@@ -398,6 +409,8 @@ class ExpoCallKitModule : Module() {
       "onLkConnected", "onLkParticipantConnected", "onLkParticipantDisconnected",
       "onLkTrackSubscribed", "onLkTrackUnsubscribed", "onLkConnectionQuality",
       "onLkDisconnected", "onLkDataReceived", "onLkError",
+      // [2026-05-21] LK reconnect lifecycle — banner in /call UI.
+      "nativeCallRoomReconnecting", "nativeCallRoomReconnected",
       // __chatyy_native_call_sync 2026-05-19 — native call-state changes
       // mirrored to JS (mute / cam / speaker / route / camera-flip / hold /
       // PiP) so the JS overlay, analytics, recording banner, and post-call

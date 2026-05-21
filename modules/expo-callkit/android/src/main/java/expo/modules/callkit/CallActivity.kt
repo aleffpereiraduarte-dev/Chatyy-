@@ -13,6 +13,7 @@ import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.util.Log
 import android.util.Rational
 import android.view.WindowManager
@@ -236,6 +237,12 @@ class CallActivity : ComponentActivity() {
    *  released on stopRingback() / onDestroy. */
   private var toneGen: ToneGenerator? = null
 
+  /** [2026-05-21] Proximity wake-lock for audio calls. Mirrors iOS proximity
+   *  monitoring: when the user holds the phone to their ear, the screen turns
+   *  off (saving battery + preventing cheek-touches on UI). Released in
+   *  onDestroy. Video calls skip this so the screen stays on. */
+  private var proximityWakeLock: PowerManager.WakeLock? = null
+
   /** Intent for the in-call foreground service. Stopped first in
    *  finishCall() so the persistent notification disappears before LK
    *  tears down. */
@@ -303,6 +310,25 @@ class CallActivity : ComponentActivity() {
     callerName = extras.getString(EXTRA_CALLER_NAME) ?: ""
     callerEmail = extras.getString(EXTRA_CALLER_EMAIL) ?: ""
     hasVideo = extras.getBoolean(EXTRA_HAS_VIDEO, false)
+
+    // [2026-05-21] Proximity wake-lock for audio-only calls. When user holds
+    // phone to ear during a voice call, the screen turns off so cheek-presses
+    // don't toggle UI controls and battery is preserved. Video calls skip
+    // this so the screen stays on for preview.
+    val isVideoCall = hasVideo
+    if (!isVideoCall) {
+      try {
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        proximityWakeLock = pm.newWakeLock(
+          PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK,
+          "chatyy:call:proximity"
+        )
+        proximityWakeLock?.acquire(60 * 60 * 1000L) // 1h cap
+        Log.d(TAG, "proximityWakeLock acquired (audio call)")
+      } catch (t: Throwable) {
+        Log.w(TAG, "proximityWakeLock acquire failed: ${t.message}")
+      }
+    }
     lkUrl = extras.getString(EXTRA_LK_URL)
     lkToken = extras.getString(EXTRA_LK_TOKEN)
     isOutgoing = extras.getBoolean(EXTRA_IS_OUTGOING, false)
@@ -810,6 +836,13 @@ class CallActivity : ComponentActivity() {
   override fun onDestroy() {
     try { unregisterReceiver(closeReceiver) } catch (_: Exception) {}
     try { unregisterReceiver(dtmfReceiver) } catch (_: Exception) {}
+    // [2026-05-21] Release proximity wake-lock if held.
+    try {
+      if (proximityWakeLock?.isHeld == true) {
+        proximityWakeLock?.release()
+      }
+    } catch (_: Throwable) {}
+    proximityWakeLock = null
     stopRingback()
     // [Wave 15 gap B2] Release HW audio effects antes do AudioRouter teardown.
     try {

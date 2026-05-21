@@ -1478,9 +1478,17 @@ export default function IncomingCallListener() {
             // background; /call's connectToRoom will join LiveKit as soon
             // as WS is up.
             //
-            // [hybrid 2026-05-16] Push /call.js on all platforms (mobile too).
-            // Native call screen still runs underneath for system integration.
-            router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&autoAccepted=1`);
+            // [2026-05-21 "2 sistemas" smoking-gun fix] The previous code
+            // pushed /call on EVERY push-accepted incoming call regardless of
+            // platform. On mobile, that meant the JS overlay /call screen ran
+            // SIMULTANEOUSLY with native CallKit (iOS) / IncomingCallActivity
+            // (Android), causing "atende e desliga" + double-audio + black
+            // screen reports. Mobile must go ONLY through the native call UI.
+            // Web still needs the JS push since there's no native CallKit there.
+            if (Platform.OS === 'web') {
+              router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&autoAccepted=1`);
+            }
+            // (mobile already gets full native CallKit / IncomingCallActivity)
 
             (async () => {
               const mailWs = require('../services/websocket').default;

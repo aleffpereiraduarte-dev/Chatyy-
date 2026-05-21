@@ -356,8 +356,16 @@ object NativeCallRoom {
                 val text = try { String(ev.data, Charsets.UTF_8) } catch (_: Throwable) { "" }
                 ExpoCallKitModule.emitLkDataReceived(cid, ident, text)
             }
+            is RoomEvent.Reconnecting -> {
+                Log.w(TAG, "Room reconnecting...")
+                try { ExpoCallKitModule.emitLkReconnecting(cid) } catch (_: Exception) {}
+            }
+            is RoomEvent.Reconnected -> {
+                Log.i(TAG, "Room reconnected")
+                try { ExpoCallKitModule.emitLkReconnected(cid) } catch (_: Exception) {}
+            }
             else -> {
-                // No-op: TrackMuted/TrackUnmuted/ActiveSpeakersChanged/etc.
+                // unhandled: TrackMuted/TrackUnmuted/ActiveSpeakersChanged/etc.
                 // are handled inside CallActivity's own collector for the
                 // Compose UI. JS doesn't need every event mirrored.
             }
@@ -419,6 +427,15 @@ object NativeCallRoom {
                 publish(r, callId, callId, ctx.applicationContext)
                 r.connect(url, token)
                 Log.i(TAG, "preconnect: Room.connect returned, state=${r.state}")
+                // [2026-05-21] Publish mic during preconnect (parity with iOS:1638). Without
+                // this, accept-fast races where adoptForCall sets mic AFTER user pickup
+                // produce one-way audio (callee receives but caller never hears them).
+                try {
+                  r.localParticipant.setMicrophoneEnabled(true)
+                  Log.i(TAG, "preconnect: mic published")
+                } catch (e: Exception) {
+                  Log.w(TAG, "preconnect: setMicrophoneEnabled failed: ${e.message}")
+                }
             } catch (t: Throwable) {
                 Log.w(TAG, "preconnect failed for callId=$callId: ${t.message}")
                 // Don't clear() — the cached token still lets onAnswer's
