@@ -8,7 +8,26 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
+import { swr, getCachedSync, userScopedKey } from '../services/cache';
 import AvatarCircle from '../components/AvatarCircle';
+
+// [WAVE 100] Module-scope live store — paints instant on re-mount.
+const _liveStore = new Map();
+const FEED_KEY = 'notifications_feed_list_v1';
+function _readLive() {
+  try {
+    const key = userScopedKey(FEED_KEY);
+    const hit = _liveStore.get(key);
+    if (hit && Array.isArray(hit.items)) return hit.items;
+  } catch {}
+  return null;
+}
+function _writeLive(items) {
+  try {
+    const key = userScopedKey(FEED_KEY);
+    _liveStore.set(key, { items, ts: Date.now() });
+  } catch {}
+}
 import {
   IconArrowLeft, IconHeart, IconMessageCircle, IconUser,
   IconSparkles, IconBell, IconCheck,
@@ -40,8 +59,17 @@ export default function NotificationsFeedScreen() {
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // [WAVE 100] Lazy init: live store → MMKV → empty. Paints instant.
+  const [items, setItems] = useState(() => {
+    const live = _readLive();
+    if (live) return live;
+    try {
+      const cached = getCachedSync(FEED_KEY);
+      if (cached?.notifications) return cached.notifications;
+    } catch {}
+    return [];
+  });
+  const [loading, setLoading] = useState(() => !(_readLive() || getCachedSync(FEED_KEY)?.notifications));
   const [refreshing, setRefreshing] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
@@ -93,14 +121,34 @@ export default function NotificationsFeedScreen() {
   }, [showToast, t]);
 
   const load = useCallback(async (p = 1) => {
-    // Marca loading no início — antes loading só ia pra true no mount,
-    // permitindo paginação dispar várias requisições simultâneas.
+    // [WAVE 100] First page via SWR — paints cache instantly via lazy init,
+    // then revalidates network. Pagination always hits network.
+    if (p === 1) {
+      try {
+        const fresh = await swr(
+          FEED_KEY,
+          () => api.notificationsList(1, 30),
+          null,
+          null,
+          { ttlMs: 30 * 60 * 1000, staleAfterMs: 15 * 1000 }
+        );
+        const list = fresh?.data?.notifications;
+        if (Array.isArray(list)) {
+          _writeLive(list);
+          setItems(list);
+          setHasMore(!!fresh?.data?.has_more);
+        }
+      } catch {}
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
     setLoading(true);
     try {
       const r = await api.notificationsList(p, 30);
       if (r?.success) {
         const list = r.data?.notifications || [];
-        setItems(prev => p === 1 ? list : [...prev, ...list]);
+        setItems(prev => [...prev, ...list]);
         setHasMore(!!r.data?.has_more);
       }
     } catch {}

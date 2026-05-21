@@ -5257,6 +5257,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         draftText={drafts[String(item.id)] || null}
         draftEditedAt={draftTimes[String(item.id)] || null}
         noteText={noteText}
+        onAvatarPress={(p) => setAvatarLightbox(p)}
       />
     );
   }, [filter, pinnedCount, isDark, colors, t, handleConversationPress, handleDeleteConversation, handleArchiveConversation, handleMuteConversation, handlePinConversation, handleMarkUnreadConversation, user?.email, lockedIds, unlockedIds, typingUsers, selectionMode, selectedIds, enterSelectionMode, toggleSelected, drafts, draftTimes, notesMap]);
@@ -5965,6 +5966,16 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         visible={showDiscoverChannels}
         onClose={() => setShowDiscoverChannels(false)}
         onJoined={() => loadConversations(false)}
+      />
+
+      {/* WAVE 95 — Avatar lightbox (tap on a row avatar → fullscreen photo).
+          Row tap (anywhere else) still opens the conversation; only the small
+          avatar circle on the left triggers this. */}
+      <AvatarLightbox
+        visible={!!avatarLightbox}
+        email={avatarLightbox?.email}
+        name={avatarLightbox?.name}
+        onClose={() => setAvatarLightbox(null)}
       />
 
       {/* Set Note Modal */}

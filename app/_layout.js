@@ -747,6 +747,20 @@ function AppInit({ onNotification, setOtaToast }) {
           bootstrapFullHistoryOnce(apiMod.apiCall, auth.user.email).catch(() => {});
         } catch {}
       }, 2500);
+      // Stage E (#1247, 2026-05-21): WhatsApp-grade BACKGROUND media auto-sync.
+      // Separate from the bootstrap loop — that one walks message history; this
+      // one fills any media row whose local_path stayed NULL after WS push +
+      // bootstrap (cellular gate, network blip, app killed mid-download). Loop
+      // wakes on AppState→active, wifi flip, WS chat_message, and a 5min idle
+      // tick. The user's request: "deveria sincronizar automaticamente pra
+      // nunca faltar nada" — Settings now reads from this loop's progress so
+      // they see "Sincronizado" instead of "Mídias faltantes: 47".
+      setTimeout(() => {
+        try {
+          const { initMediaAutoSync } = require('../services/mediaAutoSync');
+          initMediaAutoSync(auth.user.email);
+        } catch {}
+      }, 4000);
     }
   }, [auth?.user?.email]);
 

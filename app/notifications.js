@@ -16,9 +16,33 @@ import {
 } from '../components/Icons';
 import EmptyStateCard from '../components/EmptyStateCard';
 import * as api from '../services/api';
+import { swr, getCachedSync, setCache, userScopedKey } from '../services/cache';
 
 // Brand color (Chatyy purple)
 const BRAND = '#7C3AED';
+
+// [WAVE 100] Module-scope live store — survives unmount/remount in the same
+// JS runtime (e.g. user opens /notifications, navigates to /inbox, comes
+// back: <1ms paint instead of waiting for MMKV/network). MMKV layer below
+// still persists across cold starts. Keyed by user-scoped cache key so two
+// accounts on the same device never share state.
+const _liveStore = new Map();
+const LIVE_KEY = 'notifications_list_v1';
+
+function _readLive() {
+  try {
+    const key = userScopedKey(LIVE_KEY);
+    const hit = _liveStore.get(key);
+    if (hit && Array.isArray(hit.items)) return hit.items;
+  } catch {}
+  return null;
+}
+function _writeLive(items) {
+  try {
+    const key = userScopedKey(LIVE_KEY);
+    _liveStore.set(key, { items, ts: Date.now() });
+  } catch {}
+}
 
 // ─── Tab filter config ─ Instagram Activity 4-segment layout ──────────────────
 // "Todas" / "Pra você" / "Seguindo" / "Você"
@@ -364,8 +388,18 @@ function NotificationsScreenInner() {
   const insets = useSafeAreaInsets();
 
   const [activeTab, setActiveTab] = useState('all');
-  const [notifications, setNotifications] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // [WAVE 100] Lazy init: live store → MMKV → []. Paint instantly on every
+  // mount (cold-start + re-mount). SWR below replaces with fresh data.
+  const [notifications, setNotifications] = useState(() => {
+    const live = _readLive();
+    if (live) return live;
+    try {
+      const cached = getCachedSync(LIVE_KEY);
+      if (cached?.notifications) return cached.notifications;
+    } catch {}
+    return [];
+  });
+  const [loading, setLoading] = useState(() => !(_readLive() || getCachedSync(LIVE_KEY)?.notifications));
   const [refreshing, setRefreshing] = useState(false);
   // [follow-back-fix 2026-05-21] Lightweight inline toast: confirms the
   // server actually persisted the follow (or surfaces a failure) so the
@@ -390,36 +424,63 @@ function NotificationsScreenInner() {
 
   const cacheRef = useRef({});
 
+  const _applyTab = useCallback((tabKey, rawItems) => {
+    const tabDef = TABS.find(tt => tt.key === tabKey);
+    let items = rawItems || [];
+    if (tabDef?.types && tabDef.types.length >= 1) {
+      items = items.filter(n => tabDef.types.includes(n.type));
+    }
+    cacheRef.current[tabKey] = items;
+    setNotifications(items);
+  }, []);
+
   const fetchTab = useCallback(async (tabKey, force = false) => {
+    // [WAVE 100] SWR pattern — paint cache instantly, revalidate in bg.
     if (!force && cacheRef.current[tabKey]) {
       setNotifications(cacheRef.current[tabKey]);
       setLoading(false);
       setRefreshing(false);
       return;
     }
-    try {
-      const tabDef = TABS.find(tt => tt.key === tabKey);
-      // [bug-fix #notif-1] notificationsList signature is (page, limit) — not
-      // an object. The previous `notificationsList(params)` call passed an
-      // object as `page`, so the backend got a bogus pagination cursor and
-      // returned [], plus markAllRead was no-op.
-      const r = await api.notificationsList(1, 60);
-      if (r.success) {
-        let items = r.data?.notifications || [];
-        if (tabDef?.types && tabDef.types.length >= 1) {
-          items = items.filter(n => tabDef.types.includes(n.type));
+    // Synchronous cache paint (cold-start + cross-mount).
+    const liveItems = _readLive();
+    if (liveItems) {
+      _applyTab(tabKey, liveItems);
+      setLoading(false);
+    } else {
+      try {
+        const cached = getCachedSync(LIVE_KEY);
+        if (cached?.notifications) {
+          _applyTab(tabKey, cached.notifications);
+          setLoading(false);
         }
-        cacheRef.current[tabKey] = items;
-        setNotifications(items);
+      } catch {}
+    }
+    // Background revalidation — shared SWR helper writes to MMKV + dedupes
+    // concurrent calls (bell modal + screen mounting at the same time hit
+    // backend once). 30min TTL, skip network if last fetch <15s ago.
+    try {
+      const fresh = await swr(
+        LIVE_KEY,
+        () => api.notificationsList(1, 60),
+        null,
+        null,
+        { ttlMs: 30 * 60 * 1000, staleAfterMs: 15 * 1000 }
+      );
+      const rawItems = fresh?.data?.notifications;
+      if (Array.isArray(rawItems)) {
+        _writeLive(rawItems);
+        _applyTab(tabKey, rawItems);
       }
     } catch (e) {}
     setLoading(false);
     setRefreshing(false);
-  }, []);
+  }, [_applyTab]);
 
   useEffect(() => {
-    setLoading(true);
+    if (!notifications || notifications.length === 0) setLoading(true);
     fetchTab(activeTab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, fetchTab]);
 
   const onRefresh = useCallback(() => {
@@ -445,6 +506,14 @@ function NotificationsScreenInner() {
       cacheRef.current[key] = (cacheRef.current[key] || []).map(n => ({ ...n, read: true }));
     });
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+    // [WAVE 100] Mirror into live store + MMKV so the next mount paints
+    // already-read state instead of flashing unread tint for ~300ms.
+    try {
+      const live = _readLive() || getCachedSync(LIVE_KEY)?.notifications || [];
+      const next = live.map(n => ({ ...n, read: true }));
+      _writeLive(next);
+      setCache(LIVE_KEY, { success: true, data: { notifications: next } }, 30 * 60 * 1000);
+    } catch {}
     // Fade the unread rail tint out smoothly (200ms).
     markAllFadeAnim.setValue(1);
     Animated.timing(markAllFadeAnim, {
