@@ -560,6 +560,7 @@ export default {
   'settings.accountDeleted': 'Account deleted',
   'settings.deleteAccountContinue': 'Continue',
   'common.error': 'Error',
+  'common.warning': 'Warning',
   'common.somethingWentWrong': 'Something went wrong',
   'common.genericError': "Couldn't complete that action. Try again in a moment.",
   'common.errorNetwork': 'No connection. Check your internet.',
