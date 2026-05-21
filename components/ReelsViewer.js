@@ -2339,7 +2339,7 @@ function EmptyReels({ colors, isDark, t }) {
 }
 
 // ── Main ReelsViewer ──
-export default function ReelsViewer({ colors, isDark, t, user, router, feedMode: feedModeProp, showLiveRing, onAvatarTap, onPullRefresh, soundId: soundIdProp, soundLabel: soundLabelProp }) {
+export default function ReelsViewer({ colors, isDark, t, user, router, feedMode: feedModeProp, showLiveRing, onAvatarTap, onPullRefresh, soundId: soundIdProp, soundLabel: soundLabelProp, parentActive = true }) {
   // [#1231 2026-05-20] Screen focus gate — pausa qualquer reel quando a tela
   // sai de foco (user navegou pra /chat-conversation ou outra aba). Sem isso
   // o áudio continuava tocando em background; só `isActive` (per FlatList row)
@@ -2356,7 +2356,27 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     });
     return () => { try { sub.remove(); } catch {} };
   }, []);
-  const playGate = isScreenFocused && appActive;
+  // [#1247 2026-05-20] parentActive — chat.js renderiza tabs com display:none,
+  // então useIsFocused() fica TRUE quando user troca pra Chats/Calls (a route
+  // /chat continua focada). Sem essa flag o ShortsPlayer nativo continuava
+  // tocando áudio em background. ChatFeedTab passa true só quando activeTab
+  // === 'feed' (e feedMode === 'reels' — só renderiza ReelsViewer nesse caso).
+  const playGate = isScreenFocused && appActive && parentActive;
+
+  // [#1247 2026-05-20] Quando playGate cai pra false (user troca de aba),
+  // restaura AVAudioSession e drena o pool de imediato. Sem isso o native
+  // ShortsPlayer fica em playWhenInFocus=false mas a sessão de áudio segue
+  // .playback — o buffer drena lentamente. Drenar pool = hard-stop audible.
+  useEffect(() => {
+    if (isWeb) return;
+    if (!playGate) {
+      try { restoreShortsAudioSessionFn?.(); } catch {}
+      try { releaseShortsPoolFn?.(); } catch {}
+    } else {
+      // Re-arm playback session quando volta pra Reels.
+      try { setShortsAudioSessionPlaybackFn?.(); } catch {}
+    }
+  }, [playGate]);
   // Safe-area insets — the Following/For You tabs are absolutely positioned
   // with a static `top: 16` on Android, which on edge-to-edge windows was
   // tucking under the status-bar clock. Use runtime insets so the tab row

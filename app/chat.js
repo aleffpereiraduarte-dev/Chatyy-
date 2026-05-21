@@ -660,7 +660,12 @@ function ChatHub() {
       return () => clearTimeout(t);
     }
   }, [autoNewStatus]);
-  const tabProps = { colors, isDark, t, user, router, searchQuery, setActiveTab, autoNewStatus, initialFeedMode: pendingReels ? 'reels' : undefined, onFeedModeConsumed: () => setPendingReels(false) };
+  // [#1247 2026-05-20] tabActive flag por tab — fix audio leak no Reels.
+  // ChatFeedTab/ReelsViewer ficam mounted com display:none quando user troca
+  // de aba (Chats/Calls). Sem esse flag o ReelsViewer só checava useIsFocused
+  // (route ainda é /chat = true) e o native ShortsPlayer mantinha tocando
+  // áudio em background. Cada tab agora recebe `tabActive` próprio.
+  const tabProps = { colors, isDark, t, user, router, searchQuery, setActiveTab, autoNewStatus, initialFeedMode: pendingReels ? 'reels' : undefined, onFeedModeConsumed: () => setPendingReels(false), tabActive: activeTab };
 
   const titles = {
     feed: t('feed.title') || 'Feed',

@@ -298,7 +298,12 @@ function StoriesStrip({ user, colors, isDark, t, router }) {
   );
 }
 
-export default function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedModeConsumed }) {
+export default function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedModeConsumed, tabActive }) {
+  // [#1247 2026-05-20] parentActive prop chega pro ReelsViewer. ChatFeedTab
+  // fica mounted (display:none) quando user troca pra aba Chats — sem isso
+  // o ShortsPlayer continuava tocando áudio em background. tabActive vem
+  // do chat.js e é o activeTab string ('feed' quando feed tá visível).
+  const parentActive = tabActive === 'feed';
   // Safe-area top — the back-to-posts pill (reels mode) used a hardcoded
   // `top: 18` on Android, which was tucking under the system clock on
   // edge-to-edge windows. Use runtime insets with a small floor.
@@ -1421,7 +1426,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
   if (feedMode === 'reels') {
     return (
       <View style={[styles.container, { backgroundColor: '#000' }]}>
-        <ReelsViewer colors={colors} isDark={isDark} t={t} user={user} router={router} />
+        <ReelsViewer colors={colors} isDark={isDark} t={t} user={user} router={router} parentActive={parentActive} />
         {/* Small back-to-posts pill at top-left */}
         <TouchableOpacity
           style={[styles.backToPostsPill, { top: safeTopPill }]}
