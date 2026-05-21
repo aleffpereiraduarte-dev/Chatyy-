@@ -542,17 +542,23 @@ export interface StartOutgoingCallParams {
 export async function startOutgoingCall(params: StartOutgoingCallParams): Promise<boolean> {
   const m = getModule();
   if (!m) throw new Error('Native CallKit module unavailable');
+  // [2026-05-21] Coerce every value to a non-undefined primitive. Kotlin's
+  // Map<String, Any> rejects null/undefined values → "Cannot convert
+  // [object Object]... Value is undefined". Swift's `params["x"] as? String`
+  // returns nil for missing keys → empty string after fallback. Defensive
+  // here so callers don't have to guard every optional field individually.
+  const s = (v: any) => (v == null ? '' : String(v));
   return await m.startOutgoingCall({
-    callee_email: params.calleeEmail,
-    callee_name: params.calleeName,
-    callee_avatar: params.calleeAvatar,
-    caller_name: params.callerName,
+    callee_email: s(params.calleeEmail),
+    callee_name: s(params.calleeName),
+    callee_avatar: s(params.calleeAvatar),
+    caller_name: s(params.callerName),
     is_video: !!params.isVideo,
-    room_name: params.roomName,
-    conversation_id: params.conversationId,
-    call_id: params.callId,
-    lk_url: params.lkUrl,
-    lk_token: params.lkToken,
+    room_name: s(params.roomName),
+    conversation_id: s(params.conversationId),
+    call_id: s(params.callId),
+    lk_url: s(params.lkUrl),
+    lk_token: s(params.lkToken),
   });
 }
 

@@ -183,15 +183,22 @@ export async function startOutgoingCall({
   //      also fire a second startActivity with the populated extras — the
   //      activity's onNewIntent picks up the late token and calls
   //      bringUpRoom() without re-creating the UI.
+  // [2026-05-21 ROOT-CAUSE FIX] The wrapper at modules/expo-callkit/index.ts
+  // L545-556 re-maps camelCase → snake_case before calling native. If we pass
+  // snake_case keys here, the wrapper's `params.calleeEmail` etc. all read as
+  // undefined → native gets a Map with `undefined` values → Kotlin throws
+  // "Cannot convert [object Object]... Value is undefined" and iOS Swift
+  // sees empty strings for everything. Match the wrapper's expected
+  // StartOutgoingCallParams shape (camelCase) and let it do the conversion.
   const nativePresent = ExpoCallKit.startOutgoingCall({
-    callee_email: String(calleeEmail ?? ''),
-    callee_name: String(calleeName || calleeEmail || ''),
-    callee_avatar: String(calleeAvatar ?? ''),
-    caller_name: String(callerName ?? ''),
-    is_video: !!isVideo,
-    room_name: String(cid ?? ''),
-    conversation_id: String(conversationId ?? ''),
-    call_id: String(cid ?? ''),
+    calleeEmail: String(calleeEmail ?? ''),
+    calleeName: String(calleeName || calleeEmail || ''),
+    calleeAvatar: String(calleeAvatar ?? ''),
+    callerName: String(callerName ?? ''),
+    isVideo: !!isVideo,
+    roomName: String(cid ?? ''),
+    conversationId: String(conversationId ?? ''),
+    callId: String(cid ?? ''),
   });
 
   // Background: mint LK token then forward it to native.
@@ -213,16 +220,16 @@ export async function startOutgoingCall({
           if (Platform.OS === 'android') {
             try {
               await ExpoCallKit.startOutgoingCall({
-                callee_email: String(calleeEmail ?? ''),
-                callee_name: String(calleeName || calleeEmail || ''),
-                callee_avatar: String(calleeAvatar ?? ''),
-                caller_name: String(callerName ?? ''),
-                is_video: !!isVideo,
-                room_name: String(cid ?? ''),
-                conversation_id: String(conversationId ?? ''),
-                call_id: String(cid ?? ''),
-                lk_url: String(lkUrl ?? ''),
-                lk_token: String(lkToken ?? ''),
+                calleeEmail: String(calleeEmail ?? ''),
+                calleeName: String(calleeName || calleeEmail || ''),
+                calleeAvatar: String(calleeAvatar ?? ''),
+                callerName: String(callerName ?? ''),
+                isVideo: !!isVideo,
+                roomName: String(cid ?? ''),
+                conversationId: String(conversationId ?? ''),
+                callId: String(cid ?? ''),
+                lkUrl: String(lkUrl ?? ''),
+                lkToken: String(lkToken ?? ''),
               });
             } catch (e) {
               console.warn(TAG, 'android late-token re-launch failed:', e?.message || e);
