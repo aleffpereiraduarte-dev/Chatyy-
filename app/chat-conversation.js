@@ -16069,12 +16069,16 @@ export default function ChatConversationScreen() {
         isVideo: !!videoEnabled,
         conversationId,
         onWebFallback: (cid) => {
-          router.push(`/call?callId=${cid}&contactName=${encodeURIComponent(otherName)}&contactEmail=${encodeURIComponent(otherEmail)}&isVideo=${videoEnabled ? '1' : '0'}&conversationId=${conversationId}&isCaller=1`);
+          // [WAVE 117A] Web only — mobile uses 100% native call screen.
+          if (Platform.OS === 'web') {
+            router.push(`/call?callId=${cid}&contactName=${encodeURIComponent(otherName)}&contactEmail=${encodeURIComponent(otherEmail)}&isVideo=${videoEnabled ? '1' : '0'}&conversationId=${conversationId}&isCaller=1`);
+          }
         },
       });
       if (!native && (Platform.OS === 'ios' || Platform.OS === 'android')) {
-        // Native module reported failure — fall back to JS as a last resort.
-        router.push(`/call?callId=${callId}&contactName=${encodeURIComponent(otherName)}&contactEmail=${encodeURIComponent(otherEmail)}&isVideo=${videoEnabled ? '1' : '0'}&conversationId=${conversationId}&isCaller=1`);
+        // [WAVE 117A] Mobile = 100% native. If native module failed, show error
+        // instead of falling through to JS /call screen.
+        safeAlert(t('common.error') || 'Error', t('chat.callError') || 'Não foi possível iniciar a chamada');
       }
     } catch (e) {
       console.warn('Start call error:', e);

@@ -135,29 +135,12 @@ export async function startOutgoingCall({
     return { callId: cid, native: false };
   }
 
-  // [2026-05-20 foreground gate — WhatsApp/Telegram parity]
-  // When the user is already INSIDE the app (foreground) and taps "Ligar",
-  // show the rich JS /call.js screen instead of the native CallActivity /
-  // CallViewController. The native call UI exists primarily so OS-level
-  // CallKit (iOS) / lock-screen FullScreenIntent (Android) can ring even
-  // when the app is killed — which only matters for the INCOMING/RECEIVE
-  // path. For outgoing-while-foreground, the JS UI gives users the full
-  // feature set (invite friend, audio→video upgrade, screenshare, grid,
-  // raise hand, recording) and avoids the jarring "another app took over
-  // my screen" feeling.
-  //
-  // The caller wires `onWebFallback` to do `router.push('/call?...&isCaller=1')`.
-  // We reuse that same hook here so every existing callsite (chat-conversation,
-  // ChatCallsTab, one.js) automatically gets the new behavior with zero edits.
-  if (isAppForeground() && typeof onWebFallback === 'function') {
-    try {
-      onWebFallback(cid);
-      return { callId: cid, native: false };
-    } catch (e) {
-      console.warn(TAG, 'foreground onWebFallback threw, falling through to native:', e);
-      // fall through to native — better something than nothing
-    }
-  }
+  // [WAVE 117A] Mobile = 100% native (WhatsApp/Telegram pattern).
+  // Foreground gate removed for iOS/Android: every outgoing call on mobile
+  // goes through the native CallViewController (iOS) / CallActivity (Android)
+  // regardless of app state. The rich JS /call.js screen is Web-only.
+  // onWebFallback callers are also gated with Platform.OS === 'web' so
+  // this is belt-and-suspenders — calling onWebFallback on mobile is a no-op.
 
   // Pre-resolve the callee avatar URL so the native screen can paint a real
   // avatar (not just the initial letter) before LK Room is even up. The URL
@@ -243,7 +226,9 @@ export async function startOutgoingCall({
     return { callId: cid, native: true };
   } catch (e) {
     console.warn(TAG, 'native startOutgoingCall failed:', e?.message || e);
-    // Surface failure so the caller can fall back to /call.js.
+    // [WAVE 117A] Mobile = 100% native. Callers gate any router.push('/call')
+    // behind Platform.OS === 'web', so native failure shows user-facing error
+    // on mobile instead of falling through to the JS screen.
     return { callId: cid, native: false, error: e };
   }
 }

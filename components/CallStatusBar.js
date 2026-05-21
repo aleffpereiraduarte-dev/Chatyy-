@@ -137,10 +137,9 @@ export default function CallStatusBar() {
       // Fallback: open the calls tab inside chat
       try { router.push('/chat?tab=calls'); return; } catch {}
     }
-    // [#992 Stage 3] Mobile: re-open the full-native call screen. On native
-    // [hybrid 2026-05-16] Resume goes back to /call.js JS UI (native LK Room
-    // stays running in background for ringtone/lock-screen).
-    if (false) {
+    // [WAVE 117A] Mobile = 100% native. Tap-to-return re-opens native call
+    // screen via ExpoCallKit.openNativeCall. Web resumes via /call.js.
+    if (Platform.OS === 'ios' || Platform.OS === 'android') {
       try {
         const ExpoCallKit = require('../modules/expo-callkit');
         ExpoCallKit.openNativeCall({
@@ -154,6 +153,7 @@ export default function CallStatusBar() {
       } catch (e) { console.warn('[CallStatusBar] openNativeCall import failed:', e); }
       return;
     }
+    // Web: navigate back to /call.js
     try {
       router.push({ pathname: '/call', params: {
         callId: callData.callId || '', contactName: callData.contactName || '',

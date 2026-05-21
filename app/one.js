@@ -2296,7 +2296,10 @@ export default function OneScreen() {
                   isVideo: !!params.video,
                   callId,
                   onWebFallback: (cid) => {
-                    router.push(`/call?contactEmail=${encodeURIComponent(contactEmail)}&contactName=${encodeURIComponent(contactName)}&isVideo=${video}&isCaller=1&callId=${cid}`);
+                    // [WAVE 117A] Web only — mobile uses 100% native call screen.
+                    if (Platform.OS === 'web') {
+                      router.push(`/call?contactEmail=${encodeURIComponent(contactEmail)}&contactName=${encodeURIComponent(contactName)}&isVideo=${video}&isCaller=1&callId=${cid}`);
+                    }
                   },
                 });
                 if (!native) {
@@ -2304,7 +2307,10 @@ export default function OneScreen() {
                 }
               } catch (e) {
                 console.warn('[one start_call] startOutgoingCall failed:', e);
-                router.push(`/call?contactEmail=${encodeURIComponent(contactEmail)}&contactName=${encodeURIComponent(contactName)}&isVideo=${video}&isCaller=1&callId=${callId}`);
+                // [WAVE 117A] Mobile = 100% native. Web falls through to /call.js.
+                if (Platform.OS === 'web') {
+                  router.push(`/call?contactEmail=${encodeURIComponent(contactEmail)}&contactName=${encodeURIComponent(contactName)}&isVideo=${video}&isCaller=1&callId=${callId}`);
+                }
               }
             })();
           } else {

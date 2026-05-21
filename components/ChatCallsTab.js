@@ -3290,20 +3290,22 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
             isVideo: !!item.video,
             conversationId,
             onWebFallback: (cid) => {
-              router.push(`/call?callId=${cid}&contactName=${encodeURIComponent(name)}&contactEmail=${encodeURIComponent(email)}&isVideo=${isVideo}&conversationId=${conversationId}&isCaller=1`);
+              // [WAVE 117A] Web only — mobile uses 100% native call screen.
+              if (Platform.OS === 'web') {
+                router.push(`/call?callId=${cid}&contactName=${encodeURIComponent(name)}&contactEmail=${encodeURIComponent(email)}&isVideo=${isVideo}&conversationId=${conversationId}&isCaller=1`);
+              }
             },
           });
           if (!native) {
-            // Either web or foreground gate handled it via onWebFallback —
-            // no extra navigation needed. The router.push already ran inside
-            // the callback. Defensive: if `native === false` and the callback
-            // somehow didn't run (e.g. it threw silently), nothing surfaced
-            // — but this is the rare degenerate case, the explicit
-            // onWebFallback flow above covers the happy paths.
+            // [WAVE 117A] Mobile = 100% native. onWebFallback already gated.
+            // No router.push on mobile — native module handles the UI.
           }
         } catch (e) {
           console.warn('[handleHistoryCallBack] startOutgoingCall failed:', e);
-          router.push(`/call?contactName=${encodeURIComponent(name)}&contactEmail=${encodeURIComponent(email)}&isVideo=${isVideo}&isCaller=1`);
+          // [WAVE 117A] Web only — mobile shows no fallback JS screen.
+          if (Platform.OS === 'web') {
+            router.push(`/call?contactName=${encodeURIComponent(name)}&contactEmail=${encodeURIComponent(email)}&isVideo=${isVideo}&isCaller=1`);
+          }
         }
       })();
       return;
