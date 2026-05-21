@@ -623,15 +623,16 @@ class MailWebSocket {
         this._resurrectAttempt = 0;
         return;
       }
-      // Surface user-visible banner after 3rd retry (~50s of pain) so user
+      // Surface user-visible banner after 2nd retry (~20s of pain) so user
       // knows they should pull-to-refresh or check network — silent reconnect
-      // attempts up to 3 are fine.
-      if (this._resurrectAttempt >= 3) {
+      // attempts up to 2 are fine. ChatListTab subscribes to 'disconnected'
+      // status, fires a 12s suppress timer, then paints the gray banner.
+      if (this._resurrectAttempt >= 2) {
         try {
           this._emit('connection', {
-            status: 'reconnecting',
+            status: 'disconnected',
             attempt: this._resurrectAttempt,
-            persistent: true, // banner caller checks this — sticky until OPEN
+            reason: 'resurrect_retry',
           });
         } catch {}
       }
@@ -1351,6 +1352,8 @@ class MailWebSocket {
           this._pendingOutgoing.delete(resolveId);
           if (entry.resolve) entry.resolve(msg);
         }
+        // [WAVE 66 2026-05-21] Reset zombie ack-fail counter on any ack.
+        this._consecutiveAckFails = 0;
         this._emit('message_ack', msg);
         break;
       }
@@ -1572,6 +1575,17 @@ class MailWebSocket {
         if (entry.retries > CLIENT_MSG_MAX_RETRIES) {
           this._pendingOutgoing.delete(msgId);
           resolve({ failed: true, msg_id: msgId }); // Resolve instead of reject to avoid unhandled
+          // [WAVE 66 2026-05-21] Server-side ack tracking: 3 consecutive
+          // missed ACKs means the socket is a zombie even if readyState
+          // reads OPEN. Force a resurrect so user doesn't keep losing
+          // messages silently. Counter rolls when ANY ack lands.
+          this._consecutiveAckFails = (this._consecutiveAckFails || 0) + 1;
+          if (this._consecutiveAckFails >= 3) {
+            this._consecutiveAckFails = 0;
+            this._logGhost('ack_fail_resurrect', { msgId });
+            try { console.warn('[WS] 3 consecutive ACK fails → forcing resurrect'); } catch {}
+            try { this.resurrect('ack_fail_streak'); } catch {}
+          }
           return;
         }
         attempt();
@@ -1676,7 +1690,7 @@ class MailWebSocket {
       this._logGhost('resurrect_landed', { attempts: this._resurrectAttempt });
     }
     this._resurrectAttempt = 0;
-    try { this._emit('connection', { status: 'connected' }); } catch {}
+    this._consecutiveAckFails = 0;
 
     // Re-subscribe to all tracked channels
     for (const channel of this._subscribedChannels) {
