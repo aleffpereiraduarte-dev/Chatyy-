@@ -81,6 +81,7 @@ import { userScopedKey } from '../services/cache';
 import * as SmartCache from '../services/smartChatCache';
 import useIsMounted from '../hooks/useIsMounted';
 import SyncBar from '../components/SyncBar';
+import ErrorBoundary from '../components/ErrorBoundary';
 // Chat 2026 features (top-3): video notes recorder, AI summarize, smart replies.
 // Lazy-required inside the file when needed to keep the initial parse fast.
 let VideoNoteRecorder = null; try { VideoNoteRecorder = require('../components/chat/VideoNoteRecorder').default; } catch {}
@@ -5410,38 +5411,105 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
       }
 
       // Native: use expo-audio
+      // [WAVE 39 2026-05-20] BUG 1 — Android white-screen crash on record. Root
+      // cause: permission denial or native module crash returned null/undefined
+      // URI which then crashed downstream render. Wrap the whole permission +
+      // module-load + start sequence in defensive try/catch with explicit
+      // Alert.alert fallback (vs silent setError that didn't surface on some
+      // Android skins where banner was eaten by the keyboard). On Android,
+      // explicitly check RECORD_AUDIO permission BEFORE touching expo-audio.
       let expoAudio;
       try {
         expoAudio = require('expo-audio');
-      } catch {
+      } catch (modErr) {
+        console.warn('[startRecording] expo-audio require failed:', modErr?.message);
+        if (Platform.OS === 'android') {
+          try {
+            const { Alert } = require('react-native');
+            Alert.alert(
+              t('chatConv.audioModuleUnavailable') || 'Áudio indisponível',
+              'O módulo de gravação não está disponível neste dispositivo.',
+            );
+          } catch {}
+        }
         setError(t('chatConv.audioModuleUnavailable'));
+        onCancel();
         return;
       }
-      const perm = await expoAudio.requestRecordingPermissionsAsync();
-      if (!perm.granted) {
+      let perm;
+      try {
+        perm = await expoAudio.requestRecordingPermissionsAsync();
+      } catch (permErr) {
+        console.warn('[startRecording] permission request failed:', permErr?.message);
+        if (Platform.OS === 'android') {
+          try {
+            const { Alert } = require('react-native');
+            Alert.alert(
+              t('chatConv.micPermissionDenied') || 'Permissão negada',
+              'Habilite o microfone nas configurações do Android para gravar áudio.',
+            );
+          } catch {}
+        }
         setError(t('chatConv.micPermissionDenied'));
+        onCancel();
+        return;
+      }
+      if (!perm?.granted) {
+        if (Platform.OS === 'android') {
+          try {
+            const { Alert } = require('react-native');
+            Alert.alert(
+              t('chatConv.micPermissionDenied') || 'Permissão de microfone necessária',
+              'Habilite o microfone nas configurações do Android para gravar áudio.',
+            );
+          } catch {}
+        }
+        setError(t('chatConv.micPermissionDenied'));
+        onCancel();
         return;
       }
       if (!mountedRef.current) return;
-      await expoAudio.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      try {
+        await expoAudio.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      } catch (modeErr) {
+        // Non-fatal on Android — some Android devices reject playsInSilentMode
+        // but recording still works. Log and continue.
+        console.warn('[startRecording] setAudioModeAsync failed:', modeErr?.message);
+      }
       // ⭐ Native recorder (iOS AVAudioRecorder, Android MediaRecorder) — real
       // waveform samples + lower latency than expo-audio. Falls back to
       // expo-audio if the native module isn't installed (older binary).
+      // [WAVE 39] On Android wrap native path in extra-defensive check —
+      // expo-native-toolkit Android impl had a NPE on some devices when
+      // startRecording fired before mic warmup.
       let nativeRec = null;
       if (Platform.OS === 'ios' || Platform.OS === 'android') {
         try {
           const { Audio: NativeAudio } = require('../modules/expo-native-toolkit');
           if (NativeAudio?.startRecording) {
             const path = await NativeAudio.startRecording();
-            nativeRec = {
-              __native: true, NativeAudio, path,
-              stop: async () => {
-                const result = await NativeAudio.stopRecording();
-                return result; // { path, durationMs, samples }
-              },
-            };
+            // [WAVE 39] Validate path returned is non-empty BEFORE wrapping the
+            // recorder — empty/null path means native init silently failed and
+            // we should fall back to expo-audio path instead of returning a
+            // half-baked recorder object that crashes on stop().
+            if (path && typeof path === 'string' && path.length > 0) {
+              nativeRec = {
+                __native: true, NativeAudio, path,
+                stop: async () => {
+                  try {
+                    const result = await NativeAudio.stopRecording();
+                    return result; // { path, durationMs, samples }
+                  } catch (stopErr) {
+                    console.warn('[NativeAudio.stop] failed:', stopErr?.message);
+                    return null;
+                  }
+                },
+              };
+            }
           }
-        } catch {}
+        } catch (nativeErr) {
+          console.warn('[NativeAudio.startRecording] failed, falling back:', nativeErr?.message);
+        }
       }
       let recorder = nativeRec;
       if (!recorder) {
@@ -5451,20 +5519,60 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
           recorder = new AudioMod.AudioRecorder(RecordingPresets.HIGH_QUALITY);
         } catch (err) {
           console.warn('[startRecorder] Failed to load audio module:', err?.message);
+          if (Platform.OS === 'android') {
+            try {
+              const { Alert } = require('react-native');
+              Alert.alert(
+                t('chatConv.audioModuleUnavailable') || 'Falha ao gravar áudio',
+                'Não foi possível iniciar a gravação. Tente novamente.',
+              );
+            } catch {}
+          }
           setError(t('chatConv.audioModuleUnavailable'));
+          onCancel();
           return;
         }
       }
       if (!nativeRec) {
-        await recorder.prepareToRecordAsync();
-        recorder.record();
+        try {
+          await recorder.prepareToRecordAsync();
+          recorder.record();
+        } catch (recErr) {
+          console.warn('[startRecorder] prepare/record failed:', recErr?.message);
+          if (Platform.OS === 'android') {
+            try {
+              const { Alert } = require('react-native');
+              Alert.alert(
+                t('chatConv.recordingStartError') || 'Falha ao gravar áudio',
+                'O microfone não respondeu. Reinicie o app e tente novamente.',
+              );
+            } catch {}
+          }
+          setError(t('chatConv.recordingStartError'));
+          onCancel();
+          return;
+        }
       }
       if (!mountedRef.current) { try { await recorder.stop(); } catch {} return; }
       setRecording(recorder);
       startTimer();
     } catch (e) {
       console.warn('Recording error:', e);
+      // [WAVE 39] On Android surface the error as Alert so the user sees a clear
+      // explanation instead of a silent banner that may be eaten by the keyboard.
+      if (Platform.OS === 'android') {
+        try {
+          const { Alert } = require('react-native');
+          Alert.alert(
+            t('chatConv.recordingStartError') || 'Falha ao gravar áudio',
+            e?.message || 'Não foi possível iniciar a gravação. Tente novamente.',
+          );
+        } catch {}
+      }
       if (mountedRef.current) setError(t('chatConv.recordingStartError'));
+      // [WAVE 39] If we crashed during start, bail out cleanly so the parent
+      // doesn't keep AudioRecorder mounted in a broken state (white screen).
+      try { onCancel(); } catch {}
     }
   };
 
@@ -9133,6 +9241,34 @@ export default function ChatConversationScreen() {
         // For the incremental delta sync case, leave hasMore alone.
         if (beforeId || sinceId === 0) {
           setHasMore(r.data?.has_more !== false);
+        }
+        // [WAVE 39 2026-05-20] BUG 2 — per-conv auto-bootstrap trigger.
+        // User reports: "vamos fazer as conversas antigas todo baixar no celular".
+        // If the server says there are more messages (has_more=true) AND we only
+        // have <10 cached locally for this conv, kick off a force-download of the
+        // full history. This is a fire-and-forget call — Settings → Storage UI
+        // also has the manual button, but most users don't drill into Settings
+        // so we trigger it automatically on first open of a thread with history.
+        // Dedup via globalThis Set so re-opening the same conv doesn't re-fire.
+        if (!beforeId && sinceId === 0 && Platform.OS !== 'web' && r.data?.has_more === true && newMsgs.length < 10) {
+          try {
+            const _bootKey = `__chatyy_conv_boot_${conversationId}`;
+            if (!globalThis.__chatyy_conv_boot_set) globalThis.__chatyy_conv_boot_set = new Set();
+            if (!globalThis.__chatyy_conv_boot_set.has(_bootKey)) {
+              globalThis.__chatyy_conv_boot_set.add(_bootKey);
+              setTimeout(() => {
+                try {
+                  const { forceFullHistoryDownload } = require('../services/fullHistorySync');
+                  const email = api.getActiveAccountEmail?.() || '';
+                  if (email && forceFullHistoryDownload) {
+                    forceFullHistoryDownload(api.apiCall, email, { includeAllMedia: true }).catch(e => {
+                      console.warn('[per-conv-boot] force download fail:', e?.message);
+                    });
+                  }
+                } catch (e) { console.warn('[per-conv-boot] init fail:', e?.message); }
+              }, 1500);
+            }
+          } catch {}
         }
         if (r.data?.read_receipts) {
           // Merge with existing state (keeping the highest last_read_id per
@@ -17207,35 +17343,24 @@ export default function ChatConversationScreen() {
               activeOpacity={0.9}
               style={{ marginHorizontal: -13, marginTop: -8, marginBottom: hasCaption ? 0 : -8 }}>
               <View style={{ overflow: 'hidden', width: imgBoxW, height: imgBoxH }}>
-                {/* WhatsApp-style backdrop: blurhash sits BEHIND the real image
-                    and stays painted the whole time it loads. Even if the
-                    crossfade has a hitch the user never sees blank/flicker —
-                    just the blurry version coming into focus. Blurhash >
-                    lqip > thumb > flat color, in priority order. */}
-                {msg.blurhash && !msg._localUri && (
-                  <ExpoImage source={{ blurhash: msg.blurhash }} style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', zIndex: 0 }} contentFit="cover" recyclingKey={`bh-${msg.id}`} />
-                )}
-                {!msg.blurhash && lqipUri && !msg._localUri && (
-                  <ExpoImage source={{ uri: lqipUri }} style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', zIndex: 0 }} contentFit="cover" cachePolicy="memory-disk" blurRadius={20} />
-                )}
-                {!msg.blurhash && !lqipUri && thumbUri && !msg._localUri && (
-                  <ExpoImage source={{ uri: thumbUri }} style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', zIndex: 0 }} contentFit="cover" cachePolicy="memory-disk" blurRadius={8} />
-                )}
-                {!msg.blurhash && !lqipUri && !thumbUri && !msg._localUri && !imgLocalPath && (
-                  // [WAVE 38 2026-05-20] HSL fallback bg + always-on "Carregando..." overlay.
-                  // Antes ficava só uma cor pastel lisa que parecia um "bloco branco
-                  // gigante" pro user (especialmente em mídia velha sem blurhash/lqip).
-                  // Agora SEMPRE mostra o text + spinner enquanto não tem _localUri,
-                  // independente do downloadProgress ter sido populado ou não — o ring
-                  // grande do meio cobre o cenário "baixando agora", esse text cobre
-                  // o cenário "tá idle/aguardando trigger".
+                {/* [WAVE 39 2026-05-20] BUG 4 — Android image thumb backdrop regression.
+                    Root cause: WAVE 38 eager cacheMedia trigger started downloading
+                    BEFORE the blurhash/lqip backdrop painted, so on Android (where
+                    ExpoImage blurhash decode is slower than iOS) the user saw a
+                    "blank box" period before the ChatMedia onLoadStart fired. Fix:
+                    ALWAYS render the HSL base-color background layer at the bottom
+                    (zIndex 0) regardless of blurhash/lqip availability. Blurhash/lqip
+                    sits on TOP of it (zIndex 1), so if those silently fail to render
+                    on Android, the user still sees a coloured backdrop instead of
+                    white. Priority: HSL bg (always) → blurhash → lqip → thumb → real img. */}
+                {!msg._localUri && !imgLocalPath && (
                   <View style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', zIndex: 0, backgroundColor: (() => {
                     const u = String(msg.file_url || msg.id || '');
                     let h = 0;
                     for (let i = 0; i < u.length; i++) h = (h * 31 + u.charCodeAt(i)) & 0xffffffff;
                     return `hsl(${Math.abs(h) % 360}, 28%, 82%)`;
                   })(), alignItems: 'center', justifyContent: 'center' }}>
-                    {!imgUploading && !imgFailed && (
+                    {!imgUploading && !imgFailed && !msg.blurhash && !lqipUri && !thumbUri && (
                       <>
                         <ActivityIndicator size="small" color="rgba(60,60,60,0.55)" />
                         <Text style={{ marginTop: 6, fontSize: 11, fontWeight: '500', color: 'rgba(60,60,60,0.65)' }}>
@@ -17244,6 +17369,43 @@ export default function ChatConversationScreen() {
                       </>
                     )}
                   </View>
+                )}
+                {/* WhatsApp-style backdrop: blurhash sits BEHIND the real image
+                    and stays painted the whole time it loads. Even if the
+                    crossfade has a hitch the user never sees blank/flicker —
+                    just the blurry version coming into focus. Blurhash >
+                    lqip > thumb > flat color, in priority order.
+                    [WAVE 39] zIndex bumped to 1 so it paints OVER the HSL base
+                    fallback. Priority="high" added so paint orders before the
+                    full image fetch begins. */}
+                {msg.blurhash && !msg._localUri && (
+                  <ExpoImage
+                    source={{ blurhash: msg.blurhash }}
+                    style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', zIndex: 1 }}
+                    contentFit="cover"
+                    recyclingKey={`bh-${msg.id}`}
+                    priority="high"
+                  />
+                )}
+                {!msg.blurhash && lqipUri && !msg._localUri && (
+                  <ExpoImage
+                    source={{ uri: lqipUri }}
+                    style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', zIndex: 1 }}
+                    contentFit="cover"
+                    cachePolicy="memory-disk"
+                    blurRadius={20}
+                    priority="high"
+                  />
+                )}
+                {!msg.blurhash && !lqipUri && thumbUri && !msg._localUri && (
+                  <ExpoImage
+                    source={{ uri: thumbUri }}
+                    style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', zIndex: 1 }}
+                    contentFit="cover"
+                    cachePolicy="memory-disk"
+                    blurRadius={8}
+                    priority="high"
+                  />
                 )}
                 {/* [WAVE 34 2026-05-20] Shimmer skeleton overlay. Visible while
                     the full image hasn't emitted onLoadEnd AND we have no
@@ -17258,7 +17420,9 @@ export default function ChatConversationScreen() {
                     Antes (WAVE 34) ficava preso em msgs com local_path no SQLite
                     porque _localUri pode estar vazio mesmo com arquivo no disco. */}
                 {!imgUploading && !imgFailed && downloadProgress[msg.id] !== undefined && !msg._localUri && !imgLocalPath && !(typeof fullUri === 'string' && fullUri.startsWith('file://')) && (
-                  <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, width: imgBoxW, height: imgBoxH, overflow: 'hidden', zIndex: 1 }}>
+                  /* [WAVE 39 2026-05-20] zIndex 2 so shimmer sits ABOVE both HSL
+                     base layer (z=0) AND blurhash/lqip backdrop (z=1). */
+                  <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, width: imgBoxW, height: imgBoxH, overflow: 'hidden', zIndex: 2 }}>
                     <Animated.View
                       style={{
                         position: 'absolute',
@@ -22588,15 +22752,22 @@ export default function ChatConversationScreen() {
       ) : null}
 
       {/* Audio Recorder (replaces input bar when recording) */}
+      {/* [WAVE 39 2026-05-20] Wrap in ErrorBoundary — Android white-screen bug
+          where any throw inside AudioRecorder render path (permission denial,
+          native module crash, undefined URI) crashed the whole chat-conversation
+          tree. ErrorBoundary catches the render error and shows a friendly fallback
+          with a "Cancelar" button so the user can recover without restarting the app. */}
       {(conversationType !== 'channel' || members.find(m => m.email === currentEmail && m.role === 'admin')) && (isRecording ? (
         <View style={{ paddingBottom: keyboardHeight > 0 ? 0 : Math.max(insets.bottom, Spacing.sm) }}>
-          <AudioRecorder
-            onSend={handleSendAudio}
-            onCancel={() => setIsRecording(false)}
-            colors={colors}
-            t={t}
-            conversationId={conversationId}
-          />
+          <ErrorBoundary onReset={() => setIsRecording(false)}>
+            <AudioRecorder
+              onSend={handleSendAudio}
+              onCancel={() => setIsRecording(false)}
+              colors={colors}
+              t={t}
+              conversationId={conversationId}
+            />
+          </ErrorBoundary>
         </View>
       ) : (
         /* Input Bar with Mention Autocomplete */

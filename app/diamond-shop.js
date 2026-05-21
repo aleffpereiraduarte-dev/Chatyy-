@@ -128,8 +128,36 @@ export default function DiamondShopScreen() {
             t('wallet.topupUnavailableBody') || 'Não conseguimos iniciar a compra. Tente novamente em alguns minutos.',
           );
         }
+      } else if (r?.message === 'sku_not_in_catalog') {
+        // [WAVE 39 2026-05-20] BUG 3 — friendly message instead of showing
+        // raw "sku_not_in_catalog" string. Diamond SKUs (chatyy_diamond_*) may
+        // still be pending approval in App Store Connect / Play Console.
+        // TODO: pedir ao founder pra finalizar registro dos SKUs no ASC/Play.
+        if (Platform.OS === 'android') {
+          // Android: offer web checkout fallback since the SKU isn't live in Play.
+          const base = (typeof getBaseUrl === 'function' ? getBaseUrl() : 'https://chatyy.com.br').replace(/\/$/, '');
+          const buyUrl = `${base}/diamantes${pack?.sku ? `?sku=${encodeURIComponent(pack.sku)}` : ''}`;
+          Alert.alert(
+            t('wallet.topupUnavailableTitle') || 'Pacote indisponível',
+            t('wallet.androidWebBuyBody') || 'Este pacote ainda não está disponível na Play Store. Quer abrir a loja no navegador para comprar agora?',
+            [
+              { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+              { text: t('wallet.openWebStore') || 'Abrir loja web', onPress: () => { try { Linking.openURL(buyUrl); } catch {} } },
+            ],
+          );
+        } else {
+          Alert.alert(
+            t('wallet.topupUnavailableTitle') || 'Pacote indisponível',
+            t('wallet.topupSkuPending') || 'Este pacote ainda está em aprovação na App Store. Tente outro pacote por enquanto.',
+          );
+        }
       } else {
-        Alert.alert(t('common.error') || 'Erro', r?.message || (t('wallet.topupFailed') || 'Falha na compra.'));
+        // [WAVE 39 2026-05-20] Never surface raw internal error codes to the
+        // user. Map any other unknown error code to a friendly message.
+        const friendly = (typeof r?.message === 'string' && /^[a-z_]+$/.test(r.message))
+          ? (t('wallet.topupFailed') || 'Falha na compra. Tente novamente.')
+          : (r?.message || t('wallet.topupFailed') || 'Falha na compra.');
+        Alert.alert(t('common.error') || 'Erro', friendly);
       }
     } catch (e) {
       Alert.alert(t('common.error') || 'Erro', e?.message || 'Falha na compra');
