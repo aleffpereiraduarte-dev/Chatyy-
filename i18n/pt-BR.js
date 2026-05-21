@@ -5185,6 +5185,7 @@ export default {
   'liveReplay.emptyProcessing': 'Se você acabou de encerrar uma live, o replay pode levar 1-2 minutos para aparecer.',
   'liveReplay.refresh': 'Atualizar',
   'live.replayProcessingToast': 'Seu replay está sendo processado (pode levar 1-2 min)',
+  'live.replaySavedToast': 'Sua live foi salva! Toque em "Ver Lives Salvas".',
   'live.replayPublishFailed': 'Replay não será salvo (falha de conexão com servidor de mídia)',
   'liveReplay.savedBy1': 'pessoa salvou',
   'liveReplay.savedByN': 'pessoas salvaram',
