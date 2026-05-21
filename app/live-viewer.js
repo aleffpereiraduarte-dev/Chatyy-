@@ -10,6 +10,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useTheme } from '../context/ThemeContext';
 import * as api from '../services/api';
+import { prettifyHandle } from '../services/displayName';
 import AvatarCircle from '../components/AvatarCircle';
 import {
   IconX, IconHeart, IconShare, IconStar,
@@ -652,12 +653,17 @@ export default function LiveViewerScreen() {
         if (cancelled) return;
         const lives = r?.data?.lives || r?.lives || [];
         const found = lives.find(l => l?.id === paramSessionId);
-        if (found) setResolvedHost({ name: found.host_name || (found.host_email || '').split('@')[0], email: found.host_email });
+        if (found) setResolvedHost({ name: found.host_name || prettifyHandle((found.host_email || '').split('@')[0]), email: found.host_email });
       } catch {}
     })();
     return () => { cancelled = true; };
   }, [paramSessionId, hostName, hostEmail]);
-  const displayHostName = hostName || resolvedHost.name || (hostEmail || resolvedHost.email || '').split('@')[0] || '';
+  // Title fallback: when the host didn't pick a custom title and host_name is
+  // blank, the handle is what shows up everywhere (top bar, center spinner,
+  // notifications). The raw lowercase handle "suporte" looks unfinished, so
+  // prettifyHandle capitalizes it to "Suporte" before we render anywhere.
+  const displayHostName = hostName || resolvedHost.name ||
+    prettifyHandle((hostEmail || resolvedHost.email || '').split('@')[0]) || '';
   const displayHostEmail = hostEmail || resolvedHost.email || '';
   // Self-live detection — when the current user opens /live-viewer with their
   // OWN hostEmail (happens when they tap their own profile's live badge while
