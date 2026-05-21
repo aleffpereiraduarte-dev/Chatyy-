@@ -1236,7 +1236,16 @@ export default function IncomingCallListener() {
             // IncomingCallActivity stay for ringing/lock-screen, but the
             // in-call screen is /call.js with WhatsApp-grade features.
             voipDiag('push_js_call_hybrid', callId);
-            router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(finalCallerName)}&contactEmail=${encodeURIComponent(finalCallerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(finalConversationId)}&isCaller=0`);
+            // [WAVE 92 2026-05-21] Bug 2 fix: on iOS the native CallViewController
+            // is presented in parallel with this JS route. /call.js needs to
+            // know to: (a) extend the adoptNativeRoom poll window from 1.5s to
+            // 4s (token fetch + LK SFU handshake on a cold-start path takes
+            // 1500-3500ms — the old 1.5s window often missed and JS span a
+            // duplicate Room that the SFU evicted), and (b) suppress its own
+            // Room.connect attempt entirely until adoption fails. Param is
+            // additive — Android + legacy callers ignore it.
+            const adoptParam = Platform.OS === 'ios' ? '&adoptNative=1' : '';
+            router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(finalCallerName)}&contactEmail=${encodeURIComponent(finalCallerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(finalConversationId)}&isCaller=0${adoptParam}`);
           };
 
           let attempts = 0;

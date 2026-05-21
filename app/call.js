@@ -238,7 +238,20 @@ function CallScreenInner() {
     isVideo: isVideoParam, conversationId,
     isCaller: isCallerParam,
     callerVerified: callerVerifiedParam,
+    adoptNative: adoptNativeParam,
   } = params;
+  // [WAVE 92 2026-05-21] Bug 2 — When iOS callee accepts via native CallKit,
+  // IncomingCallListener pushes /call with adoptNative=1. We use this to:
+  //  1. Extend the adoptNativeRoom poll window from 1.5s (15×100ms) to 4s
+  //     (40×100ms). The native CallViewController.viewDidLoad takes 1500-3500ms
+  //     to (a) fetch token (b) Room.connect (c) NativeCallRoom.publish — the
+  //     old window often missed and JS spawned a duplicate Room that the SFU
+  //     evicted, manifesting as "Não foi possível conectar" + the native VC
+  //     hanging in a parallel UIKit window the user couldn't reach.
+  //  2. Skip the JS-side Room.connect fallback for an additional 6s after
+  //     adoption fails — gives native more headroom on cold-start where the
+  //     RN bundle parses faster than the LK SDK warms up.
+  const wantsAdoptNative = adoptNativeParam === '1' || adoptNativeParam === 'true';
 
   const peerVerified = callerVerifiedParam === '1'
     || callerVerifiedParam === 1
@@ -583,7 +596,17 @@ function CallScreenInner() {
         }, 'POST').catch(() => {});
       } catch {}
       setConnectionFailed(true);
-      try { setErrorMsg(t('call.connectionFailed') || 'Não foi possível conectar.'); } catch {}
+      // [WAVE 92 2026-05-21] Bug 1 — surface a slightly more actionable
+      // message. Generic "Não foi possível conectar" was unactionable. New
+      // copy hints at network/peer state which is the actual root cause 90%
+      // of the time (peer never joined LK room → caller / callee in different
+      // rooms via WAVE 41/74 fix, or callee phone got no FCM/VoIP push).
+      try {
+        const msg = !peerRinging && isCaller
+          ? (t('call.peerNotReachable') || 'A pessoa não atendeu ou está sem internet. Tente novamente.')
+          : (t('call.connectionFailed') || 'Não foi possível conectar. Tente novamente.');
+        setErrorMsg(msg);
+      } catch {}
     }, 25000);
     return () => {
       clearTimeout(tEstablishing);
@@ -1283,7 +1306,12 @@ function CallScreenInner() {
         // budget; if still nothing by then the legacy fallback runs.
         let snap = null;
         let polls = 0;
-        for (let i = 0; i < 15; i++) {
+        // [WAVE 92 2026-05-21] Bug 2 — extend poll window when JS knows the
+        // native VC is presented in parallel (adoptNative=1 query param). Old
+        // 1.5s ceiling raced with native cold-start (token fetch + LK SFU
+        // handshake = 1500-3500ms on first call after install).
+        const maxPolls = wantsAdoptNative ? 40 : 15;
+        for (let i = 0; i < maxPolls; i++) {
           polls = i + 1;
           snap = await ExpoCallKit.adoptNativeRoom?.(callId);
           // [CALL-TRACE 2026-05-20 WAVE42] Step 10/12 — JS asks native if a

@@ -45,6 +45,52 @@ export default function NotificationsFeedScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
+  // [follow-back-fix 2026-05-21] Inline toast — confirms the follow back
+  // actually persisted. Same UX as the main /notifications screen and the
+  // NotificationsHub modal so behaviour matches wherever the user lands.
+  const [toastMsg, setToastMsg] = useState(null);
+  const toastAnim = useRef(new Animated.Value(0)).current;
+  const toastTimerRef = useRef(null);
+  const showToast = useCallback((msg) => {
+    setToastMsg(msg);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    Animated.timing(toastAnim, { toValue: 1, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+    toastTimerRef.current = setTimeout(() => {
+      Animated.timing(toastAnim, { toValue: 0, duration: 220, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start(() => setToastMsg(null));
+    }, 2400);
+  }, [toastAnim]);
+  useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
+
+  // [follow-back-fix 2026-05-21] Inline "Seguir de volta" action on follow
+  // notifications. Previously this screen had no follow-back button at all;
+  // the user had to deep-tap into the profile route to follow back. Now we
+  // surface the same primary CTA WhatsApp/Instagram users expect from the
+  // notification row itself.
+  const handleFollowBack = useCallback(async (item) => {
+    const target = item?.author_email;
+    if (!target) {
+      showToast(t?.('notifications.followBackError') || 'Não foi possível seguir agora.');
+      return;
+    }
+    setItems(prev => prev.map(n =>
+      n.id === item.id ? { ...n, action_taken: 'follow_back', read: true } : n
+    ));
+    try {
+      const r = await api.followUser?.(target);
+      if (!r || r.success === false) throw new Error(r?.error || 'follow_failed');
+      try { api.notificationsMarkRead?.(item.id).catch(() => {}); } catch {}
+      const nameRaw = (item.author_email || '').split('@')[0] || '';
+      showToast(
+        (t?.('notifications.followBackOk') || 'Você está seguindo {name} agora').replace('{name}', nameRaw)
+      );
+    } catch (e) {
+      console.warn('[notifications-feed] followUser failed:', e?.message || e);
+      setItems(prev => prev.map(n =>
+        n.id === item.id ? { ...n, action_taken: null } : n
+      ));
+      showToast(t?.('notifications.followBackError') || 'Não foi possível seguir agora. Tente de novo.');
+    }
+  }, [showToast, t]);
 
   const load = useCallback(async (p = 1) => {
     // Marca loading no início — antes loading só ia pra true no mount,
@@ -93,6 +139,10 @@ export default function NotificationsFeedScreen() {
 
   const renderItem = ({ item }) => {
     const countSuffix = item.count > 1 ? ` +${item.count - 1}` : '';
+    // [follow-back-fix 2026-05-21] Show the inline CTA only for follow
+    // notifications and only when the user hasn't already pressed it in
+    // this session (action_taken survives until the next refresh).
+    const showFollowBack = item.type === 'follow' && !item.action_taken;
     return (
       <TouchableOpacity
         onPress={() => handlePress(item)}
@@ -115,6 +165,29 @@ export default function NotificationsFeedScreen() {
           <Text style={{ color: colors.textTertiary, fontSize: 11.5, marginTop: 3 }}>
             {timeAgo(item.created_at, t)}
           </Text>
+          {showFollowBack && (
+            <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+              <TouchableOpacity
+                onPress={(e) => { e?.stopPropagation?.(); handleFollowBack(item); }}
+                activeOpacity={0.85}
+                style={{
+                  paddingHorizontal: 14, paddingVertical: 6, borderRadius: 8,
+                  backgroundColor: ACCENT,
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={t?.('notifications.followBack') || 'Seguir de volta'}
+              >
+                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>
+                  {t?.('notifications.followBack') || 'Seguir de volta'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
+          {item.type === 'follow' && item.action_taken === 'follow_back' && (
+            <Text style={{ marginTop: 6, fontSize: 12, color: '#10b981', fontWeight: '600' }}>
+              {t?.('notifications.followingNow') || 'Seguindo'}
+            </Text>
+          )}
         </View>
       </TouchableOpacity>
     );
@@ -164,6 +237,38 @@ export default function NotificationsFeedScreen() {
           contentContainerStyle={{ paddingVertical: 4 }}
         />
       )}
+
+      {/* [follow-back-fix 2026-05-21] Toast confirming the follow back */}
+      {toastMsg ? (
+        <Animated.View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            left: 16, right: 16,
+            bottom: 24 + (insets.bottom || 0),
+            paddingHorizontal: 14, paddingVertical: 12,
+            borderRadius: 12,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 10,
+            backgroundColor: isDark ? 'rgba(20,20,28,0.95)' : 'rgba(20,20,28,0.92)',
+            opacity: toastAnim,
+            transform: [{
+              translateY: toastAnim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }),
+            }],
+            ...(Platform.OS === 'web'
+              ? { boxShadow: '0 6px 18px rgba(0,0,0,0.22)' }
+              : Platform.OS === 'ios'
+                ? { shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 14, shadowOffset: { width: 0, height: 6 } }
+                : { elevation: 8 }),
+          }}
+        >
+          <IconCheck size={16} color="#10b981" />
+          <Text style={{ flex: 1, color: '#fff', fontSize: 13.5, fontWeight: '600', letterSpacing: -0.1 }}>
+            {toastMsg}
+          </Text>
+        </Animated.View>
+      ) : null}
     </View>
   );
 }

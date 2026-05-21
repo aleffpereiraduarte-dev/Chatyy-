@@ -691,10 +691,21 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
     /// Read room_name/identity from the push payload and ask NativeCallRoom
     /// to connect. Token fetch happens inside the Task — total time-to-audio
     /// on a typical 4G network is ~300-600ms.
+    ///
+    /// [WAVE 92 2026-05-21] Bug 1 root cause: pre-WAVE92 the lookup order was
+    /// room_name → conversation_id → callId. WAVE 74 fixed chat.php so the
+    /// backend mints `lk_token` for room=callId, but this Swift path STILL
+    /// preferred `conversation_id` as room name — meaning the callee's native
+    /// pre-connect joined `conv_47` while caller joined the callId-named room.
+    /// Result: 25s tFailed timer surfaced "Não foi possível conectar." Now we
+    /// prioritize `lk_room` (server-authoritative) → `call_id` → `callId` →
+    /// `room_name`, with `conversation_id` strictly as last resort.
     static func startNativeLkConnect(payload: [String: Any]) {
-        let roomName = (payload["room_name"] as? String)
-            ?? (payload["conversation_id"] as? String)
+        let roomName = (payload["lk_room"] as? String)
+            ?? (payload["call_id"] as? String)
             ?? (payload["callId"] as? String)
+            ?? (payload["room_name"] as? String)
+            ?? (payload["conversation_id"] as? String)
             ?? ""
         // identity = our user; prefer explicit identity in payload, else fall
         // back to user_email persisted in App Group at login.

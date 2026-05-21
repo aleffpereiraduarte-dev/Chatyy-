@@ -493,7 +493,17 @@ function NotificationsScreenInner() {
         if (!r || r.success === false) throw new Error(r?.error || 'follow_failed');
         // Persist read so the bell counter ticks down. Backend is idempotent.
         try { api.notificationsMarkRead?.(notif.id).catch(() => {}); } catch {}
-        const nameRaw = (notif.author_name || (notif.author_email || '').split('@')[0] || '').trim();
+        // Server returns the JSON blob in `data`; pluck actor_name if present.
+        let dataObj = notif.data || {};
+        if (typeof dataObj === 'string') {
+          try { dataObj = JSON.parse(dataObj || '{}'); } catch { dataObj = {}; }
+        }
+        const nameRaw = (
+          dataObj.actor_name ||
+          notif.author_name ||
+          (notif.author_email || '').split('@')[0] ||
+          ''
+        ).trim();
         showToast(
           (t('notifications.followBackOk') || 'Você está seguindo {name} agora').replace('{name}', nameRaw)
         );

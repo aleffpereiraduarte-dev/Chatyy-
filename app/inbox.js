@@ -2266,6 +2266,8 @@ const s = StyleSheet.create({
   greetingText: { fontSize: 17, fontWeight: '800', letterSpacing: -0.3 },
   unreadHint: { fontSize: FontSize.xs, marginTop: 1, letterSpacing: 0.1 },
   searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: Spacing.md,
     paddingVertical: 6,
     borderBottomWidth: 1,

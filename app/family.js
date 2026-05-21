@@ -267,7 +267,28 @@ function FamilyScreenInner() {
         const safeMembers = Array.isArray(r1.data.members)
           ? r1.data.members.filter(m => m && typeof m.email === 'string' && m.email)
           : [];
-        setInfo({ ...r1.data, members: safeMembers });
+        // [bug 2026-05-21 #wave89] family_info only returns the invited
+        // family-plan members (parent + spouse). Children live in
+        // parental_accounts and were INVISIBLE on the family screen even
+        // when registered. Merge them so the hero card + member list
+        // surface every kid the parent has set up via the parental wizard.
+        let mergedMembers = safeMembers;
+        try {
+          const kidsRes = await api.parentalListChildren().catch(() => null);
+          if (kidsRes?.success) {
+            const existing = new Set(safeMembers.map(m => (m.email || '').toLowerCase()));
+            const childMembers = (kidsRes?.data?.children || kidsRes?.children || [])
+              .map(c => {
+                const childEmail = (c.child_email || c.email || '').toString().trim().toLowerCase();
+                if (!childEmail || existing.has(childEmail)) return null;
+                const childName = (c.child_name || c.name || c.full_name || childEmail.split('@')[0] || '').toString();
+                return { email: childEmail, name: childName, role: 'child', age: c.age, avatar_url: c.avatar_url };
+              })
+              .filter(Boolean);
+            mergedMembers = [...safeMembers, ...childMembers];
+          }
+        } catch {}
+        setInfo({ ...r1.data, members: mergedMembers });
       } else {
         try {
           const kids = await api.parentalListChildren();
