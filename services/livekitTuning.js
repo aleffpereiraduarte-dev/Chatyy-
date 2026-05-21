@@ -59,12 +59,17 @@ export function buildAudioRoomOptions({ initialBitrate = 48000, videoCall = fals
     // High-quality capture: 48k mono, all DSP on. NoiseSuppression here is
     // the WebRTC built-in (NS3) — *not* the Chatyy RNNoise toggle that lives
     // in the More sheet. Both can coexist; this just guarantees a baseline.
+    // [WAVE 44B, 2026-05-21 gap A8] Add `latency: 0.01` hint (10ms) so
+    // Chrome / Safari pick the low-latency mic path. Without it browsers
+    // default to ~20ms buffers which adds round-trip latency. Native
+    // (react-native-webrtc) ignores `latency` cleanly — no-op.
     audioCaptureDefaults: {
       sampleRate: 48000,
       channelCount: 1,
       echoCancellation: true,
       noiseSuppression: true,
       autoGainControl: true,
+      latency: 0.01,
     },
     // Publish defaults: DTX on so silent periods don't burn bandwidth.
     // RED off (LiveKit defaults to RED-on at high bitrates, but RED doubles

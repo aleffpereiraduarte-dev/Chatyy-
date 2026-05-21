@@ -296,7 +296,17 @@ public enum NativeCallRoomEvent {
         }
         Task {
             do {
-                _ = try await r.localParticipant.setMicrophone(enabled: enabled)
+                // [WAVE 44B, 2026-05-21 gap A7] Pin captureOptions on every
+                // mic toggle so an un-mute after a mute doesn't re-publish
+                // a fresh track without AEC/AGC/NS. LK 2.5+ keeps the same
+                // LocalAudioTrack across enabled toggles only when the track
+                // exists — if it was disposed (e.g. user denied mic, then
+                // re-granted) the next setMicrophone(true) creates a new
+                // track that needs the DSP pin from the start.
+                _ = try await r.localParticipant.setMicrophone(
+                    enabled: enabled,
+                    captureOptions: AudioCaptureOptions()
+                )
             } catch {
                 print("[NativeCallRoom] setMicEnabled(\(enabled)) failed: \(error)")
             }

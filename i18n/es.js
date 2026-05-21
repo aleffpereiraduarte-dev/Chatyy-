@@ -4010,6 +4010,7 @@ export default {
   'config.wallpaperSolid': 'Colores sólidos',
   'config.wallpaperDefault': 'Predeterminado',
   'config.comingSoon': '¡Próximamente!',
+  'common.comingSoon': 'Próximamente',
   'config.storageUsage': 'Uso de almacenamiento',
   'config.storageDesc2': 'Los mensajes y multimedia se almacenan en el servidor. La app mantiene un caché local mínimo.',
   'config.cacheCleared': '¡Caché limpiado!',

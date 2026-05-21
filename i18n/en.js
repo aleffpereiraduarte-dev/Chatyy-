@@ -4013,6 +4013,7 @@ export default {
   'config.wallpaperSolid': 'Solid colors',
   'config.wallpaperDefault': 'Default',
   'config.comingSoon': 'Coming soon!',
+  'common.comingSoon': 'Coming soon',
   'config.storageUsage': 'Storage usage',
   'config.storageDesc2': 'Messages and media are stored on the server. The app keeps a minimal local cache.',
   'config.cacheCleared': 'Cache cleared!',

@@ -4078,6 +4078,7 @@ export default {
   'config.wallpaperSolid': 'Cores sólidas',
   'config.wallpaperDefault': 'Padrão',
   'config.comingSoon': 'Em breve!',
+  'common.comingSoon': 'Em breve',
   'config.storageUsage': 'Uso de armazenamento',
   'config.storageDesc2': 'As mensagens e mídia são armazenadas no servidor. O app mantém um cache local mínimo.',
   'config.cacheCleared': 'Cache limpo!',

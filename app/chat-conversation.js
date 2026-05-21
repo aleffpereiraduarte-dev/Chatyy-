@@ -20438,19 +20438,21 @@ export default function ChatConversationScreen() {
               top-right e2e lock above. Skipped on media/sticker bubbles
               where it would clash with the artwork. */}
           {(() => {
-            const isText = msg.type === 'text';
-            const longText = isText && (String(msg.content || '').length > 300);
+            // WAVE 46 (2026-05-21): removed inline starred-badge in top-left
+            // corner of the bubble — user feedback "dentro da conversa
+            // podemos deixar mais clen sem o icone de estrela que tem la".
+            // Pin indicator stays (pinned messages still get a visible
+            // marker because the pin pill at the top is the only other cue).
+            // Starred state is still surfaced via the header menu →
+            // "Favoritas" and the starred-messages modal.
             const isPinnedHere = pinnedIdSet.has(String(msg.id));
-            const showStar = !!msg.starred && (longText || isPinnedHere);
-            const showPin  = isPinnedHere && (longText || msg.type !== 'text');
-            const showAny = (longText && (msg.starred || isPinnedHere)) || isPinnedHere;
-            if (!showAny) return null;
+            const showPin  = isPinnedHere && (msg.type !== 'text' || String(msg.content || '').length > 300);
+            if (!showPin) return null;
             if (msg.type === 'sticker' || msg.type === 'gif' || msg.type === 'image' || msg.type === 'video') return null;
             const tint = isOwn ? 'rgba(255,255,255,0.85)' : '#f59e0b';
             return (
               <View pointerEvents="none" style={{ position: 'absolute', top: 4, left: 6, opacity: 0.85, zIndex: 2, flexDirection: 'row', gap: 3 }}>
-                {showPin ? <IconPin size={11} color={tint} /> : null}
-                {showStar ? <IconStarFilled size={11} color={tint} /> : null}
+                <IconPin size={11} color={tint} />
               </View>
             );
           })()}
@@ -20693,9 +20695,10 @@ export default function ChatConversationScreen() {
           {msg.type !== 'sticker' && msg.type !== 'gif' && !(msg.type === 'image' && !(msg.content && msg.content !== msg.file_name)) && msg.type !== 'video' && (
             <View style={styles.msgMeta}>
               {disappearingTimer > 0 ? <IconClock size={10} color={isOwn ? 'rgba(255,255,255,0.5)' : colors.textTertiary} style={{ marginRight: 2 }} /> : null}
-              {!!msg.starred && !isDeleted && (
-                <IconStarFilled size={10} color={isOwn ? 'rgba(255,255,255,0.7)' : '#f59e0b'} style={{ marginRight: 2 }} />
-              )}
+              {/* WAVE 46 (2026-05-21): removed inline ⭐ in the meta row for
+                  starred messages — keeps the bubble clean. Functionality
+                  preserved: long-press menu "Favoritar", bulk-select star,
+                  header menu → "Favoritas" modal. */}
               {!!msg._e2e && (
                 <IconLock size={10} color={isOwn ? 'rgba(255,255,255,0.5)' : colors.textTertiary} style={{ marginRight: 2 }} />
               )}

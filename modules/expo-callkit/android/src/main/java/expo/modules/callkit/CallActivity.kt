@@ -730,9 +730,55 @@ class CallActivity : ComponentActivity() {
   private val hwAudioEffects = mutableListOf<android.media.audiofx.AudioEffect>()
   private fun installHwAudioEffects() {
     try {
-      // LK reusa o session id global do WebRTC AudioRecord. Default 0 funciona
-      // como "current default", aceito por AcousticEchoCanceler.create().
-      val sid = 0
+      // [WAVE 44B, 2026-05-21 gap A5] Resolve the real WebRTC AudioRecord
+      // session id. Many OEMs (Samsung Exynos, Xiaomi MIUI < 13) silently
+      // skip effects attached to session 0 — they need a real session id
+      // that matches the active mic AudioRecord. We walk LK's JavaAudioDeviceModule
+      // → audioRecorder → audioRecord.audioSessionId via reflection. Falls
+      // back to AudioManager.generateAudioSessionId() (better than 0 because
+      // it points at the AudioFlinger's "global output" rather than nothing).
+      var sid = 0
+      try {
+        val r = room
+        // LK 2.x: room.engine.audioDeviceModule (JavaAudioDeviceModule)
+        // → audioRecord (org.webrtc.audio.WebRtcAudioRecord)
+        // → audioRecord (android.media.AudioRecord)
+        // → audioSessionId
+        val candidates = listOfNotNull(
+          try { r?.javaClass?.getDeclaredField("engine")?.apply { isAccessible = true }?.get(r) } catch (_: Throwable) { null },
+          try { r?.javaClass?.declaredFields?.firstOrNull { it.name.contains("audioDeviceModule", true) }?.apply { isAccessible = true }?.get(r) } catch (_: Throwable) { null },
+        )
+        for (root in candidates) {
+          if (sid != 0) break
+          val visited = mutableSetOf<Any>()
+          fun walk(node: Any?, depth: Int) {
+            if (node == null || depth > 4 || sid != 0) return
+            if (!visited.add(node)) return
+            try {
+              for (f in node.javaClass.declaredFields) {
+                f.isAccessible = true
+                val v = try { f.get(node) } catch (_: Throwable) { null } ?: continue
+                if (v is android.media.AudioRecord) {
+                  val s = v.audioSessionId
+                  if (s > 0) { sid = s; return }
+                } else if (f.name.contains("audioRecord", true) ||
+                           f.name.contains("audioRecorder", true) ||
+                           f.name.contains("audioDevice", true) ||
+                           f.name.contains("engine", true)) {
+                  walk(v, depth + 1)
+                }
+              }
+            } catch (_: Throwable) {}
+          }
+          walk(root, 0)
+        }
+      } catch (_: Throwable) {}
+      if (sid == 0) {
+        try {
+          val am = applicationContext.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+          sid = am?.generateAudioSessionId() ?: 0
+        } catch (_: Throwable) {}
+      }
       if (android.media.audiofx.AcousticEchoCanceler.isAvailable()) {
         android.media.audiofx.AcousticEchoCanceler.create(sid)?.apply { enabled = true }?.let(hwAudioEffects::add)
       }
@@ -742,7 +788,7 @@ class CallActivity : ComponentActivity() {
       if (android.media.audiofx.AutomaticGainControl.isAvailable()) {
         android.media.audiofx.AutomaticGainControl.create(sid)?.apply { enabled = true }?.let(hwAudioEffects::add)
       }
-      Log.d(TAG, "HW audio effects: ${hwAudioEffects.size} attached")
+      Log.d(TAG, "HW audio effects: ${hwAudioEffects.size} attached (sid=$sid)")
     } catch (t: Throwable) {
       Log.w(TAG, "installHwAudioEffects fail (graceful): ${t.message}")
     }

@@ -191,7 +191,77 @@ object NativeCallRoom {
         }
         scope.launch {
             try {
-                r.localParticipant.setCameraEnabled(enabled)
+                if (enabled) {
+                    // [WAVE 44B, 2026-05-21 gap A3] Mirror the CallActivity
+                    // publish path: VP9 + simulcast + balanced degradation +
+                    // 720p@30 capture. Without this, JS-triggered camera
+                    // enable (adoptNativeRoom path) ends up calling the no-arg
+                    // overload which falls back to VP8/no-simulcast defaults.
+                    // Reflective in case LK Android rev changes the option
+                    // surface — graceful fallback to plain enable on failure.
+                    var usedOpts = false
+                    try {
+                        val publishDefaultsCls = Class.forName(
+                            "io.livekit.android.room.track.VideoTrackPublishDefaults"
+                        )
+                        val captureCls = Class.forName(
+                            "io.livekit.android.room.track.LocalVideoTrackOptions"
+                        )
+                        val captureParamCls = Class.forName(
+                            "io.livekit.android.room.track.VideoCaptureParameter"
+                        )
+                        // Construct VideoCaptureParameter(1280, 720, 30).
+                        val capParam = try {
+                            captureParamCls
+                                .getDeclaredConstructor(Int::class.java, Int::class.java, Int::class.java)
+                                .newInstance(1280, 720, 30)
+                        } catch (_: Throwable) { null }
+                        val captureOpts = try {
+                            // Try (captureParams) named-arg ctor first; fall back to no-arg.
+                            captureCls.declaredConstructors.firstOrNull {
+                                it.parameterTypes.any { p -> p.name.contains("VideoCaptureParameter") }
+                            }?.let { ctor ->
+                                val args = ctor.parameterTypes.map { p ->
+                                    if (p.name.contains("VideoCaptureParameter")) capParam else null
+                                }
+                                ctor.newInstance(*args.toTypedArray())
+                            } ?: captureCls.getDeclaredConstructor().newInstance()
+                        } catch (_: Throwable) { null }
+                        val publishOpts = publishDefaultsCls.getDeclaredConstructor().newInstance()
+                        // Pin codec/simulcast/degradation reflectively.
+                        publishDefaultsCls.declaredFields.forEach { f ->
+                            f.isAccessible = true
+                            when {
+                                f.name.contains("simulcast", true) && f.type == Boolean::class.java -> f.set(publishOpts, true)
+                                f.name.contains("codec", true) && f.type == String::class.java -> f.set(publishOpts, "vp9")
+                                f.name.contains("degradation", true) -> {
+                                    val t = f.type
+                                    val v: Any = if (t.isEnum) {
+                                        t.enumConstants?.firstOrNull { it.toString().equals("BALANCED", true) }
+                                            ?: "balanced"
+                                    } else "balanced"
+                                    f.set(publishOpts, v)
+                                }
+                            }
+                        }
+                        // Try the 3-arg overload: setCameraEnabled(true, captureOpts, publishOpts).
+                        val method = r.localParticipant.javaClass.methods.firstOrNull {
+                            it.name == "setCameraEnabled" && it.parameterTypes.size == 3
+                        }
+                        if (method != null && captureOpts != null) {
+                            method.invoke(r.localParticipant, true, captureOpts, publishOpts)
+                            usedOpts = true
+                            Log.d(TAG, "setCameraEnabled(true) with VP9+simulcast publish opts")
+                        }
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "VP9 publish opts reflective set failed (falling back): ${t.message}")
+                    }
+                    if (!usedOpts) {
+                        r.localParticipant.setCameraEnabled(true)
+                    }
+                } else {
+                    r.localParticipant.setCameraEnabled(false)
+                }
                 ExpoCallKitModule.emitLkLocalVideoChanged(enabled)
             } catch (t: Throwable) {
                 Log.w(TAG, "setCameraEnabled($enabled) threw: ${t.message}")

@@ -129,6 +129,7 @@ import {
   makeLevelChangeFilter,
   makeSustainedPoorFilter,
   triggerIceRestart,
+  applyOpusSdpMunge,
 } from '../services/livekitTuning';
 import * as callStateBus from '../services/callState';
 import {
@@ -1269,11 +1270,14 @@ function CallScreenInner() {
     // `rtcConfig` so peerConnection's ICE has a real relay candidate.
     // Audio quality tuning lives in services/livekitTuning so both this
     // screen and future surfaces (meet, broadcast) share the same Opus
-    // FEC/DTX/bitrate defaults. We start mid-ladder at 48 kbps; the
-    // adaptive loop (statsUnsubRef) bumps to 64 kbps after the first
-    // good sample, or drops to 32/24 kbps if the connection is rough.
+    // FEC/DTX/bitrate defaults.
+    // [WAVE 44B, 2026-05-21 gap A4] Start at 64 kbps (HD Opus voice) instead
+    // of 48 — adaptive loop bumps to 96 on excellent / drops to 32/24 on poor.
+    // Old 48 was conservative carried over from cellular-first Wave B; with
+    // simulcast + adaptive the SFU downshifts gracefully so we can afford
+    // to start higher and let the loop pull down only when actually needed.
     const audioOpts = buildAudioRoomOptions({
-      initialBitrate: 48000,
+      initialBitrate: 64000,
       videoCall: !!initialVideoCall,
     });
     const roomOpts = {
@@ -1315,6 +1319,69 @@ function CallScreenInner() {
       setErrorMsg(String(e?.message || 'Room ctor failed'));
       setConnectionFailed(true);
       return;
+    }
+
+    // [WAVE 44B, 2026-05-21 gap A2] Wire applyOpusSdpMunge into the publisher
+    // PC so Opus fmtp lines carry WhatsApp-grade knobs (maxaveragebitrate,
+    // useinbandfec, usedtx). Without this LK only emits the SDK defaults
+    // and 96 kbps target voice never actually negotiates — the SFU caps
+    // at ~32 kbps because the SDP doesn't advertise the headroom.
+    // We monkey-patch createOffer/createAnswer on the publisher PC after
+    // the engine spins up. The engine lazy-creates PCs at first publish,
+    // so we install a setter on engine.publisher and react when it lands.
+    // Safe: any throw degrades silently to LK's default SDP.
+    try {
+      const installOpusMunge = () => {
+        try {
+          const eng = r?.engine;
+          if (!eng) return false;
+          const pcm = eng.pcManager || eng;
+          // Try a couple of common shapes — publisher.pc and pcManager.publisher.pc.
+          const pub = pcm.publisher || eng.publisher;
+          const pc = pub?.pc || pub?.peerConnection;
+          if (!pc || pc.__opusMungeWired) return false;
+          pc.__opusMungeWired = true;
+          const origCreateOffer = pc.createOffer?.bind(pc);
+          const origCreateAnswer = pc.createAnswer?.bind(pc);
+          const mungeDesc = (desc) => {
+            try {
+              if (!desc || typeof desc !== 'object' || typeof desc.sdp !== 'string') return desc;
+              const newSdp = applyOpusSdpMunge(desc.sdp, {
+                maxBitrate: 96000,
+                dtx: true,
+                cbr: false,
+                stereo: false,
+              });
+              if (newSdp === desc.sdp) return desc;
+              // Mutate in-place — both web/native preserve {type, sdp} shape.
+              return { type: desc.type, sdp: newSdp };
+            } catch { return desc; }
+          };
+          if (origCreateOffer) {
+            pc.createOffer = async function (opts) {
+              const o = await origCreateOffer(opts);
+              return mungeDesc(o);
+            };
+          }
+          if (origCreateAnswer) {
+            pc.createAnswer = async function (opts) {
+              const a = await origCreateAnswer(opts);
+              return mungeDesc(a);
+            };
+          }
+          try { _diag('opus_sdp_munge_wired'); } catch {}
+          return true;
+        } catch { return false; }
+      };
+      // Try now; if PC doesn't exist yet, retry on RoomEvent.LocalTrackPublished
+      // (which is when the publisher PC has definitely been created).
+      if (!installOpusMunge()) {
+        try {
+          r.on(RoomEvent.LocalTrackPublished, () => { installOpusMunge(); });
+        } catch {}
+      }
+    } catch (e) {
+      try { _diag('opus_sdp_munge_err', { msg: String(e?.message || e) }); } catch {}
     }
 
     // RoomEvent handlers
@@ -1627,6 +1694,12 @@ function CallScreenInner() {
     if (statsUnsubRef.current) { try { statsUnsubRef.current(); } catch {} }
     levelFilterRef.current = makeLevelChangeFilter();
     sustainedPoorFilterRef.current = makeSustainedPoorFilter(3);
+    // [WAVE 44B, 2026-05-21 gap A6] Audio stats poll bumped 5s → 2.5s. The
+    // adaptive loop's sustained-poor filter needs 3 consecutive samples to
+    // fire ICE restart — at 5s that's 15s of bad audio before recovery.
+    // At 2.5s we react in 7.5s, matching WhatsApp's perceived recovery time.
+    // makeSustainedPoorFilter still requires `threshold` consecutive samples
+    // (default 3) so we don't over-react to single jitter spikes.
     statsUnsubRef.current = pollNetworkStats(r, (sample) => {
       try {
         if (endedRef.current) return;
@@ -1657,7 +1730,7 @@ function CallScreenInner() {
           await triggerIceRestart(roomRef.current).catch(() => {});
         });
       } catch {}
-    }, 5000);
+    }, 2500);
 
     // [gap D3 2026-05-20] Subscribe to network handover events so the call
     // forces an ICE restart immediately when iOS NWPathMonitor /

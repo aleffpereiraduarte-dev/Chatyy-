@@ -47,6 +47,12 @@ public class ExpoCallKitModule: Module {
   // hangup notification — bridges the native UI's red-button tap back into
   // the JS `onCallEnded` event so /call state stays consistent.
   private var nativeCallEndedObserver: Any?
+  // [foreground gate, 2026-05-21] Observer for CallSignalWs's WS-driven
+  // `call_invite` while the app is foreground. CallSignalWs skips CallKit
+  // in that case (JS owns the UI via the in-app IncomingCallSheet); we
+  // forward the payload to JS as `onIncomingCall` so any module-side
+  // listener still sees the call.
+  private var incomingCallForegroundObserver: Any?
 
   // __chatyy_native_call_sync 2026-05-19 — call-state observers (mute, cam,
   // speaker, route, hold, PiP, camera flip). CallViewController posts the
@@ -1097,6 +1103,30 @@ public class ExpoCallKitModule: Module {
         self?.adoptPendingCall(from: note.userInfo ?? [:])
       }
     }
+    // [foreground gate, 2026-05-21] WS-driven incoming-call invite while
+    // app is foreground — CallSignalWs.handleIncomingCallInviteLocked posts
+    // this notification instead of reporting to CallKit. Forward to JS so
+    // /call.js + IncomingCallListener can pick it up alongside the parallel
+    // services/websocket.js subscription.
+    if incomingCallForegroundObserver == nil {
+      incomingCallForegroundObserver = NotificationCenter.default.addObserver(
+        forName: Notification.Name("ExpoCallKitIncomingCallForeground"),
+        object: nil,
+        queue: .main
+      ) { [weak self] note in
+        guard let info = note.userInfo else { return }
+        var payload: [String: Any] = [:]
+        for (k, v) in info {
+          if let key = k as? String { payload[key] = v }
+        }
+        // Always tag the source so JS can distinguish from the VoIP/CallKit
+        // path. JS-side primary subscription is still services/websocket.js
+        // → mailWs.on('call_invite'); this is a belt-and-suspenders bridge.
+        if payload["source"] == nil { payload["source"] = "ws" }
+        if payload["foreground"] == nil { payload["foreground"] = true }
+        self?.safeSendEvent("onIncomingCall", payload)
+      }
+    }
   }
 
   /// [native call screen, 2026-05-16] Listen for the SwiftUI CallView's
@@ -1278,6 +1308,9 @@ public class ExpoCallKitModule: Module {
       NotificationCenter.default.removeObserver(obs)
     }
     if let obs = nativeCallEndedObserver {
+      NotificationCenter.default.removeObserver(obs)
+    }
+    if let obs = incomingCallForegroundObserver {
       NotificationCenter.default.removeObserver(obs)
     }
     if let obs = shareDidSendObserver {
