@@ -1287,6 +1287,14 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
                             done(conv.id)
                         }
                     }
+                    // [outbox feedback, 2026-05-19] Wrap the `after` callback so
+                    // every successful send appends a {msg_id, conv_id, sent_at, type}
+                    // entry to the App Group `chatyy.share_outbox` array. The host
+                    // app reads + clears this when it reopens, then triggers a
+                    // chat-list refresh for the affected conversation so the user
+                    // sees their newly-sent share message without pull-to-refresh.
+                    let mediaType = p.kind.rawValue
+                    let payloadKind: String = p.hasMedia ? mediaType : "text"
                     resolveConvId { [weak self] realId in
                         guard let realId = realId else {
                             DispatchQueue.main.async {
@@ -1298,11 +1306,17 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
                             }
                             return
                         }
+                        let wrapped: (Bool, String?) -> Void = { ok, err in
+                            if ok {
+                                ShareOutbox.append(convId: realId, type: payloadKind)
+                            }
+                            after(ok, err)
+                        }
                         if p.hasMedia, let f = p.fileURL {
                             ChatyyAPI.uploadAndSend(baseUrl: baseUrl, token: authToken,
                                                     conversationId: realId, fileURL: f, mime: p.fileMime,
                                                     caption: useCaption, type: p.kind.rawValue,
-                                                    completion: after)
+                                                    completion: wrapped)
                         } else {
                             let txt = !useCaption.isEmpty ? useCaption :
                                 (p.kind == .url ? p.url : p.text)
@@ -1312,7 +1326,7 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
                             }
                             ChatyyAPI.sendText(baseUrl: baseUrl, token: authToken,
                                                conversationId: realId, text: txt,
-                                               completion: after)
+                                               completion: wrapped)
                         }
                     }
                 }
@@ -1393,7 +1407,65 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
 
     private func dismissDone() {
         UINotificationFeedbackGenerator().notificationOccurred(.success)
+        // [outbox feedback, 2026-05-19] Wake the host app so it can reconcile
+        // the App Group share_outbox queue we just appended to. Darwin
+        // notifications are the only iOS IPC channel that crosses the
+        // extension <-> host boundary (App Group UserDefaults is the storage;
+        // this is the signal). The host's AppDelegate observer reposts an
+        // NSNotification that ExpoCallKitModule forwards to JS as
+        // `onShareDidSend`, and JS refreshes the chat list / affected conv.
+        ShareOutbox.postDarwinNotification()
         extensionContext?.completeRequest(returningItems: nil, completionHandler: nil)
+    }
+}
+
+// MARK: - ShareOutbox bridge
+//
+// Appends successful sends to the App Group UserDefaults array
+// `chatyy.share_outbox` and posts a Darwin notification so the host app can
+// reconcile when it reopens (or instantly if it's already in memory).
+//
+// The host doesn't need the entries to render anything itself — it just
+// triggers a refresh of the chat list / affected conversation. We keep the
+// payload small (msg_id, conv_id, sent_at, type) and cap at 50 to avoid
+// runaway growth if the host never wakes (rare but possible if the user
+// uninstalls the host while leaving the extension).
+fileprivate enum ShareOutbox {
+    private static let appGroupId = "group.com.onemundo.mail"
+    private static let outboxKey  = "chatyy.share_outbox"
+    private static let maxItems   = 50
+    private static let darwinName = "com.onemundo.mail.share_did_send" as CFString
+
+    /// Append a successful send to the outbox queue. Best-effort — silently
+    /// no-op if the App Group container isn't reachable (rare; would also
+    /// mean the rest of the extension's persistence is broken, in which
+    /// case the user is already seeing bigger errors).
+    static func append(convId: String, type: String) {
+        guard let ud = UserDefaults(suiteName: appGroupId) else { return }
+        let entry: [String: Any] = [
+            "msg_id":  UUID().uuidString,    // share-ext doesn't know server msg_id; client UUID is fine for dedup
+            "conv_id": convId,
+            "sent_at": Date().timeIntervalSince1970,
+            "type":    type
+        ]
+        var queue = (ud.array(forKey: outboxKey) as? [[String: Any]]) ?? []
+        queue.append(entry)
+        if queue.count > maxItems {
+            queue.removeFirst(queue.count - maxItems)
+        }
+        ud.set(queue, forKey: outboxKey)
+        // Force the suite to flush — UserDefaults batches writes and we want
+        // the host to see the entry the moment it reads after the Darwin
+        // notification fires.
+        ud.synchronize()
+    }
+
+    /// Wake the host. Sent once per share session in dismissDone() rather
+    /// than once per entry — the host will read+clear the whole array.
+    static func postDarwinNotification() {
+        let center = CFNotificationCenterGetDarwinNotifyCenter()
+        CFNotificationCenterPostNotification(center, CFNotificationName(darwinName),
+                                              nil, nil, true)
     }
 }
 

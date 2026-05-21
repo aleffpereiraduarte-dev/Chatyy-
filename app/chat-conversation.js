@@ -20351,7 +20351,12 @@ export default function ChatConversationScreen() {
             const senderColor = senderColorFromEmail(msg.sender_email);
             return (
               <View style={styles.msgSenderRow}>
-                <TouchableOpacity activeOpacity={0.7} onPress={() => setProfileViewer({ name: msg.sender_name || msg.sender_email, email: msg.sender_email })}>
+                <TouchableOpacity activeOpacity={0.7} onPress={() => {
+                  // [WAVE 43D] Multi-select sticky — tap on group sender
+                  // avatar toggles selection instead of opening the profile.
+                  if (selectionMode) return toggleSelection(msg.id);
+                  setProfileViewer({ name: msg.sender_name || msg.sender_email, email: msg.sender_email });
+                }}>
                   <AvatarCircle name={msg.sender_name || msg.sender_email} email={msg.sender_email} size={28} style={{ marginRight: 6 }} />
                 </TouchableOpacity>
                 <Text style={[styles.msgSender, { color: senderColor }]}>
@@ -20514,6 +20519,10 @@ export default function ChatConversationScreen() {
               <TouchableOpacity
                 activeOpacity={0.7}
                 onPress={() => {
+                  // [WAVE 43D] Multi-select sticky — tap on the reply quote
+                  // bar inside a selected bubble must toggle selection, not
+                  // jump to the quoted message.
+                  if (selectionMode) return toggleSelection(msg.id);
                   // WhatsApp-parity: scroll to the quoted message and flash it.
                   // Use `safeScrollToMsg` (already wired for pin tap + search
                   // jump) which transparently handles the case where the

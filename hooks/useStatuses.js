@@ -35,7 +35,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
-import { setCache } from '../services/cache';
+import { setCache, getCached, getCachedSync } from '../services/cache';
 
 let _mailWs = null;
 try { _mailWs = require('../services/websocket').default; } catch {}
@@ -235,7 +235,14 @@ export default function useStatuses(currentEmail, opts = {}) {
   // Synchronous MMKV preload so the first paint already shows yesterday's
   // groups — no spinner flash on cold start. Web and the first-ever launch
   // fall through to the fetch.
-  const _preload = (enabled ? _readMMKVOnce() : null);
+  //
+  // [WAVE 43B 2026-05-20] SWR cache layer: além de MMKV (native-only,
+  // synchronous), tentamos a disk cache (services/cache.js) que cobre web
+  // E persiste por 30d. getCachedSync é não-bloqueante e retorna null se
+  // ainda não foi warmed; chamamos ele primeiro como hot path. Combinado
+  // ao MMKV, o status strip pinta IMEDIATAMENTE em 99% dos casos pós-uso
+  // inicial. O fetch real continua acontecendo no background.
+  const _preload = enabled ? (_readMMKVOnce() || getCachedSync('statuses')) : null;
   const _hadPreload = !!(_preload && (
     (Array.isArray(_preload.mine) && _preload.mine.length) ||
     (Array.isArray(_preload.others) && _preload.others.length) ||
@@ -255,8 +262,46 @@ export default function useStatuses(currentEmail, opts = {}) {
   const [groups, setGroups] = useState(_initialNorm.groups);
   const [mine, setMine] = useState(_initialNorm.mine);
   const [others, setOthers] = useState(_initialNorm.others);
+  // [WAVE 43B 2026-05-20] loading=false quando temos preload (MMKV ou disk).
+  // Antes era só MMKV → web e cold-start sem MMKV mostrava skeleton blank.
   const [loading, setLoading] = useState(!_hadPreload);
   const fpRef = useRef(_hadPreload ? _fingerprint(_initialNorm.mine, _initialNorm.others) : null);
+
+  // [WAVE 43B 2026-05-20] Async fallback — se MMKV sync E getCachedSync
+  // não tiveram cache (primeira vez nesta sessão JS, hot reload, etc.),
+  // ainda tentamos getCached async pra recuperar dados anteriores antes
+  // do fetch real completar. Mata a maioria dos "status demora carregar"
+  // em cold start.
+  const asyncCacheHydratedRef = useRef(false);
+  useEffect(() => {
+    if (!enabled || _hadPreload || asyncCacheHydratedRef.current) return;
+    asyncCacheHydratedRef.current = true;
+    let alive = true;
+    (async () => {
+      try {
+        const cached = await getCached('statuses');
+        if (!alive || !cached) return;
+        // Only paint if the live fetch hasn't already won the race.
+        if (fpRef.current) return;
+        const cachedGroups = cached.groups || [];
+        const cachedMine = cached.mine || [];
+        const cachedOthers = cached.others || [];
+        if (cachedGroups.length === 0 && cachedMine.length === 0 && cachedOthers.length === 0) return;
+        fpRef.current = _fingerprint(cachedMine, cachedOthers);
+        setGroups(cachedGroups);
+        setMine(cachedMine);
+        setOthers(cachedOthers);
+        setLoading(false);
+        // Warm the SW / native media cache for the cached items so when
+        // user taps a story the video plays from file:// immediately
+        // (and not waiting for the fresh fetch to complete first).
+        if (warmCacheVideos) _warmCacheVideos(cachedMine, cachedOthers);
+        if (Platform.OS === 'web') _swPrefetch(cachedMine, cachedOthers);
+      } catch {}
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, warmCacheVideos]);
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
 
