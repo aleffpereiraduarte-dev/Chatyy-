@@ -1606,9 +1606,21 @@ try {
                 jsonResponse(false, null, 'Este email ja existe', 409);
             }
 
-            // Create password hash
-            $hash = trim(shell_exec("sudo doveadm pw -s SHA512-CRYPT -p " . escapeshellarg($password)));
-            
+            // Create password hash — `sudo doveadm pw` does NOT exist inside
+            // the PHP-FPM Docker container (no sudo binary, host doveadm not
+            // mounted), so shell_exec returned empty → kids@... and other new
+            // signups landed with empty hash, dovecot rejected login, and
+            // mailbox dir was never chowned (signup looked "200 success" but
+            // the user could never log in). crypt() with `$6$<salt>$` produces
+            // the exact SHA512-CRYPT digest Dovecot expects — same pattern
+            // already used by phone_signup. [bug 2026-05-21]
+            $salt = '$6$' . bin2hex(random_bytes(8)) . '$';
+            $cryptHash = crypt($password, $salt);
+            if (!$cryptHash || strlen($cryptHash) < 20) {
+                jsonResponse(false, null, 'Falha ao gerar senha do sistema', 500);
+            }
+            $hash = '{SHA512-CRYPT}' . $cryptHash;
+
             // Add to Dovecot users — if this fails, the new user can't auth
             // and the signup is broken. Don't claim 200 to the client.
             if (safe_put_contents($usersFile, "\n{$email}:{$hash}", FILE_APPEND) === false) {
@@ -8761,9 +8773,12 @@ try {
             $testAuth = imapAuth($auth['email'], $currentPwd);
             if ($testAuth === false) jsonResponse(false, null, 'Senha atual incorreta', 403);
 
-            // Generate new hash
-            $newHash = trim(shell_exec("sudo doveadm pw -s SHA512-CRYPT -p " . escapeshellarg($newPwd)) ?? '');
-            if (!$newHash || strpos($newHash, '{SHA512-CRYPT}') !== 0) jsonResponse(false, null, 'Erro ao gerar hash', 500);
+            // Generate new hash — same crypt() fallback as signup
+            // (sudo doveadm unavailable in container, see signup case).
+            $salt = '$6$' . bin2hex(random_bytes(8)) . '$';
+            $cryptHash = crypt($newPwd, $salt);
+            if (!$cryptHash || strlen($cryptHash) < 20) jsonResponse(false, null, 'Erro ao gerar hash', 500);
+            $newHash = '{SHA512-CRYPT}' . $cryptHash;
 
             // Update /etc/dovecot/users with file locking
             $usersFile = '/etc/dovecot/users';
@@ -9027,9 +9042,12 @@ try {
             // leave the same code replayable for the remainder of its TTL.
             @unlink($recoveryFile);
 
-            // Generate new password hash
-            $newHash = trim(shell_exec("sudo doveadm pw -s SHA512-CRYPT -p " . escapeshellarg($newPwd)) ?? '');
-            if (!$newHash || strpos($newHash, '{SHA512-CRYPT}') !== 0) jsonResponse(false, null, 'Erro ao gerar hash', 500);
+            // Generate new password hash — crypt() fallback (sudo doveadm
+            // unavailable in PHP-FPM container, see signup case).
+            $salt = '$6$' . bin2hex(random_bytes(8)) . '$';
+            $cryptHash = crypt($newPwd, $salt);
+            if (!$cryptHash || strlen($cryptHash) < 20) jsonResponse(false, null, 'Erro ao gerar hash', 500);
+            $newHash = '{SHA512-CRYPT}' . $cryptHash;
 
             // Update /etc/dovecot/users
             $usersFile = '/etc/dovecot/users';
