@@ -5127,6 +5127,7 @@ export default {
   'live.replayError': 'Falha ao salvar',
   'live.replayStatusLabel': 'Status do replay',
   'live.publisherMissing': 'Aguardando o host publicar a transmissão...',
+  'live.publishFailedTitle': 'Transmissão não publicada',
   // ─── Live moderation + engagement (2026-05-17) ───
   'live.slowMode': 'Modo lento',
   'live.slowModeTitle': 'Modo lento',
