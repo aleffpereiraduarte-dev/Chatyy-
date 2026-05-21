@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, memo } from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { getAvatarUrlForEmail } from '../services/api';
 import { IconSparkles } from './Icons';
+import ChatyyOneAvatar from './ChatyyOneAvatar';
 // Disk-persistent avatar cache (documentDirectory/avatar-saved). Survives
 // OS cache evictions so a contact's profile photo paints from disk on
 // cold-start / offline — even if expo-image's NSURLCache got purged.
@@ -377,24 +378,11 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
     return () => { _versionListeners.delete(listener); };
   }, [email]);
 
-  // ChatyyAI bot — special-cased gradient + sparkle icon. The bot has no
-  // real account so its /get_avatar request would 400. Render in-app instead.
+  // ChatyyAI bot — special-cased app icon avatar with a winking-eye animation
+  // (WAVE 46 brand refresh, 2026-05-21). The bot has no real account so its
+  // /get_avatar request would 400. Render the in-app icon + blink instead.
   if (typeof email === 'string' && email.toLowerCase() === 'ai@chatyy.com.br') {
-    return (
-      <View
-        style={[{
-          width: size, height: size, borderRadius: size / 2,
-          alignItems: 'center', justifyContent: 'center',
-          backgroundColor: '#7C3AED',
-          // Purple → indigo flat fill — close enough to a gradient without
-          // pulling in react-native-svg's LinearGradient at this depth.
-        }, style]}
-        accessibilityLabel="Chatyy AI"
-        accessibilityRole="image"
-      >
-        <IconSparkles size={Math.round(size * 0.55)} color="#fff" />
-      </View>
-    );
+    return <ChatyyOneAvatar size={size} style={style} />;
   }
   // Only fetch when `email` looks like a real address. Handles/usernames like
   // "@itsneres" or plain names sometimes leak through from feed posts and

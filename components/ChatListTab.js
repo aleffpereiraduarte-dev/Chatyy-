@@ -27,6 +27,7 @@ function mqttSubscribeAll(conversations) {
 import CachedImage from './CachedImage';
 import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye, IconMusic, IconUserPlus, IconSparkles, IconHeart, IconUsers, IconBell } from './Icons';
 import AvatarCircle from './AvatarCircle';
+import ChatyyOneAvatar from './ChatyyOneAvatar';
 import StatusCamera, { FILTERS as STATUS_FILTERS, FilterOverlay } from './StatusCamera';
 import BroadcastModal from './BroadcastModal';
 import CreateGroupFlow from './CreateGroupFlow';
