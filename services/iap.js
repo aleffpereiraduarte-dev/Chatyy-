@@ -299,8 +299,15 @@ export function getLocalizedPrice(productId) {
 async function _finalizePurchase(purchase) {
   let verified = false;
   let resultData = null;
-  const isDiamond = typeof purchase?.productId === 'string'
-    && purchase.productId.indexOf('chatyy_diamond_') === 0;
+  const pid = typeof purchase?.productId === 'string' ? purchase.productId : '';
+  const isDiamond = pid.indexOf('chatyy_diamond') === 0 || pid.indexOf('chatyy_topup_') === 0;
+  // WAVE 75 — storage subscriptions route through iap_validate_storage
+  // (which delegates to /iap-verify.php for iOS, _gplayVerifySubscription
+  // for Android). They are NOT consumables — finishTransaction without
+  // isConsumable acknowledges them on Google Play (required) and a no-op
+  // on iOS (StoreKit auto-renews handled server-side via App Store Server
+  // notifications).
+  const isStorage = pid.indexOf('storage_') !== -1 || pid.indexOf('chatyy_storage_') === 0;
   try {
     // expo-iap purchase shape varies by store:
     //   iOS:     { id, productId, transactionId, transactionReceipt,
@@ -323,7 +330,9 @@ async function _finalizePurchase(purchase) {
       ? (purchaseToken || purchase.transactionId || purchase.id || '')
       : (purchase.transactionId || purchase.id || '');
     if (txId && purchase.productId) {
-      const action = isDiamond ? 'wallet_topup_verify' : 'iap_verify_receipt';
+      const action = isDiamond
+        ? 'wallet_topup_verify'
+        : (isStorage ? 'iap_validate_storage' : 'iap_verify_receipt');
       const r = await apiCall(action, {
         platform: Platform.OS,
         sku: purchase.productId,             // wallet_topup_verify reads this
@@ -351,6 +360,10 @@ async function _finalizePurchase(purchase) {
       try { _pendingTopupCallback({ success: false, message: 'verify_failed' }); } catch {}
       _pendingTopupCallback = null;
     }
+    if (isStorage && _pendingStorageCallback) {
+      try { _pendingStorageCallback({ success: false, message: 'verify_failed' }); } catch {}
+      _pendingStorageCallback = null;
+    }
     return;
   }
   try {
@@ -374,6 +387,106 @@ async function _finalizePurchase(purchase) {
     } catch {}
     _pendingTopupCallback = null;
   }
+  if (isStorage && _pendingStorageCallback) {
+    try {
+      _pendingStorageCallback({
+        success: true,
+        sku: purchase.productId,
+        tier: resultData?.tier,
+        activeUntil: resultData?.expires_at || resultData?.active_until || 0,
+      });
+    } catch {}
+    _pendingStorageCallback = null;
+  }
+}
+
+/**
+ * WAVE 75 (2026-05-21) — Start a storage subscription purchase via
+ * StoreKit / Play Billing. Resolves when backend confirms verification
+ * (iap_validate_storage) and the StoreKit transaction is finished.
+ *
+ * @param tierId  one of '100gb'|'500gb'|'1tb'|'5tb'
+ * @param cycle   'monthly'|'annual'
+ * Returns { success, sku?, tier?, activeUntil?, message? }
+ */
+export async function purchaseStorage(tierId, cycle = 'monthly') {
+  const mod = _getIAP();
+  if (Platform.OS === 'web' || !mod) {
+    try { Linking.openURL(`${getBaseUrl()}/#/storage`); } catch {}
+    return { success: false, message: 'web_fallback' };
+  }
+  if (!_available) {
+    try { await initIAP(); } catch {}
+    if (!_available) return { success: false, message: 'iap_unavailable' };
+  }
+  const tier = STORAGE_TIERS.find(t => t.id === tierId);
+  if (!tier) return { success: false, message: 'unknown_tier' };
+
+  // Resolve the right SKU for current platform + cycle.
+  let sku;
+  if (Platform.OS === 'ios') {
+    sku = cycle === 'annual' ? tier.skuAnnualApple : tier.skuMonthlyApple;
+  } else {
+    sku = cycle === 'annual' ? tier.skuAnnualGoogle : tier.skuMonthlyGoogle;
+  }
+
+  // Guard: SKU must have been returned by fetchProducts. Otherwise surface
+  // a friendly message — same as diamond catalog flow. Skip the guard on
+  // Android when _storageProducts is empty because Play Console is still
+  // pending Payments profile (memory: WAVE 75 risk).
+  if (_storageProducts.length > 0) {
+    const inCatalog = _storageProducts.some(
+      p => (p?.id || p?.productId) === sku
+    );
+    if (!inCatalog) {
+      return { success: false, message: 'sku_not_in_catalog', sku };
+    }
+  }
+
+  let resolve;
+  const done = new Promise((r) => { resolve = r; });
+  _pendingStorageCallback = (payload) => resolve(payload);
+  const timer = setTimeout(() => {
+    if (_pendingStorageCallback) {
+      _pendingStorageCallback = null;
+      resolve({ success: false, message: 'timeout' });
+    }
+  }, 120000);
+  try {
+    const androidReq = { skus: [sku] };
+    // For Play subscriptions the basePlanId selects monthly vs annual
+    // under one product; expo-iap surfaces it via subscriptionOffers.
+    if (Platform.OS === 'android') {
+      const product = _storageProducts.find(p => (p?.id || p?.productId) === sku);
+      const offer = (product?.subscriptionOfferDetails || []).find(
+        o => o?.basePlanId === (cycle === 'annual' ? 'annual' : 'monthly')
+      );
+      if (offer?.offerToken) {
+        androidReq.subscriptionOffers = [{ sku, offerToken: offer.offerToken }];
+      }
+    }
+    await mod.requestPurchase({
+      request: { ios: { sku }, android: androidReq },
+      type: 'subs',
+    });
+  } catch (e) {
+    clearTimeout(timer);
+    _pendingStorageCallback = null;
+    const code = e?.code || '';
+    if (code === 'E_USER_CANCELLED' || code === 'USER_CANCELLED') {
+      return { success: false, message: 'cancelled' };
+    }
+    return { success: false, message: e?.message || 'purchase_failed' };
+  }
+  const result = await done;
+  clearTimeout(timer);
+  return result;
+}
+
+export function getStorageProducts() { return _storageProducts; }
+export function getStorageLocalizedPrice(sku) {
+  const p = _storageProducts.find(x => x.id === sku || x.productId === sku);
+  return p?.localizedPrice || p?.displayPrice || '';
 }
 
 /** Start a consumable diamond top-up purchase via StoreKit sheet.

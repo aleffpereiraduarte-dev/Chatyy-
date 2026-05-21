@@ -7717,6 +7717,13 @@ export async function notificationsFeed() { return apiCall('notifications_feed')
 // PLANS API
 // ============================================================
 export async function planInfo() { return apiCall('plan_info'); }
+
+// WAVE 75 (2026-05-21) — Storage system endpoints.
+export async function storageUsage() { return apiCall('chat_storage_usage'); }
+export async function storageTiers() { return apiCall('chat_storage_tiers'); }
+export async function iapValidateStorage(payload) {
+  return apiCall('iap_validate_storage', payload, 'POST');
+}
 export async function spotlightList(page = 1, limit = 10) {
   return apiCall('spotlight_list', { page, limit }, 'POST');
 }
