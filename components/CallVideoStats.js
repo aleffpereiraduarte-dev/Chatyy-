@@ -96,7 +96,13 @@ export function PoorConnectionWarning({ snapshot, suppressed, label, style }) {
   useEffect(() => {
     const fps = snapshot?.fps ?? 0;
     const bucket = snapshot?.bucket || 'good';
-    const isPoor = bucket === 'very_poor' || (bucket === 'poor' && fps > 0 && fps < 15);
+    // [WAVE 104E 2026-05-21] fps=0 means receiver stats haven't resolved yet,
+    // not that video is frozen. Guard requires fps > 0 (already existed) AND
+    // the fps threshold only applies when bucket is already 'poor' — avoiding
+    // a dual-trigger (bucket AND fps) that fires the banner immediately.
+    // very_poor alone is sufficient since evaluateBucket now requires 2
+    // consecutive samples to reach that bucket.
+    const isPoor = bucket === 'very_poor' || (bucket === 'poor' && fps > 0 && fps < 12);
 
     if (suppressed) {
       lowSinceRef.current = 0;
@@ -106,8 +112,11 @@ export function PoorConnectionWarning({ snapshot, suppressed, label, style }) {
 
     if (isPoor) {
       if (!lowSinceRef.current) lowSinceRef.current = Date.now();
-      // Show after 3s of sustained poor to avoid flickering on momentary stats hiccups
-      if (Date.now() - lowSinceRef.current >= 2500 && !show) setShow(true);
+      // [WAVE 104E 2026-05-21] Sustained window 2500ms → 6000ms.
+      // The adaptive loop ticks every 3s and SAMPLES_BEFORE_DOWNGRADE=2 means
+      // we need 6s of bad samples to reach very_poor. The banner should only
+      // appear AFTER that — not race ahead of the bucket hysteresis.
+      if (Date.now() - lowSinceRef.current >= 6000 && !show) setShow(true);
     } else {
       // Recovered — hide after a brief delay.
       lowSinceRef.current = 0;

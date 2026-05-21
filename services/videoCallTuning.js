@@ -83,7 +83,12 @@ const PROFILE_ORDER = ['very_poor', 'poor', 'good', 'excellent'];
 
 // Hysteresis: require N consecutive samples in the new bucket before changing.
 // Stops flapping between profiles when stats wobble (typical on cellular).
-const SAMPLES_BEFORE_DOWNGRADE = 1;   // downgrade fast — bad UX to keep dropping frames
+//
+// [WAVE 104E 2026-05-21] DOWNGRADE bumped 1→2: a single bad sample (e.g. the
+// very first tick at 1.5s when ICE has just settled) was enough to pin the call
+// to 'poor' and show "Conexão fraca" on a healthy wifi connection.
+// UPGRADE stays at 3 to avoid ping-ponging back to a higher profile too soon.
+const SAMPLES_BEFORE_DOWNGRADE = 2;   // require 2 consecutive bad samples before degrading
 const SAMPLES_BEFORE_UPGRADE = 3;     // upgrade slow — make sure connection actually recovered
 
 // ─── Stats → bucket evaluation ────────────────────────────────────────────────
@@ -94,21 +99,36 @@ const SAMPLES_BEFORE_UPGRADE = 3;     // upgrade slow — make sure connection a
 //   • qualityLimitationReason ('bandwidth' / 'cpu' / 'other' / 'none')
 //   • Received fps (for the peek indicator only)
 //
-// Thresholds calibrated against ~200 real calls on 3G / 4G / WiFi:
-//   excellent: RTT < 150ms, loss < 1%, no bandwidth limitation
-//   good:      RTT < 300ms, loss < 3%
-//   poor:      RTT < 600ms, loss < 8%
+// [WAVE 104E 2026-05-21] Thresholds loosened for video:
+//   Video codecs (H.264/VP8) with simulcast + FEC tolerate significantly
+//   higher packet loss than Opus audio before picture degrades perceptibly.
+//   Previous thresholds were audio-grade (loss<1% excellent, loss<3% good)
+//   and fired "Conexão fraca" on perfectly healthy wifi links.
+//
+//   New video-grade thresholds:
+//   excellent: RTT < 200ms, loss < 2.5%, no bandwidth limitation
+//   good:      RTT < 350ms, loss < 6%
+//   poor:      RTT < 700ms, loss < 14%
 //   very_poor: anything worse (or LK reports lost)
+//
+// [WAVE 104E 2026-05-21] lkQuality === 'unknown' no longer maps to very_poor.
+//   'unknown' means LK hasn't emitted a quality event yet (normal for the first
+//   3-8s of a call). We treat it as 'good' so the banner never appears during
+//   the connection-stabilization window.
 export function evaluateBucket({ lkQuality, rttMs, lossPct, limitReason }) {
-  if (lkQuality === 'lost' || lkQuality === 'unknown') return 'very_poor';
+  if (lkQuality === 'lost') return 'very_poor';
+  // 'unknown' = LK not yet rated (early-call warmup). Don't penalize.
+  // Fall through to raw stats; if stats are also zero (warmup) we default good.
   const rtt = Number.isFinite(rttMs) ? rttMs : 0;
   const loss = Number.isFinite(lossPct) ? lossPct : 0;
+  // If this is the early-warmup tick (no real stats yet), stay at 'good'.
+  if (lkQuality === 'unknown' && rtt === 0 && loss === 0) return 'good';
   // CPU bound → don't push higher than 'good'; even good network can't help
   // a thermal-throttled phone.
   const cpuCapped = limitReason === 'cpu';
-  if (lkQuality === 'excellent' && rtt < 150 && loss < 1) return cpuCapped ? 'good' : 'excellent';
-  if (rtt < 300 && loss < 3) return cpuCapped ? 'good' : 'good';
-  if (rtt < 600 && loss < 8) return 'poor';
+  if (lkQuality === 'excellent' && rtt < 200 && loss < 2.5) return cpuCapped ? 'good' : 'excellent';
+  if (rtt < 350 && loss < 6) return cpuCapped ? 'good' : 'good';
+  if (rtt < 700 && loss < 14) return 'poor';
   return 'very_poor';
 }
 
@@ -143,6 +163,13 @@ export function startAdaptiveLoop(room, { onChange, intervalMs = 3000 } = {}) {
   let pendingCount = 0;
   let timer = null;
   let lastSenderStats = null;
+  // [WAVE 104E 2026-05-21] Startup guard: skip bucket evaluation for the
+  // first 8s. The ICE candidate pair settles ~2-5s after connect; sender
+  // stats for the first 1-2 ticks may show rttMs=0 + lkQuality='unknown',
+  // which before this fix mapped to 'very_poor' and immediately fired the
+  // "Conexão fraca" banner on healthy connections.
+  const startedAt = Date.now();
+  const STARTUP_GRACE_MS = 8000;
 
   // Lazily load VideoQuality enum — livekit-client may not be ready on web
   // cold-paths.
@@ -236,7 +263,12 @@ export function startAdaptiveLoop(room, { onChange, intervalMs = 3000 } = {}) {
       } catch {}
 
       // ─── Pick bucket ──────────────────────────────────────────────────────
-      const bucket = evaluateBucket({ lkQuality, rttMs, lossPct, limitReason });
+      // [WAVE 104E] During startup grace window, force bucket to 'good' so
+      // the banner never fires while ICE is still settling. After 8s, normal
+      // evaluation takes over. The onChange still fires during grace so the
+      // snapshot (fps, bitrate indicators) is live from the start.
+      const inGrace = (Date.now() - startedAt) < STARTUP_GRACE_MS;
+      const bucket = inGrace ? 'good' : evaluateBucket({ lkQuality, rttMs, lossPct, limitReason });
 
       // Hysteresis: track pending bucket transitions until they stabilize.
       if (bucket === currentBucket) {
