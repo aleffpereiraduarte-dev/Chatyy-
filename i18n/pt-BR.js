@@ -560,6 +560,7 @@ export default {
   'settings.accountDeleted': 'Conta excluída',
   'settings.deleteAccountContinue': 'Continuar',
   'common.error': 'Erro',
+  'common.warning': 'Aviso',
   'common.somethingWentWrong': 'Algo deu errado',
   'common.genericError': 'Não foi possível completar a ação. Tente de novo em instantes.',
   'common.networkError': 'Erro de rede. Verifique sua conexão.',
