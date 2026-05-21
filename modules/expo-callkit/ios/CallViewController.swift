@@ -1704,7 +1704,8 @@ extension CallViewController: RoomDelegate {
         // wrapper — call restartIce() on it directly.
         DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self, weak room] in
             guard let self = self, let r = room else { return }
-            guard !self.session.didHangup else { return }
+            // [6th Swift compile cause, build cd37bbe] didHangup is on the VC, not session.
+            guard !self.didHangup else { return }
             NSLog("[CallVC][relay-first] Phase-2: attempting P2P upgrade via engine.publisher.restartIce")
             // Access the publisher PeerConnection through LK Swift internals.
             // Mirror walk is fragile but safe — no code here throws, so no
