@@ -2457,12 +2457,16 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   // (TikTok parity: audio survives lock screen) and restore + drain the pool
   // on unmount. Both functions are no-ops on web / when expo-shorts isn't
   // available (dev binaries that didn't link the native module).
+  //
+  // [WAVE 43B 2026-05-20] Drena pool ANTES de restaurar a sessão de áudio.
+  // setActive(false) com player vivo deixa frames residuais saírem; nilificar
+  // o player primeiro garante silêncio antes da sessão desativar.
   useEffect(() => {
     if (isWeb) return undefined;
     try { setShortsAudioSessionPlaybackFn?.(); } catch {}
     return () => {
-      try { restoreShortsAudioSessionFn?.(); } catch {}
       try { releaseShortsPoolFn?.(); } catch {}
+      try { restoreShortsAudioSessionFn?.(); } catch {}
     };
   }, []);
 
