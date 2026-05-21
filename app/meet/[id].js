@@ -236,7 +236,9 @@ export default function MeetScreen() {
   }, [roomId]);
 
   const displayName = user?.name || user?.email || t('meetScreen.guest');
-  const meetUrl = `${MEET_BASE}?id=${encodeURIComponent(roomId)}&token=${encodeURIComponent(api.getAuthToken() || '')}&name=${encodeURIComponent(displayName)}&webview=${Platform.OS !== 'web' ? '1' : '0'}&video=${video === 'off' ? '0' : '1'}`;
+  // WAVE 61 (2026-05-21): backend nginx /signal -> 8095 fixed (was -> 8443 dead).
+  // TURN URLs canonicalized to turn.chatyy.com.br. room.html WS now connects end-to-end.
+  const meetUrl = `${MEET_BASE}?id=${encodeURIComponent(roomId)}&token=${encodeURIComponent(api.getAuthToken() || '')}&name=${encodeURIComponent(displayName)}&webview=${Platform.OS !== 'web' ? '1' : '0'}&video=${video === 'off' ? '0' : '1'}&v=61`;
 
   // Inject JS into WebView/iframe
   const injectJS = useCallback((code) => {
