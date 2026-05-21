@@ -2259,6 +2259,19 @@ function SettingsScreenInner() {
             </View>
             <IconChevronRight size={20} color={colors.textTertiary} />
           </TouchableOpacity>
+          {/* [WAVE 104F] Call diagnostics — visible in __DEV__ or developer_mode */}
+          {(__DEV__ || settings?.developer_mode) && (
+          <TouchableOpacity
+            style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0 }]}
+            onPress={() => router.push('/call-diagnose')}
+          >
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>Diagnóstico de chamadas</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>Ring buffer dos últimos 100 eventos de call lifecycle</Text>
+            </View>
+            <IconChevronRight size={20} color={colors.textTertiary} />
+          </TouchableOpacity>
+          )}
         </View>
         )}
 

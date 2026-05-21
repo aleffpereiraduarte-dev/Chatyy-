@@ -121,6 +121,8 @@ import ErrorBoundary from '../components/ErrorBoundary';
 // Chat 2026 features (top-3): video notes recorder, AI summarize, smart replies.
 // Lazy-required inside the file when needed to keep the initial parse fast.
 let VideoNoteRecorder = null; try { VideoNoteRecorder = require('../components/chat/VideoNoteRecorder').default; } catch {}
+// Circular video-note viewer modal (WhatsApp-style — stays round on tap).
+let RoundVideoViewer = null; try { RoundVideoViewer = require('../components/RoundVideoViewer').default; } catch {}
 // WhatsApp-style mic trigger — bigger circle, ambient pulse, haptic.
 // Extracted so we can tune the visuals without touching the chat surface.
 let VoiceMicButton = null; try { VoiceMicButton = require('../components/chat/VoiceMicButton').default; } catch {}
@@ -7802,6 +7804,8 @@ export default function ChatConversationScreen() {
   const [presence, setPresence] = useState(null); // { status, last_seen }
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [mediaViewer, setMediaViewer] = useState({ visible: false, fileUrl: '', fileName: '', fileSize: 0, type: '', blurhash: null, placeholderUri: null, thumbUri: null });
+  // Round video note viewer — stays circular (WhatsApp parity, never rect fullscreen).
+  const [roundVideoViewer, setRoundVideoViewer] = useState({ visible: false, uri: null });
   const [forwardMsg, setForwardMsg] = useState(null);
   const [forwardConversations, setForwardConversations] = useState([]);
   // Multi-select forward (WhatsApp-style): user pode marcar várias convs e
@@ -19184,10 +19188,9 @@ export default function ChatConversationScreen() {
         }
 
         case 'video_note': {
-          // Round short video (iMessage/Telegram style). Always 240x240
-          // circular crop, autoplay on mount, tap to expand. expo-video's
-          // useVideoPlayer hook is called via a dedicated sub-component so
-          // hooks aren't called conditionally in the main render path.
+          // Round short video (iMessage/Telegram/WhatsApp style). Always 240×240
+          // circular crop, autoplay muted loop on mount. Tap expands to the
+          // RoundVideoViewer modal (320×320 circular, unmuted, never rect).
           const noteUrl = resolveMediaUri(msg.file_url || msg.content);
           if (!noteUrl) return null;
           const VideoNote = require('../components/VideoNotePlayer').default;
@@ -19196,7 +19199,8 @@ export default function ChatConversationScreen() {
               activeOpacity={0.95}
               onPress={() => {
                 if (selectionMode) return toggleSelection(msg.id);
-                setMediaViewer({ visible: true, fileUrl: msg.file_url, fileName: msg.file_name || 'video_note.mp4', fileSize: msg.file_size || 0, type: 'video' });
+                // Open circular viewer (WhatsApp parity — stays round, never rect)
+                setRoundVideoViewer({ visible: true, uri: noteUrl });
               }}
               onLongPress={() => { if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg); }}
               delayLongPress={350}
@@ -26046,6 +26050,16 @@ export default function ChatConversationScreen() {
           />
         );
       })()}
+
+      {/* Round video note viewer — stays circular (WhatsApp parity).
+          Never opens rectangular fullscreen for video_note messages. */}
+      {RoundVideoViewer && (
+        <RoundVideoViewer
+          visible={roundVideoViewer.visible}
+          uri={roundVideoViewer.uri}
+          onClose={() => setRoundVideoViewer({ visible: false, uri: null })}
+        />
+      )}
 
 {/* Desktop-web webcam capture modal */}
       <WebcamCapture
