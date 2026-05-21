@@ -28512,9 +28512,16 @@ const styles = StyleSheet.create({
   msgSenderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6, marginLeft: 4 },
   msgSender: { fontSize: 13, fontWeight: '700', letterSpacing: -0.15 },
   replyIndicator: {
-    borderLeftWidth: 3, borderRadius: 4,
-    paddingHorizontal: 8, paddingVertical: 6,
-    marginBottom: 6,
+    // WAVE 70 (2026-05-21): WhatsApp-grade polish — wider purple accent
+    // bar (3px), larger breathing padding (10x8), and a marginBottom of 8
+    // so the inline reply text below has a visible GAP and doesn't read
+    // as a single mashed block. marginTop:2 separates from the bubble's
+    // top edge so the quote isn't kissing the bubble corner. borderRadius
+    // bumped 4→6 to match the WhatsApp quote pill.
+    borderLeftWidth: 3, borderRadius: 6,
+    paddingHorizontal: 10, paddingVertical: 8,
+    marginTop: 2,
+    marginBottom: 8,
     // Natural width — lets the reply preview push the bubble out to
     // accommodate the quoted text + sender name. `alignSelf: 'stretch'`
     // (previous iteration) made it conform to the bubble, which in turn
@@ -28522,8 +28529,14 @@ const styles = StyleSheet.create({
     // minWidth gives it a baseline so even one-word quotes don't collapse.
     minWidth: 200,
   },
-  replyName: { fontSize: 13, fontWeight: '600', letterSpacing: -0.1, marginBottom: 2 },
-  replyText: { fontSize: 12, lineHeight: 16, opacity: 0.78 },
+  // WAVE 70: author label gets a 700 weight + 3px gap to the quote body
+  // (matches WhatsApp typography hierarchy — bold author, muted quote).
+  replyName: { fontSize: 13, fontWeight: '700', letterSpacing: -0.1, marginBottom: 3 },
+  // WAVE 70: quote text bumped 12→13 with 17px lineHeight so multi-line
+  // quotes breathe instead of stacking flat. opacity 0.78→0.82 nudges it
+  // just a hair more readable while still subordinate to the reply text
+  // beneath.
+  replyText: { fontSize: 13, lineHeight: 17, opacity: 0.82 },
   bubble: {
     borderRadius: 18, paddingHorizontal: 14,
     paddingTop: 7, paddingBottom: 6,
