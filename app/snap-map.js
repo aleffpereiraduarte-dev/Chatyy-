@@ -522,6 +522,69 @@ function ago(updatedAt) {
   return `há ${Math.round(s / 86400)}d`;
 }
 
+// [WAVE 49 2026-05-21] Active sessions chip. Renders ONLY when the user is
+// actively sharing their location OUT to one or more people. We hide it in
+// ghost mode (a separate banner takes over) and on first paint until the
+// grants data has loaded — flashing an empty chip is worse than waiting.
+//
+// Tap → opens the grants modal where each session can be revoked
+// individually. The chip text adapts to the count: "Compartilhando com Ana"
+// for 1, "Compartilhando com Ana + 2" for many.
+function ActiveSessionsChip({ grantsData, isDark, colors, t, ghostMode, onOpen, onLoad }) {
+  useEffect(() => { try { onLoad?.(); } catch {} }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  if (ghostMode) return null;
+  const outgoing = grantsData?.sharing_with || [];
+  if (outgoing.length === 0) return null;
+  const first = outgoing[0];
+  const firstName = (first?.name || first?.email || '').split(' ')[0] || first?.email?.split('@')[0] || '';
+  // Find the soonest-expiring session (excluding unlimited). Surfaces
+  // "expira em Xmin" right on the chip — the user previously had to dig
+  // into the grants modal to know how much time was left, which is the
+  // kind of friction that made them think shares were "desconectando".
+  let earliestExp = null;
+  for (const g of outgoing) {
+    if (g.is_unlimited) continue;
+    if (g.expires_at && (earliestExp === null || g.expires_at < earliestExp)) earliestExp = g.expires_at;
+  }
+  let timeLabel = '';
+  if (earliestExp !== null) {
+    const secs = Math.max(0, earliestExp - Date.now() / 1000);
+    if (secs > 3600) timeLabel = `${Math.round(secs / 3600)}h ${t?.('snapmap.remaining') || 'restantes'}`;
+    else if (secs > 60) timeLabel = `${Math.round(secs / 60)}min ${t?.('snapmap.remaining') || 'restantes'}`;
+    else timeLabel = `${Math.round(secs)}s ${t?.('snapmap.remaining') || 'restantes'}`;
+  } else {
+    timeLabel = '∞ ' + (t?.('snapmap.alwaysOn') || 'sempre ativo');
+  }
+  return (
+    <Pressable
+      onPress={onOpen}
+      style={{
+        marginHorizontal: 12, marginTop: 8, marginBottom: 4,
+        paddingHorizontal: 14, paddingVertical: 10, borderRadius: 14,
+        backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)',
+        borderWidth: 1, borderColor: 'rgba(124,58,237,0.40)',
+        flexDirection: 'row', alignItems: 'center', gap: 10,
+      }}
+      accessibilityRole="button"
+      accessibilityLabel={t?.('snapmap.activeSessionsA11y') || 'Ver sessões ativas'}
+    >
+      <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center' }}>
+        <IconMapPin size={16} color="#fff" />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, fontWeight: '700' }}>
+          {outgoing.length === 1
+            ? `${t?.('snapmap.sharingChipOne') || 'Compartilhando com'} ${firstName}`
+            : `${t?.('snapmap.sharingChipMany') || 'Compartilhando com'} ${firstName} + ${outgoing.length - 1}`}
+        </Text>
+        <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, marginTop: 1 }}>
+          {timeLabel} · {t?.('snapmap.tapToManage') || 'toque pra gerenciar'}
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
 export default function SnapMapScreen() {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();

@@ -1845,9 +1845,9 @@ export default function Profile({
               alignItems: 'center', justifyContent: 'center',
               backgroundColor: tone,
             }}>
-              <IconPlus size={26} color={colors?.text} strokeWidth={2} />
+              <IconPlus size={30} color={colors?.text} strokeWidth={2} />
             </View>
-            <Text style={{ fontSize: 12, color: colors?.text, marginTop: 5, fontWeight: '500' }} numberOfLines={1}>
+            <Text style={{ fontSize: 12, color: colors?.text, marginTop: 6, fontWeight: '500', letterSpacing: 0.1 }} numberOfLines={1}>
               {t?.('profile.newHighlight') || 'Novo'}
             </Text>
           </TouchableOpacity>
@@ -1929,7 +1929,14 @@ export default function Profile({
           // users no way to rename, swap cover, or generate a public link.
           // For viewers (non-owners) we still surface Share so they can
           // forward the highlight via the public /h/<id> link.
+          // [WAVE 52] Haptic feedback on long-press mirrors IG's action-sheet
+          // tactile — `Medium` impact is the same level IG uses for story-
+          // tile menus. Lazy-required so a missing peer dep doesn't crash.
           const openActionSheet = () => {
+            try {
+              const H = require('expo-haptics');
+              H.impactAsync?.(H.ImpactFeedbackStyle?.Medium);
+            } catch {}
             setHighlightSheet({ open: true, highlight: { id: h.id, title: h.title, cover_url: h.cover_url, isSelf } });
           };
           return (
@@ -1964,7 +1971,7 @@ export default function Profile({
                   <View style={{ width: SIZE - 4, height: SIZE - 4, borderRadius: (SIZE - 4) / 2, backgroundColor: '#7C3AED22' }} />
                 )}
               </View>
-              <Text style={{ fontSize: 12, color: colors?.text, marginTop: 5, fontWeight: '500', maxWidth: SIZE + 8 }} numberOfLines={1}>
+              <Text style={{ fontSize: 12, color: colors?.text, marginTop: 6, fontWeight: '500', maxWidth: SIZE + 8, letterSpacing: 0.1 }} numberOfLines={1}>
                 {h.title || ''}
               </Text>
             </TouchableOpacity>
