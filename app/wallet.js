@@ -1011,9 +1011,18 @@ export default function WalletScreen() {
           style={[styles.headTitle, { color: colors.text, opacity: headerOpacity }]}
           numberOfLines={1}
         >
-          {t('wallet.myDiamonds') || 'Meus diamantes'}
+          {t('wallet.title') || t('wallet.myDiamonds') || 'Carteira'}
         </Animated.Text>
-        <View style={{ width: 38 }} />
+        {/* [WAVE 51] Settings button — opens sheet with privacy toggle +
+            shortcuts to /creator-earnings + /wallet-cashout + refresh. */}
+        <TouchableOpacity
+          onPress={() => { tap('light'); setSettingsOpen(true); }}
+          style={styles.backBtn}
+          accessibilityRole="button"
+          accessibilityLabel={t('wallet.settings') || 'Configurações'}
+        >
+          <IconSettings size={20} color={colors.text} />
+        </TouchableOpacity>
       </View>
 
       {loading ? (
@@ -1161,6 +1170,73 @@ export default function WalletScreen() {
         toAvatarUrl={sendTarget?.avatar}
         onSent={() => { setSendTarget(null); load(); }}
       />
+
+      {/* [WAVE 51] Settings sheet — privacy toggle + nav shortcuts. */}
+      <Modal visible={settingsOpen} animationType="slide" transparent onRequestClose={() => setSettingsOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+          <View style={{ backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingBottom: Math.max(insets.bottom, 16) }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, paddingTop: 14, paddingBottom: 8 }}>
+              <View style={{ width: 34 }} />
+              <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>
+                {t('wallet.settings') || 'Configurações'}
+              </Text>
+              <TouchableOpacity onPress={() => setSettingsOpen(false)} style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' }}>
+                <IconX size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity onPress={togglePrivacy} style={styles.settingRow} accessibilityRole="button">
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.settingLabel, { color: colors.text }]}>
+                  {t('wallet.privacyHide') || 'Esconder saldos'}
+                </Text>
+                <Text style={[styles.settingSub, { color: colors.textSecondary }]}>
+                  {t('wallet.privacyHideSub') || 'Substitui valores por ••••'}
+                </Text>
+              </View>
+              <View style={[styles.toggle, { backgroundColor: hideAmounts ? PURPLE : (isDark ? '#3a3a3a' : '#d4d4d8') }]}>
+                <View style={[styles.toggleDot, { transform: [{ translateX: hideAmounts ? 18 : 0 }] }]} />
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={() => { setSettingsOpen(false); router.push('/creator-earnings'); }} style={styles.settingRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.settingLabel, { color: colors.text }]}>
+                  {t('wallet.openEarnings') || 'Painel de ganhos'}
+                </Text>
+                <Text style={[styles.settingSub, { color: colors.textSecondary }]}>
+                  {t('wallet.openEarningsSub') || 'Estatísticas + top apoiadores'}
+                </Text>
+              </View>
+              <IconChevronRight size={18} color={colors.textTertiary} />
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={() => { setSettingsOpen(false); router.push('/wallet-cashout'); }} style={styles.settingRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.settingLabel, { color: colors.text }]}>
+                  {t('wallet.openCashout') || 'Saques'}
+                </Text>
+                <Text style={[styles.settingSub, { color: colors.textSecondary }]}>
+                  {t('wallet.openCashoutSub') || 'Histórico + nova solicitação PIX'}
+                </Text>
+              </View>
+              <IconChevronRight size={18} color={colors.textTertiary} />
+            </TouchableOpacity>
+
+            <TouchableOpacity onPress={() => { setSettingsOpen(false); load(); }} style={styles.settingRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.settingLabel, { color: colors.text }]}>
+                  {t('wallet.refresh') || 'Recarregar'}
+                </Text>
+                <Text style={[styles.settingSub, { color: colors.textSecondary }]}>
+                  {t('wallet.refreshSub') || 'Atualizar saldos e histórico'}
+                </Text>
+              </View>
+              <IconRefresh size={18} color={colors.textTertiary} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

@@ -59,10 +59,11 @@ for f in $ICON_FILES; do
   imports=$(python3 -c "
 import re, sys
 src = open('$f').read()
-# match import { ... } from '.../Icons'
-m = re.findall(r\"import\s*\{([^}]+)\}\s*from\s*'[^']*Icons'\", src)
+# match import { ... } from '.../Icons' OR \".../Icons\" (single + double quoted).
+# Also accept Icons.js, ./components/Icons, ../components/Icons, etc.
+m = re.findall(r'import\s*\{([^}]+)\}\s*from\s*[\"\\']([^\"\\']*Icons(?:\.js)?)[\"\\']', src)
 names = set()
-for blk in m:
+for blk, _src in m:
   for n in re.findall(r'\b(Icon[A-Z][A-Za-z0-9_]*)\b', blk):
     names.add(n)
 print('\n'.join(sorted(names)))" 2>/dev/null)
