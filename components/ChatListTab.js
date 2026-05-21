@@ -5421,13 +5421,22 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           const snippet = (hit.snippet || hit.content || '').replace(/<b>/g, '').replace(/<\/b>/g, '');
           const convName = hit.conv_name || hit.conversation_name || (hit.sender_email || '').split('@')[0];
           const date = hit.created_at ? (_d => isNaN(_d.getTime()) ? '' : _d.toLocaleDateString())(new Date(hit.created_at)) : '';
+          // WAVE 55 fix: chat-conversation lê `params.id` (não `conversationId`).
+          // Antes o tap em search result navegava com param errado → tela abria
+          // com id=0 e nada renderizava. Passa também `type` + `name` pra header
+          // não ficar em branco enquanto resolve a conversa.
+          const hitType = hit.conv_type || hit.conversation_type || hit.type || 'direct';
+          const peerEmail = hit.peer_email || hit.other_email || hit.contact_email || hit.sender_email || '';
           return (
             <TouchableOpacity
               key={`hit-${hit.id}`}
               onPress={() => router.push({
                 pathname: '/chat-conversation',
                 params: {
-                  conversationId: String(hit.conversation_id),
+                  id: String(hit.conversation_id),
+                  name: encodeURIComponent(convName || ''),
+                  type: hitType,
+                  ...(peerEmail ? { email: peerEmail } : {}),
                   scrollToMessageId: String(hit.id),
                   highlightMessageId: String(hit.id),
                 },

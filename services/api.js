@@ -7260,6 +7260,16 @@ export async function walletCashoutList() {
 export async function walletCashoutDetail(payoutId) {
   return apiCall('wallet_cashout_detail', { payout_id: payoutId }, 'POST');
 }
+// [WAVE 51 2026-05-21] Aggregator endpoint for the /wallet hub. Returns
+// EVERYTHING the wallet screen needs in one round-trip: balance, pending
+// payout, ledger items, recent cashouts, saved Stripe cards, creator
+// insights (month/lifetime, top fans). Falls back gracefully if the
+// endpoint isn't deployed yet — caller should branch on response.success
+// and fan out to legacy endpoints if needed. Supports pagination via
+// limit/offset; with offset>0 only the ledger items panel is returned.
+export async function walletOverview({ limit = 50, offset = 0 } = {}) {
+  return apiCall('wallet_overview', { limit, offset }, 'POST');
+}
 // Daily login bonus — credits diamonds once per UTC day. Idempotent on
 // the backend, so cheap to fire on every cold-start. Returns
 // { granted: bool, amount, streak_days, diamond_balance }. 2026-05-20.

@@ -13971,7 +13971,9 @@ export default function ChatConversationScreen() {
   const stopLiveLocationNow = useCallback(async () => {
     const msgId = liveLocActive?.messageId || liveLocMsgIdRef.current;
     try {
-      if (msgId && api.chatStopLiveLocation) await api.chatStopLiveLocation(msgId);
+      // force:true — this is the explicit "user tapped Parar" path, so we
+      // DO want the backend destructive cleanup (delete row + grants).
+      if (msgId && api.chatStopLiveLocation) await api.chatStopLiveLocation(msgId, { force: true });
     } catch {}
     try {
       if (liveLocIntervalRef.current) { clearInterval(liveLocIntervalRef.current); liveLocIntervalRef.current = null; }
@@ -14236,7 +14238,9 @@ export default function ChatConversationScreen() {
             clearInterval(liveLocIntervalRef.current);
             liveLocIntervalRef.current = null;
             liveLocTimeoutRef.current = null;
-            api.chatStopLiveLocation(msgId).catch(() => {});
+            // Auto-expiry path: the timer just elapsed for the user-picked
+            // duration so the backend cleanup is the correct outcome.
+            api.chatStopLiveLocation(msgId, { force: true }).catch(() => {});
             // Auto-expiry path: clear the guard so a brand-new picker open
             // immediately offers duration chips again (no manual "Parar"
             // needed if the session already lapsed on its own).
@@ -18515,7 +18519,9 @@ export default function ChatConversationScreen() {
                         if (liveLocIntervalRef.current) { clearInterval(liveLocIntervalRef.current); liveLocIntervalRef.current = null; }
                         if (liveLocTimeoutRef.current) { clearTimeout(liveLocTimeoutRef.current); liveLocTimeoutRef.current = null; }
                       } catch {}
-                      try { api.chatStopLiveLocation?.(msg.id).catch(() => {}); } catch {}
+                      // Bubble Stop is explicit — pass force:true for the
+                      // destructive cleanup on the backend.
+                      try { api.chatStopLiveLocation?.(msg.id, { force: true }).catch(() => {}); } catch {}
                       // Mirror the bubble's Stop into the picker-side guard so
                       // reopening Anexar > Localização right after tapping
                       // Parar offers fresh duration chips (no leftover "já

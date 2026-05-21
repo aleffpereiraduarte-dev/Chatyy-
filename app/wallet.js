@@ -31,12 +31,14 @@ import {
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import {
   IconArrowLeft, IconDiamond, IconX, IconSearch, IconSend, IconClock,
   IconGiftBox, IconSparkles, IconChevronRight, IconArrowRight,
+  IconCreditCard, IconSettings, IconRefresh,
 } from '../components/Icons';
 import DiamondTopUpSheet from '../components/DiamondTopUpSheet';
 import SendDiamondSheet from '../components/SendDiamondSheet';
@@ -64,6 +66,20 @@ const FEATURED_PACKS = [
   { sku: 'diamonds_6000',  amount: 6000,  priceBRL: 499.90,  popular: false },
   { sku: 'diamonds_19500', amount: 19500, priceBRL: 1499.90, popular: false },
 ];
+
+// [WAVE 51] Local-only key for the "esconder saldo" privacy toggle. Per-device
+// preference (never sync to backend) so users can hide values in screenshots
+// or when handing the phone to someone else.
+const PRIVACY_KEY = 'wallet:hideBalance:v1';
+
+// [WAVE 51] BRL cashout floor — keep in sync with backend wallet_cashout_request.
+const MIN_CASHOUT_CENTS = 5000;
+
+// [WAVE 51] Format integer cents as BRL string ("12,34"). No currency prefix.
+function fmtBrl(cents) {
+  const v = (Number(cents) || 0) / 100;
+  return v.toFixed(2).replace('.', ',');
+}
 
 // Safe haptic — wraps in try/catch so Android dev builds without the native
 // module don't throw. We use light impact on every action.
@@ -268,6 +284,37 @@ export default function WalletScreen() {
   const [topUpOpen, setTopUpOpen] = useState(false);
   const [showAllHistory, setShowAllHistory] = useState(false);
 
+  // [WAVE 51] Carteira completa state — saved cards, recent cashouts,
+  // creator insights, history filter chips, privacy toggle, settings sheet.
+  const [savedCards, setSavedCards] = useState([]);
+  const [recentCashouts, setRecentCashouts] = useState([]);
+  const [insights, setInsights] = useState({
+    month_payout_cents: 0,
+    gifts_count_30d: 0,
+    gifts_count_lifetime: 0,
+    lifetime_payout_cents: 0,
+  });
+  const [historyFilter, setHistoryFilter] = useState('all'); // all|in|out|cashout
+  const [hideAmounts, setHideAmounts] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Restore privacy preference once per mount.
+  useEffect(() => {
+    (async () => {
+      try {
+        const v = await AsyncStorage.getItem(PRIVACY_KEY);
+        if (v === '1') setHideAmounts(true);
+      } catch {}
+    })();
+  }, []);
+
+  const togglePrivacy = useCallback(async () => {
+    const next = !hideAmounts;
+    setHideAmounts(next);
+    try { await AsyncStorage.setItem(PRIVACY_KEY, next ? '1' : '0'); } catch {}
+    tap('select');
+  }, [hideAmounts]);
+
   // Picker sheet state (Enviar button → conversation picker → SendDiamondSheet)
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerLoading, setPickerLoading] = useState(false);
@@ -301,10 +348,16 @@ export default function WalletScreen() {
 
   // ----- Data load ------------------------------------------------------
 
+  // [WAVE 51] Single round-trip via walletOverview. Falls back to legacy
+  // walletHistory if endpoint missing (e.g. backend not yet deployed).
+  // On append=true (pagination) the aggregator short-circuits and returns
+  // only ledger items, so we skip refreshing the aggregate panels.
   const load = useCallback(async ({ append = false } = {}) => {
     try {
       const offset = append ? items.length : 0;
-      const r = await api.walletHistory({ limit: 50, offset });
+      let r = null;
+      try { r = await api.walletOverview?.({ limit: 50, offset }); } catch { r = null; }
+
       if (r?.success && r.data) {
         const next = (Array.isArray(r.data.items) ? r.data.items : [])
           .filter(it => Number.isFinite(Number(it?.amount)) && Math.abs(Number(it.amount)) >= 1);
@@ -312,6 +365,27 @@ export default function WalletScreen() {
         setBalance(Number(r.data.diamond_balance) || 0);
         setPendingPayout(Number(r.data.pending_payout_cents) || 0);
         setHasMore(!!r.data.has_more);
+        if (!append) {
+          setSavedCards(Array.isArray(r.data.saved_cards) ? r.data.saved_cards : []);
+          setRecentCashouts(Array.isArray(r.data.recent_cashouts) ? r.data.recent_cashouts : []);
+          setInsights({
+            month_payout_cents:    Number(r.data.month_payout_cents) || 0,
+            gifts_count_30d:       Number(r.data.gifts_count_30d) || 0,
+            gifts_count_lifetime:  Number(r.data.gifts_count_lifetime) || 0,
+            lifetime_payout_cents: Number(r.data.lifetime_payout_cents) || 0,
+          });
+        }
+      } else {
+        // Legacy fallback — preserves screen if aggregator not deployed.
+        const h = await api.walletHistory({ limit: 50, offset });
+        if (h?.success && h.data) {
+          const next = (Array.isArray(h.data.items) ? h.data.items : [])
+            .filter(it => Number.isFinite(Number(it?.amount)) && Math.abs(Number(it.amount)) >= 1);
+          setItems(prev => append ? [...prev, ...next] : next);
+          setBalance(Number(h.data.diamond_balance) || 0);
+          setPendingPayout(Number(h.data.pending_payout_cents) || 0);
+          setHasMore(!!h.data.has_more);
+        }
       }
     } catch (e) {
       // Silent — empty state will render.
@@ -621,6 +695,209 @@ export default function WalletScreen() {
         </View>
       ) : null}
 
+      {/* [WAVE 51] Cash / BRL summary card — Dinheiro side of the wallet.
+          Shows pending payout (saque disponível), recent cashout pills,
+          and CTAs to /wallet-cashout + /creator-earnings. Only renders
+          when there's BRL data OR a creator-eligible signal (any monthly
+          gift income). */}
+      {pendingPayout > 0 || insights.month_payout_cents > 0 || recentCashouts.length > 0 ? (
+        <View style={[styles.cashCard, {
+          backgroundColor: isDark ? 'rgba(16,185,129,0.10)' : 'rgba(16,185,129,0.08)',
+          borderColor: isDark ? 'rgba(16,185,129,0.30)' : 'rgba(16,185,129,0.22)',
+        }]}>
+          <View style={styles.cashHeadRow}>
+            <Text style={[styles.cashLabel, { color: colors.textSecondary }]}>
+              {t('wallet.cashAvailable') || 'Disponível para saque'}
+            </Text>
+            <TouchableOpacity onPress={() => router.push('/creator-earnings')} accessibilityRole="button">
+              <Text style={[styles.seeAll, { color: GREEN }]}>
+                {t('wallet.earnings') || 'Ganhos'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.cashAmtRow}>
+            <Text style={[styles.cashPrefix, { color: GREEN }]}>R$</Text>
+            <Text style={[styles.cashAmt, { color: colors.text }]} numberOfLines={1} adjustsFontSizeToFit>
+              {hideAmounts ? '••••' : fmtBrl(pendingPayout)}
+            </Text>
+          </View>
+          {pendingPayout > 0 && pendingPayout < MIN_CASHOUT_CENTS ? (
+            <Text style={[styles.cashHint, { color: colors.textSecondary }]}>
+              {(t('wallet.minCashoutHint') || 'Faltam R$ {missing} para o saque mínimo (R$ 50,00).')
+                .replace('{missing}', fmtBrl(MIN_CASHOUT_CENTS - pendingPayout))}
+            </Text>
+          ) : null}
+
+          <View style={styles.cashCtaRow}>
+            <TouchableOpacity
+              onPress={() => { tap('medium'); router.push('/wallet-cashout'); }}
+              disabled={pendingPayout < MIN_CASHOUT_CENTS}
+              style={[styles.cashCta, {
+                backgroundColor: pendingPayout >= MIN_CASHOUT_CENTS ? GREEN : (isDark ? 'rgba(16,185,129,0.40)' : 'rgba(16,185,129,0.45)'),
+              }]}
+              accessibilityRole="button"
+            >
+              <Text style={styles.cashCtaText}>{t('wallet.cashoutAction') || 'Sacar via PIX'}</Text>
+            </TouchableOpacity>
+          </View>
+
+          {recentCashouts.length > 0 ? (
+            <View style={{ marginTop: 12 }}>
+              <Text style={[styles.cashSubLabel, { color: colors.textSecondary }]}>
+                {t('wallet.recentCashouts') || 'Saques recentes'}
+              </Text>
+              {recentCashouts.slice(0, 3).map(co => {
+                const status = String(co.status || 'pending');
+                const c = status === 'paid' ? GREEN : status === 'rejected' ? RED : GOLD;
+                const lbl = t(`wallet.statusBadge.${status}`) || status;
+                return (
+                  <View key={String(co.id)} style={styles.cashRow}>
+                    <Text style={[styles.cashRowAmt, { color: colors.text }]} numberOfLines={1}>
+                      {hideAmounts ? '••••' : `R$ ${fmtBrl(co.amount_cents)}`}
+                    </Text>
+                    <View style={[styles.cashStatusPill, { backgroundColor: c + '22', borderColor: c }]}>
+                      <Text style={[styles.cashStatusText, { color: c }]}>{lbl}</Text>
+                    </View>
+                  </View>
+                );
+              })}
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+
+      {/* [WAVE 51] Creator insights — month_payout, gifts_count_30d, lifetime.
+          Only renders for users with at least 1 received gift to avoid empty
+          card clutter for non-creators. */}
+      {insights.gifts_count_lifetime > 0 || insights.month_payout_cents > 0 ? (
+        <View style={[styles.insightsCard, {
+          backgroundColor: isDark ? 'rgba(245,158,11,0.10)' : 'rgba(245,158,11,0.08)',
+          borderColor: isDark ? 'rgba(245,158,11,0.28)' : 'rgba(245,158,11,0.20)',
+        }]}>
+          <View style={styles.sectionHead}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>
+              {t('wallet.insightsTitle') || 'Seus ganhos'}
+            </Text>
+          </View>
+          <View style={styles.insightsGrid}>
+            <View style={styles.insightCol}>
+              <Text style={[styles.insightVal, { color: colors.text }]} numberOfLines={1} adjustsFontSizeToFit>
+                {hideAmounts ? '••••' : `R$ ${fmtBrl(insights.month_payout_cents)}`}
+              </Text>
+              <Text style={[styles.insightLbl, { color: colors.textSecondary }]}>
+                {t('wallet.insight30d') || 'Recebido em 30d'}
+              </Text>
+            </View>
+            <View style={[styles.insightDivider, { backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)' }]} />
+            <View style={styles.insightCol}>
+              <Text style={[styles.insightVal, { color: colors.text }]}>
+                {insights.gifts_count_30d}
+              </Text>
+              <Text style={[styles.insightLbl, { color: colors.textSecondary }]}>
+                {t('wallet.insightGifts30d') || 'Presentes 30d'}
+              </Text>
+            </View>
+            <View style={[styles.insightDivider, { backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)' }]} />
+            <View style={styles.insightCol}>
+              <Text style={[styles.insightVal, { color: colors.text }]} numberOfLines={1} adjustsFontSizeToFit>
+                {hideAmounts ? '••••' : `R$ ${fmtBrl(insights.lifetime_payout_cents)}`}
+              </Text>
+              <Text style={[styles.insightLbl, { color: colors.textSecondary }]}>
+                {t('wallet.insightLifetime') || 'Total ganho'}
+              </Text>
+            </View>
+          </View>
+        </View>
+      ) : null}
+
+      {/* [WAVE 51] Saved payment methods — Stripe cards from wallet_overview.
+          Tap "Adicionar" pushes /diamond-shop where SetupIntent flow lives. */}
+      <View style={styles.section}>
+        <View style={styles.sectionHead}>
+          <Text style={[styles.sectionTitle, { color: colors.text }]}>
+            {t('wallet.methodsTitle') || 'Métodos de pagamento'}
+          </Text>
+          <TouchableOpacity
+            onPress={() => { tap('light'); router.push('/diamond-shop'); }}
+            accessibilityRole="button"
+            accessibilityLabel={t('wallet.addMethod') || 'Adicionar'}
+          >
+            <Text style={[styles.seeAll, { color: PURPLE }]}>
+              {t('wallet.addMethod') || 'Adicionar'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+        {savedCards.length > 0 ? savedCards.map(card => {
+          const brand = String(card.brand || 'card').toUpperCase();
+          const last4 = card.last4 || '••••';
+          const exp = card.exp_month && card.exp_year
+            ? `${String(card.exp_month).padStart(2, '0')}/${String(card.exp_year).slice(-2)}`
+            : '';
+          return (
+            <View key={card.id} style={[styles.methodRow, {
+              backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#fff',
+              borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)',
+            }]}>
+              <View style={[styles.methodIconBox, { backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.12)' }]}>
+                <IconCreditCard size={18} color={PURPLE_DEEP} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.methodTitle, { color: colors.text }]} numberOfLines={1}>
+                  {brand} •••• {last4}
+                </Text>
+                {!!exp && (
+                  <Text style={[styles.methodSub, { color: colors.textSecondary }]} numberOfLines={1}>
+                    {(t('wallet.cardExp') || 'Expira em')} {exp}
+                  </Text>
+                )}
+              </View>
+              <TouchableOpacity
+                onPress={() => {
+                  Alert.alert(
+                    t('wallet.cardRemoveTitle') || 'Remover cartão?',
+                    t('wallet.cardRemoveBody') || 'O cartão não estará mais disponível para compras automáticas.',
+                    [
+                      { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+                      {
+                        text: t('wallet.cardRemove') || 'Remover',
+                        style: 'destructive',
+                        onPress: async () => {
+                          try {
+                            await api.stripeDiamondDeleteCard?.(card.id);
+                            setSavedCards(prev => prev.filter(c => c.id !== card.id));
+                          } catch {
+                            Alert.alert(t('common.error') || 'Erro', t('wallet.cardRemoveFail') || 'Falha ao remover cartão.');
+                          }
+                        },
+                      },
+                    ],
+                  );
+                }}
+                style={styles.methodRemove}
+                accessibilityRole="button"
+                accessibilityLabel={t('wallet.cardRemove') || 'Remover'}
+              >
+                <IconX size={16} color={colors.textTertiary} />
+              </TouchableOpacity>
+            </View>
+          );
+        }) : (
+          <TouchableOpacity
+            onPress={() => { tap('light'); router.push('/diamond-shop'); }}
+            style={[styles.methodEmpty, {
+              borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)',
+            }]}
+            accessibilityRole="button"
+          >
+            <IconCreditCard size={20} color={colors.textTertiary} />
+            <Text style={[styles.methodEmptyText, { color: colors.textTertiary }]}>
+              {t('wallet.noMethods') || 'Adicione um cartão para comprar diamantes mais rápido.'}
+            </Text>
+            <IconChevronRight size={16} color={colors.textTertiary} />
+          </TouchableOpacity>
+        )}
+      </View>
+
       {/* Activity section header */}
       <View style={[styles.section, { paddingBottom: 0 }]}>
         <View style={styles.sectionHead}>
@@ -638,6 +915,35 @@ export default function WalletScreen() {
             </TouchableOpacity>
           ) : null}
         </View>
+
+        {/* [WAVE 51] History filter chips — only render when expanded.
+            Backend doesn't paginate by filter; we filter client-side over
+            the items we already have. */}
+        {showAllHistory ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterChipsScroll}>
+            {[
+              { id: 'all', label: t('wallet.filterAll') || 'Tudo' },
+              { id: 'in',  label: t('wallet.filterIn')  || 'Recebidos' },
+              { id: 'out', label: t('wallet.filterOut') || 'Enviados' },
+              { id: 'cashout', label: t('wallet.filterCashout') || 'Saques' },
+            ].map(f => {
+              const active = historyFilter === f.id;
+              return (
+                <TouchableOpacity
+                  key={f.id}
+                  onPress={() => { setHistoryFilter(f.id); tap('select'); }}
+                  style={[styles.filterChip, {
+                    backgroundColor: active ? PURPLE : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.05)'),
+                    borderColor: active ? PURPLE : 'transparent',
+                  }]}
+                  accessibilityRole="button"
+                >
+                  <Text style={[styles.filterChipText, { color: active ? '#fff' : colors.text }]}>{f.label}</Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        ) : null}
       </View>
     </View>
   );
