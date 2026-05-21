@@ -137,11 +137,14 @@ export async function liveDiagClear() {
  *   at least one audio + one video track for normal live use.
  * @param {string} webrtcUrl - The `webrtc_url` field from `live_start_cf`
  *   (e.g. `https://customer-xyz.cloudflarestream.com/<input-uid>/webRTC/publish`).
+ * @param {Array} [iceServersOverride] - Optional ICE server list from the
+ *   backend (live_start_cf response `ice_servers`). When provided, these
+ *   replace the default STUN-only config and include TURN credentials.
  * @returns {Promise<{pc: RTCPeerConnection, stop: () => void}>}
  *   On success: pc (already-negotiated peer connection) + stop() helper.
  *   On failure: throws — caller should warn the host and fall back gracefully.
  */
-export async function publishToCfStream(stream, webrtcUrl) {
+export async function publishToCfStream(stream, webrtcUrl, iceServersOverride) {
   await liveDiagAppend('info', 'publishToCfStream start', { url: (webrtcUrl || '').slice(0, 80) });
 
   if (!_PC) {
@@ -176,16 +179,27 @@ export async function publishToCfStream(stream, webrtcUrl) {
     throw new Error('cfStreamPublisher: stream has no audio or video tracks');
   }
 
-  // CF Stream WHIP works with a public STUN; no TURN needed for outbound
-  // publish (the publisher is always the initiator and CF lives on a
-  // public IP). Using Cloudflare's own STUN keeps the trip short. Google's
-  // STUN is added as a fallback — some mobile carriers block cloudflare's
-  // STUN port silently.
+  // [WAVE 103 fix #4] ICE servers: prefer the list returned by live_start_cf
+  // (which contains time-limited HMAC-SHA1 TURN creds for turn.chatyy.com.br)
+  // so RTP can traverse Brazilian CGN/CGNAT networks that block UDP 3478.
+  // Falls back to STUN-only when the backend didn't send ice_servers (e.g.
+  // TURN_SECRET not set on server). STUN candidates always take priority —
+  // TURN is used only when direct/reflexive paths fail.
+  const _resolvedIce = (Array.isArray(iceServersOverride) && iceServersOverride.length > 0)
+    ? iceServersOverride
+    : [
+        { urls: 'stun:stun.cloudflare.com:3478' },
+        { urls: 'stun:stun.l.google.com:19302' },
+      ];
+  await liveDiagAppend('info', 'ICE servers resolved', {
+    fromBackend: Array.isArray(iceServersOverride) && iceServersOverride.length > 0,
+    count: _resolvedIce.length,
+    hasTurn: _resolvedIce.some(s => Array.isArray(s.urls)
+      ? s.urls.some(u => u.startsWith('turn:') || u.startsWith('turns:'))
+      : (s.urls || '').startsWith('turn:')),
+  });
   const pc = new _PC({
-    iceServers: [
-      { urls: 'stun:stun.cloudflare.com:3478' },
-      { urls: 'stun:stun.l.google.com:19302' },
-    ],
+    iceServers: _resolvedIce,
     // [WAVE 98] CF Stream prefers a small, bundled connection. `bundlePolicy:
     // 'max-bundle'` forces one ICE+DTLS transport for both audio+video, which
     // matches the answer CF generates (multiplexed). Without this RN-WebRTC

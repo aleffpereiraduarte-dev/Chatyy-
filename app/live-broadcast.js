@@ -1521,7 +1521,12 @@ export default function LiveBroadcastScreen() {
         // sees frames; if WHIP setup takes 2s the VOD just trims that).
         // Failure here is non-fatal: viewers on the in-app HLS get a
         // warm-up screen, and the legacy P2P viewer path still works.
-        if (wantsCf) {
+        // [WAVE 103 fix #1] Gate on cfModeRef.current (not wantsCf) so
+        // the race fallback path (P2P slow → CF wins, cfModeRef=true,
+        // wantsCf still false) also fires WHIP publish. Without this,
+        // the CF live_input exists and viewers receive the HLS URL via
+        // WS, but no frames ever reach CF → playlist stays empty forever.
+        if (wantsCf || cfModeRef.current) {
           const ingestUrl = res.data?.webrtc_url;
           cfIngestRef.current = {
             cf_input_uid: res.data?.cf_input_uid,
@@ -1554,7 +1559,7 @@ export default function LiveBroadcastScreen() {
           if (ingestUrl && localStreamRef.current) {
             console.log('[LIVE-VOD-TRACE] starting WHIP publish to CF Stream');
             try { liveDiagAppend('info', 'host tapped Go Live → starting WHIP publish', { sessionId: sid, cf_input_uid: res.data?.cf_input_uid }); } catch {}
-            publishToCfStream(localStreamRef.current, ingestUrl)
+            publishToCfStream(localStreamRef.current, ingestUrl, res.data?.ice_servers)
               .then((pub) => {
                 cfPublisherRef.current = pub;
                 console.log('[LIVE-VOD-TRACE] WHIP publish OK — CF should record VOD');
