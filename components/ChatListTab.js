@@ -1576,7 +1576,28 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
   // gives a one-tap entrypoint for new posts.
   const stripHasContent = !!myStatus || !!myNote || otherStatuses.length > 0 || notesOnly.length > 0 || liveOnlyEntries.length > 0;
   const hasLives = allLivesList.length > 0;
-  if (!stripHasContent && !hasLives) return null;
+  // [WAVE 43B 2026-05-20] Skeleton rings durante o cold-fetch — substitui o
+  // `return null` que deixava a área em branco por ~200-800ms (perceived
+  // "demora") em primeiras aberturas sem cache. 4 bubbles falsos no mesmo
+  // tamanho do row real evitam layout shift quando os dados chegam.
+  if (!stripHasContent && !hasLives) {
+    if (statusLoading) {
+      const skBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+      return (
+        <View style={{ paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, gap: 14 }}>
+            {[0,1,2,3,4].map(i => (
+              <View key={`sk-${i}`} style={{ alignItems: 'center', width: 68 }}>
+                <View style={{ width: 54, height: 54, borderRadius: 27, backgroundColor: skBg }} />
+                <View style={{ width: 36, height: 9, borderRadius: 4, backgroundColor: skBg, marginTop: 6 }} />
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      );
+    }
+    return null;
+  }
 
   return (
     <View style={{ paddingVertical: stripHasContent ? 10 : 0, borderBottomWidth: stripHasContent ? StyleSheet.hairlineWidth : 0, borderBottomColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}>
