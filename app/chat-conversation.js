@@ -17267,6 +17267,20 @@ export default function ChatConversationScreen() {
           // photo streaming on top — user sees a blurred version of the
           // actual photo instantly, never a blank box.
           const lqipUri = msg.thumb_b64 ? `data:image/jpeg;base64,${msg.thumb_b64}` : null;
+          // [WAVE 42 2026-05-20] One-shot dev trace per msg id so we can see
+          // which backdrop source wins on Android. Helps the next regression
+          // investigation — silenced in production by __DEV__ check.
+          if (__DEV__) {
+            try {
+              if (!globalThis.__chatyy_thumb_trace) globalThis.__chatyy_thumb_trace = new Set();
+              const _tkey = `img:${msg.id}`;
+              if (!globalThis.__chatyy_thumb_trace.has(_tkey)) {
+                globalThis.__chatyy_thumb_trace.add(_tkey);
+                const _src = msg._localUri ? 'localUri' : imgLocalPath ? 'sqliteLocalPath' : msg.blurhash ? 'blurhash' : lqipUri ? 'lqip' : thumbUri ? 'thumb' : 'hsl-only';
+                console.log('[THUMB-TRACE]', msg.id, _src, { hasFileUrl: !!msg.file_url, w: _w, h: _h });
+              }
+            } catch {}
+          }
           // [WAVE 38 2026-05-20] Eager cacheMedia trigger. Por que: o
           // ChatMedia/ExpoImage abaixo CHAMA onLoadStart só quando começa o
           // network fetch — mas em alguns paths (decoder queue cheio, cache
@@ -17922,17 +17936,35 @@ export default function ChatConversationScreen() {
                       </View>
                     </View>
                   ) : (
-                    // [WAVE 34 2026-05-20] Brand-purple halo play button.
-                    // Outer ring is a purple-tinted glass (#7C3AED 22%) with
-                    // a soft white outline; inner white solid keeps the play
-                    // icon legible on any thumbnail. Glow via iOS shadow
-                    // (purple, large radius) + Android elevation. The result
-                    // feels "Chatyy" branded without losing iMessage
-                    // tappability cues. Same diameter as before (68/54) so
-                    // the rest of the bubble layout doesn't shift.
-                    <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: 'rgba(124,58,237,0.22)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.45)', alignItems: 'center', justifyContent: 'center', ...Platform.select({ ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.55, shadowRadius: 16 }, android: { elevation: 10 }, web: { boxShadow: '0 4px 24px rgba(124,58,237,0.45)' } }) }}>
-                      <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.97)', alignItems: 'center', justifyContent: 'center' }}>
-                        <Svg width={26} height={26} viewBox="0 0 24 24"><Path d="M8 5v14l11-7z" fill="#7C3AED" /></Svg>
+                    // [WAVE 42 2026-05-20] Frosted-glass play button —
+                    // bigger outer ring (78×78), thicker white border (2px),
+                    // inner pure-white core (58×58) with a chunkier triangle
+                    // (28×28). Purple glow extended for both iOS shadow and
+                    // Android elevation 14. The "frosted" feel is simulated
+                    // by stacking: dark thumbnail behind + gradient overlay
+                    // + purple-tinted outer + white inner. We don't bring
+                    // expo-blur into the chat tree (per WAVE 34 comment) —
+                    // would double the per-bubble render cost.
+                    <View style={{
+                      width: 78, height: 78, borderRadius: 39,
+                      backgroundColor: 'rgba(124,58,237,0.28)',
+                      borderWidth: 2, borderColor: 'rgba(255,255,255,0.55)',
+                      alignItems: 'center', justifyContent: 'center',
+                      ...Platform.select({
+                        ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.65, shadowRadius: 20 },
+                        android: { elevation: 14 },
+                        web: { boxShadow: '0 6px 32px rgba(124,58,237,0.55)' },
+                      }),
+                    }}>
+                      <View style={{
+                        width: 58, height: 58, borderRadius: 29,
+                        backgroundColor: '#ffffff',
+                        alignItems: 'center', justifyContent: 'center',
+                        ...Platform.select({
+                          ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.18, shadowRadius: 4 },
+                        }),
+                      }}>
+                        <Svg width={28} height={28} viewBox="0 0 24 24"><Path d="M8 5v14l11-7z" fill="#7C3AED" /></Svg>
                       </View>
                     </View>
                   )}
