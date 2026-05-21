@@ -6605,6 +6605,16 @@ export default {
   'viewer.videoLabel': 'Vídeo',
   'viewer.fileLabel': 'Archivo',
   'viewer.yesterday': 'ayer',
+  // WAVE 73 — claves del InfoSheet del visor de vídeo y archivo
+  'viewer.duration': 'Duración',
+  'viewer.resolution': 'Resolución',
+  'viewer.codec': 'Codec',
+  'viewer.mime': 'Tipo',
+  'viewer.fileType': 'Formato',
+  'viewer.speed': 'Velocidad',
+  'viewer.pip': 'Picture-in-Picture',
+  'viewer.fullscreen': 'Pantalla completa',
+  'viewer.openExternal': 'Abrir en…',
 
   'status.saveToHighlight': 'Guardar en destacados',
   'status.highlights': 'Destacados',

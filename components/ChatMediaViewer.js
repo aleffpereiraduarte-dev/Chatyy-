@@ -1286,7 +1286,7 @@ function GenericFileViewer({ url, filename, fileSize, messageId, t }) {
 // ============================================================
 // MAIN MODAL
 // ============================================================
-export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fileName, fileSize, type, viewOnce, mediaList, initialIndex, conversationId, messageId, senderName, senderEmail, createdAt, t, colors }) {
+export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fileName, fileSize, type, viewOnce, mediaList, initialIndex, conversationId, messageId, senderName, senderEmail, createdAt, videoDuration, videoWidth, videoHeight, mimeType, t, colors }) {
   const insets = useSafeAreaInsets();
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -2000,6 +2000,49 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
                     <View style={s.infoRow}>
                       <Text style={s.infoKey}>{(typeof t === 'function' && t('viewer.fileSize')) || 'Tamanho'}</Text>
                       <Text style={s.infoVal}>{formatSize(_activeFileSize)}</Text>
+                    </View>
+                  )}
+                  {/* WAVE 73: video-specific metadata (duration + resolution).
+                      Backend doesn't always populate width/height (only when
+                      the ffmpeg poster pass writes image_variants.full_w/h),
+                      so we render the row conditionally. Resolution becomes
+                      a "1920×1080 (HD)" / "3840×2160 (4K)" label so users
+                      get the same intuition as YouTube. */}
+                  {isVideo && (_active?.videoDuration > 0 || _active?.duration > 0 || videoDuration > 0) && (
+                    <View style={s.infoRow}>
+                      <Text style={s.infoKey}>{(typeof t === 'function' && t('viewer.duration')) || 'Duração'}</Text>
+                      <Text style={s.infoVal}>{(() => {
+                        const sec = Math.floor(_active?.videoDuration || _active?.duration || videoDuration || 0);
+                        if (sec >= 3600) return `${Math.floor(sec / 3600)}:${String(Math.floor((sec % 3600) / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
+                        return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+                      })()}</Text>
+                    </View>
+                  )}
+                  {isVideo && ((_active?.videoHeight || videoHeight) > 0) && (
+                    <View style={s.infoRow}>
+                      <Text style={s.infoKey}>{(typeof t === 'function' && t('viewer.resolution')) || 'Resolução'}</Text>
+                      <Text style={s.infoVal}>{(() => {
+                        const w = _active?.videoWidth || videoWidth || 0;
+                        const h = _active?.videoHeight || videoHeight || 0;
+                        const tag = h >= 2160 ? ' (4K)' : h >= 1080 ? ' (HD)' : '';
+                        return `${w || '?'}×${h}${tag}`;
+                      })()}</Text>
+                    </View>
+                  )}
+                  {/* MIME type — useful for "what app can open this" intuition.
+                      Surfaced for files and videos; images skip it (the format
+                      is obvious from the visual). Falls back to extension-
+                      derived guess when the backend didn't tag mimeType. */}
+                  {!isImage && (mimeType || _active?.mimeType) && (
+                    <View style={s.infoRow}>
+                      <Text style={s.infoKey}>{(typeof t === 'function' && t('viewer.mime')) || 'Tipo'}</Text>
+                      <Text style={s.infoVal} numberOfLines={1}>{_active?.mimeType || mimeType}</Text>
+                    </View>
+                  )}
+                  {!isImage && !isVideo && !mimeType && !_active?.mimeType && !!ext && (
+                    <View style={s.infoRow}>
+                      <Text style={s.infoKey}>{(typeof t === 'function' && t('viewer.fileType')) || 'Formato'}</Text>
+                      <Text style={s.infoVal}>{ext.toUpperCase()}</Text>
                     </View>
                   )}
                 </View>

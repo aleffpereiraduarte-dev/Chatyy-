@@ -17920,8 +17920,35 @@ export default function ChatConversationScreen() {
           const vidProgress = msg._uploadPct || 0;
           const vidIndeterminate = vidUploading && (msg._uploadPct === undefined);
           const vidDuration = msg.duration || 0;
-          const vidDurationStr = vidDuration > 0 ? (vidDuration < 60 ? `0:${String(Math.floor(vidDuration)).padStart(2, '0')}` : `${Math.floor(vidDuration / 60)}:${String(Math.floor(vidDuration % 60)).padStart(2, '0')}`) : '';
+          // [WAVE 73 2026-05-21] Bumped to H:MM:SS for ≥1h videos. Before:
+          // a 1h30m video showed "90:00" (looked like an absurd 90-minute
+          // counter); now it shows "1:30:00" with proper hour separator —
+          // matches YouTube/WhatsApp grammar.
+          const vidDurationStr = vidDuration > 0 ? (
+            vidDuration >= 3600
+              ? `${Math.floor(vidDuration / 3600)}:${String(Math.floor((vidDuration % 3600) / 60)).padStart(2, '0')}:${String(Math.floor(vidDuration % 60)).padStart(2, '0')}`
+              : vidDuration < 60
+                ? `0:${String(Math.floor(vidDuration)).padStart(2, '0')}`
+                : `${Math.floor(vidDuration / 60)}:${String(Math.floor(vidDuration % 60)).padStart(2, '0')}`
+          ) : '';
           const vidSizeStr = msg.file_size > 0 ? (msg.file_size < 1048576 ? (msg.file_size / 1024).toFixed(0) + ' KB' : (msg.file_size / 1048576).toFixed(1) + ' MB') : '';
+          // [WAVE 73 2026-05-21] HD / 4K badge top-right. Resolution comes
+          // from image_variants.full_h (set when the ffmpeg poster pass ran
+          // server-side) OR msg.height (camera/preview pipeline). Falls
+          // back to no badge when neither is available so we never show
+          // wrong info. h≥2160 → "4K" (purple), 1080≤h<2160 → "HD"
+          // (white). Tagged with `_vidQuality` so it propagates into the
+          // viewer InfoSheet too.
+          let _vidHeight = Number(msg.height) || 0;
+          let _vidWidth = Number(msg.width) || 0;
+          if ((!_vidHeight || !_vidWidth) && msg.image_variants) {
+            try {
+              const _iv = typeof msg.image_variants === 'string' ? JSON.parse(msg.image_variants) : msg.image_variants;
+              _vidHeight = _vidHeight || Number(_iv?.full_h) || 0;
+              _vidWidth = _vidWidth || Number(_iv?.full_w) || 0;
+            } catch {}
+          }
+          const _vidQuality = _vidHeight >= 2160 ? '4K' : _vidHeight >= 1080 ? 'HD' : '';
           // WhatsApp-style: mostra download icon em vez de play button quando
           // o vídeo ainda não foi baixado localmente. Assim user sabe que
           // precisa tappear pra carregar (não é só lento — é download).
@@ -17933,7 +17960,21 @@ export default function ChatConversationScreen() {
               onPress={() => {
                 if (selectionMode) return toggleSelection(msg.id);
                 if (msg._uploading || !msg.file_url) return;
-                setMediaViewer({ visible: true, fileUrl: videoUrl || msg.file_url, fileName: msg.file_name || 'video', fileSize: msg.file_size || 0, type: 'video' });
+                setMediaViewer({
+                  visible: true,
+                  fileUrl: videoUrl || msg.file_url,
+                  fileName: msg.file_name || 'video',
+                  fileSize: msg.file_size || 0,
+                  type: 'video',
+                  messageId: msg.id,
+                  senderName: msg.sender_name || (msg.sender_email || '').split('@')[0] || '',
+                  senderEmail: msg.sender_email || '',
+                  createdAt: msg.created_at || msg.createdAt || null,
+                  videoDuration: vidDuration,
+                  videoWidth: _vidWidth,
+                  videoHeight: _vidHeight,
+                  mimeType: msg.mime_type || (msg.file_name ? `video/${(msg.file_name.split('.').pop() || 'mp4').toLowerCase().replace('mov', 'quicktime')}` : 'video/mp4'),
+                });
               }}
               onLongPress={() => {
                 if (selectionMode) toggleSelection(msg.id);
@@ -18208,6 +18249,27 @@ export default function ChatConversationScreen() {
                 }}>
                   <IconVideo size={12} color="rgba(255,255,255,0.95)" />
                   <Text style={{ fontSize: 11.5, color: '#fff', fontWeight: '700', letterSpacing: 0.3, fontVariant: ['tabular-nums'] }}>{vidDurationStr || vidSizeStr}</Text>
+                </View>
+              )}
+              {/* [WAVE 73 2026-05-21] HD / 4K badge top-right. Same frosted
+                  grammar as the duration pill so the two read as siblings.
+                  4K gets the brand purple background to "earn" its own
+                  visual weight (it's the premium tier, like YouTube's red
+                  4K badge); HD keeps the neutral dark glass. Hidden while
+                  uploading so the upload progress overlay owns the chrome. */}
+              {!!_vidQuality && !vidUploading && !vidIsDownloading && (
+                <View style={{
+                  position: 'absolute', top: 10, right: 10,
+                  backgroundColor: _vidQuality === '4K' ? 'rgba(124,58,237,0.92)' : 'rgba(0,0,0,0.72)',
+                  borderRadius: 6,
+                  paddingHorizontal: 7, paddingVertical: 2.5,
+                  borderWidth: 1, borderColor: _vidQuality === '4K' ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.28)',
+                  ...Platform.select({
+                    ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.35, shadowRadius: 3 },
+                    android: { elevation: 2 },
+                  }),
+                }}>
+                  <Text style={{ fontSize: 10.5, color: '#fff', fontWeight: '800', letterSpacing: 0.7 }}>{_vidQuality}</Text>
                 </View>
               )}
               {/* Time + read receipts pill bottom-right (WhatsApp-style).
@@ -19558,12 +19620,29 @@ export default function ChatConversationScreen() {
           const openViewerWith = (uri) => {
             const extForViewer = (msg.file_name || '').split('.').pop()?.toLowerCase() || 'file';
             const PREVIEWABLE = new Set(['pdf','doc','docx','xls','xlsx','ppt','pptx','txt','csv','json','md','log','xml','yml','ini','conf']);
+            // [WAVE 73 2026-05-21] Plumb sender + mime so the fullscreen
+            // viewer can render the WhatsApp-grade header (avatar + name +
+            // relative time) instead of the old "filename.pdf 1.2MB" line.
+            // mime guess from extension when backend didn't tag it.
+            const MIME_MAP = {
+              pdf: 'application/pdf',
+              doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+              xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              ppt: 'application/vnd.ms-powerpoint', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+              csv: 'text/csv', txt: 'text/plain', json: 'application/json', md: 'text/markdown',
+              zip: 'application/zip', rar: 'application/vnd.rar',
+            };
             setMediaViewer({
               visible: true,
               fileUrl: uri,
               fileName: msg.file_name || msg.content || 'file',
               fileSize: msg.file_size || 0,
               type: PREVIEWABLE.has(extForViewer) ? extForViewer : 'file',
+              messageId: msg.id,
+              senderName: msg.sender_name || (msg.sender_email || '').split('@')[0] || '',
+              senderEmail: msg.sender_email || '',
+              createdAt: msg.created_at || msg.createdAt || null,
+              mimeType: msg.mime_type || MIME_MAP[extForViewer] || (extForViewer ? `application/${extForViewer}` : 'application/octet-stream'),
             });
           };
 
@@ -19658,9 +19737,46 @@ export default function ChatConversationScreen() {
                 hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
               >
                 {/* File type badge — shows download icon overlay when not yet
-                    cached on disk (native only); progress ring while downloading. */}
-                <View style={{ width: 44, height: 52, borderRadius: 8, backgroundColor: fileType.color, alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
-                  <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 0.3, opacity: (fileIsDownloading || (!fileIsLocal && Platform.OS !== 'web')) ? 0.35 : 1 }}>{fileType.label}</Text>
+                    cached on disk (native only); progress ring while downloading.
+                    [WAVE 73 2026-05-21] Adds a type-specific SVG glyph above
+                    the text label so the badge reads as a real document icon
+                    (note-lines for DOC, spreadsheet grid for XLS, slide deck
+                    for PPT, archive for ZIP, page-with-creases for PDF) and
+                    not just a colored rectangle with a 3-letter label. */}
+                <View style={{ width: 44, height: 52, borderRadius: 8, backgroundColor: fileType.color, alignItems: 'center', justifyContent: 'center', position: 'relative', paddingTop: 8 }}>
+                  {!(fileIsDownloading || (!fileIsLocal && Platform.OS !== 'web')) && (() => {
+                    const glyphColor = 'rgba(255,255,255,0.85)';
+                    if (fileExt === 'pdf') {
+                      return (
+                        <Svg width={16} height={16} viewBox="0 0 24 24"><Path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M9 13h6 M9 17h4" stroke={glyphColor} strokeWidth={1.8} fill="none" strokeLinecap="round" strokeLinejoin="round" /></Svg>
+                      );
+                    }
+                    if (fileExt === 'doc' || fileExt === 'docx' || fileExt === 'txt') {
+                      return (
+                        <Svg width={16} height={16} viewBox="0 0 24 24"><Path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M8 12h8 M8 16h8 M8 8h2" stroke={glyphColor} strokeWidth={1.8} fill="none" strokeLinecap="round" strokeLinejoin="round" /></Svg>
+                      );
+                    }
+                    if (fileExt === 'xls' || fileExt === 'xlsx' || fileExt === 'csv') {
+                      return (
+                        <Svg width={16} height={16} viewBox="0 0 24 24"><Path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6 M4 13h16 M9 9v13 M14 9v13" stroke={glyphColor} strokeWidth={1.8} fill="none" strokeLinecap="round" strokeLinejoin="round" /></Svg>
+                      );
+                    }
+                    if (fileExt === 'ppt' || fileExt === 'pptx') {
+                      return (
+                        <Svg width={16} height={16} viewBox="0 0 24 24"><Path d="M3 4h18v12H3z M3 4v12 M21 4v12 M3 4h18 M12 16v4 M9 20h6" stroke={glyphColor} strokeWidth={1.8} fill="none" strokeLinecap="round" strokeLinejoin="round" /></Svg>
+                      );
+                    }
+                    if (fileExt === 'zip' || fileExt === 'rar' || fileExt === '7z') {
+                      return (
+                        <Svg width={16} height={16} viewBox="0 0 24 24"><Path d="M21 8v13a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8 M1 3h22v5H1z M10 12h4 M10 16h4 M10 20h4" stroke={glyphColor} strokeWidth={1.8} fill="none" strokeLinecap="round" strokeLinejoin="round" /></Svg>
+                      );
+                    }
+                    // Generic doc page glyph for unknown extensions.
+                    return (
+                      <Svg width={16} height={16} viewBox="0 0 24 24"><Path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2v6h6" stroke={glyphColor} strokeWidth={1.8} fill="none" strokeLinecap="round" strokeLinejoin="round" /></Svg>
+                    );
+                  })()}
+                  <Text style={{ color: '#fff', fontSize: 10.5, fontWeight: '800', letterSpacing: 0.3, marginTop: 3, opacity: (fileIsDownloading || (!fileIsLocal && Platform.OS !== 'web')) ? 0.35 : 1 }}>{fileType.label}</Text>
                   {/* Folded corner */}
                   <View style={{ position: 'absolute', top: 0, right: 0, width: 0, height: 0, borderStyle: 'solid', borderTopWidth: 8, borderTopColor: 'rgba(255,255,255,0.35)', borderLeftWidth: 8, borderLeftColor: 'transparent' }} />
                   {fileIsDownloading ? (

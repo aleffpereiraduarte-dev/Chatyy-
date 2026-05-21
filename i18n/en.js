@@ -6605,6 +6605,16 @@ export default {
   'viewer.videoLabel': 'Video',
   'viewer.fileLabel': 'File',
   'viewer.yesterday': 'yesterday',
+  // WAVE 73 — video + file viewer InfoSheet keys
+  'viewer.duration': 'Duration',
+  'viewer.resolution': 'Resolution',
+  'viewer.codec': 'Codec',
+  'viewer.mime': 'Type',
+  'viewer.fileType': 'Format',
+  'viewer.speed': 'Speed',
+  'viewer.pip': 'Picture-in-Picture',
+  'viewer.fullscreen': 'Fullscreen',
+  'viewer.openExternal': 'Open in…',
 
   'status.saveToHighlight': 'Save to highlights',
   'status.highlights': 'Highlights',

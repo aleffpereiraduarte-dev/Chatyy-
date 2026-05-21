@@ -6686,6 +6686,17 @@ export default {
   'viewer.videoLabel': 'Vídeo',
   'viewer.fileLabel': 'Arquivo',
   'viewer.yesterday': 'ontem',
+  // WAVE 73 — extra detalhes pra viewer de vídeo e arquivo (InfoSheet
+  // expandido + ações futuras como Picture-in-Picture / abrir externo).
+  'viewer.duration': 'Duração',
+  'viewer.resolution': 'Resolução',
+  'viewer.codec': 'Codec',
+  'viewer.mime': 'Tipo',
+  'viewer.fileType': 'Formato',
+  'viewer.speed': 'Velocidade',
+  'viewer.pip': 'Picture-in-Picture',
+  'viewer.fullscreen': 'Tela cheia',
+  'viewer.openExternal': 'Abrir em…',
 
   // Highlights (Stories permanentes salvos no perfil)
   'status.saveToHighlight': 'Salvar em destaques',
