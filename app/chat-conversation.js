@@ -4750,6 +4750,24 @@ function VideoThumbImage({ url, thumbnailUrl, posterUrl, videoThumb, imageVarian
     if (imageVariantsThumb) out.push(abs(imageVariantsThumb));
     if (url) {
       out.push(abs(url) + '.thumb.jpg');
+      // R2/CDN fallback: when the R2 push of the .thumb.jpg failed (or
+      // hasn't landed yet — async pipeline), media.chatyy.com.br returns
+      // 404 and the bubble shows the black play-button placeholder. The
+      // PHP backend always writes the thumbnail to local disk first under
+      // /data/chat-files/...mp4.thumb.jpg, so hitting chatyy.com.br
+      // (origin nginx, not the CDN) recovers the poster. Path is the
+      // same — only the host changes.
+      try {
+        const u = String(url);
+        // Only pure path → prepend origin (skip http URLs that already
+        // include scheme since abs() handled those).
+        if (u && !u.startsWith('http') && !u.startsWith('data:') && !u.startsWith('blob:')) {
+          out.push(`https://chatyy.com.br${u.startsWith('/') ? '' : '/'}${u}.thumb.jpg`);
+        } else if (u.startsWith('https://media.chatyy.com.br/')) {
+          const path = u.replace('https://media.chatyy.com.br', '');
+          out.push(`https://chatyy.com.br${path}.thumb.jpg`);
+        }
+      } catch {}
     }
     // Inline base64 (thumb_b64) as last resort — used for very old
     // messages or when remote .thumb.jpg 404s. Doesn't need network.
