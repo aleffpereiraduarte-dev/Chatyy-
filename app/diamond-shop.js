@@ -11,7 +11,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator,
-  Platform, StatusBar, Alert, Linking, Animated, Easing,
+  Platform, StatusBar, Alert, Linking, Animated, Easing, AppState,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -71,18 +71,45 @@ export default function DiamondShopScreen() {
     }
   }, []);
 
+  // Refresh balance helper — used on mount and on AppState resume
+  // (so coming back from the Stripe web checkout reflects the credit).
+  const refreshBalance = useCallback(async () => {
+    try {
+      const r = await api.walletBalance?.();
+      if (r?.success && r.data) {
+        setBalance(Number(r.data.diamond_balance) || 0);
+      }
+    } catch {}
+  }, []);
+
   useEffect(() => {
     let alive = true;
     (async () => {
-      try {
-        const r = await api.walletBalance?.();
-        if (alive && r?.success && r.data) {
-          setBalance(Number(r.data.diamond_balance) || 0);
-        }
-      } catch {}
+      await refreshBalance();
       if (alive) setLoadingBal(false);
     })();
     return () => { alive = false; };
+  }, [refreshBalance]);
+
+  // WAVE 43E (2026-05-21) — when the user returns from the Stripe web
+  // checkout (in Safari/Chrome), re-poll the wallet so the new balance
+  // shows up without needing a manual pull-to-refresh.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refreshBalance();
+    });
+    return () => { try { sub.remove(); } catch {} };
+  }, [refreshBalance]);
+
+  const openWebCheckout = useCallback((sku) => {
+    // chatyy.com.br/comprar-diamantes hosts the Stripe Elements page.
+    // iOS App Store 3.1.1 forbids charging digital goods via card
+    // INSIDE the app — but a web link is fine. Android tags along on
+    // the same flow for now (a native Stripe Payment Sheet integration
+    // can ship later — Phase 2 from WAVE 43E plan).
+    const base = (typeof getBaseUrl === 'function' && getBaseUrl()) || 'https://chatyy.com.br';
+    const url = `${base.replace(/\/$/, '')}/comprar-diamantes${sku ? `?sku=${encodeURIComponent(sku)}` : ''}`;
+    try { Linking.openURL(url); } catch {}
   }, []);
 
   const packs = useMemo(() => DIAMOND_PACKS, []);
@@ -224,6 +251,34 @@ export default function DiamondShopScreen() {
             )}
           </View>
         </View>
+
+        {/* WAVE 43E (2026-05-21) — credit card via web (Stripe).
+            Sits between hero and packs so it's discoverable but not
+            forced on users who prefer in-app IAP. iOS opens Safari
+            (App Review 3.1.1 compliance); Android can do the same
+            until native Payment Sheet ships. */}
+        <TouchableOpacity
+          onPress={() => openWebCheckout(null)}
+          style={[styles.ccCta, {
+            borderColor: isDark ? 'rgba(168,85,247,0.45)' : 'rgba(168,85,247,0.35)',
+            backgroundColor: isDark ? 'rgba(168,85,247,0.10)' : 'rgba(168,85,247,0.06)',
+          }]}
+          accessibilityRole="button"
+          accessibilityLabel={t('diamondShop.payWithCard') || 'Comprar com cartão de crédito'}
+        >
+          <View style={styles.ccCtaIcon}>
+            <Text style={styles.ccCtaIconText}>💳</Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.ccCtaTitle, { color: colors.text }]}>
+              {t('diamondShop.payWithCard') || 'Comprar com cartão de crédito'}
+            </Text>
+            <Text style={[styles.ccCtaSub, { color: colors.textSecondary }]}>
+              {t('diamondShop.payWithCardSub') || 'Pagamento seguro via web. Cartão fica salvo para próximas compras.'}
+            </Text>
+          </View>
+          <Text style={{ color: '#A855F7', fontSize: 22, fontWeight: '700' }}>›</Text>
+        </TouchableOpacity>
 
         {/* Packs */}
         {packs.map(p => {
@@ -394,4 +449,20 @@ const styles = StyleSheet.create({
 
   historyLink: { marginTop: 18, paddingVertical: 12, alignItems: 'center' },
   historyLinkText: { fontSize: 14, fontWeight: '700' },
+
+  // WAVE 43E (2026-05-21) — credit card CTA card.
+  ccCta: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    paddingVertical: 14, paddingHorizontal: 14,
+    borderRadius: 14, borderWidth: 1.5,
+    marginBottom: 16,
+  },
+  ccCtaIcon: {
+    width: 42, height: 42, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(168,85,247,0.20)',
+  },
+  ccCtaIconText: { fontSize: 22 },
+  ccCtaTitle: { fontSize: 15, fontWeight: '700' },
+  ccCtaSub: { fontSize: 12, marginTop: 2, lineHeight: 16 },
 });

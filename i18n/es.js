@@ -4725,6 +4725,9 @@ export default {
   'diamondShop.bestValue': 'Mejor valor',
   'diamondShop.viewHistory': 'Ver historial y enviar diamantes',
   'diamondShop.wallet': 'Cartera',
+  // WAVE 43E (2026-05-21) — Stripe credit-card purchase via web.
+  'diamondShop.payWithCard': 'Pagar con tarjeta de crédito',
+  'diamondShop.payWithCardSub': 'Pago seguro vía web. La tarjeta se guarda para próximas compras.',
   // 2026-05-18 — Send-diamond peer-to-peer + wallet history strings.
   'wallet.history': 'Historial',
   'wallet.historyEmpty': 'Aún no hay transacciones. Compra diamantes para empezar.',

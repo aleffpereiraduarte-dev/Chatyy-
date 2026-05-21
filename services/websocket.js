@@ -231,6 +231,17 @@ class MailWebSocket {
         if (nextState === 'inactive') return;
         if (nextState === 'active') {
           this._hidden = false;
+          // [WAVE 43G 2026-05-21] Foreground = good moment to revive a
+          // tombstoned socket. If destroyed=true (8+ auth_error outside
+          // grace), the legacy AppState handler below would skip both
+          // branches (readyState!==OPEN AND token-but-destroyed) and the
+          // user would stay disconnected. resurrect() is a no-op when
+          // the socket is healthy so we can call it unconditionally
+          // before the legacy checks.
+          if (this.destroyed) {
+            try { this.resurrect('appstate_active'); } catch {}
+            return;
+          }
           // [STAGE-E 2026-05-20 GAP#1] Re-publish presence=online when
           // returning to foreground. Pairs with the offline publish
           // on background transition.
@@ -507,6 +518,8 @@ class MailWebSocket {
     this.reconnectAttempt = 0;
     this._reconnectCount = 0;
     this._droppedCount = 0;
+    this._authFailStreak = 0;
+    this._authErrorBackoff = 0;
     this._seenMsgIds.clear();
     this._seenMsgIdQueue = [];
     if (fullWipe) {
@@ -517,6 +530,61 @@ class MailWebSocket {
       this.userId = null;
       this.token = null;
     }
+  }
+
+  // [WAVE 43G 2026-05-21] Self-heal entry point for the "silent logout"
+  // bug. When the WS hits destroyed=true (8+ auth_error strikes outside
+  // grace, or any other tombstone path) BUT the chatyy:authFailure was
+  // refused by the grace/in-call/HTTP-confirm guards in AuthContext, the
+  // socket would sit dead forever — UI stayed "logged in" but messages
+  // stopped arriving until the user manually did logout+login. The
+  // MailContext WS effect only fires on user.email change, so a
+  // tombstoned-then-refused state has no automatic recovery.
+  //
+  // resurrect() is idempotent and safe to call from anywhere:
+  //   - AppState 'active' watchdog (foreground transition)
+  //   - AuthContext after HTTP check_auth=200 refuses an auth-failure
+  //   - Periodic self-heal interval (every 60s while user is logged in)
+  //
+  // It pulls the freshest token from api.js, clears the tombstone, and
+  // reconnects. Returns true if a reconnect was kicked off, false if
+  // the socket was already healthy or no token is available.
+  resurrect(reason = 'unknown') {
+    try {
+      const apiMod = require('./api');
+      const token = apiMod.getAuthToken?.();
+      if (!token) return false;
+      // Socket is alive and authenticated → nothing to do.
+      if (this.connected && this.authenticated && !this.destroyed) {
+        return false;
+      }
+      try { console.warn('[WS] resurrect() — reason=' + reason + ' destroyed=' + this.destroyed + ' connected=' + this.connected + ' authed=' + this.authenticated); } catch {}
+      try { this._cleanup(); } catch {}
+      this.destroyed = false;
+      this.reconnectAttempt = 0;
+      this._authFailStreak = 0;
+      this._authErrorBackoff = 0;
+      this.token = token;
+      this.connect(token);
+      return true;
+    } catch (e) {
+      try { console.warn('[WS] resurrect() failed:', e?.message); } catch {}
+      return false;
+    }
+  }
+
+  // Cheap state inspector for the resurrect watchdog. Returns true if the
+  // socket is in a recoverable-by-resurrect state (dead but should be live).
+  isZombie() {
+    if (this.destroyed) return true;
+    if (!this.ws) return true;
+    if (this.ws.readyState !== WebSocket.OPEN) return true;
+    if (!this.authenticated) return true;
+    // Long ping silence — the ping watchdog should have caught this, but if
+    // it didn't (timer cleared by a botched AppState cycle, etc.) treat the
+    // socket as zombie.
+    if (this.lastPongTime && (Date.now() - this.lastPongTime) > (PING_TIMEOUT * 3)) return true;
+    return false;
   }
 
   _cleanup() {

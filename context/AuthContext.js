@@ -1333,6 +1333,11 @@ export function AuthProvider({ children }) {
             source: 'authcontext_signal',
           });
           api.resetAuthFailureSignal?.();
+          // [WAVE 43G 2026-05-21] Revive WS if it tombstoned itself.
+          try {
+            const ws = require('../services/websocket').default;
+            if (ws?.resurrect) ws.resurrect('authcontext_refused_during_call');
+          } catch {}
           console.warn('[auth] Auth-failure signal during active call — refusing logout (#1165)');
           return;
         }
@@ -1348,6 +1353,15 @@ export function AuthProvider({ children }) {
             source: 'authcontext_signal',
           });
           api.resetAuthFailureSignal?.();
+          // [WAVE 43G 2026-05-21] Revive WS if it tombstoned itself. The
+          // 90-day grace window is the most common path through this
+          // handler — without resurrect, every silent token rejection
+          // outside an active call leaves the WS dead. This is the
+          // dominant cause of the "logado mas msgs não chegam" report.
+          try {
+            const ws = require('../services/websocket').default;
+            if (ws?.resurrect) ws.resurrect('authcontext_refused_within_grace');
+          } catch {}
           console.warn('[auth] Auth-failure signal received but token <90d old — refusing logout');
           return;
         }
@@ -1372,6 +1386,13 @@ export function AuthProvider({ children }) {
           try {
             const ws = require('../services/websocket').default;
             if (ws) ws._authFailStreak = 0;
+            // [WAVE 43G 2026-05-21] HTTP just confirmed the token is alive —
+            // if the WS tombstoned itself (destroyed=true) on the way here,
+            // resurrect it now. Without this, AuthContext refused logout but
+            // the user is still stuck on a dead WS until next foreground.
+            if (ws && typeof ws.resurrect === 'function') {
+              ws.resurrect('authcontext_http_confirmed');
+            }
           } catch {}
           console.warn('[auth] Auth-failure signal but HTTP check_auth=200 — refusing logout (#1165)');
           return;

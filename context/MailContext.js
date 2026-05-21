@@ -859,7 +859,29 @@ export function MailProvider({ children }) {
     // No cleanup — the socket should outlive provider re-renders.
   }, [user?.email]);
 
-  // No watchdog needed — websocket.js has built-in reconnect with exponential backoff
+  // [WAVE 43G 2026-05-21] Zombie WS watchdog. Auto-reconnect handles the
+  // common case (close → backoff → connect), but does NOT cover:
+  //   - destroyed=true tombstone from 8 auth_error strikes (outside grace
+  //     window the chatyy:authFailure handler refuses logout but the WS
+  //     never wakes up again)
+  //   - readyState===OPEN zombie sockets that the ping watchdog missed
+  //     because the timer was cleared by a botched AppState cycle
+  // We poll every 30s and call ws.resurrect() if isZombie() returns true.
+  // resurrect() is a no-op when the socket is healthy so the overhead is
+  // a single property read every 30s while logged in. Bug report:
+  // "me desloga do nada parece qe eu to logado mas as mensagens para de
+  //  chegar... tenho que deslogar e logar denovo".
+  useEffect(() => {
+    if (!user?.email || !mailWs) return;
+    const iv = setInterval(() => {
+      try {
+        if (typeof mailWs.isZombie === 'function' && mailWs.isZombie()) {
+          mailWs.resurrect?.('mailcontext_watchdog_30s');
+        }
+      } catch {}
+    }, 30000);
+    return () => clearInterval(iv);
+  }, [user?.email]);
 
   // Adaptive polling: silent background refresh — no spinner, no scroll jump
   // Real-time new-email push — Rust email-api runs IMAP IDLE per user and
