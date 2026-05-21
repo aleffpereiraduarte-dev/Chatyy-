@@ -17591,6 +17591,14 @@ export default function ChatConversationScreen() {
                     priority="high"
                   />
                 )}
+                {/* [WAVE 76 2026-05-21] thumbUri é o REAL thumb (200px JPEG do
+                    image_variants.thumb backend) — render NÍTIDO (sem blurRadius).
+                    User reportou: "ta mostrando a foto toda borrada de thumb
+                    deveria mostrar ela menor como era antes". WAVE 58 estava
+                    aplicando blurRadius=8 no thumb legítimo, fazendo parecer
+                    blur fullsize. Agora thumb pequeno é mostrado clean; só
+                    blurhash/lqip (placeholders nano) ficam blurred porque
+                    são por natureza ultra-pequenos. */}
                 {!msg.blurhash && !lqipUri && thumbUri && !msg._localUri && (
                   <ExpoImage
                     key={`thumb-${msg.id}-${thumbUri.split('?')[0]}`}
@@ -17598,7 +17606,6 @@ export default function ChatConversationScreen() {
                     style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', zIndex: 1 }}
                     contentFit="cover"
                     cachePolicy="memory-disk"
-                    blurRadius={8}
                     priority="high"
                     onError={() => {
                       if (__DEV__) console.warn('[THUMB-TRACE]', msg.id, 'thumbUri onError', thumbUri);
