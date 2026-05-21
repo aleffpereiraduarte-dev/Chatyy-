@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, memo } from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { getAvatarUrlForEmail } from '../services/api';
-import { IconSparkles } from './Icons';
 import ChatyyOneAvatar from './ChatyyOneAvatar';
 // Disk-persistent avatar cache (documentDirectory/avatar-saved). Survives
 // OS cache evictions so a contact's profile photo paints from disk on

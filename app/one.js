@@ -3352,11 +3352,11 @@ export default function OneScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={st.emptyCenter}>
-          {/* SVG sparkle illustration — 3-point composition (big sparkle +
-              two accents). Replaces the previous solid circle behind a
-              single icon for a more illustrative mark. */}
+          {/* WAVE 46 (2026-05-21): real app icon avatar w/ blinking eyes
+              replaces the abstract sparkle composition. Reads more like a
+              mascot greeting the user on an empty canvas. */}
           <View style={{ marginBottom: 18 }}>
-            <SparkleIllustration size={96} isDark={isDark} />
+            <ChatyyOneAvatar size={96} />
           </View>
           {/* Title — "Como posso ajudar?" (i18n). Personalized greeting still
               shown on top as a small eyebrow when we know the first name. */}
