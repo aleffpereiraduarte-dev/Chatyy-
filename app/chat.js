@@ -722,16 +722,27 @@ function ChatHub() {
     return null;
   };
 
-  // Mobile bottom tab bar indicator
+  // Mobile bottom tab bar indicator — inputRange must match outputRange
+  // length, and outputRange follows TAB_KEYS which is dynamic (3 kids/desktop, 4 full).
   const indicatorTranslateX = indicatorAnim.interpolate({
-    inputRange: [0, 1, 2, 3, 4],
+    inputRange: TAB_KEYS.map((_, i) => i),
     outputRange: TAB_KEYS.map((_, i) => (i * tabWidth) + (tabWidth / 2) - 18),
   });
 
-  const indicatorScale = indicatorAnim.interpolate({
-    inputRange: [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4],
-    outputRange: [1, 1.15, 1, 1.15, 1, 1.15, 1, 1.15, 1],
-  });
+  const indicatorScale = (() => {
+    const n = TAB_KEYS.length;
+    const inputRange = [];
+    const outputRange = [];
+    for (let i = 0; i < n; i++) {
+      inputRange.push(i);
+      outputRange.push(1);
+      if (i < n - 1) {
+        inputRange.push(i + 0.5);
+        outputRange.push(1.15);
+      }
+    }
+    return indicatorAnim.interpolate({ inputRange, outputRange });
+  })();
 
   const searchHeight = searchAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 52] });
   const searchOpacity = searchAnim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 0, 1] });
