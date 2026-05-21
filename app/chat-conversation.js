@@ -17523,7 +17523,23 @@ export default function ChatConversationScreen() {
               delayLongPress={350}
               activeOpacity={0.9}
               style={{ marginHorizontal: -13, marginTop: -8, marginBottom: hasCaption ? 0 : -8 }}>
-              <View style={{ overflow: 'hidden', width: imgBoxW, height: imgBoxH }}>
+              <View style={{ overflow: 'hidden', width: imgBoxW, height: imgBoxH, backgroundColor: (() => {
+                // [WAVE 77 2026-05-21] HSL base painted on the WRAPPER itself so
+                // that even when every internal layer is transparent (e.g. during
+                // ExpoImage's cross-dissolve transition on Android where the
+                // placeholder slot is undefined for legacy msgs lacking blurhash/
+                // lqip), the bubble NEVER renders as empty/transparent. User
+                // reported: "fica borrada depois fica sem fundo" — second state
+                // was the 280ms cross-dissolve window where expo-image clears the
+                // slot and the only HSL layer (z=0) sat at the SAME flow level as
+                // ChatMedia, so on Android paint order ChatMedia could blank it.
+                // Putting bg on the wrapper itself = HSL guaranteed at the
+                // bottommost compositing layer, always.
+                const u = String(msg.file_url || msg.id || '');
+                let h = 0;
+                for (let i = 0; i < u.length; i++) h = (h * 31 + u.charCodeAt(i)) & 0xffffffff;
+                return `hsl(${Math.abs(h) % 360}, 32%, 78%)`;
+              })() }}>
                 {/* [WAVE 45 2026-05-21] Photo thumb sumindo Android — root cause.
                     `ExpoImage` was aliased to react-native's <Image> which silently
                     ignored `source={{ blurhash }}` and the expo-image-specific props
@@ -17591,14 +17607,19 @@ export default function ChatConversationScreen() {
                     priority="high"
                   />
                 )}
-                {/* [WAVE 76 2026-05-21] thumbUri é o REAL thumb (200px JPEG do
-                    image_variants.thumb backend) — render NÍTIDO (sem blurRadius).
-                    User reportou: "ta mostrando a foto toda borrada de thumb
-                    deveria mostrar ela menor como era antes". WAVE 58 estava
-                    aplicando blurRadius=8 no thumb legítimo, fazendo parecer
-                    blur fullsize. Agora thumb pequeno é mostrado clean; só
-                    blurhash/lqip (placeholders nano) ficam blurred porque
-                    são por natureza ultra-pequenos. */}
+                {/* [WAVE 77 2026-05-21] thumb 200px JPEG upscaled to ~280-320px
+                    bubble → visible pixelation/blocks on Android (looked "borrada"
+                    to user even sem blurRadius). Re-add small blurRadius=3 to
+                    SMOOTH upscaling artifacts (not heavy blur — just enough to
+                    hide JPEG block boundaries during the brief window before
+                    the full image paints). WAVE 76 went too far removing all
+                    blur — 200px → 320px contentFit:cover ALWAYS looks rough
+                    on Android's native scaler. blurRadius=3 = subtle smoothing,
+                    not "blur backdrop" feel. Also: when ChatMedia's main image
+                    paints on top (z=3 vs thumb z=1), thumb is hidden anyway.
+                    onError now sets a state flag so we KEEP the layer painted
+                    (showing transparent over HSL) instead of disappearing —
+                    fallback chain: blurhash → lqip → thumb → HSL wrapper bg. */}
                 {!msg.blurhash && !lqipUri && thumbUri && !msg._localUri && (
                   <ExpoImage
                     key={`thumb-${msg.id}-${thumbUri.split('?')[0]}`}
@@ -17606,7 +17627,9 @@ export default function ChatConversationScreen() {
                     style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', zIndex: 1 }}
                     contentFit="cover"
                     cachePolicy="memory-disk"
+                    blurRadius={3}
                     priority="high"
+                    transition={0}
                     onError={() => {
                       if (__DEV__) console.warn('[THUMB-TRACE]', msg.id, 'thumbUri onError', thumbUri);
                     }}
@@ -17697,7 +17720,18 @@ export default function ChatConversationScreen() {
                   priority="high"
                   blurRadius={msg._blurred ? 30 : (imgUploading ? 2 : 0)}
                   recyclingKey={`img-${msg.id}`}
-                  placeholder={msg.blurhash ? { blurhash: msg.blurhash } : (lqipUri ? { uri: lqipUri } : undefined)}
+                  // [WAVE 77 2026-05-21] Fallback chain extended to include
+                  // thumbUri. Before: blurhash → lqip → undefined. For legacy
+                  // photos that only have image_variants.thumb (no blurhash, no
+                  // thumb_b64 lqip), placeholder was undefined → expo-image's
+                  // 280ms cross-dissolve faded from EMPTY → image, leaving the
+                  // user with a transparent slot ("sem fundo") during transition
+                  // because the wrapper HSL was at z=0 and ChatMedia paints in
+                  // normal flow at z=3 (Android compositing can briefly clear
+                  // the slot mid-dissolve). Now thumb is the placeholder when
+                  // nothing better exists → expo-image dissolves THUMB → full
+                  // image = visible the entire time.
+                  placeholder={msg.blurhash ? { blurhash: msg.blurhash } : (lqipUri ? { uri: lqipUri } : (thumbUri ? { uri: thumbUri } : undefined))}
                   placeholderContentFit="cover"
                   // WhatsApp-style download progress ring. Skip tracking for
                   // local files (they load instantly) and for upload-in-flight

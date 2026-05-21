@@ -162,9 +162,15 @@ export default function ChatMedia({
   }, [uri, messageId, redownloading]);
 
   if (!localUri) {
+    // [WAVE 77 2026-05-21] Transparent bg when localUri is missing so the
+    // parent wrapper's HSL backdrop shines through. Previously the opaque
+    // placeholderColor (rgba(0,0,0,0.06)) sat on TOP of the parent's HSL +
+    // thumb layers, looking like "sem fundo" (washed-out empty box) on
+    // Android during the brief sync-index miss window for fresh chats.
+    // spinner only shows when there is literally no other layer painted.
     return (
-      <View style={[{ backgroundColor: placeholderColor, alignItems: 'center', justifyContent: 'center' }, style]}>
-        <ActivityIndicator size="small" color="#999" />
+      <View style={[{ backgroundColor: 'transparent', alignItems: 'center', justifyContent: 'center' }, style]}>
+        <ActivityIndicator size="small" color="rgba(255,255,255,0.85)" />
       </View>
     );
   }

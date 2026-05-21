@@ -69,13 +69,76 @@ export const PRODUCT_IDS = [
 // Google Play Console (Managed product / Consumable). Backend pack table
 // in /var/www/mail/api/chat.php (case 'wallet_buy_diamonds') is the source
 // of truth for diamond credit math; this list is just StoreKit metadata.
+//
+// WAVE 75 (2026-05-21) — App Store Connect actually registered these as
+// `chatyy_diamonds_*` (plural). We keep the legacy `chatyy_diamond_*` IDs
+// in DIAMOND_PACKS for backward compatibility on existing builds, but
+// the production SKU list below is what gets sent to fetchProducts().
 export const DIAMOND_PACK_SKUS = [
-  'chatyy_diamond_100',
-  'chatyy_diamond_500',
-  'chatyy_diamond_1500',
-  'chatyy_diamond_5000',
-  'chatyy_diamond_15000',
+  // Production SKUs (ASC reg'd 2026-05-18, MISSING_METADATA pending screenshot)
+  'chatyy_diamonds_100',
+  'chatyy_diamonds_550',
+  'chatyy_diamonds_1700',
+  'chatyy_diamonds_6000',
+  'chatyy_diamonds_19500',
+  // Google Play SKUs (chatyy_topup_*) — created via /tmp/gplay_create_v2.py
+  // when Payments profile unblocks. Same diamond credit math, separate IDs.
+  'chatyy_topup_5',
+  'chatyy_topup_20',
+  'chatyy_topup_50',
+  'chatyy_topup_150',
+  'chatyy_topup_400',
 ];
+
+// WAVE 75 (2026-05-21) — Storage subscription SKUs.
+// iOS uses com.onemundo.mail.storage_* (ASC bundle-prefixed pattern, mirrors
+// the existing storage_500/1000/2000 monthlies that are already approved).
+// Android uses chatyy_storage_* + basePlanId 'monthly'/'annual' from
+// Play Console (created via gplay_create_v2.py).
+export const STORAGE_SUB_SKUS = [
+  // iOS
+  'com.onemundo.mail.storage_100',
+  'com.onemundo.mail.storage_100_annual',
+  'com.onemundo.mail.storage_500',
+  'com.onemundo.mail.storage_500_annual',
+  'com.onemundo.mail.storage_1000',
+  'com.onemundo.mail.storage_1000_annual',
+  'com.onemundo.mail.storage_5000',
+  'com.onemundo.mail.storage_5000_annual',
+  // Android (Play Console base-plan format collapses period into the SKU)
+  'chatyy_storage_100',
+  'chatyy_storage_500',
+  'chatyy_storage_1tb',
+  'chatyy_storage_5tb',
+];
+
+// Static fallback catalog for rendering the StorageShopSheet before
+// fetchProducts() lands. Keep in sync with /var/www/mail/api/chat.php
+// chat_storage_tiers response — server is the source of truth.
+export const STORAGE_TIERS = [
+  { id: '100gb', gb: 100,  priceMonthly: 4.99,  priceAnnual: 49.99,
+    skuMonthlyApple:  'com.onemundo.mail.storage_100',
+    skuAnnualApple:   'com.onemundo.mail.storage_100_annual',
+    skuMonthlyGoogle: 'chatyy_storage_100',  basePlanMonthlyGoogle: 'monthly',
+    skuAnnualGoogle:  'chatyy_storage_100',  basePlanAnnualGoogle:  'annual' },
+  { id: '500gb', gb: 500,  priceMonthly: 14.99, priceAnnual: 149.99,
+    skuMonthlyApple:  'com.onemundo.mail.storage_500',
+    skuAnnualApple:   'com.onemundo.mail.storage_500_annual',
+    skuMonthlyGoogle: 'chatyy_storage_500',  basePlanMonthlyGoogle: 'monthly',
+    skuAnnualGoogle:  'chatyy_storage_500',  basePlanAnnualGoogle:  'annual' },
+  { id: '1tb',   gb: 1024, priceMonthly: 24.99, priceAnnual: 249.99,
+    skuMonthlyApple:  'com.onemundo.mail.storage_1000',
+    skuAnnualApple:   'com.onemundo.mail.storage_1000_annual',
+    skuMonthlyGoogle: 'chatyy_storage_1tb',  basePlanMonthlyGoogle: 'monthly',
+    skuAnnualGoogle:  'chatyy_storage_1tb',  basePlanAnnualGoogle:  'annual' },
+  { id: '5tb',   gb: 5120, priceMonthly: 89.99, priceAnnual: 899.99,
+    skuMonthlyApple:  'com.onemundo.mail.storage_5000',
+    skuAnnualApple:   'com.onemundo.mail.storage_5000_annual',
+    skuMonthlyGoogle: 'chatyy_storage_5tb',  basePlanMonthlyGoogle: 'monthly',
+    skuAnnualGoogle:  'chatyy_storage_5tb',  basePlanAnnualGoogle:  'annual' },
+];
+
+export const STORAGE_FREE_GB = 50;
 
 // Catalog used by DiamondTopUpSheet to render the grid before the StoreKit
 // fetchProducts() response lands. Keep in sync with the server catalog —
@@ -91,6 +154,8 @@ export const DIAMOND_PACKS = [
 let _available = false;
 let _products = [];
 let _diamondProducts = []; // type:'inapp' consumable diamond packs
+let _storageProducts = []; // type:'subs' storage tier subscriptions (WAVE 75)
+let _pendingStorageCallback = null; // resolved by purchase listener for storage flows
 let _purchaseSub = null;
 let _errorSub = null;
 let _initPromise = null; // guard against concurrent initIAP() calls
