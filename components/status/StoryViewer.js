@@ -1295,11 +1295,19 @@ export default function StoryViewer({
     // for both photo + video status. Painting a blurred thumb behind the
     // full image kills the 1-2s black gap users reported while expo-image /
     // network finished the full payload. Falls back gracefully on older
-    // statuses without thumbnail_url (the wrapper's #0f172a tint reads as
-    // a soft slate, not pitch black).
+    // statuses without thumbnail_url (the wrapper's #1a0a2e tint reads as
+    // a soft brand-purple, not pitch black).
+    //
+    // [WAVE 99 2026-05-21] When backend didn't ship a thumbnail_url for an
+    // image status (most image rows, since chat.php only generates thumbs
+    // for video — line 8972), fall back to the media_url ITSELF blurred so
+    // the blackness gap before/around expo-image's fade-in window is
+    // covered by the same image content rather than a dark void. expo-image
+    // dedupes by URL so this is essentially free (same bytes used by the
+    // sharp foreground load).
     const imagePoster = cur.thumbnail_url
       ? (cur.thumbnail_url.startsWith('http') ? cur.thumbnail_url : `${BASE_URL}${cur.thumbnail_url}`)
-      : '';
+      : mediaUrl;
     const ImagePosterLayer = imagePoster ? (
       WEB ? (
         <img
@@ -1319,6 +1327,60 @@ export default function StoryViewer({
         />
       )
     ) : null;
+    // [WAVE 99 2026-05-21] Error fallback chip — replaces the silent-black
+    // canvas when expo-image / RN Image / <img> fails to decode. Surfaces
+    // the real reason in dev logs + offers a Retry tap that bumps the
+    // imageRetry counter — that remounts the underlying image with a fresh
+    // cache key (cachePolicy="none" on retry) so a poisoned disk cache entry
+    // can't soft-brick the viewer forever. Branded #1a0a2e backdrop so the
+    // canvas reads as "Stories" not "app crashed". Falls through to next
+    // story via the existing auto-advance timer so a single broken item
+    // doesn't dead-end the carousel.
+    if (imageError) {
+      return (
+        <View style={{ flex: 1, backgroundColor: '#1a0a2e', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
+          <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 38, marginBottom: 14 }}>⚠</Text>
+          <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 16, fontWeight: '700', textAlign: 'center' }}>
+            {t?.('status.imageUnavailable') || 'Imagem indisponível'}
+          </Text>
+          <Text style={{ marginTop: 6, color: 'rgba(255,255,255,0.55)', fontSize: 12, textAlign: 'center', paddingHorizontal: 12 }}>
+            {t?.('status.imageUnavailableHint') || 'Toque pra tentar de novo ou avance pra próxima.'}
+          </Text>
+          <TouchableOpacity
+            onPress={() => {
+              setImageError(false);
+              setImageRetry(r => r + 1);
+              imageFade.setValue(0);
+              Animated.timing(imageFade, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+            }}
+            style={{
+              marginTop: 18, paddingHorizontal: 22, paddingVertical: 10,
+              borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.16)',
+              borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)',
+            }}
+            accessibilityRole="button"
+          >
+            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>
+              {t?.('status.retry') || 'Tentar de novo'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    // On retry, bypass the (possibly poisoned) disk cache for one fetch so
+    // we don't loop on the bad entry. After a successful onLoad it'll be
+    // re-cached fresh.
+    const _imgCachePolicy = imageRetry > 0 ? 'none' : 'memory-disk';
+    // Brand-tinted backdrop replaces #0f172a slate. When expo-image fails
+    // but the safety-net imageFade forces opacity 1 anyway, the user at
+    // least sees a recognizable dark-purple "Stories canvas" — not a blank
+    // black void the user calls "preto puro".
+    const _wrapperBg = '#1a0a2e';
+    // Force-remount the inner image whenever URL or retry counter changes
+    // so React doesn't reuse a stale instance still tied to the old cache
+    // hit. expo-image internally dedupes by source.uri so the key= is the
+    // only escape hatch.
+    const _imgKey = `${mediaUrl}::${imageRetry}`;
     if (_ExpoImage && !WEB) {
       // Image fade-in: opacity ramps 0 → 1 once expo-image fires onLoad.
       // Native driver makes it free; transition prop alone gives a slight
@@ -1326,18 +1388,26 @@ export default function StoryViewer({
       // before any data has arrived. Poster sits underneath via absolute
       // positioning so the blurred thumb peeks while the full payload lands.
       return (
-        <View style={{ flex: 1, backgroundColor: '#0f172a' }}>
+        <View style={{ flex: 1, backgroundColor: _wrapperBg }}>
           {ImagePosterLayer}
           <Animated.View style={{ flex: 1, opacity: imageFade }}>
             <_ExpoImage
+              key={_imgKey}
               source={{ uri: mediaUrl }}
               style={{ width: '100%', height: '100%' }}
               contentFit="contain"
-              cachePolicy="memory-disk"
+              cachePolicy={_imgCachePolicy}
               priority="high"
               transition={120}
               onLoad={() => {
                 Animated.timing(imageFade, { toValue: 1, duration: 350, useNativeDriver: true }).start();
+              }}
+              onError={(e) => {
+                if (__DEV__) {
+                  try { console.warn('[STATUS-IMG-ERR]', mediaUrl, e?.nativeEvent?.error || e?.error || e); } catch {}
+                }
+                setImageError(true);
+                imageFade.setValue(1);
               }}
             />
           </Animated.View>
@@ -1346,21 +1416,40 @@ export default function StoryViewer({
     }
     return WEB
       ? (
-        <div style={{ position: 'relative', width: '100%', height: '100%', backgroundColor: '#0f172a' }}>
+        <div style={{ position: 'relative', width: '100%', height: '100%', backgroundColor: _wrapperBg }}>
           {ImagePosterLayer}
-          <img src={mediaUrl} alt="" style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain' }} />
+          <img
+            key={_imgKey}
+            src={mediaUrl}
+            alt=""
+            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain' }}
+            onError={() => {
+              if (typeof console !== 'undefined') {
+                try { console.warn('[STATUS-IMG-ERR-web]', mediaUrl); } catch {}
+              }
+              setImageError(true);
+            }}
+          />
         </div>
       )
       : (
-        <View style={{ flex: 1, backgroundColor: '#0f172a' }}>
+        <View style={{ flex: 1, backgroundColor: _wrapperBg }}>
           {ImagePosterLayer}
           <Animated.View style={{ flex: 1, opacity: imageFade }}>
             <Image
+              key={_imgKey}
               source={{ uri: mediaUrl }}
               style={{ width: '100%', height: '100%' }}
               resizeMode="contain"
               onLoad={() => {
                 Animated.timing(imageFade, { toValue: 1, duration: 350, useNativeDriver: true }).start();
+              }}
+              onError={(e) => {
+                if (__DEV__) {
+                  try { console.warn('[STATUS-IMG-ERR-rn]', mediaUrl, e?.nativeEvent?.error || e); } catch {}
+                }
+                setImageError(true);
+                imageFade.setValue(1);
               }}
             />
           </Animated.View>
