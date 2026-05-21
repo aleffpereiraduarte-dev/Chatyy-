@@ -1,0 +1,224 @@
+<?php
+/**
+ * VoIP Push — Send VoIP push notifications via APNs HTTP/2 + JWT auth.
+ * Triggers CallKit on iOS when a call comes in, even with the app closed.
+ *
+ * Auth: APNs Auth Key (.p8) — modern method (replaces .pem certs).
+ * The same .p8 works for both regular and VoIP topics.
+ *
+ * Required env vars (set in /etc/mail-api.env):
+ *   APNS_KEY_PATH      - path to .p8 file (e.g. /etc/apns_auth_key.p8)
+ *   APNS_KEY_ID        - the 10-char Key ID from Apple Developer
+ *   APNS_TEAM_ID       - your 10-char Team ID (e.g. XN9XN27QCE)
+ *   APNS_BUNDLE_ID     - app bundle (default: com.onemundo.mail)
+ *   APNS_USE_SANDBOX   - "1" for development builds, empty for production
+ *
+ * To get the .p8: Apple Developer → Certificates, IDs & Profiles → Keys → +
+ * → check "Apple Push Notifications service (APNs)" → Continue → Register.
+ * Download the .p8 (you can only download once!), upload to /etc/.
+ */
+
+if (!defined('APNS_TOKEN_TTL')) define('APNS_TOKEN_TTL', 50 * 60); // refresh JWT every 50 min (Apple rejects >60min)
+
+// PHP-FPM in chatyy-php-fpm doesn't auto-load /etc/mail-api.env, so we have
+// to read it ourselves before reading env vars. Same workaround email.php
+// uses for WEBMAIL_SESSION_KEY (see chatyy-prod note).
+function _apnsLoadEnv() {
+    static $loaded = false;
+    if ($loaded) return;
+    $loaded = true;
+    $envFile = '/etc/mail-api.env';
+    if (!is_readable($envFile)) return;
+    foreach (file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+        if ($line[0] === '#' || strpos($line, '=') === false) continue;
+        [$k, $v] = array_map('trim', explode('=', $line, 2));
+        if ($k === '' || strncmp($k, 'APNS_', 5) !== 0) continue;
+        // strip optional surrounding quotes
+        if (strlen($v) >= 2 && ($v[0] === '"' || $v[0] === "'") && substr($v, -1) === $v[0]) {
+            $v = substr($v, 1, -1);
+        }
+        if (getenv($k) === false || getenv($k) === '') {
+            putenv("$k=$v");
+        }
+    }
+}
+
+function _apnsConfig() {
+    static $cfg = null;
+    if ($cfg !== null) return $cfg;
+    _apnsLoadEnv();
+    $cfg = [
+        'key_path'   => getenv('APNS_KEY_PATH') ?: '/etc/apns_auth_key.p8',
+        'key_id'     => getenv('APNS_KEY_ID') ?: '',
+        'team_id'    => getenv('APNS_TEAM_ID') ?: 'XN9XN27QCE',
+        'bundle_id'  => getenv('APNS_BUNDLE_ID') ?: 'com.onemundo.mail',
+        'use_sandbox'=> !empty(getenv('APNS_USE_SANDBOX')),
+    ];
+    return $cfg;
+}
+
+/**
+ * Build (and cache) the APNs JWT bearer token.
+ * Apple rejects tokens older than 60min, so we refresh every 50min via APCu.
+ * Falls back to per-request generation if APCu isn't available.
+ */
+function _apnsJwt() {
+    $cfg = _apnsConfig();
+    if (empty($cfg['key_id']) || !file_exists($cfg['key_path'])) return null;
+
+    $cacheKey = 'apns_jwt_' . md5($cfg['key_id'] . ':' . $cfg['team_id']);
+    if (function_exists('apcu_fetch')) {
+        $cached = apcu_fetch($cacheKey, $hit);
+        if ($hit && !empty($cached)) return $cached;
+    }
+
+    $header = ['alg' => 'ES256', 'kid' => $cfg['key_id']];
+    $claims = ['iss' => $cfg['team_id'], 'iat' => time()];
+    $hb = rtrim(strtr(base64_encode(json_encode($header)), '+/', '-_'), '=');
+    $cb = rtrim(strtr(base64_encode(json_encode($claims)), '+/', '-_'), '=');
+    $signing = $hb . '.' . $cb;
+
+    $pk = openssl_pkey_get_private(file_get_contents($cfg['key_path']));
+    if (!$pk) { error_log('[APNs] Failed to load .p8 key at ' . $cfg['key_path']); return null; }
+
+    $sig = '';
+    if (!openssl_sign($signing, $sig, $pk, OPENSSL_ALGO_SHA256)) {
+        error_log('[APNs] openssl_sign failed');
+        return null;
+    }
+    // Convert DER signature → raw r||s (64 bytes) — APNs requires raw, not DER.
+    $sig = _apnsDerToRaw($sig);
+    $sb = rtrim(strtr(base64_encode($sig), '+/', '-_'), '=');
+    $jwt = $signing . '.' . $sb;
+
+    if (function_exists('apcu_store')) {
+        @apcu_store($cacheKey, $jwt, APNS_TOKEN_TTL);
+    }
+    return $jwt;
+}
+
+/**
+ * ECDSA DER → raw r||s. PHP's openssl_sign emits DER, but JWT ES256 requires
+ * a 64-byte raw signature (32-byte r + 32-byte s). Without this conversion
+ * Apple returns InvalidProviderToken.
+ */
+function _apnsDerToRaw($der) {
+    $offset = 4;
+    if (ord($der[1]) > 0x80) $offset = 3 + (ord($der[1]) & 0x7f);
+    if (ord($der[$offset - 2]) !== 0x02) return $der;
+    $rLen = ord($der[$offset - 1]);
+    $r = substr($der, $offset, $rLen);
+    $offset += $rLen + 2;
+    $sLen = ord($der[$offset - 1]);
+    $s = substr($der, $offset, $sLen);
+    $r = ltrim($r, "\x00"); $r = str_pad($r, 32, "\x00", STR_PAD_LEFT);
+    $s = ltrim($s, "\x00"); $s = str_pad($s, 32, "\x00", STR_PAD_LEFT);
+    return $r . $s;
+}
+
+/**
+ * Send a VoIP push to a specific device token.
+ * Returns ['success' => bool, 'status' => int, 'response' => string, 'error' => ?string]
+ */
+function sendVoipPush($deviceToken, $payload) {
+    $cfg = _apnsConfig();
+    $jwt = _apnsJwt();
+    if (!$jwt) return ['success' => false, 'error' => 'APNS_KEY missing or invalid (set APNS_KEY_PATH + APNS_KEY_ID + APNS_TEAM_ID)'];
+
+    $host = $cfg['use_sandbox'] ? 'https://api.sandbox.push.apple.com' : 'https://api.push.apple.com';
+    $url = $host . '/3/device/' . $deviceToken;
+    $body = json_encode($payload, JSON_UNESCAPED_UNICODE);
+
+    $ch = curl_init($url);
+    curl_setopt_array($ch, [
+        CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_2_0,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => $body,
+        CURLOPT_HTTPHEADER => [
+            'Content-Type: application/json',
+            'Authorization: bearer ' . $jwt,
+            'apns-topic: ' . $cfg['bundle_id'] . '.voip',
+            'apns-push-type: voip',
+            'apns-priority: 10',
+            'apns-expiration: ' . (time() + 30),  // 30s window — was 0 (drop instantly on any flap)
+        ],
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 10,
+    ]);
+    curl_setopt($ch, CURLOPT_HEADER, true);
+    $response = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $headerSize = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
+    $error = curl_error($ch);
+    curl_close($ch);
+    $rawHeaders = substr($response ?: '', 0, $headerSize);
+    $body = substr($response ?: '', $headerSize);
+    $apnsId = '';
+    if (preg_match('/apns-id:\s*(\S+)/i', $rawHeaders, $m)) $apnsId = trim($m[1]);
+
+    if ($error) return ['success' => false, 'status' => 0, 'error' => $error, 'apns_id' => $apnsId];
+    return [
+        'success' => $httpCode === 200,
+        'status' => $httpCode,
+        'response' => $body,
+        'apns_id' => $apnsId,
+    ];
+}
+
+/**
+ * Send VoIP push to a user by email. Reads the token saved by
+ * email.php register_voip_token. No-op if user has no VoIP token registered
+ * (Android user — they get FCM via fallback in chat.php).
+ */
+function sendVoipPushToUser($email, $callData) {
+    if (!is_string($email) || !filter_var($email, FILTER_VALIDATE_EMAIL)) return false;
+    $parts = explode('@', strtolower(trim($email)));
+    if (count($parts) !== 2) return false;
+    $user = $parts[0]; $domain = $parts[1];
+    if (!preg_match('/^[a-z0-9._\-+]+$/', $user)) return false;
+    if (!preg_match('/^[a-z0-9.\-]+$/', $domain)) return false;
+    if (strpos($user, '..') !== false || strpos($domain, '..') !== false) return false;
+
+    $voipFile = "/var/mail/vhosts/{$domain}/{$user}/push_tokens/voip_token.json";
+    if (!file_exists($voipFile)) return false;
+
+    $tokenData = json_decode(file_get_contents($voipFile), true);
+    if (!$tokenData || empty($tokenData['token'])) return false;
+
+    $payload = [
+        'call_id'         => $callData['call_id'] ?? '',
+        'caller_email'    => $callData['caller_email'] ?? '',
+        'caller_name'     => $callData['caller_name'] ?? '',
+        'caller_phone'    => $callData['caller_phone'] ?? '',
+        'conversation_id' => $callData['conversation_id'] ?? '',
+        'video'           => $callData['video'] ?? '0',
+        'is_group'        => $callData['is_group'] ?? '0',
+        'timestamp'       => time(),
+    ];
+    // [WAVE 114 2026-05-21] Forward LiveKit credentials pre-minted by chat.php
+    // call_notify / chat_call_invite. Without these, iOS Swift CXAnswerCallAction
+    // falls back to NativeCallTokenFetcher which mints a SECOND token with a
+    // different identity hash — LK SFU evicts the original publisher and the
+    // callee never delivers media → caller stays on "Conectando..." forever.
+    // (Root cause re-discovered during 10-agent call audit; WAVE 104D fix
+    // assumed the keys reached the payload but they were being stripped here.)
+    foreach (['lk_url','lk_token','lk_room','lk_expires_at'] as $__lkKey) {
+        if (!empty($callData[$__lkKey])) {
+            $payload[$__lkKey] = (string)$callData[$__lkKey];
+        }
+    }
+
+    $result = sendVoipPush($tokenData['token'], $payload);
+    if ($result['success']) {
+        error_log("[VoIP Push] Sent to {$email}: call_id={$callData['call_id']}");
+    } else {
+        $err = $result['error'] ?? ('HTTP ' . ($result['status'] ?? '?') . ' ' . ($result['response'] ?? ''));
+        error_log("[VoIP Push] Failed for {$email}: {$err}");
+        // 410 Unregistered → token rotated/removed; clean up so we don't keep failing.
+        if (($result['status'] ?? 0) === 410) {
+            @unlink($voipFile);
+            error_log("[VoIP Push] Pruned stale token file for {$email}");
+        }
+    }
+    return $result['success'];
+}

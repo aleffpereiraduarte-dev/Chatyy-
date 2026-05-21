@@ -420,7 +420,7 @@ export default function IncomingCallListener() {
             contactName: data.caller_name || callerEmail?.split('@')[0] || '',
             callId: normalizedCallId,
             type: 'missed',
-            video: data.video !== false,
+            video: !!data.video,
             timestamp: new Date().toISOString(),
             duration: 0,
             auto_declined: true,
@@ -458,7 +458,7 @@ export default function IncomingCallListener() {
           normalizedCallId,
           data.caller_name || data.caller_email || 'Chatyy',
           data.caller_email || '',
-          data.video !== false,
+          !!data.video,
           data.conversation_id || '',
         );
       } catch (e) {
@@ -487,7 +487,7 @@ export default function IncomingCallListener() {
           contactName: c.caller_name || c.caller_email?.split('@')[0] || '',
           callId: c.call_id || c.room_id || '',
           type: 'missed',
-          video: c.video !== false,
+          video: !!c.video,
           timestamp: new Date().toISOString(),
           duration: 0,
         }).catch(() => {});
@@ -970,7 +970,7 @@ export default function IncomingCallListener() {
               contactName: c.caller_name || c.caller_email?.split('@')[0] || '',
               callId: c.call_id || c.room_id || '',
               type: 'missed',
-              video: c.video !== false,
+              video: !!c.video,
               timestamp: new Date().toISOString(),
               duration: 0,
             }).catch(() => {});
@@ -1022,7 +1022,7 @@ export default function IncomingCallListener() {
               contactName: c.caller_name || c.caller_email?.split('@')[0] || '',
               callId: c.call_id || c.room_id || '',
               type: 'missed',
-              video: c.video !== false,
+              video: !!c.video,
               timestamp: new Date().toISOString(),
               duration: 0,
             }).catch(() => {});
@@ -1605,7 +1605,7 @@ export default function IncomingCallListener() {
       || currentCall.caller_email?.split('@')[0]
       || '';
     const callerEmail = currentCall.caller_email || '';
-    const isVideo = currentCall.video !== false ? '1' : '0';
+    const isVideo = !!currentCall.video ? '1' : '0';
     const conversationId = currentCall.conversation_id || '';
     const callerVerifiedParam = (currentCall.caller_verified === true
       || currentCall.caller_verified === 1
@@ -1764,7 +1764,7 @@ export default function IncomingCallListener() {
         contactName: currentCall.caller_name || currentCall.caller_email?.split('@')[0] || '',
         callId: callId,
         type: 'missed',
-        video: currentCall.video !== false,
+        video: !!currentCall.video,
         timestamp: new Date().toISOString(),
         duration: 0,
       }).catch(() => {});
@@ -1811,7 +1811,7 @@ export default function IncomingCallListener() {
     || call.caller_email?.split('@')[0]
     || '?';
   const callerEmail = call.caller_email || '';
-  const isVideo = call.video !== false;
+  const isVideo = !!call.video;
   // Trust the backend flag — set when the caller has completed Telnyx
   // caller-id verification (PIN-confirmed phone in profile/data.json).
   // Both '1' (string from FCM data payload) and true (JS bool) are valid.
