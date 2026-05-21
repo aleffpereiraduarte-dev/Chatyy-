@@ -243,6 +243,16 @@ class ExpoCallKitModule : Module() {
       instance.get()?.sendEvent("onPipChanged", mapOf("inPip" to inPip))
     }
 
+    /** [Wave C-1, 2026-05-21] Emitted when the user taps the chat icon in the
+     *  native Compose CallActivity. JS subscriber in callkeep.js calls
+     *  router.push('/chat-conversation?id=<conversationId>'). */
+    fun emitOpenChat(callId: String, conversationId: String) {
+      instance.get()?.sendEvent("onOpenChat", mapOf(
+        "callId" to callId,
+        "conversationId" to conversationId
+      ))
+    }
+
     /**
      * Save accepted call data to SharedPreferences so JS can read it on cold start.
      * Called from IncomingCallActivity and CallActionReceiver when instance is null.
@@ -395,7 +405,11 @@ class ExpoCallKitModule : Module() {
       // native button taps were silent black holes from the JS side.
       "onLkLocalAudioChanged", "onLkLocalVideoChanged", "onLkSpeakerChanged",
       "onLkCameraFlipped", "onAudioRouteChanged", "onCallHoldChanged",
-      "onPipChanged"
+      "onPipChanged",
+      // [Wave C-1, 2026-05-21] Back-to-chat button in native call UI.
+      // Payload: { callId: String, conversationId: String? }.
+      // JS subscriber in callkeep.js pushes /chat-conversation?id=...
+      "onOpenChat"
     )
 
     OnCreate {

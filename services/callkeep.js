@@ -153,6 +153,21 @@ export async function setupCallKeep() {
       });
     } catch {}
 
+    // [Wave C-1, 2026-05-21] Back-to-chat button: when the user taps the chat
+    // icon on the native call screen (iOS SwiftUI or Android Compose), the
+    // native side emits `onOpenChat`, minimises the call to PiP, and then this
+    // handler pushes the /chat-conversation route so the conversation is visible
+    // while the call continues in the background. Mirrors WhatsApp behaviour.
+    try {
+      ExpoCallKit.onOpenChat?.(({ callId, conversationId }) => {
+        if (conversationId) {
+          try {
+            require('expo-router').router.push(`/chat-conversation?id=${conversationId}`);
+          } catch {}
+        }
+      });
+    } catch {}
+
     // Register for VoIP push (iOS)
     if (Platform.OS === 'ios') {
       try {

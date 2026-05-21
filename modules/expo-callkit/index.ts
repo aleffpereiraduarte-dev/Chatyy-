@@ -42,6 +42,11 @@ interface ExpoCallKitEvents {
     entries: Array<{ msg_id: string; conv_id: string; sent_at: number; type: string }>;
     count: number;
   };
+  /** [Wave C-1, 2026-05-21] Fired when the user taps the in-call chat icon on
+   *  the native iOS SwiftUI CallView or Android Compose CallActivity. JS
+   *  subscriber in callkeep.js calls router.push('/chat-conversation?id=...').
+   *  `conversationId` may be empty for calls without a prior chat thread. */
+  onOpenChat: { callId: string; conversationId?: string };
 }
 
 export interface ShareOutboxEntry {
@@ -325,6 +330,22 @@ export function onPipChanged(cb: (data: { inPip: boolean }) => void): () => void
   const e = getEmitter();
   if (!e) return () => {};
   const sub = e.addListener('onPipChanged', cb);
+  return () => sub.remove();
+}
+
+/**
+ * [Wave C-1, 2026-05-21] Subscribe to the native back-to-chat button tap.
+ * Fired when the user taps the chat icon in the native iOS SwiftUI CallView
+ * or Android Compose CallActivity. The call is simultaneously minimised to
+ * PiP / background so the JS navigation stack is visible.
+ *
+ * Returns an unsubscribe function; safe to call before the native module
+ * is loaded (returns a no-op unsubscribe).
+ */
+export function onOpenChat(cb: (data: { callId: string; conversationId?: string }) => void): () => void {
+  const e = getEmitter();
+  if (!e) return () => {};
+  const sub = e.addListener('onOpenChat', cb);
   return () => sub.remove();
 }
 

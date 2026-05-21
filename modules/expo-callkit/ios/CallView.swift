@@ -30,6 +30,38 @@ import Combine
 import LiveKitClient
 import AVKit
 
+// MARK: - [Wave C-2] Group participant model
+
+/// A remote participant in a multi-person call. The VC populates this array
+/// from `room.remoteParticipants` and keeps it up-to-date via RoomDelegate
+/// callbacks so the grid reflects the live room state without requiring a full
+/// Room re-scan on every event.
+///
+/// `videoTrack` is nil when the participant hasn't published video yet, is
+/// muted, or the call is audio-only. The tile shows an avatar block in that
+/// case.  The VC sets `videoTrack` on `didSubscribeTrack` (kind == .video) and
+/// clears it on `didUnsubscribeTrack`.
+struct GroupParticipant: Identifiable, Equatable {
+    /// LiveKit identity string — unique per-participant in a room.
+    let id: String
+    /// Display name (may be empty).
+    let name: String
+    /// First character of `name` (or `id`) for the avatar letter fallback.
+    var initial: String {
+        let src = name.isEmpty ? id : name
+        return String(src.first ?? "?").uppercased()
+    }
+    /// Camera VideoTrack from LiveKit subscription. Nil → show avatar tile.
+    var videoTrack: VideoTrack?
+
+    static func == (lhs: GroupParticipant, rhs: GroupParticipant) -> Bool {
+        lhs.id == rhs.id && lhs.name == rhs.name
+        // Intentionally ignores videoTrack so SwiftUI .onChange(of:) on the
+        // array fires only for join/leave events, not every track-update.
+        // Track updates mutate the individual element directly.
+    }
+}
+
 // MARK: - Floating reaction model
 
 /// One floating emoji burst spawned by either side via the data channel. The
@@ -83,6 +115,10 @@ struct CallView: View {
     /// plays the local feedback tone. Optional so existing call sites that
     /// haven't been migrated still compile.
     var onPlayDTMF: ((String) -> Void)? = nil
+    /// [Wave C-1, 2026-05-21] Tap the chat icon while in-call to navigate
+    /// to the associated chat thread. The VC emits `onOpenChat` to JS and
+    /// then minimises the call to PiP so the conversation screen is visible.
+    var onOpenChat: (() -> Void)? = nil
 
     // MARK: - Local UI state
     //
@@ -131,24 +167,51 @@ struct CallView: View {
 
     var body: some View {
         ZStack {
-            // ── 1. Background (remote video when subscribed; gradient otherwise)
-            backgroundLayer
+            // ── [Wave C-2] MULTI-PARTICIPANT PATH ─────────────────────────────
+            // When the room has ≥2 remote participants, render a grid of tiles
+            // instead of the 1:1 full-bleed remote video. The 1:1 code path
+            // (backgroundLayer + avatarBlock) is left entirely untouched so
+            // existing 1:1 calls are not affected.
+            if session.groupParticipants.count >= 2 {
+                participantGrid
+                    .ignoresSafeArea()
+
+                // Semi-transparent gradient so the top/bottom bars stay
+                // legible over the tile grid.
+                VStack(spacing: 0) {
+                    LinearGradient(
+                        colors: [Color.black.opacity(0.55), Color.black.opacity(0.0)],
+                        startPoint: .top, endPoint: .bottom
+                    ).frame(height: 120)
+                    Spacer()
+                    LinearGradient(
+                        colors: [Color.black.opacity(0.0), Color.black.opacity(0.55)],
+                        startPoint: .top, endPoint: .bottom
+                    ).frame(height: 160)
+                }
                 .ignoresSafeArea()
 
-            // ── 2. Subtle glassmorphism overlay so the avatar / status text
-            //      stay readable even when the remote feed is bright. Skipped
-            //      when there's no video so the dark color shows through.
-            if !hasVideo || session.remoteVideoTrack == nil {
-                LinearGradient(
-                    colors: [
-                        Color.black.opacity(0.0),
-                        Color.black.opacity(0.55)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .ignoresSafeArea()
+            } else {
+                // ── 1. Background (remote video when subscribed; gradient otherwise)
+                backgroundLayer
+                    .ignoresSafeArea()
+
+                // ── 2. Subtle glassmorphism overlay so the avatar / status text
+                //      stay readable even when the remote feed is bright. Skipped
+                //      when there's no video so the dark color shows through.
+                if !hasVideo || session.remoteVideoTrack == nil {
+                    LinearGradient(
+                        colors: [
+                            Color.black.opacity(0.0),
+                            Color.black.opacity(0.55)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .ignoresSafeArea()
+                }
             }
+            // ── END multi-participant / 1:1 split ─────────────────────────────
 
             // ── 3. Main content stack (avatar + name + status + controls)
             VStack(spacing: 0) {
@@ -160,7 +223,11 @@ struct CallView: View {
 
                 Spacer().frame(height: 24)
 
-                if !hasVideo || session.remoteVideoTrack == nil {
+                // [Wave C-2] In group mode (≥2 remote participants) the grid
+                // already fills the background — we only show the 1:1 avatar
+                // block when there are 0 or 1 remote participants.
+                if session.groupParticipants.count < 2 &&
+                   (!hasVideo || session.remoteVideoTrack == nil) {
                     avatarBlock
                 }
 
@@ -295,6 +362,38 @@ struct CallView: View {
         }
     }
 
+    // MARK: - [Wave C-2] Multi-participant grid
+
+    /// 2-column grid for 2–4 participants; 3-column for 5–9.
+    /// Audio-only participants get an avatar tile (no `SwiftUIVideoView`).
+    /// The overall container fills the safe-area so tiles extend behind the
+    /// status bar, matching WhatsApp / Telegram group-call aesthetics.
+    @ViewBuilder
+    private var participantGrid: some View {
+        let participants = session.groupParticipants
+        let columns = participants.count <= 4 ? 2 : 3
+        let gridColumns = Array(
+            repeating: GridItem(.flexible(), spacing: 4),
+            count: columns
+        )
+
+        ScrollView {
+            LazyVGrid(columns: gridColumns, spacing: 4) {
+                ForEach(participants) { participant in
+                    GroupTileView(
+                        participant: participant,
+                        chipColor: chipColor,
+                        backgroundColor: backgroundColor
+                    )
+                    .aspectRatio(9.0 / 16.0, contentMode: .fill)
+                    .clipped()
+                }
+            }
+            .padding(4)
+        }
+        .background(backgroundColor)
+    }
+
     // MARK: - Top bar
 
     private var topBar: some View {
@@ -312,6 +411,20 @@ struct CallView: View {
             // in the top-leading area too.
             ConnectionQualityBars(quality: session.connectionQuality)
                 .frame(width: 22, height: 22)
+
+            // [Wave C-1, 2026-05-21] Back-to-chat button. Tapping it fires
+            // onOpenChat (VC emits `onOpenChat` event to JS → JS pushes the
+            // /chat-conversation screen) and minimises the call to PiP so
+            // the chat thread is visible. Only shown while the call is active
+            // (not while ringing) so callers can't accidentally skip to chat
+            // before a call even connects. WhatsApp shows an identical icon
+            // in the same position (between quality bars and Spacer).
+            if session.status == "Conectado" || session.status.hasPrefix("Conectad") {
+                iconChip(systemName: "bubble.left.fill", action: {
+                    hapticTap()
+                    onOpenChat?()
+                })
+            }
 
             Spacer()
 
@@ -1152,6 +1265,65 @@ struct CallView: View {
     private func hapticHeavy() {
         let gen = UIImpactFeedbackGenerator(style: .heavy)
         gen.impactOccurred()
+    }
+}
+
+// MARK: - [Wave C-2] Group call tile
+
+/// One participant tile inside the multi-participant grid.
+///
+/// • If `participant.videoTrack` is non-nil → renders `SwiftUIVideoView`
+///   fill-cropped to the tile bounds.
+/// • Otherwise → renders an avatar circle (initial letter) centered on the
+///   dark chip background.  This covers audio-only calls and video-muted peers.
+///
+/// The name label is pinned to the bottom-leading corner, mirroring WhatsApp
+/// and Google Meet group-call tile labelling conventions.
+struct GroupTileView: View {
+    let participant: GroupParticipant
+    let chipColor: Color
+    let backgroundColor: Color
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            if let track = participant.videoTrack {
+                // Live video — fill the tile, crop edges as needed.
+                SwiftUIVideoView(track)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+            } else {
+                // Audio-only or video muted — avatar block.
+                backgroundColor
+                ZStack {
+                    Circle()
+                        .fill(chipColor)
+                        .frame(width: 64, height: 64)
+                    Text(participant.initial)
+                        .font(.system(size: 26, weight: .regular, design: .rounded))
+                        .foregroundColor(.white)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+
+            // Name label — bottom-leading, small semi-opaque pill.
+            if !participant.name.isEmpty || !participant.id.isEmpty {
+                Text(participant.name.isEmpty ? participant.id : participant.name)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.black.opacity(0.50))
+                    .clipShape(Capsule())
+                    .padding(6)
+            }
+        }
+        .background(backgroundColor)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
     }
 }
 

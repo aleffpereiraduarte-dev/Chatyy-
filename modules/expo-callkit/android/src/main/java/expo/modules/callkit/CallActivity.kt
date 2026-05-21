@@ -41,12 +41,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -55,6 +58,7 @@ import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.BlurOn
 import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.Cameraswitch
+import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Dialpad
 import androidx.compose.material.icons.filled.EmojiEmotions
@@ -587,6 +591,13 @@ class CallActivity : ComponentActivity() {
               }
             } catch (t: Throwable) { Log.w(TAG, "dtmf tone failed: ${t.message}") }
             publishDtmfFrame(digit)
+          },
+          onOpenChat = {
+            // [Wave C-1, 2026-05-21] Emit onOpenChat to JS then enter PiP /
+            // move task to back so the navigation stack is visible while the
+            // call stays alive in the foreground service + notification.
+            try { ExpoCallKitModule.emitOpenChat(callId, conversationId) } catch (_: Throwable) {}
+            tryEnterPip()
           },
           onPickAudioDevice = { type ->
             // [Audio output picker, 2026-05-19] Real route switch via
@@ -1861,6 +1872,12 @@ class CallSessionStateAndroid {
   /** Live list of floating emoji bursts. Compose redraws when items are
    *  added or removed; the activity scope prunes each entry after 3s. */
   val floatingReactions: SnapshotStateList<FloatingReactionAndroid> = mutableStateListOf()
+
+  // [Wave C-2] Remote participants for the multi-person grid.
+  // Populated by handleRoomEvent (ParticipantConnected / TrackSubscribed /
+  // ParticipantDisconnected). When count >= 2, CallScreen renders
+  // ParticipantGridView instead of the 1:1 remote-video background.
+  val groupParticipants: SnapshotStateList<GroupParticipantAndroid> = mutableStateListOf()
 }
 
 /** One floating emoji burst. The activity scope removes it after ~3s. */
@@ -1870,6 +1887,18 @@ data class FloatingReactionAndroid(
   val xOffset: Float,
   val spawnedAt: Long,
 )
+
+// [Wave C-2] A remote participant entry for the multi-person grid.
+// `renderer` is the SurfaceViewRenderer allocated by CallActivity when
+// the participant's video track is subscribed; null = audio-only tile.
+data class GroupParticipantAndroid(
+  val identity: String,
+  val name: String,
+  /** Non-null when a video track is subscribed and not muted. */
+  val renderer: SurfaceViewRenderer? = null,
+) {
+  val initial: String get() = (name.ifEmpty { identity }).firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+}
 
 // ══════════════════════════════════════════════════════════════════════════
 // Palette — kept in sync with iOS CallView and the JS /call.js fallback
@@ -1909,6 +1938,8 @@ private fun CallScreen(
   onPlayDTMF: (String) -> Unit,
   /** [Audio picker, 2026-05-19] One of "speaker"/"earpiece"/"bluetooth"/"wired". */
   onPickAudioDevice: (String) -> Unit,
+  /** [Wave C-1, 2026-05-21] Emit onOpenChat + enter PiP. */
+  onOpenChat: () -> Unit,
 ) {
   var elapsedSeconds by remember { mutableStateOf(0) }
   var showReactions by remember { mutableStateOf(false) }
@@ -1937,25 +1968,51 @@ private fun CallScreen(
         Brush.verticalGradient(colors = listOf(BgTop, BgBottom))
       )
   ) {
-    // 1. Remote video fills the background once subscribed. Audio calls
-    //    just keep the gradient.
-    if (state.isVideo && state.hasRemoteVideo && remoteRenderer != null) {
-      val remote = remoteRenderer
-      AndroidView(
-        factory = { remote },
+    // [Wave C-2] MULTI-PARTICIPANT PATH ──────────────────────────────────────
+    // When the room has ≥2 remote participants, render a grid of tiles
+    // instead of the 1:1 full-bleed remote video. The 1:1 code path below
+    // is left entirely untouched — this branch only activates for group calls.
+    if (state.groupParticipants.size >= 2) {
+      ParticipantGridView(
+        participants = state.groupParticipants,
         modifier = Modifier.fillMaxSize(),
       )
-      // Dim overlay so action bar / top bar stay readable on bright frames.
+      // Semi-transparent gradient scrim so top/bottom bars stay legible.
       Box(
         modifier = Modifier
           .fillMaxSize()
           .background(
             Brush.verticalGradient(
-              colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f))
+              colors = listOf(
+                Color.Black.copy(alpha = 0.50f),
+                Color.Transparent,
+                Color.Black.copy(alpha = 0.50f),
+              ),
             )
           )
       )
+    } else {
+      // 1. Remote video fills the background once subscribed. Audio calls
+      //    just keep the gradient.
+      if (state.isVideo && state.hasRemoteVideo && remoteRenderer != null) {
+        val remote = remoteRenderer
+        AndroidView(
+          factory = { remote },
+          modifier = Modifier.fillMaxSize(),
+        )
+        // Dim overlay so action bar / top bar stay readable on bright frames.
+        Box(
+          modifier = Modifier
+            .fillMaxSize()
+            .background(
+              Brush.verticalGradient(
+                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f))
+              )
+            )
+        )
+      }
     }
+    // ── END Wave C-2 multi-participant split ─────────────────────────────────
 
     // 2. Reconnect banner (slides from the top under the status bar).
     AnimatedVisibility(
@@ -1993,11 +2050,14 @@ private fun CallScreen(
         onMinimize = onMinimize,
         onFlipCamera = onFlipCamera,
         onToggleCam = onToggleCam,
+        onOpenChat = onOpenChat,
       )
       Spacer(Modifier.height(24.dp))
 
-      // Avatar block hides once we have a remote video frame to show.
-      if (!state.isVideo || !state.hasRemoteVideo) {
+      // Avatar block hides once we have a remote video frame to show OR when
+      // the multi-participant grid (≥2 remote participants) fills the background.
+      // [Wave C-2] In group mode the grid fills the BG — no avatar block needed.
+      if (state.groupParticipants.size < 2 && (!state.isVideo || !state.hasRemoteVideo)) {
         Box(
           modifier = Modifier
             .fillMaxWidth()
@@ -2123,6 +2183,9 @@ private fun TopBar(
   onMinimize: () -> Unit,
   onFlipCamera: () -> Unit,
   onToggleCam: (Boolean) -> Unit,
+  // [Wave C-1, 2026-05-21] Back-to-chat button. Taps emit onOpenChat + enter
+  // PiP so the chat thread becomes visible while the call stays alive.
+  onOpenChat: () -> Unit,
 ) {
   Row(
     modifier = Modifier
@@ -2137,6 +2200,18 @@ private fun TopBar(
     )
     Spacer(Modifier.width(12.dp))
     ConnectionQualityBars(quality = state.peerQuality)
+
+    // [Wave C-1, 2026-05-21] Chat icon — only visible while connected so the
+    // caller can't accidentally open chat before the call even picks up.
+    if (state.status == "Conectado") {
+      Spacer(Modifier.width(12.dp))
+      IconChip(
+        icon = Icons.Filled.Chat,
+        contentDescription = "Abrir chat",
+        onClick = onOpenChat,
+      )
+    }
+
     Spacer(Modifier.weight(1f))
 
     if (state.isVideo && state.isCameraOn) {

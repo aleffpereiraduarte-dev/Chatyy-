@@ -255,7 +255,11 @@ public class ExpoCallKitModule: Module {
       // queue via getShareOutbox() and refreshes the chat list for any
       // affected conversations so users see their share messages without
       // pull-to-refresh.
-      "onShareDidSend"
+      "onShareDidSend",
+      // [Wave C-1, 2026-05-21] Emitted when the user taps the in-call chat
+      // button on the native SwiftUI CallView. Payload: { callId, conversationId }.
+      // JS subscriber in callkeep.js calls router.push('/chat-conversation').
+      "onOpenChat"
     )
 
     // Auto-initialize on module load (skip CallKit in China per Apple requirement)
@@ -1201,6 +1205,20 @@ public class ExpoCallKitModule: Module {
       }
       callStateObservers.append(token)
     }
+
+    // [Wave C-1, 2026-05-21] Back-to-chat event. Payload has two string
+    // fields (callId, conversationId); the triples loop above only handles
+    // single-key payloads so we wire this one manually.
+    let chatToken = nc.addObserver(
+      forName: Notification.Name("ExpoCallKitOpenChat"),
+      object: nil,
+      queue: q
+    ) { [weak self] note in
+      let callId = note.userInfo?["callId"] as? String ?? ""
+      let convId  = note.userInfo?["conversationId"] as? String ?? ""
+      self?.safeSendEvent("onOpenChat", ["callId": callId, "conversationId": convId])
+    }
+    callStateObservers.append(chatToken)
   }
 
   private func flushVoipTokenFromAppGroup() {

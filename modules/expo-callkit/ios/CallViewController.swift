@@ -77,6 +77,19 @@ final class CallSessionState: ObservableObject {
     /// local send. SwiftUI removes each via a per-emoji `.task` after 3s.
     @Published var floatingReactions: [CallFloatingReaction]
 
+    // MARK: [Wave C-2] Multi-participant grid
+    //
+    // When `groupParticipants.count >= 2`, CallView renders a LazyVGrid of
+    // video tiles instead of the 1:1 full-bleed remote video. The array is
+    // keyed by `identity` so additions/removals are O(participants) — small
+    // enough for voice/video calls up to 9 people without needing a diff.
+    //
+    // Each entry holds the VideoTrack reference directly (nil = audio-only
+    // or video muted). CallViewController mutates this array on the main
+    // thread from `participantDidConnect`, `participantDidDisconnect`, and
+    // `didSubscribeTrack` / `didUnsubscribeTrack` delegates.
+    @Published var groupParticipants: [GroupParticipant] = []
+
     init(status: String = "Conectando\u{2026}",
          micEnabled: Bool = true,
          camEnabled: Bool = true,
@@ -255,7 +268,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             onToggleNoiseSuppression: { [weak self] desired in self?.applyNoiseSuppression(desired) },
             onCycleBackground: { [weak self] in self?.cycleBackground() },
             onToggleHold: { [weak self] desired in self?.applyHold(desired) },
-            onPlayDTMF: { [weak self] digit in self?.handlePlayDTMF(digit) }
+            onPlayDTMF: { [weak self] digit in self?.handlePlayDTMF(digit) },
+            onOpenChat: { [weak self] in self?.openChat() }
         )
 
         let host = UIHostingController(rootView: rootView)
@@ -1049,6 +1063,24 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         dismiss(animated: true, completion: nil)
     }
 
+    /// [Wave C-1, 2026-05-21] Chat button handler: post an
+    /// `ExpoCallKitOpenChat` notification (observed in ExpoCallKitModule which
+    /// calls `safeSendEvent("onOpenChat", …)`) and then minimise the call to
+    /// PiP / floating bar so the chat thread is visible. Mirrors the WhatsApp
+    /// pattern — call stays alive in PiP while the conversation screen opens.
+    private func openChat() {
+        NotificationCenter.default.post(
+            name: Notification.Name("ExpoCallKitOpenChat"),
+            object: nil,
+            userInfo: [
+                "callId": callId,
+                "conversationId": conversationId
+            ]
+        )
+        // Minimise so JS navigation is reachable.
+        handleMinimize()
+    }
+
     /// [Wave WhatsApp parity, 2026-05-20 gap G4 iOS] Re-present this VC when
     /// the user taps the floating OngoingCallBar. We rely on
     /// ProviderDelegate's presenter resolver to handle the case where the JS
@@ -1787,7 +1819,16 @@ extension CallViewController: RoomDelegate {
         NSLog("[CallTrace][9/12] RoomEvent type=ParticipantConnected identity=\(identity) callId=\(callId) ts=\(Int(Date().timeIntervalSince1970 * 1000))")
         print("[CallVC] participantDidConnect — identity=\(identity)")
         DispatchQueue.main.async { [weak self] in
-            self?.stopRingbackTone(reason: "participantDidConnect")
+            guard let self = self else { return }
+            self.stopRingbackTone(reason: "participantDidConnect")
+            // [Wave C-2] Add the new participant to the grid list. Video track
+            // starts nil — it gets filled in on didSubscribeTrack once the SFU
+            // delivers the video publication.
+            if !self.session.groupParticipants.contains(where: { $0.id == identity }) {
+                self.session.groupParticipants.append(
+                    GroupParticipant(id: identity, name: participant.name ?? "")
+                )
+            }
         }
         // [#1207 NativeCallRoom REAL] Fanout so JS chat header / call grid
         // can mark the peer as joined.
@@ -1801,7 +1842,11 @@ extension CallViewController: RoomDelegate {
         NSLog("[CallTrace][9/12] RoomEvent type=ParticipantDisconnected identity=\(identity) callId=\(callId) ts=\(Int(Date().timeIntervalSince1970 * 1000))")
         print("[CallVC] participantDidDisconnect — identity=\(identity)")
         DispatchQueue.main.async { [weak self] in
-            self?.session.remoteVideoTrack = nil
+            guard let self = self else { return }
+            // [Wave C-2] Remove from grid.
+            self.session.groupParticipants.removeAll { $0.id == identity }
+            // 1:1 fallback: clear the remote video track when the peer leaves.
+            self.session.remoteVideoTrack = nil
         }
         // [#1207 NativeCallRoom REAL] Fanout so JS can drop the peer tile.
         NativeCallRoom.shared.participantDisconnected(identity: identity)
@@ -1827,10 +1872,24 @@ extension CallViewController: RoomDelegate {
         print("[CallVC] didSubscribeTrack — remote video, identity=\(identity)")
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            // 1:1 path: keep remoteVideoTrack for the full-bleed background.
             self.session.remoteVideoTrack = track
             self.stopRingbackTone(reason: "didSubscribeTrack")
             if #available(iOS 15.0, *) {
                 self.attachPiPRenderer(to: track)
+            }
+            // [Wave C-2] Wire the video track into the grid tile for this
+            // participant. If the participant isn't in the array yet (race:
+            // TrackSubscribed fires before ParticipantConnected on some SFU
+            // topologies), add them now with the track already populated.
+            if let idx = self.session.groupParticipants.firstIndex(where: { $0.id == identity }) {
+                self.session.groupParticipants[idx].videoTrack = track
+            } else {
+                self.session.groupParticipants.append(
+                    GroupParticipant(id: identity,
+                                     name: participant.name ?? "",
+                                     videoTrack: track)
+                )
             }
         }
     }
@@ -1853,6 +1912,11 @@ extension CallViewController: RoomDelegate {
             }
             self.pipAttachedTrack = nil
             self.session.remoteVideoTrack = nil
+            // [Wave C-2] Clear the video track in the grid tile (participant
+            // stays in the array — they're still in the call, just muted).
+            if let idx = self.session.groupParticipants.firstIndex(where: { $0.id == identity }) {
+                self.session.groupParticipants[idx].videoTrack = nil
+            }
         }
     }
 
