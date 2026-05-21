@@ -22,6 +22,10 @@ import { IconArrowLeft } from '../components/Icons';
 import DiamondTopUpSheet from '../components/DiamondTopUpSheet';
 
 const ACCENT = '#7C3AED';
+const ACCENT_DEEP = '#5B21B6';
+const ACCENT_PINK = '#EC4899';
+const GREEN = '#10B981';
+const AMBER = '#F59E0B';
 
 function formatCents(cents) {
   const v = (Number(cents) || 0) / 100;
@@ -109,6 +113,28 @@ export default function CreatorDashboardScreen() {
   const cardBorder = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
   const sparkData = (data.tip_series_7d || []).map(s => Number(s.tip_cents) || 0);
 
+  // 2026-05-20 — Painel de criador visual upgrade.
+  // Pre-2026-05-20 the layout was a stack of 5 flat cards plus a wallet card.
+  // It worked but felt like an admin debug view. Reworked into:
+  //  • Hero gradient header (brand purple → pink) com saldo de diamantes + CTA top-up.
+  //  • Stat grid 2×2: receita mensal, 7d, 30d, a receber — visualmente paritários.
+  //  • Card de série temporal (7d) com Sparkline maior + receita semanal.
+  //  • Top tippers com pódio coloreado pros 3 primeiros (#FFD700/#C0C0C0/#CD7F32).
+  //  • Empty state ilustrado quando não há tippers.
+  //  • CTA "Solicitar saque" → /creator-earnings.
+  const hasAnyEarnings =
+    (data.monthly_revenue_cents || 0) > 0 ||
+    (data.weekly_tip_cents || 0) > 0 ||
+    (data.monthly_tip_cents || 0) > 0 ||
+    (data.pending_payout_cents || 0) > 0;
+
+  const rankColor = (idx) => {
+    if (idx === 0) return '#FFD700';
+    if (idx === 1) return '#C0C0C0';
+    if (idx === 2) return '#CD7F32';
+    return colors.textTertiary;
+  };
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <View style={[styles.header, { borderBottomColor: cardBorder }]}>
@@ -131,78 +157,129 @@ export default function CreatorDashboardScreen() {
           showsVerticalScrollIndicator={false}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} />}
         >
-          {/* Diamond wallet — own balance + top-up CTA. Lets creators
-              both see their own ◆ stash and reload it. */}
+          {/* Hero — Diamond wallet + top-up CTA.
+              Fake-gradient effect via stacked layers (sem expo-linear-gradient
+              pra evitar dep nativa). Deep purple base + pink overlay diagonal. */}
           <TouchableOpacity
-            activeOpacity={0.85}
+            activeOpacity={0.9}
             onPress={() => setTopupOpen(true)}
-            style={[styles.card, styles.walletCard, { borderColor: cardBorder }]}
+            style={[styles.hero, { backgroundColor: ACCENT_DEEP }]}
             accessibilityRole="button"
             accessibilityLabel={t?.('wallet.topup') || 'Comprar diamantes'}
           >
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.cardTitle, { color: 'rgba(255,255,255,0.85)' }]}>
+            <View style={[styles.heroOverlay, { backgroundColor: ACCENT_PINK }]} />
+            <View style={[styles.heroOverlay2, { backgroundColor: ACCENT }]} />
+            <View style={{ flex: 1, zIndex: 2 }}>
+              <Text style={styles.heroLabel}>
                 {t?.('wallet.myDiamonds') || 'Meus diamantes'}
               </Text>
-              <Text style={[styles.cardValue, { color: '#fff' }]}>{diamondBalance.toLocaleString('pt-BR')} ◆</Text>
-              <Text style={[styles.cardSub, { color: 'rgba(255,255,255,0.7)' }]}>
+              <Text style={styles.heroValue}>{diamondBalance.toLocaleString('pt-BR')} ◆</Text>
+              <Text style={styles.heroSub}>
                 {t?.('wallet.topupCta') || 'Tocar para comprar diamantes'}
               </Text>
             </View>
-            <View style={styles.walletCta}>
-              <Text style={styles.walletCtaText}>+</Text>
+            <View style={styles.heroCta}>
+              <Text style={styles.heroCtaText}>+</Text>
             </View>
           </TouchableOpacity>
 
-          {/* Top-line revenue cards */}
-          <View style={[styles.card, { backgroundColor: cardBg, borderColor: cardBorder }]}>
-            <Text style={[styles.cardTitle, { color: colors.textSecondary }]}>
-              {t?.('profile.monthlyRevenue') || 'Receita mensal'}
-            </Text>
-            <Text style={[styles.cardValue, { color: colors.text }]}>{formatCents(data.monthly_revenue_cents)}</Text>
-            <Text style={[styles.cardSub, { color: colors.textTertiary }]}>
-              {(t?.('profile.subscriberCountLine') || '{n} assinantes ativos').replace('{n}', data.subscriber_count || 0)}
-            </Text>
+          {/* Quick action row — Saque + Ver ganhos */}
+          <View style={styles.actionRow}>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => { try { router.push('/creator-earnings'); } catch {} }}
+              style={[styles.actionPill, { backgroundColor: GREEN }]}
+              accessibilityRole="button"
+              accessibilityLabel={t?.('creatorEarnings.requestPayout') || 'Solicitar saque'}
+            >
+              <Text style={styles.actionPillText}>
+                {t?.('creatorEarnings.requestPayout') || 'Solicitar saque'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              activeOpacity={0.85}
+              onPress={() => { try { router.push('/creator-earnings'); } catch {} }}
+              style={[styles.actionPillSecondary, { borderColor: cardBorder, backgroundColor: cardBg }]}
+              accessibilityRole="button"
+              accessibilityLabel={t?.('creatorEarnings.cta') || 'Ver ganhos'}
+            >
+              <Text style={[styles.actionPillSecondaryText, { color: colors.text }]}>
+                {t?.('creatorEarnings.cta') || 'Ver ganhos'}
+              </Text>
+            </TouchableOpacity>
           </View>
 
-          <View style={[styles.card, { backgroundColor: cardBg, borderColor: cardBorder }]}>
-            <Text style={[styles.cardTitle, { color: colors.textSecondary }]}>
-              {t?.('profile.tipsLast7d') || 'Diamantes recebidos (7d)'}
-            </Text>
-            <Text style={[styles.cardValue, { color: colors.text }]}>{formatCents(data.weekly_tip_cents)}</Text>
-            <View style={styles.sparkWrap}>
-              <Sparkline data={sparkData} color="#F59E0B" />
+          {/* Stat grid 2x2 — paired KPIs */}
+          <View style={styles.gridRow}>
+            <View style={[styles.statCard, { backgroundColor: cardBg, borderColor: cardBorder }]}>
+              <View style={[styles.statDot, { backgroundColor: ACCENT }]} />
+              <Text style={[styles.statLabel, { color: colors.textSecondary }]} numberOfLines={1}>
+                {t?.('profile.monthlyRevenue') || 'Receita mensal'}
+              </Text>
+              <Text style={[styles.statValue, { color: colors.text }]} numberOfLines={1}>
+                {formatCents(data.monthly_revenue_cents)}
+              </Text>
+              <Text style={[styles.statSub, { color: colors.textTertiary }]} numberOfLines={1}>
+                {(t?.('profile.subscriberCountLine') || '{n} assinantes ativos').replace('{n}', data.subscriber_count || 0)}
+              </Text>
+            </View>
+            <View style={[styles.statCard, { backgroundColor: cardBg, borderColor: cardBorder }]}>
+              <View style={[styles.statDot, { backgroundColor: GREEN }]} />
+              <Text style={[styles.statLabel, { color: colors.textSecondary }]} numberOfLines={1}>
+                {t?.('profile.pendingPayout') || 'A receber'}
+              </Text>
+              <Text style={[styles.statValue, { color: colors.text }]} numberOfLines={1}>
+                {formatCents(data.pending_payout_cents)}
+              </Text>
+              <Text style={[styles.statSub, { color: colors.textTertiary }]} numberOfLines={1}>
+                {t?.('profile.payoutHint') || 'Saque a partir de R$ 50,00'}
+              </Text>
             </View>
           </View>
 
+          {/* Sparkline card — 7d tips trend */}
           <View style={[styles.card, { backgroundColor: cardBg, borderColor: cardBorder }]}>
-            <Text style={[styles.cardTitle, { color: colors.textSecondary }]}>
-              {t?.('profile.tipsLast30d') || 'Diamantes recebidos (30d)'}
-            </Text>
-            <Text style={[styles.cardValue, { color: colors.text }]}>{formatCents(data.monthly_tip_cents)}</Text>
+            <View style={styles.sparkHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.cardTitle, { color: colors.textSecondary }]}>
+                  {t?.('profile.tipsLast7d') || 'Diamantes recebidos (7d)'}
+                </Text>
+                <Text style={[styles.cardValue, { color: colors.text }]}>{formatCents(data.weekly_tip_cents)}</Text>
+              </View>
+              <View style={[styles.badge30d, { backgroundColor: AMBER + '22', borderColor: AMBER + '55' }]}>
+                <Text style={[styles.badge30dLabel, { color: AMBER }]}>30d</Text>
+                <Text style={[styles.badge30dValue, { color: colors.text }]}>{formatCents(data.monthly_tip_cents)}</Text>
+              </View>
+            </View>
+            <View style={styles.sparkWrap}>
+              <Sparkline data={sparkData} color={AMBER} />
+            </View>
           </View>
 
-          <View style={[styles.card, { backgroundColor: cardBg, borderColor: cardBorder }]}>
-            <Text style={[styles.cardTitle, { color: colors.textSecondary }]}>
-              {t?.('profile.pendingPayout') || 'A receber'}
-            </Text>
-            <Text style={[styles.cardValue, { color: colors.text }]}>{formatCents(data.pending_payout_cents)}</Text>
-          </View>
-
-          {/* Top tippers list */}
+          {/* Top tippers list — podium colors for top 3 */}
           <View style={[styles.card, { backgroundColor: cardBg, borderColor: cardBorder }]}>
             <Text style={[styles.cardTitle, { color: colors.textSecondary, marginBottom: 12 }]}>
               {t?.('profile.topTippers') || 'Maiores apoiadores (30d)'}
             </Text>
             {(data.top_tippers || []).length === 0 ? (
-              <Text style={[styles.cardSub, { color: colors.textTertiary }]}>
-                {t?.('profile.noTippersYet') || 'Ninguém mandou diamantes ainda.'}
-              </Text>
+              <View style={styles.emptyState}>
+                <View style={[styles.emptyIcon, { backgroundColor: ACCENT + '18' }]}>
+                  <Text style={styles.emptyIconText}>◆</Text>
+                </View>
+                <Text style={[styles.emptyTitle, { color: colors.text }]}>
+                  {t?.('profile.noTippersYet') || 'Ninguém mandou diamantes ainda.'}
+                </Text>
+                <Text style={[styles.emptySub, { color: colors.textTertiary }]}>
+                  {hasAnyEarnings
+                    ? (t?.('profile.emptyTippersWithEarnings') || 'Os primeiros fãs vão aparecer aqui assim que mandarem um presente.')
+                    : (t?.('profile.emptyTippersNoEarnings') || 'Comece a postar pra ver suas métricas crescerem.')}
+                </Text>
+              </View>
             ) : (
               (data.top_tippers || []).map((tp, idx) => (
                 <View key={tp.email + idx} style={styles.tipperRow}>
-                  <Text style={[styles.tipperRank, { color: colors.textTertiary }]}>#{idx + 1}</Text>
-                  <AvatarCircle email={tp.email} name={tp.name} size={32} colors={colors} />
+                  <Text style={[styles.tipperRank, { color: rankColor(idx), fontWeight: idx < 3 ? '800' : '700' }]}>#{idx + 1}</Text>
+                  <AvatarCircle email={tp.email} name={tp.name} size={36} colors={colors} />
                   <View style={{ flex: 1, marginLeft: 10 }}>
                     <Text style={[styles.tipperName, { color: colors.text }]} numberOfLines={1}>
                       {tp.name || tp.email?.split('@')[0]}

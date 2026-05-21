@@ -2497,12 +2497,13 @@ export default function OneScreen() {
     const effectiveMsg = msg || (currentImage ? 'Analise esta imagem. Se for um recibo/nota fiscal/conta, extraia os dados e me pergunte se quero criar uma planilha.' : '');
 
     // ── Try SSE streaming first; fall back to oneChat on any error ─────────────
-    // SSE is only available on web / modern runtimes that expose ReadableStream.
-    // On native we fall straight to the REST endpoint (React Native's fetch has
-    // ReadableStream behind a flag but text/event-stream handling is unreliable).
-    const canStream = Platform.OS === 'web'
-      && typeof ReadableStream !== 'undefined'
-      && typeof fetch !== 'undefined';
+    // [WAVE 43A 2026-05-21] Native (RN 0.83 + Hermes) now supports
+    // text streaming via `reactNative.textStreaming: true` in fetch opts (set
+    // in api.oneChatStream). Without streaming on native the user waited
+    // 6-10s for the full reply ("a one ta lenta"). With streaming the first
+    // token shows in ~700ms. The onError path still falls back to oneChat()
+    // so any platform that doesn't honor the flag degrades cleanly.
+    const canStream = typeof fetch !== 'undefined';
 
     if (canStream) {
       // Place a placeholder message so the UI shows content as it streams
@@ -3454,7 +3455,16 @@ export default function OneScreen() {
             onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
             showsVerticalScrollIndicator={false}
             style={{ flex: 1 }}
-            contentContainerStyle={{ paddingTop: 8, paddingBottom: 16, paddingHorizontal: 12 }}
+            contentContainerStyle={{
+              paddingTop: 8,
+              // [WAVE 43A 2026-05-21] When followup chips render in the footer,
+              // the previous 16px wasn't enough on iOS — the chip row got
+              // clipped by the input pill on auto-scrollToEnd (user report:
+              // "ta cortando embaixo"). Bump to ~120 when chips are visible
+              // so the chip row is fully clear of the input area.
+              paddingBottom: (lastFollowups.length > 0 && !loading) ? 120 : 16,
+              paddingHorizontal: 12,
+            }}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="interactive"
             automaticallyAdjustKeyboardInsets={true}
@@ -3478,12 +3488,17 @@ export default function OneScreen() {
                 && !inputText.trim()
                 && messages.some(m => m.role === 'assistant' && !m._streaming)
                   ? (
-                    <SmartReplyChips
-                      replies={lastFollowups}
-                      label={t('one.followupSuggested') || 'Sugestões'}
-                      onSelectReply={(chip) => setInputText(chip)}
-                      onSendReply={(chip) => { setLastFollowups([]); sendMessage(chip); }}
-                    />
+                    // [WAVE 43A] Wrap in View w/ paddingBottom so chip pills
+                    // never sit flush against the input bar — gives the row
+                    // a clear floor even if keyboard pushes layout around.
+                    <View style={{ paddingBottom: 24 }}>
+                      <SmartReplyChips
+                        replies={lastFollowups}
+                        label={t('one.followupSuggested') || 'Continue com'}
+                        onSelectReply={(chip) => setInputText(chip)}
+                        onSendReply={(chip) => { setLastFollowups([]); sendMessage(chip); }}
+                      />
+                    </View>
                   )
                   : null
               )

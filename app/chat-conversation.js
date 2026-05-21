@@ -18323,6 +18323,12 @@ export default function ChatConversationScreen() {
                 ? (t('chatConv.liveLocation') || 'Localização ao vivo')
                 : (t('chatConv.location') || 'Localização')}
               onPress={() => {
+                // [WAVE 43D 2026-05-21] Multi-select sticky: in selection mode
+                // taps on inner cards must toggle the row, not fire the card
+                // action. Without this, tapping a location bubble in
+                // selectionMode would open the map and silently leave the
+                // selection intact (user perceived as "saiu da seleção").
+                if (selectionMode) return toggleSelection(msg.id);
                 // Abre MapModal — Google Maps JS API + WS subscription pra
                 // live location se a mensagem ainda estiver ativa.
                 setMapModalData({
@@ -18335,6 +18341,8 @@ export default function ChatConversationScreen() {
                   conversationId,
                 });
               }}
+              onLongPress={() => { if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg); }}
+              delayLongPress={350}
               style={{
                 width: CARD_W,
                 borderRadius: 12,
@@ -18854,7 +18862,13 @@ export default function ChatConversationScreen() {
                   </View>
                 </View>
                 <TouchableOpacity
-                  onPress={() => startCall(isVideo)}
+                  onPress={() => {
+                    // [WAVE 43D] Multi-select sticky — see location card.
+                    if (selectionMode) return toggleSelection(msg.id);
+                    startCall(isVideo);
+                  }}
+                  onLongPress={() => { if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg); }}
+                  delayLongPress={350}
                   style={{
                     paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14,
                     backgroundColor: isOwn ? 'rgba(255,255,255,0.2)' : (colors.primary + '18'),

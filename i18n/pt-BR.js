@@ -6849,6 +6849,7 @@ export default {
   'changePhone.phonePlaceholder': 'Adicione seu número de telefone',
   'changePhone.country': 'País',
   'changePhone.otpSent': 'Enviamos um código para {phone}',
+  'settings.activityHistory': 'Histórico de atividades',
   'changePhone.pickCountry': 'Selecionar país',
   'changePhone.searchCountry': 'Buscar país',
   'changePhone.resend': 'Reenviar código',

@@ -6757,6 +6757,7 @@ export default {
   'changePhone.phonePlaceholder': 'Add your phone number',
   'changePhone.country': 'Country',
   'changePhone.otpSent': 'We sent a code to {phone}',
+  'settings.activityHistory': 'Activity history',
   'changePhone.pickCountry': 'Select country',
   'changePhone.searchCountry': 'Search country',
   'changePhone.resend': 'Resend code',

@@ -134,6 +134,27 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
     private var sendingOverlay: UIView?
     private var progressLabel: UILabel?
 
+    // MARK: Loading state for shared content (iCloud download / HEIC decode)
+    //
+    // iCloud-hosted photos/videos take 2-10s+ to download via
+    // `loadFileRepresentation`. Older versions of this file blocked
+    // `viewDidLoad` waiting for extraction to finish before calling
+    // `setupUI()` — net effect: user taps "Chatyy" in the iOS share
+    // sheet and stares at a blank sheet for several seconds, perceived
+    // as "fica carregando travado". The new flow renders the UI
+    // immediately with a "Preparando…" preview, lets the user pick
+    // contacts in parallel, and either auto-fires the send when content
+    // arrives (if user already tapped Enviar) or simply enables the
+    // Enviar button. Matches WhatsApp's behaviour.
+    private var contentLoaded = false
+    private var contentLoadFailed = false
+    private var pendingSendAfterLoad = false
+    private var loadStartedAt: Date = Date()
+    /// Hard upper bound on iCloud download. After this, show an
+    /// explicit "abre Fotos e deixa baixar" message instead of leaving
+    /// the user staring at the spinner forever.
+    private let contentLoadTimeoutSec: TimeInterval = 20
+
     // MARK: Lifecycle
 
     override func viewDidLoad() {

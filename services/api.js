@@ -6438,6 +6438,11 @@ export function oneChatStream(message, conversationId = null, callbacks = {}, im
     timezone: tz,
     locale,
     screen_context: _oneScreenContext,
+    // [WAVE 43A 2026-05-21] Hint that we want the fast model (gpt-4o-mini).
+    // Backend already defaults to mini per memory openai_only_migration; we
+    // pass the hint so future routing logic can read it without app churn.
+    model: 'fast',
+    prefer_fast: true,
   };
   if (imageBase64) { body.image_data = imageBase64; body.image_mime_type = imageMimeType || 'image/jpeg'; }
   if (driveFileId) { body.drive_file_id = driveFileId; }
@@ -6449,12 +6454,18 @@ export function oneChatStream(message, conversationId = null, callbacks = {}, im
   // while the Anthropic billing is sorted out — OpenAI is the only path for now.
   (async () => {
     try {
+      // [WAVE 43A 2026-05-21] Native React Native (iOS+Android) fetch
+      // does NOT expose a streaming body by default — needs the RN-specific
+      // `reactNative.textStreaming: true` flag. Without this, RN buffers the
+      // whole SSE response → user waits 6-10s for first byte. With it, RN
+      // exposes `res.body` as a ReadableStream we can consume chunk-by-chunk.
       const res = await fetch(`${API_URL}?action=one_chat_stream`, {
         method: 'POST',
         headers,
         credentials: 'include',
         body: JSON.stringify(body),
         signal: controller.signal,
+        reactNative: { textStreaming: true },
       });
 
       clearTimeout(timeout);
@@ -6575,7 +6586,9 @@ export async function oneChat(message, conversationId = null, imageBase64 = null
   const timeout = setTimeout(() => controller.abort(), 120000);
   try {
     const headers = { 'Content-Type': 'application/json', ...getAuthHeaders() };
-    const body = { action: 'one_chat', message, conversation_id: conversationId, timezone: tz, locale, screen_context: _oneScreenContext };
+    // [WAVE 43A 2026-05-21] same fast hint as streaming path so fallback
+    // doesn't accidentally hit the smart/slow model.
+    const body = { action: 'one_chat', message, conversation_id: conversationId, timezone: tz, locale, screen_context: _oneScreenContext, model: 'fast', prefer_fast: true };
     if (imageBase64) {
       body.image_data = imageBase64;
       body.image_mime_type = imageMimeType || 'image/jpeg';
