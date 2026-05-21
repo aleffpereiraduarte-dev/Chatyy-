@@ -348,6 +348,23 @@ function CallScreenInner() {
   const [reconnecting, setReconnecting] = useState(false);
   const [connectionFailed, setConnectionFailed] = useState(false);
   const [showSlowConnectOverlay, setShowSlowConnectOverlay] = useState(false);
+  // [WAVE 68 2026-05-21] Progressive connect phase. Drives the topStatus
+  // line BEFORE peer joins so user never sees an alarmist "Conexão lenta"
+  // in the first 15s (most calls connect well under that). Phases:
+  //   'connecting'    — 0-4s   default ("Conectando..." / pulse)
+  //   'establishing'  — 4-15s  ("Estabelecendo conexão segura...")
+  //   'slow'          — 15s+   ("Conexão lenta..." hint surfaces)
+  // Reset to 'connecting' when peerRinging/peerConnected fires.
+  const [connectPhase, setConnectPhase] = useState('connecting');
+  // [WAVE 68] Deferred reconnect banner. The orange "Reconectando..." banner
+  // is HEAVY and was firing on 1-2s ICE blips that LK auto-recovered from
+  // before the user could perceive them — pure visual noise. We now keep the
+  // raw `reconnecting` flag (used for QoS counter, hard timeout) but only
+  // *render* the banner after RECONNECT_BANNER_DELAY_MS of sustained
+  // reconnecting state. Cancels on Reconnected/Connected.
+  const [showReconnectBanner, setShowReconnectBanner] = useState(false);
+  const RECONNECT_BANNER_DELAY_MS = 5000;
+  const reconnectBannerArmTimerRef = useRef(null);
 
   // [2026-05-19 #1183 bad-internet PSTN fallback]
   // When LiveKit can't connect (15s timeout or hard-reconnect ceiling) and the
@@ -505,21 +522,25 @@ function CallScreenInner() {
   const [groupPeers, setGroupPeers] = useState(new Map());
   const groupPeersRef = useRef(new Map());
 
-  // Slow-connect overlay (#892 fix 3): pre-connect > 8s → explicit Conectando overlay.
+  // [WAVE 68 2026-05-21] Progressive connect-phase state machine.
+  // Previously a single 8s timer flipped showSlowConnectOverlay — too
+  // aggressive: a normal token fetch + SDK init + peer join on cellular is
+  // 5-12s, and the alarmist red banner was firing on healthy calls. New ladder:
+  //   T+0-4s    'connecting'   default — pulsing dot, "Conectando..."
+  //   T+4-15s   'establishing' "Estabelecendo conexão segura..." (calmer)
+  //   T+15s+    'slow'         show the slowConnectHint banner
+  // peerRinging/peerConnected cancels all phase escalation immediately.
   useEffect(() => {
     if (peerConnected || peerRinging || ended) {
       setShowSlowConnectOverlay(false);
+      setConnectPhase('connecting');
       return;
     }
-    const t8 = setTimeout(() => {
-      // [CALL-TRACE 2026-05-20 WAVE42] The "Conexão lenta, aguardando..."
-      // overlay (i18n key call.slowConnectHint) appears here — fires when we
-      // haven't reached peerConnected nor peerRinging within 8s of mount.
-      // Probable root cause when user reports "conexão lenta" with no signal
-      // of step 12 firing: token fetch fallback (step 11) succeeded but the
-      // peer never joined the SFU on their side (step 7/8 fail on callee).
+    setConnectPhase('connecting');
+    const tEstablishing = setTimeout(() => setConnectPhase('establishing'), 4000);
+    const tSlow = setTimeout(() => {
       try {
-        console.log('[CALL-TRACE][SLOW] Conexão lenta overlay armed (8s elapsed without peer/ringing)', {
+        console.log('[CALL-TRACE][SLOW] Slow-connect hint armed (15s elapsed without peer/ringing)', {
           callId,
           peerConnected,
           peerRinging,
@@ -527,10 +548,41 @@ function CallScreenInner() {
           ts: Date.now(),
         });
       } catch {}
+      setConnectPhase('slow');
       setShowSlowConnectOverlay(true);
-    }, 8000);
-    return () => clearTimeout(t8);
+    }, 15000);
+    return () => {
+      clearTimeout(tEstablishing);
+      clearTimeout(tSlow);
+    };
   }, [peerConnected, peerRinging, ended]);
+
+  // [WAVE 68 2026-05-21] Defer the orange "Reconectando..." banner so a 1-2s
+  // ICE blip (very common on cellular bouncing 4G↔5G or SFU edge migration)
+  // doesn't paint a scary banner that LK auto-recovers from before the user
+  // could read it. Banner only renders after `reconnecting` has been true
+  // for >= RECONNECT_BANNER_DELAY_MS (5s) continuously.
+  useEffect(() => {
+    if (!reconnecting) {
+      if (reconnectBannerArmTimerRef.current) {
+        try { clearTimeout(reconnectBannerArmTimerRef.current); } catch {}
+        reconnectBannerArmTimerRef.current = null;
+      }
+      setShowReconnectBanner(false);
+      return;
+    }
+    if (reconnectBannerArmTimerRef.current) return;
+    reconnectBannerArmTimerRef.current = setTimeout(() => {
+      reconnectBannerArmTimerRef.current = null;
+      setShowReconnectBanner(true);
+    }, RECONNECT_BANNER_DELAY_MS);
+    return () => {
+      if (reconnectBannerArmTimerRef.current) {
+        try { clearTimeout(reconnectBannerArmTimerRef.current); } catch {}
+        reconnectBannerArmTimerRef.current = null;
+      }
+    };
+  }, [reconnecting]);
 
   // ───── Animations ─────
   const fadeAnim = useRef(new Animated.Value(1)).current;
@@ -634,7 +686,11 @@ function CallScreenInner() {
   const handleToggleVideoRef = useRef(null);
 
   // Mute toggle UI shake when peer is on hold.
-  const reconnectMicroVisible = reconnecting && peerConnected && !ended;
+  // [WAVE 68 2026-05-21] Gate the post-connect micro banner on the
+  // DEBOUNCED showReconnectBanner so a brief 1-2s ICE blip mid-call doesn't
+  // flash the orange strip across the screen. The 5s debounce upstream is
+  // armed off the raw `reconnecting` flag and cancels on Reconnected.
+  const reconnectMicroVisible = showReconnectBanner && peerConnected && !ended;
   useEffect(() => {
     Animated.timing(reconnectMicroFade, {
       toValue: reconnectMicroVisible ? 1 : 0,
@@ -3479,12 +3535,21 @@ function CallScreenInner() {
   }, [activeFilter]);
 
   // ───── Status text ─────
+  // [WAVE 68 2026-05-21] Honest progressive messages while peer hasn't
+  // joined yet. Default "Conectando..." for the first 4s, then
+  // "Estabelecendo conexão segura..." up to 15s, then the slow hint. The
+  // reconnecting state ALSO only surfaces in the status line after the
+  // 5s debounce — `showReconnectBanner` is the gate, not the raw flag.
   let statusText = t('call.connecting') || 'Conectando...';
-  if (peerRinging && !peerConnected) statusText = t('call.ringing') || 'Tocando...';
+  if (!peerConnected && !peerRinging) {
+    if (connectPhase === 'slow') statusText = t('call.slowConnectHint') || 'A conexão está demorando um pouco. Verifique sua rede.';
+    else if (connectPhase === 'establishing') statusText = t('call.establishing') || 'Estabelecendo conexão segura...';
+  }
+  if (peerRinging && !peerConnected) statusText = t('call.ringing') || 'Chamando...';
   if (connectionFailed) statusText = t('call.connectionFailed') || 'Não foi possível conectar. Tente novamente.';
   else if (errorMsg) statusText = errorMsg;
   else if (ended) statusText = t('call.ended') || 'Chamada encerrada';
-  else if (reconnecting && !peerConnected) statusText = t('call.reconnecting') || 'Reconectando...';
+  else if (showReconnectBanner && !peerConnected) statusText = t('call.reconnecting') || 'Reconectando...';
   else if (onHold) statusText = (t('call.onHold') || 'Em espera') + ' · ' + formatDuration(callDuration);
   else if (screenSharing) statusText = t('call.screenSharing') || 'Compartilhando tela';
   else if (peerScreenSharing) statusText = formatDuration(callDuration);
@@ -3576,11 +3641,13 @@ function CallScreenInner() {
 
       {/* [2026-05-18 video-quality-push] Frame-drop / poor-connection toast.
           Suppressed while LK is already showing the "Reconectando..." banner
-          so we don't stack overlapping warnings. */}
+          so we don't stack overlapping warnings.
+          [WAVE 68 2026-05-21] Gate on debounced showReconnectBanner — see
+          comment near reconnectMicroVisible above. */}
       {isVideoCall && peerConnected && (
         <PoorConnectionWarning
           snapshot={videoStatsSnapshot}
-          suppressed={reconnecting}
+          suppressed={showReconnectBanner}
           label={t('call.video.poorConnection') || t('call.poorConnection') || 'Conexão fraca'}
         />
       )}
@@ -3657,10 +3724,10 @@ function CallScreenInner() {
             <View style={styles.topInfo}>
               <Text style={styles.topName} numberOfLines={1}>{callerName}</Text>
               {!peerConnected && (
-                <Text style={[styles.topStatus, reconnecting && { color: '#f59e0b' }]}>{statusText}</Text>
+                <Text style={[styles.topStatus, showReconnectBanner && { color: '#f59e0b' }]}>{statusText}</Text>
               )}
               {peerConnected && (onHold || screenSharing || peerScreenSharing) && (
-                <Text style={[styles.topStatus, reconnecting && { color: '#f59e0b' }]}>
+                <Text style={[styles.topStatus, showReconnectBanner && { color: '#f59e0b' }]}>
                   {onHold ? (t('call.onHold') || 'Em espera')
                     : screenSharing ? (t('call.screenSharing') || 'Compartilhando tela')
                     : (t('call.peerSharing') || 'Tela compartilhada')}
@@ -3708,8 +3775,11 @@ function CallScreenInner() {
             </View>
           )}
 
-          {/* Reconnecting overlay (pre-connect) */}
-          {reconnecting && !ended && !peerConnected && (
+          {/* Reconnecting overlay (pre-connect) — WAVE 68 gated on the
+              5s-debounced showReconnectBanner so transient LK Reconnecting
+              flickers (cellular handoff, SFU edge migration) don't paint the
+              big orange banner before LK auto-recovers. */}
+          {showReconnectBanner && !ended && !peerConnected && (
             <Animated.View
               style={[styles.reconnectBanner, {
                 transform: [{
