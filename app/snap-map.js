@@ -188,7 +188,7 @@ function pinHtml(pin) {
   var name = (pin.name || (pin.email ? pin.email.split('@')[0] : '?'));
   var nameShort = name.split(' ')[0];
   // ago_label is a short relative-time string ("agora", "há 5min", "há 2h")
-  // computed in RN-land via the `ago()` helper. We render it inside the pin
+  // computed in RN-land via the ago() helper. We render it inside the pin
   // so users see at a glance how fresh the position is — the dominant
   // user feedback ("ta desconectando") was actually peers seeing stale pins
   // and assuming the share died, when it's still live just heartbeat-quiet.

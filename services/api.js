@@ -3484,8 +3484,19 @@ export async function chatUpdateLiveLocation(messageId, latitude, longitude, add
   return apiCall('chat_update_live_location', payload, 'POST');
 }
 
-export async function chatStopLiveLocation(messageId) {
-  return apiCall('chat_stop_live_location', { message_id: messageId }, 'POST');
+export async function chatStopLiveLocation(messageId, opts) {
+  // [WAVE 49 2026-05-21] `force=true` opts in to the destructive backend
+  // path (delete chat_live_locations row + global share + auto_chat grants).
+  // Without it the backend soft-no-ops and the share continues until its
+  // natural expires_at TTL elapses.
+  //
+  // Callers that REALLY want to stop (explicit "Parar" tap, auto-expiry
+  // setTimeout firing, bubble Stop action) must pass `{ force: true }`.
+  // Lifecycle cleanups like screen-unmount should call WITHOUT force so
+  // they don't accidentally kill an active session.
+  const payload = { message_id: messageId };
+  if (opts && opts.force) payload.force = true;
+  return apiCall('chat_stop_live_location', payload, 'POST');
 }
 
 // Idempotency token used by chat_edit/chat_delete/chat_react so the server
