@@ -55,6 +55,7 @@ import { WebView } from 'react-native-webview';
 import ChatMediaViewer from '../components/ChatMediaViewer';
 import ChatMedia from '../components/ChatMedia';
 import AvatarCircle from '../components/AvatarCircle';
+import AvatarLightbox from '../components/AvatarLightbox';
 import OngoingCallChip from '../components/OngoingCallChip';
 import { registerAudioPlayer, stopAllAudio } from '../services/audioManager';
 import { getCachedAudioUri } from '../services/audioCache';

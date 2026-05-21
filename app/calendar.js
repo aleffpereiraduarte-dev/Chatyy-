@@ -775,9 +775,11 @@ function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextW
     return arr;
   }, [weekStart]);
 
-  // Map events to day columns
+  // Map events to day columns, with side-by-side overlap tracks
+  // (Apple/Google Calendar style: overlapping events split the column
+  // into N tracks so they tile horizontally instead of stacking on top).
   const dayEvents = useMemo(() => {
-    const map = {}; // dayIdx -> [event]
+    const map = {}; // dayIdx -> [{ evt, topPx, heightPx, trackIdx, trackCount }]
     for (let i = 0; i < 7; i++) {
       map[i] = [];
     }
@@ -790,10 +792,42 @@ function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextW
         const dayEnd = new Date(days[i]);
         dayEnd.setHours(23, 59, 59, 999);
         if (evtStart <= dayEnd && evtEnd >= dayStart) {
-          map[i].push(evt);
+          // Clip event to this day so the block never spills the column.
+          const segStart = evtStart < dayStart ? dayStart : evtStart;
+          const segEnd = evtEnd > dayEnd ? dayEnd : evtEnd;
+          const startMin = segStart.getHours() * 60 + segStart.getMinutes();
+          const rawEndMin = segEnd.getHours() * 60 + segEnd.getMinutes();
+          const endMin = Math.max(rawEndMin, startMin + 30); // min 30min block
+          const topPx = (startMin / 60) * HOUR_HEIGHT;
+          const heightPx = ((endMin - startMin) / 60) * HOUR_HEIGHT;
+          map[i].push({ evt, startMin, endMin, topPx, heightPx, trackIdx: 0, trackCount: 1 });
         }
       }
     });
+    // Greedy track assignment per day so overlapping events tile horizontally
+    // and never render on top of each other (was the main source of clutter).
+    for (let i = 0; i < 7; i++) {
+      const arr = map[i];
+      arr.sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin);
+      const tracks = []; // tracks[k] = endMin of last event in track k
+      arr.forEach(item => {
+        let placed = -1;
+        for (let k = 0; k < tracks.length; k++) {
+          if (tracks[k] <= item.startMin) {
+            tracks[k] = item.endMin;
+            placed = k;
+            break;
+          }
+        }
+        if (placed === -1) {
+          tracks.push(item.endMin);
+          placed = tracks.length - 1;
+        }
+        item.trackIdx = placed;
+      });
+      const total = Math.max(tracks.length, 1);
+      arr.forEach(item => { item.trackCount = total; });
+    }
     return map;
   }, [events, days]);
 
@@ -876,38 +910,42 @@ function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextW
               const isToday = isSameDay(d, today);
               return (
                 <View key={i} style={[weekStyles.dayColBody, { borderLeftColor: colors.border }, isToday && { backgroundColor: colors.primary + '05' }]}>
-                  {(dayEvents[i] || []).map(evt => {
-                    const evtStart = new Date(evt.start_at);
-                    const evtEnd = new Date(evt.end_at);
-                    const startMin = evtStart.getHours() * 60 + evtStart.getMinutes();
-                    const endMin = evtEnd.getHours() * 60 + evtEnd.getMinutes();
-                    const topPx = (startMin / 60) * HOUR_HEIGHT;
-                    const duration = Math.max(endMin - startMin, 30); // min 30min block
-                    const heightPx = (duration / 60) * HOUR_HEIGHT;
+                  {(dayEvents[i] || []).map((item, idx) => {
+                    const { evt, topPx, heightPx, trackIdx, trackCount } = item;
                     const bgColor = evt.color || evt.calendar_color || colors.primary;
-
+                    // Side-by-side tracks: each takes 1/trackCount of column width
+                    // (with a 1px outer + small inner gap so blocks read as separate).
+                    const widthPct = 100 / trackCount;
+                    const leftPct = trackIdx * widthPct;
+                    // Apple-style: tiny blocks render as a colored bar only,
+                    // taller blocks add title + time. Saves the WeekView from
+                    // poluted truncated labels stacking on top of each other.
+                    const compact = heightPx < 24;
+                    const showTime = heightPx >= 44;
                     return (
                       <TouchableOpacity
-                        key={evt.id}
+                        key={`${evt.id || idx}-${trackIdx}`}
                         style={[weekStyles.eventBlock, {
                           top: topPx,
-                          height: heightPx,
-                          backgroundColor: bgColor + '22',
+                          height: Math.max(heightPx - 1, 16),
+                          left: `${leftPct}%`,
+                          width: `${widthPct}%`,
+                          backgroundColor: compact ? bgColor : bgColor + '22',
                           borderLeftColor: bgColor,
                         }]}
                         onPress={() => onEventPress(evt)}
                         activeOpacity={0.7}
                       >
-                        {/* Drag handle visual (top) */}
-                        <View style={weekStyles.dragHandle}>
-                          <View style={[weekStyles.dragHandleDot, { backgroundColor: bgColor + '55' }]} />
-                          <View style={[weekStyles.dragHandleDot, { backgroundColor: bgColor + '55' }]} />
-                          <View style={[weekStyles.dragHandleDot, { backgroundColor: bgColor + '55' }]} />
-                        </View>
-                        <Text style={[weekStyles.eventBlockTitle, { color: bgColor }]} numberOfLines={1}>
-                          {evt.title || ''}
-                        </Text>
-                        {heightPx > 30 && (
+                        {!compact && (
+                          <Text
+                            style={[weekStyles.eventBlockTitle, { color: bgColor }]}
+                            numberOfLines={heightPx > 48 ? 2 : 1}
+                            ellipsizeMode="tail"
+                          >
+                            {evt.title || ''}
+                          </Text>
+                        )}
+                        {showTime && (
                           <Text style={[weekStyles.eventBlockTime, { color: bgColor }]} numberOfLines={1}>
                             {formatTime(evt.start_at)}
                           </Text>
@@ -972,17 +1010,14 @@ const weekStyles = StyleSheet.create({
   },
   dayColBody: { flex: 1, position: 'relative', borderLeftWidth: StyleSheet.hairlineWidth },
   eventBlock: {
-    position: 'absolute', left: 1, right: 1,
-    borderLeftWidth: 3, borderRadius: 4, paddingHorizontal: 4, paddingVertical: 2,
+    position: 'absolute',
+    borderLeftWidth: 2, borderRadius: 5,
+    paddingHorizontal: 4, paddingVertical: 3,
     overflow: 'hidden',
+    marginRight: 1,
   },
-  dragHandle: {
-    flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
-    gap: 2, paddingVertical: 1, marginBottom: 0,
-  },
-  dragHandleDot: { width: 3, height: 3, borderRadius: 1.5 },
-  eventBlockTitle: { fontSize: 11, fontWeight: '600' },
-  eventBlockTime: { fontSize: 10 },
+  eventBlockTitle: { fontSize: 11, fontWeight: '600', lineHeight: 13 },
+  eventBlockTime: { fontSize: 9, marginTop: 1, opacity: 0.85 },
   nowLine: {
     position: 'absolute', left: 0, right: 0, flexDirection: 'row',
     height: 2, zIndex: 10,

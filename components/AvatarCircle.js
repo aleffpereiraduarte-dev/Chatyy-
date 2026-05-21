@@ -315,7 +315,7 @@ function _GroupCollage({ members, size, style }) {
   );
 }
 
-function AvatarCircle({ name, email, uri, size = 48, style, online = false, ringColor = '#7C3AED', showStatus = false, members }) {
+function AvatarCircle({ name, email, uri, size = 48, style, online = false, ringColor = '#7C3AED', showStatus = false, members, onPress }) {
   const [imgError, setImgError] = useState(false);
   const [version, setVersion] = useState(() => getAvatarVersion(email));
   // Holds the file:// URI from avatarCache once a background download
@@ -346,7 +346,7 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
     const ringWidth = online && showStatus ? 2 : 0;
     const totalSize = size + (ringWidth * 2) + 2;
     if (online && showStatus) {
-      return (
+      const node = (
         <View style={[{ width: totalSize, height: totalSize, borderRadius: totalSize / 2, alignItems: 'center', justifyContent: 'center', borderWidth: ringWidth, borderColor: ringColor, overflow: 'hidden' }, style, { borderRadius: totalSize / 2 }]}>
           <_GroupCollage members={members} size={size} />
           <View style={{
@@ -357,8 +357,14 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
           }} />
         </View>
       );
+      return onPress
+        ? <TouchableOpacity activeOpacity={0.7} onPress={onPress} accessibilityRole="button">{node}</TouchableOpacity>
+        : node;
     }
-    return <_GroupCollage members={members} size={size} style={style} />;
+    const node = <_GroupCollage members={members} size={size} style={style} />;
+    return onPress
+      ? <TouchableOpacity activeOpacity={0.7} onPress={onPress} accessibilityRole="button">{node}</TouchableOpacity>
+      : node;
   }
 
   // Subscribe to global cache bumps so this avatar refreshes when the user uploads a new pic.
@@ -534,7 +540,7 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
     // the wrapper square: if a caller passes `borderWidth` without
     // `borderRadius`, the wrapper would otherwise paint a 4-pixel square ring
     // around a circular avatar (regression seen in IMG_6703 on /live-viewer).
-    return (
+    const node = (
       <View style={[{ width: totalSize, height: totalSize, borderRadius: totalSize / 2, alignItems: 'center', justifyContent: 'center', borderWidth: ringWidth, borderColor: ringColor, overflow: 'hidden' }, style, { borderRadius: totalSize / 2 }]}>
         {inner}
         {/* Bottom-right green dot — intentional SQUARE-with-rounded-corners
@@ -553,6 +559,9 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
         }} />
       </View>
     );
+    return onPress
+      ? <TouchableOpacity activeOpacity={0.7} onPress={onPress} accessibilityRole="button" accessibilityLabel={accessLabel}>{node}</TouchableOpacity>
+      : node;
   }
 
   // ALWAYS force the wrapper to be round + clip overflow. Without this, a
@@ -562,11 +571,14 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
   // wasn't. Putting size/radius LAST guarantees they win even when the caller
   // passes a conflicting style. (Bug visible in IMG_6703 — square frame
   // behind the host's circular avatar on /live-viewer "Stream indisponível".)
-  return (
+  const node = (
     <View style={[{ width: size, height: size, overflow: 'hidden' }, style, { width: size, height: size, borderRadius: size / 2 }]}>
       {inner}
     </View>
   );
+  return onPress
+    ? <TouchableOpacity activeOpacity={0.7} onPress={onPress} accessibilityRole="button" accessibilityLabel={accessLabel}>{node}</TouchableOpacity>
+    : node;
 }
 
 const styles = StyleSheet.create({
@@ -616,7 +628,12 @@ function _avatarEqual(prev, next) {
     prev.size === next.size &&
     prev.online === next.online &&
     prev.ringColor === next.ringColor &&
-    prev.showStatus === next.showStatus
+    prev.showStatus === next.showStatus &&
+    // `onPress` swaps from undefined → fn when the caller wires tap-to-fullscreen
+    // mid-mount (rare, but happens on Profile peek's avatar). Treating it as a
+    // tracked dim means a freshly-passed callback re-wraps the avatar in a
+    // TouchableOpacity instead of staying inert.
+    (typeof prev.onPress === 'function') === (typeof next.onPress === 'function')
   );
 }
 export default memo(AvatarCircle, _avatarEqual);
