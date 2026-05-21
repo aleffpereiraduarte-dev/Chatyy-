@@ -1200,7 +1200,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
   // fingerprint-diff-anti-flicker, 30d disk cache, video warm-cache. The
   // local `statuses` state lives just to keep the optimistic mutation
   // helpers (mark-viewed, delete) familiar to the rest of this component.
-  const { groups: hookGroups, refetch: refetchStatuses, markViewed: markStatusViewed, removeStatus: removeStatusFromCache, removeGroup: removeStatusGroup } = useStatuses(user?.email, { warmCacheVideos: true });
+  const { groups: hookGroups, loading: statusLoading, refetch: refetchStatuses, markViewed: markStatusViewed, removeStatus: removeStatusFromCache, removeGroup: removeStatusGroup } = useStatuses(user?.email, { warmCacheVideos: true });
   const [statuses, setStatuses] = useState(hookGroups);
   // Mirror hook output → local state. setState is a noop when reference is
   // unchanged (React bails) so this only fires on actual data deltas.
