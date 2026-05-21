@@ -7717,6 +7717,29 @@ export async function stripeSavedCard() { return apiCall('stripe_saved_card'); }
 export async function stripeUpgrade(plan, storageGb) { return apiCall('stripe_upgrade', { plan, storage_gb: storageGb || undefined }, 'POST'); }
 
 // ============================================================
+// STRIPE DIAMOND PURCHASE (WAVE 43E — 2026-05-21)
+// One-shot PaymentIntents NOT tied to a subscription. Used by the
+// web checkout page at chatyy.com.br/comprar-diamantes and (later)
+// by Android's Payment Sheet integration. iOS deep-links to the
+// web flow — App Store 3.1.1 forbids 3rd-party processors for
+// digital goods inside the iOS app.
+// ============================================================
+export async function stripeDiamondPacks() { return apiCall('stripe_diamond_packs'); }
+export async function stripeDiamondSetupIntent() { return apiCall('stripe_diamond_setup_intent', {}, 'POST'); }
+export async function stripeDiamondPaymentIntent(sku, paymentMethodId = null, offSession = false) {
+  return apiCall('stripe_diamond_payment_intent', {
+    sku,
+    payment_method_id: paymentMethodId || undefined,
+    off_session: offSession || undefined,
+  }, 'POST');
+}
+export async function stripeDiamondListCards() { return apiCall('stripe_diamond_list_cards'); }
+export async function stripeDiamondDeleteCard(paymentMethodId) {
+  return apiCall('stripe_diamond_delete_card', { payment_method_id: paymentMethodId }, 'POST');
+}
+export async function stripeDiamondHistory() { return apiCall('stripe_diamond_history'); }
+
+// ============================================================
 // CONTENT SAFETY / MODERATION
 // ============================================================
 export async function feedBookmarkList() { return apiCall('feed_bookmark_list'); }

@@ -170,8 +170,24 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
         // suggestion is effectively ignored — which is exactly the "abre
         // em vazio" symptom in the report.
         preselectFromIntentIfNeeded()
+
+        // PERF FIX (2026-05-21): render UI IMMEDIATELY so the user sees
+        // contact list + preview placeholder right away. Extraction
+        // (which may trigger an iCloud download) runs in the
+        // background; we refresh the preview + Enviar button when it
+        // completes. Without this, sharing an iCloud photo = blank
+        // share-sheet for 2-10s ("fica carregando travado").
+        loadStartedAt = Date()
+        setupUI()
         extractSharedContent { [weak self] in
-            DispatchQueue.main.async { self?.setupUI() }
+            DispatchQueue.main.async { self?.onContentLoaded() }
+        }
+        // Hard timeout so iCloud failures don't hang the UI forever.
+        DispatchQueue.main.asyncAfter(deadline: .now() + contentLoadTimeoutSec) { [weak self] in
+            guard let self = self else { return }
+            if !self.contentLoaded {
+                self.onContentLoadTimedOut()
+            }
         }
     }
 
@@ -526,15 +542,14 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
             renderLoggedOutState()
             return
         }
-        // Defensive: if extractSharedContent silently failed (e.g. iCloud
-        // photo not downloaded, unknown UTI), show an explicit error
-        // instead of the regular UI — otherwise user taps Send, nothing
-        // happens, extension closes, and they think they shipped a video
-        // but the server never saw it.
-        if payloads.isEmpty {
-            renderEmptyContentError()
-            return
-        }
+        // PERF FIX (2026-05-21): render the share UI immediately, even
+        // with `payloads` still empty. The preview block paints a
+        // "Preparando…" placeholder while extraction runs; we swap in
+        // the real preview via refreshPreviewBlock() when content
+        // arrives. Earlier behaviour was to short-circuit to
+        // renderEmptyContentError when payloads.isEmpty — but in the
+        // new async flow, empty just means "not yet loaded", so we'd
+        // permanently lock the user out of the picker.
         renderShareUI()
     }
 
@@ -676,51 +691,42 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
         sep.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(sep)
 
-        // Preview block (small, inline at top above caption)
+        // Preview block (small, inline at top above caption).
+        // PERF FIX (2026-05-21): we paint a "Preparando…" placeholder
+        // here and then call refreshPreviewBlock() once extraction
+        // completes to swap in the real thumbnail/label. The block is
+        // wired with a constant 66pt height in the layout below so
+        // swapping content doesn't reflow the rest of the UI.
         previewView.backgroundColor = .secondarySystemBackground
         previewView.layer.cornerRadius = 10
         previewView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(previewView)
 
-        if payload.kind == .image, let img = payload.image {
-            previewImageView.image = img
-            previewImageView.contentMode = .scaleAspectFill
-            previewImageView.clipsToBounds = true
-            previewImageView.layer.cornerRadius = 8
-            previewImageView.translatesAutoresizingMaskIntoConstraints = false
-            previewView.addSubview(previewImageView)
+        // Image view is always added (hidden when no image yet).
+        previewImageView.contentMode = .scaleAspectFill
+        previewImageView.clipsToBounds = true
+        previewImageView.layer.cornerRadius = 8
+        previewImageView.backgroundColor = .tertiarySystemBackground
+        previewImageView.translatesAutoresizingMaskIntoConstraints = false
+        previewView.addSubview(previewImageView)
 
-            // "📷 Foto" if 1, "📷 5 fotos" if multiple
-            let n = payloads.count
-            previewLabel.text = n > 1 ? "📷 \(n) fotos" : "📷 Foto"
-            previewLabel.font = .systemFont(ofSize: 13, weight: .medium)
-            previewLabel.textColor = .secondaryLabel
-            previewLabel.translatesAutoresizingMaskIntoConstraints = false
-            previewView.addSubview(previewLabel)
+        previewLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        previewLabel.textColor = .secondaryLabel
+        previewLabel.numberOfLines = 2
+        previewLabel.translatesAutoresizingMaskIntoConstraints = false
+        previewView.addSubview(previewLabel)
 
-            NSLayoutConstraint.activate([
-                previewImageView.leadingAnchor.constraint(equalTo: previewView.leadingAnchor, constant: 8),
-                previewImageView.topAnchor.constraint(equalTo: previewView.topAnchor, constant: 8),
-                previewImageView.bottomAnchor.constraint(equalTo: previewView.bottomAnchor, constant: -8),
-                previewImageView.widthAnchor.constraint(equalToConstant: 50),
-                previewLabel.leadingAnchor.constraint(equalTo: previewImageView.trailingAnchor, constant: 12),
-                previewLabel.centerYAnchor.constraint(equalTo: previewView.centerYAnchor),
-                previewLabel.trailingAnchor.constraint(equalTo: previewView.trailingAnchor, constant: -12),
-            ])
-        } else {
-            previewLabel.text = payload.displayPreview
-            previewLabel.numberOfLines = 2
-            previewLabel.textColor = .label
-            previewLabel.font = .systemFont(ofSize: 14)
-            previewLabel.translatesAutoresizingMaskIntoConstraints = false
-            previewView.addSubview(previewLabel)
-            NSLayoutConstraint.activate([
-                previewLabel.topAnchor.constraint(equalTo: previewView.topAnchor, constant: 10),
-                previewLabel.bottomAnchor.constraint(equalTo: previewView.bottomAnchor, constant: -10),
-                previewLabel.leadingAnchor.constraint(equalTo: previewView.leadingAnchor, constant: 12),
-                previewLabel.trailingAnchor.constraint(equalTo: previewView.trailingAnchor, constant: -12),
-            ])
-        }
+        NSLayoutConstraint.activate([
+            previewImageView.leadingAnchor.constraint(equalTo: previewView.leadingAnchor, constant: 8),
+            previewImageView.topAnchor.constraint(equalTo: previewView.topAnchor, constant: 8),
+            previewImageView.bottomAnchor.constraint(equalTo: previewView.bottomAnchor, constant: -8),
+            previewImageView.widthAnchor.constraint(equalToConstant: 50),
+            previewLabel.leadingAnchor.constraint(equalTo: previewImageView.trailingAnchor, constant: 12),
+            previewLabel.centerYAnchor.constraint(equalTo: previewView.centerYAnchor),
+            previewLabel.trailingAnchor.constraint(equalTo: previewView.trailingAnchor, constant: -12),
+        ])
+
+        refreshPreviewBlock()
 
         // Caption
         captionField.placeholder = "Adicionar legenda…"
@@ -845,10 +851,113 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
             sendBarLabel.text = "Selecione contatos"
             sendButton.isEnabled = false
             sendButton.alpha = 0.4
+        } else if !contentLoaded && !contentLoadFailed {
+            // PERF FIX (2026-05-21): user already picked contacts but
+            // the photo is still being pulled from iCloud. Show a
+            // friendly hint instead of an opaque grey button. The
+            // button stays tappable so the user can "queue" the send —
+            // we'll fire it the instant extraction finishes (see
+            // sendTapped + onContentLoaded).
+            sendBarLabel.text = "\(n) selecionado\(n > 1 ? "s" : "") • baixando do iCloud…"
+            sendButton.isEnabled = true
+            sendButton.alpha = 0.85
         } else {
             sendBarLabel.text = "\(n) selecionado\(n > 1 ? "s" : "")"
             sendButton.isEnabled = true
             sendButton.alpha = 1
+        }
+    }
+
+    // PERF FIX (2026-05-21): repaint the preview block based on the
+    // current state of `payloads` + `contentLoaded`. Called once from
+    // renderShareUI (placeholder state) and again from
+    // onContentLoaded() / onContentLoadTimedOut() to swap in the real
+    // thumbnail.
+    private func refreshPreviewBlock() {
+        if contentLoadFailed {
+            previewImageView.image = nil
+            previewImageView.isHidden = true
+            previewLabel.textColor = .systemRed
+            previewLabel.font = .systemFont(ofSize: 13, weight: .medium)
+            previewLabel.text = "⚠️ Não consegui ler o conteúdo. Abre Fotos, deixa baixar do iCloud, e compartilha de novo."
+            return
+        }
+        if !contentLoaded {
+            // Loading state — pulse the placeholder.
+            previewImageView.isHidden = false
+            previewImageView.image = nil
+            previewLabel.textColor = .secondaryLabel
+            previewLabel.font = .systemFont(ofSize: 13, weight: .medium)
+            previewLabel.text = "Preparando mídia…"
+            // Subtle pulse so the user sees something is happening.
+            UIView.animate(withDuration: 0.8, delay: 0, options: [.autoreverse, .repeat, .allowUserInteraction]) {
+                self.previewImageView.alpha = 0.5
+            }
+            return
+        }
+        // Loaded state — repaint with real content.
+        previewImageView.layer.removeAllAnimations()
+        previewImageView.alpha = 1
+        if payload.kind == .image, let img = payload.image {
+            previewImageView.isHidden = false
+            previewImageView.image = img
+            let n = payloads.count
+            previewLabel.text = n > 1 ? "📷 \(n) fotos" : "📷 Foto"
+            previewLabel.textColor = .secondaryLabel
+            previewLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        } else if payload.kind == .video {
+            previewImageView.isHidden = true
+            let n = payloads.count
+            previewLabel.text = n > 1 ? "🎬 \(n) vídeos" : "🎬 Vídeo"
+            previewLabel.textColor = .label
+            previewLabel.font = .systemFont(ofSize: 14)
+        } else {
+            previewImageView.isHidden = true
+            previewLabel.text = payload.displayPreview
+            previewLabel.textColor = .label
+            previewLabel.font = .systemFont(ofSize: 14)
+        }
+    }
+
+    /// Called on main queue once extractSharedContent finishes (success
+    /// or empty result). Updates preview + send-button state + fires a
+    /// queued send if the user already tapped Enviar.
+    private func onContentLoaded() {
+        // Guard against double-fire (extraction completes after the
+        // timeout fallback already ran).
+        if contentLoaded || contentLoadFailed { return }
+        contentLoaded = true
+        // If extraction completed but yielded nothing (rare — usually
+        // an unsupported UTI), flag as failure so user gets a clear
+        // error instead of a permanently disabled Send button.
+        if payloads.isEmpty {
+            contentLoaded = false
+            contentLoadFailed = true
+        }
+        refreshPreviewBlock()
+        updateSendBar()
+        if pendingSendAfterLoad && contentLoaded {
+            pendingSendAfterLoad = false
+            sendTapped()
+        } else if pendingSendAfterLoad && contentLoadFailed {
+            pendingSendAfterLoad = false
+            hideSending()
+            showError("Não consegui ler o conteúdo. Abre Fotos, deixa o vídeo/foto baixar do iCloud, e compartilha de novo.")
+        }
+    }
+
+    /// Hard timeout fallback — extraction is still running after
+    /// `contentLoadTimeoutSec`. Surface the iCloud message and let the
+    /// user cancel.
+    private func onContentLoadTimedOut() {
+        if contentLoaded || contentLoadFailed { return }
+        contentLoadFailed = true
+        refreshPreviewBlock()
+        updateSendBar()
+        if pendingSendAfterLoad {
+            pendingSendAfterLoad = false
+            hideSending()
+            showError("Demorou muito pra baixar do iCloud. Abre Fotos, deixa o item baixar, e compartilha de novo.")
         }
     }
 
@@ -1063,7 +1172,25 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
     }
 
     @objc private func sendTapped() {
-        guard !selectedIds.isEmpty, !payloads.isEmpty else { return }
+        guard !selectedIds.isEmpty else { return }
+        // PERF FIX (2026-05-21): if extraction is still in flight, queue
+        // the send and show a "Preparando…" overlay. onContentLoaded()
+        // will re-fire sendTapped() the moment payloads arrive. Without
+        // this guard, tapping Enviar before iCloud finishes downloading
+        // would silently no-op (payloads.isEmpty), matching the
+        // "carregando travado" user complaint.
+        if payloads.isEmpty {
+            if contentLoadFailed {
+                showError("Não consegui ler o conteúdo. Abre Fotos, deixa o item baixar do iCloud, e compartilha de novo.")
+                return
+            }
+            pendingSendAfterLoad = true
+            // Show the same overlay used for actual sending so the user
+            // gets immediate feedback that their tap registered.
+            showSending(total: selectedIds.count)
+            progressLabel?.text = "Preparando mídia…"
+            return
+        }
         let caption = captionField.text ?? ""
 
         // Total ops = (selected destinations) × (payloads). Each payload
@@ -1205,6 +1332,13 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
     // MARK: Loading + finish
 
     private func showSending(total: Int) {
+        // PERF FIX (2026-05-21): idempotent — if an overlay already
+        // exists (e.g. a queued send is upgrading from "Preparando…" to
+        // "Enviando 0/N"), reuse it instead of stacking a second one.
+        if sendingOverlay != nil {
+            progressLabel?.text = "Enviando 0 de \(total)…"
+            return
+        }
         let overlay = UIView(frame: view.bounds)
         overlay.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         overlay.backgroundColor = UIColor.black.withAlphaComponent(0.5)

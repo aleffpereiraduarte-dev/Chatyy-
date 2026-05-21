@@ -18109,7 +18109,7 @@ export default function ChatConversationScreen() {
             ? (msg.local_path.startsWith('file://') ? msg.local_path : `file://${msg.local_path}`)
             : null;
           return (
-            <View>
+            <View style={{ position: 'relative' }}>
               <AudioPlayer
                 url={msg._localUri || audioLocalPath || resolveMediaUri(msg.file_url)}
                 duration={msg.duration || 0}
@@ -18118,6 +18118,19 @@ export default function ChatConversationScreen() {
                 messageId={msg.id}
                 waveform={msg.waveform}
               />
+              {/* [WAVE 43D] Multi-select sticky — overlay intercepts taps on
+                  the AudioPlayer (play/seek) while in selection mode and
+                  toggles the row instead. Without this the play button still
+                  fired and the row never got added to the selection. */}
+              {selectionMode && (
+                <TouchableOpacity
+                  activeOpacity={1}
+                  onPress={() => toggleSelection(msg.id)}
+                  onLongPress={() => toggleSelection(msg.id)}
+                  delayLongPress={350}
+                  style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'transparent', zIndex: 99 }}
+                />
+              )}
               {audioTx ? (
                 <View style={{ marginTop: 6 }}>
                   {!msg._txHidden && (
@@ -18632,7 +18645,7 @@ export default function ChatConversationScreen() {
             }
           };
           return (
-            <View style={{ minWidth: 250, maxWidth: 300, borderRadius: 14, backgroundColor: cardBg, overflow: 'hidden' }}>
+            <View style={{ minWidth: 250, maxWidth: 300, borderRadius: 14, backgroundColor: cardBg, overflow: 'hidden', position: 'relative' }}>
               {/* Header: avatar + name + phone (with flag) + email */}
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingTop: 12, paddingBottom: 10 }}>
                 <AvatarCircle name={ctName} email={ctEmail} size={56} />
@@ -18701,6 +18714,18 @@ export default function ChatConversationScreen() {
                 onSave={handleSaveContact}
                 onCall={() => { try { Linking.openURL(`tel:${ctPhone.replace(/[^+\d]/g, '')}`); } catch {} }}
               />
+              {/* [WAVE 43D] Multi-select sticky — overlay intercepts the
+                  Mensagem/Convidar/Salvar/Ligar action buttons when the row
+                  is in selection mode and toggles selection instead. */}
+              {selectionMode && (
+                <TouchableOpacity
+                  activeOpacity={1}
+                  onPress={() => toggleSelection(msg.id)}
+                  onLongPress={() => toggleSelection(msg.id)}
+                  delayLongPress={350}
+                  style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'transparent', zIndex: 99 }}
+                />
+              )}
             </View>
           );
         }
@@ -18895,16 +18920,29 @@ export default function ChatConversationScreen() {
             return <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text }]}>{t('voicemail.unavailable') || 'Mensagem de voz indisponível'}</Text>;
           }
           return (
-            <VoicemailBubble
-              voicemail={vm}
-              messageId={msg.id}
-              isOwn={isOwn}
-              colors={colors}
-              t={t}
-              ownTextColor={ownTextColor}
-              styles={styles}
-              transcription={msg.voicemail_transcription || vm.transcription || null}
-            />
+            <View style={{ position: 'relative' }}>
+              <VoicemailBubble
+                voicemail={vm}
+                messageId={msg.id}
+                isOwn={isOwn}
+                colors={colors}
+                t={t}
+                ownTextColor={ownTextColor}
+                styles={styles}
+                transcription={msg.voicemail_transcription || vm.transcription || null}
+              />
+              {/* [WAVE 43D] Multi-select sticky — overlay intercepts the
+                  voicemail play/listen taps and toggles selection instead. */}
+              {selectionMode && (
+                <TouchableOpacity
+                  activeOpacity={1}
+                  onPress={() => toggleSelection(msg.id)}
+                  onLongPress={() => toggleSelection(msg.id)}
+                  delayLongPress={350}
+                  style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'transparent', zIndex: 99 }}
+                />
+              )}
+            </View>
           );
         }
 
@@ -18988,7 +19026,13 @@ export default function ChatConversationScreen() {
             <View style={{ minWidth: 180, maxWidth: 300 }}>
               <TouchableOpacity
                 activeOpacity={0.78}
-                onPress={onTapStatus}
+                onPress={() => {
+                  // [WAVE 43D] Multi-select sticky — see location card.
+                  if (selectionMode) return toggleSelection(msg.id);
+                  onTapStatus();
+                }}
+                onLongPress={() => { if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg); }}
+                delayLongPress={350}
                 accessibilityRole="button"
                 accessibilityLabel={t('status.openOriginal') || 'Abrir status original'}
                 style={{
@@ -19181,7 +19225,13 @@ export default function ChatConversationScreen() {
                     return (
                       <TouchableOpacity
                         key={status}
-                        onPress={() => handleRsvp(status)}
+                        onPress={() => {
+                          // [WAVE 43D] Multi-select sticky — let row toggle win over RSVP.
+                          if (selectionMode) return toggleSelection(msg.id);
+                          handleRsvp(status);
+                        }}
+                        onLongPress={() => { if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg); }}
+                        delayLongPress={350}
                         style={{
                           flex: 1, paddingVertical: 7, borderRadius: 8, alignItems: 'center',
                           backgroundColor: btnColors[status],
@@ -19208,12 +19258,17 @@ export default function ChatConversationScreen() {
             <TouchableOpacity
               activeOpacity={0.85}
               onPress={() => {
+                // [WAVE 43D] Multi-select sticky — tap toggles selection
+                // instead of opening the playlist editor.
+                if (selectionMode) return toggleSelection(msg.id);
                 if (msg._pending || typeof msg.id === 'string') {
                   // Optimistic message — wait for server ID before allowing edits
                   return;
                 }
                 setPlaylistEditor({ messageId: msg.id, playlist });
               }}
+              onLongPress={() => { if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg); }}
+              delayLongPress={350}
               style={{
                 minWidth: 210, maxWidth: 270, padding: 10, borderRadius: 12,
                 backgroundColor: isDark ? '#1f1f29' : '#ffffff',
@@ -19415,7 +19470,14 @@ export default function ChatConversationScreen() {
           return (
             <View style={{ flexDirection: 'row', alignItems: 'stretch', minWidth: 220 }}>
               <TouchableOpacity
-                onPress={handleOpenFile}
+                onPress={() => {
+                  // [WAVE 43D] Multi-select sticky — tap toggles selection
+                  // instead of opening/downloading the file.
+                  if (selectionMode) return toggleSelection(msg.id);
+                  handleOpenFile();
+                }}
+                onLongPress={() => { if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg); }}
+                delayLongPress={350}
                 style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8 }}
                 activeOpacity={0.7}
                 hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
@@ -19471,7 +19533,13 @@ export default function ChatConversationScreen() {
                   in the Chatyy Docs editor (CKEditor / jspreadsheet) for inline edit. */}
               {isEditable && (
                 <TouchableOpacity
-                  onPress={handleEditInChatyy}
+                  onPress={() => {
+                    // [WAVE 43D] Multi-select sticky — tap toggles selection.
+                    if (selectionMode) return toggleSelection(msg.id);
+                    handleEditInChatyy();
+                  }}
+                  onLongPress={() => { if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg); }}
+                  delayLongPress={350}
                   style={{
                     paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center',
                     borderLeftWidth: StyleSheet.hairlineWidth,
@@ -19705,7 +19773,13 @@ export default function ChatConversationScreen() {
                 return (
                   <TouchableOpacity
                     key={idx}
-                    onPress={() => handleVote(idx)}
+                    onPress={() => {
+                      // [WAVE 43D] Multi-select sticky — let row toggle win.
+                      if (selectionMode) return toggleSelection(msg.id);
+                      handleVote(idx);
+                    }}
+                    onLongPress={() => { if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg); }}
+                    delayLongPress={350}
                     activeOpacity={0.7}
                     style={{
                       marginBottom: 5, borderRadius: 12, overflow: 'hidden',
@@ -19892,7 +19966,13 @@ export default function ChatConversationScreen() {
             const _legLiveUntil = loc.live_until || msg.live_until || null;
             return (
               <TouchableOpacity
-                onPress={() => setMapModalData({ lat: locLat, lng: locLng, label: locLabel, isLive: _legLive, liveUntil: _legLiveUntil, messageId: msg.id, conversationId })}
+                onPress={() => {
+                  // [WAVE 43D] Multi-select sticky — tap toggles selection.
+                  if (selectionMode) return toggleSelection(msg.id);
+                  setMapModalData({ lat: locLat, lng: locLng, label: locLabel, isLive: _legLive, liveUntil: _legLiveUntil, messageId: msg.id, conversationId });
+                }}
+                onLongPress={() => { if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg); }}
+                delayLongPress={350}
                 activeOpacity={0.7}
                 style={{ minWidth: 200, maxWidth: 280, backgroundColor: colors.surface, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, gap: 8 }}
               >
@@ -19937,7 +20017,13 @@ export default function ChatConversationScreen() {
             const roomMatch = msg.content.match(/meet\/([a-z0-9-]+)/i);
             return (
               <TouchableOpacity
-                onPress={() => roomMatch?.[1] && router.push(`/meet/${roomMatch[1]}${isVideo ? '' : '?video=off'}`)}
+                onPress={() => {
+                  // [WAVE 43D] Multi-select sticky — tap toggles selection.
+                  if (selectionMode) return toggleSelection(msg.id);
+                  if (roomMatch?.[1]) router.push(`/meet/${roomMatch[1]}${isVideo ? '' : '?video=off'}`);
+                }}
+                onLongPress={() => { if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg); }}
+                delayLongPress={350}
                 activeOpacity={0.7}
                 style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 2 }}
               >

@@ -4286,6 +4286,9 @@ export default {
   'profile.topTippers': 'Mayores apoyos (30d)',
   'profile.tipperLine': '{d} ◆ · {n} regalos',
   'profile.noTippersYet': 'Nadie ha enviado diamantes todavía.',
+  'profile.payoutHint': 'Retira desde R$ 50,00',
+  'profile.emptyTippersWithEarnings': 'Tus primeros fans aparecerán aquí en cuanto envíen un regalo.',
+  'profile.emptyTippersNoEarnings': 'Empieza a publicar para ver tus métricas crecer.',
   // Search Sons tab + trending
   'search.trendingSounds': 'Sonidos en tendencia',
   'search.noTrendingSounds': 'No hay sonidos en tendencia ahora mismo.',

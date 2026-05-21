@@ -176,7 +176,7 @@ function VideoFallbackPlayer({ videoUrl, isActive, paused, muted, playbackRate =
   );
 }
 
-const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActive, paused, playbackRate = 1, isPreload = false, muted = true, onTimeUpdate, onReady }) {
+const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActive, paused, playbackRate = 1, isPreload = false, muted = true, onTimeUpdate, onReady, hardGateClosed = false }) {
   const shortsRef = useRef(null);
 
   // Expose the imperative seek API to the parent through onReady — keeps the
@@ -195,6 +195,14 @@ const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActi
     if (onTimeUpdate) onTimeUpdate(ms, durMs);
   }, [onTimeUpdate]);
 
+  // [WAVE 43B 2026-05-20] hardGateClosed = user trocou de aba/route. Mesmo
+  // que `paused` já esteja true via effectivePaused, forçamos muted=true
+  // adicionalmente como belt-and-suspenders pra silenciar IMEDIATAMENTE —
+  // o pause vai pelo prop diff mas se a session de áudio não desativou
+  // ainda, o AVPlayer pode emitir frames residuais. muted=true mata áudio
+  // sem ambiguidade. Quando o gate reabre, voltamos pro estado original.
+  const effectiveMuted = hardGateClosed ? true : !!muted;
+
   // Native-only — if for any reason the module didn't link (e.g. iOS 504/505
   // shipped before expo-shorts), fall back to expo-video's VideoView so the
   // Reels feed still plays. Only surface a black placeholder if expo-video
@@ -204,9 +212,9 @@ const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActi
       return (
         <VideoFallbackPlayer
           videoUrl={videoUrl}
-          isActive={isActive && !isPreload}
-          paused={paused}
-          muted={muted}
+          isActive={isActive && !isPreload && !hardGateClosed}
+          paused={paused || hardGateClosed}
+          muted={effectiveMuted}
           playbackRate={playbackRate}
           onTimeUpdate={onTimeUpdate}
           onReady={onReady}
@@ -216,14 +224,16 @@ const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActi
     return <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }]} />;
   }
 
-  const shouldPlay = !!isActive && !paused && !isPreload;
+  // hardGateClosed force-mutes AND forces playWhenInFocus=false regardless
+  // of isActive/paused so a stale parent re-render can't re-arm playback.
+  const shouldPlay = !!isActive && !paused && !isPreload && !hardGateClosed;
   return (
     <View style={StyleSheet.absoluteFill}>
       <ShortsPlayerLazy
         ref={shortsRef}
         videoUrl={videoUrl}
         playWhenInFocus={shouldPlay}
-        muted={!!muted}
+        muted={effectiveMuted}
         playbackRate={Number(playbackRate) || 1}
         onTime={handleNativeTime}
       />
@@ -1826,6 +1836,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
             onTimeUpdate={handleNativeTime}
             onReady={handleNativeReady}
             isPreload={!!preload && !isActive}
+            hardGateClosed={!screenFocused}
           />
         )}
       </TouchableOpacity>
@@ -2367,16 +2378,44 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   // restaura AVAudioSession e drena o pool de imediato. Sem isso o native
   // ShortsPlayer fica em playWhenInFocus=false mas a sessão de áudio segue
   // .playback — o buffer drena lentamente. Drenar pool = hard-stop audible.
+  //
+  // [WAVE 43B 2026-05-20] Reorder: drena pool ANTES de restaurar a sessão.
+  // Iteração anterior chamava restoreShortsAudioSession primeiro — isso
+  // chama setActive(false) com player ainda vivo, e iOS continua emitindo
+  // áudio até o player ser explicitamente nilificado. Drenar pool primeiro
+  // garante que slot.player?.pause() + replaceCurrentItem(nil) acontecem
+  // antes da sessão desativar, eliminando frames residuais.
   useEffect(() => {
     if (isWeb) return;
     if (!playGate) {
-      try { restoreShortsAudioSessionFn?.(); } catch {}
+      // 1) pause + tear down all 3 AVPlayer slots first (kills audio at source)
       try { releaseShortsPoolFn?.(); } catch {}
+      // 2) only then deactivate AVAudioSession (with notifyOthersOnDeactivation
+      //    so Spotify/Apple Music can resume if they were ducked)
+      try { restoreShortsAudioSessionFn?.(); } catch {}
     } else {
       // Re-arm playback session quando volta pra Reels.
       try { setShortsAudioSessionPlaybackFn?.(); } catch {}
     }
   }, [playGate]);
+
+  // [WAVE 43B 2026-05-20] AppState belt-and-suspenders — quando o app vai
+  // pra background (Home button, app switcher), playGate já cai via
+  // appActive=false e o effect acima drena o pool. Mas se o user matar o
+  // app via swipe sem passar por background events (raro mas observed na
+  // emul Android), o AVPlayer pool sobrevive em outro processo até ARC
+  // limpar. Esse listener extra força drain via componentWillUnmount no
+  // change para 'background'/'inactive'.
+  useEffect(() => {
+    if (isWeb) return undefined;
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'background' || next === 'inactive') {
+        try { releaseShortsPoolFn?.(); } catch {}
+        try { restoreShortsAudioSessionFn?.(); } catch {}
+      }
+    });
+    return () => { try { sub.remove(); } catch {} };
+  }, []);
   // Safe-area insets — the Following/For You tabs are absolutely positioned
   // with a static `top: 16` on Android, which on edge-to-edge windows was
   // tucking under the status-bar clock. Use runtime insets so the tab row

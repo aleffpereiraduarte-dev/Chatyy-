@@ -4289,6 +4289,9 @@ export default {
   'profile.topTippers': 'Top tippers (30d)',
   'profile.tipperLine': '{d} ◆ · {n} gifts',
   'profile.noTippersYet': 'No one has tipped yet.',
+  'profile.payoutHint': 'Cash out from R$ 50.00',
+  'profile.emptyTippersWithEarnings': 'Your first fans will show up here as soon as they send a gift.',
+  'profile.emptyTippersNoEarnings': 'Start posting to watch your metrics grow.',
   // Search Sons tab + trending
   'search.trendingSounds': 'Trending sounds',
   'search.noTrendingSounds': 'No trending sounds right now.',

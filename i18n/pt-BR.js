@@ -4357,6 +4357,9 @@ export default {
   'profile.topTippers': 'Maiores apoiadores (30d)',
   'profile.tipperLine': '{d} ◆ · {n} presentes',
   'profile.noTippersYet': 'Ninguém mandou diamantes ainda.',
+  'profile.payoutHint': 'Saque a partir de R$ 50,00',
+  'profile.emptyTippersWithEarnings': 'Os primeiros fãs vão aparecer aqui assim que mandarem um presente.',
+  'profile.emptyTippersNoEarnings': 'Comece a postar pra ver suas métricas crescerem.',
   // Search Sons tab + trending
   'search.trendingSounds': 'Sons em alta',
   'search.noTrendingSounds': 'Sem sons em alta no momento.',

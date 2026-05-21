@@ -190,10 +190,10 @@ export default function CreatorDashboardScreen() {
               onPress={() => { try { router.push('/creator-earnings'); } catch {} }}
               style={[styles.actionPill, { backgroundColor: GREEN }]}
               accessibilityRole="button"
-              accessibilityLabel={t?.('creatorEarnings.requestPayout') || 'Solicitar saque'}
+              accessibilityLabel={t?.('creatorEarnings.cashoutCta') || 'Solicitar saque'}
             >
               <Text style={styles.actionPillText}>
-                {t?.('creatorEarnings.requestPayout') || 'Solicitar saque'}
+                {t?.('creatorEarnings.cashoutCta') || 'Solicitar saque'}
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -328,30 +328,154 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 4,
   },
-  walletCard: {
+  // Hero — fake-gradient via stacked translucent overlays so we don't pull in
+  // expo-linear-gradient (would force a native rebuild). Deep purple base,
+  // pink overlay diagonal, accent purple second diagonal.
+  hero: {
+    borderRadius: 18,
+    padding: 18,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: ACCENT,
+    overflow: 'hidden',
+    minHeight: 120,
   },
-  walletCta: {
-    width: 44, height: 44, borderRadius: 22,
-    backgroundColor: 'rgba(255,255,255,0.18)',
-    alignItems: 'center', justifyContent: 'center',
+  heroOverlay: {
+    position: 'absolute',
+    width: 260,
+    height: 260,
+    borderRadius: 200,
+    right: -90,
+    top: -90,
+    opacity: 0.55,
+  },
+  heroOverlay2: {
+    position: 'absolute',
+    width: 200,
+    height: 200,
+    borderRadius: 200,
+    left: -70,
+    bottom: -70,
+    opacity: 0.4,
+  },
+  heroLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    color: 'rgba(255,255,255,0.85)',
+  },
+  heroValue: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: '#fff',
+    marginTop: 6,
+    letterSpacing: -0.5,
+  },
+  heroSub: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.78)',
+    marginTop: 4,
+  },
+  heroCta: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    alignItems: 'center',
+    justifyContent: 'center',
     marginLeft: 12,
+    zIndex: 2,
   },
-  walletCtaText: { color: '#fff', fontSize: 28, fontWeight: '700', lineHeight: 30 },
+  heroCtaText: { color: '#fff', fontSize: 30, fontWeight: '700', lineHeight: 32 },
+  // Quick action row (Saque CTA + Ver ganhos secondary)
+  actionRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  actionPill: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  actionPillText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  actionPillSecondary: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  actionPillSecondaryText: { fontWeight: '700', fontSize: 14 },
+  // Stat grid 2x2
+  gridRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  statCard: {
+    flex: 1,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 14,
+    gap: 4,
+    minHeight: 110,
+  },
+  statDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginBottom: 4,
+  },
+  statLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  statValue: {
+    fontSize: 20,
+    fontWeight: '800',
+    marginTop: 4,
+    letterSpacing: -0.3,
+  },
+  statSub: { fontSize: 11, marginTop: 2 },
+  // Sparkline card header
+  sparkHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  badge30d: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'flex-end',
+  },
+  badge30dLabel: { fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+  badge30dValue: { fontSize: 13, fontWeight: '700', marginTop: 2 },
   cardTitle: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.4 },
   cardValue: { fontSize: 22, fontWeight: '800', marginTop: 6 },
   cardSub: { fontSize: 12 },
   sparkWrap: { marginTop: 6 },
+  // Top tippers
   tipperRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 8,
     gap: 8,
   },
-  tipperRank: { width: 28, fontSize: 12, fontWeight: '700' },
+  tipperRank: { width: 28, fontSize: 13 },
   tipperName: { fontSize: 14, fontWeight: '700' },
   tipperSub: { fontSize: 12 },
   tipperAmount: { fontSize: 14, fontWeight: '800' },
+  // Empty state
+  emptyState: { alignItems: 'center', paddingVertical: 20, gap: 8 },
+  emptyIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  emptyIconText: { fontSize: 28, color: ACCENT, fontWeight: '700' },
+  emptyTitle: { fontSize: 14, fontWeight: '700', textAlign: 'center' },
+  emptySub: { fontSize: 12, textAlign: 'center', paddingHorizontal: 20 },
 });
