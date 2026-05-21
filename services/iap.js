@@ -70,19 +70,22 @@ export const PRODUCT_IDS = [
 // in /var/www/mail/api/chat.php (case 'wallet_buy_diamonds') is the source
 // of truth for diamond credit math; this list is just StoreKit metadata.
 //
-// WAVE 75 (2026-05-21) — App Store Connect actually registered these as
-// `chatyy_diamonds_*` (plural). We keep the legacy `chatyy_diamond_*` IDs
-// in DIAMOND_PACKS for backward compatibility on existing builds, but
-// the production SKU list below is what gets sent to fetchProducts().
+// 2026-05-21 FIX (WAVE 82): DIAMOND_PACK_SKUS must match the SKU IDs in
+// DIAMOND_PACKS exactly (the IDs the UI passes to purchaseDiamonds). Singular
+// `chatyy_diamond_*` is the canonical form — registered in ASC as Consumables
+// under those exact IDs. The previous plural `chatyy_diamonds_*` was wrong and
+// caused every tap to return sku_not_in_catalog because isDiamondSkuAvailable()
+// compared the singular DIAMOND_PACKS IDs against plural _diamondProducts — 0 matches.
+// Android Play IDs (chatyy_topup_*) are separate because Play Console was
+// created with those IDs; they map to the same diamond credit tiers in the backend.
 export const DIAMOND_PACK_SKUS = [
-  // Production SKUs (ASC reg'd 2026-05-18, MISSING_METADATA pending screenshot)
-  'chatyy_diamonds_100',
-  'chatyy_diamonds_550',
-  'chatyy_diamonds_1700',
-  'chatyy_diamonds_6000',
-  'chatyy_diamonds_19500',
-  // Google Play SKUs (chatyy_topup_*) — created via /tmp/gplay_create_v2.py
-  // when Payments profile unblocks. Same diamond credit math, separate IDs.
+  // iOS/ASC Consumable SKUs — must match DIAMOND_PACKS.sku exactly
+  'chatyy_diamond_100',
+  'chatyy_diamond_500',
+  'chatyy_diamond_1500',
+  'chatyy_diamond_5000',
+  'chatyy_diamond_15000',
+  // Android Play Managed-product SKUs (separate namespace, same credit math)
   'chatyy_topup_5',
   'chatyy_topup_20',
   'chatyy_topup_50',
@@ -143,12 +146,14 @@ export const STORAGE_FREE_GB = 50;
 // Catalog used by DiamondTopUpSheet to render the grid before the StoreKit
 // fetchProducts() response lands. Keep in sync with the server catalog —
 // the server still recomputes diamonds credited on receipt verification.
+// `sku` is the canonical iOS/ASC SKU. `skuAndroid` is the Play Console SKU
+// (separate namespace). purchaseDiamonds() resolves the right one per platform.
 export const DIAMOND_PACKS = [
-  { sku: 'chatyy_diamond_100',   diamonds: 100,   priceBrl: 4.99,   bonusPct: 0  },
-  { sku: 'chatyy_diamond_500',   diamonds: 550,   priceBrl: 19.99,  bonusPct: 10 },
-  { sku: 'chatyy_diamond_1500',  diamonds: 1700,  priceBrl: 49.99,  bonusPct: 13 },
-  { sku: 'chatyy_diamond_5000',  diamonds: 6000,  priceBrl: 149.99, bonusPct: 20 },
-  { sku: 'chatyy_diamond_15000', diamonds: 19500, priceBrl: 399.99, bonusPct: 30 },
+  { sku: 'chatyy_diamond_100',   skuAndroid: 'chatyy_topup_5',   diamonds: 100,   priceBrl: 4.99,   bonusPct: 0  },
+  { sku: 'chatyy_diamond_500',   skuAndroid: 'chatyy_topup_20',  diamonds: 550,   priceBrl: 19.99,  bonusPct: 10 },
+  { sku: 'chatyy_diamond_1500',  skuAndroid: 'chatyy_topup_50',  diamonds: 1700,  priceBrl: 49.99,  bonusPct: 13 },
+  { sku: 'chatyy_diamond_5000',  skuAndroid: 'chatyy_topup_150', diamonds: 6000,  priceBrl: 149.99, bonusPct: 20 },
+  { sku: 'chatyy_diamond_15000', skuAndroid: 'chatyy_topup_400', diamonds: 19500, priceBrl: 399.99, bonusPct: 30 },
 ];
 
 let _available = false;
@@ -517,23 +522,27 @@ export async function purchaseDiamonds(productId) {
     try { await initIAP(); } catch {}
     if (!_available) return { success: false, message: 'iap_unavailable' };
   }
-  // [#1188-followup, 2026-05-19] Guard against "SKU not found" — happens
-  // when the catalog doesn't have this product registered (the
-  // chatyy_diamond_* IDs were never created in App Store Connect / Play
-  // Console for some builds). Without this check, requestPurchase throws
-  // raw "SKU not found" and the user sees the modal-over-modal error
-  // stack. With it, we surface a friendly message and route to web
-  // checkout when available. Note: Google Play returns products via the
-  // SAME fetchProducts({type:'inapp'}) call as StoreKit, so the same
-  // _diamondProducts cache covers both stores.
+  // On Android, DIAMOND_PACKS uses iOS SKU IDs (chatyy_diamond_*) as canonical
+  // UI identifiers, but Play Console has separate chatyy_topup_* SKUs.
+  // Translate before checking _diamondProducts and before requestPurchase.
+  let resolvedSku = productId;
+  if (Platform.OS === 'android') {
+    const pack = DIAMOND_PACKS.find(p => p.sku === productId || p.skuAndroid === productId);
+    if (pack?.skuAndroid) resolvedSku = pack.skuAndroid;
+  }
+  // Guard against "SKU not found" — happens when the catalog doesn't have
+  // this product registered (ASC / Play Console propagation delay, or SKU
+  // was never created). Without this check, requestPurchase throws a raw
+  // "SKU not found" error. With it we surface a friendly message and (on
+  // Android) offer web checkout as a fallback.
   const hasInCatalog = _diamondProducts.some(
-    p => (p?.id || p?.productId) === productId
+    p => (p?.id || p?.productId) === resolvedSku
   );
   if (!hasInCatalog) {
     return {
       success: false,
       message: 'sku_not_in_catalog',
-      sku: productId,
+      sku: resolvedSku,
     };
   }
   // Wire a one-shot callback that the purchase listener resolves once the
@@ -549,10 +558,11 @@ export async function purchaseDiamonds(productId) {
     }
   }, 90000);
   try {
+    // Use resolvedSku (Android: chatyy_topup_*, iOS: chatyy_diamond_*)
     await mod.requestPurchase({
       request: {
-        ios: { sku: productId },
-        android: { skus: [productId] },
+        ios: { sku: resolvedSku },
+        android: { skus: [resolvedSku] },
       },
       type: 'inapp', // consumable, not subs
     });
@@ -572,7 +582,14 @@ export async function purchaseDiamonds(productId) {
 
 export function getDiamondProducts() { return _diamondProducts; }
 export function getDiamondLocalizedPrice(productId) {
-  const p = _diamondProducts.find(x => x.id === productId || x.productId === productId);
+  // On Android, productId is the iOS canonical SKU (chatyy_diamond_*);
+  // resolve to the Android SKU (chatyy_topup_*) for the price lookup.
+  let lookupId = productId;
+  if (Platform.OS === 'android') {
+    const pack = DIAMOND_PACKS.find(p => p.sku === productId);
+    if (pack?.skuAndroid) lookupId = pack.skuAndroid;
+  }
+  const p = _diamondProducts.find(x => x.id === lookupId || x.productId === lookupId);
   return p?.localizedPrice || p?.displayPrice || '';
 }
 /** True iff this SKU was returned by fetchProducts (StoreKit on iOS,
@@ -583,7 +600,13 @@ export function getDiamondLocalizedPrice(productId) {
 export function isDiamondSkuAvailable(productId) {
   if (Platform.OS === 'web') return true; // web never hits a billing client
   if (!_diamondProducts.length) return false;
-  return _diamondProducts.some(p => (p?.id || p?.productId) === productId);
+  // On Android resolve iOS canonical SKU to Play SKU before checking
+  let lookupId = productId;
+  if (Platform.OS === 'android') {
+    const pack = DIAMOND_PACKS.find(p => p.sku === productId);
+    if (pack?.skuAndroid) lookupId = pack.skuAndroid;
+  }
+  return _diamondProducts.some(p => (p?.id || p?.productId) === lookupId);
 }
 
 /** Start a subscription purchase via StoreKit sheet. */

@@ -224,14 +224,11 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
             })}
           </ScrollView>
 
-          {!iapReady && Platform.OS === 'ios' ? (
+          {!iapReady && (Platform.OS === 'ios' || Platform.OS === 'android') ? (
             <Text style={[styles.iapHint, { color: colors.textTertiary }]}>
-              {t('wallet.topupConnecting') || 'Conectando à App Store…'}
-            </Text>
-          ) : null}
-          {Platform.OS === 'android' ? (
-            <Text style={[styles.iapHint, { color: colors.textTertiary }]}>
-              {t('wallet.androidComingSoon') || 'Em breve no Android. Use o iOS por enquanto.'}
+              {Platform.OS === 'ios'
+                ? (t('wallet.topupConnecting') || 'Conectando à App Store…')
+                : (t('wallet.topupConnectingAndroid') || 'Conectando ao Google Play…')}
             </Text>
           ) : null}
 
