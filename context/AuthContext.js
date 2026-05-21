@@ -214,6 +214,10 @@ function _teardownSyncEngines() {
     abortFullHistorySync();
   } catch {}
   try {
+    const { stopMediaAutoSync } = require('../services/mediaAutoSync');
+    stopMediaAutoSync();
+  } catch {}
+  try {
     const { stopEnvelopePuller } = require('../services/envelopePuller');
     stopEnvelopePuller();
   } catch {}
