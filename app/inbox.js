@@ -29,7 +29,7 @@ import {
   IconUser, IconLogout, IconCompose, IconPlus, IconSearch, IconFolder, IconShield,
   IconMessageSquare, IconCalendar, IconFilm, IconGlobe, IconZap, IconImage,
   IconStar, IconArchive, IconLink, IconStickyNote, IconBell, IconPenTool, IconFilter, IconCheck,
-  IconWifiOff,
+  IconWifiOff, IconBookmark,
 } from '../components/Icons';
 import CategoryTabs from '../components/CategoryTabs';
 import QuickSettingsPanel from '../components/QuickSettingsPanel';
@@ -1475,21 +1475,45 @@ function InboxScreenInner() {
                 onClear={handleClearSearch}
               />
             </View>
-            {/* Saved-searches launcher — always visible. When the search bar
-                has text, the primary affordance is "Save"; otherwise it
-                opens the saved list. */}
+            {/* [WAVE 88 2026-05-21] Saved-searches launcher — SVG icon + counter
+                badge, no emoji (per UI rules). 36×36 circular button right of
+                the SearchBar, never overlaps because parent is flexDirection:
+                row with `flex:1` on the SearchBar wrapper. When search has
+                text, shows bookmark+ to save; otherwise shows star with the
+                count of saved searches as a small badge. */}
             <TouchableOpacity
               onPress={() => {
                 if (searchText.trim()) { handleSaveSearch(); }
                 else { setShowSavedSearches(true); }
               }}
-              style={{ paddingHorizontal: 10, paddingVertical: 6, marginLeft: 6, borderRadius: 10, backgroundColor: colors.primaryLight }}
+              style={{
+                width: 40, height: 40, borderRadius: 12, marginLeft: 8,
+                alignItems: 'center', justifyContent: 'center',
+                backgroundColor: colors.primaryLight,
+                position: 'relative',
+              }}
+              hitSlop={8}
               accessibilityLabel={searchText.trim() ? (t('search.saveSearch') || 'Salvar busca') : (t('search.savedSearches') || 'Buscas salvas')}
               accessibilityRole="button"
             >
-              <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '700' }}>
-                {searchText.trim() ? ('💾 ' + (t('search.saveSearch') || 'Salvar busca')) : ('★ ' + (savedSearches.length || 0))}
-              </Text>
+              {searchText.trim() ? (
+                <IconBookmark size={18} color={colors.primary} />
+              ) : (
+                <IconStar size={18} color={colors.primary} />
+              )}
+              {!searchText.trim() && savedSearches.length > 0 && (
+                <View style={{
+                  position: 'absolute', top: 2, right: 2,
+                  minWidth: 16, height: 16, borderRadius: 8,
+                  backgroundColor: colors.primary,
+                  alignItems: 'center', justifyContent: 'center',
+                  paddingHorizontal: 4,
+                }}>
+                  <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800' }}>
+                    {savedSearches.length}
+                  </Text>
+                </View>
+              )}
             </TouchableOpacity>
           </View>
           {/* Saved-searches sheet — modal list of persisted queries; tap a row
