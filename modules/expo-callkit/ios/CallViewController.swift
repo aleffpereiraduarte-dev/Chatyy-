@@ -1725,9 +1725,23 @@ extension CallViewController: RoomDelegate {
             guard !self.didHangup else { return }
             NSLog("[CallVC][relay-first] Phase-2: attempting P2P upgrade via engine.publisher.restartIce")
             // Access the publisher PeerConnection through LK Swift internals.
-            // Mirror walk is fragile but safe — no code here throws, so no
-            // do-catch needed (bare scope removed; ObjC perform is non-throwing).
-            let eng = r.engine
+            // [2026-05-21] LK SDK v2.5+ made `room.engine` `internal` — direct
+            // property access fails to compile. We walk the Room's Mirror
+            // children to find the engine ivar without going through the
+            // typed property. Mirror reflection sees ivars regardless of
+            // their declared access level.
+            let roomMirror = Mirror(reflecting: r)
+            var engineValue: Any? = nil
+            for c in roomMirror.children {
+                if c.label == "engine" || c.label == "_engine" {
+                    engineValue = c.value
+                    break
+                }
+            }
+            guard let eng = engineValue else {
+                NSLog("[CallVC][relay-first] Phase-2: room.engine ivar not found via Mirror (LK SDK changed?)")
+                return
+            }
             let engMirror = Mirror(reflecting: eng)
             for child in engMirror.children {
                 if let label = child.label,
@@ -1761,7 +1775,7 @@ extension CallViewController: RoomDelegate {
     /// the call is silent. On `.connected` after reconnect we flip back to
     /// "Conectado"; full `.disconnected` is handled by `didDisconnectWithError`
     /// further below but we keep the status synced here too.
-    func room(_ room: Room, didUpdate connectionState: ConnectionState, oldValue: ConnectionState) {
+    func room(_ room: Room, didUpdateConnectionState connectionState: ConnectionState, from oldValue: ConnectionState) {
         Task { @MainActor in
             switch connectionState {
             case .reconnecting:
