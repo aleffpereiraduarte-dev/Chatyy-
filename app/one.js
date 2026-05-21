@@ -3420,10 +3420,7 @@ export default function OneScreen() {
         </TouchableOpacity>
 
         <View style={st.headerCleanCenter}>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <PulsingHeaderLogo active={loading || messages.some(m => m._streaming)} isDark={isDark} />
-            <Text style={[st.headerCleanTitle, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}>One</Text>
-          </View>
+          <Text style={[st.headerCleanTitle, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}>One</Text>
         </View>
 
         <View style={{ flexDirection: 'row' }}>

@@ -14175,6 +14175,17 @@ export default function ChatConversationScreen() {
         let liveFailCount = 0;
         liveLocIntervalRef.current = setInterval(async () => {
           try {
+            // [WAVE 49 2026-05-21] Ghost mode honors the user's choice in
+            // snap-map: when ON, we skip the heartbeat tick. The session
+            // row stays on the backend (so the user can "un-ghost" without
+            // re-picking duration) but stops emitting fresh coords. Peers
+            // see the pin go stale within ~2min instead of trailing the
+            // user. This is the canonical Snapchat ghost-mode semantics.
+            try {
+              const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+              const ghost = await AsyncStorage.getItem('snap_map_ghost_mode');
+              if (ghost === '1') return;
+            } catch {}
             let lat2, lng2;
             if (Platform.OS === 'web') {
               const p = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { enableHighAccuracy: true, timeout: 5000 }));

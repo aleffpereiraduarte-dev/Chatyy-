@@ -1433,21 +1433,55 @@ export default function SnapMapScreen() {
         <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' }} onPress={() => setSelected(null)}>
           <View style={{ flex: 1 }} />
           <Pressable onPress={(e) => e.stopPropagation?.()} style={{ backgroundColor: colors.surface, padding: 22, borderTopLeftRadius: 24, borderTopRightRadius: 24 }}>
-            {selected && (
+            {selected && (() => {
+              // [WAVE 49 2026-05-21] Compute freshness for the bottom sheet
+              // so the "Atualizado há Xmin" line can flip into a red
+              // staleness warning when the peer hasn't ticked in a while.
+              // This is the explicit answer to the user's "ta
+              // desconectando" feedback at the bottom-sheet level: instead
+              // of the pin silently vanishing, the user now SEES a
+              // "Sem atualização há Xh" red label and understands the
+              // share is alive but the peer hasn't moved/heartbeat'd.
+              let ageMs = null;
+              if (selected.updated_at) {
+                try { ageMs = Math.max(0, nowTick - new Date(String(selected.updated_at).replace(' ', 'T') + 'Z').getTime()); } catch {}
+              }
+              const isStale = ageMs !== null && ageMs > 2 * 60 * 1000;
+              const dist = myLocation && Number.isFinite(selected.latitude) && Number.isFinite(selected.longitude)
+                ? haversineMeters(myLocation.lat, myLocation.lng, Number(selected.latitude), Number(selected.longitude))
+                : null;
+              const midLat = myLocation && Number.isFinite(selected.latitude)
+                ? (myLocation.lat + Number(selected.latitude)) / 2 : null;
+              const midLng = myLocation && Number.isFinite(selected.longitude)
+                ? (myLocation.lng + Number(selected.longitude)) / 2 : null;
+              return (
               <>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-                  <AvatarCircle name={selected.name || selected.email} email={selected.email} size={56} />
+                  <View style={{ borderWidth: 3, borderColor: isStale ? '#9ca3af' : (selected.is_unlimited ? '#7C3AED' : '#22c55e'), borderRadius: 36, padding: 2 }}>
+                    <AvatarCircle name={selected.name || selected.email} email={selected.email} size={60} />
+                  </View>
                   <View style={{ flex: 1 }}>
                     <Text style={{ color: colors.text, fontSize: 18, fontWeight: '700' }} numberOfLines={1}>
                       {selected.name || selected.email}
                     </Text>
-                    <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
-                      {t?.('snapmap.updated') || 'Atualizado'} {ago(selected.updated_at)}
+                    <Text style={{ color: isStale ? '#ef4444' : colors.textSecondary, fontSize: 12, marginTop: 3, fontWeight: isStale ? '700' : '400' }}>
+                      {isStale
+                        ? `${t?.('snapmap.staleHeader') || 'Sem atualização'} ${ago(selected.updated_at)}`
+                        : `${t?.('snapmap.updated') || 'Atualizado'} ${ago(selected.updated_at)}`}
                       {selected.is_unlimited ? ` · ∞ ${t?.('snapmap.alwaysOn') || 'sempre ativo'}` : ''}
                     </Text>
+                    {dist !== null && (
+                      <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
+                        {formatDistance(dist)} {t?.('snapmap.awayFromYou') || 'de você'}
+                      </Text>
+                    )}
                   </View>
                 </View>
 
+                {/* Primary actions row — Chat + Call. Call jumps to chat-
+                    conversation with autoCall=1 so the existing call flow
+                    fires (same handler Live tab uses). Kept inline so the
+                    user reaches the most common verbs in one tap. */}
                 <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
                   <TouchableOpacity
                     onPress={() => { setSelected(null); router.push(`/chat-conversation?email=${encodeURIComponent(selected.email)}`); }}
@@ -1457,15 +1491,43 @@ export default function SnapMapScreen() {
                     <Text style={{ color: '#fff', fontWeight: '700' }}>{t?.('snapmap.message') || 'Conversar'}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
+                    onPress={() => { setSelected(null); router.push(`/chat-conversation?email=${encodeURIComponent(selected.email)}&autoCall=1`); }}
+                    style={{ paddingVertical: 14, paddingHorizontal: 18, borderRadius: 22, backgroundColor: '#22c55e', alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}
+                    accessibilityLabel={t?.('snapmap.call') || 'Ligar'}
+                  >
+                    <IconPhone size={18} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+
+                {/* Secondary row — Directions to friend + Meet halfway.
+                    Meet-halfway opens maps centered between me and the
+                    friend with a search for "café/restaurant" — the
+                    canonical "find somewhere to meet up" pattern from
+                    Find-My-Friends. Only rendered when I have my own GPS
+                    (otherwise the midpoint is meaningless). */}
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+                  <TouchableOpacity
                     onPress={() => {
                       const url = `https://www.google.com/maps/dir/?api=1&destination=${selected.latitude},${selected.longitude}`;
                       Linking.openURL(url).catch(() => {});
                     }}
-                    style={{ flex: 1, paddingVertical: 14, borderRadius: 22, backgroundColor: colors.border + '50', alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}
+                    style={{ flex: 1, paddingVertical: 12, borderRadius: 18, backgroundColor: colors.border + '50', alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}
                   >
-                    <IconMapPin size={18} color={colors.text} />
-                    <Text style={{ color: colors.text, fontWeight: '700' }}>{t?.('snapmap.directions') || 'Como chegar'}</Text>
+                    <IconNavigation size={16} color={colors.text} />
+                    <Text style={{ color: colors.text, fontWeight: '600', fontSize: 13 }}>{t?.('snapmap.directions') || 'Como chegar'}</Text>
                   </TouchableOpacity>
+                  {myLocation && midLat !== null && midLng !== null && (
+                    <TouchableOpacity
+                      onPress={() => {
+                        const url = `https://www.google.com/maps/search/?api=1&query=cafe&query_place_id=&center=${midLat},${midLng}&zoom=15`;
+                        Linking.openURL(url).catch(() => {});
+                      }}
+                      style={{ flex: 1, paddingVertical: 12, borderRadius: 18, backgroundColor: colors.border + '50', alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}
+                    >
+                      <IconMapPin size={16} color={colors.text} />
+                      <Text style={{ color: colors.text, fontWeight: '600', fontSize: 13 }}>{t?.('snapmap.meetHalfway') || 'Local intermediário'}</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
 
                 <TouchableOpacity
@@ -1491,7 +1553,8 @@ export default function SnapMapScreen() {
                   </Text>
                 </TouchableOpacity>
               </>
-            )}
+              );
+            })()}
           </Pressable>
         </Pressable>
       </Modal>
