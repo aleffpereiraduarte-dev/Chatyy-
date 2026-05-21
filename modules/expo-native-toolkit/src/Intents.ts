@@ -38,6 +38,13 @@ declare class IntentsClass {
   setShareExtensionConversations(conversations: ShareExtensionConversation[]): boolean;
   /** Wipe all share-extension cached data (call on logout). */
   clearShareExtensionData(): boolean;
+  /** WAVE 87 (2026-05-21): read the ShareExtension diagnostic ring buffer.
+   *  Each entry: { ts: number (unix sec), level: 'info'|'warn'|'error', msg: string }. */
+  getShareExtensionDiag(): Array<{ ts: number; level: string; msg: string }>;
+  /** WAVE 87 (2026-05-21): read the last error entry only (faster than the full buffer). */
+  getShareExtensionLastError(): { ts: number; level: string; msg: string } | null;
+  /** WAVE 87 (2026-05-21): clear the diagnostic ring buffer + last-error. */
+  clearShareExtensionDiag(): boolean;
 }
 
 let _mod: IntentsClass | null = null;
@@ -72,6 +79,18 @@ export const Intents = {
   },
   clearShareExtensionData: (): boolean => {
     try { return getMod()?.clearShareExtensionData() ?? false; }
+    catch { return false; }
+  },
+  getShareExtensionDiag: (): Array<{ ts: number; level: string; msg: string }> => {
+    try { return getMod()?.getShareExtensionDiag() ?? []; }
+    catch { return []; }
+  },
+  getShareExtensionLastError: (): { ts: number; level: string; msg: string } | null => {
+    try { return getMod()?.getShareExtensionLastError() ?? null; }
+    catch { return null; }
+  },
+  clearShareExtensionDiag: (): boolean => {
+    try { return getMod()?.clearShareExtensionDiag() ?? false; }
     catch { return false; }
   },
 };

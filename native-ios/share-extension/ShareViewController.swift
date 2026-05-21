@@ -18,6 +18,7 @@ import UIKit
 import MobileCoreServices
 import UniformTypeIdentifiers
 import Intents
+import ImageIO
 
 // MARK: - Shared payload model
 
@@ -241,12 +242,16 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
     // MARK: App Group bridge
 
     private func loadAppGroupData() {
-        guard let ud = UserDefaults(suiteName: appGroupId) else { return }
+        guard let ud = UserDefaults(suiteName: appGroupId) else {
+            ShareDiag.recordError("App Group UserDefaults nil — entitlement missing on ShareExtension target?")
+            return
+        }
         authToken = ud.string(forKey: "chatyy.auth_token") ?? ""
         authEmail = ud.string(forKey: "chatyy.auth_email") ?? ""
         if let url = ud.string(forKey: "chatyy.base_url"), !url.isEmpty {
             baseUrl = url
         }
+        ShareDiag.recordInfo("session_start auth_token=\(authToken.isEmpty ? "MISSING" : "present(\(authToken.count) chars)") email=\(authEmail.isEmpty ? "MISSING" : authEmail) base=\(baseUrl)")
         if let data = ud.data(forKey: "chatyy.recent_conversations"),
            let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
             allConversations = arr.compactMap { ShareConversation.from(dict: $0) }
@@ -271,15 +276,23 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
         // and lost the rest.
         guard let items = extensionContext?.inputItems as? [NSExtensionItem],
               !items.isEmpty else {
+            ShareDiag.recordWarn("extractSharedContent: no inputItems (extension launched without payload?)")
             completion(); return
         }
+        var attachmentCount = 0
         let group = DispatchGroup()
         for item in items {
             guard let attachments = item.attachments else { continue }
             for attachment in attachments {
+                attachmentCount += 1
+                let registered = (attachment.registeredTypeIdentifiers as? [String])?.joined(separator: ",") ?? "?"
+                ShareDiag.recordInfo("attachment \(attachmentCount) UTIs=[\(registered)]")
                 group.enter()
                 handleAttachment(attachment) { group.leave() }
             }
+        }
+        if attachmentCount == 0 {
+            ShareDiag.recordWarn("extractSharedContent: \(items.count) inputItems but zero attachments")
         }
         group.notify(queue: .main) { completion() }
     }
@@ -308,15 +321,18 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
         // See: https://developer.apple.com/documentation/foundation/
         //   nsitemprovider/loadfilerepresentation
         if attachment.hasItemConformingToTypeIdentifier(videoType) {
-            attachment.loadFileRepresentation(forTypeIdentifier: videoType) { [weak self] url, _ in
+            attachment.loadFileRepresentation(forTypeIdentifier: videoType) { [weak self] url, err in
+                if let err = err { ShareDiag.recordError("video loadFileRepresentation: \(err.localizedDescription)") }
                 self?.consumeVideoFileURL(url); done()
             }
         } else if attachment.hasItemConformingToTypeIdentifier(imageType) {
-            attachment.loadFileRepresentation(forTypeIdentifier: imageType) { [weak self] url, _ in
+            attachment.loadFileRepresentation(forTypeIdentifier: imageType) { [weak self] url, err in
+                if let err = err { ShareDiag.recordError("image loadFileRepresentation: \(err.localizedDescription)") }
                 self?.consumeImageFileURL(url); done()
             }
         } else if attachment.hasItemConformingToTypeIdentifier(fileURLType) {
-            attachment.loadFileRepresentation(forTypeIdentifier: fileURLType) { [weak self] url, _ in
+            attachment.loadFileRepresentation(forTypeIdentifier: fileURLType) { [weak self] url, err in
+                if let err = err { ShareDiag.recordError("file loadFileRepresentation: \(err.localizedDescription)") }
                 self?.consumeGenericFileURL(url); done()
             }
         } else if attachment.hasItemConformingToTypeIdentifier(urlType) {
@@ -360,27 +376,68 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
     }
 
     private func consumeImageFileURL(_ url: URL?) {
-        guard let url = url else { return }
-        // Decode for in-memory preview thumbnail.
-        let img = UIImage(contentsOfFile: url.path)
-        // Persist either as decoded JPG (if we got a UIImage) or by
-        // copying the original bytes (HEIC/PNG/whatever).
-        var dest: URL?
-        if let img = img {
-            dest = saveToAppGroup(image: img, originalURL: url)
-        } else {
-            dest = copyToAppGroup(url: url)
+        guard let url = url else {
+            ShareDiag.recordWarn("consumeImageFileURL: nil URL from loadFileRepresentation")
+            return
         }
-        guard let final = dest else { return }
-        let ext = final.pathExtension.lowercased()
+        // WAVE 87 (2026-05-21): NEVER decode the full bitmap with
+        // `UIImage(contentsOfFile:)` here. A 12MB HEIC photo from an
+        // iPhone camera decodes to a 30-50MB ARGB bitmap in RAM. Then
+        // `saveToAppGroup` re-encodes it as JPEG (another 10MB+ peak),
+        // while the original UIImage stays retained on the payload.
+        // Combined peak ≈ 80-100MB. The extension memory ceiling is
+        // 120MB → iOS aborts the process mid-share with no error
+        // surfaced to the user (the "tap share → nothing happens"
+        // symptom). Instead:
+        //   1. Copy original bytes to the App Group (no decode).
+        //   2. Generate a SMALL 256pt preview thumbnail via ImageIO with
+        //      kCGImageSourceCreateThumbnailFromImageAlways. ImageIO
+        //      streams the file without loading the full image into RAM,
+        //      so peak stays under ~8MB even for 4032×3024 HEIC inputs.
+        // We DO NOT retain the preview thumbnail on the payload past
+        // the initial render — `previewImageView.image` holds the only
+        // reference and gets released when the extension dismisses.
+        guard let dest = copyToAppGroup(url: url) else {
+            ShareDiag.recordWarn("consumeImageFileURL: copyToAppGroup returned nil for \(url.lastPathComponent)")
+            return
+        }
+        let ext = dest.pathExtension.lowercased()
+        let thumb = downsampledThumbnail(at: dest, maxPixelSize: 256)
         var p = SharedPayload()
         p.kind = .image
-        p.image = img
-        p.fileURL = final
+        p.image = thumb
+        p.fileURL = dest
         p.fileMime = ["png": "image/png", "heic": "image/heic", "heif": "image/heic",
                       "webp": "image/webp", "gif": "image/gif"][ext] ?? "image/jpeg"
-        p.fileName = final.lastPathComponent
+        p.fileName = dest.lastPathComponent
         appendPayload(p)
+        ShareDiag.recordInfo("image attached: \(dest.lastPathComponent) ext=\(ext) mime=\(p.fileMime) thumb=\(thumb != nil)")
+    }
+
+    /// Generate a small UIImage preview without loading the full bitmap.
+    /// ImageIO's `kCGImageSourceCreateThumbnailFromImageAlways` streams
+    /// the source file and decodes only the pixels needed for the
+    /// requested max dimension — peak RSS stays under ~8MB even for
+    /// 4032×3024 HEIC inputs. Returns nil if the file can't be read as
+    /// an image (e.g. raw video bytes mistakenly routed here).
+    private func downsampledThumbnail(at url: URL, maxPixelSize: Int) -> UIImage? {
+        let options: [CFString: Any] = [
+            kCGImageSourceShouldCache: false,
+            kCGImageSourceShouldCacheImmediately: false,
+        ]
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, options as CFDictionary) else {
+            return nil
+        }
+        let thumbOpts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+        ]
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, thumbOpts as CFDictionary) else {
+            return nil
+        }
+        return UIImage(cgImage: cg)
     }
 
     private func consumeGenericFileURL(_ url: URL?) {
@@ -406,48 +463,41 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
     }
 
     private func handleImageData(_ data: NSSecureCoding?) {
-        var image: UIImage?
-        var sourceURL: URL?
+        // WAVE 87 (2026-05-21): legacy loadItem path. Same memory rule
+        // as consumeImageFileURL — never hold a full-resolution UIImage
+        // in the payload. Copy bytes to App Group, derive a small
+        // thumbnail via ImageIO if/when we need one.
+        var dest: URL?
+        var mime = "image/jpeg"
         if let url = data as? URL {
-            sourceURL = url
-            // .heic/.heif from iPhone Photos: UIImage decodes natively.
-            image = UIImage(contentsOfFile: url.path)
-        } else if let img = data as? UIImage {
-            image = img
+            dest = copyToAppGroup(url: url)
+            let ext = url.pathExtension.lowercased()
+            mime = ["png": "image/png", "heic": "image/heic", "heif": "image/heic",
+                    "webp": "image/webp", "gif": "image/gif"][ext] ?? "image/jpeg"
         } else if let bytes = data as? Data {
-            image = UIImage(data: bytes)
-        }
-        // If we couldn't decode as image but iOS gave us *something*, fall
-        // back to writing the raw bytes/copying the URL — at least the
-        // upload won't silently disappear.
-        if image == nil {
-            if let bytes = data as? Data {
-                if let dest = writeBytesToAppGroup(data: bytes, ext: "jpg") {
-                    var p = SharedPayload()
-                    p.kind = .image
-                    p.fileURL = dest
-                    p.fileMime = "image/jpeg"
-                    p.fileName = dest.lastPathComponent
-                    appendPayload(p)
-                }
-            } else if let url = data as? URL, let dest = copyToAppGroup(url: url) {
-                var p = SharedPayload()
-                p.kind = .image
-                p.fileURL = dest
-                p.fileMime = "image/jpeg"
-                p.fileName = dest.lastPathComponent
-                appendPayload(p)
+            dest = writeBytesToAppGroup(data: bytes, ext: "jpg")
+        } else if let img = data as? UIImage {
+            // Some apps hand us a pre-decoded UIImage. Encode once to
+            // JPEG quality 0.85 (smaller than 0.9, indistinguishable to
+            // the eye) and write — accept the one-time spike.
+            if let jpg = img.jpegData(compressionQuality: 0.85),
+               let d = writeBytesToAppGroup(data: jpg, ext: "jpg") {
+                dest = d
             }
+        }
+        guard let final = dest else {
+            ShareDiag.recordWarn("handleImageData: no destination — unsupported NSSecureCoding type")
             return
         }
-        let dest = saveToAppGroup(image: image!, originalURL: sourceURL)
+        let thumb = downsampledThumbnail(at: final, maxPixelSize: 256)
         var p = SharedPayload()
         p.kind = .image
-        p.image = image
-        p.fileURL = dest
-        p.fileMime = "image/jpeg"
-        p.fileName = dest?.lastPathComponent ?? "shared.jpg"
+        p.image = thumb
+        p.fileURL = final
+        p.fileMime = mime
+        p.fileName = final.lastPathComponent
         appendPayload(p)
+        ShareDiag.recordInfo("image attached (legacy loadItem): \(final.lastPathComponent) mime=\(mime)")
     }
 
     private func handleVideoData(_ data: NSSecureCoding?) {
@@ -1173,6 +1223,7 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
 
     @objc private func sendTapped() {
         guard !selectedIds.isEmpty else { return }
+        ShareDiag.recordInfo("sendTapped selected=\(selectedIds.count) payloads=\(payloads.count) loaded=\(contentLoaded) failed=\(contentLoadFailed)")
         // PERF FIX (2026-05-21): if extraction is still in flight, queue
         // the send and show a "Preparando…" overlay. onContentLoaded()
         // will re-fire sendTapped() the moment payloads arrive. Without
@@ -1181,9 +1232,11 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
         // "carregando travado" user complaint.
         if payloads.isEmpty {
             if contentLoadFailed {
+                ShareDiag.recordError("sendTapped: contentLoadFailed, surfacing iCloud error to user")
                 showError("Não consegui ler o conteúdo. Abre Fotos, deixa o item baixar do iCloud, e compartilha de novo.")
                 return
             }
+            ShareDiag.recordInfo("sendTapped: queued (waiting for extraction)")
             pendingSendAfterLoad = true
             // Show the same overlay used for actual sending so the user
             // gets immediate feedback that their tap registered.
@@ -1336,8 +1389,10 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
         group.notify(queue: .main) { [weak self] in
             self?.hideSending()
             if anyFailure {
+                ShareDiag.recordError("send session FAILED done=\(done)/\(total) lastErr=\(lastErr ?? "?")")
                 self?.showError(lastErr ?? "Falha em alguns envios")
             } else {
+                ShareDiag.recordInfo("send session OK \(total) uploads completed")
                 self?.dismissDone()
             }
         }
@@ -1467,6 +1522,57 @@ fileprivate enum ShareOutbox {
         CFNotificationCenterPostNotification(center, CFNotificationName(darwinName),
                                               nil, nil, true)
     }
+}
+
+// MARK: - ShareDiag bridge (WAVE 87, 2026-05-21)
+//
+// Ring-buffer diagnostic log for ShareExtension, written to App Group
+// UserDefaults under key `chatyy.share_diag`. The host app exposes this
+// via the `getShareExtensionDiag` Intents bridge so the user can open
+// `/share-diagnose` inside the main app and see EXACTLY where the last
+// share session went wrong (auth missing, extract failed, upload HTTP
+// error, etc.).
+//
+// Without this we are flying blind: when the user says "share não
+// funciona", we have no logs from the extension process at all (iOS
+// rejects most logging hooks in extension contexts, NSLog is filtered
+// in TestFlight builds, and we don't ship a remote logger inside the
+// extension to keep RSS under control).
+//
+// Capped at 80 entries (~16KB JSON) so UserDefaults stays snappy.
+fileprivate enum ShareDiag {
+    private static let appGroupId = "group.com.onemundo.mail"
+    private static let logKey     = "chatyy.share_diag"
+    private static let lastErrKey = "chatyy.share_last_error"
+    private static let maxItems   = 80
+
+    enum Level: String { case info, warn, error }
+
+    static func record(_ level: Level, _ msg: String) {
+        guard let ud = UserDefaults(suiteName: appGroupId) else { return }
+        let entry: [String: Any] = [
+            "ts":    Date().timeIntervalSince1970,
+            "level": level.rawValue,
+            "msg":   String(msg.prefix(400)),  // hard cap so a stack trace doesn't bloat the queue
+        ]
+        var queue = (ud.array(forKey: logKey) as? [[String: Any]]) ?? []
+        queue.append(entry)
+        if queue.count > maxItems {
+            queue.removeFirst(queue.count - maxItems)
+        }
+        ud.set(queue, forKey: logKey)
+        // Mirror the last error to a dedicated key so the host app can
+        // surface a banner ("Última falha no compartilhamento: HTTP 401")
+        // without parsing the full ring buffer.
+        if level == .error {
+            ud.set(entry, forKey: lastErrKey)
+        }
+        ud.synchronize()
+    }
+
+    static func recordInfo(_ msg: String)  { record(.info,  msg) }
+    static func recordWarn(_ msg: String)  { record(.warn,  msg) }
+    static func recordError(_ msg: String) { record(.error, msg) }
 }
 
 // MARK: - UITableView
@@ -1924,10 +2030,17 @@ private enum ChatyyAPI {
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
 
         let task = session.uploadTask(with: req, from: body) { data, resp, err in
-            if let err = err { completion(false, err.localizedDescription, nil); return }
-            guard let http = resp as? HTTPURLResponse else { completion(false, "no response", nil); return }
+            if let err = err {
+                ShareDiag.recordError("upload(\(action)) network: \(err.localizedDescription)")
+                completion(false, err.localizedDescription, nil); return
+            }
+            guard let http = resp as? HTTPURLResponse else {
+                ShareDiag.recordError("upload(\(action)) no HTTPURLResponse")
+                completion(false, "no response", nil); return
+            }
             if http.statusCode >= 400 {
                 let bodyStr = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                ShareDiag.recordError("upload(\(action)) HTTP \(http.statusCode): \(bodyStr.prefix(200))")
                 completion(false, "HTTP \(http.statusCode): \(bodyStr.prefix(200))", nil); return
             }
             // CRITICAL: never default to "success" when the server returns
@@ -1960,10 +2073,17 @@ private enum ChatyyAPI {
 
     private static func handleJSONResponse(data: Data?, resp: URLResponse?, err: Error?,
                                            completion: @escaping (Bool, String?) -> Void) {
-        if let err = err { completion(false, err.localizedDescription); return }
-        guard let http = resp as? HTTPURLResponse else { completion(false, "no response"); return }
+        if let err = err {
+            ShareDiag.recordError("json call network: \(err.localizedDescription)")
+            completion(false, err.localizedDescription); return
+        }
+        guard let http = resp as? HTTPURLResponse else {
+            ShareDiag.recordError("json call no HTTPURLResponse")
+            completion(false, "no response"); return
+        }
         if http.statusCode >= 400 {
             let bodyStr = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            ShareDiag.recordError("json call HTTP \(http.statusCode): \(bodyStr.prefix(200))")
             completion(false, "HTTP \(http.statusCode): \(bodyStr.prefix(200))"); return
         }
         guard let data = data, !data.isEmpty else {

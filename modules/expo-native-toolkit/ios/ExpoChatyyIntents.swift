@@ -143,5 +143,29 @@ public class ExpoChatyyIntentsModule: Module {
             }
             return true
         }
+
+        // WAVE 87 (2026-05-21): read the ShareExtension diagnostic
+        // ring-buffer. The /share-diagnose screen in the host app
+        // consumes this to surface exactly where the last share
+        // session went wrong (auth missing, extract failed, HTTP 401,
+        // iCloud timeout, etc.) — without this we have zero visibility
+        // because iOS extensions can't reach Sentry/console/network
+        // loggers reliably.
+        Function("getShareExtensionDiag") { () -> [[String: Any]] in
+            guard let ud = UserDefaults(suiteName: "group.com.onemundo.mail") else { return [] }
+            return (ud.array(forKey: "chatyy.share_diag") as? [[String: Any]]) ?? []
+        }
+
+        Function("getShareExtensionLastError") { () -> [String: Any]? in
+            guard let ud = UserDefaults(suiteName: "group.com.onemundo.mail") else { return nil }
+            return ud.dictionary(forKey: "chatyy.share_last_error")
+        }
+
+        Function("clearShareExtensionDiag") { () -> Bool in
+            guard let ud = UserDefaults(suiteName: "group.com.onemundo.mail") else { return false }
+            ud.removeObject(forKey: "chatyy.share_diag")
+            ud.removeObject(forKey: "chatyy.share_last_error")
+            return true
+        }
     }
 }

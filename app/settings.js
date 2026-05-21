@@ -2963,6 +2963,14 @@ function SettingsScreenInner() {
                 ]}
               >
                 <Text style={[s.settingLabel, { color: colors.text, marginBottom: Spacing.sm }]}>{row.label}</Text>
+                {/* [2026-05-21] Pills got reported as "empty" on Print 6 —
+                    `perPageBtn` had no alignItems/justifyContent so the
+                    `Text` rendered top-left and "Wi-Fi + Móvel" wrapped to
+                    2 lines while "Nunca"/"Wi-Fi" looked centered. On a
+                    412×915 device the per-pill width is ~110px so the
+                    label was overflowing visually. Now: explicit center +
+                    minHeight + numberOfLines=1 + subtle inactive bg so the
+                    user always sees the option name + which one is on. */}
                 <View style={s.perPageBtns}>
                   {[
                     { val: 'wifi',   label: t('settings.mediaWifi') },
@@ -2975,7 +2983,14 @@ function SettingsScreenInner() {
                         key={opt.val}
                         style={[
                           s.perPageBtn,
-                          { borderColor: colors.divider, flex: 1 },
+                          {
+                            borderColor: colors.divider,
+                            backgroundColor: colors.backgroundSecondary || colors.background,
+                            flex: 1,
+                            minHeight: 38,
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          },
                           selected && { backgroundColor: colors.primary, borderColor: colors.primary },
                         ]}
                         onPress={() => updateChatDefault({ [row.key]: opt.val })}
@@ -2983,11 +2998,16 @@ function SettingsScreenInner() {
                         accessibilityState={{ selected }}
                         accessibilityLabel={`${row.label} — ${opt.label}`}
                       >
-                        <Text style={[
-                          s.perPageText,
-                          { color: colors.text, textAlign: 'center' },
-                          selected && { color: '#fff' },
-                        ]}>
+                        <Text
+                          numberOfLines={1}
+                          adjustsFontSizeToFit
+                          minimumFontScale={0.85}
+                          style={[
+                            s.perPageText,
+                            { color: colors.text, textAlign: 'center', fontSize: 13 },
+                            selected && { color: '#fff' },
+                          ]}
+                        >
                           {opt.label}
                         </Text>
                       </TouchableOpacity>
