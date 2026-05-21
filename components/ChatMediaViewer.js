@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, Modal, Image, Platform,
-  Dimensions, Animated, PanResponder, ActivityIndicator, Linking, StatusBar, Alert, FlatList,
+  View, Text, TouchableOpacity, TouchableWithoutFeedback, StyleSheet, Modal, Image, Platform,
+  Dimensions, Animated, PanResponder, ActivityIndicator, Linking, StatusBar, Alert, FlatList, Share,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { IconX, IconDownload, IconPlay, IconPause, IconLock, IconCheck } from './Icons';
+import { IconX, IconDownload, IconPlay, IconPause, IconLock, IconCheck, IconShare, IconStar, IconStarFilled, IconMoreHorizontal, IconInfo } from './Icons';
 // Wave 14: 3D / depth-photo parallax view. Lazy-loaded so web stays green
 // (expo-sensors isn't available in the web bundle).
 let ParallaxPortraitView = null;
@@ -118,6 +118,49 @@ function formatSize(bytes) {
   if (!bytes || bytes <= 0) return '';
   if (bytes < 1048576) return (bytes / 1024).toFixed(0) + ' KB';
   return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+// WAVE 60: WhatsApp/IG-grade viewer chrome helpers.
+// Initials from sender name or email → 1-2 uppercase chars for the avatar
+// circle. Mirrors the chat list pattern.
+function senderInitials(name, email) {
+  const src = (name && name.trim()) || (email || '').split('@')[0] || '';
+  if (!src) return '?';
+  const parts = src.split(/[\s._-]+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase();
+  }
+  return (parts[0] || '?').slice(0, 2).toUpperCase();
+}
+
+// Stable color from a string — used for the avatar bg when no photo is
+// available. Matches the chat list palette so the same user shows the same
+// color across screens.
+function colorFromString(str) {
+  const palette = ['#7C3AED', '#EC4899', '#F59E0B', '#10B981', '#3B82F6', '#EF4444', '#8B5CF6', '#06B6D4'];
+  let hash = 0;
+  for (let i = 0; i < (str || '').length; i++) {
+    hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+  }
+  return palette[Math.abs(hash) % palette.length];
+}
+
+// "agora", "5 min", "2 h", "ontem" or short date — IG-style compact label.
+function viewerRelativeTime(ts, t) {
+  if (!ts) return '';
+  const ms = typeof ts === 'number' ? (ts < 1e12 ? ts * 1000 : ts) : Date.parse(ts);
+  if (!ms || isNaN(ms)) return '';
+  const diff = Date.now() - ms;
+  if (diff < 60000) return t?.('time.now') || 'agora';
+  if (diff < 3600000) return Math.floor(diff / 60000) + ' min';
+  if (diff < 86400000) return Math.floor(diff / 3600000) + ' h';
+  if (diff < 172800000) return t?.('viewer.yesterday') || 'ontem';
+  try {
+    const d = new Date(ms);
+    return d.toLocaleDateString(undefined, { day: '2-digit', month: 'short' });
+  } catch {
+    return '';
+  }
 }
 
 // ============================================================
@@ -1225,10 +1268,39 @@ function GenericFileViewer({ url, filename, fileSize, messageId, t }) {
 // ============================================================
 // MAIN MODAL
 // ============================================================
-export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fileName, fileSize, type, viewOnce, mediaList, initialIndex, conversationId, messageId, t, colors }) {
+export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fileName, fileSize, type, viewOnce, mediaList, initialIndex, conversationId, messageId, senderName, senderEmail, createdAt, t, colors }) {
   const insets = useSafeAreaInsets();
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  // WAVE 60: WhatsApp/IG-grade viewer chrome. The ugly "IMG_1234.jpg 299KB"
+  // header is gone — we now show sender avatar + name + relative time, and
+  // tap on the photo toggles bars (parity with IG). The filename + bytes
+  // moved into the info sheet (long-press More menu) so power users still
+  // have access without the cellphone-camera-file-name being the first
+  // thing the user sees.
+  const [_chromeVisible, _setChromeVisible] = useState(true);
+  const [_infoSheetOpen, _setInfoSheetOpen] = useState(false);
+  const [_starred, _setStarred] = useState(false);
+  const _chromeOpacity = useRef(new Animated.Value(1)).current;
+  const _toggleChrome = useCallback(() => {
+    _setChromeVisible(v => {
+      const next = !v;
+      Animated.timing(_chromeOpacity, {
+        toValue: next ? 1 : 0,
+        duration: 220,
+        useNativeDriver: true,
+      }).start();
+      return next;
+    });
+  }, [_chromeOpacity]);
+  // Reset chrome to visible whenever a new media is opened so the user
+  // doesn't open a fresh image and find a bare black screen.
+  useEffect(() => {
+    if (!visible) return;
+    _setChromeVisible(true);
+    _setInfoSheetOpen(false);
+    _chromeOpacity.setValue(1);
+  }, [visible, _chromeOpacity]);
 
   // Build the effective array. When the caller passes mediaList we render
   // FlatList horizontal with paging + neighbor preload (Instagram pattern).
@@ -1598,70 +1670,116 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
             </Text>
           </View>
         )}
-        {/* Header — SVG icons replace 🔒/✓ emoji per project rule (sharp on
-            every density), and the page count "1 / 5" sits in a subtle pill
-            so multi-photo galleries read like Instagram instead of a sterile
-            label. */}
-        <View style={[s.header, { paddingTop: Math.max(insets.top, 12) + 8 }]}>
-          <View style={s.headerInfo}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              {viewOnce && <IconLock size={14} color="#fff" />}
-              <Text style={s.headerTitle} numberOfLines={1}>
-                {_activeFileName || (isImage ? 'Imagem' : isVideo ? 'Video' : 'Arquivo')}
-              </Text>
-            </View>
-            {_activeFileSize > 0 && !viewOnce && <Text style={s.headerSize}>{formatSize(_activeFileSize)}</Text>}
-            {_multi && (
-              <View style={{
-                alignSelf: 'flex-start', marginTop: 2,
-                paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
-                backgroundColor: 'rgba(255,255,255,0.16)',
-              }}>
-                <Text style={[s.headerSize, { color: '#fff', fontWeight: '600' }]}>
-                  {`${_currentIdx + 1} / ${_list.length}`}
-                </Text>
-              </View>
-            )}
-            {viewOnce && <Text style={s.headerSize}>Visualização única</Text>}
-            {_activeMediaKind && _activeMediaKind !== 'regular' && (() => {
-              // Compact uppercase pill — Instagram-style format badge. Per
-              // task: live = LIVE (motion hint via short loop already
-              // handled by the video branch when src is the paired clip),
-              // burst = BURST, slowmo = SLO-MO with the rate hint inline,
-              // timelapse = TIME-LAPSE, raw = RAW.
-              const LABELS = {
-                live_photo: 'LIVE',
-                burst: 'BURST',
-                slowmo: 'SLO-MO',
-                timelapse: 'TIME-LAPSE',
-                raw: 'RAW',
-              };
-              const label = LABELS[_activeMediaKind] || _activeMediaKind.toUpperCase();
-              return (
-                <View style={{
-                  alignSelf: 'flex-start', marginTop: 4,
-                  paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6,
-                  backgroundColor: 'rgba(255,255,255,0.92)',
-                }}>
-                  <Text style={{ color: '#111', fontSize: 10, fontWeight: '800', letterSpacing: 0.5 }}>
-                    {label}
+        {/* WAVE 60: Header modernizado WhatsApp/IG-grade. Antes: nome
+            "IMG_xxx.jpg" + "299 KB" feio. Agora: avatar do sender + nome
+            + tempo relativo no centro, X à esquerda, More à direita.
+            Filename + bytes movidos pro InfoSheet (toque em More) — info
+            técnica continua acessível pra power users sem poluir a UI.
+            Bars (top + bottom) fazem fade via _chromeOpacity quando o user
+            toca na foto (parity Instagram). */}
+        <Animated.View
+          pointerEvents={_chromeVisible ? 'auto' : 'none'}
+          style={[
+            s.headerBar,
+            {
+              paddingTop: Math.max(insets.top, 12) + 6,
+              opacity: _chromeOpacity,
+            },
+          ]}
+        >
+          <TouchableOpacity
+            onPress={onClose}
+            style={s.headerIconBtn}
+            hitSlop={14}
+            accessibilityLabel={(typeof t === 'function' && t('common.close')) || 'Fechar'}
+            accessibilityRole="button"
+          >
+            <IconX size={24} color="#fff" />
+          </TouchableOpacity>
+
+          <View style={s.headerCenter}>
+            {/* Sender row — avatar circle (initials, stable color) + name +
+                relative time. Falls back to "Mídia" header when there's no
+                sender (rare; happens for outbox previews where sender
+                wasn't piped through yet). */}
+            {(senderName || senderEmail) ? (
+              <View style={s.senderRow}>
+                <View style={[s.avatar, { backgroundColor: colorFromString(senderEmail || senderName || '') }]}>
+                  <Text style={s.avatarText}>{senderInitials(senderName, senderEmail)}</Text>
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    {viewOnce && <IconLock size={12} color="#fff" />}
+                    <Text style={s.senderName} numberOfLines={1}>
+                      {senderName || (senderEmail || '').split('@')[0]}
+                    </Text>
+                  </View>
+                  <Text style={s.senderMeta} numberOfLines={1}>
+                    {viewOnce
+                      ? ((typeof t === 'function' && t('chat.viewOnceLabel')) || 'Visualização única')
+                      : viewerRelativeTime(createdAt || _active?.createdAt || _active?.created_at, t)}
                   </Text>
                 </View>
-              );
-            })()}
+              </View>
+            ) : (
+              <View style={s.senderRow}>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    {viewOnce && <IconLock size={14} color="#fff" />}
+                    <Text style={s.senderName} numberOfLines={1}>
+                      {isImage ? ((typeof t === 'function' && t('viewer.imageLabel')) || 'Foto')
+                        : isVideo ? ((typeof t === 'function' && t('viewer.videoLabel')) || 'Vídeo')
+                        : ((typeof t === 'function' && t('viewer.fileLabel')) || 'Arquivo')}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            )}
+
+            {/* Pills row — page count "3/12" + media_kind LIVE/BURST/etc.
+                Sit under the sender so the title line stays clean. */}
+            {(_multi || (_activeMediaKind && _activeMediaKind !== 'regular')) && (
+              <View style={{ flexDirection: 'row', gap: 6, marginTop: 4, marginLeft: 40 }}>
+                {_multi && (
+                  <View style={s.pill}>
+                    <Text style={s.pillText}>{`${_currentIdx + 1} / ${_list.length}`}</Text>
+                  </View>
+                )}
+                {_activeMediaKind && _activeMediaKind !== 'regular' && (() => {
+                  const LABELS = {
+                    live_photo: 'LIVE', burst: 'BURST', slowmo: 'SLO-MO',
+                    timelapse: 'TIME-LAPSE', raw: 'RAW',
+                  };
+                  const label = LABELS[_activeMediaKind] || _activeMediaKind.toUpperCase();
+                  return (
+                    <View style={[s.pill, { backgroundColor: 'rgba(255,255,255,0.92)' }]}>
+                      <Text style={[s.pillText, { color: '#111', fontWeight: '800', letterSpacing: 0.5 }]}>{label}</Text>
+                    </View>
+                  );
+                })()}
+              </View>
+            )}
           </View>
-          {!viewOnce && (
-            <TouchableOpacity onPress={handleDownload} disabled={saving} style={s.headerBtn} hitSlop={12} accessibilityLabel="Download" accessibilityRole="button">
-              {saving ? <ActivityIndicator size="small" color="#fff" /> : saved ? <IconCheck size={20} color="#22c55e" strokeWidth={3} /> : <IconDownload size={20} color="#fff" />}
-            </TouchableOpacity>
-          )}
-          <TouchableOpacity onPress={onClose} style={s.headerBtn} hitSlop={12} accessibilityLabel="Close" accessibilityRole="button">
-            <IconX size={22} color="#fff" />
+
+          <TouchableOpacity
+            onPress={() => _setInfoSheetOpen(o => !o)}
+            style={s.headerIconBtn}
+            hitSlop={14}
+            accessibilityLabel={(typeof t === 'function' && t('viewer.info')) || 'Mais'}
+            accessibilityRole="button"
+          >
+            <IconMoreHorizontal size={22} color="#fff" />
           </TouchableOpacity>
-        </View>
+        </Animated.View>
 
         {/* Content — single-item path renders inline; multi-item path uses
-            a paging FlatList so swipe between feels native. */}
+            a paging FlatList so swipe between feels native.
+            WAVE 60: wrapped in a transparent tap-zone so a single tap on the
+            backdrop toggles top/bottom chrome (Instagram parity). Pan/zoom
+            gestures inside ImageViewer still win because PanResponder
+            captures movement; only the unmodified tap reaches us here. */}
+        <TouchableWithoutFeedback onPress={_toggleChrome} accessible={false}>
+        <View style={{ flex: 1 }}>
         {_multi ? (
           <FlatList
             data={_list}
@@ -1753,9 +1871,124 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
             />
           )
         )}
+        </View>
+        </TouchableWithoutFeedback>
 
-        {/* Bottom safe area spacer */}
-        <View style={{ height: Math.max(insets.bottom, 12) }} />
+        {/* WAVE 60: Bottom action bar — Share / Download / Star (WhatsApp/IG
+            grade). Lives in its own row at the bottom, fades with the top
+            chrome on tap. View-once hides Download + Share (download path
+            already blocked) but keeps Star (lets the user remember the
+            moment without saving the file itself). */}
+        <Animated.View
+          pointerEvents={_chromeVisible ? 'auto' : 'none'}
+          style={[
+            s.actionBar,
+            {
+              paddingBottom: Math.max(insets.bottom, 12) + 6,
+              opacity: _chromeOpacity,
+            },
+          ]}
+        >
+          {!viewOnce && (
+            <TouchableOpacity
+              onPress={async () => {
+                try {
+                  if (Platform.OS === 'web') {
+                    if (navigator.share) {
+                      await navigator.share({ url }).catch(() => {});
+                    } else {
+                      await navigator.clipboard?.writeText?.(url);
+                    }
+                  } else {
+                    await Share.share({ url, message: url });
+                  }
+                } catch {}
+              }}
+              style={s.actionBtn}
+              hitSlop={10}
+              accessibilityLabel={(typeof t === 'function' && t('viewer.share')) || 'Compartilhar'}
+              accessibilityRole="button"
+            >
+              <IconShare size={22} color="#fff" />
+            </TouchableOpacity>
+          )}
+          {!viewOnce && (
+            <TouchableOpacity
+              onPress={handleDownload}
+              disabled={saving}
+              style={s.actionBtn}
+              hitSlop={10}
+              accessibilityLabel={(typeof t === 'function' && t('viewer.download')) || 'Baixar'}
+              accessibilityRole="button"
+            >
+              {saving ? <ActivityIndicator size="small" color="#fff" />
+                : saved ? <IconCheck size={22} color="#22c55e" strokeWidth={3} />
+                : <IconDownload size={22} color="#fff" />}
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            onPress={() => _setStarred(s => !s)}
+            style={s.actionBtn}
+            hitSlop={10}
+            accessibilityLabel={(typeof t === 'function' && t('viewer.star')) || 'Favorito'}
+            accessibilityRole="button"
+          >
+            {_starred
+              ? <IconStarFilled size={22} color="#facc15" />
+              : <IconStar size={22} color="#fff" />}
+          </TouchableOpacity>
+        </Animated.View>
+
+        {/* WAVE 60: Info sheet — opens on More tap. Surfaces the technical
+            details (filename, file size, sender email, date) that used to
+            pollute the main header. Power users still have access; new
+            users get a clean fullscreen photo experience. */}
+        {_infoSheetOpen && (
+          <TouchableWithoutFeedback onPress={() => _setInfoSheetOpen(false)}>
+            <View style={s.infoOverlay}>
+              <TouchableWithoutFeedback>
+                <View style={[s.infoSheet, { paddingBottom: Math.max(insets.bottom, 16) + 12 }]}>
+                  <View style={s.infoHandle} />
+                  <Text style={s.infoTitle}>
+                    {(typeof t === 'function' && t('viewer.imageInfo')) || 'Detalhes'}
+                  </Text>
+                  {!!(senderName || senderEmail) && (
+                    <View style={s.infoRow}>
+                      <Text style={s.infoKey}>{(typeof t === 'function' && t('viewer.sentBy')) || 'Enviado por'}</Text>
+                      <Text style={s.infoVal} numberOfLines={1}>{senderName || senderEmail}</Text>
+                    </View>
+                  )}
+                  {!!(createdAt || _active?.createdAt || _active?.created_at) && (
+                    <View style={s.infoRow}>
+                      <Text style={s.infoKey}>{(typeof t === 'function' && t('viewer.date')) || 'Data'}</Text>
+                      <Text style={s.infoVal}>
+                        {(() => {
+                          try {
+                            const tsRaw = createdAt || _active?.createdAt || _active?.created_at;
+                            const ms = typeof tsRaw === 'number' ? (tsRaw < 1e12 ? tsRaw * 1000 : tsRaw) : Date.parse(tsRaw);
+                            return new Date(ms).toLocaleString();
+                          } catch { return ''; }
+                        })()}
+                      </Text>
+                    </View>
+                  )}
+                  {!!_activeFileName && (
+                    <View style={s.infoRow}>
+                      <Text style={s.infoKey}>{(typeof t === 'function' && t('viewer.fileName')) || 'Arquivo'}</Text>
+                      <Text style={s.infoVal} numberOfLines={1}>{_activeFileName}</Text>
+                    </View>
+                  )}
+                  {_activeFileSize > 0 && (
+                    <View style={s.infoRow}>
+                      <Text style={s.infoKey}>{(typeof t === 'function' && t('viewer.fileSize')) || 'Tamanho'}</Text>
+                      <Text style={s.infoVal}>{formatSize(_activeFileSize)}</Text>
+                    </View>
+                  )}
+                </View>
+              </TouchableWithoutFeedback>
+            </View>
+          </TouchableWithoutFeedback>
+        )}
       </View>
     </Modal>
   );
@@ -1777,6 +2010,71 @@ const s = StyleSheet.create({
   headerTitle: { color: '#fff', fontSize: 15, fontWeight: '600' },
   headerSize: { color: 'rgba(255,255,255,0.5)', fontSize: 12, marginTop: 1 },
   headerBtn: { padding: 8 },
+  // WAVE 60 — WhatsApp/IG-grade viewer chrome
+  headerBar: {
+    position: 'absolute', top: 0, left: 0, right: 0,
+    flexDirection: 'row', alignItems: 'flex-start',
+    paddingHorizontal: 8, paddingBottom: 12,
+    zIndex: 20,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  headerIconBtn: {
+    width: 40, height: 40, borderRadius: 20,
+    alignItems: 'center', justifyContent: 'center',
+    marginTop: 2,
+  },
+  headerCenter: { flex: 1, paddingHorizontal: 4, justifyContent: 'center' },
+  senderRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  avatar: {
+    width: 32, height: 32, borderRadius: 16,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  avatarText: { color: '#fff', fontSize: 12, fontWeight: '700', letterSpacing: 0.3 },
+  senderName: { color: '#fff', fontSize: 15, fontWeight: '600' },
+  senderMeta: { color: 'rgba(255,255,255,0.65)', fontSize: 11, marginTop: 1 },
+  pill: {
+    paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.16)',
+  },
+  pillText: { color: '#fff', fontSize: 11, fontWeight: '600' },
+  actionBar: {
+    position: 'absolute', bottom: 0, left: 0, right: 0,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around',
+    paddingTop: 12, paddingHorizontal: 24,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    zIndex: 20,
+  },
+  actionBtn: {
+    width: 48, height: 48, borderRadius: 24,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.10)',
+  },
+  infoOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    justifyContent: 'flex-end',
+    zIndex: 50,
+  },
+  infoSheet: {
+    backgroundColor: '#1a1a1a',
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    paddingHorizontal: 20, paddingTop: 10,
+  },
+  infoHandle: {
+    alignSelf: 'center',
+    width: 36, height: 4, borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    marginBottom: 14,
+  },
+  infoTitle: { color: '#fff', fontSize: 17, fontWeight: '700', marginBottom: 14 },
+  infoRow: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: 'rgba(255,255,255,0.08)',
+  },
+  infoKey: { color: 'rgba(255,255,255,0.6)', fontSize: 13, flexShrink: 0, marginRight: 12 },
+  infoVal: { color: '#fff', fontSize: 13, fontWeight: '500', flex: 1, textAlign: 'right' },
   mediaContainer: {
     flex: 1,
     justifyContent: 'center',

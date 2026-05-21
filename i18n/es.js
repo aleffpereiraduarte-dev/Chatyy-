@@ -6587,6 +6587,21 @@ export default {
   'media.offlineTitle': 'Sin internet',
   'media.codecError': 'No se puede reproducir este audio (formato no compatible).',
 
+  // WAVE 60 — Visor fullscreen
+  'viewer.share': 'Compartir',
+  'viewer.download': 'Guardar',
+  'viewer.star': 'Favorito',
+  'viewer.info': 'Más',
+  'viewer.imageInfo': 'Detalles',
+  'viewer.fileName': 'Archivo',
+  'viewer.fileSize': 'Tamaño',
+  'viewer.sentBy': 'Enviado por',
+  'viewer.date': 'Fecha',
+  'viewer.imageLabel': 'Foto',
+  'viewer.videoLabel': 'Vídeo',
+  'viewer.fileLabel': 'Archivo',
+  'viewer.yesterday': 'ayer',
+
   'status.saveToHighlight': 'Guardar en destacados',
   'status.highlights': 'Destacados',
   'status.newHighlight': 'Nuevo destacado',

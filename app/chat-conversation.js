@@ -16962,6 +16962,9 @@ export default function ChatConversationScreen() {
                 blurhash: m.blurhash || null,
                 placeholderUri: _cellLqip,
                 thumbUri: _cellThumbUri,
+                senderName: m.sender_name || (m.sender_email || '').split('@')[0] || '',
+                senderEmail: m.sender_email || '',
+                createdAt: m.created_at || m.createdAt || null,
               });
             }}
             style={cellStyle(w, h)}
@@ -17448,6 +17451,10 @@ export default function ChatConversationScreen() {
                   blurhash: msg.blurhash || null,
                   placeholderUri: lqipUri || null,
                   thumbUri: thumbUri || null,
+                  // WAVE 60 — sender + timestamp pra header WhatsApp/IG-grade.
+                  senderName: msg.sender_name || (msg.sender_email || '').split('@')[0] || '',
+                  senderEmail: msg.sender_email || '',
+                  createdAt: msg.created_at || msg.createdAt || null,
                 });
               }}
               onLongPress={() => {
@@ -25651,6 +25658,10 @@ export default function ChatConversationScreen() {
             blurhash={mv.blurhash}
             placeholderUri={mv.placeholderUri}
             thumbUri={mv.thumbUri}
+            senderName={mv.senderName}
+            senderEmail={mv.senderEmail}
+            createdAt={mv.createdAt}
+            t={t}
           />
         );
       })()}

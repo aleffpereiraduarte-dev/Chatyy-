@@ -6668,6 +6668,21 @@ export default {
   // format is unsupported so they don't think Chatyy is offline.
   'media.codecError': 'Não foi possível tocar este áudio (formato não suportado).',
 
+  // WAVE 60 — Fullscreen media viewer (WhatsApp/IG-grade chrome)
+  'viewer.share': 'Compartilhar',
+  'viewer.download': 'Baixar',
+  'viewer.star': 'Favorito',
+  'viewer.info': 'Mais',
+  'viewer.imageInfo': 'Detalhes',
+  'viewer.fileName': 'Arquivo',
+  'viewer.fileSize': 'Tamanho',
+  'viewer.sentBy': 'Enviado por',
+  'viewer.date': 'Data',
+  'viewer.imageLabel': 'Foto',
+  'viewer.videoLabel': 'Vídeo',
+  'viewer.fileLabel': 'Arquivo',
+  'viewer.yesterday': 'ontem',
+
   // Highlights (Stories permanentes salvos no perfil)
   'status.saveToHighlight': 'Salvar em destaques',
   'status.highlights': 'Destaques',

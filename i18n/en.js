@@ -6587,6 +6587,21 @@ export default {
   'media.offlineTitle': 'No internet',
   'media.codecError': 'Couldn’t play this audio (unsupported format).',
 
+  // WAVE 60 — Fullscreen media viewer
+  'viewer.share': 'Share',
+  'viewer.download': 'Save',
+  'viewer.star': 'Favorite',
+  'viewer.info': 'More',
+  'viewer.imageInfo': 'Details',
+  'viewer.fileName': 'File',
+  'viewer.fileSize': 'Size',
+  'viewer.sentBy': 'Sent by',
+  'viewer.date': 'Date',
+  'viewer.imageLabel': 'Photo',
+  'viewer.videoLabel': 'Video',
+  'viewer.fileLabel': 'File',
+  'viewer.yesterday': 'yesterday',
+
   'status.saveToHighlight': 'Save to highlights',
   'status.highlights': 'Highlights',
   'status.newHighlight': 'New highlight',
