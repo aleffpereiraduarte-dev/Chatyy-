@@ -778,10 +778,14 @@ function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextW
   // Map events to day columns, with side-by-side overlap tracks
   // (Apple/Google Calendar style: overlapping events split the column
   // into N tracks so they tile horizontally instead of stacking on top).
-  const dayEvents = useMemo(() => {
+  // All-day events go to a separate strip above the grid so they don't
+  // get squished into 5 tracks at 00:00 (was rendering as "f f 1 1 e").
+  const { dayEvents, allDayEvents } = useMemo(() => {
     const map = {}; // dayIdx -> [{ evt, topPx, heightPx, trackIdx, trackCount }]
+    const allDay = {}; // dayIdx -> [evt]
     for (let i = 0; i < 7; i++) {
       map[i] = [];
+      allDay[i] = [];
     }
     (events || []).forEach(evt => {
       const evtStart = new Date(evt.start_at);
@@ -792,6 +796,10 @@ function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextW
         const dayEnd = new Date(days[i]);
         dayEnd.setHours(23, 59, 59, 999);
         if (evtStart <= dayEnd && evtEnd >= dayStart) {
+          if (evt.all_day) {
+            allDay[i].push(evt);
+            continue;
+          }
           // Clip event to this day so the block never spills the column.
           const segStart = evtStart < dayStart ? dayStart : evtStart;
           const segEnd = evtEnd > dayEnd ? dayEnd : evtEnd;
@@ -828,8 +836,13 @@ function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextW
       const total = Math.max(tracks.length, 1);
       arr.forEach(item => { item.trackCount = total; });
     }
-    return map;
+    return { dayEvents: map, allDayEvents: allDay };
   }, [events, days]);
+
+  const hasAnyAllDay = useMemo(
+    () => Object.values(allDayEvents).some(arr => arr.length > 0),
+    [allDayEvents]
+  );
 
   // Current time indicator position
   const nowMinutes = today.getHours() * 60 + today.getMinutes();
@@ -888,6 +901,54 @@ function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextW
           );
         })}
       </View>
+
+      {/* All-day strip — keeps the time grid clean when a day has
+          multiple all-day events (previously they got squished into
+          N tracks at 00:00 and rendered as illegible 1-char slivers). */}
+      {hasAnyAllDay && (
+        <View style={[weekStyles.allDayStrip, { borderBottomColor: colors.border }]}>
+          <View style={weekStyles.timeGutter}>
+            <Text style={[weekStyles.allDayLabel, { color: colors.textTertiary }]}>
+              {t('calendar.allDay')}
+            </Text>
+          </View>
+          {days.map((_, i) => {
+            const list = allDayEvents[i] || [];
+            const visible = list.slice(0, 2);
+            const overflow = list.length - visible.length;
+            return (
+              <View key={i} style={weekStyles.allDayCol}>
+                {visible.map(evt => {
+                  const bg = evt.color || evt.calendar_color || colors.primary;
+                  return (
+                    <TouchableOpacity
+                      key={evt.id}
+                      style={[weekStyles.allDayChip, { backgroundColor: bg }]}
+                      onPress={() => onEventPress(evt)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={weekStyles.allDayChipText} numberOfLines={1} ellipsizeMode="tail">
+                        {evt.title || ''}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+                {overflow > 0 && (
+                  <TouchableOpacity
+                    style={[weekStyles.allDayChip, { backgroundColor: colors.surface, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }]}
+                    onPress={() => list[0] && onEventPress(list[0])}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[weekStyles.allDayChipText, { color: colors.textTertiary }]}>
+                      +{overflow}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            );
+          })}
+        </View>
+      )}
 
       {/* Scrollable time grid */}
       <ScrollView ref={scrollRef} style={weekStyles.scrollArea} showsVerticalScrollIndicator={false}>
@@ -994,6 +1055,24 @@ const weekStyles = StyleSheet.create({
   },
   timeGutter: { width: 48 },
   dayCol: { flex: 1, alignItems: 'center', paddingVertical: 2 },
+  allDayStrip: {
+    flexDirection: 'row', paddingVertical: 4, paddingRight: 2,
+    borderBottomWidth: StyleSheet.hairlineWidth, alignItems: 'flex-start',
+  },
+  allDayLabel: {
+    fontSize: 9, fontWeight: '600', textTransform: 'uppercase',
+    textAlign: 'right', paddingRight: 6, paddingTop: 4,
+  },
+  allDayCol: {
+    flex: 1, paddingHorizontal: 1, gap: 2,
+  },
+  allDayChip: {
+    height: 18, borderRadius: 4, paddingHorizontal: 5,
+    justifyContent: 'center', overflow: 'hidden',
+  },
+  allDayChipText: {
+    fontSize: 10, fontWeight: '600', color: '#fff',
+  },
   dayName: { fontSize: 10, fontWeight: '600', textTransform: 'uppercase', marginBottom: 2 },
   dayNum: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   dayNumText: { fontSize: FontSize.sm, fontWeight: '600' },
