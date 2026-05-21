@@ -871,7 +871,24 @@ export default function StoryViewer({
     imageFade.setValue(0);
     setVideoError(false);
     setVideoLoading(cur.type === 'video');
-    if (cur.id && !viewedIdsRef.current.has(cur.id)) {
+    // [WAVE 93 2026-05-21] Safety net for `imageFade` — when expo-image
+    // serves the source from its own memory cache (same uri viewed earlier
+    // in this session, or pre-warmed via prefetch) the `onLoad` callback can
+    // fire BEFORE the new <Image> child commits, so our `imageFade` reset
+    // to 0 wins and the user sees a black canvas forever. After 900ms force
+    // the fade to 1 — way past any realistic decode + paint window for a
+    // disk-cached jpeg/webp. Doesn't fight the natural fade-in path: if
+    // onLoad already triggered the animation, this is a no-op (value already
+    // 1; Animated will short-circuit). Cancel on idx change to avoid leaks.
+    const imageFadeFloor = setTimeout(() => {
+      try { Animated.timing(imageFade, { toValue: 1, duration: 200, useNativeDriver: true }).start(); } catch {}
+    }, 900);
+    // [WAVE 93 2026-05-21] Skip placeholder items: their id looks like
+    // `__manifest_<email>_<i>` and the backend rejects it (500 → goes into
+    // offline queue → garbage retries forever). Wait for the real status_list
+    // payload to land before firing the view receipt. The next idx-effect
+    // render after hookGroups swaps will see a numeric id and fire correctly.
+    if (cur.id && !cur._placeholder && !String(cur.id).startsWith('__manifest_') && !viewedIdsRef.current.has(cur.id)) {
       viewedIdsRef.current.add(cur.id);
       // Fire-and-forget → if offline / 5xx, the receipt is silently lost,
       // breaking the "Vistos" badge on the author's side. Queue the action
@@ -925,14 +942,14 @@ export default function StoryViewer({
         }
       } catch {}
     }
-    if (cur.type === 'video') return;
-    if (paused) return;
+    if (cur.type === 'video') return () => clearTimeout(imageFadeFloor);
+    if (paused) return () => clearTimeout(imageFadeFloor);
     // [WAVE 79 2026-05-21] Placeholder items have no real media yet —
     // freeze the progress bar so the timer doesn't tick through ghost items
     // while status_list is still in flight. Parent (ChatListTab) refetches
     // and swaps to real items in-place; the next render of this effect will
     // see `cur._placeholder === undefined` and resume normal cadence.
-    if (cur._placeholder) return;
+    if (cur._placeholder) return () => clearTimeout(imageFadeFloor);
     // Reply grace — if the user just dismissed the reply keyboard we extend
     // the remaining-time so they can actually read whatever made them reply.
     // Grace flag is cleared 4s later by the blur handler so a second visit
@@ -950,7 +967,7 @@ export default function StoryViewer({
     animRef.current.start(({ finished }) => {
       if (finished) advance();
     });
-    return () => { animRef.current?.stop?.(); };
+    return () => { animRef.current?.stop?.(); clearTimeout(imageFadeFloor); };
   }, [visible, idx, paused, stories, advance, onMarkViewed, itemOpacity, imageFade]);
 
   useEffect(() => {

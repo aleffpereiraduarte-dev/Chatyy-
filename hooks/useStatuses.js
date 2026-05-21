@@ -301,7 +301,12 @@ function _swPrefetch(mine, others) {
 export default function useStatuses(currentEmail, opts = {}) {
   const {
     warmCacheVideos = true,
-    pollMs = 120000,
+    // [WAVE 93 2026-05-21] Tightened belt-and-suspenders poll from 120s → 45s.
+    // 120s left a >1 minute window where the strip looked stale if the WS
+    // socket died mid-session (iOS background suspends often drop the
+    // socket without firing `disconnect`). 45s mirrors the chat-list
+    // foreground poll cadence and is still cheap (manifest is ~4KB).
+    pollMs = 45000,
     enabled = true,
   } = opts;
 
