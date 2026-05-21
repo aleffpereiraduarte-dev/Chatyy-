@@ -6133,6 +6133,18 @@ export async function driveMemories() {
   return apiCall('drive_memories', {}, 'POST');
 }
 
+// WAVE 80 (2026-05-21): persistence helpers for photo memories.
+//   - mute: long-press a card → backend sets chat_user_memories.muted=1 so
+//     the card never re-appears (even from another device).
+//   - regenerate: force-rebuild the cache (manual "refresh" or after large
+//     photo import).
+export async function photoMemoryMute(memoryKey, muted = 1) {
+  return apiCall('photo_memories_mute', { memory_key: memoryKey, muted: muted ? 1 : 0 }, 'POST');
+}
+export async function photoMemoriesRegenerate() {
+  return apiCall('photo_memories_regenerate', {}, 'POST');
+}
+
 export async function unifiedSearch(query, limit = 5) {
   return apiCall('unified_search', { query, limit }, 'POST');
 }

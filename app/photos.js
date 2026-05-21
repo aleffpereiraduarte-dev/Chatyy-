@@ -1289,7 +1289,7 @@ export default function PhotosScreen() {
       return next;
     });
     try {
-      await api.apiCall?.('photo_memories_mute', { memory_key: memoryKey, muted: 1 }, 'POST');
+      await api.photoMemoryMute(memoryKey, 1);
     } catch {}
   }, [memMuteKey]);
 
