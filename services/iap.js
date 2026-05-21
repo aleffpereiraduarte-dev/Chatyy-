@@ -273,6 +273,18 @@ export function isAvailable() { return _available; }
 export function getProducts() { return _products; }
 export function getLastDiagnostic() { return _lastDiagnostic; }
 
+/** WAVE 82 (2026-05-21) — true when StoreKit/Play Billing connected but
+ *  returned ZERO products for ALL three catalogs (subs + diamonds + storage).
+ *  UI uses this to surface a single "Compras em breve" hint instead of three
+ *  separate "sku_not_in_catalog" errors when the user taps any pack.
+ *  Happens during ASC propagation window (24-48h post-create) or when SKUs
+ *  are stuck in MISSING_METADATA / awaiting Apple review screenshot. */
+export function isCatalogEmpty() {
+  if (Platform.OS === 'web') return false;
+  if (!_available) return true;
+  return _products.length === 0 && _diamondProducts.length === 0 && _storageProducts.length === 0;
+}
+
 export function getProductId(plan, period, storageGb) {
   if (storageGb) return `com.onemundo.mail.storage_${storageGb}`;
   const periodMap = { monthly: 'monthly', yearly: 'annual', annual: 'annual' };
