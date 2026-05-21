@@ -510,7 +510,24 @@ function CallScreenInner() {
       setShowSlowConnectOverlay(false);
       return;
     }
-    const t8 = setTimeout(() => setShowSlowConnectOverlay(true), 8000);
+    const t8 = setTimeout(() => {
+      // [CALL-TRACE 2026-05-20 WAVE42] The "Conexão lenta, aguardando..."
+      // overlay (i18n key call.slowConnectHint) appears here — fires when we
+      // haven't reached peerConnected nor peerRinging within 8s of mount.
+      // Probable root cause when user reports "conexão lenta" with no signal
+      // of step 12 firing: token fetch fallback (step 11) succeeded but the
+      // peer never joined the SFU on their side (step 7/8 fail on callee).
+      try {
+        console.log('[CALL-TRACE][SLOW] Conexão lenta overlay armed (8s elapsed without peer/ringing)', {
+          callId,
+          peerConnected,
+          peerRinging,
+          reconnecting,
+          ts: Date.now(),
+        });
+      } catch {}
+      setShowSlowConnectOverlay(true);
+    }, 8000);
     return () => clearTimeout(t8);
   }, [peerConnected, peerRinging, ended]);
 
@@ -892,6 +909,18 @@ function CallScreenInner() {
     // "Reconectando..." (Disconnected event loop). Bug existed for weeks
     // disguised as "WebRTC desconecta após native answer". Fix = align names.
     const room = String(callId);
+    // [CALL-TRACE 2026-05-20 WAVE42] Step 11/12 — JS fallback path mints the
+    // LK token (used only when adoptNativeRoom failed). Post-WAVE41 the
+    // `room` field MUST equal the raw callId — if you ever see "call_<id>"
+    // here it means a regression of the WAVE41 fix snuck back in.
+    try {
+      console.log('[CALL-TRACE][11/12] JS fetchLivekitToken fallback', {
+        room,
+        callId,
+        prefixedBug: room !== String(callId),
+        ts: Date.now(),
+      });
+    } catch {}
     // Fast-path: IncomingCallListener pre-fetched the token when the call
     // invite arrived. If it's fresh (<30s old, same call_id) consume it and
     // skip the network round-trip. Saves 200-700ms on weak networks.
@@ -1161,12 +1190,36 @@ function CallScreenInner() {
         // → mute-toggle desync. 100ms × 15 = 1500ms is the WhatsApp answer
         // budget; if still nothing by then the legacy fallback runs.
         let snap = null;
+        let polls = 0;
         for (let i = 0; i < 15; i++) {
+          polls = i + 1;
           snap = await ExpoCallKit.adoptNativeRoom?.(callId);
+          // [CALL-TRACE 2026-05-20 WAVE42] Step 10/12 — JS asks native if a
+          // Room is already up. On the caller (hybrid foreground) this
+          // usually fails — caller adopts via the JS path. On the callee
+          // post-CallKit answer it succeeds and we skip Room.connect.
+          try {
+            console.log('[CALL-TRACE][10/12] adoptNativeRoom poll attempt', {
+              polls,
+              callId,
+              adopted: !!snap,
+              isCaller,
+              ts: Date.now(),
+            });
+          } catch {}
           if (snap) break;
           await new Promise((r) => setTimeout(r, 100));
         }
-        if (snap && (snap.alreadyConnected || snap.connected || snap.roomName || snap.localIdentity)) {
+        const adopted = !!(snap && (snap.alreadyConnected || snap.connected || snap.roomName || snap.localIdentity));
+        try {
+          console.log('[CALL-TRACE][10b/12] adoptNativeRoom result', {
+            success: adopted,
+            polls,
+            fallbackToJsConnect: !adopted,
+            snap_keys: snap ? Object.keys(snap).join(',') : '<null>',
+          });
+        } catch {}
+        if (adopted) {
           console.log('[Call] adopting native Room — skip JS Room.connect', { callId, snap });
           _diag('adopted_native_room', { snap_keys: Object.keys(snap || {}).join(',') });
           setPeerConnected(true);
@@ -1276,6 +1329,18 @@ function CallScreenInner() {
       }
       _diag('event_room_connected', { remotes: r.remoteParticipants?.size || 0 });
       console.log('[Call] LiveKit Connected to room', room, 'ttfc=', ttfcMsRef.current, 'ms');
+      // [CALL-TRACE 2026-05-20 WAVE42] Step 12/12 — JS-owned Room reports
+      // Connected. Whether the peer is in the room yet is in `peerConnected`
+      // (still false here unless we caught them via the immediate scan below).
+      try {
+        console.log('[CALL-TRACE][12/12] JS Room.connect outcome', {
+          callId,
+          room,
+          peerConnected: (r.remoteParticipants?.size || 0) > 0,
+          ttfcMs: ttfcMsRef.current,
+          ts: Date.now(),
+        });
+      } catch {}
       setReconnecting(false);
       setConnectionFailed(false);
       setErrorMsg(null);
@@ -1351,6 +1416,17 @@ function CallScreenInner() {
 
     r.on(RoomEvent.Disconnected, (reason) => {
       console.log('[Call] LiveKit Disconnected reason=', reason);
+      // [CALL-TRACE 2026-05-20 WAVE42] Step 12b/12 — JS Room dropped. If
+      // reason=ClientInitiated it's our own hangup. Anything else combined
+      // with peerConnected=false means we never made it (setup-phase fail).
+      try {
+        console.log('[CALL-TRACE][12b/12] JS Room.Disconnected', {
+          callId,
+          reason: String(reason),
+          peerConnected,
+          ts: Date.now(),
+        });
+      } catch {}
       // ClientInitiated means we called .disconnect() ourselves — already in
       // hangup flow, don't fire another teardown.
       if (endedRef.current) return;

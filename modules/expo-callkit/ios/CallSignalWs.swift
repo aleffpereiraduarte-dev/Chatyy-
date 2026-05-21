@@ -105,6 +105,9 @@ final class CallSignalWs: NSObject {
             "has_video": hasVideo,
             "ts": Int(Date().timeIntervalSince1970 * 1000)
         ]
+        // [CALL-TRACE 2026-05-20 WAVE42] Step 4/12 — caller pushes call_invite
+        // into the iOS native WS outbox.
+        NSLog("[CallTrace][4/12] WS send call_invite callId=\(callId) callee=\(calleeEmail) video=\(hasVideo) ts=\(Int(Date().timeIntervalSince1970 * 1000))")
         enqueue(dict)
     }
 
@@ -424,6 +427,9 @@ final class CallSignalWs: NSObject {
             if let n = obj["conversation_id"] as? NSNumber { return n.stringValue }
             return ""
         }()
+        // [CALL-TRACE 2026-05-20 WAVE42] Step 6/12 — callee picks up call_invite
+        // off the WS.
+        NSLog("[CallTrace][6/12] WS recv call_invite callId=\(callId) fromCallerEmail=\(callerEmail) conv=\(conversationId) ts=\(Int(Date().timeIntervalSince1970 * 1000))")
         let hasVideo: Bool = {
             if let b = obj["video"] as? Bool { return b }
             if let b = obj["has_video"] as? Bool { return b }

@@ -393,11 +393,16 @@ public class NativeCallTokenFetcher {
     }
 
     public func fetchToken(roomName: String, identity: String, role: String) async throws -> TokenResult {
+        // [CALL-TRACE 2026-05-20 WAVE42] Step 7/12 — iOS mints LK token.
+        let __ct_t0 = Date().timeIntervalSince1970 * 1000
+        NSLog("[CallTrace][7/12] LkTokenFetcher.fetchToken room=\(roomName) role=\(role) identity=\(identity) ts=\(Int(__ct_t0))")
         guard let ud = UserDefaults(suiteName: "group.com.onemundo.mail") else {
+            NSLog("[CallTrace][7b/12] LkTokenFetcher result success=false err=missingAppGroup elapsedMs=\(Int(Date().timeIntervalSince1970 * 1000 - __ct_t0))")
             throw FetchError.missingAppGroup
         }
         guard let authToken = ud.string(forKey: "auth_token"), !authToken.isEmpty,
               let apiBase = ud.string(forKey: "api_base"), !apiBase.isEmpty else {
+            NSLog("[CallTrace][7b/12] LkTokenFetcher result success=false err=missingAuth elapsedMs=\(Int(Date().timeIntervalSince1970 * 1000 - __ct_t0))")
             throw FetchError.missingAuth
         }
 
@@ -466,8 +471,10 @@ public class NativeCallTokenFetcher {
             ?? (envelope["livekit_url"] as? String)
             ?? ""
         guard !lkUrl.isEmpty else {
+            NSLog("[CallTrace][7b/12] LkTokenFetcher result success=false err=emptyUrl elapsedMs=\(Int(Date().timeIntervalSince1970 * 1000 - __ct_t0))")
             throw FetchError.malformedResponse(bodyStr)
         }
+        NSLog("[CallTrace][7b/12] LkTokenFetcher result success=true url=\(lkUrl) elapsedMs=\(Int(Date().timeIntervalSince1970 * 1000 - __ct_t0))")
         return TokenResult(token: token, url: lkUrl)
     }
 }

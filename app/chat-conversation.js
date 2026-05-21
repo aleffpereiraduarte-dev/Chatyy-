@@ -15770,6 +15770,19 @@ export default function ChatConversationScreen() {
 
   const startCall = async (videoEnabled) => {
     if (startingCall) return;
+    // [CALL-TRACE 2026-05-20 WAVE42] Step 1/12 — caller taps Ligar in chat.
+    // First visible event in the JS-side pipeline. From here we ensure WS
+    // health, mint a callId, and hand off to voipNative. Grep `CallTrace`
+    // (native) / `CALL-TRACE` (JS) to reconstruct the chronological flow.
+    try {
+      console.log('[CALL-TRACE][1/12] caller tap', {
+        to: (params?.email || '').toLowerCase(),
+        video: !!videoEnabled,
+        conversationId,
+        conversationType,
+        ts: Date.now(),
+      });
+    } catch {}
 
     // Force WS to a known-healthy state before navigating. ensureHealthy
     // ping-tests the socket and force-reconnects on zombie state — same

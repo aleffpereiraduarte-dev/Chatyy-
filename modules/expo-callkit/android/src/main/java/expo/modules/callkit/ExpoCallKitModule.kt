@@ -1012,6 +1012,11 @@ class ExpoCallKitModule : Module() {
         throw IllegalArgumentException("callee_email required")
       }
       val calleeName = (params["callee_name"] as? String) ?: calleeEmail
+      // [CALL-TRACE 2026-05-20 WAVE42] Step 3/12 — native module receives the
+      // outgoing call request from JS. Grep `CallTrace` (no space). Logs the
+      // raw incoming params BEFORE we synthesize callId/avatar/intent so we
+      // can correlate JS-side step 2 with native-side intent dispatch.
+      Log.i("CallTrace", "[3/12] native startOutgoingCall callId=${params["call_id"] ?: "<gen>"} callee=$calleeEmail video=${params["is_video"]} hasLkToken=${!(params["lk_token"] as? String).isNullOrEmpty()} ts=${System.currentTimeMillis()}")
       // [#1176 polish, 2026-05-18] Avatar URL forwarded into CallActivity so
       // the Compose UI can paint the real photo instead of just an initial
       // letter while LiveKit Room is still negotiating.

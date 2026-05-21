@@ -7062,6 +7062,16 @@ export async function liveStartCf(title, opts = {}) {
   if (opts && opts.audience) payload.audience = opts.audience;
   if (opts && opts.category) payload.category = opts.category;
   if (opts && opts.subscribersOnly) payload.subscribers_only = 1;
+  // [LIVE-VOD-TRACE] Wave 44 — be explicit. Backend default is true but
+  // passing save_replay=1 here removes any ambiguity for ops digging into
+  // logs when a host opens a CF live (the broadcast UI always sets the
+  // toggle ON by default, so wantsCf path here always wants the VOD).
+  if (opts && Object.prototype.hasOwnProperty.call(opts, 'save_replay')) {
+    payload.save_replay = opts.save_replay ? 1 : 0;
+  } else {
+    payload.save_replay = 1;
+  }
+  try { console.log('[LIVE-VOD-TRACE] liveStartCf payload', payload); } catch {}
   return apiCall('live_start_cf', payload, 'POST');
 }
 // Status probe — checks CF Stream for a session (live_input_status, viewers,

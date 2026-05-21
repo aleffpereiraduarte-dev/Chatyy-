@@ -384,7 +384,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             Task { [weak self] in
                 guard let self = self else { return }
                 do {
+                    // [CALL-TRACE 2026-05-20 WAVE42] Step 8/12 — viewDidLoad
+                    // path connect (non-preconnect — fresh CallVC mount).
+                    NSLog("[CallTrace][8/12] LK Room.connect roomName=\(self.callId) serverUrl=\(url) tokenLen=\(token.count) path=viewDidLoad")
                     try await r.connect(url: url, token: token)
+                    NSLog("[CallTrace][8b/12] LK Room state=\(r.connectionState) after connect (path=viewDidLoad)")
                     // [Wave B audio, 2026-05-18 / restored 2026-05-19] Pin
                     // AudioCaptureOptions on the first publish too — RoomOptions
                     // defaults usually carry it, but pinning per-call defense-
@@ -1582,7 +1586,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         NativeCallRoom.shared.publish(room: r, callId: callId, roomName: callId)
         Task.detached(priority: .userInitiated) {
             do {
+                // [CALL-TRACE 2026-05-20 WAVE42] Step 8/12 — iOS dials the
+                // LK SFU on the preconnect path. The viewDidLoad async-connect
+                // path (~line 365) has its own [8/12] tracer below if used.
+                NSLog("[CallTrace][8/12] LK Room.connect roomName=\(callId) serverUrl=\(url) tokenLen=\(token.count) path=preconnect")
                 try await r.connect(url: url, token: token)
+                NSLog("[CallTrace][8b/12] LK Room state=\(r.connectionState) after connect (path=preconnect)")
                 try await r.localParticipant.setMicrophone(
                     enabled: true,
                     captureOptions: Self.defaultAudioCaptureOptions()
@@ -1590,6 +1599,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 NativeCallRoom.shared.didConnect()
                 print("[CallVC] preconnectRoom: connected callId=\(callId)")
             } catch {
+                NSLog("[CallTrace][8b/12] LK Room connect FAILED err=\(error) (path=preconnect)")
                 print("[CallVC] preconnectRoom: failed callId=\(callId) err=\(error)")
                 NativeCallRoom.shared.clear()
             }
@@ -1635,6 +1645,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 extension CallViewController: RoomDelegate {
 
     func roomDidConnect(_ room: Room) {
+        // [CALL-TRACE 2026-05-20 WAVE42] Step 9/12 — RoomDelegate.connected.
+        NSLog("[CallTrace][9/12] RoomEvent type=Connected callId=\(callId) ts=\(Int(Date().timeIntervalSince1970 * 1000))")
         print("[CallVC] roomDidConnect — callId=\(callId)")
         DispatchQueue.main.async { [weak self] in
             self?.session.status = "Conectado"
@@ -1646,6 +1658,8 @@ extension CallViewController: RoomDelegate {
     }
 
     func room(_ room: Room, didDisconnectWithError error: LiveKitError?) {
+        // [CALL-TRACE 2026-05-20 WAVE42] Step 9/12 — RoomDelegate.disconnect.
+        NSLog("[CallTrace][9/12] RoomEvent type=Disconnected callId=\(callId) err=\(String(describing: error)) ts=\(Int(Date().timeIntervalSince1970 * 1000))")
         print("[CallVC] didDisconnectWithError — error=\(String(describing: error))")
         // [#1207 NativeCallRoom REAL] Fanout to JS BEFORE we tear down the
         // session. JS listeners need the disconnect event so they can swap
@@ -1706,6 +1720,10 @@ extension CallViewController: RoomDelegate {
 
     func room(_ room: Room, participantDidConnect participant: RemoteParticipant) {
         let identity = participant.identity?.stringValue ?? "?"
+        // [CALL-TRACE 2026-05-20 WAVE42] Step 9/12 — RoomDelegate.peerJoin.
+        // Equivalent to "peer joined the SFU room" — should fire on the
+        // caller's device shortly after the callee answers.
+        NSLog("[CallTrace][9/12] RoomEvent type=ParticipantConnected identity=\(identity) callId=\(callId) ts=\(Int(Date().timeIntervalSince1970 * 1000))")
         print("[CallVC] participantDidConnect — identity=\(identity)")
         DispatchQueue.main.async { [weak self] in
             self?.stopRingbackTone(reason: "participantDidConnect")
@@ -1718,6 +1736,8 @@ extension CallViewController: RoomDelegate {
 
     func room(_ room: Room, participantDidDisconnect participant: RemoteParticipant) {
         let identity = participant.identity?.stringValue ?? "?"
+        // [CALL-TRACE 2026-05-20 WAVE42] Step 9/12 — peer left the SFU.
+        NSLog("[CallTrace][9/12] RoomEvent type=ParticipantDisconnected identity=\(identity) callId=\(callId) ts=\(Int(Date().timeIntervalSince1970 * 1000))")
         print("[CallVC] participantDidDisconnect — identity=\(identity)")
         DispatchQueue.main.async { [weak self] in
             self?.session.remoteVideoTrack = nil

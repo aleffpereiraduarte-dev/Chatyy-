@@ -269,6 +269,14 @@ export default function LiveViewerScreen() {
   // API in the background. Failures rollback silently.
   const [replaySaved, setReplaySaved] = useState(false);
   const [savingReplay, setSavingReplay] = useState(false);
+  // [WAVE 43 2026-05-20] When the viewer detects ended, scan for a newer
+  // live from the same host so the user can hop into it without backing
+  // out and re-tapping. Common scenario: host re-broadcast (live #1 ended,
+  // live #2 started seconds later) but the chat list / push notification
+  // cached the old session_id. Without this, user would see "Live
+  // encerrada" and never realize the host is still live.
+  const [newerSessionFromHost, setNewerSessionFromHost] = useState(null);
+  const [searchingNewerSession, setSearchingNewerSession] = useState(false);
   const [hearts, setHearts] = useState([]);
   // Cumulative like counter for the right-rail heart display. Increments
   // every time a heart is spawned (locally or from a remote reaction WS msg).
@@ -782,8 +790,19 @@ export default function LiveViewerScreen() {
       try {
         const res = await api.liveList();
         if (!alive) return;
-        const sessions = Array.isArray(res?.sessions)
-          ? res.sessions
+        // [WAVE 43 2026-05-20] Robust shape parsing. Backend response is
+        // `{success:true, data:{lives:[…]}, message:''}` — apiCall returns
+        // that whole object. BEFORE only checked `res?.sessions` /
+        // `Array.isArray(res)` — both ALWAYS missed → `sessions=[]` →
+        // `found=false` → after 16s every viewer that hadn't connected was
+        // flipped to liveEnded, even when the live was actively running.
+        // This was the primary "Live encerrada on connect" bug reported.
+        // Now we try all known shapes (lives/sessions, data wrapper, raw
+        // array) so the match logic actually has data to check.
+        const sessions = Array.isArray(res?.data?.lives) ? res.data.lives
+          : Array.isArray(res?.lives) ? res.lives
+          : Array.isArray(res?.data?.sessions) ? res.data.sessions
+          : Array.isArray(res?.sessions) ? res.sessions
           : (Array.isArray(res) ? res : []);
         // Match by id OR session_id (backend field varies between shapes).
         const sidStr = String(paramSessionId);
@@ -792,12 +811,46 @@ export default function LiveViewerScreen() {
           const id2 = s?.session_id != null ? String(s.session_id) : '';
           return id1 === sidStr || id2 === sidStr;
         });
+        console.log('[LIVE-TRACE] checkSession', {
+          sessionId: paramSessionId,
+          totalSessions: sessions.length,
+          found,
+          consecutiveMissing,
+        });
         if (!found) {
           // Two-strike rule: need 2 consecutive misses before declaring
           // ended. liveList auto-expires stale sessions, but a transient
           // backend hiccup shouldn't yank a viewer mid-stream.
           consecutiveMissing += 1;
           if (consecutiveMissing >= 2) {
+            // [WAVE 43] Second opinion before declaring ended. Ask
+            // `live_status_cf` directly for THIS session — it may still
+            // exist as 'live' even if it's not in the discovery list yet
+            // (e.g. private/restricted, brand new, replication lag).
+            try {
+              const statusR = await Promise.race([
+                api.liveStatusCf(paramSessionId),
+                new Promise((resolve) => setTimeout(() => resolve(null), 2500)),
+              ]);
+              const ds = String(statusR?.data?.status || '').toLowerCase();
+              const stillLive = ds === 'live' || ds === 'active' || statusR?.data?.is_live === true;
+              console.log('[LIVE-TRACE] second-opinion liveStatusCf', {
+                sessionId: paramSessionId,
+                dataStatus: ds,
+                is_live: statusR?.data?.is_live,
+                stillLive,
+              });
+              if (stillLive) {
+                // Reset miss counter — backend says we're fine.
+                consecutiveMissing = 0;
+                return;
+              }
+            } catch (e) {
+              console.log('[LIVE-TRACE] second-opinion threw', { message: e?.message });
+              // Probe threw — be conservative, don't end yet on next tick.
+              return;
+            }
+            console.log('[LIVE-TRACE] declaring liveEnded after 2 misses + second-opinion confirm');
             setLiveEnded(true);
           }
         } else {
@@ -817,6 +870,94 @@ export default function LiveViewerScreen() {
       clearInterval(interval);
     };
   }, [connected, liveEnded, paramSessionId]);
+
+  // [WAVE 43 2026-05-20] Auto-search for a newer session from the same host
+  // the moment we hit liveEnded. If found, surface a "Entrar na nova live"
+  // CTA on the ended card — user can hop straight in. Common scenario: host
+  // re-broadcast and we landed on the old session_id from a stale tap, push
+  // notification, or deep link. Without this the user thinks the live is
+  // dead even though the host is actively streaming a fresh session.
+  useEffect(() => {
+    if (!liveEnded) return undefined;
+    if (!displayHostEmail) return undefined;
+    let cancelled = false;
+    (async () => {
+      setSearchingNewerSession(true);
+      try {
+        const res = await api.liveList();
+        if (cancelled) return;
+        const sessions = Array.isArray(res?.data?.lives) ? res.data.lives
+          : Array.isArray(res?.lives) ? res.lives
+          : Array.isArray(res?.data?.sessions) ? res.data.sessions
+          : Array.isArray(res?.sessions) ? res.sessions
+          : (Array.isArray(res) ? res : []);
+        const targetEmail = String(displayHostEmail).toLowerCase();
+        const hit = sessions.find(s => {
+          const he = String(s?.host_email || '').toLowerCase();
+          const sid = s?.id || s?.session_id;
+          return he === targetEmail && sid && String(sid) !== String(paramSessionId);
+        });
+        console.log('[LIVE-TRACE] auto-search newer session', {
+          host: targetEmail,
+          totalSessions: sessions.length,
+          found: !!hit,
+          newerId: hit?.id || hit?.session_id,
+        });
+        if (hit) {
+          setNewerSessionFromHost({
+            id: hit.id || hit.session_id,
+            host_name: hit.host_name || (hit.host_email || '').split('@')[0],
+            host_email: hit.host_email,
+          });
+        }
+      } catch (e) {
+        console.log('[LIVE-TRACE] auto-search threw', { message: e?.message });
+      } finally {
+        if (!cancelled) setSearchingNewerSession(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [liveEnded, displayHostEmail, paramSessionId]);
+
+  // [WAVE 43 2026-05-20] Manual recovery — user taps "Procurar nova live"
+  // on the ended screen. Re-runs the host-newer-session search and, if it
+  // finds something, replaces the viewer screen with the new session id.
+  const handleSearchNewerLive = useCallback(async () => {
+    if (!displayHostEmail) return;
+    console.log('[LIVE-TRACE] manual search newer live', { host: displayHostEmail });
+    setSearchingNewerSession(true);
+    try {
+      const res = await api.liveList();
+      const sessions = Array.isArray(res?.data?.lives) ? res.data.lives
+        : Array.isArray(res?.lives) ? res.lives
+        : Array.isArray(res?.data?.sessions) ? res.data.sessions
+        : Array.isArray(res?.sessions) ? res.sessions
+        : (Array.isArray(res) ? res : []);
+      const targetEmail = String(displayHostEmail).toLowerCase();
+      const hit = sessions.find(s => {
+        const he = String(s?.host_email || '').toLowerCase();
+        const sid = s?.id || s?.session_id;
+        return he === targetEmail && sid && String(sid) !== String(paramSessionId);
+      });
+      if (hit) {
+        const newId = hit.id || hit.session_id;
+        const newName = hit.host_name || (hit.host_email || '').split('@')[0];
+        const p = new URLSearchParams();
+        p.set('sessionId', String(newId));
+        if (hit.host_email) p.set('hostEmail', hit.host_email);
+        if (newName) p.set('hostName', newName);
+        try { router.replace(`/live-viewer?${p.toString()}`); } catch {}
+      } else {
+        try {
+          const { ToastAndroid, Platform: P } = require('react-native');
+          const msg = t('live.noNewerSession') || 'Nenhuma live ativa deste host no momento';
+          if (P.OS === 'android' && ToastAndroid?.show) ToastAndroid.show(msg, ToastAndroid.SHORT);
+          else { try { showToastRef.current?.(msg); } catch {} }
+        } catch {}
+      }
+    } catch {}
+    finally { setSearchingNewerSession(false); }
+  }, [displayHostEmail, paramSessionId, router, t]);
 
   // Connect to signaling and WebRTC
   useEffect(() => {
@@ -2321,6 +2462,50 @@ export default function LiveViewerScreen() {
             </Text>
           </TouchableOpacity>
         </View>
+
+        {/* [WAVE 43 2026-05-20] Newer-session-from-host CTA. Shown when the
+            auto-search effect found a NEW live from the same host (host
+            re-broadcast common scenario). Lets user hop directly into the
+            fresh session without backing out + re-tapping the chat list.
+            Also shows a smaller "Procurar nova live" link as fallback when
+            no newer session was auto-detected — manual retry in case the
+            host went live again seconds after we landed here. */}
+        {newerSessionFromHost ? (
+          <TouchableOpacity
+            onPress={() => {
+              const p = new URLSearchParams();
+              p.set('sessionId', String(newerSessionFromHost.id));
+              if (newerSessionFromHost.host_email) p.set('hostEmail', newerSessionFromHost.host_email);
+              if (newerSessionFromHost.host_name) p.set('hostName', newerSessionFromHost.host_name);
+              try { router.replace(`/live-viewer?${p.toString()}`); } catch {}
+            }}
+            style={[styles.endedBtn, styles.endedBtnPrimary, { marginTop: 12 }]}
+            accessibilityLabel={t('live.joinNewerSession') || 'Entrar na nova live'}
+            accessibilityRole="button"
+            activeOpacity={0.85}
+          >
+            <Text style={styles.endedBtnText}>
+              {(t('live.joinNewerSession') || 'Entrar na nova live de {name}').replace('{name}', displayHostName || '')}
+            </Text>
+          </TouchableOpacity>
+        ) : (
+          displayHostEmail ? (
+            <TouchableOpacity
+              onPress={handleSearchNewerLive}
+              disabled={searchingNewerSession}
+              style={styles.endedBackLink}
+              accessibilityLabel={t('live.searchNewerSession') || 'Procurar nova live'}
+              accessibilityRole="button"
+              activeOpacity={0.7}
+            >
+              <Text style={styles.endedBackLinkText}>
+                {searchingNewerSession
+                  ? (t('live.searching') || 'Buscando…')
+                  : ((t('live.searchNewerSession') || 'Procurar nova live de {name}').replace('{name}', displayHostName || ''))}
+              </Text>
+            </TouchableOpacity>
+          ) : null
+        )}
 
         {/* Helper line under the buttons — explica que o replay vai
             aparecer em "Lives salvas" e que pode demorar pra processar

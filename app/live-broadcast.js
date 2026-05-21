@@ -1489,16 +1489,55 @@ export default function LiveBroadcastScreen() {
             rtmps_url: res.data?.rtmps_url,
             rtmps_key: res.data?.rtmps_key,
           };
+          // [LIVE-VOD-TRACE] Wave 44 — surface the full ingest payload so we
+          // can tell from logs whether a host's empty VOD was caused by
+          // (a) backend not returning webrtc_url, (b) WHIP publish failing,
+          // (c) localStreamRef being null when we tried to publish, or
+          // (d) something else upstream. User report: "aonde ta ficando
+          // salvo as lives? não tá funcionando" — DB shows save_replay=true
+          // on every recent session but recording_mp4=null forever because
+          // CF Stream's /videos endpoint returns []: no frames ever reached
+          // CF, so no VOD was ever produced.
+          try {
+            console.log('[LIVE-VOD-TRACE] live_start_cf response', {
+              session_id: sid,
+              cf_input_uid: res.data?.cf_input_uid,
+              has_webrtc_url: !!ingestUrl,
+              has_rtmps_url: !!res.data?.rtmps_url,
+              has_hls_url: !!res.data?.hls_url,
+              has_local_stream: !!localStreamRef.current,
+              local_tracks: localStreamRef.current
+                ? localStreamRef.current.getTracks().map(t => `${t.kind}:${t.readyState}`)
+                : null,
+            });
+          } catch {}
           if (ingestUrl && localStreamRef.current) {
+            console.log('[LIVE-VOD-TRACE] starting WHIP publish to CF Stream');
             publishToCfStream(localStreamRef.current, ingestUrl)
-              .then((pub) => { cfPublisherRef.current = pub; })
+              .then((pub) => {
+                cfPublisherRef.current = pub;
+                console.log('[LIVE-VOD-TRACE] WHIP publish OK — CF should record VOD');
+              })
               .catch((e) => {
-                console.warn('[Live] CF Stream WHIP publish failed:', e?.message || e);
+                console.warn('[LIVE-VOD-TRACE] CF Stream WHIP publish failed:', e?.message || e);
+                // Soft-warn the host so they know the replay won't materialize.
+                // Without this, host taps end-live, sees "Processing", and
+                // /lives-saved never shows the row (a 2-week+ silent bug for
+                // every CF live since the pipeline shipped).
+                try {
+                  const msg = t('live.replayPublishFailed') || 'Replay não será salvo (falha de conexão com servidor de mídia)';
+                  if (Platform.OS === 'android' && Platform.constants?.ToastAndroid !== undefined) {
+                    const { ToastAndroid } = require('react-native');
+                    ToastAndroid?.show?.(msg, ToastAndroid.LONG);
+                  }
+                } catch {}
                 // No teardown — viewers fall back to the WebRTC P2P path
                 // (host -> viewer pcs created via the WS signaling below).
               });
           } else if (!ingestUrl) {
-            console.warn('[Live] live_start_cf returned no webrtc_url — VOD will be empty');
+            console.warn('[LIVE-VOD-TRACE] live_start_cf returned no webrtc_url — VOD will be empty');
+          } else if (!localStreamRef.current) {
+            console.warn('[LIVE-VOD-TRACE] no localStream when WHIP would have started — VOD will be empty');
           }
         }
 
@@ -1684,8 +1723,33 @@ export default function LiveBroadcastScreen() {
       // live_end_cf so the cron-live-recordings finalizer picks them up,
       // legacy sessions stay on live_end. Memory-safe — fires after teardown.
       const endFn = cfModeRef.current ? api.liveEndCf : api.liveEnd;
+      // [LIVE-VOD-TRACE] Wave 44 — show a tangible "Replay sendo processado"
+      // toast the moment the host taps end-live. The previous UX let users
+      // walk away thinking nothing was happening (the end-card just said
+      // "Live encerrada"), then they'd open /lives-saved later, see an empty
+      // list, and assume the feature was broken — matching the actual user
+      // report. Toast surfaces ONLY when replay was requested AND we went
+      // through the CF pipeline (replayRequested gate).
+      if (replayRequested && cfModeRef.current) {
+        try {
+          const msg = t('live.replayProcessingToast') || 'Seu replay está sendo processado (pode levar 1-2 min)';
+          if (Platform.OS === 'android') {
+            const { ToastAndroid } = require('react-native');
+            ToastAndroid?.show?.(msg, ToastAndroid.LONG);
+          } else if (Platform.OS === 'web') {
+            // Web: no native toast — append to the end-card state which
+            // already surfaces "Processing" copy.
+          } else {
+            // iOS: end-card already renders the "Processando..." chip via
+            // endedReplayStatus, so no extra toast needed (avoids stacking
+            // alerts on top of the modal animation).
+          }
+        } catch {}
+      }
+      try { console.log('[LIVE-VOD-TRACE] live_end fired', { session_id: endedSessionId, cf_mode: cfModeRef.current, save_replay: replayRequested }); } catch {}
       endFn(endedSessionId, { save_replay: replayRequested })
         .then((res) => {
+          try { console.log('[LIVE-VOD-TRACE] live_end response', { ok: !!res?.success, has_recording: res?.data?.has_recording, message: res?.message }); } catch {}
           if (res?.success) {
             const has = !!res.data?.has_recording;
             setEndedHasRecording(has);
@@ -1698,7 +1762,10 @@ export default function LiveBroadcastScreen() {
             }
           }
         })
-        .catch(() => setEndedReplayStatus(replayRequested ? 'error' : 'none'));
+        .catch((e) => {
+          try { console.warn('[LIVE-VOD-TRACE] live_end network error', e?.message); } catch {}
+          setEndedReplayStatus(replayRequested ? 'error' : 'none');
+        });
     }
 
     if (wsRef.current?.readyState === WebSocket.OPEN) {

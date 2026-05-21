@@ -122,6 +122,12 @@ object CallSignalWs {
             put("has_video", hasVideo)
             put("ts", System.currentTimeMillis())
         }.toString()
+        // [CALL-TRACE 2026-05-20 WAVE42] Step 4/12 — caller pushes call_invite
+        // into the WS outbox. enqueueAndShip will eventually drain to the
+        // server (or queue if WS still authenticating). If [4/12] never shows
+        // up in logcat it means the native fallback path didn't fire (JS WS
+        // alone tried to ship; check services/websocket.js for the JS twin).
+        Log.i("CallTrace", "[4/12] WS send call_invite callId=$callId callee=$calleeEmail video=$hasVideo ts=${System.currentTimeMillis()}")
         enqueueAndShip(context, payload)
     }
 
@@ -427,6 +433,11 @@ object CallSignalWs {
         val callerEmail = obj.optString("caller_email")
         val callerName = obj.optString("caller_name").ifEmpty { callerEmail }
         val conversationId = obj.optString("conversation_id")
+        // [CALL-TRACE 2026-05-20 WAVE42] Step 6/12 — callee's WS picks up the
+        // call_invite frame. If you see [4/12] (caller side) but no [6/12]
+        // on the callee device the server didn't fan the frame out — check
+        // chatyy-ws-cpp (or fallback go) broadcastToEmail logs.
+        Log.i("CallTrace", "[6/12] WS recv call_invite callId=$callId fromCallerEmail=$callerEmail conv=$conversationId ts=${System.currentTimeMillis()}")
         val hasVideo: Boolean = when {
             obj.has("video") -> {
                 val v = obj.opt("video")

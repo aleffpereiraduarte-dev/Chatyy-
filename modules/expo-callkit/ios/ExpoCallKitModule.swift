@@ -701,6 +701,13 @@ public class ExpoCallKitModule: Module {
                       userInfo: [NSLocalizedDescriptionKey: "callee_email required"])
       }
       let calleeName = (params["callee_name"] as? String) ?? calleeEmail
+      // [CALL-TRACE 2026-05-20 WAVE42] Step 3/12 — iOS native module receives
+      // outgoing call from JS. Subsystem stays as the legacy print() but
+      // tagged with `[CallTrace][3/12]` so the same grep on console works:
+      //   log stream --predicate 'eventMessage contains "CallTrace"'
+      let __ct_callId = (params["call_id"] as? String) ?? "<gen>"
+      let __ct_hasToken = !((params["lk_token"] as? String) ?? "").isEmpty
+      NSLog("[CallTrace][3/12] native startOutgoingCall callId=\(__ct_callId) callee=\(calleeEmail) video=\(params["is_video"] as? Bool ?? false) hasLkToken=\(__ct_hasToken)")
       let calleeAvatar = (params["callee_avatar"] as? String) ?? ""
       let callerName = (params["caller_name"] as? String) ?? ""
       let isVideo = (params["is_video"] as? Bool) ?? false

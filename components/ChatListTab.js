@@ -1307,36 +1307,111 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
         router.push(`/live-broadcast${sid}`);
         return;
       }
-      // [WAVE 38 2026-05-20] Pre-tap status verify. Antes de navegar pro
-      // /live-viewer, confirma com o backend que o sessionId AINDA está
-      // live. Cenário: host fechou live mas live_ended WS event não chegou
-      // (reconnect, network blip) → user clica num card AO VIVO obsoleto
-      // → viewer abre e mostra "live encerrada". Agora detectamos antes
-      // de navegar e: (a) limpamos a entry obsoleta da lista,
-      // (b) mostramos toast/alert curto em vez de abrir viewer morto.
+      // [WAVE 43 2026-05-20] Permissive pre-tap status verify. Antes (WAVE 38)
+      // bloqueava entry no /live-viewer sempre que `liveStatusCf` retornava
+      // qualquer coisa que não fosse `status='live'`. Isso causava bug user:
+      // "não tá deixando conectar na live, mostra 'live encerrada'" em
+      // múltiplos cenários false-positive:
+      //   1. Backend retorna 404 (`Session not found`) — `r.data` é null mas
+      //      `r` truthy → bloqueava com alert "Live encerrada".
+      //   2. CF Stream ainda não ingerindo frames → `is_live=false` mas
+      //      status='live' no PG (esse caso já passa). Outros cenários onde
+      //      `r` é success=false sem `data` válido bloqueavam falsamente.
+      //   3. Timeout/transient backend hiccup → trata como ended.
+      //   4. Auto-end backend (5min sem viewers) marca live legítima como
+      //      'ended' enquanto host ainda transmite (live_list:6717-6757).
+      // Nova regra: SÓ bloqueamos quando o backend CONFIRMA explicitamente
+      // `status==='ended'`. Qualquer outra resposta (404, timeout, success
+      // false, success true com status indeterminado) deixa entrar — o
+      // /live-viewer tem 2 sources of truth próprios (live_list poll +
+      // live_session_info WS) que vão converter pra liveEnded se for o caso.
       try {
-        const r = await api.liveStatusCf(sessionId);
-        const status = String(r?.data?.status || r?.status || '').toLowerCase();
-        const isLive = status === 'live' || status === 'active' || r?.data?.is_live === true;
-        if (!isLive && r) {
-          // Stale — clear the card from our local list so next render hides it.
-          if (email) {
-            const emailLower = String(email).toLowerCase();
-            setLivesByEmail(prev => {
-              if (!prev[emailLower]) return prev;
-              const n = { ...prev }; delete n[emailLower]; return n;
-            });
+        console.log('[LIVE-TRACE] openLiveViewer pre-tap', { sessionId, hostEmail: email, ts: Date.now() });
+        // Timeout race — se backend demorar >2s, deixa entrar mesmo assim.
+        const probe = api.liveStatusCf(sessionId);
+        const timeoutP = new Promise((resolve) => setTimeout(() => resolve({ __probeTimeout: true }), 2000));
+        const r = await Promise.race([probe, timeoutP]);
+        if (r?.__probeTimeout) {
+          console.log('[LIVE-TRACE] liveStatusCf timeout — allow entry');
+        } else {
+          const dataStatus = String(r?.data?.status || '').toLowerCase();
+          const topStatus = String(r?.status || '').toLowerCase();
+          const explicitEnded = dataStatus === 'ended' || topStatus === 'ended';
+          const isLiveSignal = dataStatus === 'live' || dataStatus === 'active' || r?.data?.is_live === true;
+          console.log('[LIVE-TRACE] liveStatusCf result', {
+            success: r?.success,
+            dataStatus,
+            topStatus,
+            is_live: r?.data?.is_live,
+            message: r?.message,
+          });
+          console.log('[LIVE-TRACE] decision', {
+            allow: !explicitEnded || isLiveSignal,
+            fallback: explicitEnded && !isLiveSignal ? 'tryNewerSessionFromHost' : 'allowEntry',
+          });
+          if (explicitEnded && !isLiveSignal) {
+            // Backend confirmed this exact session is ended. Antes de
+            // bloquear, tenta achar uma session NOVA do mesmo host na
+            // live_list — cobre o caso "host re-broadcast, card velho
+            // ainda mostra session_id antigo" comum em race conditions.
+            let newerSessionId = null;
+            let newerHostName = null;
+            try {
+              const listR = await Promise.race([
+                api.liveList(),
+                new Promise((resolve) => setTimeout(() => resolve(null), 1500)),
+              ]);
+              if (listR && email) {
+                const sessions = Array.isArray(listR?.lives)
+                  ? listR.lives
+                  : (Array.isArray(listR?.data?.lives) ? listR.data.lives : []);
+                const emailLower = String(email).toLowerCase();
+                const hit = sessions.find(s => String(s?.host_email || '').toLowerCase() === emailLower);
+                if (hit && hit.id && String(hit.id) !== String(sessionId)) {
+                  newerSessionId = hit.id;
+                  newerHostName = hit.host_name || null;
+                }
+              }
+            } catch {}
+            if (newerSessionId) {
+              console.log('[LIVE-TRACE] redirect to newer session', { from: sessionId, to: newerSessionId });
+              // Update local cache to the new id so next tap hits it directly.
+              if (email) {
+                const emailLower = String(email).toLowerCase();
+                setLivesByEmail(prev => ({
+                  ...prev,
+                  [emailLower]: { id: newerSessionId, host_name: newerHostName || hostName || emailLower.split('@')[0], viewer_count: 0 },
+                }));
+              }
+              const params2 = new URLSearchParams();
+              params2.set('sessionId', String(newerSessionId));
+              if (email) params2.set('hostEmail', email);
+              if (newerHostName || hostName) params2.set('hostName', String(newerHostName || hostName));
+              router.push(`/live-viewer?${params2.toString()}`);
+              return;
+            }
+            // No newer session — clear stale card and surface a friendlier
+            // message. Still allow tap-through if user insists.
+            if (email) {
+              const emailLower = String(email).toLowerCase();
+              setLivesByEmail(prev => {
+                if (!prev[emailLower]) return prev;
+                const n = { ...prev }; delete n[emailLower]; return n;
+              });
+            }
+            try {
+              const { Alert } = require('react-native');
+              Alert.alert(
+                t('live.endedTitle') || 'Live encerrada',
+                t('live.endedBody') || 'Esta transmissão já terminou.',
+              );
+            } catch {}
+            return;
           }
-          try {
-            const { Alert } = require('react-native');
-            Alert.alert(t('live.endedTitle') || 'Live encerrada', t('live.endedBody') || 'Esta transmissão já terminou.');
-          } catch {}
-          return;
         }
-      } catch {
-        // If status probe fails (network/backend hiccup), fall through and
-        // let /live-viewer's own error handling kick in. We don't want a
-        // probe failure to block opening a live that's actually fine.
+      } catch (e) {
+        console.log('[LIVE-TRACE] liveStatusCf threw — allow entry', { message: e?.message });
+        // Probe threw — never block. /live-viewer has its own ended detection.
       }
       const params = new URLSearchParams();
       params.set('sessionId', sessionId);

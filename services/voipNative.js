@@ -93,6 +93,21 @@ export async function startOutgoingCall({
     throw new Error('startOutgoingCall: calleeEmail is required');
   }
   const cid = callId || generateCallId();
+  // [CALL-TRACE 2026-05-20 WAVE42] Step 2/12 — JS hands the call off to
+  // native CallKit / CallActivity. From this point the foreground UI is
+  // either /call.js (in-app foreground branch below) or the native call
+  // surface. The callId here is what propagates through native, WS, server,
+  // LK room name, and post-call diag.
+  try {
+    console.log('[CALL-TRACE][2/12] voipNative.startOutgoingCall', {
+      callId: cid,
+      calleeEmail,
+      video: !!isVideo,
+      conversationId: conversationId || '',
+      platform: Platform.OS,
+      ts: Date.now(),
+    });
+  } catch {}
 
   // Fire-and-forget push notification so the callee's phone rings. Server
   // returns immediately — we don't block the native present on this. Bug

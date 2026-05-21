@@ -110,15 +110,26 @@ object LkTokenFetcher {
      */
     suspend fun fetchToken(ctx: Context, callId: String, isVideo: Boolean, intentExtras: Bundle?): Result? {
         if (callId.isEmpty()) return null
+        // [CALL-TRACE 2026-05-20 WAVE42] Step 7/12 — callee mints (or pulls
+        // cached) LK token. Triggered both pre-accept (preconnectRoom) and at
+        // accept-time. If [7b] reports success=false we either had a 401
+        // (auth_token resolveAuth failure across 4 sources), HTTP non-2xx,
+        // or success=false in the JSON. fall-through path is no-token → user
+        // sees forever "Conectando…".
+        val t0 = System.currentTimeMillis()
+        Log.i("CallTrace", "[7/12] LkTokenFetcher.fetchToken room=$callId isVideo=$isVideo ts=$t0")
         return withContext(Dispatchers.IO) {
             val identity = resolveIdentity(ctx)
             // Cache check first — saves a round trip if JS already pre-stashed.
             val cached = getCached(ctx, callId)
             if (cached != null) {
                 Log.d(TAG, "fetchToken: cache hit for $callId")
+                Log.i("CallTrace", "[7b/12] LkTokenFetcher result success=true source=cache elapsedMs=${System.currentTimeMillis() - t0} url=${cached.url}")
                 return@withContext cached
             }
-            doFetch(ctx, callId, identity, intentExtras)
+            val result = doFetch(ctx, callId, identity, intentExtras)
+            Log.i("CallTrace", "[7b/12] LkTokenFetcher result success=${result != null} source=http elapsedMs=${System.currentTimeMillis() - t0} url=${result?.url ?: "<none>"}")
+            result
         }
     }
 

@@ -1146,7 +1146,17 @@ class CallActivity : ComponentActivity() {
     localRenderer?.let { r.initVideoRenderer(it) }
 
     eventsJob = lifecycleScope.launch {
-      r.events.collect { event -> handleRoomEvent(r, event) }
+      r.events.collect { event ->
+        // [CALL-TRACE 2026-05-20 WAVE42] Step 9/12 — every LK RoomEvent
+        // streams through here. Use this trace to detect Reconnecting >3s
+        // (the "Reconectando…"/"Conexão lenta" UI is driven by these
+        // events). `event.javaClass.simpleName` keeps the log compact;
+        // detailed reason/state lives in handleRoomEvent's existing logs.
+        try {
+          Log.i("CallTrace", "[9/12] RoomEvent type=${event.javaClass.simpleName} state=${r.state} ts=${System.currentTimeMillis()}")
+        } catch (_: Throwable) {}
+        handleRoomEvent(r, event)
+      }
     }
 
     if (isOutgoing) {
@@ -1161,7 +1171,12 @@ class CallActivity : ComponentActivity() {
   private suspend fun attemptConnect(r: Room, url: String, token: String, attempt: Int) {
     try {
       state.isReconnecting = attempt > 0
+      // [CALL-TRACE 2026-05-20 WAVE42] Step 8/12 — about to dial the LK SFU.
+      // `url` is the wss://livekit.chatyy.com.br endpoint; `token` is the
+      // signed JWT minted in step 7. Pre-state should be DISCONNECTED.
+      Log.i("CallTrace", "[8/12] LK Room.connect roomName=$callId serverUrl=$url attempt=$attempt tokenLen=${token.length}")
       r.connect(url, token)
+      Log.i("CallTrace", "[8b/12] LK Room state=${r.state} after connect (attempt=$attempt)")
       // [#1191 audio fix, 2026-05-19] Only publish mic if RECORD_AUDIO is
       // actually granted. Calling setMicrophoneEnabled(true) without the
       // perm silently publishes a muted/empty track — call looks connected

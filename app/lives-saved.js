@@ -66,13 +66,35 @@ export default function LivesSavedScreen() {
   // ended lives a chance to flip recording_ready=TRUE before the list query
   // runs, so the host doesn't see "Processing…" on their own recent replay
   // if CF has already finalized.
+  // [LIVE-VOD-TRACE] Wave 44 — trace what /lives-saved sees. User report
+  // "aonde ta ficando salvo as lives nao ta funcionando" — list returns
+  // [] for everyone because backend recording_ready=FALSE on every CF row
+  // (no frames ever reached Cloudflare Stream; WHIP publish silently fails
+  // on the host device). Trace lets us correlate device-side observation
+  // with the DB state via remote log fetch.
   const load = useCallback(async (showSpinner = true) => {
     if (showSpinner) setLoading(true);
     setError('');
     try {
       // Fire poll first (best-effort, don't block on errors).
-      try { await api.liveRecordingPoll(); } catch {}
+      try {
+        const pollRes = await api.liveRecordingPoll();
+        console.log('[LIVE-VOD-TRACE] liveRecordingPoll', {
+          ok: !!pollRes?.success,
+          finalized: pollRes?.data?.finalized,
+          pending: pollRes?.data?.pending,
+        });
+      } catch (pe) {
+        console.warn('[LIVE-VOD-TRACE] liveRecordingPoll failed', pe?.message);
+      }
       const res = await api.liveRecordingsList(50, 0);
+      const list = res?.success && Array.isArray(res.data?.recordings) ? res.data.recordings : [];
+      console.log('[LIVE-VOD-TRACE] liveRecordingsList', {
+        ok: !!res?.success,
+        count: list.length,
+        ready_count: list.filter(r => r.recording_ready).length,
+        sample_ids: list.slice(0, 3).map(r => r.session_id),
+      });
       if (res?.success && Array.isArray(res.data?.recordings)) {
         setRecordings(res.data.recordings);
       } else {
@@ -80,6 +102,7 @@ export default function LivesSavedScreen() {
         setError(res?.message || '');
       }
     } catch (e) {
+      console.warn('[LIVE-VOD-TRACE] liveRecordingsList error', e?.message);
       setError(e?.message || 'Falha ao carregar');
       setRecordings([]);
     } finally {
@@ -260,8 +283,26 @@ export default function LivesSavedScreen() {
       </View>
 
       {loading ? (
-        <View style={styles.centered}><ActivityIndicator color="#7C3AED" /></View>
+        // [Wave 44] Skeleton — 4 rows of placeholder cards so the UI doesn't
+        // look frozen on slow networks (was a bare spinner). Matches the
+        // dimensions of the real row for zero layout shift when data lands.
+        <View style={{ paddingVertical: 8 }}>
+          {[0,1,2,3].map((i) => (
+            <View key={i} style={[styles.row, { backgroundColor: colors.card || (isDark ? '#1c1c1e' : '#fff') }]}>
+              <View style={[styles.thumbWrap, { backgroundColor: isDark ? '#2a2a2c' : '#eee' }]} />
+              <View style={styles.rowBody}>
+                <View style={{ height: 14, width: '60%', borderRadius: 4, backgroundColor: isDark ? '#2a2a2c' : '#e7e7ea', marginBottom: 8 }} />
+                <View style={{ height: 10, width: '40%', borderRadius: 4, backgroundColor: isDark ? '#2a2a2c' : '#e7e7ea' }} />
+              </View>
+            </View>
+          ))}
+        </View>
       ) : empty ? (
+        // [Wave 44] Empty state — actionable hint about WHY it might be empty
+        // (the host's last live is still processing, or they never went live).
+        // Plus a "Atualizar" button so users without pull-to-refresh muscle
+        // memory have an obvious retry. Resolves the "aonde tá salvando?"
+        // confusion: now the screen explicitly tells them.
         <View style={styles.empty}>
           <View style={[styles.emptyIcon, { backgroundColor: isDark ? '#222' : '#f1ecff' }]}>
             <IconStar size={36} color="#7C3AED" />
@@ -272,6 +313,22 @@ export default function LivesSavedScreen() {
           <Text style={[styles.emptyHint, { color: colors.textMuted || '#888' }]}>
             {t('liveReplay.empty') || 'Lives que você apresentou e replays que salvar vão aparecer aqui.'}
           </Text>
+          <Text style={[styles.emptyHint, { color: colors.textMuted || '#888', marginTop: 8, fontSize: 12 }]}>
+            {t('liveReplay.emptyProcessing') || 'Se você acabou de encerrar uma live, o replay pode levar 1-2 minutos para aparecer.'}
+          </Text>
+          <TouchableOpacity
+            onPress={() => load(true)}
+            style={{
+              marginTop: 18, paddingHorizontal: 20, paddingVertical: 10,
+              borderRadius: 22, backgroundColor: '#7C3AED',
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={t('liveReplay.refresh') || 'Atualizar'}
+          >
+            <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>
+              {t('liveReplay.refresh') || 'Atualizar'}
+            </Text>
+          </TouchableOpacity>
           {!!error && <Text style={styles.err}>{error}</Text>}
         </View>
       ) : (
