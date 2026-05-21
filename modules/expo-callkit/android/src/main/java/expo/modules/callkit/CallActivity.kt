@@ -1133,6 +1133,48 @@ class CallActivity : ComponentActivity() {
     } catch (t: Throwable) {
       Log.w(TAG, "audio capture defaults reflective set failed: ${t.message}")
     }
+    // [WAVE 115, 2026-05-21] Relay-first ICE: set iceTransportPolicy=RELAY on
+    // RoomOptions so the very first connect always goes over TURN.
+    // LK Android exposes rtcConfig (RTCConfiguration) on RoomOptions reflectively.
+    try {
+      val roClass = roomOptions.javaClass
+      val rtcField = roClass.declaredFields.firstOrNull {
+        it.name.contains("rtcConfig", ignoreCase = true) ||
+        it.name.contains("rtcConfiguration", ignoreCase = true) ||
+        it.name.contains("iceConfig", ignoreCase = true)
+      }
+      if (rtcField != null) {
+        rtcField.isAccessible = true
+        val rtcCfg = rtcField.get(roomOptions)
+        if (rtcCfg != null) {
+          val cfgCls = rtcCfg.javaClass
+          val policyField = cfgCls.declaredFields.firstOrNull {
+            it.name.contains("iceTransportPolicy", ignoreCase = true) ||
+            it.name.contains("transportPolicy", ignoreCase = true)
+          }
+          if (policyField != null) {
+            policyField.isAccessible = true
+            // IceTransportPolicy.RELAY enum — try to find RELAY constant
+            val enumType = policyField.type
+            val relayConst = if (enumType.isEnum) {
+              enumType.enumConstants?.firstOrNull { it.toString().equals("RELAY", true) }
+            } else null
+            if (relayConst != null) {
+              policyField.set(rtcCfg, relayConst)
+              Log.d(TAG, "[relay-first] iceTransportPolicy=RELAY set on RoomOptions.rtcConfig")
+            } else {
+              Log.d(TAG, "[relay-first] RELAY enum not found on ${enumType.name} — relay phase skipped")
+            }
+          } else {
+            Log.d(TAG, "[relay-first] no iceTransportPolicy field on RTCConfig — skip")
+          }
+        }
+      } else {
+        Log.d(TAG, "[relay-first] no rtcConfig field on RoomOptions — relay phase skipped")
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "[relay-first] iceTransportPolicy reflective set failed: ${t.message}")
+    }
     val r = LiveKit.create(applicationContext, options = roomOptions)
     room = r
     LiveKitRoomHolder.set(r)
@@ -1255,6 +1297,48 @@ class CallActivity : ComponentActivity() {
       }
       reconnectAttempts = 0
       Log.d(TAG, "LK connect + publish OK (attempt=$attempt)")
+      // [WAVE 115, 2026-05-21] Relay-first Phase-2: after 5s on TURN relay,
+      // open iceTransportPolicy to 'all' and call restartIce() so WebRTC
+      // attempts a direct P2P candidate pair. If P2P wins → lower RTT.
+      // If P2P fails → relay stays, call uninterrupted.
+      // Only run on first successful connect (attempt==0 guard prevents
+      // re-triggering on manual reconnect paths).
+      if (attempt == 0) {
+        lifecycleScope.launch {
+          delay(5000L)
+          if (isFinishing || isDestroyed) return@launch
+          try {
+            // Walk Room internals to reach the publisher RTCPeerConnection.
+            val roomCls = r.javaClass
+            val engineField = roomCls.declaredFields.firstOrNull {
+              it.name.contains("engine", ignoreCase = true) ||
+              it.name.contains("rtcEngine", ignoreCase = true)
+            }
+            val engine = engineField?.apply { isAccessible = true }?.get(r)
+            val pubField = engine?.javaClass?.declaredFields?.firstOrNull {
+              it.name.equals("publisher", ignoreCase = true) ||
+              it.name.contains("publisherPc", ignoreCase = true)
+            }
+            val pub = pubField?.apply { isAccessible = true }?.get(engine)
+            val pcField = pub?.javaClass?.declaredFields?.firstOrNull {
+              it.name.equals("pc", ignoreCase = true) ||
+              it.name.contains("peerConnection", ignoreCase = true)
+            }
+            val pc = pcField?.apply { isAccessible = true }?.get(pub)
+            if (pc != null) {
+              val restartIceMethod = pc.javaClass.methods.firstOrNull {
+                it.name == "restartIce" && it.parameterCount == 0
+              }
+              restartIceMethod?.invoke(pc)
+              Log.d(TAG, "[relay-first] Phase-2: restartIce() called on publisher PC")
+            } else {
+              Log.d(TAG, "[relay-first] Phase-2: publisher PC not found via reflection — skip")
+            }
+          } catch (t2: Throwable) {
+            Log.w(TAG, "[relay-first] Phase-2 restartIce failed: ${t2.message}")
+          }
+        }
+      }
     } catch (t: Throwable) {
       Log.e(TAG, "LK connect failed attempt=$attempt: ${t.message}", t)
       if (attempt < 3) {

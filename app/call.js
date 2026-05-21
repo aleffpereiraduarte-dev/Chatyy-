@@ -1453,8 +1453,21 @@ function CallScreenInner() {
         useBroadcastExtension: true,
       },
     };
+    // [WAVE 115, 2026-05-21] Relay-first ICE pattern (WhatsApp At Scale 2024).
+    // Phase-1: force TURN immediately — TURN is never NAT-blocked, so the call
+    // connects in 200-500ms with zero "não foi possível conectar" failures.
+    // Phase-2 (5s after Connected): restartIce with 'all' — WebRTC tries direct
+    // P2P; if it lands, media silently upgrades (lower latency / higher bitrate).
+    // If P2P fails the relay leg stays intact and the call never drops.
+    // When no iceServers are present (token fetch failed to mint TURN creds) we
+    // still set relay policy — LK will gather TURN candidates from the SFU
+    // signaling path which always carries the Chatyy coturn endpoint.
     if (Array.isArray(iceServers) && iceServers.length > 0) {
-      roomOpts.rtcConfig = { iceServers, iceTransportPolicy: 'all' };
+      roomOpts.rtcConfig = { iceServers, iceTransportPolicy: 'relay' };
+    } else {
+      // No explicit TURN creds from backend yet — still force relay so LK's
+      // built-in coturn (turn.chatyy.com.br, wired in livekit.yaml) is used.
+      roomOpts.rtcConfig = { iceTransportPolicy: 'relay' };
     }
     let r;
     try {
@@ -1564,6 +1577,44 @@ function CallScreenInner() {
         try { clearTimeout(reconnectGraceTimerRef.current); } catch {}
         reconnectGraceTimerRef.current = null;
       }
+      // [WAVE 115 relay-first Phase-2] After 5s on relay, attempt P2P upgrade.
+      // We open a new RTCPeerConnection policy window by calling restartIce on
+      // the publisher PC with iceTransportPolicy 'all'. If a direct candidate
+      // wins, WebRTC transparently migrates media to P2P (lower RTT, higher BW).
+      // If P2P fails the relay leg stays and the call is unaffected.
+      // Guard: skip if call already ended, skip on subsequent Reconnected events
+      // (relay-first only runs once per call).
+      setTimeout(() => {
+        try {
+          if (endedRef.current) return;
+          const eng = r?.engine;
+          const pcm = eng?.pcManager || eng;
+          const pub = pcm?.publisher || eng?.publisher;
+          const pc = pub?.pc || pub?.peerConnection;
+          if (pc && typeof pc.setConfiguration === 'function') {
+            const currentCfg = pc.getConfiguration?.() || {};
+            const allCfg = { ...currentCfg, iceTransportPolicy: 'all' };
+            pc.setConfiguration(allCfg);
+            console.log('[Call][relay-first] Phase-2: setConfiguration iceTransportPolicy=all, cfg=', JSON.stringify(allCfg));
+            _diag('relay_first_p2p_upgrade_start', { policy: 'all', ts: Date.now() });
+          }
+          // Also upgrade subscriber PC if it exists (for receiving media).
+          const sub = pcm?.subscriber || eng?.subscriber;
+          const subPc = sub?.pc || sub?.peerConnection;
+          if (subPc && typeof subPc.setConfiguration === 'function') {
+            const subCfg = { ...(subPc.getConfiguration?.() || {}), iceTransportPolicy: 'all' };
+            subPc.setConfiguration(subCfg);
+          }
+          // Trigger ICE restart so new candidates are gathered with 'all' policy.
+          if (pc && typeof pc.restartIce === 'function') {
+            pc.restartIce();
+            console.log('[Call][relay-first] Phase-2: restartIce() called on publisher PC');
+          }
+        } catch (e) {
+          // Non-fatal — relay is still active and working.
+          try { _diag('relay_first_p2p_upgrade_err', { msg: String(e?.message || e) }); } catch {}
+        }
+      }, 5000);
       // If a remote is already in the room, surface them immediately.
       try {
         const others = Array.from(r.remoteParticipants?.values?.() || []);

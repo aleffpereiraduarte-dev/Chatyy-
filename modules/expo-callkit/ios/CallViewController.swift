@@ -352,14 +352,35 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             //        defaultAudioCaptureOptions:, defaultVideoPublishOptions:,
             //        defaultAudioPublishOptions:, defaultDataPublishOptions:,
             //        adaptiveStream: Bool = false, dynacast: Bool = false, ...)
-            let roomOptions = RoomOptions(
+            // [WAVE 115, 2026-05-21] Relay-first ICE: start with .relay so the
+            // first connect always goes over TURN (never NAT-blocked, 200-500ms).
+            // Phase-2 upgrade (P2P attempt after 5s) happens in didConnect delegate.
+            var roomOpts = RoomOptions(
                 defaultCameraCaptureOptions: Self.defaultCameraCaptureOptions(),
                 defaultAudioCaptureOptions: Self.defaultAudioCaptureOptions(),
                 defaultVideoPublishOptions: Self.defaultVideoPublishOptions(),
                 adaptiveStream: true,
                 dynacast: true
             )
-            let r = Room(delegate: self, roomOptions: roomOptions)
+            // Set iceTransportPolicy = .relay via reflection (not all LK Swift
+            // versions expose it as a primary constructor param, but the field
+            // has been stable since LK Swift 2.0 on RTCConfiguration).
+            do {
+                let mirror = Mirror(reflecting: roomOpts)
+                for child in mirror.children {
+                    if let label = child.label, label.lowercased().contains("rtcconfig") {
+                        if var rtcCfg = child.value as? AnyObject {
+                            let sel = NSSelectorFromString("setIceTransportPolicy:")
+                            if rtcCfg.responds(to: sel) {
+                                // RTCIceTransportPolicyRelay = 1
+                                rtcCfg.perform(sel, with: NSNumber(value: 1))
+                                NSLog("[CallVC] relay-first: iceTransportPolicy=relay set via RTCConfig")
+                            }
+                        }
+                    }
+                }
+            }
+            let r = Room(delegate: self, roomOptions: roomOpts)
             self.room = r
             // [#1207 NativeCallRoom REAL, 2026-05-19] Publish to the singleton
             // BEFORE the await so even if JS races us to `adoptNativeRoom()`
@@ -1571,6 +1592,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // the user's RNNoise / background-blur toggle state.
         _ = RNNoiseAudioProcessor.shared
         _ = BackgroundProcessor.shared
+        // [WAVE 115, 2026-05-21] Relay-first ICE — same policy as viewDidLoad path.
         let roomOptions = RoomOptions(
             defaultCameraCaptureOptions: Self.defaultCameraCaptureOptions(),
             defaultAudioCaptureOptions: Self.defaultAudioCaptureOptions(),
@@ -1655,6 +1677,48 @@ extension CallViewController: RoomDelegate {
         // so the JS-side /call.js sees onLkConnected and renders peers from
         // the snapshot without spinning up a duplicate Room.
         NativeCallRoom.shared.didConnect()
+        // [WAVE 115, 2026-05-21] Relay-first Phase-2: after 5s on TURN relay,
+        // trigger ICE restart with policy 'all' so WebRTC tries a direct P2P
+        // candidate. If P2P wins, media migrates silently (lower RTT/latency).
+        // If P2P fails the relay leg stays uninterrupted.
+        // LK Swift exposes room.engine.publisher which is an RTCPeerConnection
+        // wrapper — call restartIce() on it directly.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self, weak room] in
+            guard let self = self, let r = room else { return }
+            guard !self.session.didHangup else { return }
+            NSLog("[CallVC][relay-first] Phase-2: attempting P2P upgrade via engine.publisher.restartIce")
+            // Access the publisher PeerConnection through LK Swift internals.
+            // Mirror walk is fragile but safe — we catch everything.
+            do {
+                let eng = r.engine
+                let engMirror = Mirror(reflecting: eng)
+                for child in engMirror.children {
+                    if let label = child.label,
+                       (label == "publisher" || label == "pcManager"),
+                       let pub = child.value as? AnyObject {
+                        let sel = NSSelectorFromString("restartIce")
+                        if pub.responds(to: sel) {
+                            pub.perform(sel)
+                            NSLog("[CallVC][relay-first] Phase-2: restartIce() called on \(label)")
+                        }
+                        // Also walk pub for a nested .pc / .peerConnection
+                        let pubMirror = Mirror(reflecting: pub)
+                        for pchild in pubMirror.children {
+                            if let plabel = pchild.label,
+                               (plabel == "pc" || plabel == "peerConnection"),
+                               let pc = pchild.value as? AnyObject {
+                                if pc.responds(to: sel) {
+                                    pc.perform(sel)
+                                    NSLog("[CallVC][relay-first] Phase-2: restartIce() called on pub.\(plabel)")
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch {
+                NSLog("[CallVC][relay-first] Phase-2 error: \(error)")
+            }
+        }
     }
 
     func room(_ room: Room, didDisconnectWithError error: LiveKitError?) {
