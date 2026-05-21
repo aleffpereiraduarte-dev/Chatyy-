@@ -6744,6 +6744,43 @@ export default function ChatConversationScreen() {
     _recvIdSet.current = null;
   }; }, []);
 
+  // ── WhatsApp-grade push suppression (WAVE 113) ────────────────────────
+  // Tell the WS server which conversation this client is actively viewing.
+  // Server writes chat_user_presence.active_conversation_id (INTEGER); the
+  // PHP push fanout in chatSendPushToMembers skips fcmSendToUser when the
+  // recipient's presence row shows status=online + matching conv + last_seen<30s.
+  // Fail-open: if WS is disconnected the column stays null → push fires normally.
+  // Mentions still push even when focused (WhatsApp parity).
+  useEffect(() => {
+    if (!conversationId) return;
+    let blurred = false;
+    try {
+      const mailWs = require('../services/websocket').default;
+      mailWs.sendConvFocus?.(conversationId);
+
+      // Handle app going to background: blur so pushes resume while backgrounded,
+      // re-focus when app comes back to foreground and this screen is still mounted.
+      const { AppState } = require('react-native');
+      const handleAppState = (nextState) => {
+        if (!blurred && nextState !== 'active') {
+          blurred = true;
+          try { mailWs.sendConvBlur?.(conversationId); } catch {}
+        } else if (blurred && nextState === 'active') {
+          blurred = false;
+          try { mailWs.sendConvFocus?.(conversationId); } catch {}
+        }
+      };
+      const sub = AppState.addEventListener('change', handleAppState);
+
+      return () => {
+        sub?.remove?.();
+        if (!blurred) {
+          try { mailWs.sendConvBlur?.(conversationId); } catch {}
+        }
+      };
+    } catch {}
+  }, [conversationId]);
+
   // Email-only navigation (Profile "Mensagem" button, push deep_link, etc.):
   // open ?email=foo@bar.com without ?id. Without this resolver every
   // conversationId-gated effect short-circuits → tela em branco. Resolve to

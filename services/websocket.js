@@ -1651,6 +1651,24 @@ class MailWebSocket {
     }
   }
 
+  // WhatsApp-grade push suppression: tell the server which conversation the
+  // user is actively viewing so it can skip the OS-level FCM/APNs push for
+  // that conversation (the WS chat_message event already drives the in-app
+  // update). Server writes chat_user_presence.active_conversation_id;
+  // PHP push path reads it and gates on status=online + last_seen<30s.
+  // Fail-open design: if WS is disconnected the column stays null → push fires.
+  sendConvFocus(conversationId) {
+    if (!this.isConnected || !conversationId) return;
+    this._send({ type: 'conv_focus', conversation_id: conversationId });
+  }
+
+  // Clear the active conversation focus so pushes resume (e.g. when user
+  // navigates away or the app goes to background).
+  sendConvBlur(conversationId) {
+    if (!this.isConnected || !conversationId) return;
+    this._send({ type: 'conv_blur', conversation_id: conversationId });
+  }
+
   // Send read receipt over WS so peer flips ✓✓ blue ticks in <50ms instead
   // of waiting on HTTP chat_mark_read round-trip (~300ms+). Server case
   // `message_read` broadcasts back on `chat_{convId}` channel so the peer's
