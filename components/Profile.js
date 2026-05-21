@@ -1248,7 +1248,27 @@ export default function Profile({
         if (liveEndedAtRef.current >= startedAt) return;
         const lives = r?.data?.lives || r?.lives || [];
         const found = lives.find(l => (l?.host_email || '').toLowerCase() === target);
-        const nextId = found?.id || null;
+        // [WAVE 37 2026-05-20] User report: "ainda mostra ao vivo agora mas a live
+        // nem comecou". Root cause is a ghost chat_live_sessions row stuck in
+        // status='live' (failed start, crash mid-broadcast, backend's 5min/6h
+        // auto-end heuristic running late). The backend probe shows live_list
+        // includes started_at, so guard client-side: any session older than 6h
+        // is treated as ghost regardless of status. This matches the backend's
+        // auto-end ceiling and gives the user instant correctness if the cron
+        // is lagging or the auto-end query missed.
+        let nextId = found?.id || null;
+        if (found && found.started_at) {
+          try {
+            const startedMs = new Date(found.started_at).getTime();
+            if (Number.isFinite(startedMs)) {
+              const ageH = (Date.now() - startedMs) / 3600000;
+              if (ageH > 6) {
+                console.warn('[Profile.live] ignoring ghost session age=' + ageH.toFixed(1) + 'h id=' + found.id);
+                nextId = null;
+              }
+            }
+          } catch {}
+        }
         setLiveSessionId(prev => (prev === nextId ? prev : nextId));
       } catch {
         if (!cancelled) setLiveSessionId(prev => (prev === null ? prev : null));
@@ -1273,6 +1293,19 @@ export default function Profile({
           // AFTER an end signal (server can replay a buffered event during
           // reconnect). 30s grace mirrors the stale-tick guard above.
           if (Date.now() - liveEndedAtRef.current < 30000) return;
+          // [WAVE 37] Reject stale started events for sessions whose started_at
+          // is already too old to be a real "just started" event (>6h matches
+          // backend's auto-end ceiling). Without this, a WS replay during
+          // reconnect could re-paint AO VIVO on a long-dead session id.
+          if (d.started_at) {
+            try {
+              const startedMs = new Date(d.started_at).getTime();
+              if (Number.isFinite(startedMs) && (Date.now() - startedMs) > 6 * 3600 * 1000) {
+                console.warn('[Profile.live] ignoring stale live_started echo, age>6h');
+                return;
+              }
+            } catch {}
+          }
           setLiveSessionId(d.session_id || null);
         }
       });

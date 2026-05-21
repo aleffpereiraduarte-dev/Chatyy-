@@ -1354,6 +1354,25 @@ export default function LiveBroadcastScreen() {
     if (sessionIdRef.current) return; // already live
     startingRef.current = true;
     try {
+      // [WAVE 37 2026-05-20] NetInfo gate BEFORE any backend call — if the
+      // device has no connectivity, surface that clearly instead of letting
+      // fetch hang for 25s and reporting "Connection failed". Many of the
+      // "erro ao iniciar" reports came from emulators / lab phones where
+      // NetInfo briefly reports offline; without this gate the user saw a
+      // generic timeout message after waiting 30+ seconds.
+      try {
+        const NetInfoMod = require('@react-native-community/netinfo');
+        const NI = NetInfoMod?.default || NetInfoMod;
+        const st = await Promise.race([
+          (NI?.fetch ? NI.fetch() : Promise.resolve({ isConnected: true })),
+          new Promise((res) => setTimeout(() => res({ isConnected: true }), 1500)),
+        ]);
+        if (st && st.isConnected === false) {
+          setError(t('live.noConnection') || t('errors.noConnection') || 'Sem conexão com a internet');
+          startingRef.current = false;
+          return;
+        }
+      } catch {}
       // Ask for camera + mic only now — the user actively tapped Go Live.
       const ok = await ensureCameraStream();
       if (!ok) { startingRef.current = false; return; }
@@ -1391,42 +1410,45 @@ export default function LiveBroadcastScreen() {
         res = await api.liveStartCf(liveTitle, { audience, category: liveCategory, subscribersOnly });
         sid = res.data?.session_id || res.data?.session?.id;
       } else {
+        // [WAVE 37 2026-05-20] User report: "live ta dando erro ao iniciar".
+        // Previously we gave live_start a 7s head start before kicking off
+        // live_start_cf, which still left users staring at a spinner when
+        // P2P backend was slow but not dead. Now both endpoints race from
+        // t=0 — the FIRST one to return a valid session_id wins. CF costs
+        // a little more (creates a CF input that may be dropped) but
+        // recovers instantly from any P2P-only stall.
         const primary = api.liveStart(liveTitle, { audience, category: liveCategory, subscribersOnly });
-        // 7s head-start — if live_start hasn't resolved by then, kick off
-        // the CF parallel fetch. Math.race() picks whichever surfaces a
-        // session_id first. Each promise resolves to {res, mode} so we know
-        // which path won and can set cfModeRef accordingly.
+        const cf = api.liveStartCf(liveTitle, { audience, category: liveCategory, subscribersOnly });
         const wrapWithMode = (p, mode) => p.then((r) => ({ r, mode })).catch((e) => ({ r: null, mode, err: e }));
         const primaryWrapped = wrapWithMode(primary, 'p2p');
-        // NOTE: using `cfTimerId` (not `t`) — `t` is already the i18n func in scope.
-        let cfTimerId = null;
-        const cfDelayedWrapped = new Promise((resolve) => {
-          cfTimerId = setTimeout(() => {
-            wrapWithMode(api.liveStartCf(liveTitle, { audience, category: liveCategory, subscribersOnly }), 'cf').then(resolve);
-          }, 7000);
-        });
-        // Belt-and-suspenders: if primary settles fast, cancel the CF timer.
-        primary.finally(() => { if (cfTimerId) clearTimeout(cfTimerId); }).catch(() => {});
+        const cfWrapped = wrapWithMode(cf, 'cf');
         const pickIfSuccess = (x) => (x?.r?.success && (x.r.data?.session_id || x.r.data?.session?.id)) ? x : null;
         try {
           // Each promise resolves with the wrapped result IF successful, else
-          // hangs forever — that way Promise.race picks the first WINNER, not
-          // the first SETTLER. A 25s ceiling guards against both endpoints
-          // hanging past the WS ack window (30s) so we don't deadlock.
+          // hangs forever — Promise.race picks the first WINNER, not the
+          // first SETTLER. 25s ceiling guards against both endpoints hanging
+          // past the WS ack window (30s) so we don't deadlock.
           const primaryRace = primaryWrapped.then(x => pickIfSuccess(x) || new Promise(() => {}));
-          const cfRace = cfDelayedWrapped.then(x => pickIfSuccess(x) || new Promise(() => {}));
+          const cfRace = cfWrapped.then(x => pickIfSuccess(x) || new Promise(() => {}));
           const ceiling = new Promise((_, rej) => setTimeout(() => rej(new Error('race ceiling 25s')), 25000));
           const winner = await Promise.race([primaryRace, cfRace, ceiling]);
           res = winner.r;
           sid = res.data?.session_id || res.data?.session?.id;
           if (winner.mode === 'cf') {
             cfModeRef.current = true;
-            console.warn('[Live] race winner: live_start_cf (P2P was slow >7s)');
+            console.warn('[Live] race winner: live_start_cf (P2P slow or failed)');
+          } else {
+            console.log('[Live] race winner: live_start (P2P)');
           }
         } catch {
-          // Race timed out or both legitimately failed — fall through to the
-          // legacy fallback path below which awaits primary properly.
-          try { res = await primary; sid = res?.data?.session_id || res?.data?.session?.id; } catch {}
+          // Race timed out — try awaiting whichever has settled (or fallback
+          // to settled-or-null). Symmetric: never hang past 25s.
+          try {
+            const settled = await Promise.race([primaryWrapped, cfWrapped]);
+            res = settled?.r;
+            sid = res?.data?.session_id || res?.data?.session?.id;
+            if (settled?.mode === 'cf') cfModeRef.current = true;
+          } catch {}
         }
       }
       if ((!res?.success || !sid) && !wantsCf) {
@@ -1505,25 +1527,21 @@ export default function LiveBroadcastScreen() {
           // up the host UX for the legacy flow.
         }
 
-        // Codex root cause #3 — start WS signaling BEFORE countdown completes
-        // so the `live_started` ack lands while the host watches "3,2,1".
-        // Await BOTH the WS ack AND the countdown promise so the UI never
-        // flips to "AO VIVO" while the channel subscribe is still pending.
+        // [WAVE 37 2026-05-20] WS signaling kicks off in parallel but does
+        // NOT block the UI from going live. The backend already accepted
+        // live_start (we have sid in hand), so the host should see "AO VIVO"
+        // as soon as the countdown finishes. WS subscribe runs in background
+        // so viewers can connect when ready. Previously Promise.all() with
+        // the 30s WS watchdog meant a slow ack froze the user on the count-
+        // down screen for half a minute before bailing — exactly the
+        // "erro ao iniciar" report users have been hitting.
         const wsReady = connectSignaling();
-        const countdownRun = (async () => {
-          await animateCountdown(3);
-          await animateCountdown(2);
-          await animateCountdown(1);
-        })();
-        try {
-          await Promise.all([wsReady, countdownRun]);
-        } catch (waitErr) {
-          // live_started ack rejected — the watchdog already surfaced an
-          // error string; don't double-message, just abort start.
-          console.warn('[Live] start aborted — WS ack failed:', waitErr?.message);
-          setCountdown(null);
-          return;
-        }
+        wsReady.catch((waitErr) => {
+          console.warn('[Live] WS subscribe failed (non-fatal, UI continues):', waitErr?.message);
+        });
+        await animateCountdown(3);
+        await animateCountdown(2);
+        await animateCountdown(1);
         setCountdown(null);
 
         // Round 69 #1166 (2026-05-19) — bump videoEpoch BEFORE flipping
