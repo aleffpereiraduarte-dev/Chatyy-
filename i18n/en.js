@@ -5042,6 +5042,7 @@ export default {
   'live.replayError': 'Save failed',
   'live.replayStatusLabel': 'Replay status',
   'live.publisherMissing': 'Waiting for host to publish stream...',
+  'live.publishFailedTitle': 'Broadcast not published',
   // ─── Live moderation + engagement (2026-05-17) ───
   'live.slowMode': 'Slow mode',
   'live.slowModeTitle': 'Slow mode',
