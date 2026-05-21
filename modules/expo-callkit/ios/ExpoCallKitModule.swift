@@ -776,9 +776,20 @@ public class ExpoCallKitModule: Module {
         ud.set(calleeAvatar, forKey: "callAvatar:\(callId)")
       }
 
+      // [fix 2026-05-21] OnCreate dispatches setupProvider via main.async, so on
+      // very fast taps (< ~50ms after launch) callController may still be nil.
+      // Eagerly set up on the calling thread if so, falling back to a blocking
+      // main-thread dispatch so CXCallController is always available here.
+      if self.callController == nil {
+        if Thread.isMainThread {
+          self.setupProvider()
+        } else {
+          DispatchQueue.main.sync { self.setupProvider() }
+        }
+      }
       guard let cc = self.callController else {
         throw NSError(domain: "ExpoCallKit", code: 101,
-                      userInfo: [NSLocalizedDescriptionKey: "CallController not ready"])
+                      userInfo: [NSLocalizedDescriptionKey: "CallController not ready — setupProvider() failed on main thread"])
       }
       let handle = CXHandle(type: .emailAddress, value: calleeEmail)
       let startAction = CXStartCallAction(call: uuid, handle: handle)

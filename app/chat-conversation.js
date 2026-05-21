@@ -16062,7 +16062,7 @@ export default function ChatConversationScreen() {
       // CallActivity (Android Compose). No more JS /call.js on mobile. Web
       // still falls through to /call.js via onWebFallback.
       const voipNative = require('../services/voipNative');
-      const { callId, native } = await voipNative.startOutgoingCall({
+      const callResult = await voipNative.startOutgoingCall({
         calleeEmail: otherEmail,
         calleeName: otherName,
         callerName: currentEmail || '',
@@ -16075,14 +16075,24 @@ export default function ChatConversationScreen() {
           }
         },
       });
+      const { native, error: nativeErr } = callResult || {};
       if (!native && (Platform.OS === 'ios' || Platform.OS === 'android')) {
-        // [WAVE 117A] Mobile = 100% native. If native module failed, show error
-        // instead of falling through to JS /call screen.
-        safeAlert(t('common.error') || 'Error', t('chat.callError') || 'Não foi possível iniciar a chamada');
+        // [WAVE 117A] Mobile = 100% native. If native module failed, show the
+        // real error reason so we can diagnose without a device plugged in.
+        const reason = nativeErr?.message || String(nativeErr || 'native=false');
+        console.warn('[startCall] native=false reason:', reason);
+        safeAlert(
+          t('common.error') || 'Erro',
+          `${t('chat.callError') || 'Não foi possível iniciar a chamada'}\n\n${reason}`,
+        );
       }
     } catch (e) {
       console.warn('Start call error:', e);
-      safeAlert(t('common.error') || 'Error', t('chat.callError') || 'Could not start call');
+      const reason = e?.message || String(e);
+      safeAlert(
+        t('common.error') || 'Erro',
+        `${t('chat.callError') || 'Could not start call'}\n\n${reason}`,
+      );
     } finally {
       setStartingCall(false);
     }
