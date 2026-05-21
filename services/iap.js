@@ -233,6 +233,20 @@ async function _doInitIAP() {
       if (__DEV__) console.warn('[IAP] diamond fetchProducts failed:', e?.message);
     }
 
+    // WAVE 75 — storage subscriptions. Same fetchProducts surface, type 'subs'.
+    // Failure is silent: StorageShopSheet has a static STORAGE_TIERS fallback
+    // and the user sees BRL labels from the server-side catalog.
+    if (Platform.OS === 'ios' || Platform.OS === 'android') {
+      try {
+        const storageProducts = await mod.fetchProducts({ skus: STORAGE_SUB_SKUS, type: 'subs' });
+        if (Array.isArray(storageProducts) && storageProducts.length) {
+          _storageProducts = storageProducts;
+        }
+      } catch (e) {
+        if (__DEV__) console.warn('[IAP] storage fetchProducts failed:', e?.message);
+      }
+    }
+
     if (!_purchaseSub && mod.purchaseUpdatedListener) {
       _purchaseSub = mod.purchaseUpdatedListener(async (purchase) => {
         try { await _finalizePurchase(purchase); } catch (e) {
