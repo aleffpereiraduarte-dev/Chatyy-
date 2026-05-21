@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, FlatList, StyleSheet, ActivityIndicator,
-  RefreshControl, Platform,
+  RefreshControl, Platform, Animated, Easing,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,7 +11,7 @@ import * as api from '../services/api';
 import AvatarCircle from '../components/AvatarCircle';
 import {
   IconArrowLeft, IconHeart, IconMessageCircle, IconUser,
-  IconSparkles, IconBell,
+  IconSparkles, IconBell, IconCheck,
 } from '../components/Icons';
 
 const ACCENT = '#7C3AED';
