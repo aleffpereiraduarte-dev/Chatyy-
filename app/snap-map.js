@@ -967,7 +967,12 @@ export default function SnapMapScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: isDark ? '#0d0d0d' : '#fff' }}>
-      {/* Header */}
+      {/* Header — title + ghost-mode toggle + privacy shortcut.
+          [WAVE 49 2026-05-21] The subtitle now surfaces TWO pieces of state:
+          (1) the count of friends currently visible to me, and (2) my own
+          ghost-mode status. Users had no way to tell at a glance whether
+          they were broadcasting, which directly fed the "ta desconectando"
+          confusion (you can't tell if YOU stopped showing up to them). */}
       <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: topInset + 8, paddingBottom: 14, backgroundColor: isDark ? '#0d0d0d' : '#fff', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)', zIndex: 10 }}>
         <TouchableOpacity onPress={() => router.back()} style={{ padding: 8 }} accessibilityLabel="Voltar">
           <IconArrowLeft size={22} color={colors.text} />
@@ -976,14 +981,88 @@ export default function SnapMapScreen() {
           <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>
             {t?.('snapmap.title') || 'Amigos no Mapa'}
           </Text>
-          <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
-            {shares.length} {t?.('snapmap.sharingNow') || 'compartilhando agora'}
+          <Text style={{ fontSize: 12, color: ghostMode ? '#f59e0b' : colors.textSecondary, marginTop: 2 }}>
+            {ghostMode
+              ? (t?.('snapmap.ghostStatus') || 'Modo invisível — ninguém te vê')
+              : `${shares.length} ${shares.length === 1 ? (t?.('snapmap.sharingNowOne') || 'compartilhando agora') : (t?.('snapmap.sharingNow') || 'compartilhando agora')}`}
           </Text>
         </View>
+        <TouchableOpacity
+          onPress={toggleGhostMode}
+          style={{
+            padding: 8,
+            borderRadius: 14,
+            backgroundColor: ghostMode ? 'rgba(245,158,11,0.18)' : 'transparent',
+            marginRight: 4,
+          }}
+          accessibilityLabel={ghostMode ? (t?.('snapmap.ghostOff') || 'Sair do modo invisível') : (t?.('snapmap.ghostOn') || 'Modo invisível')}
+        >
+          <IconEyeOff size={20} color={ghostMode ? '#f59e0b' : colors.text} />
+        </TouchableOpacity>
         <TouchableOpacity onPress={openGrants} style={{ padding: 8 }} accessibilityLabel="Privacidade">
           <IconUser size={22} color={colors.text} />
         </TouchableOpacity>
       </View>
+
+      {/* [WAVE 49] Filter pills — horizontal scrollable row of Snapchat-style
+          chips. Active filter has accent fill, inactive has subtle surface.
+          We only render this when there are >=2 shares so single-friend or
+          empty screens stay clean. */}
+      {shares.length >= 2 && (
+        <View style={{ backgroundColor: isDark ? '#0d0d0d' : '#fff', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingHorizontal: 4 }}>
+            {[
+              { id: 'all', label: t?.('snapmap.filterAll') || 'Todos', icon: null },
+              { id: 'live', label: t?.('snapmap.filterLive') || 'Ao vivo', icon: 'live' },
+              { id: 'nearby', label: t?.('snapmap.filterNearby') || 'Próximos', icon: null },
+              { id: 'always', label: t?.('snapmap.filterAlways') || 'Sempre ativo', icon: null },
+            ].map((p) => {
+              const active = filter === p.id;
+              return (
+                <TouchableOpacity
+                  key={p.id}
+                  onPress={() => setFilter(p.id)}
+                  style={{
+                    paddingHorizontal: 14, paddingVertical: 7, borderRadius: 16,
+                    backgroundColor: active ? '#7C3AED' : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'),
+                    flexDirection: 'row', alignItems: 'center', gap: 6,
+                  }}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                >
+                  {p.icon === 'live' && (
+                    <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: active ? '#fff' : '#22c55e' }} />
+                  )}
+                  <Text style={{ color: active ? '#fff' : colors.text, fontSize: 12, fontWeight: '700' }}>
+                    {p.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* [WAVE 49] Active sessions chip — shows when I'M actively sharing
+          OUT to people. Tapping opens the grants modal where I can revoke
+          individual sessions. The chip pulls from grantsData (lazy-loaded);
+          if it's not loaded yet we fetch it on mount via the same effect
+          that populates pendingReqs. Hidden when ghostMode is on (then the
+          ghost banner above already tells the story). */}
+      <ActiveSessionsChip
+        grantsData={grantsData}
+        isDark={isDark}
+        colors={colors}
+        t={t}
+        ghostMode={ghostMode}
+        onOpen={openGrants}
+        onLoad={async () => {
+          try {
+            const g = await api.friendLocationGrants?.();
+            if (g?.success && g.data) setGrantsData(g.data);
+          } catch {}
+        }}
+      />
 
       {/* Pending-request banner */}
       {pendingReqs.length > 0 && (
