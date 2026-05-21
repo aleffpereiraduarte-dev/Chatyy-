@@ -1149,7 +1149,7 @@ export default function StoryViewer({
       // Bug user 2026-05-21: "foto não aparece, se volta aparece".
       if (cur?._placeholder) {
         return (
-          <View style={{ flex: 1, backgroundColor: '#0f172a', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
+          <View style={{ flex: 1, backgroundColor: '#1a0a2e', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
             <ActivityIndicator size="large" color="rgba(255,255,255,0.85)" />
             <Text style={{ marginTop: 16, color: 'rgba(255,255,255,0.85)', fontSize: 14, fontWeight: '600', textAlign: 'center' }}>
               {t?.('status.loading') || 'Carregando…'}
@@ -1158,7 +1158,7 @@ export default function StoryViewer({
         );
       }
       return (
-        <View style={{ flex: 1, backgroundColor: '#0f172a', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
+        <View style={{ flex: 1, backgroundColor: '#1a0a2e', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
           <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 40, marginBottom: 12 }}>📷</Text>
           <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 16, fontWeight: '700', textAlign: 'center' }}>
             {t?.('status.unavailable') || 'Mídia indisponível'}
