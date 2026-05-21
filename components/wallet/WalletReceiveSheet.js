@@ -13,8 +13,12 @@ import {
   View, Text, Modal, TouchableOpacity, StyleSheet, Share, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import QRCode from 'react-native-qrcode-svg';
 import * as Haptics from 'expo-haptics';
+
+// Lazy-load — environments without react-native-svg (web SSR) shouldn't crash
+// the sheet. Falls back to a placeholder square with the link text.
+let QRCode = null;
+try { QRCode = require('react-native-qrcode-svg').default; } catch {}
 import { useTheme } from '../../context/ThemeContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { useAuth } from '../../context/AuthContext';
@@ -101,12 +105,18 @@ export default function WalletReceiveSheet({ visible, onClose }) {
 
           {/* QR */}
           <View style={[styles.qrWrap, { backgroundColor: '#fff', borderColor: border }]}>
-            <QRCode
-              value={link}
-              size={200}
-              backgroundColor="#FFFFFF"
-              color="#0B0B0F"
-            />
+            {QRCode ? (
+              <QRCode
+                value={link}
+                size={200}
+                backgroundColor="#FFFFFF"
+                color="#0B0B0F"
+              />
+            ) : (
+              <View style={styles.qrPlaceholder}>
+                <Text style={styles.qrPlaceholderText}>{handle}</Text>
+              </View>
+            )}
           </View>
 
           <Text style={[styles.scanHint, { color: subtle }]}>
@@ -170,6 +180,11 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     borderWidth: StyleSheet.hairlineWidth,
   },
+  qrPlaceholder: {
+    width: 200, height: 200, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#F0F0F4',
+  },
+  qrPlaceholderText: { color: '#0B0B0F', fontSize: 16, fontWeight: '700' },
   scanHint: { fontSize: 12, textAlign: 'center', marginTop: 12, marginBottom: 14 },
 
   linkChip: {

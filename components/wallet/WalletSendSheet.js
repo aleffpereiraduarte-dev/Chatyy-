@@ -13,7 +13,7 @@
 // On 402 "insufficient_diamonds" we surface a friendly alert pointing to
 // /wallet "Adicionar saldo".
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, Modal, TouchableOpacity, StyleSheet, ActivityIndicator,
   TextInput, FlatList, Alert, Platform, KeyboardAvoidingView,
@@ -28,7 +28,6 @@ import * as api from '../../services/api';
 import { formatInt } from '../../utils/dateFormat';
 
 const PURPLE = '#A855F7';
-const RED    = '#EF4444';
 
 const QUICK_AMOUNTS = [10, 50, 100, 500];
 

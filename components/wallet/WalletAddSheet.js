@@ -13,12 +13,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, Modal, TouchableOpacity, StyleSheet, ActivityIndicator,
-  ScrollView, Platform, Alert, Linking, Animated, Easing,
+  ScrollView, Platform, Alert, Linking,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../context/ThemeContext';
 import { useLanguage } from '../../context/LanguageContext';
-import { IconX, IconSparkles, IconCreditCard, IconChevronRight } from '../Icons';
+import { IconX, IconSparkles, IconChevronRight } from '../Icons';
 import { formatInt } from '../../utils/dateFormat';
 import {
   DIAMOND_PACKS, getDiamondLocalizedPrice, initIAP, isDiamondSkuAvailable,
