@@ -397,6 +397,21 @@ export default function NotificationsHub({
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState('all');
+  // [follow-back-fix 2026-05-21] Inline toast inside the hub modal so the
+  // user sees confirmation when they tap "Seguir de volta" — same UX as
+  // /notifications page. Without this the button just vanished silently.
+  const [toastMsg, setToastMsg] = useState(null);
+  const toastAnim = useRef(new Animated.Value(0)).current;
+  const toastTimerRef = useRef(null);
+  const showToast = useCallback((msg) => {
+    setToastMsg(msg);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    Animated.timing(toastAnim, { toValue: 1, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+    toastTimerRef.current = setTimeout(() => {
+      Animated.timing(toastAnim, { toValue: 0, duration: 220, easing: Easing.in(Easing.cubic), useNativeDriver: true }).start(() => setToastMsg(null));
+    }, 2400);
+  }, [toastAnim]);
+  useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
 
   const load = useCallback(async () => {
     try {
@@ -444,24 +459,43 @@ export default function NotificationsHub({
     } catch {}
   }, []);
 
-  const handleAction = useCallback((item, kind) => {
+  const handleAction = useCallback(async (item, kind) => {
     if (kind === 'follow_back') {
-      // followUser espera string `targetEmail`, não objeto. O bug original
-      // passava `{ email }` → backend recebia `target_email = { email: ... }`
-      // e silenciosamente não persistia o follow. UI ficava "marcada" mas
-      // o servidor nunca registrava nada.
-      if (item?.actor_email) {
-        api.followUser?.(item.actor_email).catch((e) => {
-          console.warn('[NotificationsHub] followUser failed:', e?.message || e);
-        });
+      // [follow-back-fix 2026-05-21] Await + handle success/failure
+      // explicitly. The previous fire-and-forget call meant a failed
+      // bearer or network blip looked identical to success — button
+      // vanished, server saw nothing, user saw nothing. See
+      // app/notifications.js for the parallel fix on the full-screen
+      // version.
+      const target = item?.actor_email;
+      if (!target) {
+        showToast(t?.('notifications.followBackError') || 'Não foi possível seguir agora.');
+        return;
       }
+      // Optimistic mark + read
       setItems(prev => prev.map(n =>
-        n.id === item.id ? { ...n, action_taken: 'follow_back' } : n
+        n.id === item.id ? { ...n, action_taken: 'follow_back', read: true } : n
       ));
+      try {
+        const r = await api.followUser?.(target);
+        if (!r || r.success === false) throw new Error(r?.error || 'follow_failed');
+        try { api.notificationsRead?.({ ids: [item.id] }); } catch {}
+        const nameRaw = (item.actor_name || (item.actor_email || '').split('@')[0] || '').trim();
+        showToast(
+          (t?.('notifications.followBackOk') || 'Você está seguindo {name} agora').replace('{name}', nameRaw)
+        );
+      } catch (e) {
+        console.warn('[NotificationsHub] followUser failed:', e?.message || e);
+        // Revert action_taken
+        setItems(prev => prev.map(n =>
+          n.id === item.id ? { ...n, action_taken: null } : n
+        ));
+        showToast(t?.('notifications.followBackError') || 'Não foi possível seguir agora. Tente de novo.');
+      }
     } else if (kind === 'message') {
       go(`/chat-conversation?peer=${encodeURIComponent(item.actor_email || '')}`);
     }
-  }, []); // eslint-disable-line
+  }, [showToast, t]); // eslint-disable-line
 
   // Filter by tab + group by date
   const filtered = useMemo(() => {
