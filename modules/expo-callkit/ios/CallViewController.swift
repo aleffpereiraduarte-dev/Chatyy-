@@ -77,19 +77,6 @@ final class CallSessionState: ObservableObject {
     /// local send. SwiftUI removes each via a per-emoji `.task` after 3s.
     @Published var floatingReactions: [CallFloatingReaction]
 
-    // MARK: [Wave C-2] Multi-participant grid
-    //
-    // When `groupParticipants.count >= 2`, CallView renders a LazyVGrid of
-    // video tiles instead of the 1:1 full-bleed remote video. The array is
-    // keyed by `identity` so additions/removals are O(participants) — small
-    // enough for voice/video calls up to 9 people without needing a diff.
-    //
-    // Each entry holds the VideoTrack reference directly (nil = audio-only
-    // or video muted). CallViewController mutates this array on the main
-    // thread from `participantDidConnect`, `participantDidDisconnect`, and
-    // `didSubscribeTrack` / `didUnsubscribeTrack` delegates.
-    @Published var groupParticipants: [CallParticipant] = []
-
     init(status: String = "Conectando\u{2026}",
          micEnabled: Bool = true,
          camEnabled: Bool = true,
@@ -1821,14 +1808,6 @@ extension CallViewController: RoomDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.stopRingbackTone(reason: "participantDidConnect")
-            // [Wave C-2] Add the new participant to the grid list. Video track
-            // starts nil — it gets filled in on didSubscribeTrack once the SFU
-            // delivers the video publication.
-            if !self.session.groupParticipants.contains(where: { $0.id == identity }) {
-                self.session.groupParticipants.append(
-                    CallParticipant(id: identity, name: participant.name ?? "")
-                )
-            }
         }
         // [#1207 NativeCallRoom REAL] Fanout so JS chat header / call grid
         // can mark the peer as joined.
@@ -1843,8 +1822,6 @@ extension CallViewController: RoomDelegate {
         print("[CallVC] participantDidDisconnect — identity=\(identity)")
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            // [Wave C-2] Remove from grid.
-            self.session.groupParticipants.removeAll { $0.id == identity }
             // 1:1 fallback: clear the remote video track when the peer leaves.
             self.session.remoteVideoTrack = nil
         }
@@ -1878,19 +1855,6 @@ extension CallViewController: RoomDelegate {
             if #available(iOS 15.0, *) {
                 self.attachPiPRenderer(to: track)
             }
-            // [Wave C-2] Wire the video track into the grid tile for this
-            // participant. If the participant isn't in the array yet (race:
-            // TrackSubscribed fires before ParticipantConnected on some SFU
-            // topologies), add them now with the track already populated.
-            if let idx = self.session.groupParticipants.firstIndex(where: { $0.id == identity }) {
-                self.session.groupParticipants[idx].videoTrack = track
-            } else {
-                self.session.groupParticipants.append(
-                    CallParticipant(id: identity,
-                                    name: participant.name ?? "",
-                                    videoTrack: track)
-                )
-            }
         }
     }
 
@@ -1912,11 +1876,6 @@ extension CallViewController: RoomDelegate {
             }
             self.pipAttachedTrack = nil
             self.session.remoteVideoTrack = nil
-            // [Wave C-2] Clear the video track in the grid tile (participant
-            // stays in the array — they're still in the call, just muted).
-            if let idx = self.session.groupParticipants.firstIndex(where: { $0.id == identity }) {
-                self.session.groupParticipants[idx].videoTrack = nil
-            }
         }
     }
 

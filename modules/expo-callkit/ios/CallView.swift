@@ -30,44 +30,6 @@ import Combine
 import LiveKitClient
 import AVKit
 
-// MARK: - [Wave C-2] 1:1 call participant model
-
-/// Lightweight participant model used only by CallView's 1:1 multi-participant
-/// grid. Deliberately separate from `GroupParticipant` (GroupCallView.swift)
-/// which carries the full group-call roster state (audioMuted, handRaised,
-/// connectionQuality, etc.) — naming it `CallParticipant` avoids the
-/// `invalid redeclaration` Swift error that fires when two source files in the
-/// same module define identically-named types.
-///
-/// The VC populates this array from `room.remoteParticipants` and keeps it
-/// up-to-date via RoomDelegate callbacks so the grid reflects live room state
-/// without requiring a full Room re-scan on every event.
-///
-/// `videoTrack` is nil when the participant hasn't published video yet, is
-/// muted, or the call is audio-only. The tile shows an avatar block in that
-/// case.  The VC sets `videoTrack` on `didSubscribeTrack` (kind == .video) and
-/// clears it on `didUnsubscribeTrack`.
-struct CallParticipant: Identifiable, Equatable {
-    /// LiveKit identity string — unique per-participant in a room.
-    let id: String
-    /// Display name (may be empty).
-    let name: String
-    /// First character of `name` (or `id`) for the avatar letter fallback.
-    var initial: String {
-        let src = name.isEmpty ? id : name
-        return String(src.first ?? "?").uppercased()
-    }
-    /// Camera VideoTrack from LiveKit subscription. Nil → show avatar tile.
-    var videoTrack: VideoTrack?
-
-    static func == (lhs: CallParticipant, rhs: CallParticipant) -> Bool {
-        lhs.id == rhs.id && lhs.name == rhs.name
-        // Intentionally ignores videoTrack so SwiftUI .onChange(of:) on the
-        // array fires only for join/leave events, not every track-update.
-        // Track updates mutate the individual element directly.
-    }
-}
-
 // MARK: - Floating reaction model
 
 /// One floating emoji burst spawned by either side via the data channel. The
@@ -1209,65 +1171,6 @@ struct CallView: View {
     private func hapticHeavy() {
         let gen = UIImpactFeedbackGenerator(style: .heavy)
         gen.impactOccurred()
-    }
-}
-
-// MARK: - [Wave C-2] Group call tile
-
-/// One participant tile inside the multi-participant grid.
-///
-/// • If `participant.videoTrack` is non-nil → renders `SwiftUIVideoView`
-///   fill-cropped to the tile bounds.
-/// • Otherwise → renders an avatar circle (initial letter) centered on the
-///   dark chip background.  This covers audio-only calls and video-muted peers.
-///
-/// The name label is pinned to the bottom-leading corner, mirroring WhatsApp
-/// and Google Meet group-call tile labelling conventions.
-struct GroupTileView: View {
-    let participant: CallParticipant
-    let chipColor: Color
-    let backgroundColor: Color
-
-    var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            if let track = participant.videoTrack {
-                // Live video — fill the tile, crop edges as needed.
-                SwiftUIVideoView(track)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipped()
-            } else {
-                // Audio-only or video muted — avatar block.
-                backgroundColor
-                ZStack {
-                    Circle()
-                        .fill(chipColor)
-                        .frame(width: 64, height: 64)
-                    Text(participant.initial)
-                        .font(.system(size: 26, weight: .regular, design: .rounded))
-                        .foregroundColor(.white)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-
-            // Name label — bottom-leading, small semi-opaque pill.
-            if !participant.name.isEmpty || !participant.id.isEmpty {
-                Text(participant.name.isEmpty ? participant.id : participant.name)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.white)
-                    .lineLimit(1)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(Color.black.opacity(0.50))
-                    .clipShape(Capsule())
-                    .padding(6)
-            }
-        }
-        .background(backgroundColor)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        )
     }
 }
 
