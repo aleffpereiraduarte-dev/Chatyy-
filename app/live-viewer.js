@@ -421,6 +421,12 @@ export default function LiveViewerScreen() {
   const hlsRetryTimerRef = useRef(null);
   const joinRetryTimerRef = useRef(null);
   const joinResetTimerRef = useRef(null);
+  // WAVE 85 — Marker set the moment we get `live_session_info` from the WS.
+  // Used by the REST-fallback effect (below) to know whether to keep polling
+  // `live_status_cf` looking for the HLS URL. Old Go WS builds (<wave85)
+  // didn't dispatch `live_session_info` at all, so cf_hls viewers stalled on
+  // `streamType='webrtc'` forever waiting for an offer that never came.
+  const liveSessionInfoSeenRef = useRef(false);
   // Full-screen container ref — used by react-native-view-shot to snap the
   // live frame + comment overlay (Instagram/TikTok "save snap" parity).
   const screenRef = useRef(null);
@@ -871,6 +877,107 @@ export default function LiveViewerScreen() {
     };
   }, [connected, liveEnded, paramSessionId]);
 
+  // [WAVE 85 2026-05-21] REST-fallback for `live_session_info`.
+  //
+  // Root cause: the Go WS `handleLiveJoin` shipped without emitting a
+  // `live_session_info` payload — so Cloudflare Stream HLS viewers stayed
+  // on the default `streamType='webrtc'`, waited for a `live_offer` that
+  // the host never sent (host publishes via WHIP to CF, not via P2P
+  // WebRTC), and stalled in "Conectando..." until the 30s stuck-timer
+  // flipped them to "Stream indisponível". WAVE 85 fixed the WS side too,
+  // but this fallback covers:
+  //   (a) Old WS builds still in the upstream rotation (ip_hash quirks)
+  //   (b) Brief WS reconnect right after auth_success that loses the
+  //       single-shot dispatch
+  //   (c) Race where the row is inserted but cf_input_uid populated AFTER
+  //       the viewer joined — REST resync picks up the URL within 4s.
+  //
+  // Stops as soon as we get the HLS URL, the WS sends `live_session_info`
+  // first, the live ends, or we connect. Adds at most ~4 reqs per viewer
+  // join (one every 4s, capped at 20s) — negligible backend cost.
+  useEffect(() => {
+    if (!paramSessionId) return undefined;
+    if (connected || liveEnded) return undefined;
+    // If WS already told us the pipeline AND gave us a URL (or it's WebRTC),
+    // we don't need REST. liveSessionInfoSeenRef flips inside the
+    // `live_session_info` handler when both conditions are met.
+    if (liveSessionInfoSeenRef.current) return undefined;
+    let cancelled = false;
+    let timer = null;
+    let attempt = 0;
+    const tick = async () => {
+      if (cancelled) return;
+      attempt += 1;
+      try {
+        const r = await api.liveStatusCf(paramSessionId);
+        if (cancelled) return;
+        const d = r?.data || r || {};
+        const pipeline = String(d.pipeline || '').toLowerCase();
+        const dbStatus = String(d.status || '').toLowerCase();
+        const hls = d.hls_url ? String(d.hls_url) : '';
+        const cfUid = d.cf_input_uid ? String(d.cf_input_uid) : '';
+        console.log('[LIVE-TRACE] session-info REST fallback', {
+          sessionId: paramSessionId,
+          attempt,
+          pipeline,
+          dbStatus,
+          hasHls: !!hls,
+          hasCfUid: !!cfUid,
+          isLive: d.is_live,
+        });
+        if (dbStatus && dbStatus !== 'live') {
+          // Backend says ended — let the checkSession effect handle UX
+          // (avoids racing two "ended" paths).
+          cancelled = true;
+          return;
+        }
+        if (pipeline === 'cf_stream' && hls) {
+          // Synthesize what `live_session_info` would have delivered.
+          liveSessionInfoSeenRef.current = true;
+          setStreamType('cf_hls');
+          setHlsUrl(hls);
+          setHlsError(false);
+          setError('');
+          hlsRetryAttemptRef.current = 0;
+          if (hlsRetryTimerRef.current) {
+            clearTimeout(hlsRetryTimerRef.current);
+            hlsRetryTimerRef.current = null;
+          }
+          setHlsRetryKey(k => k + 1);
+          cancelled = true;
+          return;
+        }
+        if (pipeline === 'cf_stream' && cfUid && !hls) {
+          // Input exists but host not publishing yet — keep polling, the
+          // host may be 5-15s behind us. Don't surface "publisher missing"
+          // from REST (the WS will tell us if needed).
+        }
+        if (pipeline === 'legacy_p2p') {
+          // Old WebRTC P2P — nothing to do here, the offer path handles it.
+          liveSessionInfoSeenRef.current = true;
+          cancelled = true;
+          return;
+        }
+      } catch (e) {
+        // Network / 404 — sit tight, try again. We don't want to surface
+        // any error from this fallback (the stuck-timer covers it).
+      }
+      if (cancelled) return;
+      // Backoff: 4s, 4s, 4s, 8s, 8s, then bail (covers 28s — overlaps the
+      // 30s stuck-timer for WebRTC and the 90s HLS_BOOT_TIMEOUT for CF).
+      const delay = attempt < 3 ? 4000 : attempt < 5 ? 8000 : 0;
+      if (delay > 0) {
+        timer = setTimeout(tick, delay);
+      }
+    };
+    // First poll at 4s — gives the WS the first-shot window, then we step in.
+    timer = setTimeout(tick, 4000);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [paramSessionId, connected, liveEnded]);
+
   // [WAVE 43 2026-05-20] Auto-search for a newer session from the same host
   // the moment we hit liveEnded. If found, surface a "Entrar na nova live"
   // CTA on the ended card — user can hop straight in. Common scenario: host
@@ -1009,6 +1116,15 @@ export default function LiveViewerScreen() {
           }));
           break;
         case 'live_session_info':
+          // WAVE 85 — Mark that the WS gave us a session-info payload so the
+          // REST-fallback poll can stop. If the URL was empty (CF input
+          // exists but host hasn't published yet) we keep the marker false
+          // so the poll keeps watching for hls_url.
+          if (msg.stream_type === 'cf_hls' && msg.hls_url) {
+            liveSessionInfoSeenRef.current = true;
+          } else if (msg.stream_type === 'webrtc') {
+            liveSessionInfoSeenRef.current = true;
+          }
           // Backend tells us how this session is streamed. For Cloudflare
           // Stream we just hand the m3u8 URL to expo-video; for WebRTC we
           // fall through and wait for `live_offer` like before.

@@ -43,6 +43,18 @@ import expo.modules.kotlin.modules.ModuleDefinition
  *   - We rate-limit emits to the requested fps from the JS caller.
  *   - All ML Kit calls run on a dedicated HandlerThread so we never
  *     block the main thread on inference.
+ *
+ * ⚠️ KNOWN LIMITATION (2026-05-21):
+ *   Android's CameraX provider serializes camera access through Camera2.
+ *   When expo-camera's CameraView is already bound to the front lens,
+ *   our bindToLifecycle() call rebinds the camera — which silently steals
+ *   the preview from expo-camera and leaves StatusCamera blank.
+ *
+ *   The proper fix is to share the frame stream: either patch expo-camera
+ *   to expose an ImageAnalysis tap, or replace CameraView with a
+ *   PreviewView + ImageAnalysis pair owned by this module. Until that
+ *   ships in a rebuild, the JS overlay stays in static fallback mode
+ *   whenever StatusCamera is up.
  */
 class ExpoFaceLandmarkerModule : Module() {
 

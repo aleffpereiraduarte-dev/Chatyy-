@@ -17576,10 +17576,19 @@ export default function ChatConversationScreen() {
                 // ChatMedia, so on Android paint order ChatMedia could blank it.
                 // Putting bg on the wrapper itself = HSL guaranteed at the
                 // bottommost compositing layer, always.
+                // [WAVE 81 2026-05-21] iOS photo rosa regression — user report
+                // "a foto que manda no chat depois ela fica rosa ao invés de
+                // mostrar a foto pequena". WAVE 77's HSL was 32% saturation /
+                // 78% lightness — pastel pink/rosa for most hash buckets. On
+                // iOS the photo thumb sometimes never paints over (thumbUri
+                // 404s silently or expo-image bug), so the rosa stayed forever.
+                // Drop saturation to 6% (basically neutral grey, just a hint of
+                // hue) and use 86% lightness so it reads as "loading skeleton"
+                // grey, never as "ROSA pink box". Same skeleton WhatsApp/IG use.
                 const u = String(msg.file_url || msg.id || '');
                 let h = 0;
                 for (let i = 0; i < u.length; i++) h = (h * 31 + u.charCodeAt(i)) & 0xffffffff;
-                return `hsl(${Math.abs(h) % 360}, 32%, 78%)`;
+                return `hsl(${Math.abs(h) % 360}, 6%, 86%)`;
               })() }}>
                 {/* [WAVE 45 2026-05-21] Photo thumb sumindo Android — root cause.
                     `ExpoImage` was aliased to react-native's <Image> which silently
@@ -17597,10 +17606,13 @@ export default function ChatConversationScreen() {
                     when the real image paints on top (zIndex 4 via ChatMedia order),
                     HSL is hidden — but if anything fails, HSL is still there. */}
                 <View pointerEvents="none" style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', zIndex: 0, backgroundColor: (() => {
+                  // [WAVE 81 2026-05-21] Same neutral grey skeleton — see
+                  // wrapper bg comment above. Eliminates the "rosa" complaint
+                  // when the photo thumb fails to paint over.
                   const u = String(msg.file_url || msg.id || '');
                   let h = 0;
                   for (let i = 0; i < u.length; i++) h = (h * 31 + u.charCodeAt(i)) & 0xffffffff;
-                  return `hsl(${Math.abs(h) % 360}, 28%, 82%)`;
+                  return `hsl(${Math.abs(h) % 360}, 5%, 88%)`;
                 })(), alignItems: 'center', justifyContent: 'center' }}>
                   {!imgUploading && !imgFailed && !msg.blurhash && !lqipUri && !thumbUri && !msg._localUri && !imgLocalPath && (
                     <>
@@ -17707,6 +17719,31 @@ export default function ChatConversationScreen() {
                     onError={() => {
                       if (__DEV__) console.warn('[THUMB-DIAG] remote-bd onError', msg.id, msg.file_url);
                     }}
+                  />
+                )}
+                {/* [WAVE 81 2026-05-21] iOS-specific extra defense backdrop.
+                    Even when thumbUri exists, iOS sometimes shows ONLY the grey
+                    skeleton because: (a) thumbUri 404s silently when backend
+                    hasn't finished generating image_variants (race: WS msg
+                    arrives BEFORE the thumb job lands), (b) expo-image's
+                    cross-dissolve 280ms window clears the slot mid-transition.
+                    On iOS only, paint the FULL remote image blurred ALSO when
+                    a thumbUri is set — belt-and-suspenders so the actual photo
+                    content is always sitting at z=1 as a backdrop. Android
+                    already has the small thumb at z=1; iOS gets BOTH (thumb
+                    above the remote blurred bg) so we never see only the
+                    skeleton. Gated on no local file (file:// renders instantly
+                    via ChatMedia, no backdrop needed) and no upload-in-flight. */}
+                {Platform.OS === 'ios' && !imgUploading && !imgFailed && !msg._localUri && !imgLocalPath && msg.file_url && (msg.blurhash || lqipUri || thumbUri) && (
+                  <ExpoImage
+                    key={`ios-bd-${msg.id}`}
+                    source={{ uri: typeof fullUri === 'string' && fullUri.startsWith('http') ? fullUri : (msg.file_url.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`) }}
+                    style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', top: 0, left: 0, zIndex: 1 }}
+                    contentFit="cover"
+                    cachePolicy="memory-disk"
+                    blurRadius={20}
+                    priority="high"
+                    recyclingKey={`ios-bd-${msg.id}`}
                   />
                 )}
                 {/* [WAVE 34 2026-05-20] Shimmer skeleton overlay. Visible while

@@ -113,6 +113,20 @@ export default function LivesSavedScreen() {
 
   useEffect(() => { load(true); }, [load]);
 
+  // WAVE 86 — Auto-refresh when cron-live-recordings.php broadcasts a
+  // newly-finalized replay (event `live_recording_ready`). The cron emits on
+  // `live_<id>`, but the WS server also fans out per-user via the host's
+  // channel (chat_user_<email>) so this listener catches replays even when
+  // the user never subscribed to a specific live_<id> channel.
+  useEffect(() => {
+    let mailWs;
+    try { mailWs = require('../services/websocket').default; } catch { return undefined; }
+    if (!mailWs?.on) return undefined;
+    const handler = () => { try { load(false); } catch {} };
+    const unsub = mailWs.on('live_recording_ready', handler);
+    return () => { try { unsub?.(); } catch {} };
+  }, [load]);
+
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     load(false);

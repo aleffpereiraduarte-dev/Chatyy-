@@ -98,27 +98,61 @@ export const FACE_FILTER_PRESETS = [
   },
 ];
 
-// Lazy native binding loader. MediaPipe FaceLandmarker is wrapped by
-// `react-native-mediapipe` (the community Apache-2.0 binding) or, when
-// shipped via expo-modules autolinking, by `expo-mediapipe-face`. We
-// try both in order; if neither is present, fall back to the static
-// fallback anchor (no real face tracking).
+// Lazy native binding loader. The real face tracking ships via
+// `expo-native-toolkit`'s ExpoMediaPipeFace native module (iOS Vision
+// + Android ML Kit Face Detection). We expose a stable surface here so
+// the overlay code doesn't need to know which backend is wired:
+//
+//   startFaceLandmarker({ fps })  → bool
+//   stopFaceLandmarker()          → void
+//   addListener('faceLandmarks', cb) → { remove() }
+//
+// If the binding can't be loaded (web, debug simulator without the
+// rebuilt binary), we return null and the overlay falls back to its
+// static centered anchor — the filter still renders, just no tracking.
 let _mp = null;
 let _mpAttempted = false;
 export function getMediaPipe() {
   if (_mpAttempted) return _mp;
   _mpAttempted = true;
   if (Platform.OS === 'web') return null;
+
+  // 1) Preferred: expo-native-toolkit ships ExpoMediaPipeFace as a
+  //    sibling native module. Use requireNativeModule so we don't
+  //    crash if the JS package is present but the native side isn't
+  //    linked yet (older binaries on test devices).
   try {
-    // Preferred: expo-mediapipe-face (matches expo-module autolink pattern)
-    _mp = require('expo-mediapipe-face');
-    if (_mp) return _mp;
+    const { requireNativeModule } = require('expo');
+    const mod = requireNativeModule('ExpoMediaPipeFace');
+    if (mod && typeof mod.startFaceLandmarker === 'function') {
+      _mp = wrapEmitter(mod);
+      return _mp;
+    }
   } catch {}
+
+  // 2) Legacy fallback: standalone expo-mediapipe-face package, if a
+  //    future release moves out of expo-native-toolkit.
   try {
-    _mp = require('react-native-mediapipe');
-    if (_mp) return _mp;
+    const mp = require('expo-mediapipe-face');
+    if (mp && typeof mp.startFaceLandmarker === 'function') {
+      _mp = mp;
+      return _mp;
+    }
   } catch {}
+
   return null;
+}
+
+// expo-modules's NativeModule exposes addListener but requires a
+// matching `Events()` declaration on the native side. Both iOS and
+// Android emit "faceLandmarks", so we just forward the call.
+function wrapEmitter(mod) {
+  return {
+    startFaceLandmarker: (opts) => mod.startFaceLandmarker(opts || {}),
+    stopFaceLandmarker: () => mod.stopFaceLandmarker(),
+    setTargetFps: (fps) => mod.setTargetFps?.(fps),
+    addListener: (name, cb) => mod.addListener(name, cb),
+  };
 }
 
 // Heuristic device-class probe — drops the inference cap to 15fps when

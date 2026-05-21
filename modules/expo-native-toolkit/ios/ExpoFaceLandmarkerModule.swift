@@ -29,6 +29,24 @@
 //   - JS lazy-requires it via getMediaPipe() — the binding is registered
 //     under the name "ExpoMediaPipeFace" for compatibility with the
 //     filter overlay code already in production.
+//
+// ⚠️ KNOWN LIMITATION (2026-05-21):
+//   iOS only lets ONE AVCaptureSession own the front camera at a time.
+//   When StatusCamera is up and using expo-camera's CameraView, this
+//   module's startCapture() will fail to acquire the device — Vision
+//   gets no frames, and the JS overlay stays in static fallback mode.
+//
+//   The proper fix is to share the buffer stream from expo-camera with
+//   this module (frame processor / sample buffer delegate). expo-camera
+//   SDK 55 doesn't expose that API, so the options are:
+//     a) Patch expo-camera to forward CMSampleBuffers to us (small)
+//     b) Replace CameraView with our own AVCaptureVideoPreviewLayer +
+//        a delegate that dispatches to BOTH the preview AND Vision
+//     c) Wait for SDK 56's frame-processor API
+//
+//   Until that's done, the module is functional only when called by
+//   itself (no other camera UI active). On a rebuild that ships with
+//   option (a) or (b), the filter tracking goes live for users.
 
 import ExpoModulesCore
 import AVFoundation

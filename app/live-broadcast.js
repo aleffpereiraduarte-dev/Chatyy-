@@ -141,6 +141,12 @@ export default function LiveBroadcastScreen() {
   // silently desync from the actual backend state.
   const [endedReplayRequested, setEndedReplayRequested] = useState(false);
   const [endedReplayStatus, setEndedReplayStatus] = useState('idle'); // idle|processing|none|error
+  // WAVE 86 — once the live ends with save_replay=true we keep the session id
+  // around so the WS `live_recording_ready` listener (wired below) can flip
+  // the end-card from "Processando" to "Salvo em Lives" the moment the cron
+  // finalizes the CF Stream VOD. Without this the host stared at "Processando"
+  // forever even though the recording was already ready on the backend.
+  const [endedSessionIdSnapshot, setEndedSessionIdSnapshot] = useState(null);
   const [pinnedComment, setPinnedComment] = useState(null);
   // Settings/effects/filter UI state — the right-stack buttons used to be
   // no-op stubs (audit 2026-05-12); now they each open a small bottom sheet
@@ -210,6 +216,40 @@ export default function LiveBroadcastScreen() {
   // muteReactions closure window) reads the current toggle value.
   const muteReactionsRef = useRef(false);
   useEffect(() => { muteReactionsRef.current = muteReactions; }, [muteReactions]);
+
+  // WAVE 86 — Listen for cron-live-recordings.php broadcasting
+  // `live_recording_ready` on the live's channel. This is the bridge that
+  // turns the end-card chip from "Processando…" → "Salvo em Lives" the moment
+  // CF Stream finishes finalizing the VOD (~30-120s after live_end_cf). Before
+  // this, the cron emitted the event but no JS listened, so the host had to
+  // manually open /lives-saved and refresh to see their replay.
+  useEffect(() => {
+    if (!endedSessionIdSnapshot) return undefined;
+    let mailWs;
+    try { mailWs = require('../services/websocket').default; } catch { return undefined; }
+    if (!mailWs?.on) return undefined;
+    const handler = (data) => {
+      try {
+        const sid = data?.session_id || data?.data?.session_id;
+        if (!sid || String(sid) !== String(endedSessionIdSnapshot)) return;
+        setEndedReplayStatus('saved');
+        setEndedHasRecording(true);
+        // Optional toast on Android — host's already on the end-card so the
+        // status chip flip is the primary signal; toast is bonus reinforcement.
+        if (Platform.OS === 'android') {
+          try {
+            const { ToastAndroid } = require('react-native');
+            ToastAndroid?.show?.(
+              t('live.replaySavedToast') || 'Sua live foi salva! Toque em "Ver Lives Salvas".',
+              ToastAndroid.LONG,
+            );
+          } catch {}
+        }
+      } catch {}
+    };
+    const unsub = mailWs.on('live_recording_ready', handler);
+    return () => { try { unsub?.(); } catch {} };
+  }, [endedSessionIdSnapshot, t]);
   useEffect(() => {
     const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
@@ -1694,7 +1734,20 @@ export default function LiveBroadcastScreen() {
     const replayRequested = !!saveReplay;
     setEndedReplayRequested(replayRequested);
     setEndedReplayStatus(replayRequested ? 'processing' : 'none');
+    // WAVE 86 — keep id around so the global WS `live_recording_ready`
+    // listener (mounted via useEffect below) can match the event back to
+    // this screen and flip the end-card status when CF finalizes the VOD.
+    setEndedSessionIdSnapshot(endedSessionId || null);
     if (endedSessionId) {
+      // WAVE 86 — subscribe to the live's channel BEFORE we tear down the
+      // raw WS, so cron-live-recordings.php broadcasts (channel=live_<id>)
+      // actually reach this device. The screen's raw WS (wsRef) is about
+      // to close; the global mailWs survives the broadcast end and is the
+      // one listening for live_recording_ready below.
+      try {
+        const mailWs = require('../services/websocket').default;
+        mailWs?.subscribe?.('live_' + endedSessionId);
+      } catch {}
       // Dismiss the ongoing-broadcast pill — broadcast is over.
       try { liveBroadcastNotification.stop(endedSessionId); } catch {}
       // Local fast-path: clear the AO VIVO badge on the host's own Profile
@@ -2970,7 +3023,7 @@ export default function LiveBroadcastScreen() {
                   ? (t('live.replayProcessing') || 'Processando…')
                   : endedReplayStatus === 'error'
                     ? (t('live.replayError') || 'Falha ao salvar')
-                    : endedReplayRequested
+                    : endedReplayStatus === 'saved' || endedReplayRequested
                       ? (t('live.replaySavedInLives') || 'Salvo em Lives')
                       : (t('live.replayNotSaved') || 'Não salvo')}
               </Text>
@@ -2982,7 +3035,7 @@ export default function LiveBroadcastScreen() {
               recording is in flight (CF Stream pipeline + save_replay=true).
               Without this CTA the host had no idea WHERE the replay went
               (incident: user complaint "Replay onde tá?? Cadê?"). */}
-          {endedHasRecording && saveReplay ? (
+          {(endedHasRecording || endedReplayStatus === 'saved') && saveReplay ? (
             <TouchableOpacity
               onPress={() => {
                 try { router.replace('/lives-saved'); }
