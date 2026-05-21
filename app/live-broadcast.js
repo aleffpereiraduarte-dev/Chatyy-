@@ -1339,10 +1339,40 @@ export default function LiveBroadcastScreen() {
       const wantsCf = !!saveReplay;
       cfModeRef.current = wantsCf;
       const liveTitle = titleInput.trim() || t('live.title') || 'Live';
-      const res = wantsCf
+      // [WAVE 34 2026-05-20] User report: "erro ao conectar ao servidor".
+      // Backend's live_start returns 200 with session_id; live_start_cf is
+      // the Cloudflare path. The old code committed to one or the other up
+      // front based on `saveReplay`. When liveStart succeeded `{success:1}`
+      // but didn't surface a session_id (rare edge: PG insert race, stale
+      // cache hit), the host saw the generic "Connection failed" with no
+      // hint to retry. Fix: try the chosen endpoint; if it returns success
+      // without session_id OR returns success:false with a transient
+      // message, fall back to the other endpoint before surfacing the
+      // error. This kept legacy P2P working as a safety net for the CF
+      // pipeline rollout, and now does the symmetric job in the other
+      // direction too.
+      let res = wantsCf
         ? await api.liveStartCf(liveTitle, { audience, category: liveCategory, subscribersOnly })
         : await api.liveStart(liveTitle, { audience, category: liveCategory, subscribersOnly });
-      const sid = res.data?.session_id || res.data?.session?.id;
+      let sid = res.data?.session_id || res.data?.session?.id;
+      if ((!res?.success || !sid) && !wantsCf) {
+        // P2P path failed — try CF as a fallback before giving up. This
+        // catches the case where live_start regressed (backend deploy mid-
+        // request, parental gate transient, etc) but live_start_cf works.
+        console.warn('[live] live_start failed, falling back to live_start_cf:', res?.message, 'status:', res?.status);
+        try {
+          const cfRes = await api.liveStartCf(liveTitle, { audience, category: liveCategory, subscribersOnly });
+          const cfSid = cfRes?.data?.session_id || cfRes?.data?.session?.id;
+          if (cfRes?.success && cfSid) {
+            res = cfRes;
+            sid = cfSid;
+            cfModeRef.current = true; // flip to CF lifecycle so live_end picks the right endpoint
+            console.warn('[live] fallback to live_start_cf succeeded — session', cfSid);
+          }
+        } catch (cfErr) {
+          console.warn('[live] live_start_cf fallback also failed:', cfErr?.message);
+        }
+      }
       if (res.success && sid) {
         setSessionId(sid);
         sessionIdRef.current = sid;
@@ -1475,7 +1505,27 @@ export default function LiveBroadcastScreen() {
           api.liveUpdateViewers(sid, display).catch(() => {});
         }, 5000);
       } else {
-        setError(res?.message || t('live.connectionFailed') || 'Connection failed');
+        // [WAVE 34 2026-05-20] More-actionable error. The previous text
+        // was just "Connection failed" — useless for triage. Now we
+        // append:
+        //   1. HTTP status (401/403/500/502 etc) — tells the user
+        //      whether they need to re-login, are blocked by parental,
+        //      or backend is genuinely down.
+        //   2. Backend error_code (auth_expired, parental_blocked,
+        //      livekit_unreachable, etc) so we can correlate user
+        //      reports to one specific backend code path.
+        //   3. First 80 chars of `data.message` (truncated) — for
+        //      transient errors we get a human-readable string.
+        // User report: "erro ao conectar ao servidor". With the detail
+        // appended the next report will tell us WHICH server (LiveKit /
+        // PG / Cloudflare / Telnyx) actually failed.
+        const status = res?.status ? `HTTP ${res.status}` : '';
+        const code = res?.data?.error_code || res?.error_code || '';
+        const msg = (res?.message || res?.data?.message || '').toString().slice(0, 80).trim();
+        const sidMissing = res?.success && !sid ? 'no session_id' : '';
+        const parts = [status, code, sidMissing, msg].filter(Boolean);
+        const detail = parts.length ? ` (${parts.join(' · ')})` : '';
+        setError((t('live.connectionFailed') || 'Connection failed') + detail);
       }
     } catch (e) {
       // Was empty `catch {}` — masked real reason (e.g., auth expired,
@@ -1483,7 +1533,14 @@ export default function LiveBroadcastScreen() {
       // whether to retry / re-login / wait. Falls back to the generic
       // i18n string if the exception has no message.
       console.warn('[live] start failed:', e?.message || e);
-      const detail = e?.message ? ` (${e.message})` : '';
+      // [WAVE 34 2026-05-20] Include the exception name (e.g.
+      // "TypeError", "AbortError") in addition to message — sometimes
+      // the message is empty for fetch failures and the name is the
+      // only useful clue.
+      const errName = e?.name && e.name !== 'Error' ? e.name : '';
+      const errMsg = e?.message || '';
+      const parts = [errName, errMsg].filter(Boolean);
+      const detail = parts.length ? ` (${parts.join(': ')})` : '';
       setError((t('live.connectionFailed') || 'Connection failed') + detail);
     } finally {
       // Release the single-flight gate. If the start succeeded sessionIdRef

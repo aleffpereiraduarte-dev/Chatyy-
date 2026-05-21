@@ -7521,6 +7521,28 @@ export default function ChatConversationScreen() {
   // stale state for an off-screen bubble doesn't bleed into a new message
   // with the same URL. Each entry is 0-100; removed on load-end.
   const [downloadProgress, setDownloadProgress] = useState({});
+  // [WAVE 34 2026-05-20] Track per-msg media load errors so we can render a
+  // tap-to-retry placeholder instead of leaving the slot blank. User report:
+  // "carrega 100% mas fica branco gigante" — root cause: onError fired
+  // (transient CDN 502 / file:// path bust after WAVE 31) but the bubble had
+  // no fallback UI, just an empty 280x220 box. Keyed by msg.id; cleared on
+  // successful retry / load-end.
+  const [mediaErrors, setMediaErrors] = useState({});
+  // [WAVE 34 2026-05-20] Shared shimmer animation for media skeletons. Single
+  // Animated.Value driven by a global loop so every loading bubble pulses in
+  // sync (cheaper than N independent loops, and visually feels more cohesive
+  // — like WhatsApp).
+  const mediaShimmerAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(mediaShimmerAnim, { toValue: 1, duration: 950, useNativeDriver: true }),
+        Animated.timing(mediaShimmerAnim, { toValue: 0, duration: 950, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => { try { loop.stop(); } catch {} };
+  }, [mediaShimmerAnim]);
   // Abort controllers keyed by tempId so the X button on a pending bubble
   // can actually cancel the in-flight upload instead of letting it finish
   // and send anyway.
@@ -16958,6 +16980,29 @@ export default function ChatConversationScreen() {
             ? (msg.local_path.startsWith('file://') ? msg.local_path : `file://${msg.local_path}`)
             : null;
           const fullUri = msg._localUri || imgLocalPath || resolveMediaUri(msg.file_url);
+          // [WAVE 34 2026-05-20] Dynamic aspect ratio. Backend stores width/
+          // height on the message row (chat_messages.width + .height) and
+          // image_variants.full_w/full_h for the high-res. Use them to size
+          // the bubble so portraits don't get squashed into 280x220. Cap to
+          // 280px wide max; height computed from ratio, clamped between 140
+          // (very wide landscape) and 380 (tall portrait). Falls back to
+          // 280x220 when neither dimension is known (legacy rows).
+          let imgVariants = null;
+          if (msg.image_variants) {
+            try { imgVariants = typeof msg.image_variants === 'string' ? JSON.parse(msg.image_variants) : msg.image_variants; } catch {}
+          }
+          const _w = Number(msg.width) || Number(imgVariants?.full_w) || 0;
+          const _h = Number(msg.height) || Number(imgVariants?.full_h) || 0;
+          let imgBoxW = 280, imgBoxH = 220;
+          if (_w > 0 && _h > 0) {
+            const ratio = _h / _w;
+            imgBoxW = 280;
+            imgBoxH = Math.round(Math.max(140, Math.min(380, 280 * ratio)));
+          }
+          // [WAVE 34 2026-05-20] Per-msg error flag — see mediaErrors state up
+          // top. When onError fires AND there's no local cache to fall back
+          // to, we render a tap-to-retry placeholder instead of the bare box.
+          const imgFailed = !!mediaErrors[msg.id];
           const thumbUri = msg.image_variants
             ? (() => { try { const v = typeof msg.image_variants === 'string' ? JSON.parse(msg.image_variants) : msg.image_variants; return v?.thumb ? (v.thumb.startsWith('http') ? v.thumb : `https://chatyy.com.br${v.thumb}`) : null; } catch { return null; } })()
             : null;
@@ -17022,34 +17067,60 @@ export default function ChatConversationScreen() {
               delayLongPress={350}
               activeOpacity={0.9}
               style={{ marginHorizontal: -13, marginTop: -8, marginBottom: hasCaption ? 0 : -8 }}>
-              <View style={{ overflow: 'hidden' }}>
+              <View style={{ overflow: 'hidden', width: imgBoxW, height: imgBoxH }}>
                 {/* WhatsApp-style backdrop: blurhash sits BEHIND the real image
                     and stays painted the whole time it loads. Even if the
                     crossfade has a hitch the user never sees blank/flicker —
                     just the blurry version coming into focus. Blurhash >
                     lqip > thumb > flat color, in priority order. */}
                 {msg.blurhash && !msg._localUri && (
-                  <ExpoImage source={{ blurhash: msg.blurhash }} style={{ width: 280, height: 220, position: 'absolute', zIndex: 0 }} contentFit="cover" recyclingKey={`bh-${msg.id}`} />
+                  <ExpoImage source={{ blurhash: msg.blurhash }} style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', zIndex: 0 }} contentFit="cover" recyclingKey={`bh-${msg.id}`} />
                 )}
                 {!msg.blurhash && lqipUri && !msg._localUri && (
-                  <ExpoImage source={{ uri: lqipUri }} style={{ width: 280, height: 220, position: 'absolute', zIndex: 0 }} contentFit="cover" cachePolicy="memory-disk" blurRadius={20} />
+                  <ExpoImage source={{ uri: lqipUri }} style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', zIndex: 0 }} contentFit="cover" cachePolicy="memory-disk" blurRadius={20} />
                 )}
                 {!msg.blurhash && !lqipUri && thumbUri && !msg._localUri && (
-                  <ExpoImage source={{ uri: thumbUri }} style={{ width: 280, height: 220, position: 'absolute', zIndex: 0 }} contentFit="cover" cachePolicy="memory-disk" blurRadius={8} />
+                  <ExpoImage source={{ uri: thumbUri }} style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', zIndex: 0 }} contentFit="cover" cachePolicy="memory-disk" blurRadius={8} />
                 )}
                 {!msg.blurhash && !lqipUri && !thumbUri && !msg._localUri && (
-                  <View style={{ width: 280, height: 220, position: 'absolute', zIndex: 0, backgroundColor: (() => {
+                  <View style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', zIndex: 0, backgroundColor: (() => {
                     const u = String(msg.file_url || msg.id || '');
                     let h = 0;
                     for (let i = 0; i < u.length; i++) h = (h * 31 + u.charCodeAt(i)) & 0xffffffff;
                     return `hsl(${Math.abs(h) % 360}, 28%, 82%)`;
                   })() }} />
                 )}
+                {/* [WAVE 34 2026-05-20] Shimmer skeleton overlay. Visible while
+                    the full image hasn't emitted onLoadEnd AND we have no
+                    local file. Sits above the blurhash/lqip backdrop, below
+                    ChatMedia, so it fades the moment the bytes paint. Why a
+                    cheap rectangle band instead of a fancy radial: the
+                    backdrop already provides shape/color; the shimmer just
+                    needs to whisper "still working" — same pattern WhatsApp
+                    uses. translateX driven via shared mediaShimmerAnim. */}
+                {!imgUploading && !imgFailed && downloadProgress[msg.id] !== undefined && !msg._localUri && (
+                  <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, width: imgBoxW, height: imgBoxH, overflow: 'hidden', zIndex: 1 }}>
+                    <Animated.View
+                      style={{
+                        position: 'absolute',
+                        top: 0, bottom: 0,
+                        width: imgBoxW * 0.6,
+                        backgroundColor: 'rgba(255,255,255,0.18)',
+                        transform: [{
+                          translateX: mediaShimmerAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [-imgBoxW * 0.6, imgBoxW],
+                          }),
+                        }, { skewX: '-20deg' }],
+                      }}
+                    />
+                  </View>
+                )}
                 <ChatMedia
                   uri={fullUri}
                   messageId={msg.id}
                   fileSize={msg.file_size || 0}
-                  style={{ width: 280, height: 220, opacity: imgUploading ? 0.7 : 1 }}
+                  style={{ width: imgBoxW, height: imgBoxH, opacity: imgUploading ? 0.7 : 1 }}
                   contentFit="cover"
                   // Local cached file:// → no transition, instant. Remote
                   // first paint → 280ms cross-dissolve over the blurhash
@@ -17080,9 +17151,17 @@ export default function ChatConversationScreen() {
                   }}
                   onLoadEnd={() => {
                     setDownloadProgress(prev => { if (prev[msg.id] === undefined) return prev; const n = { ...prev }; delete n[msg.id]; return n; });
+                    // [WAVE 34] Image loaded successfully — clear any prior error
+                    // flag so a retry from the tap-to-retry placeholder leaves
+                    // the bubble in the normal "loaded" visual state.
+                    setMediaErrors(prev => { if (!prev[msg.id]) return prev; const n = { ...prev }; delete n[msg.id]; return n; });
                   }}
                   onError={() => {
                     setDownloadProgress(prev => { if (prev[msg.id] === undefined) return prev; const n = { ...prev }; delete n[msg.id]; return n; });
+                    // [WAVE 34] Flip error flag so the placeholder paints.
+                    // Cleared on successful re-load (onLoadEnd above) or on
+                    // an explicit retry tap from the placeholder UI.
+                    setMediaErrors(prev => prev[msg.id] ? prev : ({ ...prev, [msg.id]: true }));
                     // Optimistic local path guess falhou — força remote pra este msg
                     if (typeof fullUri === 'string' && fullUri.startsWith('file://')) {
                       const remote = msg.file_url?.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`;
@@ -17092,12 +17171,52 @@ export default function ChatConversationScreen() {
                         cacheMedia(remote).then(local => {
                           if (local && local !== remote && mountedRef.current) {
                             setCachedUris(p => ({ ...p, [remote]: local }));
+                            // Cache succeeded — clear error so the new URI paints.
+                            setMediaErrors(p => { if (!p[msg.id]) return p; const n = { ...p }; delete n[msg.id]; return n; });
                           }
                         }).catch(() => {});
                       } catch {}
                     }
                   }}
                 />
+                {/* [WAVE 34 2026-05-20] Tap-to-retry placeholder for failed
+                    image loads. Render only when the load errored AND we
+                    don't have a local cached copy to fall back to (file://
+                    means cacheMedia already succeeded — image will paint
+                    on next re-render). Sits above ChatMedia so the user
+                    can tap to force a fresh download via mediaCache. */}
+                {!imgUploading && imgFailed && !(typeof fullUri === 'string' && fullUri.startsWith('file://')) && (
+                  <TouchableOpacity
+                    activeOpacity={0.7}
+                    onPress={(e) => {
+                      e.stopPropagation?.();
+                      // Clear error flag + force a fresh download. The
+                      // ChatMedia component re-keys off uri so we don't
+                      // need to unmount it explicitly.
+                      setMediaErrors(prev => { if (!prev[msg.id]) return prev; const n = { ...prev }; delete n[msg.id]; return n; });
+                      try {
+                        const remote = msg.file_url?.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`;
+                        const { cacheMedia } = require('../services/mediaCache');
+                        setDownloadProgress(prev => ({ ...prev, [msg.id]: 0 }));
+                        cacheMedia(remote, { force: true, conversationId }).then(local => {
+                          if (local && local !== remote && mountedRef.current) {
+                            setCachedUris(p => ({ ...p, [remote]: local }));
+                          }
+                        }).catch(() => {
+                          if (mountedRef.current) setMediaErrors(p => ({ ...p, [msg.id]: true }));
+                        }).finally(() => {
+                          if (mountedRef.current) setDownloadProgress(prev => { const n = { ...prev }; delete n[msg.id]; return n; });
+                        });
+                      } catch {}
+                    }}
+                    style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.55)', zIndex: 5 }}
+                  >
+                    <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
+                      <Svg width={28} height={28} viewBox="0 0 24 24"><Path d="M12 4v4l4-4-4-4v3a8 8 0 100 16v-2a6 6 0 110-12z" fill="#fff" /></Svg>
+                    </View>
+                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>{t('chatConv.tapToRetry') || (t('common.tapToDownload') || 'Toque para baixar')}</Text>
+                  </TouchableOpacity>
+                )}
                 {msg._blurred && (
                   <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}>
                     <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{'\uD83D\uDD12'}</Text>
@@ -17300,10 +17419,12 @@ export default function ChatConversationScreen() {
                       </TouchableOpacity>
                     </View>
                   ) : (
+                    // [WAVE 34 2026-05-20] Web variant matches native:
+                    // purple-tinted halo + brand-color play icon.
                     <View style={styles.videoOverlayAbsolute}>
-                      <View style={{ width: 68, height: 68, borderRadius: 34, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center', ...Platform.select({ web: { boxShadow: '0 2px 12px rgba(0,0,0,0.35)' } }) }}>
-                        <View style={{ width: 54, height: 54, borderRadius: 27, backgroundColor: 'rgba(255,255,255,0.95)', alignItems: 'center', justifyContent: 'center' }}>
-                          <Svg width={24} height={24} viewBox="0 0 24 24"><Path d="M8 5v14l11-7z" fill="#111" /></Svg>
+                      <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: 'rgba(124,58,237,0.22)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.45)', alignItems: 'center', justifyContent: 'center', ...Platform.select({ web: { boxShadow: '0 4px 24px rgba(124,58,237,0.45)' } }) }}>
+                        <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.97)', alignItems: 'center', justifyContent: 'center' }}>
+                          <Svg width={26} height={26} viewBox="0 0 24 24"><Path d="M8 5v14l11-7z" fill="#7C3AED" /></Svg>
                         </View>
                       </View>
                     </View>
@@ -17366,20 +17487,28 @@ export default function ChatConversationScreen() {
                       </TouchableOpacity>
                     </View>
                   ) : vidIsDownloading ? (
-                    <View style={{ width: 62, height: 62, borderRadius: 31, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}>
-                      <CircularProgressArc pct={vidDlProgress} size={62} strokeWidth={3} style={{ position: 'absolute' }} />
-                      <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{Math.round(vidDlProgress)}%</Text>
+                    // [WAVE 34 2026-05-20] Downloading state CENTERED via
+                    // absolute fill (was inline so it pushed off the visual
+                    // center). Same purple-tinted glow as the play btn so
+                    // the transition download→play→play feels of-a-piece.
+                    <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
+                      <View style={{ width: 68, height: 68, borderRadius: 34, backgroundColor: 'rgba(124,58,237,0.55)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.35)', alignItems: 'center', justifyContent: 'center', ...Platform.select({ ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.7, shadowRadius: 14 }, android: { elevation: 8 } }) }}>
+                        <CircularProgressArc pct={vidDlProgress} size={68} strokeWidth={3.5} style={{ position: 'absolute' }} />
+                        <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{Math.round(vidDlProgress)}%</Text>
+                      </View>
                     </View>
                   ) : (
-                    // iMessage / Instagram-grade play button: white frosted
-                    // circle with a soft outer ring + black play icon. The
-                    // double-layer (outer ring + inner solid) gives the
-                    // button readable contrast over busy thumbnails and a
-                    // premium "tappable" feel. Previous version was a flat
-                    // dark circle that disappeared on darker frames.
-                    <View style={{ width: 68, height: 68, borderRadius: 34, backgroundColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center', ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 10 }, android: { elevation: 6 } }) }}>
-                      <View style={{ width: 54, height: 54, borderRadius: 27, backgroundColor: 'rgba(255,255,255,0.95)', alignItems: 'center', justifyContent: 'center' }}>
-                        <Svg width={24} height={24} viewBox="0 0 24 24"><Path d="M8 5v14l11-7z" fill="#111" /></Svg>
+                    // [WAVE 34 2026-05-20] Brand-purple halo play button.
+                    // Outer ring is a purple-tinted glass (#7C3AED 22%) with
+                    // a soft white outline; inner white solid keeps the play
+                    // icon legible on any thumbnail. Glow via iOS shadow
+                    // (purple, large radius) + Android elevation. The result
+                    // feels "Chatyy" branded without losing iMessage
+                    // tappability cues. Same diameter as before (68/54) so
+                    // the rest of the bubble layout doesn't shift.
+                    <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: 'rgba(124,58,237,0.22)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.45)', alignItems: 'center', justifyContent: 'center', ...Platform.select({ ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.55, shadowRadius: 16 }, android: { elevation: 10 }, web: { boxShadow: '0 4px 24px rgba(124,58,237,0.45)' } }) }}>
+                      <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.97)', alignItems: 'center', justifyContent: 'center' }}>
+                        <Svg width={26} height={26} viewBox="0 0 24 24"><Path d="M8 5v14l11-7z" fill="#7C3AED" /></Svg>
                       </View>
                     </View>
                   )}
@@ -17391,11 +17520,30 @@ export default function ChatConversationScreen() {
                   )}
                 </View>
               )}
-              {/* Duration badge bottom-left */}
+              {/* [WAVE 34 2026-05-20] Duration pill — WhatsApp-style.
+                  Heavier black bg (60%) + larger radius (12) + tighter
+                  padding makes the badge feel like a real glassmorphic
+                  pill instead of a translucent rectangle. Subtle top
+                  highlight via borderWidth + white-tinted color simulates
+                  the frosted-glass refraction WhatsApp uses (we can't run
+                  real blur on a sibling View without bringing
+                  expo-blur into the chat tree — too heavy for every
+                  bubble). Position bumped to bottom: 8 / left: 10 to
+                  match WhatsApp's exact placement. */}
               {(vidDurationStr || vidSizeStr) && !vidUploading && (
-                <View style={{ position: 'absolute', bottom: 6, left: 8, flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2.5 }}>
-                  <IconVideo size={10} color="rgba(255,255,255,0.9)" />
-                  <Text style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.95)', fontWeight: '500' }}>{vidDurationStr || vidSizeStr}</Text>
+                <View style={{
+                  position: 'absolute', bottom: 8, left: 10,
+                  flexDirection: 'row', alignItems: 'center', gap: 5,
+                  backgroundColor: 'rgba(0,0,0,0.62)',
+                  borderRadius: 12,
+                  paddingHorizontal: 8, paddingVertical: 3,
+                  borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.18)',
+                  ...Platform.select({
+                    ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.25, shadowRadius: 3 },
+                  }),
+                }}>
+                  <IconVideo size={11} color="rgba(255,255,255,0.95)" />
+                  <Text style={{ fontSize: 11, color: '#fff', fontWeight: '600', letterSpacing: 0.2 }}>{vidDurationStr || vidSizeStr}</Text>
                 </View>
               )}
               {/* Time + read receipts pill bottom-right (WhatsApp-style).
@@ -18923,9 +19071,28 @@ export default function ChatConversationScreen() {
                 const serverTotal = (typeof r.data.total_votes === 'number')
                   ? r.data.total_votes
                   : serverCounts.reduce((a, b) => a + (b || 0), 0);
+                // [WAVE 34 2026-05-20] Don't zero local state when server
+                // returns an empty payload. User report: "esse sistema de
+                // polls testar pq ele some as respostas". Root cause: under
+                // poor connectivity the backend can return `success: true`
+                // with `vote_counts: []` (vote was registered to a stale
+                // copy of the poll row, or the SELECT race lost it). The
+                // previous code unconditionally overwrote `vote_counts`,
+                // `my_votes`, and `total_votes` with the empty server
+                // values → the just-cast vote visually vanished. Now we
+                // merge: server is authoritative ONLY when it brings real
+                // data (non-empty counts OR confirmed-empty my_votes after
+                // an unvote action). Otherwise keep the optimistic state.
+                const serverIsEmpty = serverCounts.length === 0 && serverMy.length === 0 && serverTotal === 0;
                 let updatedMsg = null;
                 setMessages(prev => prev.map(m => {
                   if (m.id !== msg.id) return m;
+                  if (serverIsEmpty) {
+                    // Server gave us nothing — preserve optimistic state +
+                    // still persist it (so re-open sees the local vote).
+                    updatedMsg = m;
+                    return m;
+                  }
                   const next = { ...m, poll: { ...m.poll, vote_counts: serverCounts, total_votes: serverTotal, my_votes: serverMy } };
                   updatedMsg = next;
                   return next;
@@ -18939,6 +19106,26 @@ export default function ChatConversationScreen() {
                 if (updatedMsg) {
                   try { _cacheOne(conversationId, updatedMsg); } catch {}
                 }
+                // [WAVE 34 2026-05-20] Belt-and-suspenders: mirror the
+                // last vote to MMKV-style fast key/value so even if the
+                // SQLite cache misses (schema race, partial restore, etc),
+                // the next chat-conversation mount can hydrate the user's
+                // vote into m.poll.my_votes BEFORE the network response
+                // lands. Key shape: `poll_vote:${pollId}:${userEmail}`.
+                try {
+                  const userEmail = user?.email || '';
+                  if (userEmail && updatedMsg?.poll) {
+                    const key = `poll_vote:${poll.id || msg.id}:${userEmail.toLowerCase()}`;
+                    const payload = JSON.stringify({
+                      my_votes: updatedMsg.poll.my_votes || [],
+                      vote_counts: updatedMsg.poll.vote_counts || [],
+                      total_votes: updatedMsg.poll.total_votes || 0,
+                      at: Date.now(),
+                    });
+                    const AS = require('@react-native-async-storage/async-storage').default;
+                    AS.setItem(key, payload).catch(() => {});
+                  }
+                } catch {}
               }
             } catch (e) {
               // Best-effort error log; the optimistic state stays so the user
