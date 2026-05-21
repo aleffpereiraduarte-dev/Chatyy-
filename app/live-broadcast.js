@@ -20,7 +20,7 @@ import LiveTopGifters from '../components/LiveTopGifters';
 import LiveGiftAnimation from '../components/LiveGiftAnimation';
 import LivePollOverlay from '../components/live/LivePollOverlay';
 import * as liveBroadcastNotification from '../services/liveBroadcastNotification';
-import { publishToCfStream } from '../services/cfStreamPublisher';
+import { publishToCfStream, liveDiagAppend } from '../services/cfStreamPublisher';
 import * as Haptics from 'expo-haptics';
 // Round 67 #1158 (2026-05-18) — user: "a tela ainda desliga mesmo
 // rolando a live". expo-keep-awake holds the OS display awake while
